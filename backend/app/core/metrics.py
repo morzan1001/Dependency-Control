@@ -525,23 +525,11 @@ chat_rate_limited_total = Counter(
     "Rate-limited chat requests",
 )
 
-chat_rate_limit_remaining = Gauge(
-    "dc_chat_rate_limit_remaining",
-    "Remaining requests in the current rate-limit window per user",
-    ["user_id", "window"],
-)
-
-# Its own series rather than a label on the chat pair: the Chat AI Assistant dashboard sums the
+# Its own series rather than a label on the chat counter: the Chat AI Assistant dashboard sums the
 # chat counter unfiltered, so a shared metric would show ad-hoc denials as chat denials.
 adhoc_rate_limited_total = Counter(
     "dc_adhoc_rate_limited_total",
     "Rate-limited ad-hoc analysis requests",
-)
-
-adhoc_rate_limit_remaining = Gauge(
-    "dc_adhoc_rate_limit_remaining",
-    "Remaining ad-hoc analysis requests in the current rate-limit window per user",
-    ["user_id", "window"],
 )
 
 uptime_seconds = Gauge(

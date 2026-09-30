@@ -17,7 +17,7 @@ async def test_generate_pqc_migration_plan_returns_response():
                 )
             )
         )
-        out = await generate_pqc_migration_plan(db, project_id="p1")
+        out = await generate_pqc_migration_plan(db, project_id="p1", limit=500)
     assert out["scope"] == "project"
     assert out["items"] == []
     assert gen_cls.return_value.generate.await_args.kwargs["resolved"] == ResolvedScope(
@@ -40,7 +40,9 @@ async def test_list_compliance_reports_returns_metadata():
                 ]
             )
         )
-        out = await list_compliance_reports(db, visibility={"scope": "project", "scope_id": "p"})
+        out = await list_compliance_reports(
+            db, visibility={"scope": "project", "scope_id": "p"}, framework=None, limit=10
+        )
     assert len(out["reports"]) == 1
     assert out["reports"][0]["id"] == "r1"
 
@@ -60,7 +62,9 @@ async def test_list_policy_audit_entries_returns_timeline():
                 ]
             )
         )
-        out = await list_policy_audit_entries(db, policy_scope="system")
+        out = await list_policy_audit_entries(
+            db, policy_scope="system", project_id=None, policy_type="crypto", limit=20
+        )
     assert out["entries"][0]["version"] == 1
 
 

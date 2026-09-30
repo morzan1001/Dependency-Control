@@ -1,15 +1,20 @@
 """Tests for ChatService orchestration (mocks Ollama + DB)."""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import anyio
 import pytest
+from prometheus_client import REGISTRY
 
 import app.services.chat.service as service_mod
+from app.core.config import settings
 from app.models.user import User
 from app.services.chat.service import ChatService
+from app.services.chat.tools import ChatToolRegistry
 
 
 def _make_user(user_id: str = "user-1", permissions: list[str] | None = None) -> User:
@@ -36,6 +41,33 @@ async def _dying_gen(chunks: list[dict[str, Any]], error: Exception) -> AsyncIte
     for c in chunks:
         yield c
     raise error
+
+
+def _turns(status: str) -> float:
+    return REGISTRY.get_sample_value("dc_chat_messages_total", {"status": status}) or 0.0
+
+
+def _tokens(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str).encode()) // 4
+
+
+def _in_memory_store(service: ChatService) -> list[dict[str, Any]]:
+    stored: list[dict[str, Any]] = []
+
+    async def fake_add(conversation_id, role, content="", **kwargs):
+        stored.append({"role": role, "content": content, "tool_calls": kwargs.get("tool_calls") or []})
+        return len(stored)
+
+    async def fake_recent(conversation_id, limit=20):
+        return list(stored)
+
+    service.repo.add_message = AsyncMock(side_effect=fake_add)
+    service.repo.get_recent_messages = AsyncMock(side_effect=fake_recent)
+    return stored
+
+
+_LIST_PROJECTS = {"type": "tool_call", "function": {"name": "list_projects", "arguments": {}}}
+_DONE = {"type": "done", "total_tokens": 3, "eval_rate": 10.0}
 
 
 def _make_service() -> ChatService:
@@ -238,6 +270,7 @@ async def test_send_message_executes_tool_call():
 async def test_send_message_error_stops_stream():
     service = _make_service()
     user = _make_user()
+    errors, interrupted = _turns("error"), _turns("interrupted")
 
     service.ollama.chat_stream = MagicMock(
         return_value=_async_gen(
@@ -252,8 +285,24 @@ async def test_send_message_error_stops_stream():
     combined = "".join(events)
     assert "error" in combined
     assert "Ollama unavailable" in combined
-    # On immediate error with no streamed tokens, only the user message is saved.
-    assert service.repo.add_message.call_count == 1
+    assert service.repo.add_message.call_count == 2
+    assistant_call = service.repo.add_message.call_args_list[-1]
+    assert assistant_call.kwargs["role"] == "assistant"
+    assert assistant_call.kwargs["content"] == "_[stream interrupted]_"
+    assert (_turns("error"), _turns("interrupted")) == (errors + 1, interrupted)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_for_a_deleted_conversation_ends_before_the_model_runs():
+    service = _make_service()
+    service.repo.add_message = AsyncMock(return_value=None)
+    service.ollama.chat_stream = MagicMock(side_effect=AssertionError("the model must not run"))
+
+    events = [c async for c in service.send_message("conv-gone", _make_user(), "hi", max_tool_rounds=20)]
+
+    assert events == ['data: {"type": "error", "message": "Conversation not found"}\n\n']
+    assert service.repo.add_message.await_count == 1
+    service.repo.update_conversation_title.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -262,25 +311,7 @@ async def test_current_user_message_not_duplicated_in_prompt():
     service = _make_service()
     user = _make_user()
 
-    # In-memory store so get_recent_messages reflects what add_message persisted.
-    stored: list[dict[str, Any]] = []
-
-    async def fake_add(conversation_id, role, content="", images=None, **kwargs):
-        stored.append(
-            {
-                "role": role,
-                "content": content,
-                "images": images or [],
-                "tool_calls": kwargs.get("tool_calls") or [],
-            }
-        )
-        return {"_id": f"msg-{len(stored)}"}
-
-    async def fake_recent(conversation_id, limit=20):
-        return list(stored)
-
-    service.repo.add_message = AsyncMock(side_effect=fake_add)
-    service.repo.get_recent_messages = AsyncMock(side_effect=fake_recent)
+    _in_memory_store(service)
 
     captured: dict[str, Any] = {}
 
@@ -368,11 +399,161 @@ async def test_delete_conversation_scoped_to_user():
 
 
 @pytest.mark.asyncio
-async def test_get_messages_returns_empty_when_conversation_missing():
+async def test_get_messages_reads_the_messages_without_rechecking_ownership():
     service = _make_service()
-    service.repo.get_conversation = AsyncMock(return_value=None)
-    user = _make_user()
+    stored = [{"_id": "m1", "role": "user", "content": "hi"}]
+    service.repo.get_messages = AsyncMock(return_value=stored)
 
-    msgs = await service.get_messages("conv-missing", user)
-    assert msgs == []
-    service.repo.get_messages.assert_not_called()
+    assert await service.get_messages("conv-1") == stored
+    service.repo.get_messages.assert_awaited_once_with("conv-1")
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_replays_the_tool_turn_exactly_as_it_happened_live():
+    service = _make_service()
+    _in_memory_store(service)
+    sent: list[list[dict[str, Any]]] = []
+    rounds = iter(
+        [
+            [_LIST_PROJECTS, _DONE],
+            [{"type": "token", "content": "Two projects."}, _DONE],
+            [{"type": "token", "content": "ok"}, _DONE],
+        ]
+    )
+
+    def record(messages, tools=None):
+        sent.append([dict(m) for m in messages])
+        return _async_gen(next(rounds))
+
+    service.ollama.chat_stream = MagicMock(side_effect=record)
+
+    async for _ in service.send_message("conv-1", _make_user(), "list projects", max_tool_rounds=20):
+        pass
+    async for _ in service.send_message("conv-1", _make_user(), "and the worst?", max_tool_rounds=20):
+        pass
+
+    live_second_round, replay = sent[1], sent[2]
+    assert replay[:-1] == [*live_second_round, {"role": "assistant", "content": "Two projects."}]
+
+
+@pytest.mark.asyncio
+async def test_text_from_a_tool_calling_round_is_not_the_answer():
+    service = _make_service()
+    service.ollama.chat_stream = MagicMock(
+        side_effect=[
+            _async_gen([{"type": "token", "content": "Let me check. "}, _LIST_PROJECTS, _DONE]),
+            _async_gen([{"type": "token", "content": "Two projects."}, _DONE]),
+        ]
+    )
+
+    async for _ in service.send_message("conv-1", _make_user(), "list projects", max_tool_rounds=20):
+        pass
+
+    assert service.repo.add_message.call_args_list[-1].kwargs["content"] == "Two projects."
+
+
+@pytest.mark.asyncio
+async def test_rounds_exhausted_after_a_preface_each_round_still_answers_with_the_fallback():
+    service = _make_service()
+    service.ollama.chat_stream = MagicMock(
+        side_effect=lambda messages, tools=None: _async_gen(
+            [{"type": "token", "content": "Let me check. "}, _LIST_PROJECTS, _DONE]
+        )
+    )
+    exhausted, successes = _turns("max_rounds_exhausted"), _turns("success")
+
+    events = [c async for c in service.send_message("conv-1", _make_user(), "why?", max_tool_rounds=2)]
+
+    stored = service.repo.add_message.call_args_list[-1].kwargs["content"]
+    assert "reasoning budget" in stored
+    assert "Let me check" not in stored
+    assert "reasoning budget" in "".join(events)
+    assert (_turns("max_rounds_exhausted"), _turns("success")) == (exhausted + 1, successes)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_completion_is_answered_with_a_fallback_not_saved_as_success():
+    service = _make_service()
+    service.ollama.chat_stream = MagicMock(return_value=_async_gen([_DONE]))
+    empty, successes = _turns("empty_response"), _turns("success")
+
+    events = [c async for c in service.send_message("conv-1", _make_user(), "hi", max_tool_rounds=20)]
+
+    stored = service.repo.add_message.call_args_list[-1].kwargs["content"]
+    assert "empty response" in stored
+    assert stored in "".join(events).replace("\\n", "\n")
+    assert (_turns("empty_response"), _turns("success")) == (empty + 1, successes)
+
+
+@pytest.mark.asyncio
+async def test_a_client_disconnect_still_saves_the_interrupted_turn():
+    service = _make_service()
+    saved: list[tuple[str, str]] = []
+
+    async def insert_after_io(conversation_id, role, content="", **kwargs):
+        await asyncio.sleep(0.01)
+        saved.append((role, content))
+        return len(saved)
+
+    service.repo.add_message = AsyncMock(side_effect=insert_after_io)
+
+    async def answer_then_hang():
+        yield {"type": "token", "content": "partial answer"}
+        await asyncio.sleep(3600)
+
+    service.ollama.chat_stream = MagicMock(return_value=answer_then_hang())
+    interrupted = _turns("interrupted")
+
+    # Starlette cancels the response's task group when the client goes away.
+    with anyio.CancelScope() as request_scope:
+        async for event in service.send_message("conv-1", _make_user(), "hi", max_tool_rounds=20):
+            if "partial answer" in event:
+                request_scope.cancel()
+
+    assert saved == [("user", "hi"), ("assistant", "partial answer\n\n_[stream interrupted]_")]
+    assert _turns("interrupted") == interrupted + 1
+
+
+@pytest.mark.asyncio
+async def test_a_tool_call_records_how_long_the_tool_itself_took():
+    service = _make_service()
+
+    async def slow_model_then_tool_call():
+        await asyncio.sleep(0.3)
+        yield _LIST_PROJECTS
+        yield _DONE
+
+    service.ollama.chat_stream = MagicMock(
+        side_effect=[slow_model_then_tool_call(), _async_gen([{"type": "token", "content": "ok"}, _DONE])]
+    )
+
+    async for _ in service.send_message("conv-1", _make_user(), "list projects", max_tool_rounds=20):
+        pass
+
+    (call,) = service.repo.add_message.call_args_list[-1].kwargs["tool_calls"]
+    assert call["duration_ms"] < 100
+
+
+@pytest.mark.asyncio
+async def test_every_prompt_sent_to_ollama_leaves_room_for_the_reply():
+    service = _make_service()
+    service.repo.get_recent_messages = AsyncMock(
+        return_value=[{"role": ("user", "assistant")[i % 2], "content": "history " * 750} for i in range(15)]
+    )
+    service.tools.get_available_tool_definitions = ChatToolRegistry().get_available_tool_definitions
+    service.tools.execute_tool = AsyncMock(return_value={"rows": ["x" * 90] * 80})
+    prompt_sizes: list[int] = []
+
+    def record(messages, tools=None):
+        prompt_sizes.append(sum(_tokens(m) for m in messages) + _tokens(tools))
+        if len(prompt_sizes) < 4:
+            return _async_gen([_LIST_PROJECTS, _DONE])
+        return _async_gen([{"type": "token", "content": "ok"}, _DONE])
+
+    service.ollama.chat_stream = MagicMock(side_effect=record)
+
+    async for _ in service.send_message("conv-1", _make_user(), "summarise", max_tool_rounds=20):
+        pass
+
+    assert len(prompt_sizes) == 4
+    assert max(prompt_sizes) <= settings.OLLAMA_NUM_CTX - 2048

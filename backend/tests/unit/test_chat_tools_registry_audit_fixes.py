@@ -8,6 +8,7 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._arguments import checked_arguments
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -59,6 +60,10 @@ def _seed_project(db, project_id=_PROJECT, **overrides):
     )
 
 
+async def _dispatch(tool: str, args: dict, user: User, db) -> dict:
+    return await ChatToolRegistry()._dispatch(tool, checked_arguments(tool, args), user, db)
+
+
 def _seed_finding(db, fid, severity, scan_id=_SCAN, project_id=_PROJECT, **details):
     db.findings._docs[fid] = {
         "_id": fid,
@@ -83,7 +88,7 @@ class TestSeverityRanking:
         for i in range(3):
             _seed_finding(db, f"crit-{i}", "CRITICAL")
 
-        result = await ChatToolRegistry()._dispatch("get_project_findings", {"project_id": "proj-1"}, admin_user, db)
+        result = await _dispatch("get_scan_findings", {"project_id": "proj-1"}, admin_user, db)
 
         sevs = [f["severity"] for f in result["findings"]]
         assert len(sevs) == 10
@@ -97,7 +102,7 @@ class TestSeverityRanking:
         _seed_finding(db, "high-1", "HIGH")
         _seed_finding(db, "crit-1", "CRITICAL")
 
-        result = await ChatToolRegistry()._dispatch(
+        result = await _dispatch(
             "get_scan_findings",
             {"project_id": "proj-1", "scan_id": "scan-1"},
             admin_user,
@@ -113,9 +118,7 @@ class TestSeverityRanking:
         _seed_finding(db, "crit-hi", "CRITICAL", epss_score=0.90)
         _seed_finding(db, "high-1", "HIGH", epss_score=0.99)
 
-        result = await ChatToolRegistry()._dispatch(
-            "get_top_priority_findings", {"project_id": "proj-1"}, admin_user, db
-        )
+        result = await _dispatch("get_top_priority_findings", {"project_id": "proj-1"}, admin_user, db)
         ids = [f["finding_id"] for f in result["findings"]]
         # CRITICAL before HIGH; within CRITICAL, higher details.epss_score first.
         assert ids[:3] == ["crit-hi", "crit-lo", "high-1"]
@@ -124,9 +127,7 @@ class TestSeverityRanking:
 class TestPolicyAuditSystemScopeGate:
     @pytest.mark.asyncio
     async def test_non_admin_denied_system_scope(self, db, plain_user):
-        result = await ChatToolRegistry()._dispatch(
-            "list_policy_audit_entries", {"policy_scope": "system"}, plain_user, db
-        )
+        result = await _dispatch("list_policy_audit_entries", {"policy_scope": "system"}, plain_user, db)
         assert result == {"error": "Access denied"}
 
     @pytest.mark.asyncio
@@ -135,9 +136,7 @@ class TestPolicyAuditSystemScopeGate:
             "app.services.chat.tools.registry.list_policy_audit_entries",
             new=AsyncMock(return_value={"entries": [{"version": 1}]}),
         ) as mock_list:
-            result = await ChatToolRegistry()._dispatch(
-                "list_policy_audit_entries", {"policy_scope": "system"}, admin_user, db
-            )
+            result = await _dispatch("list_policy_audit_entries", {"policy_scope": "system"}, admin_user, db)
         assert result == {"entries": [{"version": 1}]}
         mock_list.assert_awaited_once()
 
@@ -159,7 +158,7 @@ class TestComplianceReportsVisibility:
             "app.services.chat.tools.ComplianceReportRepository",
             return_value=repo_instance,
         ):
-            await ChatToolRegistry()._dispatch("list_compliance_reports", {}, plain_user, db)
+            await _dispatch("list_compliance_reports", {}, plain_user, db)
 
         repo_instance.list.assert_awaited_once()
         branches = repo_instance.list.await_args.kwargs["visibility"]["$or"]

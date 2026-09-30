@@ -5,16 +5,22 @@ named "breakdown", and the counts silently stop adding up to the total. A ranked
 population beside it reads as the whole list of offenders.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
 from app.models.user import User
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.crypto_policy import CryptoRule
+from app.schemas.policy_audit import PolicyAuditAction
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools.crypto_tools import _NOISY_RULE_SAMPLE, suggest_crypto_policy_override
-from app.services.crypto_policy.seeder import load_seed_rules
+from app.services.crypto_policy.seeder import load_seed_rules, seed_crypto_policies, write_policy
+from app.services.normalizers.sast import _parse_opengrep_item
 from tests.helpers.permission_presets import PRESET_ADMIN
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -48,6 +54,30 @@ def _seed_project(db: FakeDatabase) -> None:
         "status": "completed",
         "created_at": "2026-09-01T00:00:00Z",
     }
+
+
+_EVERY_SEED_RULE_ENABLED = [rule.model_copy(update={"enabled": True}) for rule in load_seed_rules()]
+
+
+async def _system_policy(db: FakeDatabase, rules: list[CryptoRule]) -> None:
+    await write_policy(db, scope="system", project_id=None, rules=rules, action=PolicyAuditAction.SEED, actor=None)
+
+
+def _rules_named(rule_ids: list[str]) -> list[CryptoRule]:
+    return [_EVERY_SEED_RULE_ENABLED[0].model_copy(update={"rule_id": rule_id}) for rule_id in rule_ids]
+
+
+def _md5_finding() -> dict:
+    md5 = CryptoAsset(
+        project_id=_PROJECT,
+        scan_id=_SCAN,
+        bom_ref="crypto/algorithm/md5",
+        name="MD5",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.HASH,
+    )
+    (finding,) = crypto_findings_for_assets([md5], _EVERY_SEED_RULE_ENABLED, scanner="crypto_weak_algorithm")
+    return {**finding, "_id": finding["id"], "project_id": _PROJECT, "scan_id": _SCAN}
 
 
 def _crypto_finding(key: str, rule_id: str) -> dict:
@@ -103,6 +133,7 @@ async def test_the_severity_breakdown_holds_every_severity_the_scan_carries():
 @pytest.mark.asyncio
 async def test_the_noisy_rule_sample_names_how_many_rules_there_are():
     db = FakeDatabase()
+    await _system_policy(db, _rules_named([f"rule-{rule:02d}" for rule in range(_MORE_RULES_THAN_SHOWN)]))
     for rule in range(_MORE_RULES_THAN_SHOWN):
         for occurrence in range(_FINDINGS_PER_RULE):
             key = f"r{rule}-{occurrence}"
@@ -123,6 +154,9 @@ async def test_the_noisy_rule_sample_names_how_many_rules_there_are():
 @pytest.mark.asyncio
 async def test_rules_tied_on_findings_are_sampled_by_rule_id():
     db = FakeDatabase()
+    await _system_policy(
+        db, _rules_named([_LOUDEST_RULE, *(f"rule-{rule:02d}" for rule in range(_MORE_RULES_THAN_SHOWN))])
+    )
     for occurrence in range(_FINDINGS_FOR_LOUDEST):
         key = f"loud-{occurrence}"
         db.findings._docs[key] = _crypto_finding(key, _LOUDEST_RULE)
@@ -144,6 +178,7 @@ async def test_rules_tied_on_findings_are_sampled_by_rule_id():
 @pytest.mark.asyncio
 async def test_a_scan_with_no_crypto_findings_reports_an_empty_population():
     db = FakeDatabase()
+    await seed_crypto_policies(db)
 
     result = await suggest_crypto_policy_override(db, project_id=_PROJECT, scan_id=_SCAN)
 
@@ -155,16 +190,9 @@ async def test_a_scan_with_no_crypto_findings_reports_an_empty_population():
 async def test_the_noisy_rule_sample_counts_every_rule_a_finding_matched():
     """Disabling a finding's lead rule leaves it standing under the other rules it matched."""
     db = FakeDatabase()
-    md5 = CryptoAsset(
-        project_id=_PROJECT,
-        scan_id=_SCAN,
-        bom_ref="crypto/algorithm/md5",
-        name="MD5",
-        asset_type=CryptoAssetType.ALGORITHM,
-        primitive=CryptoPrimitive.HASH,
-    )
-    (finding,) = crypto_findings_for_assets([md5], load_seed_rules(), scanner="crypto_weak_algorithm")
-    db.findings._docs[finding["id"]] = {**finding, "_id": finding["id"], "project_id": _PROJECT, "scan_id": _SCAN}
+    await _system_policy(db, _EVERY_SEED_RULE_ENABLED)
+    finding = _md5_finding()
+    db.findings._docs[finding["_id"]] = finding
     matched = sorted(entry["rule_id"] for entry in finding["details"]["matched_rules"])
 
     result = await suggest_crypto_policy_override(db, project_id=_PROJECT, scan_id=_SCAN)
@@ -172,3 +200,30 @@ async def test_the_noisy_rule_sample_counts_every_rule_a_finding_matched():
     assert len(matched) > 1
     assert result["top_noisy_rules"] == [{"rule_id": rule_id, "findings": 1} for rule_id in matched]
     assert result["top_noisy_rules_total"] == len(matched)
+
+
+@pytest.mark.asyncio
+async def test_the_noisy_rule_sample_names_only_rules_the_policy_enables():
+    """A disabled rule or a SAST check id is no rule a project override could switch off."""
+    db = FakeDatabase()
+    await _system_policy(db, _EVERY_SEED_RULE_ENABLED)
+    finding = _md5_finding()
+    db.findings._docs[finding["_id"]] = finding
+    fixture = Path(__file__).parents[1] / "fixtures" / "sast" / "crypto_misuse_findings.json"
+    sast = _parse_opengrep_item(json.loads(fixture.read_text())["results"][0]).model_dump()
+    db.findings._docs[sast["id"]] = {**sast, "_id": sast["id"], "project_id": _PROJECT, "scan_id": _SCAN}
+    disabled, *still_enabled = sorted(entry["rule_id"] for entry in finding["details"]["matched_rules"])
+    rule = next(r for r in _EVERY_SEED_RULE_ENABLED if r.rule_id == disabled)
+    await write_policy(
+        db,
+        scope="project",
+        project_id=_PROJECT,
+        rules=[rule.model_copy(update={"enabled": False})],
+        action=PolicyAuditAction.UPDATE,
+        actor=None,
+    )
+
+    result = await suggest_crypto_policy_override(db, project_id=_PROJECT, scan_id=_SCAN)
+
+    assert sast["type"] == FindingType.CRYPTO_KEY_MANAGEMENT.value
+    assert result["top_noisy_rules"] == [{"rule_id": rule_id, "findings": 1} for rule_id in still_enabled]

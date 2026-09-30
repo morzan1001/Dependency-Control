@@ -116,7 +116,7 @@ _RESCAN_PROJECT_PROJECTION = dict.fromkeys(
 )
 
 
-def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
+def resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
     """Return effective rescan interval hours, or None if rescans are disabled."""
     project_decides = system_settings.rescan_mode != SETTINGS_MODE_GLOBAL
     enabled = project.rescan_enabled if project_decides else None
@@ -189,7 +189,7 @@ async def _process_project_rescan(
 ) -> None:
     """Evaluate a single project and create a rescan for every source that is due."""
     project = Project(**project_data)
-    interval_hours = _resolve_rescan_interval(project, system_settings)
+    interval_hours = resolve_rescan_interval(project, system_settings)
     if interval_hours is None:
         return
 

@@ -140,7 +140,7 @@ export default function Chat() {
         .mutateAsync(undefined)
         .then((conv) => {
           setActiveConversationId(conv.id);
-          sendMessage(content, [], conv.id);
+          sendMessage(content, conv.id);
         })
         .catch((err) => {
           toast.error('Failed to send message', {
@@ -223,9 +223,7 @@ export default function Chat() {
                     conversation_id: activeConversationId ?? '',
                     role: 'user',
                     content: pendingUserMessage.content,
-                    images: pendingUserMessage.images,
                     tool_calls: [],
-                    token_count: 0,
                     created_at: new Date().toISOString(),
                   }}
                 />

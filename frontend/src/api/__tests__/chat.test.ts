@@ -124,7 +124,7 @@ describe('chatApi.sendMessage token refresh (delegates to shared client helper)'
     expect(clientMocks.getBaseUrl).toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledWith(
       'https://example.test/api/chat/conversations/conv-42/messages',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ content: 'hello' }) }),
     );
 
     vi.unstubAllGlobals();

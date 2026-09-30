@@ -19,15 +19,12 @@ export function useChatStream(
   });
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
-  const [pendingUserMessage, setPendingUserMessage] = useState<{
-    content: string;
-    images: string[];
-  } | null>(null);
+  const [pendingUserMessage, setPendingUserMessage] = useState<{ content: string } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isStreamingRef = useRef(false);
 
   const sendMessage = useCallback(
-    async (content: string, images: string[] = [], conversationIdOverride?: string) => {
+    async (content: string, conversationIdOverride?: string) => {
       const effectiveId = conversationIdOverride ?? conversationId;
       if (!effectiveId || isStreamingRef.current) return;
 
@@ -37,15 +34,10 @@ export function useChatStream(
       setStreamingContent('');
       setStreamingToolCalls([]);
       // Optimistic echo so the UI isn't empty during Ollama warmup; cleared on refetch.
-      setPendingUserMessage({ content, images });
+      setPendingUserMessage({ content });
 
       try {
-        for await (const event of chatApi.sendMessage(
-          effectiveId,
-          content,
-          images,
-          abortControllerRef.current.signal,
-        )) {
+        for await (const event of chatApi.sendMessage(effectiveId, content, abortControllerRef.current.signal)) {
           if (abortControllerRef.current?.signal.aborted) break;
 
           switch (event.type) {

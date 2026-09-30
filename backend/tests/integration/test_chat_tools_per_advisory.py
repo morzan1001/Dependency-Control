@@ -51,21 +51,23 @@ async def _seed_head(db) -> None:
     )
 
 
-def _finding(_id: str, severity: str, component: str, advisories: list[dict], **details) -> dict:
+def _finding(
+    _id: str, severity: str, component: str, advisories: list[dict], *, version: str = "1.0.0", **details
+) -> dict:
     return {
         "_id": _id,
-        "finding_id": f"{component}:1.0.0",
+        "finding_id": f"{component}:{version}",
         "scan_id": _SCAN,
         "project_id": _PROJECT,
         "type": "vulnerability",
         "severity": severity,
         "component": component,
-        "version": "1.0.0",
+        "version": version,
         "description": "",
         "waived": False,
         "details": {
             "vulnerabilities": advisories,
-            "fixed_version": aggregate_fixed_version(advisories, "1.0.0"),
+            "fixed_version": aggregate_fixed_version(advisories, version),
             **details,
         },
     }
@@ -150,7 +152,7 @@ async def test_a_row_names_the_canonical_cve_and_counts_a_ghsa_alias_once(db, da
         )
     )
 
-    row = (await _call(db, "get_project_findings", project_id=_PROJECT))["findings"][0]
+    row = (await _call(db, "get_scan_findings", project_id=_PROJECT))["findings"][0]
 
     assert row["cve"] == "CVE-2024-1"
     assert row["cve_count"] == 1
@@ -165,7 +167,7 @@ async def test_ranking_breaks_severity_ties_on_the_advisories_cvss(db, database)
         ]
     )
 
-    rows = (await _call(db, "get_project_findings", project_id=_PROJECT, limit=1))["findings"]
+    rows = (await _call(db, "get_scan_findings", project_id=_PROJECT, limit=1))["findings"]
 
     assert [r["cve"] for r in rows] == ["CVE-2025-10"]
 
@@ -452,6 +454,82 @@ async def test_waiver_status_finds_a_dormant_cve_waiver_by_its_vulnerability_id(
     assert (result["waived"], result["waiver_present"], result["suppressing"]) == (False, True, False)
 
 
+_DORMANT_CVE = "CVE-2020-0010"
+
+
+def _dormant_waiver(_id: str, expires: datetime | None, *, project_id: str | None = _PROJECT, by_cve=False) -> dict:
+    return {
+        "_id": _id,
+        "project_id": project_id,
+        "finding_id": None if by_cve else _DORMANT_CVE,
+        "vulnerability_id": _DORMANT_CVE if by_cve else None,
+        "reason": "not reachable",
+        "expiration_date": expires,
+    }
+
+
+_LAPSED = datetime(2026, 1, 31, tzinfo=timezone.utc)
+_LAPSED_EARLIER = datetime(2025, 6, 30, tzinfo=timezone.utc)
+_RENEWED = datetime(2099, 1, 31, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("waivers", "answer", "waiver_id"),
+    [
+        pytest.param(
+            [_dormant_waiver("w-lapsed", _LAPSED), _dormant_waiver("w-renewed", _RENEWED)],
+            "waiver",
+            "w-renewed",
+            id="renewed-beside-lapsed",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-lapsed", _LAPSED), _dormant_waiver("w-global", None, project_id=None)],
+            "waiver",
+            "w-global",
+            id="global-beside-lapsed-project",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-lapsed", _LAPSED), _dormant_waiver("w-cve", _RENEWED, by_cve=True)],
+            "waiver",
+            "w-cve",
+            id="cve-waiver-beside-lapsed-finding-waiver",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-global", None, project_id=None), _dormant_waiver("w-project", _RENEWED)],
+            "waiver",
+            "w-project",
+            id="project-before-global",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-earlier", _LAPSED_EARLIER), _dormant_waiver("w-later", _LAPSED)],
+            "expired_waiver",
+            "w-later",
+            id="latest-lapsed",
+        ),
+    ],
+)
+async def test_waiver_status_off_head_reports_an_active_waiver_before_a_lapsed_one(
+    db, database, waivers, answer, waiver_id
+):
+    await _seed_head(db)
+    await db.waivers.insert_many([dict(w) for w in waivers])
+
+    result = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id=_DORMANT_CVE)
+
+    assert result[answer]["id"] == waiver_id
+
+
+async def test_waiver_status_without_a_head_build_answers_no_scan_data(db, database):
+    await db.projects.insert_one(
+        {"_id": _PROJECT, "name": "advisory-project", "team_id": None, "default_branch": "main", "deleted_branches": []}
+    )
+    await db.waivers.insert_one(_dormant_waiver("w-cve", None))
+
+    result = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id=_DORMANT_CVE)
+
+    assert result == {"error": "No scan data available"}
+
+
 async def test_a_row_reads_its_threat_fields_off_the_unwaived_advisories(db, database):
     await _seed_head(db)
     await db.findings.insert_one(
@@ -470,7 +548,250 @@ async def test_a_row_reads_its_threat_fields_off_the_unwaived_advisories(db, dat
         )
     )
 
-    [row] = (await _call(db, "get_project_findings", project_id=_PROJECT))["findings"]
+    [row] = (await _call(db, "get_scan_findings", project_id=_PROJECT))["findings"]
 
     assert "in_kev" not in row
     assert (row["epss_score"], row["epss_percentile"], row["exploit_maturity"]) == (0.001, 0.2, "low")
+
+
+def _advisory(cve: str, fixed_version: str | None, severity: str = "HIGH") -> dict:
+    return {"id": cve, "severity": severity, "fixed_version": fixed_version}
+
+
+async def _plan(db, **args) -> dict:
+    return await _call(db, "generate_remediation_plan", project_id=_PROJECT, **args)
+
+
+async def test_remediation_plan_gives_each_installed_version_its_own_patch_on_its_major_line(db, database):
+    await _seed_head(db)
+    advisories = [
+        _advisory("CVE-2023-0001", "3.2.20, 4.1.10, 4.2.3"),
+        _advisory("CVE-2023-0002", "3.2.19, 4.1.9, 4.2.1"),
+    ]
+    await db.findings.insert_many(
+        [
+            _finding("f-django-3", "HIGH", "django", advisories, version="3.2.18"),
+            _finding("f-django-4", "HIGH", "django", advisories, version="4.2.0"),
+        ]
+    )
+
+    plan = (await _plan(db))["plan"]
+
+    assert sorted((s["current_version"], s["target_version"], s["breaking_change_risk"]) for s in plan) == [
+        ("3.2.18", "3.2.20", "low"),
+        ("4.2.0", "4.2.3", "low"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("installed", "fix_lists", "target"),
+    [
+        pytest.param("2.0.0", ["2.0.5, 2.1.0-rc1"], "2.0.5", id="stable-before-newer-prerelease"),
+        pytest.param("1.9.0", ["2.0.0-rc1", "2.0.0"], "2.0.0", id="release-above-its-prerelease"),
+        pytest.param("1.2.0", ["1.2.9rc1", "1.2.10"], "1.2.10", id="pep440-prerelease"),
+        pytest.param("2.28-100.el8", ["2.28-151.el8", "2.28-189.5.el8_6"], "2.28-189.5.el8_6", id="rpm-release"),
+    ],
+)
+async def test_remediation_plan_target_covers_every_advisory(db, database, installed, fix_lists, target):
+    await _seed_head(db)
+    advisories = [_advisory(f"CVE-2024-{i:04d}", fix) for i, fix in enumerate(fix_lists, start=1)]
+    await db.findings.insert_one(_finding("f-lib", "HIGH", "lib", advisories, version=installed))
+
+    (step,) = (await _plan(db))["plan"]
+
+    assert step["target_version"] == target
+
+
+async def test_remediation_plan_counts_only_cves_the_target_fixes(db, database):
+    await _seed_head(db)
+    await db.findings.insert_many(
+        [
+            _finding(
+                "f-liba",
+                "CRITICAL",
+                "liba",
+                [_advisory("CVE-2024-0001", "1.0.5"), _advisory("CVE-2024-0002", None, "CRITICAL")],
+            ),
+            _finding(
+                "f-libb",
+                "CRITICAL",
+                "libb",
+                [_advisory("CVE-2024-0003", None, "CRITICAL"), _advisory("CVE-2024-0004", None, "CRITICAL")],
+            ),
+        ]
+    )
+
+    result = await _plan(db)
+
+    steps = {s["component"]: s for s in result["plan"]}
+    assert (steps["liba"]["resolves_count"], steps["liba"]["unresolved"]) == (1, ["CVE-2024-0002"])
+    assert (steps["libb"]["resolves_count"], steps["libb"]["unresolved_count"]) == (0, 2)
+    summary = result["summary"]
+    assert (summary["cves_resolved"], summary["critical_resolved"], summary["cves_unresolved"]) == (1, 0, 3)
+
+
+async def test_remediation_plan_counts_a_cve_shared_by_two_installed_versions_once(db, database):
+    await _seed_head(db)
+    advisories = [_advisory("CVE-2021-23337", "4.17.21")]
+    await db.findings.insert_many(
+        [
+            _finding("f-lodash-15", "HIGH", "lodash", advisories, version="4.17.15"),
+            _finding("f-lodash-19", "HIGH", "lodash", advisories, version="4.17.19"),
+        ]
+    )
+
+    result = await _plan(db)
+
+    assert len(result["plan"]) == 2
+    assert result["summary"]["cves_resolved"] == 1
+
+
+async def test_remediation_plan_steps_are_package_upgrades_and_eol_counts_as_no_cve(db, database):
+    await _seed_head(db)
+    file_findings = [
+        {
+            "_id": f"f-{finding_type}",
+            "finding_id": f"{finding_type}-1",
+            "scan_id": _SCAN,
+            "project_id": _PROJECT,
+            "type": finding_type,
+            "severity": "CRITICAL",
+            "component": path,
+            "version": None,
+            "waived": False,
+            "details": {},
+        }
+        for finding_type, path in (("secret", "src/config.py"), ("iac", "deploy/main.tf"))
+    ]
+    eol = {
+        "_id": "f-eol",
+        "finding_id": "EOL-python-3.8",
+        "scan_id": _SCAN,
+        "project_id": _PROJECT,
+        "type": "eol",
+        "severity": "HIGH",
+        "component": "python",
+        "version": "3.8.10",
+        "waived": False,
+        "details": {"fixed_version": "3.13.1", "eol_date": "2024-10-07", "cycle": "3.8", "recommended_cycle": "3.13"},
+    }
+    await db.findings.insert_many(
+        [*file_findings, eol, _finding("f-lib", "HIGH", "lib", [_advisory("CVE-1", "1.0.1")])]
+    )
+
+    result = await _plan(db)
+
+    steps = {s["component"]: s for s in result["plan"]}
+    assert set(steps) == {"lib", "python"}
+    assert (steps["python"]["target_version"], steps["python"]["resolves_count"]) == ("3.13.1", 0)
+    assert result["summary"]["cves_resolved"] == 1
+
+
+async def test_remediation_plan_summary_covers_the_steps_cut_from_the_plan(db, database):
+    await _seed_head(db)
+    fixable = [_finding(f"f-fix-{i}", "HIGH", f"lib{i}", [_advisory(f"CVE-2024-000{i}", "1.0.1")]) for i in range(3)]
+    unfixable = _finding("f-nofix", "CRITICAL", "nofix", [_advisory("CVE-2024-0009", None, "CRITICAL")])
+    await db.findings.insert_many([*fixable, unfixable])
+
+    result = await _plan(db, max_steps=2)
+
+    assert (len(result["plan"]), result["plan_total"]) == (2, 4)
+    assert (result["summary"]["cves_resolved"], result["summary"]["steps_without_fix"]) == (3, 1)
+
+
+async def test_remediation_plan_ranks_a_transitive_critical_fix_before_a_direct_high_one(db, database):
+    await _seed_head(db)
+    await db.dependencies.insert_one(
+        {
+            "_id": "d-jackson",
+            "scan_id": _SCAN,
+            "project_id": _PROJECT,
+            "name": "jackson-databind",
+            "version": "1.0.0",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@1.0.0",
+            "type": "maven",
+            "direct": True,
+            "direct_inferred": False,
+        }
+    )
+    await db.findings.insert_many(
+        [
+            _finding("f-jackson", "HIGH", "jackson-databind", [_advisory("CVE-2024-0001", "1.0.1")]),
+            _finding(
+                "f-log4j",
+                "CRITICAL",
+                "log4j-core",
+                [_advisory(_LOG4SHELL, "2.17.1", "CRITICAL")],
+                version="2.14.1",
+            ),
+        ]
+    )
+
+    plan = (await _plan(db))["plan"]
+
+    assert [(s["component"], s["direct_confidence"]) for s in plan] == [
+        ("log4j-core", "transitive"),
+        ("jackson-databind", "declared"),
+    ]
+
+
+async def test_auto_fixable_names_the_patch_on_the_installed_major_and_flags_major_upgrades(db, database):
+    await _seed_head(db)
+    await db.findings.insert_many(
+        [
+            _finding("f-patch", "HIGH", "lib-patch", [_advisory("CVE-2024-0101", "1.2.6, 2.0.1")], version="1.2.0"),
+            _finding("f-major", "HIGH", "lib-major", [_advisory("CVE-2024-0102", "2.0.1")], version="1.4.0"),
+            _finding("f-behind", "HIGH", "lib-behind", [_advisory("CVE-2024-0103", "2.9.0")], version="3.0.0"),
+        ]
+    )
+
+    rows = (await _call(db, "get_auto_fixable_findings"))["findings"]
+
+    assert {r["component"]: (r["quick_fix_version"], r["breaking_change_risk"]) for r in rows} == {
+        "lib-patch": ("1.2.6", "low"),
+        "lib-major": ("2.0.1", "high"),
+    }
+
+
+async def test_auto_fixable_targets_the_critical_and_high_fixes_and_lists_what_the_bump_leaves_open(db, database):
+    await _seed_head(db)
+    advisories = [
+        _advisory("CVE-2024-0201", "1.2.6, 2.0.1"),
+        _advisory("CVE-2024-0202", "2.0.1", "MEDIUM"),
+        _advisory("CVE-2024-0203", "1.2.3", "LOW"),
+    ]
+    await db.findings.insert_one(_finding("f-mixed", "HIGH", "lib-mixed", advisories, version="1.2.0"))
+
+    (row,) = (await _call(db, "get_auto_fixable_findings"))["findings"]
+
+    assert (row["quick_fix_version"], row["breaking_change_risk"], row["still_open"]) == (
+        "1.2.6",
+        "low",
+        ["CVE-2024-0202"],
+    )
+
+
+@pytest.mark.parametrize(
+    ("severity", "fixed", "epss", "reachability", "recommend", "expiry", "tier"),
+    [
+        pytest.param("CRITICAL", "2.5.33", 0.5, (True, "symbol"), False, 30, "confirmed", id="reachable-critical-fix"),
+        pytest.param("HIGH", "2.5.33", 0.001, (None, None), False, 30, "unknown", id="fix-on-high"),
+        pytest.param("HIGH", None, 0.05, (False, "import"), True, 180, "unreachable", id="unreachable-no-fix"),
+        pytest.param("MEDIUM", None, 0.5, (None, None), False, 90, "unknown", id="no-supporting-signal"),
+        pytest.param("LOW", "2.5.33", 0.5, (None, None), True, 30, "unknown", id="low-bridged-until-upgrade"),
+    ],
+)
+async def test_a_waiver_suggestion_weighs_reachability_and_treats_a_fix_as_a_reason_to_patch(
+    db, database, severity, fixed, epss, reachability, recommend, expiry, tier
+):
+    await _seed_head(db)
+    reachable, level = reachability
+    finding = _finding("f-struts", severity, "struts", [_advisory("CVE-2023-50164", fixed, severity)], epss_score=epss)
+    await db.findings.insert_one({**finding, "reachable": reachable, "reachability_level": level})
+
+    result = await _call(db, "suggest_waiver_for_finding", project_id=_PROJECT, finding_id="struts:1.0.0")
+
+    assert (result["recommend_waive"], result["suggested_expiry_days"]) == (recommend, expiry)
+    assert result["signals"]["reachability"] == tier
+    assert "a fix is available" not in result["suggested_reason"]
+    assert ("not reachable" in result["suggested_reason"]) is (tier == "unreachable")

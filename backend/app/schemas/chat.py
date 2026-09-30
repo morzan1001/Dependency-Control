@@ -1,7 +1,7 @@
 """Request/response schemas for the chat API."""
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,8 +30,6 @@ class ConversationListResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
-    # max_length is base64 chars: ~1.5MB per image.
-    images: list[Annotated[str, Field(max_length=2_000_000)]] = Field(default_factory=list, max_length=4)
 
 
 class ToolCallResponse(BaseModel):
@@ -46,9 +44,7 @@ class MessageResponse(BaseModel):
     conversation_id: str
     role: Literal["user", "assistant", "tool"]
     content: str
-    images: list[str]
     tool_calls: list[ToolCallResponse]
-    token_count: int
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

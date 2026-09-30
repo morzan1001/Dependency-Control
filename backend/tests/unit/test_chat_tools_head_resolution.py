@@ -12,7 +12,11 @@ import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
 from app.models.user import User
+from app.schemas.enrichment import KEVEntry
 from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._arguments import checked_arguments
+from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.enrichment.service import _build_enrichment, apply_enrichments
 from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -24,11 +28,15 @@ _DELETED_BRANCH = "feature/spike"
 
 _HEAD_SCAN = "scan-head"
 _OLDER_SCAN = "scan-older"
+_OLDEST_SCAN = "scan-oldest"
+_RESCAN_OF_HEAD = "scan-head-rescan"
 _QUEUED_SCAN = "scan-queued"
 _FAILED_SCAN = "scan-failed"
 _DELETED_BRANCH_SCAN = "scan-on-deleted-branch"
 
 _HEAD_CVE = "CVE-2026-40001"
+_OPEN_HIGH_CVE = "CVE-2026-40002"
+_KEV_CVE = "CVE-2026-40003"
 _OLDER_CVE = "CVE-2026-40008"
 _DELETED_BRANCH_CVE = "CVE-2026-40009"
 _WAIVED_FINDING_ID = "LICENSE:libcheckout:2.4.0"
@@ -48,13 +56,14 @@ _TYPE_CRYPTO = "crypto_weak_algorithm"
 _CRYPTO_ASSET_TYPE = "algorithm"
 _HEAD_CRYPTO_ASSET = "MD5"
 _DELETED_BRANCH_CRYPTO_ASSET = "RC4"
-_HEAD_CRYPTO_RULE = "crypto.weak-hash"
+_HEAD_CRYPTO_RULE = "nist-131a-md5"
 _HEAD_CRYPTO_FINDING_ID = "CRYPTO:MD5"
 _HEAD_CRYPTO_ASSET_COUNT = 1
 _HEAD_CRYPTO_RULE_HITS = 1
 _FOREIGN_SCAN = "scan-of-another-project"
 
 _HEAD_CRITICAL_COUNT = 1
+_ERR_NO_SCAN_DATA = "No scan data available"
 _FIX_VERSION = "1.0.1"
 
 # Each is a pointer a live project really carried: re-ingest sent the head build back to pending,
@@ -91,7 +100,7 @@ def _vulnerability(scan_id, cve, severity, component):
         "severity": severity,
         "component": component,
         "version": "1.0.0",
-        "created_at": _NOW - timedelta(days=300),
+        "first_seen_at": _NOW - timedelta(days=300),
         "waived": False,
         "details": {
             "fixed_version": _FIX_VERSION,
@@ -138,7 +147,7 @@ def seeded(db):
             "severity": _SEV_HIGH,
             "component": _HEAD_COMPONENT,
             "version": "2.4.0",
-            "created_at": _NOW - timedelta(days=300),
+            "first_seen_at": _NOW - timedelta(days=300),
             "waived": True,
             "waiver_reason": "legal signed off",
             "details": {},
@@ -182,18 +191,20 @@ def _point_at(db, scan_id):
 
 
 async def _call(db, user, tool_name, args=None):
-    return await ChatToolRegistry()._dispatch(tool_name, args or {}, user, db)
+    return await ChatToolRegistry()._dispatch(tool_name, checked_arguments(tool_name, args or {}), user, db)
 
 
 @pytest.mark.parametrize("pointer", _MISLEADING_POINTERS, ids=_POINTER_IDS)
 class TestPerProjectToolsAnswerFromHead:
     @pytest.mark.asyncio
-    async def test_project_findings_are_the_head_builds(self, seeded, admin_user, pointer):
+    async def test_findings_are_the_head_builds(self, seeded, admin_user, pointer):
+        """A listing keeps the waived finding, flagged, as REST's finding list does."""
         _point_at(seeded, pointer)
 
-        result = await _call(seeded, admin_user, "get_project_findings", {"project_id": _PROJECT})
+        result = await _call(seeded, admin_user, "get_scan_findings", {"project_id": _PROJECT})
 
         assert {f["finding_id"] for f in result["findings"]} == {_HEAD_CVE, _WAIVED_FINDING_ID}
+        assert result["project_name"] == _PROJECT_NAME
 
     @pytest.mark.asyncio
     async def test_severity_breakdown_is_the_head_builds(self, seeded, admin_user, pointer):
@@ -236,7 +247,7 @@ class TestPerProjectToolsAnswerFromHead:
 
         result = await _call(seeded, admin_user, "get_top_priority_findings", {"project_id": _PROJECT})
 
-        assert [f["finding_id"] for f in result["findings"]] == [_HEAD_CVE, _WAIVED_FINDING_ID]
+        assert [f["finding_id"] for f in result["findings"]] == [_HEAD_CVE]
 
     @pytest.mark.asyncio
     async def test_remediation_plan_is_built_from_the_head_build(self, seeded, admin_user, pointer):
@@ -267,8 +278,16 @@ class TestCrossProjectToolsAnswerFromHead:
         result = await _call(seeded, admin_user, "get_hotspots")
 
         (hotspot,) = result["hotspots"]
-        assert hotspot["latest_scan_id"] == _HEAD_SCAN
+        assert hotspot["head_scan_id"] == _HEAD_SCAN
         assert hotspot["stats"]["critical"] == _HEAD_CRITICAL_COUNT
+
+    @pytest.mark.asyncio
+    async def test_the_project_list_counts_the_head_build(self, seeded, admin_user, pointer):
+        _point_at(seeded, pointer)
+
+        result = await _call(seeded, admin_user, "list_projects")
+
+        assert result["projects"][0]["stats"]["critical"] == _HEAD_CRITICAL_COUNT
 
     @pytest.mark.asyncio
     async def test_org_wide_top_priority_findings_are_the_head_builds(self, seeded, admin_user, pointer):
@@ -276,7 +295,7 @@ class TestCrossProjectToolsAnswerFromHead:
 
         result = await _call(seeded, admin_user, "get_top_priority_findings")
 
-        assert [f["finding_id"] for f in result["findings"]] == [_HEAD_CVE, _WAIVED_FINDING_ID]
+        assert [f["finding_id"] for f in result["findings"]] == [_HEAD_CVE]
 
 
 class TestWaivedFindingsAreNotReportedOpen:
@@ -285,7 +304,7 @@ class TestWaivedFindingsAreNotReportedOpen:
     @pytest.fixture
     def with_open_high(self, seeded):
         _point_at(seeded, _HEAD_SCAN)
-        doc = _vulnerability(_HEAD_SCAN, "CVE-2026-40002", _SEV_HIGH, _HEAD_COMPONENT)
+        doc = _vulnerability(_HEAD_SCAN, _OPEN_HIGH_CVE, _SEV_HIGH, _HEAD_COMPONENT)
         seeded.findings._docs[doc["_id"]] = doc
         return seeded
 
@@ -301,6 +320,52 @@ class TestWaivedFindingsAreNotReportedOpen:
         result = await _call(with_open_high, admin_user, "get_findings_by_type", {"project_id": _PROJECT})
 
         assert result["breakdown"] == {_TYPE_VULNERABILITY: 2}
+
+    @pytest.mark.asyncio
+    async def test_the_priority_list_names_only_open_findings(self, with_open_high, admin_user):
+        result = await _call(with_open_high, admin_user, "get_top_priority_findings")
+
+        assert [f["finding_id"] for f in result["findings"]] == [_HEAD_CVE, _OPEN_HIGH_CVE]
+        assert "fixed_version" in result["hint"]
+
+    @pytest.mark.asyncio
+    async def test_the_stale_list_does_not_ask_for_a_waiver_that_exists(self, with_open_high, admin_user):
+        result = await _call(with_open_high, admin_user, "get_stale_findings")
+
+        assert {f["finding_id"] for f in result["findings"]} == {_HEAD_CVE, _OPEN_HIGH_CVE}
+        assert "waiv" not in result["hint"]
+
+    @pytest.mark.asyncio
+    async def test_a_waived_license_finding_is_no_violation(self, with_open_high, admin_user):
+        result = await _call(with_open_high, admin_user, "get_license_violations")
+
+        assert result["findings"] == []
+
+
+class TestTopPriorityPutsActiveExploitationFirst:
+    @pytest.fixture
+    def with_kev_high(self, seeded):
+        """A HIGH finding whose advisory CISA lists as exploited, enriched the way ingest enriches it."""
+        _point_at(seeded, _HEAD_SCAN)
+        doc = _vulnerability(_HEAD_SCAN, _KEV_CVE, _SEV_HIGH, _HEAD_COMPONENT)
+        kev = KEVEntry(
+            cve=_KEV_CVE, date_added="2026-08-01", required_action="Apply the update.", due_date="2026-08-22"
+        )
+        apply_enrichments(doc["details"], {_KEV_CVE: _build_enrichment(_KEV_CVE, kev, None)})
+        seeded.findings._docs[doc["_id"]] = doc
+        return seeded
+
+    @pytest.mark.asyncio
+    async def test_an_exploited_high_outranks_an_unexploited_critical(self, with_kev_high, admin_user):
+        result = await _call(with_kev_high, admin_user, "get_top_priority_findings")
+
+        assert [f["finding_id"] for f in result["findings"]] == [_KEV_CVE, _HEAD_CVE]
+
+    @pytest.mark.asyncio
+    async def test_a_single_slot_goes_to_the_exploited_finding(self, with_kev_high, admin_user):
+        result = await _call(with_kev_high, admin_user, "get_top_priority_findings", {"limit": 1})
+
+        assert [f["finding_id"] for f in result["findings"]] == [_KEV_CVE]
 
 
 class TestCompareScansDefaultPair:
@@ -332,10 +397,60 @@ class TestCompareScansDefaultPair:
             seeded,
             admin_user,
             "compare_scans",
-            {"project_id": _PROJECT, "scan_id_a": _OLDER_SCAN, "scan_id_b": _DELETED_BRANCH_SCAN},
+            {"project_id": _PROJECT, "from_scan_id": _OLDER_SCAN, "to_scan_id": _DELETED_BRANCH_SCAN},
         )
 
         assert result["to_scan_id"] == _DELETED_BRANCH_SCAN
+
+    @pytest.fixture
+    def with_oldest(self, seeded):
+        doc = _scan(_OLDEST_SCAN, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 40)
+        seeded.scans._docs[doc["_id"]] = doc
+        _point_at(seeded, _HEAD_SCAN)
+        return seeded
+
+    @pytest.mark.asyncio
+    async def test_a_lone_from_scan_is_compared_with_head(self, with_oldest, admin_user):
+        """'What changed since build X' names X alone."""
+        result = await _call(
+            with_oldest, admin_user, "compare_scans", {"project_id": _PROJECT, "from_scan_id": _OLDEST_SCAN}
+        )
+
+        assert (result["from_scan_id"], result["to_scan_id"]) == (_OLDEST_SCAN, _HEAD_SCAN)
+
+    @pytest.mark.asyncio
+    async def test_a_lone_to_scan_is_compared_with_the_build_before_it(self, with_oldest, admin_user):
+        result = await _call(
+            with_oldest, admin_user, "compare_scans", {"project_id": _PROJECT, "to_scan_id": _OLDER_SCAN}
+        )
+
+        assert (result["from_scan_id"], result["to_scan_id"]) == (_OLDEST_SCAN, _OLDER_SCAN)
+
+    @pytest.mark.asyncio
+    async def test_a_rescanned_head_is_compared_with_the_build_before_its_commit(self, seeded, admin_user):
+        """The rescan re-analyses head's own commit, so the build before is the one before that commit."""
+        rescan = _scan(_RESCAN_OF_HEAD, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 0)
+        rescan.update(is_rescan=True, original_scan_id=_HEAD_SCAN)
+        seeded.scans._docs[_RESCAN_OF_HEAD] = rescan
+        seeded.scans._docs[_HEAD_SCAN]["latest_rescan_id"] = _RESCAN_OF_HEAD
+        _point_at(seeded, _HEAD_SCAN)
+
+        result = await _call(seeded, admin_user, "compare_scans", {"project_id": _PROJECT})
+
+        assert (result["from_scan_id"], result["to_scan_id"]) == (_OLDER_SCAN, _RESCAN_OF_HEAD)
+
+    @pytest.mark.asyncio
+    async def test_a_scan_of_another_project_is_refused(self, seeded, admin_user):
+        seeded.scans._docs[_FOREIGN_SCAN] = _scan(
+            _FOREIGN_SCAN, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 0, project_id="another-project"
+        )
+        _point_at(seeded, _HEAD_SCAN)
+
+        result = await _call(
+            seeded, admin_user, "compare_scans", {"project_id": _PROJECT, "from_scan_id": _FOREIGN_SCAN}
+        )
+
+        assert result == {"error": "Scan not found in this project"}
 
 
 def _crypto_asset(scan_id, name):
@@ -393,6 +508,7 @@ class TestScanScopedToolsDefaultToHead:
 
     @pytest.mark.asyncio
     async def test_policy_override_advice_reads_the_head_build(self, seeded_with_crypto, admin_user):
+        await seed_crypto_policies(seeded_with_crypto)
         result = await _call(seeded_with_crypto, admin_user, "suggest_crypto_policy_override", {"project_id": _PROJECT})
 
         assert result["top_noisy_rules"] == [{"rule_id": _HEAD_CRYPTO_RULE, "findings": _HEAD_CRYPTO_RULE_HITS}]
@@ -499,7 +615,18 @@ class TestUnresolvableHead:
         for scan_id in (_HEAD_SCAN, _OLDER_SCAN, _DELETED_BRANCH_SCAN):
             del seeded.scans._docs[scan_id]
 
-        result = await _call(seeded, admin_user, "get_project_findings", {"project_id": _PROJECT})
+        result = await _call(seeded, admin_user, "get_scan_findings", {"project_id": _PROJECT})
 
-        assert result["findings"] == []
-        assert result["message"]
+        assert result == {"error": _ERR_NO_SCAN_DATA}
+
+    @pytest.mark.parametrize("tool_name", ["get_findings_by_severity", "get_findings_by_type", "get_dependency_tree"])
+    @pytest.mark.asyncio
+    async def test_a_project_without_a_head_is_not_reported_empty(self, seeded, admin_user, tool_name):
+        """An empty breakdown or tree reads as a clean project; nothing has been analysed yet."""
+        _point_at(seeded, _QUEUED_SCAN)
+        for scan_id in (_HEAD_SCAN, _OLDER_SCAN, _DELETED_BRANCH_SCAN):
+            del seeded.scans._docs[scan_id]
+
+        result = await _call(seeded, admin_user, tool_name, {"project_id": _PROJECT})
+
+        assert result == {"error": _ERR_NO_SCAN_DATA}

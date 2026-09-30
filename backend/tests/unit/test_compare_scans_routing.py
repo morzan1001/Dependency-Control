@@ -1,186 +1,139 @@
-"""The compare_scans chat tool must delegate to the scan-delta dispatcher and return its envelope."""
+"""compare_scans answers every scan-delta category through the REST dispatcher, pageable and filterable by change."""
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytest_asyncio
 
+from app.core.constants import SCAN_STATUS_COMPLETED
+from app.models.crypto_asset import CryptoAsset
+from app.models.finding import Finding, FindingType, Severity
+from app.models.project import Scan
 from app.models.user import User
-from app.schemas.scan_delta import DeltaCategory, ScanDeltaResponse, ScanDeltaTotals
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.scans import ScanRepository
+from app.schemas.cbom import CryptoAssetType
+from app.services.analysis.engine import _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_ADMIN
 
+pytestmark = pytest.mark.asyncio
 
-@pytest.fixture
-def admin_user():
-    return User(
-        id="admin-1",
-        username="admin",
-        email="admin@test.com",
-        permissions=list(PRESET_ADMIN),
+_PROJECT = "p1"
+_FROM = "s-from"
+_TO = "s-to"
+_NOW = datetime.now(timezone.utc)
+
+_LOG4J = Finding(
+    id="log4j-core:2.14.1",
+    type=FindingType.VULNERABILITY,
+    severity=Severity.CRITICAL,
+    component="log4j-core",
+    version="2.14.1",
+    description="remote code execution",
+    scanners=["trivy"],
+)
+_LODASH = Finding(
+    id="lodash:4.17.20",
+    type=FindingType.VULNERABILITY,
+    severity=Severity.HIGH,
+    component="lodash",
+    version="4.17.20",
+    description="prototype pollution",
+    scanners=["trivy"],
+)
+
+
+async def _build(db, scan_id: str, created_at: datetime, finding: Finding, algorithm: str, project_id=_PROJECT):
+    await ScanRepository(db).create(
+        Scan(id=scan_id, project_id=project_id, branch="main", status=SCAN_STATUS_COMPLETED, created_at=created_at)
+    )
+    records, _ = _prepare_finding_records([finding], scan_id, project_id, created_at)
+    await db.findings.insert_many(records)
+    asset = CryptoAsset(
+        project_id=project_id, scan_id=scan_id, bom_ref=algorithm, name=algorithm, asset_type=CryptoAssetType.ALGORITHM
+    )
+    await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, [asset])
+
+
+@pytest_asyncio.fixture
+async def seeded(db):
+    """Upgrading log4j away and pulling lodash in, while the code moves from MD5 to SHA-256."""
+    await db.projects.insert_one({"_id": _PROJECT, "name": "test-project", "team_id": None})
+    await _build(db, _FROM, _NOW - timedelta(days=1), _LOG4J, "MD5")
+    await _build(db, _TO, _NOW, _LODASH, "SHA-256")
+    return db
+
+
+async def _compare(db, **args) -> dict:
+    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
+    return await ChatToolRegistry().execute_tool(
+        "compare_scans", {"project_id": _PROJECT, "from_scan_id": _FROM, "to_scan_id": _TO, **args}, admin, db
     )
 
 
-@pytest.mark.asyncio
-async def test_compare_scans_routes_through_the_dispatcher(db, admin_user):
-    """compare_scans must run the same cached findings comparison the REST delta serves."""
-    db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
-    await db["scans"].insert_many(
-        [
-            {"_id": "sa", "project_id": "p1", "created_at": datetime.now(timezone.utc)},
-            {"_id": "sb", "project_id": "p1", "created_at": datetime.now(timezone.utc)},
-        ]
-    )
+async def test_the_resolved_findings_are_asked_for_by_change(seeded):
+    result = await _compare(seeded, change="removed")
 
-    fake_response = ScanDeltaResponse(
-        from_scan_id="sa",
-        to_scan_id="sb",
-        project_id="p1",
-        category=DeltaCategory.FINDINGS,
-        totals=ScanDeltaTotals(added=1, removed=0, unchanged=0),
-        page=1,
-        page_size=50,
-        total_pages=1,
-        items=[],
-    )
-
-    with patch(
-        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
-        new=AsyncMock(return_value=fake_response),
-    ) as mock:
-        result = await ChatToolRegistry()._dispatch(
-            "compare_scans",
-            {"project_id": "p1", "scan_id_a": "sa", "scan_id_b": "sb"},
-            admin_user,
-            db,
-        )
-
-    mock.assert_awaited_once()
-    call_kwargs = mock.await_args.kwargs
-    assert call_kwargs["project_id"] == "p1"
-    assert call_kwargs["category"] == "findings"
-    assert call_kwargs["from_scan"] == "sa"
-    assert call_kwargs["to_scan"] == "sb"
-    assert (call_kwargs["page"], call_kwargs["page_size"], call_kwargs["change"]) == (1, 50, None)
-    assert call_kwargs["allow_same_scan"] is False
-    assert result["category"] == "findings"
-    assert result["totals"]["added"] == 1
-    assert result["from_scan_id"] == "sa"
-    assert result["to_scan_id"] == "sb"
+    assert [(i["change"], i["finding_id"]) for i in result["items"]] == [("removed", _LOG4J.id)]
+    assert (result["totals"]["added"], result["totals"]["removed"]) == (1, 1)
 
 
-@pytest.mark.asyncio
-async def test_compare_scans_returns_error_when_project_not_authorized(db, admin_user):
-    """Auth check still runs: unknown project_id is rejected before the service is called."""
-    with patch(
-        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
-        new=AsyncMock(),
-    ) as mock:
-        result = await ChatToolRegistry()._dispatch(
-            "compare_scans",
-            {"project_id": "missing", "scan_id_a": "sa", "scan_id_b": "sb"},
-            admin_user,
-            db,
-        )
+async def test_a_later_page_reaches_the_items_after_the_added_ones(seeded):
+    result = await _compare(seeded, page_size=1, page=2)
+
+    assert [(i["change"], i["finding_id"]) for i in result["items"]] == [("removed", _LOG4J.id)]
+
+
+async def test_a_lone_severity_filters_the_findings(seeded):
+    result = await _compare(seeded, severity="critical")
+
+    assert [i["finding_id"] for i in result["items"]] == [_LOG4J.id]
+
+
+async def test_the_crypto_category_compares_the_cbom(seeded):
+    result = await _compare(seeded, category="crypto")
+
+    assert result["category"] == "crypto"
+    assert {(i["change"], i["name"]) for i in result["items"]} == {("removed", "MD5"), ("added", "SHA-256")}
+
+
+async def test_a_page_larger_than_the_answer_budget_is_held_to_it(seeded):
+    result = await _compare(seeded, page_size=200)
+
+    assert result["page_size"] == 25
+    assert result["_limit_clamped"] is True
+
+
+async def test_the_dispatchers_refusal_is_the_tool_error(seeded):
+    result = await _compare(seeded, category="crypto", severity="critical")
+
+    assert result == {"error": "severity and finding_type are only valid with category=findings"}
+
+
+async def test_one_scan_named_as_both_sides_is_refused(seeded):
+    result = await _compare(seeded, from_scan_id=_TO)
+
+    assert result == {"error": "from_scan_id and to_scan_id must differ"}
+
+
+async def test_a_scan_of_another_project_is_refused(seeded):
+    await _build(seeded, "s-foreign", _NOW, _LODASH, "RC4", project_id="p2")
+
+    result = await _compare(seeded, from_scan_id="s-foreign")
+
+    assert result == {"error": "Scan not found in this project"}
+
+
+async def test_a_lone_to_scan_of_another_project_is_refused_as_foreign(seeded):
+    await _build(seeded, "s-foreign", _NOW, _LODASH, "RC4", project_id="p2")
+
+    result = await _compare(seeded, from_scan_id=None, to_scan_id="s-foreign")
+
+    assert result == {"error": "Scan not found in this project"}
+
+
+async def test_an_unknown_project_is_refused(seeded):
+    result = await _compare(seeded, project_id="missing")
 
     assert result == {"error": "Project not found or access denied"}
-    mock.assert_not_awaited()
-
-
-def _fake_findings_delta_response() -> ScanDeltaResponse:
-    return ScanDeltaResponse(
-        from_scan_id="sa",
-        to_scan_id="sb",
-        project_id="p1",
-        category=DeltaCategory.FINDINGS,
-        totals=ScanDeltaTotals(added=0, removed=0, unchanged=0),
-        page=1,
-        page_size=50,
-        total_pages=1,
-        items=[],
-    )
-
-
-async def _seed_project_and_scans(db) -> None:
-    db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
-    await db["scans"].insert_many(
-        [
-            {"_id": "sa", "project_id": "p1", "created_at": datetime.now(timezone.utc)},
-            {"_id": "sb", "project_id": "p1", "created_at": datetime.now(timezone.utc)},
-        ]
-    )
-
-
-@pytest.mark.asyncio
-async def test_compare_scans_coerces_string_severity_to_list(db, admin_user):
-    """The LLM may pass severity as a bare string -- coerce to a list before the service."""
-    await _seed_project_and_scans(db)
-
-    with patch(
-        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
-        new=AsyncMock(return_value=_fake_findings_delta_response()),
-    ) as mock:
-        await ChatToolRegistry()._dispatch(
-            "compare_scans",
-            {
-                "project_id": "p1",
-                "scan_id_a": "sa",
-                "scan_id_b": "sb",
-                "severity": "critical",
-                "finding_type": "vulnerability",
-            },
-            admin_user,
-            db,
-        )
-
-    kwargs = mock.await_args.kwargs
-    assert kwargs["severity"] == ["critical"]
-    assert kwargs["finding_type"] == ["vulnerability"]
-
-
-@pytest.mark.asyncio
-async def test_compare_scans_passes_list_severity_through_unchanged(db, admin_user):
-    """When severity is already a list, the value is forwarded as-is."""
-    await _seed_project_and_scans(db)
-
-    with patch(
-        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
-        new=AsyncMock(return_value=_fake_findings_delta_response()),
-    ) as mock:
-        await ChatToolRegistry()._dispatch(
-            "compare_scans",
-            {
-                "project_id": "p1",
-                "scan_id_a": "sa",
-                "scan_id_b": "sb",
-                "severity": ["critical", "high"],
-                "finding_type": ["vulnerability", "license"],
-            },
-            admin_user,
-            db,
-        )
-
-    kwargs = mock.await_args.kwargs
-    assert kwargs["severity"] == ["critical", "high"]
-    assert kwargs["finding_type"] == ["vulnerability", "license"]
-
-
-@pytest.mark.asyncio
-async def test_compare_scans_passes_none_when_severity_missing(db, admin_user):
-    """When severity/finding_type are omitted entirely, the service gets None."""
-    await _seed_project_and_scans(db)
-
-    with patch(
-        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
-        new=AsyncMock(return_value=_fake_findings_delta_response()),
-    ) as mock:
-        await ChatToolRegistry()._dispatch(
-            "compare_scans",
-            {"project_id": "p1", "scan_id_a": "sa", "scan_id_b": "sb"},
-            admin_user,
-            db,
-        )
-
-    kwargs = mock.await_args.kwargs
-    assert kwargs["severity"] is None
-    assert kwargs["finding_type"] is None

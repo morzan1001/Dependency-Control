@@ -6,12 +6,9 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
-from app.core.cve import advisory_ids, canonical_cve, canonical_cves
+from app.core.cve import advisory_ids, canonical_cve
 from app.core.risk_scoring import calculate_exploit_maturity
 from app.repositories.base import find_window
-from app.services.component_identity import extract_artifact_name
-from app.services.analytics.findings_delta import finding_identity_key
-from app.services.aggregation.versions import parse_version_key
 from app.services.recommendation.common import live_cves, vuln_info
 
 
@@ -20,7 +17,7 @@ MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
 # How a bounded answer names the population its list was cut from: "<list key><suffix>".
 _TOTAL_SUFFIX = "_total"
 
-# Ceilings on an LLM-supplied limit, one per row shape, and every tool names the one it uses.
+# Ceilings on an LLM-supplied limit, one per row shape; each tool's schema declares the one it uses.
 # MAX_TOOL_RESULT_BYTES is what finally cuts a list — a serialized finding runs to ~850 bytes, so
 # roughly nine fill the budget — and _truncate_if_too_large says so when it does. These bound
 # what a call may cost before reaching that point.
@@ -28,6 +25,7 @@ MAX_FINDING_ROWS = 25
 MAX_SUMMARY_ROWS = 50
 MAX_PLAN_STEPS = 25
 MAX_DAY_WINDOW = 365
+MAX_CRYPTO_ASSET_PAGE = 500
 
 _FINDING_TOPLEVEL_FIELDS = (
     "finding_id",
@@ -129,26 +127,6 @@ def _clamp_limit(raw: Any, default: int, maximum: int) -> int:
     if requested is not None and clamped != requested and ledger is not None:
         ledger.append((requested, clamped))
     return clamped
-
-
-_VULNERABILITY = "vulnerability"
-
-
-def staleness_identities(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
-    """What a finding must still be for its "days open" clock to keep running.
-
-    A vulnerability record is keyed once per advisory on the folded component name. The scan
-    delta's identity carries ``version`` on purpose — a bump is a change it must report — but
-    reusing it here would restart the clock the moment an unrelated upgrade lands, and a
-    long-lived unfixed advisory is the one that most deserves attention. Every other type's
-    identity is already version-free, so it is taken as the delta computes it.
-    """
-    if (finding.get("type") or "") == _VULNERABILITY:
-        component = extract_artifact_name(finding.get("component") or "")
-        advisories = canonical_cves([finding.get("details")])
-        if advisories:
-            return {(_VULNERABILITY, component, advisory) for advisory in advisories}
-    return {finding_identity_key(finding)}
 
 
 def _ensure_list(value: Any) -> list[Any] | None:
@@ -274,12 +252,6 @@ def _parse_major(version: str | None) -> int | None:
         return None
 
 
-def _compare_versions(a: str, b: str) -> int:
-    """-1/0/1 by the ordering the aggregate fixed_version uses."""
-    key_a, key_b = parse_version_key(a), parse_version_key(b)
-    return (key_a > key_b) - (key_a < key_b)
-
-
 def _breaking_risk(current: str | None, target: str | None) -> str:
     cur_major = _parse_major(current)
     tgt_major = _parse_major(target)
@@ -320,7 +292,7 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     import json as _json
 
     try:
-        encoded = _json.dumps(result, default=str)
+        encoded = _json.dumps(result, ensure_ascii=False, default=str).encode()
     except (TypeError, ValueError):
         return result
     if len(encoded) <= MAX_TOOL_RESULT_BYTES:
@@ -342,7 +314,7 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     while lo < hi:
         mid = (lo + hi + 1) // 2
         result[biggest_key] = original[:mid]
-        if len(_json.dumps(result, default=str)) <= MAX_TOOL_RESULT_BYTES:
+        if len(_json.dumps(result, ensure_ascii=False, default=str).encode()) <= MAX_TOOL_RESULT_BYTES:
             lo = mid
         else:
             hi = mid - 1

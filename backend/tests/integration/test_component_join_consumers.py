@@ -315,6 +315,26 @@ async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, se
     assert [s["direct_confidence"] for s in plan["plan"]] == ["declared", "inferred"]
 
 
+@pytest.mark.asyncio
+async def test_a_declared_direct_row_outranks_a_later_inferred_row_of_the_package(db, seeded):
+    from app.core.permissions import Permissions
+    from app.models.user import User
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    inferred = _dependency("d-inferred")
+    inferred.update(version="2.8.0", direct_inferred=True, purl=f"pkg:maven/com.fasterxml.jackson.core/{BARE}@2.8.0")
+    await db.dependencies.insert_one(inferred)
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
+    plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
+
+    assert plan["plan"][0]["direct_confidence"] == "declared"
+
+
 async def _analytics(client, path: str, headers: dict, **params):
     resp = await client.get(f"/api/v1/analytics/{path}", params=params, headers=headers)
     assert resp.status_code == 200, resp.text

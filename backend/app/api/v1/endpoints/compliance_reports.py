@@ -118,7 +118,7 @@ async def list_reports(
     limit: int = Query(50, ge=1, le=MAX_COMPLIANCE_REPORT_PAGE),
 ) -> dict[str, Any]:
     reports = await ComplianceReportRepository(db).list(
-        visibility=await report_visibility_filter(db, current_user),
+        visibility=await report_visibility_filter(db, current_user, scope),
         scope=scope,
         scope_id=scope_id,
         framework=framework,
