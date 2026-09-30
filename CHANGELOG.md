@@ -1,6 +1,6 @@
 # Upgrade notes
 
-These notes cover the upgrade to 1.9.41. Run the steps in this order. Run mongosh commands in-pod against the application database, and Python and bash snippets in a backend pod, from the working directory where `app` is importable.
+These notes cover the upgrade to 1.9.42. Run the steps in this order. Run mongosh commands in-pod against the application database, and Python and bash snippets in a backend pod, from the working directory where `app` is importable.
 
 Before the rollout, resolve each gate before the first new pod starts:
 
@@ -54,7 +54,7 @@ After the rollout, once the last pod on the previous image has terminated:
 21. Watch the primary's load, and remove the Helm values and environment variables the backend does not read.
 22. Review the crypto system policy after its seed bump (a review).
 
-Once 1.9.41 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
+Once 1.9.42 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
 
 ## Before the rollout (gate): build the new indexes
 
@@ -70,7 +70,7 @@ db.scans.createIndex({ project_id: 1, branch: 1, is_rescan: 1, created_at: -1, _
 
 ## Before the rollout (gate): check partial restores made by a pre-release 1.9.41 build
 
-A restore now marks its scan `restore_in_progress` until its last write and only then sets `restored_at`. Housekeeping drops the archive metadata, and with it the bundle, only of a scan without the flag whose `restored_at` is later than its archiving. Restores made by 1.9.40 carry no `restored_at`, so 1.9.41 keeps their metadata and they need nothing. Only an installation that ran a pre-release 1.9.41 build can hold a partial restore with `restored_at` and no flag. It looks complete, and the next housekeeping pass would drop its metadata and orphan its bundle. On every other installation the query below returns nothing.
+A restore now marks its scan `restore_in_progress` until its last write and only then sets `restored_at`. Housekeeping drops the archive metadata, and with it the bundle, only of a scan without the flag whose `restored_at` is later than its archiving. Restores made by 1.9.40 carry no `restored_at`, so 1.9.42 keeps their metadata and they need nothing. Only an installation that ran a pre-release 1.9.41 build can hold a partial restore with `restored_at` and no flag. It looks complete, and the next housekeeping pass would drop its metadata and orphan its bundle. On every other installation the query below returns nothing.
 
 Run this right before the rollout, in a window with no restore running, and at the latest before the first housekeeping pass on the new image. A restore still running on a pre-release build can show the same low counts. The query lists restored scans whose archive metadata still exists, with the expected and found counts:
 
@@ -217,7 +217,7 @@ Decide per instance before the rollout: switch to an administrator's token, have
 
 ## Before the rollout (gate): check SMTP in the database settings
 
-Admin password reset (`POST /users/{id}/reset-password`) now only sends mail. It no longer returns a manual link, and it answers 501 "Email server not configured" when `system_settings` has no `smtp_host`. Self-service email changes need the same setting. Accounts verify their email through the mailed link, and adding a member by email now needs a verified account. Security alerts (password changed, 2FA switched on or off) go out whenever the stored settings can send. The backend reads SMTP only from the database settings: a `.env` file that still holds `SMTP_*` or `CHAT_MAX_TOKEN_BUDGET` stops the backend from starting, and environment variables of those names are ignored. Check:
+Admin password reset (`POST /users/{id}/reset-password`) now only sends mail. It no longer returns a manual link, and it answers 501 "Email server not configured" when `system_settings` has no `smtp_host`. Self-service email changes need the same setting. Accounts verify their email through the mailed link, and adding a member by email now needs a verified account. Security alerts (password changed, 2FA switched on or off) go out whenever the stored settings can send. The backend reads SMTP only from the database settings: a `.env` file holding any key that is not a setting, such as `SMTP_*` or `CHAT_MAX_TOKEN_BUDGET`, stops the backend from starting, and environment variables of those names are ignored. Check:
 
 ```js
 db.system_settings.findOne({ _id: "current" }, { smtp_host: 1 })
@@ -454,7 +454,7 @@ Run the script in-pod with mongosh before the first new pod starts. Run it twice
 Its output:
 
 - `SKIPPED` projects hold an invalid enum or boolean value, for example `"cli-batch"`, and are left untouched. Fix them by hand, then run the script again.
-- `CHANGED` projects are graded under a different policy from their next scan on, shown as the policy the old image read -> the policy 1.9.41 reads. They include projects whose top-level and settings-page policies disagreed, and projects whose stored `"false"` the old image read as true. Tell their owners.
+- `CHANGED` projects are graded under a different policy from their next scan on, shown as the policy the old image read -> the policy 1.9.42 reads. They include projects whose top-level and settings-page policies disagreed, and projects whose stored `"false"` the old image read as true. Tell their owners.
 - `printjson(stats)` counts `legacy` (object `license_policy`), `nested`, `changed`, `skipped`, `updated` and `null_legacy_unset`.
 
 ```js
@@ -649,7 +649,7 @@ curl -sH "Authorization: Bearer <token>" https://api.github.com/user | jq .id   
 
 ## Deploy blocker: fill the allowlists of the github.com and gitlab.com instances
 
-Every repository on github.com and every project on gitlab.com can mint a token for the shared issuers `https://token.actions.githubusercontent.com` and `https://gitlab.com`. From 1.9.41, an instance on a shared issuer with auto-create on and an empty allowlist stops auto-creating: a token for an unknown repository gets 403. Tokens of projects already bound keep ingesting. Every edit of that instance (`PUT`) answers 400 until the list is filled or auto-create is switched off. Before the rollout, fill `allowed_owner_ids` (GitHub) or `allowed_namespaces` (GitLab) for these instances, or switch their auto-create off in Settings > CI/CD Instances.
+Every repository on github.com and every project on gitlab.com can mint a token for the shared issuers `https://token.actions.githubusercontent.com` and `https://gitlab.com`. From 1.9.42, an instance on a shared issuer with auto-create on and an empty allowlist stops auto-creating: a token for an unknown repository gets 403. Tokens of projects already bound keep ingesting. Every edit of that instance (`PUT`) answers 400 until the list is filled or auto-create is switched off. Before the rollout, fill `allowed_owner_ids` (GitHub) or `allowed_namespaces` (GitLab) for these instances, or switch their auto-create off in Settings > CI/CD Instances.
 
 The old image ignores the unknown field, so setting it before the rollout is safe. The ids must be strings: `allowed_owner_ids: [123]` fails `GitHubInstance` validation, and every ingest on that instance would answer 500.
 
@@ -688,7 +688,7 @@ Both updates must report `matchedCount: 1`; 0 means the filter did not match the
 
 ## Right before the rollout (gate): rotate `SECRET_KEY`, or end every session
 
-Tokens now name the user id as their subject, and `/login/refresh-token` resolves it by id. Before 1.9.41, self-service username changes let any user obtain a refresh token that names another account's id. It stays valid for 7 days, and from the first new pod on it resolves to that account. Until the token is refused, its holder can do three things that outlive any session reset: create a `dck_` API key, change a local account's email through the confirmation link and then reset its password, or set a password on an SSO account (`POST /users/me/migrate`). The backend rolls out pod by pod, and old pods hand out such tokens until the last one terminates. A session reset after the rollout alone leaves that window open.
+Tokens now name the user id as their subject, and `/login/refresh-token` resolves it by id. Before 1.9.42, self-service username changes let any user obtain a refresh token that names another account's id. It stays valid for 7 days, and from the first new pod on it resolves to that account. Until the token is refused, its holder can do three things that outlive any session reset: create a `dck_` API key, change a local account's email through the confirmation link and then reset its password, or set a password on an SSO account (`POST /users/me/migrate`). The backend rolls out pod by pod, and old pods hand out such tokens until the last one terminates. A session reset after the rollout alone leaves that window open.
 
 Recommended: rotate `SECRET_KEY` with the deploy. Only this closes the window. Each pod keeps the key it started with, so new pods refuse every token an old pod mints. Right before `helm upgrade`, write a new key into `<fullname>-secrets`, the Secret the backend's `SECRET_KEY` reads. The chart keeps an existing Secret's key and ignores `backend.secrets.secretKey`, so patch the Secret itself:
 
@@ -834,7 +834,7 @@ db.waivers.find({finding_id: /^LIC-.+ \/ .+$/}).forEach(w => {
 });
 ```
 
-Licence ids are ASCII, so `sort()` orders them as the analyzer does, and a null `package_version` adds no version criterion. A second run changes nothing. The restamp below stamps the new ids onto scans analysed during the rollout. Conflict findings stored before the rollout keep their old id and show as not waived from the restamp until their scan is analysed again. The loop only reorders the pair: a conflict that still shows as not waived after its next scan names a licence differently in 1.9.41, so re-create its waiver from the new finding.
+Licence ids are ASCII, so `sort()` orders them as the analyzer does, and a null `package_version` adds no version criterion. A second run changes nothing. The restamp below stamps the new ids onto scans analysed during the rollout. Conflict findings stored before the rollout keep their old id and show as not waived from the restamp until their scan is analysed again. The loop only reorders the pair: a conflict that still shows as not waived after its next scan names a licence differently in 1.9.42, so re-create its waiver from the new finding.
 
 ## After the rollout: remove TruffleHog plaintext secrets
 
@@ -892,7 +892,7 @@ Archive bundles already in S3 still hold `Raw`, and no Mongo migration can reach
 
 ## After the rollout: rewrite archive bundles that still hold TruffleHog plaintext
 
-From 1.9.41, downloads and new bundles carry no `Raw`, but bundles archived before still hold it at rest in S3. This one-off rewrite replaces each affected bundle with a copy whose TruffleHog findings carry `RawHash` instead. Run it after the rollout, in a backend pod (`kubectl exec -it <backend-pod> -- python`), in a window with no restore running. Start with `DRY_RUN = True`, which only lists the affected bundles:
+From 1.9.42, downloads and new bundles carry no `Raw`, but bundles archived before still hold it at rest in S3. This one-off rewrite replaces each affected bundle with a copy whose TruffleHog findings carry `RawHash` instead. Run it after the rollout, in a backend pod (`kubectl exec -it <backend-pod> -- python`), in a window with no restore running. Start with `DRY_RUN = True`, which only lists the affected bundles:
 
 ```python
 import asyncio, time
@@ -1091,7 +1091,7 @@ Scans restored from archives written before this release come back without `firs
 
 ## After the rollout: purge leaked chat tool results, then rotate the exposed secrets
 
-Before 1.9.41 the chat and MCP tools `list_project_webhooks`, `get_system_settings` and `get_project_details` returned webhook secrets and headers, system integration secrets and the project API key hash. Chat history still holds those results in `chat_messages.tool_calls[].result`. Run this after the rollout, because old pods keep writing them:
+Before 1.9.42 the chat and MCP tools `list_project_webhooks`, `get_system_settings` and `get_project_details` returned webhook secrets and headers, system integration secrets and the project API key hash. Chat history still holds those results in `chat_messages.tool_calls[].result`. Run this after the rollout, because old pods keep writing them:
 
 ```js
 const leaky = ["list_project_webhooks", "get_system_settings", "get_project_details"];
@@ -1105,7 +1105,7 @@ Then rotate every project webhook `secret` and any credential in webhook `header
 
 ## After the rollout: rotate GitHub Enterprise tokens that reached github.com
 
-Before 1.9.41, GHSA enrichment sent an instance token to api.github.com whenever `system_settings.github_token` was empty. A GHES instance's PAT went too when that instance was the one picked. Every GHES instance without a base URL also sent its PAT there with its own API calls. Rotate those PATs after the rollout; before it, a new PAT would leak the same way. List the candidates, and check the settings token: if it is empty, or was empty at any time, the instance fallback was in use:
+Before 1.9.42, GHSA enrichment sent an instance token to api.github.com whenever `system_settings.github_token` was empty. A GHES instance's PAT went too when that instance was the one picked. Every GHES instance without a base URL also sent its PAT there with its own API calls. Rotate those PATs after the rollout; before it, a new PAT would leak the same way. List the candidates, and check the settings token: if it is empty, or was empty at any time, the instance fallback was in use:
 
 ```js
 db.github_instances.find({ is_active: true, access_token: { $nin: [null, ""] } }, { name: 1, url: 1, github_url: 1, created_at: 1 })
@@ -1114,7 +1114,7 @@ db.system_settings.findOne({ _id: "current" }, { github_token: 1 })
 
 ## After the rollout: review GitLab bindings set through the old unchecked path
 
-Before 1.9.41 any project admin could bind their project to any GitLab project through `PUT /api/v1/projects/{id}`. 1.9.41 stops new bindings of that kind, but bindings carry no provenance, so an existing one set that way cannot be told apart from one set by OIDC ingest. These read-only reviews list the candidates.
+Before 1.9.42 any project admin could bind their project to any GitLab project through `PUT /api/v1/projects/{id}`. 1.9.42 stops new bindings of that kind, but bindings carry no provenance, so an existing one set that way cannot be told apart from one set by OIDC ingest. These read-only reviews list the candidates.
 
 Bindings to an instance that does not exist, possible only through the old unchecked path:
 
@@ -1144,14 +1144,14 @@ db.projects.updateOne({_id: "<id>"}, {$set: {gitlab_instance_id: null, gitlab_pr
 
 ## After the rollout: review the retention of projects created in the dialog
 
-Since 1.4.61 (2026-03-03) the create-project dialog has offered Archive and None as the retention action, but until 1.9.41 every project it created was stored with `retention_action: "delete"`. The upgrade does not correct these projects. While the system retention mode is `project`, housekeeping keeps deleting their expired scans until someone corrects the setting. The choice was never stored, so no migration can restore it.
+Since 1.4.61 (2026-03-03) the create-project dialog has offered Archive and None as the retention action, but until 1.9.42 every project it created was stored with `retention_action: "delete"`. The upgrade does not correct these projects. While the system retention mode is `project`, housekeeping keeps deleting their expired scans until someone corrects the setting. The choice was never stored, so no migration can restore it.
 
 List the candidates read-only with in-pod mongosh, then ask each owner to confirm the Retention setting in the project's Settings tab. Do not bulk-rewrite them: the list also holds projects whose owners did choose Delete, and the stored documents cannot tell them apart.
 
 ```js
 db.projects.find(
   { retention_action: "delete", retention_days: { $gt: 0 },
-    created_at: { $gte: ISODate("2026-03-03T00:00:00Z"), $lt: ISODate("<time the 1.9.41 rollout finished>") } },
+    created_at: { $gte: ISODate("2026-03-03T00:00:00Z"), $lt: ISODate("<time the 1.9.42 rollout finished>") } },
   { _id: 1, name: 1, team_ids: 1, retention_days: 1, created_at: 1 }
 ).sort({ created_at: -1 })
 ```
@@ -1342,11 +1342,11 @@ db.chat_messages.updateMany({images: {$exists: true}}, {$unset: {images: ""}})
 
 ## After the rollout: watch the primary's load, and remove unused Helm values and environment variables
 
-Every MongoDB read now goes to the primary; a `readPreference` in the URI is overridden. Watch the primary's CPU and connection count on the replica set after the rollout, and during the first restamp, whose reads all go there. The chart no longer reads `backend.env.mongodbReadPreference`, and no template ever read `chat.rateLimitPerMinute` or `chat.rateLimitPerHour`; remove all three from the deployment values. The backend no longer reads `CHAT_MAX_TOKEN_BUDGET` (the chat budget follows `OLLAMA_NUM_CTX`) or any `SMTP_*` variable; remove them from the backend's environment. Leaving these is harmless but misleading, except in a `.env` file, where they stop the backend from starting. The updated Grafana dashboard `chat-ai-assistant.json` ships with the chart and shows the new `dc_chat_tool_calls_total` statuses on its "Tool Error Rate" panel.
+Every MongoDB read now goes to the primary; a `readPreference` in the URI is overridden. Watch the primary's CPU and connection count on the replica set after the rollout, and during the first restamp, whose reads all go there. The chart no longer reads `backend.env.mongodbReadPreference`, and no template ever read `chat.rateLimitPerMinute` or `chat.rateLimitPerHour`; remove all three from the deployment values. The backend no longer reads `CHAT_MAX_TOKEN_BUDGET` (the chat budget follows `OLLAMA_NUM_CTX`) or any `SMTP_*` variable; remove them from the backend's environment. Leaving these is harmless but misleading, except in a `.env` file, where they stop the backend from starting. The chart does not render the updated Grafana dashboard `helm/dependency-control/dashboards/chat-ai-assistant.json`; import it by hand, it shows the new `dc_chat_tool_calls_total` statuses on its "Tool Error Rate" panel.
 
 ## After the rollout (review): the crypto system policy after its seed bump
 
-The first start of 1.9.41 reseeds the system crypto policy once. A policy nobody edited takes the full seed. A policy a person edited keeps its rules and regains every seed rule_id it lacks, so seed rules an admin deleted come back. Review the policy on the crypto policy page, where every change is audited.
+The first start of 1.9.42 reseeds the system crypto policy once. A policy nobody edited takes the full seed. A policy a person edited keeps its rules and regains every seed rule_id it lacks, so seed rules an admin deleted come back. Review the policy on the crypto policy page, where every change is audited.
 
 Re-added seed rules: compare the policy with the audit entry before its `seed` entry, and disable or delete again the rules that were removed on purpose.
 
@@ -1357,9 +1357,9 @@ db.crypto_policies.find({scope: "project", "rules.rule_id": "pqc-quantum-vulnera
 db.crypto_policies.updateOne({scope: "system", project_id: null, "rules.rule_id": "pqc-quantum-vulnerable-pke"}, {$addToSet: {"rules.$.match_name_patterns": {$each: ["ECDHE", "X25519", "X448"]}}})
 ```
 
-A customised policy that took the full seed: the seeder tells an edited policy by `updated_by`. For a policy whose last change before 1.9.41 was a revert, which stored no `updated_by`, it reads the editor from the newest audit entry instead. If audit retention pruned every entry of such a policy, the seed replaced it. Re-enter the rules on the page. The save records you as the editor, so later seed bumps only add missing rule_ids.
+A customised policy that took the full seed: the seeder tells an edited policy by `updated_by`. For a policy whose last change before 1.9.42 was a revert, which stored no `updated_by`, it reads the editor from the newest audit entry instead. If audit retention pruned every entry of such a policy, the seed replaced it. Re-enter the rules on the page. The save records you as the editor, so later seed bumps only add missing rule_ids.
 
-## Once 1.9.41 is confirmed stable: drop the old indexes
+## Once 1.9.42 is confirmed stable: drop the old indexes
 
 The new findings indexes start with the old `(project_id, component, type)` and `(scan_id, severity)` keys, and the dependencies `(scan_id, version)` index replaces `(scan_id, name)`, whose key the unique `(scan_id, name, version, purl)` index already leads with. Nothing reads the webhook deliveries' `(success, webhook_id)` index, the findings `created_at` and `(component, version, type, scan_created_at)` indexes, or the GitLab instances' `is_default` index. The old indexes only cost writes now. Drop them only once a rollback is no longer expected: 1.9.40 recreates them at startup, in-line on the large findings and dependencies collections, and pods do not start until that build finishes.
 
@@ -1379,7 +1379,7 @@ A drop that reports "index not found" has nothing to do.
 
 The fixes stop four abuses but do not undo what happened before the upgrade. The queries are read-only. Run them with in-pod mongosh.
 
-Before 1.9.41 a `team:read_all` holder could add team members and make themselves team admin. This lists team admins who hold `team:read_all` but neither `team:update` nor `system:manage`. Team membership does not record who added a member, so the rows are candidates to review with the team, not proof.
+Before 1.9.42 a `team:read_all` holder could add team members and make themselves team admin. This lists team admins who hold `team:read_all` but neither `team:update` nor `system:manage`. Team membership does not record who added a member, so the rows are candidates to review with the team, not proof.
 
 ```js
 const ids = db.users.find({ permissions: { $in: ["team:read_all"], $nin: ["team:update", "system:manage"] } }, { _id: 1 })
@@ -1391,15 +1391,15 @@ db.teams.find(
 )
 ```
 
-The query finds only holders who promoted themselves to team admin. Before 1.9.41 a `team:read_all` holder could also add or re-role other members, delete teams and write team webhooks, and nothing records who did that. Review each team's members and webhooks with the team; `db.webhooks.find({ team_id: { $ne: null } }, { team_id: 1, url: 1, events: 1, created_at: 1 })` lists the team webhooks. A self-made team admin was also admin of the team's projects, so check those projects' policy audit for crypto and license policy changes by the listed users.
+The query finds only holders who promoted themselves to team admin. Before 1.9.42 a `team:read_all` holder could also add or re-role other members, delete teams and write team webhooks, and nothing records who did that. Review each team's members and webhooks with the team; `db.webhooks.find({ team_id: { $ne: null } }, { team_id: 1, url: 1, events: 1, created_at: 1 })` lists the team webhooks. A self-made team admin was also admin of the team's projects, so check those projects' policy audit for crypto and license policy changes by the listed users.
 
-Before 1.9.41 a `project:read_all` holder with `webhook:create`, `webhook:update` or `webhook:delete` could create, change, delete and test-fire the webhooks of any project, for example to send its events to an outside URL. Webhooks do not record who created them, so review the listed URLs with each project's owners:
+Before 1.9.42 a `project:read_all` holder with `webhook:create`, `webhook:update` or `webhook:delete` could create, change, delete and test-fire the webhooks of any project, for example to send its events to an outside URL. Webhooks do not record who created them, so review the listed URLs with each project's owners:
 
 ```js
 db.webhooks.find({ project_id: { $ne: null } }, { project_id: 1, url: 1, events: 1, created_at: 1 }).sort({ created_at: -1 })
 ```
 
-Before 1.9.41 a callgraph upload could name a `scan_id` of another project and overwrite that scan's reachability verdicts. This lists callgraphs stored under a scan of a different project:
+Before 1.9.42 a callgraph upload could name a `scan_id` of another project and overwrite that scan's reachability verdicts. This lists callgraphs stored under a scan of a different project:
 
 ```js
 db.callgraphs.aggregate([
@@ -1413,7 +1413,7 @@ db.callgraphs.aggregate([
 
 If it returns rows, review them, then delete them with `db.callgraphs.deleteMany({ _id: { $in: [<ids from the query>] } })`. The affected scans keep the injected verdicts until a callgraph is uploaded again for the same pipeline; a rescan replaces the run with one whose reachability stays pending until its callgraph arrives. To replace each affected run now, call `POST /api/v1/projects/<scan_project_id>/scans/<scan_id>/rescan`.
 
-Before 1.9.41 a chat or MCP tool call could pass an object, such as a MongoDB query operator, where an id was declared, for example to read another team's details. MCP arguments are not stored, but chat tool calls are. This lists stored chat tool calls that carried an object-valued argument:
+Before 1.9.42 a chat or MCP tool call could pass an object, such as a MongoDB query operator, where an id was declared, for example to read another team's details. MCP arguments are not stored, but chat tool calls are. This lists stored chat tool calls that carried an object-valued argument:
 
 ```js
 db.chat_messages.aggregate([
@@ -1632,8 +1632,8 @@ PY
 - `team:read_all` is read-only. It still reads every team, but adding or changing members, deleting a team and writing team webhooks now need membership with the role the action requires, or the global permission for it such as `team:update` or `team:delete`. The frontend no longer offers team admin actions to users whose only team grant is `team:read_all`.
 - `project:read_all` no longer writes project webhooks. Creating, updating, deleting and test-firing a project's webhooks with `webhook:create`, `webhook:update` or `webhook:delete` now also needs membership of the project, direct or through an owning team, or `project:update` or `project:delete`. Accounts that combine `project:read_all` with a webhook permission, such as automation or auditor accounts, now get 403 on projects they are not a member of, and the frontend no longer offers them the webhook controls there. `project:read_all` with `webhook:read` still lists and reads every project's webhooks.
 - `GET /api/v1/analytics/projects/{project_id}/dependency-tree` answers 404 "No scan found for this project" for a `scan_id` of another project, which it used to serve, and 404 "Project not found" instead of 403 for an unknown project.
-- New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply. Projects created before 1.9.41 with Archive or None are still stored as Delete, and housekeeping keeps deleting their scans until an owner corrects the setting. See "review the retention of projects created in the dialog" above.
-- Team member add and project invite by email find only accounts with a verified email, in any case, and otherwise answer 404 "No user has verified this email address". Accounts from a signup whose link was never clicked are not verified, and neither are accounts an admin created before 1.9.41; new admin-created accounts are stored verified.
+- New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply. Projects created before 1.9.42 with Archive or None are still stored as Delete, and housekeeping keeps deleting their scans until an owner corrects the setting. See "review the retention of projects created in the dialog" above.
+- Team member add and project invite by email find only accounts with a verified email, in any case, and otherwise answer 404 "No user has verified this email address". Accounts from a signup whose link was never clicked are not verified, and neither are accounts an admin created before 1.9.42; new admin-created accounts are stored verified.
 - GitLab binding changes need an admin. Setting or changing `gitlab_instance_id` or `gitlab_project_id` through `PUT /api/v1/projects/{id}` needs `system:manage`, `project:update` or `project:delete`; project admins get 403. Clearing both stays open to project admins, and resending the stored values is unaffected. A half binding answers 400, an unknown instance 404, and a GitLab project bound to another project 409 instead of 500. When the instance answers, the stored path is GitLab's `path_with_namespace`.
 - Project settings show other users a bound project's GitLab link read-only, with a "Remove GitLab link" action. Choosing "None" as the GitLab instance clears the project id and path too.
 - `project:update` and `project:delete` are separate grants. `project:update` no longer deletes projects. `project:delete` no longer edits projects, rotates keys, manages members, writes callgraphs or webhooks, binds GitLab or grants teams. See the review of accounts holding only one of them above.
@@ -1752,7 +1752,7 @@ PY
   - weaponized counts only KEV findings with ransomware use, and active exploitation only KEV findings
   - scanner errors no longer count
   - every verified secret counts as actionable, also one no longer in the scanned tree or whose tree state is unknown
-  - a waived advisory no longer counts as KEV, EPSS or actionable, and a KEV or EPSS value counts only when an unwaived advisory of the finding carries it, so recomputed stats of scans enriched before 1.9.41 can show lower KEV and EPSS counts until those scans are analysed again
+  - a waived advisory no longer counts as KEV, EPSS or actionable, and a KEV or EPSS value counts only when an unwaived advisory of the finding carries it, so recomputed stats of scans enriched before 1.9.42 can show lower KEV and EPSS counts until those scans are analysed again
 - "Fix available" is claimed only when every live CRITICAL and HIGH advisory names a fix. An unenriched NEGLIGIBLE advisory scores 0, below LOW.
 - Reachability:
   - "Analyzed N / M" counts only findings with a verdict, and "Vulnerable symbols searched, none used" drops from 0.63 to 0.35 confidence
@@ -1763,7 +1763,7 @@ PY
 - Vulnerability and quality aggregate ids use the smallest raw spelling of the package, whatever the arrival order. Some `finding_id`s change once (`Left-Pad` against `left-pad`), so the next delta can show one-time new and resolved findings.
 - deps.dev prefers the version's license over the repository's, so `vault/api` shows MPL-2.0, not BUSL-1.1.
 - Cross-linked banners changed. An `inactive_repo` maintainer risk counts as a maintenance concern. An OUTDATED finding ahead of the registry default no longer marks its package outdated. The License banner shows the package's most severe license. The OpenSSF score shows once, in the Scorecard banner. Same-type findings on one file are no longer listed in each other's related findings.
-- Rollback hazard: SBOM references written by 1.9.41 carry only `type`, `gridfs_id` and `filename`, and the SBOM export of 1.9.40 answers 500 for those scans.
+- Rollback hazard: SBOM references written by 1.9.42 carry only `type`, `gridfs_id` and `filename`, and the SBOM export of 1.9.40 answers 500 for those scans.
 
 ### Analytics, recommendations and search
 
@@ -1779,7 +1779,7 @@ PY
 - Scans whose SBOM names a directory or file source no longer get an "Update Base Image" card for their deb, rpm or apk packages. Those vulnerabilities move to the direct and transitive update cards. Every other SBOM keeps the image card, including Trivy fs and rootfs SBOMs, which name an application source.
 - Impact and Hotspots count NEGLIGIBLE, INFO and UNKNOWN CVEs, and UNKNOWN weighs 4.0, so `finding_count` equals `cve_count` and rankings shift. Hotspot `risk_score` of unenriched findings is on the 0-100 scale, where an unrated CVE counts 20. INFO now ranks above UNKNOWN everywhere, the findings-table sort included. Dependency tree, top dependencies and the dependency modal count distinct unwaived CVEs instead of finding documents.
 - Analytics group packages by purl identity. Same-named packages of different groups or ecosystems no longer merge, and spellings such as PyYAML and pyyaml join.
-- Go module paths are split per the purl spec, without a doubled host. Update-frequency deltas stored before 1.9.41 keep the doubled Go names, and SPDX Go dependencies keep `group: "github.com"`, until they are recomputed or their SBOM is re-ingested.
+- Go module paths are split per the purl spec, without a doubled host. Update-frequency deltas stored before 1.9.42 keep the doubled Go names, and SPDX Go dependencies keep `group: "github.com"`, until they are recomputed or their SBOM is re-ingested.
 - Findings-delta severity keys are uppercase, as stored. Scan delta answers 404 for an unknown project and 404 "No scan found for this project" for a scan of another project. An empty `?scan_id=` on the dependency tree and on recommendations answers the same 404 instead of falling back to head.
 - Analytics search reports `page: 1` for an empty result. Vulnerability search filters CVE rows, not documents, and each CVE row shows only its own KEV, EPSS and fix.
 - The inventory licence tile counts `unknown`, and a component without an ecosystem counts as `unknown`. The three scorecard "severity below" settings are gone.
