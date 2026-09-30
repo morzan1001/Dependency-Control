@@ -14,11 +14,8 @@ from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 from ._helpers import (
     MAX_TOOL_RESULT_BYTES,
-    _breaking_risk,
     _clip_value,
-    _compare_versions,
     _inject_urls,
-    _parse_major,
     _serialize_doc,
     _serialize_finding_for_llm,
     _truncate_if_too_large,
@@ -51,11 +48,8 @@ __all__ = [
     "ReportFramework",
     "ResolvedScope",
     "ScopeResolver",
-    "_breaking_risk",
     "_clip_value",
-    "_compare_versions",
     "_inject_urls",
-    "_parse_major",
     "_serialize_doc",
     "_serialize_finding_for_llm",
     "_truncate_if_too_large",

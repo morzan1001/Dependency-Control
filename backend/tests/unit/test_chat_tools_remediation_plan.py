@@ -156,7 +156,13 @@ class TestRemediationPlanTargets:
         assert all(r["finding_id"] == "fast-uri:3.1.2" for r in step["resolves_findings"])
 
     @pytest.mark.asyncio
-    async def test_comma_joined_fixed_version_split_into_candidates(self, db, admin_user):
+    @pytest.mark.parametrize(
+        ("fixed_version", "target", "risk"),
+        [("1.2.6, 2.0.1", "1.2.6", "low"), ("2.0.1", "2.0.1", "high")],
+    )
+    async def test_target_stays_on_the_installed_major_while_it_has_a_fix(
+        self, db, admin_user, fixed_version, target, risk
+    ):
         _seed_project(db)
         _seed_vuln_finding(
             db,
@@ -165,16 +171,16 @@ class TestRemediationPlanTargets:
             "1.2.0",
             "HIGH",
             {
-                "fixed_version": "1.2.6, 2.0.1",
-                "vulnerabilities": [{"id": "CVE-2025-1", "severity": "HIGH", "fixed_version": "1.2.6, 2.0.1"}],
+                "fixed_version": fixed_version,
+                "vulnerabilities": [{"id": "CVE-2025-1", "severity": "HIGH", "fixed_version": fixed_version}],
             },
         )
 
         result = await _plan(db, admin_user)
         (step,) = result["plan"]
 
-        assert step["target_version"] == "2.0.1"
-        assert step["breaking_change_risk"] == "high"
+        assert step["target_version"] == target
+        assert step["breaking_change_risk"] == risk
 
     @pytest.mark.asyncio
     async def test_unfixed_finding_reported_without_target(self, db, admin_user):
@@ -196,7 +202,7 @@ class TestRemediationPlanTargets:
 
         assert step["target_version"] is None
         assert step["has_fix"] is False
-        assert step["resolves_findings"][0]["cve_id"] == "CVE-2025-2"
+        assert (step["resolves_findings"], step["unresolved"]) == ([], ["CVE-2025-2"])
         assert result["summary"]["steps_without_fix"] == 1
 
     @pytest.mark.asyncio

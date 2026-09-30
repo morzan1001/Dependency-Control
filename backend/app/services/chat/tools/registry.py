@@ -26,12 +26,17 @@ from app.core.constants import (
     SCAN_USABLE_STATUSES,
     SEVERITY_ORDER,
     get_severity_value,
+    max_severity,
 )
 from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
-from app.core.epss import bucket_epss
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
-from app.core.risk_scoring import ACTIVELY_EXPLOITED_MATURITY, calculate_exploit_maturity, reachability_display_tier
+from app.core.risk_scoring import (
+    ACTIVELY_EXPLOITED_MATURITY,
+    calculate_exploit_maturity,
+    is_deprioritized_vulnerability,
+    reachability_display_tier,
+)
 from app.models.finding import Severity
 from app.models.project import Project
 from app.models.user import User
@@ -45,7 +50,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
-from app.services.aggregation.versions import split_fixed_versions
+from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
 from app.services.component_identity import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_trends import auto_bucket
 from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
@@ -58,7 +63,6 @@ from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
     _breaking_risk,
     _clip_value,
-    _compare_versions,
     _ensure_list,
     _inject_urls,
     _number,
@@ -194,6 +198,76 @@ def _direct_confidence(dep: dict[str, Any]) -> str:
     if not dep.get("direct"):
         return "transitive"
     return "inferred" if dep.get("direct_inferred") else "declared"
+
+
+_BREAKING_RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "unknown": 3}
+
+_PLAN_PROJECTION = {
+    **dict.fromkeys(("type", "component", "version", "severity", "finding_id", "details.fixed_version"), 1),
+    **{
+        f"details.vulnerabilities.{f}": 1
+        for f in ("id", "aliases", "resolved_cve", "severity", "fixed_version", "waived")
+    },
+}
+
+
+def _fix_target(fix_lists: list[str], current: str | None) -> str | None:
+    """The version fixing every list on the lowest release line from `current` up, else the highest fix listed."""
+    installed = parse_version_key(current or "")
+    lines = split_fixed_versions(aggregate_fixed_version([{"fixed_version": fix} for fix in fix_lists], current))
+    return next((line for line in lines if parse_version_key(line) >= installed), None) or max(
+        (fix for fixes in fix_lists for fix in split_fixed_versions(fixes)), key=parse_version_key, default=None
+    )
+
+
+def _plan_step(findings: list[dict[str, Any]], dep_meta: dict[str, Any]) -> dict[str, Any]:
+    """One upgrade of one installed version; an advisory counts as resolved only when it names its own fix."""
+    current = findings[0].get("version") or dep_meta.get("version")
+    advisories = [(f, v) for f in findings for v in live_advisories(f.get("details"))]
+    # An EOL finding carries its recommended version and no advisory.
+    eol_fixes = [
+        f["details"]["fixed_version"] for f in findings if f.get("type") == "eol" and f["details"].get("fixed_version")
+    ]
+    target = _fix_target([v["fixed_version"] for _, v in advisories if v.get("fixed_version")] + eol_fixes, current)
+    resolved: dict[str | None, dict[str, Any]] = {}
+    for f, v in advisories:
+        if target and v.get("fixed_version"):
+            cve = canonical_cve(v)
+            resolved.setdefault(
+                cve,
+                {"finding_id": f.get("finding_id"), "cve_id": cve, "severity": v.get("severity") or f.get("severity")},
+            )
+    unresolved = [cve for cve in dict.fromkeys(canonical_cve(v) for _, v in advisories) if cve not in resolved]
+    confidence = _direct_confidence(dep_meta)
+    return {
+        "component": findings[0]["component"],
+        "ecosystem": dep_meta.get("type"),
+        "current_version": current,
+        "target_version": target,
+        "is_direct": confidence != "transitive",
+        "direct_confidence": confidence,
+        "end_of_life": any(f.get("type") == "eol" for f in findings),
+        "resolves_findings": list(resolved.values()),
+        "resolves_count": len(resolved),
+        "critical_count": sum(1 for r in resolved.values() if r["severity"] == "CRITICAL"),
+        "unresolved": unresolved,
+        "unresolved_count": len(unresolved),
+        "max_severity": max_severity(*(f.get("severity") for f in findings)) or "UNKNOWN",
+        "breaking_change_risk": _breaking_risk(current, target) if target else "unknown",
+        "has_fix": target is not None,
+    }
+
+
+def _plan_sort_key(step: dict[str, Any]) -> tuple[Any, ...]:
+    # Resolved criticals lead so the max_steps cut drops the least urgent steps; a declared direct dependency
+    # still outranks an inferred one.
+    return (
+        -step["critical_count"],
+        not step["has_fix"],
+        _DIRECT_CONFIDENCE_RANK[step["direct_confidence"]],
+        _BREAKING_RISK_ORDER[step["breaking_change_risk"]],
+        -step["resolves_count"],
+    )
 
 
 # A head finding's waiver state, with each advisory's own flag and the ids that name it.
@@ -793,13 +867,17 @@ class ChatToolRegistry:
         if not head_scan_id:
             return {"plan": [], "message": _ERR_NO_SCAN_DATA}
 
-        max_steps = ctx.args["max_steps"]
-
         findings, findings_total = await bounded_read(
             ctx.db["findings"],
-            {"scan_id": head_scan_id, "severity": {"$in": ["CRITICAL", "HIGH"]}, **_ACTIVE},
+            {
+                "scan_id": head_scan_id,
+                "type": {"$in": ["vulnerability", "eol"]},
+                "severity": {"$in": ["CRITICAL", "HIGH"]},
+                **_ACTIVE,
+            },
             subject="unwaived CRITICAL/HIGH findings",
             limit=_REMEDIATION_FINDING_READ,
+            projection=_PLAN_PROJECTION,
         )
         if not findings:
             return {
@@ -815,131 +893,56 @@ class ChatToolRegistry:
             {"name": 1, "version": 1, "direct": 1, "direct_inferred": 1, "type": 1, "purl": 1},
         ):
             key = (dep.get("name") or "").lower()
-            if not key:
-                continue
-            # Prefer direct entries when same package appears at multiple versions.
             existing = dep_index.get(key)
-            if existing and existing.get("direct") and not dep.get("direct"):
-                continue
-            dep_index[key] = dep
+            if key and (
+                existing is None
+                or _DIRECT_CONFIDENCE_RANK[_direct_confidence(dep)]
+                < _DIRECT_CONFIDENCE_RANK[_direct_confidence(existing)]
+            ):
+                dep_index[key] = dep
         # Findings carry the qualified component while the inventory keeps the bare name.
         dep_index = build_component_index(dep_index)
 
-        groups: dict[str, dict[str, Any]] = {}
+        groups: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
         for f in findings:
-            comp = f.get("component")
-            if not comp:
-                continue
-            key = comp.lower()
-            g = groups.setdefault(
-                key,
-                {
-                    "component": comp,
-                    "current_version": f.get("version"),
-                    "findings": [],
-                    "fix_candidates": [],
-                },
-            )
-            g["findings"].append(f)
-            details = f.get("details") or {}
-            # The finding-level fixed_version also folds in the fixes of waived advisories.
-            fixes = (
-                [v.get("fixed_version") for v in live_advisories(details)]
-                if details.get("vulnerabilities")
-                else [details.get("fixed_version")]
-            )
-            for fv in fixes:
-                g["fix_candidates"].extend(split_fixed_versions(fv))
+            if comp := f.get("component"):
+                groups.setdefault((comp.lower(), f.get("version")), []).append(f)
+        steps = sorted(
+            (_plan_step(group, lookup_component(dep_index, comp) or {}) for (comp, _), group in groups.items()),
+            key=_plan_sort_key,
+        )
 
-        steps: list[dict[str, Any]] = []
-        for key, g in groups.items():
-            # Pick largest fix version — resolves the most CVEs at once.
-            target: str | None = None
-            for cand in g["fix_candidates"]:
-                if target is None or _compare_versions(cand, target) > 0:
-                    target = cand
-
-            dep_meta = lookup_component(dep_index, key) or {}
-            confidence = _direct_confidence(dep_meta)
-            current = g["current_version"] or dep_meta.get("version")
-
-            resolved: list[dict[str, Any]] = []
-            for f in g["findings"]:
-                # Non-vulnerability findings carry no CVE list; label with the finding id.
-                entries = live_advisories(f.get("details")) or [{}]
-                resolved.extend(
-                    {
-                        "finding_id": f.get("finding_id"),
-                        "cve_id": canonical_cve(v) or f.get("finding_id"),
-                        "severity": v.get("severity") or f.get("severity"),
-                    }
-                    for v in entries
-                )
-            max_sev_label = (
-                max((f.get("severity") for f in g["findings"]), key=get_severity_value, default=None) or "UNKNOWN"
-            )
-            critical_count = sum(1 for r in resolved if r["severity"] == "CRITICAL")
-
-            risk = _breaking_risk(current, target) if target else "unknown"
-
-            steps.append(
-                {
-                    "component": g["component"],
-                    "ecosystem": dep_meta.get("type"),
-                    "current_version": current,
-                    "target_version": target,
-                    "is_direct": confidence != "transitive",
-                    "direct_confidence": confidence,
-                    "resolves_findings": resolved[:10],
-                    "resolves_count": len(resolved),
-                    "critical_count": critical_count,
-                    "max_severity": max_sev_label,
-                    "breaking_change_risk": risk,
-                    "has_fix": target is not None,
-                }
-            )
-
-        # Order: fixable direct deps with low risk first (quick wins),
-        # then critical count desc, then total findings desc.
-        risk_order = {"low": 0, "medium": 1, "high": 2, "unknown": 3}
-
-        def sort_key(s: dict[str, Any]) -> tuple:
-            return (
-                0 if s["has_fix"] else 1,
-                # A graph-declared direct dependency still outranks an inferred one.
-                _DIRECT_CONFIDENCE_RANK[s["direct_confidence"]],
-                risk_order.get(s["breaking_change_risk"], 3),
-                -s["critical_count"],
-                -s["resolves_count"],
-            )
-
-        steps.sort(key=sort_key)
-        steps = steps[:max_steps]
-        for i, step in enumerate(steps, start=1):
-            step["step"] = i
-
+        resolved = {r["cve_id"]: r["severity"] for s in steps for r in s["resolves_findings"]}
         summary = {
-            "total_steps": len(steps),
             "findings_read": len(findings),
             "findings_total": findings_total,
-            "cves_resolved": sum(s["resolves_count"] for s in steps),
-            "critical_resolved": sum(s["critical_count"] for s in steps),
+            "cves_resolved": len(resolved),
+            "critical_resolved": sum(1 for severity in resolved.values() if severity == "CRITICAL"),
+            "cves_unresolved": len({cve for s in steps for cve in s["unresolved"]}),
             "steps_without_fix": sum(1 for s in steps if not s["has_fix"]),
             "breaking_changes": sum(1 for s in steps if s["breaking_change_risk"] == "high"),
         }
+        plan = steps[: ctx.args["max_steps"]]
+        for i, step in enumerate(plan, start=1):
+            step["step"] = i
+            step["resolves_findings"] = step["resolves_findings"][:10]
+            step["unresolved"] = step["unresolved"][:10]
 
         return {
             "project_id": project["_id"],
             "project_name": project.get("name"),
-            "plan": steps,
+            "plan": plan,
+            "plan_total": len(steps),
             "summary": summary,
             "hint": (
                 "Present this as a numbered Markdown plan. For each step show "
                 "component current_version → target_version, severity badge, "
-                "# CVEs resolved, direct/transitive, and breaking_change_risk. "
+                "resolves_count (distinct CVEs the upgrade fixes), direct/transitive, and breaking_change_risk. "
                 "Group visually into 'Quick wins' (low risk) and 'Major upgrades' "
-                "(high risk) if both exist. Mention steps_without_fix separately "
-                "as items that need manual investigation (no upstream patch yet)."
+                "(high risk) if both exist. unresolved names CVEs the upgrade leaves open, and an "
+                "end_of_life step moves off an end-of-life version. The summary covers all plan_total "
+                "steps: when plan_total exceeds the steps shown, say the plan shows the first of them. "
+                "Mention steps_without_fix separately as items that need manual investigation (no upstream patch yet)."
             ),
         }
 
@@ -951,6 +954,7 @@ class ChatToolRegistry:
             ctx.db,
             {
                 "scan_id": {"$in": list(head.values())},
+                "type": "vulnerability",
                 "severity": {"$in": ["CRITICAL", "HIGH"]},
                 **_ACTIVE,
                 # The live_fixed_version rule: a live advisory names a fix and no live CRITICAL/HIGH one lacks one.
@@ -969,20 +973,25 @@ class ChatToolRegistry:
             },
             ctx.args["limit"],
         )
-        out = [
-            {
-                **slim,
-                "still_open": [
-                    canonical_cve(v) for v in live_advisories(f.get("details")) if not v.get("fixed_version")
-                ],
-            }
-            for slim, f in zip(_slim_with_project(rows, names), rows, strict=True)
-        ]
+        out = []
+        for slim, f in zip(_slim_with_project(rows, names), rows, strict=True):
+            advisories, version = live_advisories(f.get("details")), f.get("version")
+            fix = _fix_target([v["fixed_version"] for v in advisories if v.get("fixed_version")], version)
+            if fix and parse_version_key(fix) > parse_version_key(version or ""):
+                out.append(
+                    {
+                        **slim,
+                        "quick_fix_version": fix,
+                        "breaking_change_risk": _breaking_risk(version, fix),
+                        "still_open": [canonical_cve(v) for v in advisories if not v.get("fixed_version")],
+                    }
+                )
         return {
             "findings": out,
             "count": len(out),
             "hint": (
-                "Upgrading to fixed_version fixes every CRITICAL/HIGH advisory of these findings. Advisories "
+                "Upgrading to quick_fix_version fixes every CRITICAL/HIGH advisory of these findings. A row with "
+                "breaking_change_risk 'high' needs a major upgrade: list it apart from the quick wins. Advisories "
                 "under still_open have no fix yet and stay after the upgrade: call that a partial fix."
             ),
             **({"ranking_note": ranking_note} if ranking_note else {}),
@@ -1001,7 +1010,6 @@ class ChatToolRegistry:
         epss = details.get("epss_score")
         fix = details.get("fixed_version")
 
-        reasons = []
         if details.get(DETAILS_KEY_IN_KEV):
             return {
                 "suggested_reason": (
@@ -1011,10 +1019,16 @@ class ChatToolRegistry:
                 "suggested_expiry_days": 0,
                 "recommend_waive": False,
             }
-        if fix:
-            reasons.append(f"a fix is available (upgrade to {fix})")
-        low_epss = isinstance(epss, (int, float)) and bucket_epss(epss) == "low"
-        if low_epss:
+        tier = reachability_display_tier(finding.get("reachable"), finding.get("reachability_level"))
+        deprioritized = is_deprioritized_vulnerability(
+            epss_score=epss if isinstance(epss, (int, float)) else None,
+            is_kev=False,
+            reachable=finding.get("reachable"),
+        )
+        reasons = []
+        if tier == "unreachable":
+            reasons.append("the vulnerable code is not reachable from the project")
+        elif deprioritized:
             reasons.append(f"real-world exploit likelihood is low (EPSS={epss:.4f})")
         if sev in ("LOW", "NEGLIGIBLE", "INFO"):
             reasons.append(f"severity is {sev}")
@@ -1023,20 +1037,24 @@ class ChatToolRegistry:
             if reasons
             else "Accepted risk: insert justification here. No strong automatic signal found."
         )
-        expiry_days = 180 if (fix or low_epss) else 90
+        if fix:
+            suggested_reason += f" Upgrade to {fix} is available: the waiver only bridges the time until it ships."
         return {
             "suggested_reason": suggested_reason,
-            "suggested_expiry_days": expiry_days,
-            "recommend_waive": True,
+            "suggested_expiry_days": 30 if fix else 180 if deprioritized else 90,
+            "recommend_waive": bool(reasons) and tier != "confirmed" and not (fix and sev in ("CRITICAL", "HIGH")),
             "signals": {
                 "severity": sev,
                 "exploit_maturity": maturity,
                 "epss_score": epss,
+                "reachability": tier,
                 "has_fix_version": bool(fix),
             },
             "hint": (
                 "Show these signals to the user and let them edit the suggested reason "
-                "before creating the waiver. This tool does NOT create the waiver."
+                "before creating the waiver. This tool does NOT create the waiver. When recommend_waive "
+                "is false (confirmed reachable, a CRITICAL/HIGH fix exists, or no signal supports the "
+                "risk), advise patching instead."
             ),
         }
 

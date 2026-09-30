@@ -443,8 +443,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "generate_remediation_plan",
             "description": (
                 "Generate a step-by-step remediation plan for a project. Groups CRITICAL/HIGH "
-                "findings by component, picks the highest known fixed version so one upgrade "
-                "covers all of a component's CVEs, "
+                "vulnerability and end-of-life findings by installed component version, picks the "
+                "smallest upgrade that fixes all of its CVEs, preferring the installed major line, "
                 "flags direct vs. transitive dependencies and breaking-change risk (major version "
                 "bumps). Use this when the user asks 'how do I fix everything', 'build me a plan', "
                 "'what's the upgrade path', or similar holistic remediation questions."
@@ -464,8 +464,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_auto_fixable_findings",
             "description": (
-                "Return CRITICAL/HIGH findings whose every live CRITICAL/HIGH advisory has a fix — "
-                "the 'low-hanging fruit' a team can resolve with a simple dependency bump. "
+                "Return CRITICAL/HIGH vulnerability findings whose every live CRITICAL/HIGH advisory has "
+                "a fix — the 'low-hanging fruit' a team can resolve with a dependency bump. "
+                "quick_fix_version is the smallest such bump, on the installed major line where one "
+                "exists; breaking_change_risk 'high' marks a major upgrade. "
                 "still_open names the lower-severity advisories the bump leaves open. "
                 "Use when the user asks 'what quick wins do I have?', 'what can I fix "
                 "easily?' or 'which updates are available?'."

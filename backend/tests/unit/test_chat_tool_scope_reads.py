@@ -48,22 +48,23 @@ def _seeded() -> FakeDatabase:
             "created_at": _NOW,
             "stats": {"critical": 1, "high": 0},
         }
-        db.findings._docs[f"{pid}-f"] = {
-            "_id": f"{pid}-f",
-            "finding_id": _CVE,
-            "scan_id": scan_id,
-            "project_id": pid,
-            "severity": "CRITICAL",
-            "type": "license",
-            "component": _COMPONENT,
-            "version": "1.0",
-            "created_at": _NOW - timedelta(days=90),
-            "details": {
-                "vulnerabilities": [{"id": _CVE, "in_kev": True, "fixed_version": "1.0.1"}],
-                "exploit_maturity": "active",
-                "fixed_version": "1.0.1",
-            },
-        }
+        for finding_type in ("license", "vulnerability"):
+            db.findings._docs[f"{pid}-{finding_type}"] = {
+                "_id": f"{pid}-{finding_type}",
+                "finding_id": _CVE,
+                "scan_id": scan_id,
+                "project_id": pid,
+                "severity": "CRITICAL",
+                "type": finding_type,
+                "component": _COMPONENT,
+                "version": "1.0",
+                "created_at": _NOW - timedelta(days=90),
+                "details": {
+                    "vulnerabilities": [{"id": _CVE, "in_kev": True, "fixed_version": "1.0.1"}],
+                    "exploit_maturity": "active",
+                    "fixed_version": "1.0.1",
+                },
+            }
         db.dependencies._docs[f"{pid}-d"] = {
             "_id": f"{pid}-d",
             "scan_id": scan_id,

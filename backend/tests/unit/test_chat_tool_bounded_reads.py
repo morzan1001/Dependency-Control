@@ -270,10 +270,11 @@ async def test_a_remediation_plan_names_the_finding_set_it_was_built_over(seeded
             "_id": f"row-{i}",
             "scan_id": _SCAN,
             "project_id": _PROJECT,
+            "type": "vulnerability",
             "severity": "HIGH",
             "component": f"pkg-{i}",
             "version": "1.0.0",
-            "details": {"fixed_version": "2.0.0"},
+            "details": {"fixed_version": "2.0.0", "vulnerabilities": [{"id": _CVE, "fixed_version": "2.0.0"}]},
         },
     )
 

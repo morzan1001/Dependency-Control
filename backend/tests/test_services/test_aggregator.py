@@ -64,6 +64,7 @@ class TestParseVersionKey:
             pytest.param("1.0.dev1", "1.0a1", id="pep440-dev-below-alpha"),
             pytest.param("1.0", "1.0.post1", id="pep440-post-release-above-release"),
             pytest.param("1.0.post1", "1.0.1", id="post-release-below-next-number"),
+            pytest.param("1.2.3-2", "1.2.3-10", id="debian-revision-numeric"),
             pytest.param("2.36-9", "2.36-9+deb12u4", id="debian-security-update-above-its-base"),
             pytest.param("3.4-1", "3.4-1+b6", id="debian-binnmu-above-its-base"),
             pytest.param("3.4-1+b6", "3.4-2", id="debian-binnmu-below-the-next-revision"),

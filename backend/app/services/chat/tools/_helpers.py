@@ -9,7 +9,6 @@ from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, g
 from app.core.cve import advisory_ids, canonical_cve
 from app.core.risk_scoring import calculate_exploit_maturity
 from app.repositories.base import find_window
-from app.services.aggregation.versions import parse_version_key
 from app.services.recommendation.common import live_cves, vuln_info
 
 
@@ -250,12 +249,6 @@ def _parse_major(version: str | None) -> int | None:
         return int(head)
     except (TypeError, ValueError):
         return None
-
-
-def _compare_versions(a: str, b: str) -> int:
-    """-1/0/1 by the ordering the aggregate fixed_version uses."""
-    key_a, key_b = parse_version_key(a), parse_version_key(b)
-    return (key_a > key_b) - (key_a < key_b)
 
 
 def _breaking_risk(current: str | None, target: str | None) -> str:
