@@ -432,10 +432,6 @@ class _RecordingRedis:
         if value is not None:
             self._store[key] = value
 
-    async def setex(self, key: str, _ttl: int, value: str) -> bool:
-        self.record(key, value)
-        return True
-
     async def set(self, key: str, value: str, **_kwargs: Any) -> bool:
         self.record(key, value)
         return True
@@ -453,7 +449,7 @@ class _RecordingPipeline:
         self._client = client
         self._queued: list[tuple[str, str]] = []
 
-    def setex(self, key: str, _ttl: int, value: str) -> None:
+    def set(self, key: str, value: str, **_kwargs: Any) -> None:
         self._queued.append((key, value))
 
     async def execute(self) -> list[bool]:

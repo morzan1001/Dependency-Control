@@ -322,7 +322,7 @@ class CacheService:
             client = await self.get_client()
             serialized = json.dumps(value, default=str)
             await asyncio.wait_for(
-                client.setex(self._make_key(key), ttl_seconds, serialized),
+                client.set(self._make_key(key), serialized, ex=ttl_seconds),
                 timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
             return True
@@ -421,7 +421,7 @@ class CacheService:
 
             for key, value in mapping.items():
                 serialized = json.dumps(value, default=str)
-                pipe.setex(self._make_key(key), ttl_seconds, serialized)
+                pipe.set(self._make_key(key), serialized, ex=ttl_seconds)
 
             await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             success = True
