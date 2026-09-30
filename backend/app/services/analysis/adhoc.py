@@ -482,16 +482,9 @@ async def _run_one_analyzer(
 
 
 def _aggregate_atomically(aggregator: ResultAggregator, name: str, payload: dict[str, Any], source: str) -> None:
-    """Normalise into a scratch aggregator, then hand over only a complete result.
-
-    The normalizers add each item as they read it, so a payload that dies half-way would
-    otherwise contribute whatever preceded the unreadable item — the same items in a different
-    order yielding a different set of findings alongside the same error.
-    """
-    staged = ResultAggregator()
-    staged.aggregate(name, payload, source=source)
-    for finding in staged.findings.values():
-        aggregator.add_finding(finding, source=source)
+    """Dry-run on a scratch aggregator: normalizers add item by item, so a half-read payload adds nothing."""
+    ResultAggregator().aggregate(name, payload, source=source)
+    aggregator.aggregate(name, payload, source=source)
 
 
 def _first_reason(exc: ValidationError) -> str:
