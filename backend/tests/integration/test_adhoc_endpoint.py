@@ -32,9 +32,6 @@ _SECRET_MARKER = "swordfish"
 _OVERLAP_WINDOW = 0.05
 _CONCURRENT_REQUESTS = 2
 _TIGHT_DEADLINE = 0.01
-_CHUNK_BYTES = 512
-_CHUNKS = 4
-_SMALL_BODY_LIMIT = 1024
 
 _SBOM = {
     "bomFormat": "CycloneDX",
@@ -204,29 +201,7 @@ async def test_a_key_without_the_permission_is_rejected(client, db):
 
 
 @pytest.mark.asyncio
-async def test_oversized_streamed_body_is_413(client, db, monkeypatch):
-    """Chunked upload: no Content-Length, so only the streaming guard can stop it."""
-    _, token = await _issue_key(db)
-    monkeypatch.setattr("app.api.v1.endpoints.analyze.MAX_ADHOC_BODY_BYTES", _SMALL_BODY_LIMIT)
-
-    async def _chunks():
-        yield b'{"sboms": [{"bomFormat": "CycloneDX", "pad": "'
-        for _ in range(_CHUNKS):
-            yield b"x" * _CHUNK_BYTES
-        yield b'"}]}'
-
-    resp = await client.post(
-        _ANALYZE,
-        content=_chunks(),
-        headers={**_bearer(token), "Content-Type": "application/json"},
-    )
-
-    assert resp.status_code == 413, resp.text
-
-
-@pytest.mark.asyncio
 async def test_an_input_shape_the_pipeline_cannot_afford_is_413(client, db, monkeypatch):
-    """Small on the wire, expensive to parse: the body ceiling cannot see this one."""
     _, token = await _issue_key(db)
     monkeypatch.setattr(adhoc, "ADHOC_MAX_SBOM_COMPONENTS", 1)
 
@@ -275,6 +250,12 @@ async def test_malformed_body_is_422_without_echoing_the_payload(client, db):
 
     assert resp.status_code == 422, resp.text
     assert _SECRET_MARKER not in resp.text
+    detail = resp.json()["detail"]
+    assert {(error["type"], error["loc"][0]) for error in detail} == {
+        ("list_type", "body"),
+        ("extra_forbidden", "body"),
+    }
+    assert not [error for error in detail if "input" in error]
 
 
 @pytest.mark.asyncio

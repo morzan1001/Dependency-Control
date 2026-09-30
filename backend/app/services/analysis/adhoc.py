@@ -330,8 +330,8 @@ def _reject_unaffordable_input(request: AdhocAnalyzeRequest) -> None:
     """Refuse a request whose shape would make a synchronous stage too expensive to run.
 
     The parse, the cross-linking and the callgraph lookups run to completion once started, on
-    a worker thread or not, so no deadline can interrupt them and the 25 MB body ceiling sits far
-    above where they become expensive. Every count is linear, and it happens before any of them run.
+    a worker thread or not, so no deadline can interrupt them. Every count is linear, and it
+    happens before any of them run.
     """
     components = [component for sbom in request.sboms for component in _components_of(sbom)]
     limits = (

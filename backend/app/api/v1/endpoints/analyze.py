@@ -3,21 +3,19 @@
 import asyncio
 from typing import Any
 
-from fastapi import Depends, HTTPException, Request, Response, status
+from fastapi import HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import ValidationError
 
 from app.api.deps import AdhocKeyDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.body_limit import enforce_declared_body_size, read_body_within_limit
+from app.api.v1.helpers.request_body import read_json_body
 from app.api.v1.helpers.responses import RESP_AUTH_400
 from app.core.constants import (
     ADHOC_DEADLINE_SECONDS,
     ADHOC_MAX_FINDINGS,
     ADHOC_RATE_LIMIT_PER_HOUR,
     ADHOC_RATE_LIMIT_PER_MINUTE,
-    MAX_ADHOC_BODY_BYTES,
 )
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import ADHOC_SLOTS, AdhocInputTooLarge, run_adhoc_analysis
@@ -57,22 +55,12 @@ type and by severity, and `stats` describes only what came back.
 _HTML_RESPONSE: dict[int | str, dict[str, Any]] = {200: {"content": {"text/html": {"schema": {"type": "string"}}}}}
 
 
-def _parse_request(raw: bytes) -> AdhocAnalyzeRequest:
-    """Validate the body here so the offending payload never reaches the traceback logger."""
-    try:
-        return AdhocAnalyzeRequest.model_validate_json(raw)
-    except ValidationError as exc:
-        detail = [{"loc": list(error["loc"]), "msg": error["msg"]} for error in exc.errors()]
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from exc
-
-
 @router.post(
     "/analyze",
     response_model=AdhocAnalyzeResponse,
     responses={**RESP_AUTH_400, **_HTML_RESPONSE},
     summary="Analyze an SBOM without storing anything",
     description=_DESCRIPTION,
-    dependencies=[Depends(enforce_declared_body_size(MAX_ADHOC_BODY_BYTES))],
 )
 async def analyze(
     request: Request,
@@ -89,7 +77,7 @@ async def analyze(
         per_minute=ADHOC_RATE_LIMIT_PER_MINUTE,
         per_hour=ADHOC_RATE_LIMIT_PER_HOUR,
     )
-    payload = _parse_request(await read_body_within_limit(request, MAX_ADHOC_BODY_BYTES))
+    payload = await read_json_body(request, AdhocAnalyzeRequest)
 
     async def _run() -> AdhocAnalyzeResponse:
         async with ADHOC_SLOTS:

@@ -193,8 +193,6 @@ curl -X POST "https://api.dependencycontrol.local/api/v1/ingest/cbom" \
   --data-binary @cbom-payload.json
 ```
 
-CBOM payloads are capped at 25 MiB; oversized uploads return `413 Payload Too Large`.
-
 ### Pinning the bundled scanner
 
 The backend serves a reusable `scanner.sh` for SBOM/CBOM/secret/SAST/IaC ingestion. Every released version is **frozen** under `ci-cd/scripts/versions/scanner-X.Y.Z.sh` and is reachable through `?v=X.Y.Z`; the unversioned URL serves whichever version is currently the latest pointer.

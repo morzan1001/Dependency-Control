@@ -143,12 +143,12 @@ async def test_the_window_is_checked_before_the_body_is_read(client, db, monkeyp
     _patch_client(monkeypatch, _FakeRedis([], _DENIED))
     read_bodies: list[int] = []
 
-    async def _record_read(request, limit):
+    async def _record_read(request, model):
         body = await request.body()
         read_bodies.append(len(body))
-        return body
+        return model.model_validate_json(body)
 
-    monkeypatch.setattr("app.api.v1.endpoints.analyze.read_body_within_limit", _record_read)
+    monkeypatch.setattr("app.api.v1.endpoints.analyze.read_json_body", _record_read)
 
     resp = await client.post(_ANALYZE, json=_BODY, headers=_bearer(token))
 

@@ -7,12 +7,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
+from app.api.v1.helpers.request_body import read_json_body
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
@@ -53,11 +54,12 @@ router = CustomAPIRouter()
     responses=RESP_AUTH,
 )
 async def ingest_trufflehog(
-    data: TruffleHogIngest,
+    request: Request,
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> SecretScanResponse:
     """Ingest TruffleHog secret scan results; returns findings summary and pipeline failure status."""
+    data = await read_json_body(request, TruffleHogIngest)
     response = await process_findings_ingest(ScanManager(db, project), "trufflehog", data)
 
     # Any secret found fails the pipeline.
@@ -79,11 +81,12 @@ async def ingest_trufflehog(
     responses=RESP_AUTH,
 )
 async def ingest_opengrep(
-    data: OpenGrepIngest,
+    request: Request,
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """Ingest OpenGrep SAST scan results; returns a findings summary."""
+    data = await read_json_body(request, OpenGrepIngest)
     response = await process_findings_ingest(ScanManager(db, project), "opengrep", data)
     return FindingsIngestResponse(**response)
 
@@ -95,11 +98,12 @@ async def ingest_opengrep(
     responses=RESP_AUTH,
 )
 async def ingest_kics(
-    data: KicsIngest,
+    request: Request,
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """Ingest KICS IaC scan results."""
+    data = await read_json_body(request, KicsIngest)
     response = await process_findings_ingest(ScanManager(db, project), "kics", data)
     return FindingsIngestResponse(**response)
 
@@ -111,11 +115,12 @@ async def ingest_kics(
     responses=RESP_AUTH,
 )
 async def ingest_bearer(
-    data: BearerIngest,
+    request: Request,
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """Ingest Bearer SAST/Data Security scan results."""
+    data = await read_json_body(request, BearerIngest)
     response = await process_findings_ingest(ScanManager(db, project), "bearer", data)
     return FindingsIngestResponse(**response)
 
@@ -198,11 +203,12 @@ async def _process_sboms(
     responses=RESP_AUTH_400_500,
 )
 async def ingest_sbom(
-    data: SBOMIngest,
+    request: Request,
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> SBOMIngestResponse:
     """Upload an SBOM for analysis; the analysis is queued and processed by background workers."""
+    data = await read_json_body(request, SBOMIngest)
     manager = ScanManager(db, project)
     dep_repo = DependencyRepository(db)
 

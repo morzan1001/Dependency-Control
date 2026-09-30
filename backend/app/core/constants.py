@@ -1118,16 +1118,13 @@ RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 
 # CBOM / Crypto
-MAX_CBOM_BODY_BYTES: int = 25 * 1024 * 1024
-MAX_ADHOC_BODY_BYTES: int = 25 * 1024 * 1024
 ADHOC_MAX_FINDINGS: int = 5000
 ADHOC_DEADLINE_SECONDS: float = 180.0
 ADHOC_RATE_LIMIT_PER_MINUTE: int = 5
 ADHOC_RATE_LIMIT_PER_HOUR: int = 60
 
 # Each limit bounds one shape a synchronous stage walks, counted in linear time before it runs:
-# a deadline cannot interrupt those stages, and the 25 MB body ceiling sits far above where
-# they hurt.
+# a deadline cannot interrupt those stages.
 ADHOC_MAX_SBOM_COMPONENTS: int = 10_000
 # ``properties``, ``cpes``, ``locations``, ``evidence.occurrences`` and SPDX ``externalRefs``.
 ADHOC_MAX_SBOM_EVIDENCE_ENTRIES: int = 20_000

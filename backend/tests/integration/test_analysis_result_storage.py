@@ -39,29 +39,10 @@ _MONGO_DOCUMENT_LIMIT = 16 * 1024 * 1024
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
 _KICS_REPORT = json.loads((_FIXTURES / "iac/kics_2.1.20_results.json").read_text())
 _SYFT_COMPONENT = json.loads((_FIXTURES / "sbom/npmpeer.syft.cdx.json").read_text())["components"][0]
+_SECRET = json.loads((_FIXTURES / "secrets/trufflehog_v3_line.json").read_text())
+_OPENGREP_FINDING = json.loads((_FIXTURES / "sast/opengrep_result.json").read_text())
 _WORKER = "pod-a/worker-0"
 _BRACE = {"name": "brace-expansion", "version": "2.0.2", "purl": "pkg:npm/brace-expansion@2.0.2"}
-
-# trufflehog v3 `--json` line
-_SECRET = {
-    "SourceMetadata": {"Data": {"Filesystem": {"file": "tests/fixtures/aws.env", "line": 3}}},
-    "SourceID": 1,
-    "SourceType": 15,
-    "SourceName": "trufflehog - filesystem",
-    "DetectorType": 2,
-    "DecoderName": "PLAIN",
-    "Verified": False,
-    "Raw": "AKIAIOSFODNN7EXAMPLE",
-}
-
-# opengrep `--json` result
-_OPENGREP_FINDING = {
-    "check_id": "python.lang.security.audit.eval-detected",
-    "path": "src/app.py",
-    "start": {"line": 12, "col": 5},
-    "end": {"line": 12, "col": 21},
-    "extra": {"message": "Detected the use of eval()", "severity": "WARNING"},
-}
 
 # kics `--report-formats json` query
 _KICS_QUERY = {

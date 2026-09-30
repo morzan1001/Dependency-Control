@@ -5,14 +5,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.request_body import read_json_body
 from app.core.constants import (
-    MAX_CBOM_BODY_BYTES,
     NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
     WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
 )
@@ -28,25 +28,6 @@ from app.services.webhooks import webhook_service
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
-
-
-def _enforce_body_size_limit(request: Request) -> None:
-    """Reject oversized CBOM uploads before Pydantic parses them."""
-    raw = request.headers.get("content-length")
-    if raw is None:
-        return
-    try:
-        size = int(raw)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
-    if size > MAX_CBOM_BODY_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                f"CBOM payload exceeds {MAX_CBOM_BODY_BYTES} bytes "
-                f"({size} bytes received). Split the upload or raise the limit."
-            ),
-        )
 
 
 class CBOMIngest(BaseIngest):
@@ -103,14 +84,14 @@ class CBOMIngestResponse(BaseModel):
     "/ingest/cbom",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest CBOM",
-    dependencies=[Depends(_enforce_body_size_limit)],
 )
 async def ingest_cbom(
-    payload: CBOMIngest,
+    request: Request,
     db: DatabaseDep,
     project: ProjectIngestDep,
 ) -> CBOMIngestResponse:
     """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response."""
+    payload = await read_json_body(request, CBOMIngest)
     manager = ScanManager(db, project)
     scan_id = manager.run_scan_id(payload)
     parsed = await asyncio.to_thread(parse_cbom, payload.cbom)
