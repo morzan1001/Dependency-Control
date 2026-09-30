@@ -1215,7 +1215,7 @@ def _build_scan_findings_pipeline(
 ) -> list[dict[str, Any]]:
     """Compose the full aggregation pipeline used by ``read_scan_findings``."""
     join = _scan_findings_dependency_join()
-    # Each joined finding reads its scan's dependencies, so only the page is joined unless the filter or sort needs it.
+    # The join runs one dependency query per finding, so only the page is joined unless the filter or sort reads it.
     early_join, page_join = (join, []) if direct_only or sort_by == "source_type" else ([], join)
     stages: list[dict[str, Any]] = [{"$match": query}, _scan_findings_add_fields_stage(), *early_join]
     if direct_only:
