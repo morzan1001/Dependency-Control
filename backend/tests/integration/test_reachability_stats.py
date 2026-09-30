@@ -398,3 +398,19 @@ async def test_rescans_pointing_at_each_other_find_no_callgraph_instead_of_recur
         )
 
     assert await fetch_callgraphs(_PROJECT_ID, "rescan-a", db) == []
+
+
+@pytest.mark.asyncio
+async def test_the_stored_inventory_keeps_a_transitive_dependency_unfalsified(db):
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.dependencies.update_one({"_id": "dep-urllib3"}, {"$set": {"direct": False, "direct_inferred": False}})
+    findings = [_finding("CVE-2", "urllib3")]
+
+    enrich_findings_with_reachability(
+        findings,
+        await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db),
+        await build_component_language_map(db, _SCAN_ID),
+    )
+
+    assert findings[0]["reachable"] is None

@@ -580,9 +580,7 @@ async def _run_reachability_enrichment(
         component_languages = await build_component_language_map(db, scan_id)
         enriched_count = enrich_findings_with_reachability(vulnerability_findings, callgraphs, component_languages)
         reachability_summary = build_reachability_summary(
-            vulnerability_findings,
-            [cg.model_dump(by_alias=True) for cg in callgraphs],
-            enriched_count,
+            vulnerability_findings, [cg.model_dump(by_alias=True) for cg in callgraphs]
         )
         await result_repo.save_result(scan_id, "reachability", reachability_summary)
         results_summary.append(f"reachability: Success ({enriched_count} enriched)")

@@ -14,7 +14,6 @@ class ModuleUsage(BaseModel):
     call_count: int = 0  # number of calls into this module
     import_locations: list[str] = []
     used_symbols: list[str] = []
-    is_direct_dependency: bool = True  # vs transitive
 
 
 class Callgraph(MongoDocument, CreatedAtModel):

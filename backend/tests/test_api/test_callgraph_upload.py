@@ -425,6 +425,9 @@ class TestPayloadValidation:
             pytest.param({"imports": [{"module": "requests", "file": 7, "line": 3, "symbols": []}]}, id="file"),
             pytest.param({"imports": [{"module": "requests", "file": "app/client.py", "symbols": [7]}]}, id="symbol"),
             pytest.param({"calls": [{"callee_module": "requests", "callee_function": 7}]}, id="callee-function"),
+            pytest.param(
+                {"calls": [{"caller_file": 7, "callee_module": "requests", "callee_function": "get"}]}, id="caller-file"
+            ),
         ],
     )
     async def test_a_value_the_document_keeps_must_be_a_string(self, client, db, data):

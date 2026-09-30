@@ -928,28 +928,15 @@ REACHABILITY_LEVEL_SYMBOL = "symbol"
 REACHABILITY_CONFIDENCE_NOT_USED = 0.9  # High confidence package is NOT used
 REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS = 0.5  # Package imported, unknown functions
 REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO = 0.4  # Package imported, no symbol analysis available
-
-# Confidence base scores for symbol extraction
-REACHABILITY_EXTRACTION_CONFIDENCE = {
-    "high": 0.9,
-    "medium": 0.7,
-    "low": 0.5,
-}
+REACHABILITY_CONFIDENCE_SYMBOL_MATCHED = 1.0
+# Vulnerable symbols searched and none used directly: weaker evidence than having no symbol data.
+REACHABILITY_CONFIDENCE_SYMBOLS_NOT_USED = 0.35
 
 # Threshold above which a "reachable" verdict is considered high-confidence
 # enough to drive prioritisation/headline counts. Values below this still
 # count as reachable but may surface as "needs verification" — they're
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
-
-# Why a finding carries no reachability verdict. "unsupported_ecosystem" and "absence_not_evidence"
-# are terminal — OS packages have no callgraph tooling, a JVM graph cannot rule a package out — while
-# the others name something a pipeline can fix.
-REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
-REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED = "language_not_analyzed"
-REACHABILITY_REASON_NO_COVERAGE_UNIVERSE = "no_coverage_universe"
-REACHABILITY_REASON_OUTSIDE_COVERAGE = "outside_coverage"
-REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE = "absence_not_evidence"
 
 # Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
 # calls, the symbols each import names, madge dependencies and the analyzed-modules list.

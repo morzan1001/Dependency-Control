@@ -70,17 +70,6 @@ class VulnerabilityEnrichment(BaseModel):
     risk_score: float  # 0-100
 
 
-class ExtractedSymbols(BaseModel):
-    """Result of symbol extraction from a vulnerability."""
-
-    cve: str
-    package: str
-    symbols: list[str] = Field(default_factory=list)
-    confidence: str = "low"  # low, medium, high
-    extraction_method: str = "none"  # none, regex, osv_ecosystem
-    raw_text: str | None = None
-
-
 class DependencyEnrichment(BaseModel):
     """Enrichment data for a dependency merged from SBOM, deps.dev and the license scanner."""
 

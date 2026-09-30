@@ -192,7 +192,6 @@ _VULNERABILITY_SAMPLE_CAP = 30
 def build_reachability_summary(
     findings: list[dict[str, Any]],
     callgraphs: list[dict[str, Any]],
-    enriched_count: int,
 ) -> ReachabilitySummary:
     """Build a summary of reachability analysis for the raw data view."""
     reachability_levels: ReachabilityLevelCounts = {
@@ -215,7 +214,7 @@ def build_reachability_summary(
 
     summary: ReachabilitySummary = {
         "total_vulnerabilities": len(findings),
-        "analyzed": enriched_count,
+        "analyzed": 0,
         "reachability_levels": reachability_levels,
         "callgraph_info": callgraph_info,
         "languages": [cg.get("language", "unknown") for cg in callgraphs],
@@ -253,6 +252,7 @@ def build_reachability_summary(
 
     summary["reachable_total"] = len(summary["reachable_vulnerabilities"])
     summary["unreachable_total"] = len(summary["unreachable_vulnerabilities"])
+    summary["analyzed"] = summary["reachable_total"] + summary["unreachable_total"]
 
     summary["reachable_vulnerabilities"] = sort_by_severity(
         summary["reachable_vulnerabilities"], key="severity", reverse=True

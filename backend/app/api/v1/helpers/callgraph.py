@@ -127,8 +127,9 @@ def _record_generic_call(call: dict[str, Any], language: str, module_usage: dict
     """Record one generic-format call edge in its callee module's usage."""
     module = call.get("callee_module", "")
     func = call.get("callee_function", "")
-    if not (isinstance(module, str) and isinstance(func, str)):
-        raise ValueError("a call needs a string callee_module and callee_function")
+    caller_file = call.get("caller_file", "")
+    if not (isinstance(module, str) and isinstance(func, str) and isinstance(caller_file, str)):
+        raise ValueError("a call needs a string callee_module, callee_function and caller_file")
 
     if not module:
         return
@@ -137,6 +138,9 @@ def _record_generic_call(call: dict[str, Any], language: str, module_usage: dict
     usage.call_count += 1
     if func:
         usage.used_symbols.append(func)
+    # A file that calls into a package references it, even when the producer emitted no import for it.
+    if caller_file:
+        usage.import_locations.append(caller_file)
 
 
 def parse_generic_format(data: dict[str, Any], language: str) -> ParsedCallgraph:

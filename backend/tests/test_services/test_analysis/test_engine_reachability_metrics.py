@@ -17,7 +17,7 @@ def _finding(is_reachable, analysis_level):
     }
 
 
-_LANGUAGES = {"requests": [("2.0.0", frozenset({"python"}))]}
+_LANGUAGES = {"requests": [("2.0.0", frozenset({"python"}), False)]}
 
 
 def _run_enrichment(monkeypatch, findings, enrich):

@@ -91,7 +91,7 @@ class TestAggregateExternalSkipsPostProcessors:
         db = FakeDatabase()
         for analyzer_name, result in (
             ("epss_kev", build_epss_kev_summary([])),
-            ("reachability", build_reachability_summary([], [], 0)),
+            ("reachability", build_reachability_summary([], [])),
         ):
             asyncio.run(AnalysisResultRepository(db).save_result("scan-1", analyzer_name, result))
         results_summary: list = []

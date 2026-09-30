@@ -56,10 +56,8 @@ from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.reachability_enrichment import (
     ComponentLanguages,
-    _prepare_callgraph,
-    _PreparedCallgraph,
     component_language_map,
-    enrich_findings_from_callgraphs,
+    enrich_findings_with_reachability,
 )
 from app.services.recommendations import recommendation_engine
 from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, merge_duplicate_dependencies, parse_sbom
@@ -704,7 +702,7 @@ async def _enrich_vulnerabilities(
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
 
-def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], _PreparedCallgraph]:
+def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], CallgraphMinimal]:
     """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
     from app.api.v1.helpers.callgraph import detect_format, parse_generic_format, parse_madge_format
 
@@ -737,7 +735,7 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
         "total_imports": parsed.total_imports,
         "created_at": None,
     }
-    return as_dict, _prepare_callgraph(minimal)
+    return as_dict, minimal
 
 
 def _run_reachability(
@@ -751,7 +749,7 @@ def _run_reachability(
         return None
 
     try:
-        callgraph_dict, prepared = _prepare_posted_callgraph(callgraph_payload)
+        callgraph_dict, callgraph = _prepare_posted_callgraph(callgraph_payload)
     except Exception as exc:
         logger.warning("adhoc: callgraph could not be prepared: %s", exc)
         _record_errored(report, _REACHABILITY, str(exc))
@@ -760,9 +758,9 @@ def _run_reachability(
     # The list holds the same dict objects as ``records``, so the mirroring store_reachability
     # does in place stays visible to every later stage.
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
-    enriched = enrich_findings_from_callgraphs(vulnerabilities, [prepared], languages)
+    enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
-    return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
+    return dict(build_reachability_summary(vulnerabilities, [callgraph_dict]))
 
 
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:

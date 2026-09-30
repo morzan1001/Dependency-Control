@@ -17,7 +17,6 @@ from app.services.component_identity import build_component_index, canonical_mod
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
     _find_usage,
-    _is_package_in_callgraph,
     _normalize_component,
     _prepare_callgraph,
 )
@@ -258,8 +257,8 @@ class TestWriteReadMeetingPoint:
             analyzed=["zope.interface", "zope.component"],
         )
 
-        assert _is_package_in_callgraph(prepared, "zope.interface")
-        assert not _is_package_in_callgraph(prepared, "zope.component")
+        assert _find_usage(prepared, "zope.interface") is not None
+        assert _find_usage(prepared, "zope.component") is None
 
     def test_an_unresolved_submodule_import_counts_for_its_distribution(self):
         """Without the dependencies installed the producer emits the module path of a from-import."""
@@ -429,6 +428,34 @@ class TestDedupeIsLinear:
         assert usage.used_symbols == ["map", "get", "set", "pick"]
         assert (usage.import_count, usage.call_count) == (3, 2)
         assert analyzed_modules == ["lodash", "express"]
+
+
+class TestCallEdges:
+    def test_each_caller_file_is_an_import_location(self):
+        data = {
+            "imports": [{"module": "requests", "file": "app/client.py", "line": 1, "symbols": []}],
+            "calls": [
+                {
+                    "caller_file": "app/client.py",
+                    "caller_function": "fetch",
+                    "callee_module": "requests",
+                    "callee_function": "get",
+                    "line": 12,
+                },
+                {
+                    "caller_file": "app/jobs.py",
+                    "caller_function": "sync",
+                    "callee_module": "requests",
+                    "callee_function": "post",
+                    "line": 4,
+                },
+            ],
+        }
+
+        usage = parse_generic_format(data, "python").module_usage["requests"]
+
+        assert usage.import_locations == ["app/client.py", "app/jobs.py"]
+        assert (usage.import_count, usage.call_count) == (1, 2)
 
 
 class TestCallgraphEntryCount:

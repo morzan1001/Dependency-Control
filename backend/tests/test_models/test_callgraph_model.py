@@ -19,7 +19,6 @@ class TestModuleUsage:
         assert usage.call_count == 0
         assert usage.import_locations == []
         assert usage.used_symbols == []
-        assert usage.is_direct_dependency is True
 
     def test_fully_populated(self):
         usage = ModuleUsage(
@@ -28,12 +27,10 @@ class TestModuleUsage:
             call_count=12,
             import_locations=["src/app.ts", "src/router.ts"],
             used_symbols=["Router", "json"],
-            is_direct_dependency=False,
         )
         assert usage.import_count == 5
         assert usage.call_count == 12
         assert len(usage.import_locations) == 2
-        assert usage.is_direct_dependency is False
 
 
 class TestCallgraphModel:
