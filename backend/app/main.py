@@ -71,7 +71,7 @@ and tracking vulnerabilities.
 
 Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
     """,
-    version="1.9.40",
+    version="1.9.42",
     license_info={
         "name": "MIT License",
         "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",

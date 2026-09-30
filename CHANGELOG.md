@@ -1,3 +1,19 @@
+# Release 1.9.42
+
+## 🧪 Tests
+
+- test(rescan): patch the GridFS download where load_gridfs_json calls it (#0)
+- test(search): stub the project scope through get_user_projects, the helper the search reads (#0)
+- test(sorting): stub the inventory scope so the contract test reaches query validation (#0)
+- test(users): expect IdentityTakenError for someone else's address on email change (#0)
+- test(dependencies): the scan fold reads group, which package_identity keys on (#0)
+
+## 📦 Build & CI
+
+- chore(release): 1.9.42 with audit waves 1-4 and the hardened ollama chart (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade to 1.9.42. Run the steps in this order. Run mongosh commands in-pod against the application database, and Python and bash snippets in a backend pod, from the working directory where `app` is importable.
