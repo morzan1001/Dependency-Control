@@ -366,9 +366,11 @@ def _build_settings_resolver(
     system_settings: Any,
     project_license_policy: dict[str, Any] | None,
     project_analyzer_settings: dict[str, dict[str, Any]] | None,
+    github_token: str | None = None,
 ) -> Callable[[str], dict[str, Any]]:
     """Return a function that yields per-analyzer settings dicts."""
     base_settings = system_settings.model_dump() if system_settings else {}
+    base_settings["github_token"] = github_token
     if project_license_policy:
         base_settings["license_policy"] = project_license_policy
 
@@ -396,6 +398,7 @@ async def _process_sbom(
     project_id: str | None = None,
     scan_type: str | None = None,
     payload: list[ParsedSBOM | None] | None = None,
+    github_token: str | None = None,
 ) -> list[str]:
     """Process a single resolved SBOM: parse, collect deps, run analyzers; returns the results summary."""
     fallback_source = f"SBOM #{index + 1}"
@@ -411,7 +414,9 @@ async def _process_sbom(
 
     effective_analyzers = _resolve_effective_analyzers(active_analyzers, parsed_sbom, parsed_components, scan_type)
 
-    settings_for = _build_settings_resolver(system_settings, project_license_policy, project_analyzer_settings)
+    settings_for = _build_settings_resolver(
+        system_settings, project_license_policy, project_analyzer_settings, github_token
+    )
 
     tasks = [
         process_analyzer(
@@ -1097,6 +1102,7 @@ async def run_analysis(
 
     settings_repo = SystemSettingsRepository(db)
     system_settings = await settings_repo.get()
+    github_token = system_settings.github_token or await _get_github_instance_token(db)
 
     project_license_policy, project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
 
@@ -1126,6 +1132,7 @@ async def run_analysis(
             project_id=project_id,
             scan_type=scan_type,
             payload=payload,
+            github_token=github_token,
         )
         resolved_sboms[index] = None
         results_summary.extend(sbom_results)
@@ -1157,10 +1164,6 @@ async def run_analysis(
         aggregated_findings, scan_id, project_id, scan_created_at
     )
     total_findings_count = len(findings_to_insert)
-
-    github_token = system_settings.github_token
-    if not github_token:
-        github_token = await _get_github_instance_token(db)
 
     component_languages = await _run_vuln_enrichments(
         active_analyzers,

@@ -17,6 +17,7 @@ from app.models.project import Scan
 from app.models.stats import Stats
 from app.services import gridfs_maintenance
 from app.services.analysis import engine
+from tests.helpers.analyzers import serve_analyzer
 
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -205,6 +206,28 @@ async def test_without_a_settings_token_the_github_com_instance_token_is_used(db
     assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] == "instance-token"
+
+
+class _SettingsProbe:
+    name = "maintainer_risk"
+
+    def __init__(self) -> None:
+        self.settings: dict = {}
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        self.settings = settings or {}
+        return {"maintainer_issues": []}
+
+
+@pytest.mark.asyncio
+async def test_the_instance_token_reaches_the_analyzers_too(db, notified, enrichment_inputs, monkeypatch):
+    await db.github_instances.insert_one(_github_instance("gh", _T0, access_token="instance-token"))
+    probe = serve_analyzer(monkeypatch, "maintainer_risk", _SettingsProbe())
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
+
+    await engine.run_analysis(await _seed_scan(db), [sbom], ["maintainer_risk"], db, worker_id=_WORKER)
+
+    assert probe.settings["github_token"] == "instance-token"
 
 
 @pytest.mark.asyncio
