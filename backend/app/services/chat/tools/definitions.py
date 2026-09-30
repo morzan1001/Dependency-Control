@@ -3,6 +3,7 @@
 from typing import Any, get_args
 
 from app.core.constants import (
+    DEFAULT_PQC_PLAN_ITEMS,
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
@@ -12,6 +13,8 @@ from app.core.constants import (
 from app.core.permissions import Permissions
 from app.models.finding import FindingType, Severity
 from app.schemas.analytics import GroupBy, Metric
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ReportFramework
 
 from ._helpers import MAX_CRYPTO_ASSET_PAGE, MAX_DAY_WINDOW, MAX_FINDING_ROWS, MAX_PLAN_STEPS, MAX_SUMMARY_ROWS
 
@@ -824,8 +827,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                     "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
-                    "asset_type": {"type": "string", "description": "Optional filter by asset type (e.g. 'algorithm')"},
-                    "primitive": {"type": "string", "description": "Optional filter by primitive (e.g. 'hash')"},
+                    "asset_type": {
+                        "type": "string",
+                        "enum": [t.value for t in CryptoAssetType],
+                        "description": "Optional filter by asset type",
+                    },
+                    "primitive": {
+                        "type": "string",
+                        "enum": [p.value for p in CryptoPrimitive],
+                        "description": "Optional filter by primitive",
+                    },
                     "name_search": {"type": "string", "description": "Optional substring filter on asset name"},
                     "skip": {"type": "integer", "description": "Number of items to skip (default 0)"},
                     "limit": _bounded(100, MAX_CRYPTO_ASSET_PAGE, "Max assets"),
@@ -872,8 +883,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_project_crypto_policy",
             "description": (
-                "Get the effective cryptographic policy for a project, "
-                "including system-level rules and any project-specific overrides."
+                "Get the effective cryptographic policy rules for a project: the system rules with "
+                "the project's override merged in. override_locked=true means a global policy "
+                "disables project overrides, so suggest none for this project."
             ),
             "parameters": {
                 "type": "object",
@@ -889,7 +901,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "suggest_crypto_policy_override",
             "description": (
-                "Advisory: returns the crypto policy rule IDs that produce the most findings. Reads "
+                "Advisory: returns the enabled crypto policy rules that match the most findings. Reads "
                 "the project's head build unless scan_id says otherwise. Does NOT make any changes — "
                 "the caller decides whether to craft a project-scoped override based on the "
                 f"suggestions. {_DESC_ANSWER_NAMES_BUILD}"
@@ -972,7 +984,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "limit": _bounded(500, MAX_PQC_PLAN_ITEMS, "Max plan items"),
+                    "limit": _bounded(DEFAULT_PQC_PLAN_ITEMS, MAX_PQC_PLAN_ITEMS, "Max plan items"),
                 },
                 "required": ["project_id"],
             },
@@ -987,7 +999,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "framework": {"type": "string"},
+                    "framework": {"type": "string", "enum": [f.value for f in ReportFramework]},
                     "limit": _bounded(10, MAX_COMPLIANCE_REPORT_PAGE, "Max reports"),
                 },
             },

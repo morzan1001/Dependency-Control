@@ -15,6 +15,7 @@ from app.models.user import User
 from app.schemas.enrichment import KEVEntry
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._arguments import checked_arguments
+from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.enrichment.service import _build_enrichment, apply_enrichments
 from tests.helpers.permission_presets import PRESET_ADMIN
 
@@ -55,7 +56,7 @@ _TYPE_CRYPTO = "crypto_weak_algorithm"
 _CRYPTO_ASSET_TYPE = "algorithm"
 _HEAD_CRYPTO_ASSET = "MD5"
 _DELETED_BRANCH_CRYPTO_ASSET = "RC4"
-_HEAD_CRYPTO_RULE = "crypto.weak-hash"
+_HEAD_CRYPTO_RULE = "nist-131a-md5"
 _HEAD_CRYPTO_FINDING_ID = "CRYPTO:MD5"
 _HEAD_CRYPTO_ASSET_COUNT = 1
 _HEAD_CRYPTO_RULE_HITS = 1
@@ -499,6 +500,7 @@ class TestScanScopedToolsDefaultToHead:
 
     @pytest.mark.asyncio
     async def test_policy_override_advice_reads_the_head_build(self, seeded_with_crypto, admin_user):
+        await seed_crypto_policies(seeded_with_crypto)
         result = await _call(seeded_with_crypto, admin_user, "suggest_crypto_policy_override", {"project_id": _PROJECT})
 
         assert result["top_noisy_rules"] == [{"rule_id": _HEAD_CRYPTO_RULE, "findings": _HEAD_CRYPTO_RULE_HITS}]

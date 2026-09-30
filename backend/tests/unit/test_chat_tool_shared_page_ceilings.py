@@ -89,6 +89,17 @@ async def test_pqc_migration_plan(seeded, admin_user):
 
 
 @pytest.mark.asyncio
+async def test_pqc_migration_plan_default_size(seeded, admin_user):
+    spy = AsyncMock(return_value={})
+    with patch("app.services.chat.tools.registry.generate_pqc_migration_plan", new=spy):
+        await ChatToolRegistry().execute_tool(
+            "generate_pqc_migration_plan", {"project_id": _PROJECT}, admin_user, seeded
+        )
+    rest_default = inspect.signature(get_pqc_migration_plan).parameters["limit"].default.default
+    assert spy.await_args.kwargs["limit"] == rest_default
+
+
+@pytest.mark.asyncio
 async def test_compliance_reports(seeded, admin_user):
     reached = await _limit_reached_by(
         "list_compliance_reports", {"project_id": _PROJECT}, "list_compliance_reports", seeded, admin_user

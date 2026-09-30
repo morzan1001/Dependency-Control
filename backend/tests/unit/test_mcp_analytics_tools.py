@@ -1,6 +1,6 @@
 """Unit tests for the crypto-analytics MCP tool functions."""
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 
@@ -56,3 +56,16 @@ async def test_mcp_get_crypto_trends_empty_range(db):
 
     assert result["metric"] == "total_crypto_findings"
     assert result["scope"] == "project"
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_trend_question_is_answered_from_the_cache_for_the_rest_of_the_day(db):
+    from app.services.chat.tools import get_crypto_trends
+
+    first = await get_crypto_trends(db, project_id="p", metric="total_crypto_findings", days=30)
+    again = await get_crypto_trends(db, project_id="p", metric="total_crypto_findings", days=30)
+
+    assert again["cache_hit"] is True
+    assert first["range_end"] > datetime.now(timezone.utc)
+    assert first["range_end"].timetz() == time(0, tzinfo=timezone.utc)
+    assert first["range_end"] - first["range_start"] == timedelta(days=30)

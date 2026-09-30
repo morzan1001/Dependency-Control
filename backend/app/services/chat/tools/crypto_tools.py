@@ -11,9 +11,11 @@ from typing import Any, Literal, cast
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import ScopeName
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.user import User
 from app.schemas.finding_details import all_rule_ids
 from app.services.compliance.renderers.base import coverage_statement
+from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 _NOISY_RULE_SAMPLE = 10
 
@@ -34,38 +36,21 @@ async def list_crypto_assets(
     primitive: str | None = None,
     name_search: str | None = None,
     skip: int = 0,
-    limit: int = 100,
+    limit: int,
 ) -> dict[str, Any]:
     from app.repositories.crypto_asset import CryptoAssetRepository
     from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
-    at_enum: CryptoAssetType | None = None
-    if asset_type:
-        try:
-            at_enum = CryptoAssetType(asset_type)
-        except ValueError:
-            at_enum = None
-    pr_enum: CryptoPrimitive | None = None
-    if primitive:
-        try:
-            pr_enum = CryptoPrimitive(primitive)
-        except ValueError:
-            pr_enum = None
-
+    filters: dict[str, Any] = {
+        "asset_type": CryptoAssetType(asset_type) if asset_type else None,
+        "primitive": CryptoPrimitive(primitive) if primitive else None,
+        "name_search": name_search,
+    }
     repo = CryptoAssetRepository(db)
-    items = await repo.list_by_scan(
-        project_id,
-        scan_id,
-        limit=limit,
-        skip=skip,
-        asset_type=at_enum,
-        primitive=pr_enum,
-        name_search=name_search,
-    )
-    total = await repo.count_by_scan(project_id, scan_id)
+    items = await repo.list_by_scan(project_id, scan_id, limit=limit, skip=skip, **filters)
     return {
         "items": [i.model_dump(by_alias=True) for i in items],
-        "total": total,
+        "items_total": await repo.count_by_scan(project_id, scan_id, **filters),
     }
 
 
@@ -97,8 +82,6 @@ async def get_project_crypto_policy(
     *,
     project_id: str,
 ) -> dict[str, Any]:
-    from app.services.crypto_policy.resolver import CryptoPolicyResolver
-
     effective = await CryptoPolicyResolver(db).resolve(project_id)
     return {
         "system_version": effective.system_version,
@@ -114,12 +97,15 @@ async def suggest_crypto_policy_override(
     project_id: str,
     scan_id: str,
 ) -> dict[str, Any]:
-    """Advisory only — returns rule_ids producing the most findings; does not write."""
+    """Advisory only — returns the enabled policy rules matching the most findings; does not write."""
+    enabled = {rule.rule_id for rule in (await CryptoPolicyResolver(db).resolve(project_id)).active_rules}
     cursor = db.findings.find(
-        {"project_id": project_id, "scan_id": scan_id, "type": {"$regex": "^crypto_"}},
+        {"project_id": project_id, "scan_id": scan_id, "type": {"$in": sorted(CRYPTO_FINDING_TYPES)}},
         {"_id": 0, "details.rule_id": 1, "details.matched_rules.rule_id": 1},
     )
-    counts = Counter([rule_id async for doc in cursor for rule_id in all_rule_ids(doc.get("details"))])
+    counts: Counter[str] = Counter()
+    async for doc in cursor:
+        counts.update(all_rule_ids(doc.get("details")) & enabled)
     # Counts tie often, so the rule id breaks them: without it the same scan names a different ten each call.
     top = sorted(counts.items(), key=lambda row: (-row[1], row[0]))[:_NOISY_RULE_SAMPLE]
     return {
@@ -161,20 +147,21 @@ async def get_crypto_trends(
     *,
     project_id: str,
     metric: str = "total_crypto_findings",
-    days: int = 30,
+    days: int,
 ) -> dict[str, Any]:
     from app.schemas.analytics import Metric
     from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket
 
     pkg = _pkg()
     resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
-    now = datetime.now(timezone.utc)
+    # A range ending at the next UTC midnight keeps today's scans and repeats the cache key all day.
+    range_end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     series = await CryptoTrendService(db).trend(
         resolved=resolved,
         metric=cast(Metric, metric),
         bucket=auto_bucket(timedelta(days=days)),
-        range_start=now - timedelta(days=days),
-        range_end=now,
+        range_start=range_end - timedelta(days=days),
+        range_end=range_end,
     )
     return series.model_dump()
 
@@ -183,7 +170,7 @@ async def generate_pqc_migration_plan(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
-    limit: int = 500,
+    limit: int,
 ) -> dict[str, Any]:
     """Generate the PQC migration plan for one project the caller already authorised."""
     pkg = _pkg()
@@ -203,12 +190,7 @@ async def list_compliance_reports(
 ) -> dict[str, Any]:
     """Recent compliance reports among those ``visibility`` admits (metadata only, no artifacts)."""
     pkg = _pkg()
-    fw: Any | None = None
-    if framework:
-        try:
-            fw = pkg.ReportFramework(framework)
-        except ValueError:
-            fw = None
+    fw = pkg.ReportFramework(framework) if framework else None
     reports = await pkg.ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 

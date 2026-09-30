@@ -17,7 +17,7 @@ async def test_generate_pqc_migration_plan_returns_response():
                 )
             )
         )
-        out = await generate_pqc_migration_plan(db, project_id="p1")
+        out = await generate_pqc_migration_plan(db, project_id="p1", limit=500)
     assert out["scope"] == "project"
     assert out["items"] == []
     assert gen_cls.return_value.generate.await_args.kwargs["resolved"] == ResolvedScope(

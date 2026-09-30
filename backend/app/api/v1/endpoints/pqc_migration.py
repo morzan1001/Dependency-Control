@@ -10,6 +10,7 @@ from app.api.deps import get_current_active_user, get_database
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_403
 from app.core.constants import (
+    DEFAULT_PQC_PLAN_ITEMS,
     MAX_PQC_PLAN_ITEMS,
     NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
     WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
@@ -32,7 +33,7 @@ async def get_pqc_migration_plan(
     background_tasks: BackgroundTasks,
     scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
-    limit: int = Query(500, ge=1, le=MAX_PQC_PLAN_ITEMS),
+    limit: int = Query(DEFAULT_PQC_PLAN_ITEMS, ge=1, le=MAX_PQC_PLAN_ITEMS),
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> MigrationPlanResponse:
