@@ -222,21 +222,19 @@ async def test_a_rescan_shared_file_present_at_restore_is_left_untouched(db, arc
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_restore_failing_mid_file_leaves_no_chunks_and_a_retry_succeeds(client, db, archive_env, monkeypatch):
-    await _seed_scan_with_result_and_callgraph(client, db, _sbom_of(20 * _MIB))
+    await _seed_scan_with_result_and_callgraph(client, db, _sbom_of(64 * _MIB))
     before = await _stored_files(db)
     await _archive(db)
     await _expire(db)
     open_bundle_stream = archive._open_bundle_stream
 
-    async def reset_inside_the_sbom(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
-        served = 0
+    async def reset_once_chunks_are_stored(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
         async for chunk in open_bundle_stream(metadata):
-            if served > 10 * _MIB:
+            if await db["fs.chunks"].count_documents({}):
                 raise ConnectionResetError("S3 connection reset by peer")
-            served += len(chunk)
             yield chunk
 
-    monkeypatch.setattr(archive, "_open_bundle_stream", reset_inside_the_sbom)
+    monkeypatch.setattr(archive, "_open_bundle_stream", reset_once_chunks_are_stored)
     assert await restore_scan(db, _SCAN_ID) is None
     assert await db["fs.chunks"].count_documents({}) == 0
     assert await db["fs.files"].count_documents({}) == 0
@@ -244,6 +242,24 @@ async def test_a_restore_failing_mid_file_leaves_no_chunks_and_a_retry_succeeds(
 
     monkeypatch.setattr(archive, "_open_bundle_stream", open_bundle_stream)
     assert await restore_scan(db, _SCAN_ID) is not None
+    assert await _stored_files(db) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_retry_clears_the_chunks_a_restore_killed_mid_file_left_behind(db, archive_env):
+    await _seed_scan(db, _sbom_of(_MIB))
+    before = await _stored_files(db)
+    ((sbom_id, _),) = before.items()
+    stray = await db["fs.chunks"].find({"files_id": sbom_id, "n": {"$lt": 2}}).to_list(None)
+    await _archive(db)
+    await _expire(db)
+    # A killed pod never runs the GridIn abort, so its chunks outlive it without a files document.
+    await db["fs.chunks"].insert_many(stray)
+
+    restored = await restore_scan(db, _SCAN_ID)
+
+    assert restored is not None
     assert await _stored_files(db) == before
 
 
