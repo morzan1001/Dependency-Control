@@ -398,11 +398,7 @@ class TestHighRiskRowsNameTheirOwnCve:
         }
         kev = KEVEntry(
             cve="CVE-2021-44228",
-            vendor_project="Apache",
-            product="Log4j2",
-            vulnerability_name="Log4Shell",
             date_added="2021-12-10",
-            short_description="RCE",
             required_action="patch",
             due_date="2021-12-24",
         )

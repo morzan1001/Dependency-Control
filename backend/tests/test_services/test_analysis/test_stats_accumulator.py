@@ -47,11 +47,7 @@ def _enriched(cve, *, kev=False, ransomware=False, epss=None):
     kev_entry = (
         KEVEntry(
             cve=cve,
-            vendor_project="v",
-            product="p",
-            vulnerability_name="n",
             date_added="2024-01-01",
-            short_description="d",
             required_action="patch",
             due_date="2024-02-01",
             known_ransomware_use=ransomware,

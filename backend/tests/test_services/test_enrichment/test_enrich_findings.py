@@ -7,17 +7,14 @@ import pytest
 
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry
 from app.schemas.finding_details import VulnerabilityDetails, VulnerabilityEntryDetails
-from app.services.enrichment.service import VulnerabilityEnrichmentService
+from app.services.enrichment.service import VulnerabilityEnrichmentService, vulnerability_enrichment_service
+from tests.helpers.enrichment import CISA_HOST, Upstreams, serve_enrichment
 
 
 def _kev(cve: str, due: str, *, ransomware: bool = False) -> KEVEntry:
     return KEVEntry(
         cve=cve,
-        vendor_project="v",
-        product="p",
-        vulnerability_name="n",
         date_added=f"added-{cve}",
-        short_description="d",
         required_action=f"action-{cve}",
         due_date=due,
         known_ransomware_use=ransomware,
@@ -34,22 +31,18 @@ def _service(monkeypatch, kev=(), epss=(), ghsa=()) -> VulnerabilityEnrichmentSe
     epss_scores = {e.cve: e for e in epss}
     resolutions = {g.ghsa_id: g for g in ghsa}
 
-    async def client():
-        return None
-
-    async def load_kev(_client):
+    async def load_kev():
         return kev_catalog
 
-    async def load_epss(_client, cves):
-        return {c: epss_scores[c] for c in cves if c in epss_scores}
+    async def load_epss(cves):
+        return {c: epss_scores[c] for c in cves if c in epss_scores}, True
 
-    async def resolve(ghsa_ids):
+    async def resolve(ghsa_ids, _token):
         return {g: resolutions[g] for g in ghsa_ids if g in resolutions}
 
-    monkeypatch.setattr(service, "_get_client", client)
     monkeypatch.setattr(service._kev_provider, "load_kev_catalog", load_kev)
     monkeypatch.setattr(service._epss_provider, "load_epss_scores", load_epss)
-    monkeypatch.setattr(service, "resolve_ghsa_to_cve", resolve)
+    monkeypatch.setattr(service._ghsa_provider, "resolve_ghsa_to_cve", resolve)
     return service
 
 
@@ -245,6 +238,19 @@ async def test_the_per_cve_enrichment_of_a_bundled_advisory_is_handed_back(monke
     service = _service(monkeypatch, kev=[_kev("CVE-2023-0002", "2024-01-01")])
     finding = _vuln_finding("openssl-libs", {"id": "CVE-2023-0001", "aliases": ["ALAS2-2023-2001", "CVE-2023-0002"]})
 
-    threat_intel = await service.enrich_findings([finding])
+    threat_intel, unavailable = await service.enrich_findings([finding])
 
     assert {cve: e.is_kev for cve, e in threat_intel.items()} == {"CVE-2023-0001": False, "CVE-2023-0002": True}
+    assert unavailable == []
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_source_is_reported_and_the_other_still_applies(fake_cache, monkeypatch):
+    serve_enrichment(monkeypatch, fake_cache, Upstreams(scores={"CVE-2021-44228": 0.94}, down=frozenset({CISA_HOST})))
+    finding = _vuln_finding("log4j-core", {"id": "CVE-2021-44228"})
+
+    _, unavailable = await vulnerability_enrichment_service.enrich_findings([finding])
+
+    assert unavailable == ["KEV"]
+    assert finding["details"]["epss_score"] == 0.94
+    assert "in_kev" not in finding["details"]

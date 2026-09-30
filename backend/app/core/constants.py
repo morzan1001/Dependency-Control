@@ -450,6 +450,7 @@ ANALYZER_TIMEOUTS: dict[str, float] = {
 # GHSA concurrent fetching (with GitHub token: 5000 req/hour, without: 60 req/hour)
 GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
+EPSS_CONCURRENT_BATCHES: int = 4
 
 # "low"/"medium"/"high" are the EPSS buckets; "active" is KEV, "weaponized" KEV with ransomware use.
 ExploitMaturity = Literal["unknown", "low", "medium", "high", "active", "weaponized"]

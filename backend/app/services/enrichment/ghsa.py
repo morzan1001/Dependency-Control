@@ -1,7 +1,6 @@
-import asyncio
 import logging
-
-import httpx
+import time
+from typing import Any
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.config import settings
@@ -11,186 +10,85 @@ from app.core.constants import (
     GHSA_CONCURRENT_REQUESTS_AUTHENTICATED,
     GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED,
 )
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.core.metrics import external_api_rate_limit_hits_total
 from app.schemas.enrichment import GHSAData
 from app.services.github import github_api_headers
 
 logger = logging.getLogger(__name__)
 
 
+def _parse_ghsa_advisory(data: dict[str, Any], ghsa_id: str) -> GHSAData:
+    return GHSAData(ghsa_id=ghsa_id, cve_id=data.get("cve_id") or None, github_url=data.get("html_url") or "")
+
+
 class GHSAProvider:
     """Provider for GitHub Security Advisory (GHSA) data."""
 
-    def __init__(
-        self,
-        max_retries: int | None = None,
-        retry_delay: float | None = None,
-    ):
-        self._github_token: str | None = None
-        self._max_retries = max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
-        self._retry_delay = retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
+    def __init__(self) -> None:
+        # Anonymous and token lookups spend separate GitHub quotas, keyed by whether a token was sent.
+        self._rate_limited_until: dict[bool, float] = {}
 
-    def set_token(self, token: str | None) -> None:
-        self._github_token = token
-        if token:
-            logger.info("GitHub token configured - using authenticated API access")
-
-    def _get_concurrency_limit(self) -> int:
-        if self._github_token:
-            return GHSA_CONCURRENT_REQUESTS_AUTHENTICATED
-        return GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
-
-    async def fetch_ghsa_advisory(self, client: InstrumentedAsyncClient, ghsa_id: str) -> GHSAData | None:
-        """Fetch a single GHSA advisory, using a distributed lock so multiple pods don't fetch the same one."""
-        cache_key = CacheKeys.ghsa(ghsa_id)
-        timeout = ANALYZER_TIMEOUTS.get("ghsa", ANALYZER_TIMEOUTS["default"])
-
-        async def fetch_from_github() -> dict | None:
-            last_error = None
-
-            for attempt in range(self._max_retries):
-                try:
-                    url = f"{GHSA_API_URL}/{ghsa_id}"
-                    response = await client.get(url, headers=github_api_headers(self._github_token), timeout=timeout)
-
-                    if response.status_code == 404:
-                        logger.debug(f"GHSA advisory not found: {ghsa_id}")
-                        # Empty payload becomes a negative cache entry.
-                        return GHSAData(ghsa_id=ghsa_id).model_dump()
-
-                    if response.status_code == 403:
-                        wait_time = self._retry_delay * (2**attempt)
-                        logger.warning(
-                            f"GitHub API rate limited for {ghsa_id}, waiting {wait_time}s (attempt {attempt + 1})"
-                        )
-                        if attempt < self._max_retries - 1:
-                            await asyncio.sleep(wait_time)
-                            continue
-                        return None
-
-                    response.raise_for_status()
-                    data = response.json()
-
-                    cve_id = None
-                    aliases = []
-                    for identifier in data.get("identifiers", []):
-                        id_type = identifier.get("type", "")
-                        id_value = identifier.get("value", "")
-                        if id_type == "CVE" and id_value:
-                            cve_id = id_value
-                        elif id_value and id_value != ghsa_id:
-                            aliases.append(id_value)
-
-                    for alias in data.get("aliases", []):
-                        if alias.startswith("CVE-") and not cve_id:
-                            cve_id = alias
-                        elif alias not in aliases and alias != ghsa_id:
-                            aliases.append(alias)
-
-                    ghsa_data = GHSAData(
-                        ghsa_id=ghsa_id,
-                        cve_id=cve_id,
-                        summary=data.get("summary"),
-                        severity=data.get("severity"),
-                        published_at=data.get("published_at"),
-                        updated_at=data.get("updated_at"),
-                        withdrawn_at=data.get("withdrawn_at"),
-                        github_url=data.get("html_url") or "",
-                        aliases=aliases,
-                    )
-
-                    logger.debug(f"GHSA {ghsa_id} fetched from GitHub API")
-                    return ghsa_data.model_dump()
-
-                except httpx.TimeoutException:
-                    last_error = "Timeout"
-                    logger.warning(f"Timeout fetching GHSA {ghsa_id} (attempt {attempt + 1}/{self._max_retries})")
-                except httpx.ConnectError:
-                    last_error = "Connection error"
-                    logger.warning(
-                        f"Connection error fetching GHSA {ghsa_id} (attempt {attempt + 1}/{self._max_retries})"
-                    )
-                except httpx.HTTPStatusError as e:
-                    last_error = f"HTTP {e.response.status_code}"
-                    if e.response.status_code >= 500:
-                        logger.warning(
-                            f"GitHub API server error for {ghsa_id}: "
-                            f"{e.response.status_code} "
-                            f"(attempt {attempt + 1}/{self._max_retries})"
-                        )
-                    else:
-                        # 4xx (other than 403) won't be fixed by retrying.
-                        logger.warning(f"GitHub API client error for {ghsa_id}: {e}")
-                        return None
-                except Exception as e:
-                    last_error = str(e)
-                    logger.warning(f"Failed to fetch GHSA {ghsa_id} (attempt {attempt + 1}/{self._max_retries}): {e}")
-
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(self._retry_delay)
-
-            logger.error(f"GHSA {ghsa_id} fetch failed after {self._max_retries} attempts: {last_error}")
+    async def fetch_ghsa_advisory(
+        self, client: InstrumentedAsyncClient, ghsa_id: str, token: str | None
+    ) -> GHSAData | None:
+        """One advisory through the cross-pod lock; None while GitHub's quota is exhausted."""
+        authenticated = bool(token)
+        if time.time() < self._rate_limited_until.get(authenticated, 0.0):
             return None
 
+        async def fetch_from_github() -> dict[str, Any]:
+            response = await client.send_with_backoff(
+                "GET",
+                f"{GHSA_API_URL}/{ghsa_id}",
+                attempts=settings.ENRICHMENT_MAX_RETRIES,
+                base_delay=settings.ENRICHMENT_RETRY_DELAY,
+                headers=github_api_headers(token),
+            )
+            if response.status_code == 404:
+                # 404 is authoritative: cache the unresolved placeholder for the GHSA TTL, not the 1 h failure TTL.
+                return GHSAData(ghsa_id=ghsa_id).model_dump()
+            if response.status_code in (403, 429) and response.headers.get("X-RateLimit-Remaining") == "0":
+                self._rate_limited_until[authenticated] = float(response.headers.get("X-RateLimit-Reset") or 0)
+                if response.status_code == 403:
+                    external_api_rate_limit_hits_total.labels(service=client.service_name).inc()
+            response.raise_for_status()
+            return _parse_ghsa_advisory(response.json(), ghsa_id).model_dump()
+
         cached = await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
+            key=CacheKeys.ghsa(ghsa_id),
             fetch_fn=fetch_from_github,
             ttl_seconds=CacheTTL.GHSA_DATA,
+            reraise_fetch_errors=True,
         )
+        return GHSAData(**cached) if cached else None
 
-        if cached:
-            return GHSAData(**cached)
-        return None
-
-    async def resolve_ghsa_to_cve(self, client: InstrumentedAsyncClient, ghsa_ids: list[str]) -> dict[str, GHSAData]:
-        """Resolve GHSA IDs to CVEs and advisory metadata (Redis-cached, semaphore-bounded fetch)."""
-        if not ghsa_ids:
-            return {}
-
+    async def resolve_ghsa_to_cve(self, ghsa_ids: list[str], token: str | None) -> dict[str, GHSAData]:
+        """Resolve GHSA IDs to CVEs from Redis, then GitHub; an id that could not be looked up comes back unresolved."""
+        cached_data = await cache_service.mget([CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids])
         results: dict[str, GHSAData] = {}
-        missing_ghsas: list[str] = []
-
-        cache_keys = [CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids]
-        cached_data = await cache_service.mget(cache_keys)
-
-        for ghsa_id, cache_key in zip(ghsa_ids, cache_keys, strict=True):
-            cached = cached_data[cache_key]
+        missing: list[str] = []
+        for ghsa_id in dict.fromkeys(ghsa_ids):
+            cached = cached_data[CacheKeys.ghsa(ghsa_id)]
             if cached:
                 results[ghsa_id] = GHSAData(**cached)
             else:
-                missing_ghsas.append(ghsa_id)
+                missing.append(ghsa_id)
+        if not missing:
+            return results
 
-        if missing_ghsas:
-            logger.debug(f"Fetching {len(missing_ghsas)} GHSA advisories (cache miss)")
-
-            concurrency = self._get_concurrency_limit()
-            semaphore = asyncio.Semaphore(concurrency)
-
-            async def fetch_with_semaphore(
-                ghsa_id: str,
-            ) -> tuple[str, GHSAData | None]:
-                async with semaphore:
-                    ghsa_data = await self.fetch_ghsa_advisory(client, ghsa_id)
-                    return ghsa_id, ghsa_data
-
-            tasks = [fetch_with_semaphore(ghsa_id) for ghsa_id in missing_ghsas]
-            fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for result in fetch_results:
-                if isinstance(result, Exception):
-                    logger.warning(f"Exception during GHSA fetch: {result}")
-                    continue
-
-                ghsa_id, ghsa_data = result  # type: ignore[misc]
-                if ghsa_data:
-                    results[ghsa_id] = ghsa_data
-                else:
-                    # Empty placeholder for lookups that failed all retries.
-                    results[ghsa_id] = GHSAData(ghsa_id=ghsa_id)
+        concurrency = GHSA_CONCURRENT_REQUESTS_AUTHENTICATED if token else GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
+        timeout = ANALYZER_TIMEOUTS.get("ghsa", ANALYZER_TIMEOUTS["default"])
+        async with InstrumentedAsyncClient("GitHub Advisory API", timeout=timeout) as client:
+            outcomes = await gather_bounded(
+                missing, lambda ghsa_id: self.fetch_ghsa_advisory(client, ghsa_id, token), concurrency
+            )
+        for ghsa_id, outcome in zip(missing, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                logger.warning(f"GHSA {ghsa_id} lookup failed: {outcome}")
+            results[ghsa_id] = outcome if isinstance(outcome, GHSAData) else GHSAData(ghsa_id=ghsa_id)
 
         logger.info(
-            f"Resolved {len(results)} GHSA IDs "
-            f"({len(ghsa_ids) - len(missing_ghsas)} from cache, "
-            f"concurrency: {self._get_concurrency_limit()})"
+            f"Resolved {len(results)} GHSA IDs ({len(results) - len(missing)} from cache, concurrency: {concurrency})"
         )
         return results

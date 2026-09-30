@@ -4,13 +4,14 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.core.constants import (
-    ANALYZER_TIMEOUTS,
     CVSS_SEVERITY_SCORES,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    EPSS_API_URL,
+    GHSA_API_URL,
+    KEV_CATALOG_URL,
 )
 from app.core.cve import entry_cves
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.risk_scoring import calculate_exploit_maturity
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
 from app.services.aggregation.merging import dedupe_vulnerability_entries
@@ -51,15 +52,16 @@ def _vulnerabilities(finding: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _resolve_ghsa(vuln: dict[str, Any], ghsa_data: GHSAData) -> bool:
-    """Record GitHub's CVE and aliases on a GHSA advisory; True when its identity grew."""
+    """Record GitHub's CVE on a GHSA advisory; True when its identity grew."""
     vuln["github_advisory_url"] = ghsa_data.advisory_url
     aliases = vuln.setdefault("aliases", [])
-    new_aliases = [a for a in dict.fromkeys([ghsa_data.cve_id, *ghsa_data.aliases]) if a and a not in aliases]
-    aliases.extend(new_aliases)
-    resolved = ghsa_data.cve_id is not None and vuln.get("resolved_cve") != ghsa_data.cve_id
-    if resolved:
-        vuln["resolved_cve"] = ghsa_data.cve_id
-    return bool(new_aliases) or resolved
+    cve_id = ghsa_data.cve_id
+    if cve_id is None or (cve_id in aliases and vuln.get("resolved_cve") == cve_id):
+        return False
+    if cve_id not in aliases:
+        aliases.append(cve_id)
+    vuln["resolved_cve"] = cve_id
+    return True
 
 
 def _apply_ghsa_resolutions(
@@ -146,71 +148,54 @@ def apply_enrichments(details: dict[str, Any], enrichments: Mapping[str, Vulnera
 class VulnerabilityEnrichmentService:
     """Enrich vulnerabilities with EPSS, KEV, and GHSA data, using Redis for cross-pod caching."""
 
+    SENDS_IDS_TO = (EPSS_API_URL, GHSA_API_URL)
+    DOWNLOADS_FROM = (KEV_CATALOG_URL,)
+
     def __init__(self) -> None:
-        self._http_client: InstrumentedAsyncClient | None = None
-        self._client_lock = asyncio.Lock()
         self._epss_provider = EPSSProvider()
         self._kev_provider = KEVProvider()
         self._ghsa_provider = GHSAProvider()
 
-    def set_github_token(self, token: str | None) -> None:
-        self._ghsa_provider.set_token(token)
-
-    async def _get_client(self) -> InstrumentedAsyncClient:
-        if self._http_client is not None and self._http_client._client is not None:
-            return self._http_client
-
-        async with self._client_lock:
-            # Double-checked locking: another coroutine may have created it.
-            if self._http_client is not None and self._http_client._client is not None:
-                return self._http_client
-            timeout = ANALYZER_TIMEOUTS.get("default", 30.0)
-            self._http_client = InstrumentedAsyncClient("Enrichment Service", timeout=timeout)
-            await self._http_client.start()
-        return self._http_client
-
-    async def close(self) -> None:
-        if self._http_client:
-            await self._http_client.close()
-
-    async def resolve_ghsa_to_cve(self, ghsa_ids: list[str]) -> dict[str, GHSAData]:
-        client = await self._get_client()
-        return await self._ghsa_provider.resolve_ghsa_to_cve(client, ghsa_ids)
-
-    async def enrich_cves(self, cves: list[str]) -> dict[str, VulnerabilityEnrichment]:
-        """Enrich CVEs with EPSS and KEV data; returns {cve: VulnerabilityEnrichment}, scored without CVSS."""
+    async def _enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+        """Enrich CVEs with EPSS and KEV, scored without CVSS; also names the sources that could not be read."""
         unique_cves = list({cve for cve in cves if cve and cve.startswith("CVE-")})
-
         if not unique_cves:
-            return {}
+            return {}, []
 
-        client = await self._get_client()
-
-        kev_task = self._kev_provider.load_kev_catalog(client)
-        epss_task = self._epss_provider.load_epss_scores(client, unique_cves)
-
-        kev_catalog, epss_data = await asyncio.gather(kev_task, epss_task)
-
+        kev_catalog, (epss_data, epss_complete) = await asyncio.gather(
+            self._kev_provider.load_kev_catalog(), self._epss_provider.load_epss_scores(unique_cves)
+        )
+        unavailable = [name for name, missing in (("KEV", kev_catalog is None), ("EPSS", not epss_complete)) if missing]
+        kev_catalog = kev_catalog or {}
         results = {cve: _build_enrichment(cve, kev_catalog.get(cve), epss_data.get(cve)) for cve in unique_cves}
 
         kev_count = sum(1 for e in results.values() if e.is_kev)
-        epss_count = sum(1 for e in results.values() if e.epss_score is not None)
-        logger.info(f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {epss_count})")
+        logger.info(
+            f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {len(epss_data)}, unavailable: {unavailable})"
+        )
+        return results, unavailable
 
-        return results
+    async def enrich_cves(self, cves: list[str]) -> dict[str, VulnerabilityEnrichment]:
+        return (await self._enrich_cves(cves))[0]
 
-    async def enrich_findings(self, findings: list[dict[str, Any]]) -> dict[str, VulnerabilityEnrichment]:
-        """Resolve GHSAs to CVEs, fold EPSS/KEV onto each advisory and finding in place; returns per-CVE enrichment."""
+    async def enrich_findings(
+        self, findings: list[dict[str, Any]], github_token: str | None = None
+    ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+        """Resolve GHSAs to CVEs, fold EPSS/KEV onto each advisory and finding in place; returns per-CVE
+        enrichment and the sources that could not be read."""
         ghsa_ids = sorted(
             {i for f in findings for v in _vulnerabilities(f) if (i := v.get("id") or "").startswith("GHSA-")}
         )
         if ghsa_ids:
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
-            resolutions = await self.resolve_ghsa_to_cve(ghsa_ids)
+            resolutions = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
             _dedupe_finding_vulnerabilities(_apply_ghsa_resolutions(findings, resolutions))
 
         cves = sorted({cve for f in findings for v in _vulnerabilities(f) for cve in entry_cves(v)})
-        enrichments = await self.enrich_cves(cves)
+        enrichments, unavailable = await self._enrich_cves(cves)
         for finding in findings:
             apply_enrichments(finding.setdefault("details", {}), enrichments)
-        return enrichments
+        return enrichments, unavailable
+
+
+vulnerability_enrichment_service = VulnerabilityEnrichmentService()

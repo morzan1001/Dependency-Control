@@ -74,7 +74,7 @@ from app.services.analysis.stats import (
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
-from app.services.enrichment import enrich_vulnerability_findings
+from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.github import is_public_github
 from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
 from app.services.reachability_enrichment import (
@@ -536,10 +536,13 @@ async def _run_epss_kev_enrichment(
 ) -> None:
     """Run EPSS/KEV enrichment on vulnerability findings."""
     try:
-        await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
+        _, unavailable = await vulnerability_enrichment_service.enrich_findings(
+            vulnerability_findings, github_token=github_token
+        )
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
         await result_repo.insert_result(scan_id, "epss_kev", epss_kev_summary)
-        results_summary.append(f"epss_kev: Success ({len(vulnerability_findings)} enriched)")
+        outcome = f"Partial ({' and '.join(unavailable)} unavailable)" if unavailable else "Success"
+        results_summary.append(f"epss_kev: {outcome} ({len(vulnerability_findings)} enriched)")
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
         if analysis_enrichment_total:

@@ -19,9 +19,7 @@ from app.core.constants import (
     ADHOC_MAX_SCANNER_FINDINGS,
     DEPS_DEV_API_URL,
     EOL_API_URL,
-    EPSS_API_URL,
     GITHUB_API_URL,
-    KEV_CATALOG_URL,
     MALWARE_API_URL,
     NPM_REGISTRY_URL,
     OSV_BATCH_API_URL,
@@ -54,7 +52,7 @@ from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
-from app.services.enrichment.service import VulnerabilityEnrichmentService
+from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     _prepare_callgraph,
@@ -198,8 +196,9 @@ _STAGE_NOTES: dict[str, str] = {
         "process; no posted coordinate is sent"
     ),
     _ENRICHMENT: (
-        f"vulnerability ids are sent to the EPSS API at {_hosts(EPSS_API_URL)} and matched "
-        f"against the CISA KEV catalog from {_hosts(KEV_CATALOG_URL)}"
+        f"vulnerability ids are sent to {_hosts(*vulnerability_enrichment_service.SENDS_IDS_TO)}; the CISA KEV "
+        f"catalog is downloaded from {_hosts(*vulnerability_enrichment_service.DOWNLOADS_FROM)} and matched in "
+        "this process"
     ),
     _CRYPTO_RULES: "graded against the shipped seed rules, not against this installation's crypto policy",
 }
@@ -687,22 +686,19 @@ def _aggregate_crypto_rules(
 async def _enrich_vulnerabilities(
     records: list[dict[str, Any]], report: AnalyzerReport
 ) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
-    """Add EPSS/KEV to the vulnerability records through a service private to this request;
-    returns the EPSS/KEV summary and the per-CVE enrichment.
-
-    The module singleton carries a mutable GitHub token shared with background scans.
-    """
+    """Add EPSS/KEV to the vulnerability records; returns the EPSS/KEV summary and the per-CVE enrichment."""
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
-    service = VulnerabilityEnrichmentService()
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     try:
-        threat_intel = await service.enrich_findings(vulnerabilities)
-        _record_ran(report, _ENRICHMENT)
+        threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
         _record_errored(report, _ENRICHMENT, str(exc))
-    finally:
-        await service.close()
+    else:
+        if unavailable:
+            _record_errored(report, _ENRICHMENT, f"{' and '.join(unavailable)} unavailable")
+        else:
+            _record_ran(report, _ENRICHMENT)
     refresh_vulnerability_info(records)
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 

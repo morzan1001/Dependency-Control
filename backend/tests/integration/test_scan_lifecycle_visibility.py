@@ -222,7 +222,9 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, m
     async def _enrichment_outage(*_args, **_kwargs):
         raise RuntimeError("EPSS feed unreachable")
 
-    monkeypatch.setattr("app.services.analysis.engine.enrich_vulnerability_findings", _enrichment_outage)
+    monkeypatch.setattr(
+        "app.services.analysis.engine.vulnerability_enrichment_service.enrich_findings", _enrichment_outage
+    )
     serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
