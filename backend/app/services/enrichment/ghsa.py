@@ -86,7 +86,7 @@ class GHSAProvider:
             return results
 
         concurrency = GHSA_CONCURRENT_REQUESTS_AUTHENTICATED if token else GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
-        timeout = ANALYZER_TIMEOUTS.get("ghsa", ANALYZER_TIMEOUTS["default"])
+        timeout = ANALYZER_TIMEOUTS["ghsa"]
         async with InstrumentedAsyncClient("GitHub Advisory API", timeout=timeout) as client:
             outcomes = await gather_bounded(
                 missing, lambda ghsa_id: self.fetch_ghsa_advisory(client, ghsa_id, token), concurrency

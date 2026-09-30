@@ -14,7 +14,7 @@ _MEMO_SECONDS = 15 * 60
 
 
 async def _fetch_kev_catalog() -> dict[str, Any]:
-    timeout = ANALYZER_TIMEOUTS.get("kev", ANALYZER_TIMEOUTS["default"])
+    timeout = ANALYZER_TIMEOUTS["kev"]
     async with InstrumentedAsyncClient("CISA KEV", timeout=timeout) as client:
         response = await client.send_with_backoff(
             "GET",

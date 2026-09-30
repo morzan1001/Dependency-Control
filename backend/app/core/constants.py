@@ -426,7 +426,6 @@ ANALYZER_BATCH_SIZES: dict[str, int] = {
     "malware": 20,
     "maintainer_risk": 10,
     "hash_verification": 10,
-    "typosquatting": 50,
     "end_of_life": 20,
     "epss": 100,  # Max CVEs per EPSS API request
 }
@@ -444,7 +443,6 @@ ANALYZER_TIMEOUTS: dict[str, float] = {
     "epss": 30.0,
     "kev": 30.0,
     "ghsa": 15.0,
-    "default": 30.0,
 }
 
 # GHSA concurrent fetching (with GitHub token: 5000 req/hour, without: 60 req/hour)

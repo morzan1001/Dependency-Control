@@ -81,7 +81,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         github_token = settings.get("github_token")
         self._stale_after_days = settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
         self._warn_after_days = settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS)
-        timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
+        timeout = ANALYZER_TIMEOUTS["maintainer_risk"]
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
             results = await gather_bounded(

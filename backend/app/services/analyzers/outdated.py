@@ -109,7 +109,7 @@ class OutdatedAnalyzer(Analyzer):
         logger.debug(f"Outdated: {len(infos)} packages from cache, {len(missing)} to fetch")
 
         if missing:
-            timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
+            timeout = ANALYZER_TIMEOUTS["outdated"]
             async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
                 fetched = await gather_bounded(
                     missing,

@@ -141,7 +141,7 @@ class EndOfLifeAnalyzer(Analyzer):
         results: list[dict[str, Any]],
     ) -> None:
         """Fetch missing products from endoflife.date and emit issues for each."""
-        timeout = ANALYZER_TIMEOUTS.get("end_of_life", ANALYZER_TIMEOUTS["default"])
+        timeout = ANALYZER_TIMEOUTS["end_of_life"]
         # Upstream renames answer 301; following them keeps a renamed product covered.
         async with InstrumentedAsyncClient("endoflife.date API", timeout=timeout, follow_redirects=True) as client:
             for product in products_to_fetch:

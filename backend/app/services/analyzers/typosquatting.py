@@ -156,7 +156,7 @@ class TyposquattingAnalyzer(Analyzer):
 
     async def _fetch_pypi_packages(self) -> list[str] | None:
         """The top PyPI package names, or None when the ranking cannot be read."""
-        timeout = ANALYZER_TIMEOUTS.get("typosquatting", ANALYZER_TIMEOUTS["default"])
+        timeout = ANALYZER_TIMEOUTS["typosquatting"]
         try:
             # The corpus has moved host before, and a 301 that is not followed leaves the
             # detector comparing against the handful of built-in names.

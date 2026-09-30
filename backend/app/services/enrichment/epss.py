@@ -14,8 +14,8 @@ class EPSSProvider:
     """Provider for Exploit Prediction Scoring System (EPSS) data."""
 
     def __init__(self) -> None:
-        self._batch_size = ANALYZER_BATCH_SIZES.get("epss", 100)
-        self._timeout = ANALYZER_TIMEOUTS.get("epss", ANALYZER_TIMEOUTS["default"])
+        self._batch_size = ANALYZER_BATCH_SIZES["epss"]
+        self._timeout = ANALYZER_TIMEOUTS["epss"]
 
     async def _fetch_batch(self, client: InstrumentedAsyncClient, cves: list[str]) -> dict[str, EPSSData]:
         response = await client.send_with_backoff(

@@ -253,7 +253,7 @@ class OSVAnalyzer(Analyzer):
         pending, uncached = await self._get_cached_stubs(targets)
         logger.debug(f"OSV: {len(pending)} from cache, {len(uncached)} to fetch")
 
-        timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
+        timeout = ANALYZER_TIMEOUTS["osv"]
         async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
             skipped = await self._fetch_uncached(client, uncached, pending)
             results, unhydrated = await self._hydrate_and_emit(client, pending)
@@ -286,7 +286,7 @@ class OSVAnalyzer(Analyzer):
         Returns how many components were never scanned: dropped batches, rejected queries,
         persistent rate limiting and truncated responses.
         """
-        batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
+        batch_size = ANALYZER_BATCH_SIZES["osv"]
         skipped = 0
         fetched: _Pending = []
         for chunk_start in range(0, len(uncached), batch_size):

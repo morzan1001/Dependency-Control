@@ -74,7 +74,7 @@ class HashVerificationAnalyzer(Analyzer):
         """Registry digests per cache key: one batched cache read, then a bounded fetch of the misses."""
         registry_hashes = await cache_service.mget(list(lookups))
         missing = [key for key, value in registry_hashes.items() if value is None]
-        timeout = ANALYZER_TIMEOUTS.get("hash_verification", ANALYZER_TIMEOUTS["default"])
+        timeout = ANALYZER_TIMEOUTS["hash_verification"]
 
         async with InstrumentedAsyncClient("Package Registry API", timeout=timeout) as client:
 

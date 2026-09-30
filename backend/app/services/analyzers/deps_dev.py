@@ -66,7 +66,7 @@ class DepsDevAnalyzer(Analyzer):
 
     async def _fetch_uncached(self, keys: list[str], targets: dict[str, tuple[dict[str, Any], str, str]]) -> list[Any]:
         """Fetch deps.dev data for uncached packages with bounded concurrency."""
-        timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
+        timeout = ANALYZER_TIMEOUTS["deps_dev"]
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
 
             async def fetch(key: str) -> dict[str, Any] | None:
