@@ -551,17 +551,20 @@ class ChatToolRegistry:
         head, _ = await self._heads_in_scope(ctx)
         if not head:
             return {"trend": [], "message": _ERR_NO_SCAN_DATA}
-        head_branches = [
-            {"project_id": scan["project_id"], "branch": scan.get("branch")}
+        head_scans = [
+            scan
             async for scan in ctx.db["scans"].find(
-                {"_id": {"$in": list(head.values())}}, {"project_id": 1, "branch": 1}
+                {"_id": {"$in": list(head.values())}}, {"project_id": 1, "branch": 1, "original_scan_id": 1}
             )
         ]
+        head_roots = [scan.get("original_scan_id") or scan["_id"] for scan in head_scans]
         severities = ("critical", "high", "medium", "low")
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
-                    "$or": head_branches,
+                    "$or": [{"project_id": scan["project_id"], "branch": scan.get("branch")} for scan in head_scans],
+                    # A rescan is dated now over an older commit; only the head commit's own rescans count.
+                    "$nor": [{"is_rescan": True, "original_scan_id": {"$nin": head_roots}}],
                     "status": {"$in": SCAN_USABLE_STATUSES},
                     "created_at": {"$gte": datetime.now(timezone.utc) - window},
                 }

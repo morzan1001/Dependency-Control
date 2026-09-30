@@ -11,6 +11,7 @@ from app.models.stats import Stats
 from app.models.user import User
 from app.repositories.scans import ScanRepository
 from app.services.chat.tools import ChatToolRegistry
+from app.services.rescan import build_rescan
 from tests.helpers.permission_presets import PRESET_ADMIN
 
 # The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
@@ -80,6 +81,29 @@ async def test_each_period_sums_the_last_head_branch_build_of_every_project(db, 
         {"period": _period(1), "critical": 1, "high": 0, "medium": 0, "low": 0, "risk_score": 10.0, "projects": 1},
         {"period": _period(3), "critical": 5, "high": 1, "medium": 2, "low": 0, "risk_score": 30.0, "projects": 2},
     ]
+
+
+async def _rescan(db, source_id: str, created_at: datetime, **counts) -> None:
+    source = await db.scans.find_one({"_id": source_id})
+    rescan = build_rescan(source).model_copy(
+        update={"status": SCAN_STATUS_COMPLETED, "created_at": created_at, "stats": Stats(**counts)}
+    )
+    await ScanRepository(db).create(rescan)
+    await ScanRepository(db).report_rescan_run(
+        source_id, source.get("sbom_generation"), {"latest_rescan_id": rescan.id}
+    )
+
+
+async def test_a_rescan_of_an_older_release_does_not_stand_in_for_the_head_build(db, database):
+    await _project(db, _CHECKOUT, "checkout-tip")
+    await _build(db, "checkout-release", _CHECKOUT, _at(5, 12), critical=50, risk_score=90.0)
+    await _build(db, "checkout-tip", _CHECKOUT, _at(0, 0), critical=1, risk_score=10.0)
+    await _rescan(db, "checkout-tip", _at(0, 0) + timedelta(minutes=1), critical=2, risk_score=15.0)
+    await _rescan(db, "checkout-release", _at(0, 0) + timedelta(minutes=2), critical=51, risk_score=95.0)
+
+    result = await _trend(db, days=7)
+
+    assert [(p["period"], p["critical"]) for p in result["trend"]] == [(_period(0), 2), (_period(5), 50)]
 
 
 async def test_a_project_id_charts_that_project_alone(db, database):
