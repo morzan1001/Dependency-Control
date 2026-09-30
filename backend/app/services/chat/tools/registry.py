@@ -29,12 +29,16 @@ from app.core.constants import (
     ANALYTICS_MAX_SCOPE_PROJECTS,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    RETENTION_ACTION_DELETE,
     SCAN_USABLE_STATUSES,
+    SETTINGS_MODE_GLOBAL,
+    SETTINGS_MODE_PROJECT,
     SEVERITY_ORDER,
     get_severity_value,
     max_severity,
 )
 from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
+from app.core.housekeeping import resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import (
@@ -54,6 +58,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
+from app.schemas.project import license_policy_from_settings
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
@@ -119,7 +124,26 @@ def _rendered_fields(model: type[BaseModel], *, withheld: frozenset[str] = froze
     ]
 
 
-_PROJECT_FIELDS = _rendered_fields(Project)
+_PROJECT_DETAIL_FIELDS = [
+    "_id",
+    "name",
+    "team_ids",
+    "default_branch",
+    "deleted_branches",
+    "last_scan_at",
+    "created_at",
+    "active_analyzers",
+    "analyzer_settings",
+    "enforce_notification_settings",
+    "gitlab_instance_id",
+    "gitlab_project_id",
+    "gitlab_project_path",
+    "gitlab_mr_comments_enabled",
+    "github_instance_id",
+    "github_repository_id",
+    "github_repository_path",
+    "github_pr_comments_enabled",
+]
 _MEMBER_FIELDS = ("user_id", "username", "role", "effective_role", "inherited_from")
 # Custom headers hold receiver credentials, and a tool answer leaves the process for the LLM provider.
 _WEBHOOK_FIELDS = _rendered_fields(WebhookResponse, withheld=frozenset({"headers"}))
@@ -470,7 +494,22 @@ class ChatToolRegistry:
 
     async def _tool_get_project_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        return {"project": _serialize_doc(project, _PROJECT_FIELDS)}
+        system = await SystemSettingsRepository(ctx.db).get()
+        if system.retention_mode == SETTINGS_MODE_GLOBAL:
+            days, action, source = system.global_retention_days, system.global_retention_action, SETTINGS_MODE_GLOBAL
+        else:
+            days = project.get("retention_days") or 0
+            action = project.get("retention_action") or RETENTION_ACTION_DELETE
+            source = SETTINGS_MODE_PROJECT
+        license_entry = (project.get("analyzer_settings") or {}).get("license_compliance")
+        return {
+            "project": {
+                **_serialize_doc(project, _PROJECT_DETAIL_FIELDS),
+                "retention": {"days": days, "action": action, "source": source},
+                "rescan_interval_hours": resolve_rescan_interval(Project(**project), system),
+                "license_policy": license_policy_from_settings(license_entry).model_dump(),
+            }
+        }
 
     async def _tool_get_project_members(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -478,22 +517,6 @@ class ChatToolRegistry:
         if data is None:
             raise _ToolRefusal(_ERR_PROJECT_NOT_FOUND)
         return {"members": [{key: m.get(key) for key in _MEMBER_FIELDS} for m in data["members"]]}
-
-    async def _tool_get_project_settings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        return {
-            "settings": _serialize_doc(
-                project,
-                [
-                    "retention_days",
-                    "retention_action",
-                    "rescan_enabled",
-                    "rescan_interval",
-                    "active_analyzers",
-                    "analyzer_settings",
-                ],
-            )
-        }
 
     async def _tool_get_scan_history(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -1604,7 +1627,6 @@ class ChatToolRegistry:
         "list_projects": _tool_list_projects,
         "get_project_details": _tool_get_project_details,
         "get_project_members": _tool_get_project_members,
-        "get_project_settings": _tool_get_project_settings,
         "get_scan_history": _tool_get_scan_history,
         "get_scan_details": _tool_get_scan_details,
         "get_scan_findings": _tool_get_scan_findings,

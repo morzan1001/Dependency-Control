@@ -77,7 +77,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_project_details",
-            "description": "Get detailed information about a specific project including members, active analyzers, and configuration.",
+            "description": (
+                "Get a project's configuration: owning teams, default branch, active analyzers and their "
+                "settings, SCM links, and the policies the system applies to it. retention is what "
+                "housekeeping does to old scans (source global or project); 0 days or action 'none' keeps "
+                "them forever. rescan_interval_hours is the scheduled rescan interval, null when rescans are "
+                "off. license_policy is the effective license compliance policy. Members come from "
+                "get_project_members; severity counts from get_scan_history."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,21 +98,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_project_members",
-            "description": "Get the list of members and their roles for a project.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                },
-                "required": ["project_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_project_settings",
-            "description": "Get project configuration: retention policy, rescan settings, license policy, active analyzers.",
+            "description": (
+                "Get everyone with access to a project: its direct members and the members of every owning "
+                "team, each with username, role, effective_role and inherited_from (the granting teams)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

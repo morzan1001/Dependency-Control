@@ -61,7 +61,6 @@ _ALWAYS_PROJECT_SCOPED = frozenset(
     {
         "get_project_details",
         "get_project_members",
-        "get_project_settings",
         "get_scan_history",
         "list_project_waivers",
         "list_project_webhooks",
