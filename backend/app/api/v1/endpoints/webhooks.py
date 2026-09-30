@@ -43,10 +43,10 @@ async def _create_scoped(
 
 
 async def _list_scoped(db: DatabaseDep, scope: dict[str, Any], skip: int, limit: int) -> dict[str, Any]:
-    """One page of the scope's webhooks, newest first; the response schema withholds the HMAC signing secret."""
+    """The response schema withholds the HMAC signing secret."""
     repo = WebhookRepository(db)
     total = await repo.count(scope)
-    webhooks = await repo.find_many(scope, skip=skip, limit=limit, sort_by="created_at", sort_order=-1)
+    webhooks = await repo.list_scope(scope, skip=skip, limit=limit)
     items = [WebhookResponse.model_validate(w).model_dump() for w in webhooks]
     return build_pagination_response(items, total, skip, limit)
 
