@@ -77,10 +77,8 @@ class _FakeResult:
         self.result = result
 
 
-class TestAggregateExternalSkipsPostProcessors:
-    def test_epss_kev_and_reachability_not_aggregated(self, monkeypatch):
-        # No registered analyzer -> only _POST_PROCESSOR_ANALYZERS membership can exclude these.
-        monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
+class TestAggregateExternalSkipsEngineRows:
+    def test_post_processor_and_crypto_rows_are_not_aggregated_again(self):
         aggregator = ResultAggregator()
 
         calls = []
@@ -95,13 +93,14 @@ class TestAggregateExternalSkipsPostProcessors:
         results = [
             _FakeResult("epss_kev", {"summary": 1}),
             _FakeResult("reachability", {"summary": 1}),
+            *(_FakeResult(name, {"findings": []}) for name in sorted(CRYPTO_ANALYZERS)),
         ]
         result_repo = SimpleNamespace(find_by_scan=AsyncMock(return_value=results))
         results_summary: list = []
 
         asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-1", results_summary))
 
-        assert calls == [], f"post-processor rows must not be aggregated; got {calls}"
+        assert calls == [], f"engine-written rows must not be aggregated; got {calls}"
         assert results_summary == [], f"no spurious Success lines expected; got {results_summary}"
 
 

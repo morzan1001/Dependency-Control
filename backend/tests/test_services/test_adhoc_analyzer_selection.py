@@ -6,7 +6,7 @@ from app.services.analysis.adhoc import (
     ADHOC_SKIP_REASONS,
     resolve_adhoc_analyzers,
 )
-from app.services.analysis.registry import analyzer_factories
+from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
 from tests.helpers.analyzers import build_analyzer
 
 _OSV = "osv"
@@ -52,7 +52,7 @@ def test_every_registered_analyzer_is_either_selected_or_given_a_reason():
 
     selected = resolve_adhoc_analyzers(None, report)
 
-    assert set(selected) | set(report.skipped) == set(analyzer_factories)
+    assert set(selected) | set(report.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS
     assert not set(selected) & set(report.skipped)
 
 
@@ -132,4 +132,4 @@ def test_empty_explicit_list_runs_nothing():
     report = AnalyzerReport()
 
     assert resolve_adhoc_analyzers([], report) == []
-    assert set(report.skipped) == set(analyzer_factories)
+    assert set(report.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS

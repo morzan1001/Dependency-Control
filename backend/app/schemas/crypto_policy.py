@@ -99,7 +99,7 @@ class CryptoRule(BaseModel):
         return self
 
 
-# The finding types CryptoRuleAnalyzer evaluates; its matchers run for no other type.
+# The finding types evaluate_rules evaluates; its matchers run for no other type.
 RULE_DRIVEN_FINDING_TYPES: frozenset[FindingType] = frozenset(
     {FindingType.CRYPTO_WEAK_ALGORITHM, FindingType.CRYPTO_WEAK_KEY, FindingType.CRYPTO_QUANTUM_VULNERABLE}
 )

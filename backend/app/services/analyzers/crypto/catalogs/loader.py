@@ -1,8 +1,7 @@
-"""Loader for the IANA TLS cipher-suite catalog with Redis cache and bundled YAML fallback."""
+"""Loader for the IANA TLS cipher-suite catalog: shared-cache read of the live registry, bundled YAML fallback."""
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import logging
 import re
@@ -11,21 +10,24 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-import httpx
 import yaml
 
 from app.core.cache import cache_service
+from app.core.http_utils import InstrumentedAsyncClient
+from app.models.finding import Severity
 
 logger = logging.getLogger(__name__)
 
-CURRENT_IANA_CATALOG_VERSION = 1
+# Bump whenever _parse_components or _derive_weaknesses change: findings and compliance reports stamp it.
+IANA_WEAKNESS_RULES_VERSION = 2
 
 _CATALOG_FALLBACK_PATH = Path(__file__).parent / "iana_tls_cipher_suites.yaml"
 _IANA_CSV_URL = "https://www.iana.org/assignments/tls-parameters/tls-parameters-4.csv"
 _IANA_CSV_TIMEOUT = 15.0
-_IANA_CSV_MAX_BYTES = 5 * 1024 * 1024
-_IANA_CACHE_KEY = "iana:tls_cipher_suites:v1"
+_IANA_CACHE_KEY = "iana:tls_cipher_suites"
 _IANA_CACHE_TTL_SECONDS = 7 * 24 * 3600
+# The registry lists ~350 suites; a 200 with far fewer is a proxy page or a changed format.
+_MIN_REGISTRY_SUITES = 100
 
 _SUITE_PATTERN = re.compile(r"^TLS_")
 
@@ -34,8 +36,29 @@ _CIPHER_KEYWORDS = {
     "DES_CBC": "weak-cipher-des",
     "DES40": "weak-cipher-des",
     "3DES": "weak-cipher-3des",
+    "IDEA": "weak-cipher-idea",
     "NULL": "weak-cipher-null",
     "EXPORT": "weak-cipher-export",
+}
+
+# RFC 9150 suites that authenticate but do not encrypt.
+_INTEGRITY_ONLY_SUITES = frozenset({"TLS_SHA256_SHA256", "TLS_SHA384_SHA384"})
+
+WEAKNESS_SEVERITY = {
+    "null-cipher": Severity.CRITICAL,
+    "null-auth": Severity.CRITICAL,
+    "export-grade": Severity.CRITICAL,
+    "anonymous": Severity.CRITICAL,
+    "weak-kex-anon": Severity.CRITICAL,
+    "weak-cipher-null": Severity.CRITICAL,
+    "weak-cipher-export": Severity.CRITICAL,
+    "weak-cipher-rc4": Severity.HIGH,
+    "weak-cipher-des": Severity.HIGH,
+    "weak-cipher-3des": Severity.HIGH,
+    "weak-cipher-idea": Severity.HIGH,
+    "weak-mac-md5": Severity.HIGH,
+    "weak-mac-sha1": Severity.MEDIUM,
+    "no-forward-secrecy": Severity.LOW,
 }
 
 
@@ -50,89 +73,34 @@ class CipherSuiteEntry:
     weaknesses: list[str] = field(default_factory=list)
 
 
-@dataclass
-class _CatalogMemo:
-    catalog: dict[str, CipherSuiteEntry] | None = None
-
-
-_IN_PROCESS = _CatalogMemo()
-_IN_PROCESS_LOCK = asyncio.Lock()
-
-
 async def load_iana_catalog() -> dict[str, CipherSuiteEntry]:
-    """Return the IANA TLS cipher-suite catalog: in-process, then Redis, then live fetch, then bundled YAML."""
-    if _IN_PROCESS.catalog is not None:
-        return _IN_PROCESS.catalog
-
-    async with _IN_PROCESS_LOCK:
-        if _IN_PROCESS.catalog is None:
-            _IN_PROCESS.catalog = await _load_shared_catalog()
-        return _IN_PROCESS.catalog
+    """The registry's suites graded by the current rules, or the bundled snapshot while the registry is unreachable."""
+    raw = await cache_service.get_or_fetch_with_lock(_IANA_CACHE_KEY, _fetch_from_iana, _IANA_CACHE_TTL_SECONDS)
+    if not isinstance(raw, list) or not raw:
+        logger.info("IANA catalog: registry unavailable, using the bundled snapshot at %s", _CATALOG_FALLBACK_PATH)
+        raw = _load_fallback_yaml()
+    return _materialize(raw)
 
 
-async def _load_shared_catalog() -> dict[str, CipherSuiteEntry]:
-    cached_raw = await _read_from_redis()
-    if cached_raw is not None:
-        return _materialize(cached_raw)
-
-    fetched_raw = await _fetch_from_iana()
-    if fetched_raw is not None:
-        await _write_to_redis(fetched_raw)
-        return _materialize(fetched_raw)
-
-    logger.warning(
-        "IANA catalog: live fetch + Redis lookup both failed, falling back to bundled snapshot at %s",
-        _CATALOG_FALLBACK_PATH,
-    )
-    return _materialize(_load_fallback_yaml())
-
-
-def reset_iana_cache_for_tests() -> None:
-    """Clear the in-process memoized catalog."""
-    _IN_PROCESS.catalog = None
-
-
-async def _read_from_redis() -> list[dict[str, Any]] | None:
+async def _fetch_from_iana() -> list[dict[str, str]] | None:
+    """The registry's (name, value) rows; None when it is unreachable or answers with something else."""
     try:
-        cached = await cache_service.get(_IANA_CACHE_KEY)
-    except Exception:
-        logger.exception("IANA catalog: Redis GET failed (non-fatal)")
-        return None
-    if not isinstance(cached, list) or not cached:
-        return None
-    return cached
-
-
-async def _write_to_redis(suites: list[dict[str, Any]]) -> None:
-    try:
-        await cache_service.set(_IANA_CACHE_KEY, suites, _IANA_CACHE_TTL_SECONDS)
-    except Exception:
-        logger.exception("IANA catalog: Redis SET failed (non-fatal)")
-
-
-async def _fetch_from_iana() -> list[dict[str, Any]] | None:
-    """Fetch and parse the IANA CSV into suite dicts; None on any network/parsing error."""
-    try:
-        async with httpx.AsyncClient(timeout=_IANA_CSV_TIMEOUT) as client:
+        async with InstrumentedAsyncClient("IANA registry", timeout=_IANA_CSV_TIMEOUT) as client:
             resp = await client.get(_IANA_CSV_URL)
-            resp.raise_for_status()
-            body = resp.content
-            if len(body) > _IANA_CSV_MAX_BYTES:
-                logger.warning(
-                    "IANA catalog: registry CSV is %d bytes (> %d limit); refusing",
-                    len(body),
-                    _IANA_CSV_MAX_BYTES,
-                )
-                return None
-            return _parse_iana_csv(body.decode("utf-8", errors="replace"))
+        resp.raise_for_status()
+        suites = _parse_iana_csv(resp.text)
     except Exception:
         logger.exception("IANA catalog: live fetch failed (non-fatal)")
         return None
+    if len(suites) < _MIN_REGISTRY_SUITES:
+        logger.warning("IANA catalog: registry CSV yielded %d TLS_ suites; ignoring", len(suites))
+        return None
+    return suites
 
 
-def _parse_iana_csv(csv_text: str) -> list[dict[str, Any]]:
+def _parse_iana_csv(csv_text: str) -> list[dict[str, str]]:
     reader = csv.DictReader(StringIO(csv_text))
-    out: list[dict[str, Any]] = []
+    out: list[dict[str, str]] = []
     for row in reader:
         name = (row.get("Description") or "").strip()
         value = (row.get("Value") or "").strip()
@@ -140,18 +108,7 @@ def _parse_iana_csv(csv_text: str) -> list[dict[str, Any]]:
             continue
         if "Reserved" in (row.get("Recommended", "") + row.get("Description", "")):
             continue
-        comps = _parse_components(name)
-        out.append(
-            {
-                "name": name,
-                "value": value,
-                "key_exchange": comps["key_exchange"],
-                "authentication": comps["authentication"],
-                "cipher": comps["cipher"],
-                "mac": comps["mac"],
-                "weaknesses": _derive_weaknesses(name),
-            }
-        )
+        out.append({"name": name, "value": value})
     return out
 
 
@@ -160,7 +117,7 @@ def _parse_components(name: str) -> dict[str, str]:
     if "_WITH_" not in name:
         parts = name.split("_")
         if len(parts) >= 3:
-            result["cipher"] = "_".join(parts[1:-1])
+            result["cipher"] = "NULL" if name in _INTEGRITY_ONLY_SUITES else "_".join(parts[1:-1])
             result["mac"] = parts[-1]
         return result
     lhs, rhs = name.split("_WITH_", 1)
@@ -204,6 +161,8 @@ def _derive_weaknesses(name: str) -> list[str]:
         tags.append("null-cipher")
     if "NULL" in before_with:
         tags.append("null-auth")
+    if upper in _INTEGRITY_ONLY_SUITES:
+        tags += ["null-cipher", "weak-cipher-null"]
 
     if "EXPORT" in upper:
         tags.append("export-grade")
@@ -221,18 +180,12 @@ def _load_fallback_yaml() -> list[dict[str, Any]]:
 
 
 def _materialize(suites: list[dict[str, Any]]) -> dict[str, CipherSuiteEntry]:
-    out: dict[str, CipherSuiteEntry] = {}
-    for e in suites:
-        name = e.get("name")
-        if not name:
-            continue
-        out[name] = CipherSuiteEntry(
-            name=name,
-            value=e.get("value", ""),
-            key_exchange=e.get("key_exchange", ""),
-            authentication=e.get("authentication", ""),
-            cipher=e.get("cipher", ""),
-            mac=e.get("mac", ""),
-            weaknesses=list(e.get("weaknesses") or []),
+    return {
+        row["name"]: CipherSuiteEntry(
+            name=row["name"],
+            value=row["value"],
+            weaknesses=_derive_weaknesses(row["name"]),
+            **_parse_components(row["name"]),
         )
-    return out
+        for row in suites
+    }

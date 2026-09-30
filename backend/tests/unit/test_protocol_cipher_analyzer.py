@@ -7,9 +7,9 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analyzers.crypto.protocol_cipher import ProtocolCipherSuiteAnalyzer
 from app.services.cbom_parser import parse_cbom
 from app.services.crypto_policy.seeder import load_seed_rules
+from tests.helpers.analyzers import evaluate_crypto
 
 
 def _protocol(suite_list, bom_ref="p1", project_id="p", scan_id="s"):
@@ -35,12 +35,7 @@ async def test_rc4_suite_emits_high_finding(db):
         ],
     )
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[]))
-    result = await ProtocolCipherSuiteAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_protocol_cipher", db)
     findings = result["findings"]
     rc4 = [f for f in findings if "TLS_RSA_WITH_RC4_128_SHA" in f["details"]["cipher_suite"]]
     assert len(rc4) == 1
@@ -59,12 +54,7 @@ async def test_strong_suite_emits_no_finding(db):
         ],
     )
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[]))
-    result = await ProtocolCipherSuiteAnalyzer().analyze(
-        sbom={},
-        project_id="p2",
-        scan_id="s2",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_protocol_cipher", db, "p2", "s2")
     assert result["findings"] == []
     assert result["unresolved_cipher_suites"] == 0
 
@@ -79,12 +69,7 @@ async def test_unknown_suite_skipped(db):
         ],
     )
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[]))
-    result = await ProtocolCipherSuiteAnalyzer().analyze(
-        sbom={},
-        project_id="p3",
-        scan_id="s3",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_protocol_cipher", db, "p3", "s3")
     assert result["findings"] == []
     assert result["unresolved_cipher_suites"] == 1
 
@@ -108,12 +93,7 @@ async def test_rule_amplifies_with_weakness_match(db):
         match_cipher_weaknesses=["no-forward-secrecy"],
     )
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[rule]))
-    result = await ProtocolCipherSuiteAnalyzer().analyze(
-        sbom={},
-        project_id="p4",
-        scan_id="s4",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_protocol_cipher", db, "p4", "s4")
     (finding,) = result["findings"]
     assert finding["severity"] == "MEDIUM"
     assert finding["details"]["rule_id"] == "cnsa20-require-pfs"
@@ -148,7 +128,7 @@ async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=
     ]
     rules.extend(extra_rules)
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=rules))
-    return await ProtocolCipherSuiteAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    return await evaluate_crypto("crypto_protocol_cipher", db)
 
 
 @pytest.mark.asyncio
@@ -214,7 +194,7 @@ async def test_an_enabled_rule_never_downgrades_a_suite_below_its_baseline(db):
 async def test_one_suite_under_two_spellings_is_one_finding_with_a_stable_id(db):
     suites = [{"name": "TLS_RSA_WITH_RC4_128_MD5"}, {"name": "SSL_RSA_WITH_RC4_128_MD5"}]
     first = await _analyze_spec_protocol(db, suites)
-    second = await ProtocolCipherSuiteAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    second = await evaluate_crypto("crypto_protocol_cipher", db)
     assert [f["id"] for f in first["findings"]] == ["CRYPTO-crypto_weak_protocol-proto-TLS_RSA_WITH_RC4_128_MD5"]
     assert [f["id"] for f in second["findings"]] == [f["id"] for f in first["findings"]]
 
@@ -229,3 +209,14 @@ async def test_a_protocol_finding_carries_the_first_twenty_locations_and_the_tot
     (finding,) = result["findings"]
     assert finding["found_in"] == [f"src/Crypto{index}.java" for index in range(20)]
     assert finding["details"]["occurrence_count"] == 25
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("suite", "severity"),
+    [("TLS_RSA_WITH_IDEA_CBC_SHA", "HIGH"), ("TLS_SHA256_SHA256", "CRITICAL"), ("TLS_SHA384_SHA384", "CRITICAL")],
+)
+async def test_idea_and_integrity_only_suites_are_rated_like_the_broken_ciphers_they_are(db, suite, severity):
+    result = await _analyze_spec_protocol(db, [{"name": suite}])
+    (finding,) = result["findings"]
+    assert finding["severity"] == severity

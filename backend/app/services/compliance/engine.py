@@ -24,7 +24,7 @@ from app.schemas.compliance import (
 )
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
-from app.services.analyzers.crypto.catalogs.loader import CURRENT_IANA_CATALOG_VERSION
+from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VERSION
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import ComplianceFramework, EvaluationInput
 from app.services.compliance.renderers import RENDERER_REGISTRY
@@ -126,7 +126,7 @@ class ComplianceReportEngine:
             policy_rules=policy_rules,
             license_policy=await self._resolve_license_policy(db, resolved, framework),
             policy_version=policy_version,
-            iana_catalog_version=CURRENT_IANA_CATALOG_VERSION,
+            iana_catalog_version=IANA_WEAKNESS_RULES_VERSION,
             scan_ids=scan_ids,
             db=db,
             coverage=EvaluationCoverage(

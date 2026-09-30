@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.db import mongodb
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import run_adhoc_analysis
-from app.services.analysis.registry import analyzer_factories
+from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
 from tests.helpers.analyzers import build_analyzer, serve_analyzer
 from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
@@ -238,7 +238,7 @@ _ONE_SCANNER = 1
 # Every net below is only as wide as the run that exercises it, so the run's own reach is
 # asserted by equality rather than by truthiness.
 _EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY, _CRYPTO_RULES}
-_EXPECTED_SKIPPED = frozenset(analyzer_factories) - frozenset(_ANALYZERS)
+_EXPECTED_SKIPPED = (frozenset(analyzer_factories) | CRYPTO_ANALYZERS) - frozenset(_ANALYZERS)
 
 
 # ── Net 1: every call the run makes on a collection

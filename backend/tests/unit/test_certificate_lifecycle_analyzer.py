@@ -9,11 +9,9 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analyzers.crypto.certificate_lifecycle import (
-    CertificateLifecycleAnalyzer,
-)
 from app.services.cbom_parser import parse_cbom
 from app.services.crypto_policy.seeder import load_seed_rules
+from tests.helpers.analyzers import evaluate_crypto
 
 
 def _cert(
@@ -80,12 +78,7 @@ async def test_expired_cert_emits_critical(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     expired = [f for f in result["findings"] if f["type"] == "crypto_cert_expired"]
     assert len(expired) == 1
     assert expired[0]["severity"] == "CRITICAL"
@@ -119,12 +112,7 @@ async def test_expiring_cert_severity_ladder(db, days_left, expected_severity):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     expiring = [f for f in result["findings"] if f["type"] == "crypto_cert_expiring_soon"]
     if expected_severity is None:
         assert expiring == []
@@ -156,12 +144,7 @@ async def test_a_cert_expiring_on_a_ladder_boundary_takes_that_rung(db, days_lef
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     expiring = [f for f in result["findings"] if f["type"] == "crypto_cert_expiring_soon"]
     assert len(expiring) == 1
     assert expiring[0]["details"]["days_until_expiry"] == days_left
@@ -181,12 +164,7 @@ async def test_not_yet_valid_cert_emits_low(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     nyv = [f for f in result["findings"] if f["type"] == "crypto_cert_not_yet_valid"]
     assert len(nyv) == 1
     assert nyv[0]["severity"] == "LOW"
@@ -205,12 +183,7 @@ async def test_self_signed_detected(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     selfs = [f for f in result["findings"] if f["type"] == "crypto_cert_self_signed"]
     assert len(selfs) == 1
     assert selfs[0]["severity"] == "MEDIUM"
@@ -233,12 +206,7 @@ async def test_weak_signature_resolved_via_ref(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), sha1_rule])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_signature"]
     assert len(weak) == 1
     assert weak[0]["severity"] == "MEDIUM"
@@ -261,7 +229,7 @@ async def test_weak_key_uses_subject_public_key(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_key_rule(min_bits=2048)])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
     assert len(weak) == 1
 
@@ -282,7 +250,7 @@ async def test_weak_signing_key_does_not_flag_strong_subject_key(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_key_rule(min_bits=2048)])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
     assert len(weak) == 0
 
@@ -329,7 +297,7 @@ async def test_weak_key_honors_policy_min_size(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_key_rule(min_bits=3072)])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
     assert len(weak) == 1
 
@@ -351,7 +319,7 @@ async def test_key_exactly_at_the_policy_minimum_is_compliant(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_key_rule(min_bits=3072)])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
     assert [f["details"]["bom_ref"] for f in weak] == ["c-below-minimum"]
 
@@ -381,7 +349,7 @@ async def test_weak_signature_honors_glob_and_rule_severity(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), glob_rule])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_signature"]
     assert len(weak) == 1
     assert weak[0]["severity"] == "MEDIUM"  # rule severity, not hard-coded HIGH
@@ -402,7 +370,7 @@ async def test_weak_signature_honors_policy_hash_ban(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_hash_rule(["SHA-224"])])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_signature"]
     assert len(weak) == 1
 
@@ -422,7 +390,7 @@ async def test_no_subject_key_ref_does_not_assert_weak_key(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_key_rule(min_bits=2048)])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
     assert len(weak) == 0
 
@@ -452,12 +420,7 @@ async def test_validity_too_long(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), rule])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     too_long = [f for f in result["findings"] if f["type"] == "crypto_cert_validity_too_long"]
     assert len(too_long) == 1
 
@@ -494,7 +457,7 @@ async def test_validity_exactly_at_the_policy_limit_is_allowed(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), rule])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     too_long = [f for f in result["findings"] if f["type"] == "crypto_cert_validity_too_long"]
     assert [f["details"]["validity_days"] for f in too_long] == [399]
     assert [f["details"]["bom_ref"] for f in too_long] == ["c-over-limit"]
@@ -545,7 +508,7 @@ async def test_every_check_emits_only_declared_details_keys(db):
         )
     )
 
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
 
     emitted_types = {f["type"] for f in result["findings"]}
     assert len(emitted_types) >= 6, f"the fixture must exercise every check, got {sorted(emitted_types)}"
@@ -596,7 +559,7 @@ async def _analyze_spec_cbom(db, components, rules):
         "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parsed.assets]
     )
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=rules))
-    return await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    return await evaluate_crypto("crypto_certificate_lifecycle", db)
 
 
 @pytest.mark.asyncio
@@ -673,7 +636,7 @@ async def test_a_policy_rule_of_the_check_type_sets_its_severity_or_disables_it(
     await CryptoAssetRepository(db).bulk_upsert("p", "s", [cert])
     rule = _type_rule("team-cert-check", finding_type, enabled=enabled)
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[rule]))
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     assert [f["severity"] for f in result["findings"] if f["type"] == finding_type.value] == expected
 
 
@@ -692,7 +655,7 @@ async def test_overlapping_expiry_rules_emit_one_finding_at_the_strictest_rung(d
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), strict, stray])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     expiring = [f for f in result["findings"] if f["type"] == "crypto_cert_expiring_soon"]
     assert len(expiring) == 1
     assert expiring[0]["severity"] == "CRITICAL"
@@ -718,7 +681,7 @@ async def test_overlapping_validity_rules_emit_one_finding_for_the_strictest_rul
         ),
     ]
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=rules))
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     too_long = [f for f in result["findings"] if f["type"] == "crypto_cert_validity_too_long"]
     assert len(too_long) == 1
     assert too_long[0]["severity"] == "MEDIUM"
@@ -733,9 +696,8 @@ async def test_certificate_finding_ids_are_stable_across_runs(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    analyzer = CertificateLifecycleAnalyzer()
-    first = await analyzer.analyze(sbom={}, project_id="p", scan_id="s", db=db)
-    second = await analyzer.analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    first = await evaluate_crypto("crypto_certificate_lifecycle", db)
+    second = await evaluate_crypto("crypto_certificate_lifecycle", db)
     assert [f["id"] for f in first["findings"]] == ["CRYPTO-crypto_cert_expired-c1"]
     assert [f["id"] for f in second["findings"]] == [f["id"] for f in first["findings"]]
 
@@ -749,7 +711,7 @@ async def test_self_signed_details_carry_no_duplicate_subject_and_issuer(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     (finding,) = result["findings"]
     assert finding["details"] == {
         "bom_ref": "c1",

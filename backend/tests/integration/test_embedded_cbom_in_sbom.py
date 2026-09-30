@@ -1,12 +1,21 @@
-"""Embedded CBOM in a CycloneDX SBOM: _process_sbom persists both dependency and CryptoAsset records."""
+"""Embedded CBOM in a CycloneDX SBOM: _process_sbom persists the CryptoAsset records and the scan evaluates them once."""
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.models.crypto_policy import CryptoPolicy
+from app.models.project import Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.services.analysis import engine
 from app.services.analysis.engine import _process_sbom
+from app.services.analysis.registry import CRYPTO_ANALYZERS
+from app.services.crypto_policy.seeder import load_seed_rules
+from tests.helpers.analyzers import bundled_iana_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -83,3 +92,72 @@ async def test_sbom_without_crypto_components_persists_no_crypto_assets(db):
 
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
     assert count == 0, f"Expected 0 CryptoAssets for a plain SBOM, got {count}"
+
+
+_PROJECT_ID = "embedded-cbom-project"
+_WORKER = "pod-a/worker-0"
+
+
+def _sbom_embedding(fixture: str, app_name: str) -> dict:
+    cbom = _load(fixture)
+    return {**cbom, "metadata": {"component": {"type": "application", "name": app_name}}}
+
+
+@pytest.fixture
+def catalog_loader(monkeypatch) -> AsyncMock:
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: None)
+    loader = AsyncMock(return_value=bundled_iana_catalog())
+    monkeypatch.setattr(engine, "load_iana_catalog", loader)
+    return loader
+
+
+async def _analyze(db, sboms: list[dict]) -> tuple[str, str | None]:
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
+    )
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[], status="processing", worker_id=_WORKER)
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    return scan.id, await engine.run_analysis(scan.id, sboms, [], db, worker_id=_WORKER)
+
+
+@pytest.mark.asyncio
+async def test_a_scan_of_several_sboms_evaluates_its_crypto_assets_once(db, catalog_loader):
+    sboms = [_sbom_embedding("legacy_crypto_mixed.json", f"app-{n}") for n in (1, 2, 3)]
+
+    scan_id, status = await _analyze(db, sboms)
+
+    assert status == SCAN_STATUS_COMPLETED
+    rows = await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
+    assert sorted(row["analyzer_name"] for row in rows) == sorted(CRYPTO_ANALYZERS)
+    findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
+    assert sorted((f["type"], f["component"]) for f in findings) == [
+        ("crypto_quantum_vulnerable", "RSA [bom-ref:algo-rsa1024]"),
+        ("crypto_weak_algorithm", "MD5 [bom-ref:algo-md5]"),
+        ("crypto_weak_algorithm", "TLS [bom-ref:proto-tls10]"),
+        ("crypto_weak_key", "RSA [bom-ref:algo-rsa1024]"),
+        ("crypto_weak_protocol", "tls 1.0 [bom-ref:proto-tls10]"),
+    ]
+    assert all(f["found_in"] == ["CBOM"] for f in findings)
+    catalog_loader.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_scan_without_protocol_assets_never_loads_the_cipher_catalog(db, catalog_loader):
+    scan_id, status = await _analyze(db, [_sbom_embedding("cyclonedx_1_6_with_crypto_assets.json", "app")])
+
+    assert status == SCAN_STATUS_COMPLETED
+    assert [f["type"] for f in await db.findings.find({"scan_id": scan_id}).to_list(None)] == ["crypto_weak_algorithm"]
+    catalog_loader.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_crypto_assets_beyond_the_scan_budget_mark_the_crypto_results_partial(db, catalog_loader, monkeypatch):
+    monkeypatch.setattr(engine, "MAX_CRYPTO_ASSETS_PER_SCAN", 2)
+
+    scan_id, status = await _analyze(db, [_sbom_embedding("legacy_crypto_mixed.json", "app")])
+
+    assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    rows = await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
+    assert {row["result"]["partial_components_skipped"] for row in rows} == {1}
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert sorted(scan["failed_analyzers"]) == sorted(CRYPTO_ANALYZERS)
