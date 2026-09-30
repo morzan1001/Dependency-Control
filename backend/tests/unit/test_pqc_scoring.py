@@ -149,6 +149,13 @@ def test_key_weakness_ratio_at_and_above_minimum():
     assert undersized == 100.0
 
 
+def test_an_eddsa_key_is_weighed_against_the_elliptic_curve_minimum():
+    from app.services.pqc_migration.scoring import _score_key_weakness
+
+    assert _score_key_weakness(_A(key_size_bits=256), "EdDSA") == 50.0
+    assert _score_key_weakness(_A(key_size_bits=128), "EdDSA") == 100.0
+
+
 def test_exposure_constants_are_module_level():
     """The _score_exposure calibration values must be named module-level constants."""
     from app.services.pqc_migration import scoring

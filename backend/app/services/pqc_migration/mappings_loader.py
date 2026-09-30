@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from app.models.crypto_asset import CryptoAsset
+
 CURRENT_MAPPINGS_VERSION = 1
 
 _MAPPINGS_PATH = Path(__file__).resolve().parent / "mappings.yaml"
@@ -99,3 +101,12 @@ def normalise_family(name: str | None, mappings: PQCMappings) -> str:
         if canon.upper() == upper:
             return canon
     return name
+
+
+def resolve_family(asset: CryptoAsset, mappings: PQCMappings) -> str:
+    """The canonical source_family of the asset's name, else of its variant, else ""."""
+    canonical = {m.source_family for m in mappings.mappings}
+    for candidate in (asset.name, asset.variant):
+        if (family := normalise_family(candidate, mappings)) in canonical:
+            return family
+    return ""

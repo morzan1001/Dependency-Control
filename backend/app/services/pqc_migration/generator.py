@@ -1,7 +1,6 @@
 """Turns quantum-vulnerable crypto assets into a priority-ranked PQC migration plan."""
 
 from datetime import datetime, timezone
-from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -20,7 +19,7 @@ from app.services.pqc_migration.mappings_loader import (
     PQCMapping,
     Timeline,
     load_mappings,
-    normalise_family,
+    resolve_family,
 )
 from app.services.pqc_migration.scoring import priority_score, status_from_score
 
@@ -63,13 +62,7 @@ class PQCMigrationPlanGenerator:
     ) -> dict[_GroupKey, list[CryptoAsset]]:
         groups: dict[_GroupKey, list[CryptoAsset]] = {}
         for a in assets:
-            variant = getattr(a, "variant", None)
-            key: _GroupKey = (
-                a.name or "",
-                variant,
-                getattr(a, "key_size_bits", None),
-                a.bom_ref,
-            )
+            key: _GroupKey = (a.name or "", a.variant, a.key_size_bits, a.bom_ref)
             groups.setdefault(key, []).append(a)
         return groups
 
@@ -79,9 +72,9 @@ class PQCMigrationPlanGenerator:
         group: list[CryptoAsset],
         now: datetime,
     ) -> MigrationItem | None:
-        name, variant, _ksize, _ref = key
-        canonical = normalise_family(name, self.mappings)
+        _name, variant, key_size_bits, _ref = key
         first_asset = group[0]
+        canonical = resolve_family(first_asset, self.mappings)
         mapping = self._find_mapping(canonical, first_asset.primitive)
         if mapping is None:
             return None
@@ -97,7 +90,7 @@ class PQCMigrationPlanGenerator:
             asset_bom_ref=first_asset.bom_ref,
             asset_name=first_asset.name or canonical,
             asset_variant=variant,
-            asset_key_size_bits=getattr(first_asset, "key_size_bits", None),
+            asset_key_size_bits=key_size_bits,
             project_ids=sorted({a.project_id for a in group}),
             asset_count=len(group),
             source_family=canonical,
@@ -139,25 +132,13 @@ class PQCMigrationPlanGenerator:
         else:
             project_ids = resolved.project_ids
         repo = CryptoAssetRepository(self.db)
-        canonical_families = {m.source_family for m in self.mappings.mappings}
         for pid, scan_id in (await resolve_scan_ids(self.db, project_ids, projects=resolved.projects)).items():
             assets = await repo.list_by_scan(pid, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
-            out.extend(self._filter_vulnerable(assets, canonical_families))
+            out.extend(self._filter_vulnerable(assets))
         return out
 
-    def _filter_vulnerable(
-        self,
-        assets: list[CryptoAsset],
-        canonical_families: set,
-    ) -> list[CryptoAsset]:
-        filtered: list[CryptoAsset] = []
-        for a in assets:
-            if a.primitive not in QUANTUM_VULNERABLE_PRIMITIVES:
-                continue
-            canonical = normalise_family(a.name or "", self.mappings)
-            if canonical in canonical_families:
-                filtered.append(a)
-        return filtered
+    def _filter_vulnerable(self, assets: list[CryptoAsset]) -> list[CryptoAsset]:
+        return [a for a in assets if a.primitive in QUANTUM_VULNERABLE_PRIMITIVES and resolve_family(a, self.mappings)]
 
     async def _all_project_ids(self) -> list[str]:
         """Distinct project ids that have at least one usable scan."""
@@ -166,10 +147,9 @@ class PQCMigrationPlanGenerator:
             {"status": {"$in": SCAN_USABLE_STATUSES}},
         )
 
-    def _find_mapping(self, family: str, primitive: Any) -> PQCMapping | None:
-        prim_val = primitive or ""
+    def _find_mapping(self, family: str, primitive: str | None) -> PQCMapping | None:
         exact = next(
-            (m for m in self.mappings.mappings if m.source_family == family and m.source_primitive == prim_val),
+            (m for m in self.mappings.mappings if m.source_family == family and m.source_primitive == primitive),
             None,
         )
         if exact is not None:

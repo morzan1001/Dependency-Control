@@ -27,6 +27,7 @@ _MIN_KEY_SIZE = {
     "DSA": 2048,
     "DH": 2048,
     "ECDSA": 256,
+    "EdDSA": 256,
     "ECDH": 256,
 }
 
