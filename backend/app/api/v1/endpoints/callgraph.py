@@ -2,14 +2,15 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.body_limit import refuse_oversized_document
 from app.api.v1.helpers.callgraph import (
+    ParsedCallgraph,
     callgraph_entry_count,
     detect_format,
     parse_generic_format,
@@ -17,8 +18,8 @@ from app.api.v1.helpers.callgraph import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCAN_ACTIVE_STATUSES, SCANS_TIP_SORT
-from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
+from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCANS_TIP_SORT
+from app.models.callgraph import Callgraph
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.callgraph import (
@@ -26,6 +27,7 @@ from app.schemas.callgraph import (
     CallgraphUploadRequest,
     CallgraphUploadResponse,
     DeleteCallgraphResponse,
+    ModuleUsageItem,
     ModuleUsageResponse,
 )
 from app.services.component_identity import canonical_callgraph_language
@@ -102,9 +104,7 @@ def _build_upsert_filter(project_id: str, language: str, scan_id: str | None) ->
     }, f"project-level ({language})"
 
 
-def _parse_callgraph(
-    format_type: str, data: dict[str, Any], language: str
-) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage], list[str]]:
+def _parse_callgraph(format_type: str, data: dict[str, Any], language: str) -> ParsedCallgraph:
     """Parse callgraph data using the appropriate parser for the format."""
     parser = _FORMAT_PARSERS.get(format_type)
     if not parser:
@@ -134,9 +134,7 @@ async def upload_callgraph(
 
     warnings: list[str] = []
     try:
-        imports, calls, module_usage, analyzed_modules = await asyncio.to_thread(
-            _parse_callgraph, format_type, request.data, language
-        )
+        parsed = await asyncio.to_thread(_parse_callgraph, format_type, request.data, language)
     except HTTPException:
         raise
     except Exception as e:
@@ -160,13 +158,11 @@ async def upload_callgraph(
         language=language,
         tool=request.tool or format_type,
         tool_version=request.tool_version,
-        imports=imports,
-        calls=calls,
-        module_usage=module_usage,
-        analyzed_modules=analyzed_modules,
-        source_files_analyzed=request.source_files_count or len({i.file for i in imports}),
-        total_imports=len(imports),
-        total_calls=len(calls),
+        module_usage=parsed.module_usage,
+        analyzed_modules=parsed.analyzed_modules,
+        source_files_analyzed=request.source_files_count or parsed.source_files,
+        total_imports=parsed.total_imports,
+        total_calls=parsed.total_calls,
         analysis_duration_ms=request.analysis_duration_ms,
     )
 
@@ -174,16 +170,17 @@ async def upload_callgraph(
 
     callgraph_data = callgraph.model_dump(by_alias=True)
     insert_only = {"_id": callgraph_data.pop("_id"), "created_at": callgraph_data.pop("created_at")}
-    await callgraph_repo.collection.update_one(
-        upsert_filter,
-        {"$set": callgraph_data, "$setOnInsert": insert_only},
-        upsert=True,
-    )
+    with refuse_oversized_document("The callgraph"):
+        await callgraph_repo.collection.update_one(
+            upsert_filter,
+            {"$set": callgraph_data, "$setOnInsert": insert_only},
+            upsert=True,
+        )
 
     logger.info(
         f"Uploaded callgraph for project {project_id} ({match_context}): "
-        f"{len(imports)} imports, {len(calls)} calls, {len(module_usage)} modules, "
-        f"{len(analyzed_modules)} analyzed modules"
+        f"{parsed.total_imports} imports, {parsed.total_calls} calls, {len(parsed.module_usage)} modules, "
+        f"{len(parsed.analyzed_modules)} analyzed modules"
     )
 
     if scan_exists:
@@ -193,36 +190,24 @@ async def upload_callgraph(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
         )
         for target_scan_id in [scan_id, *pending_rescans]:
-            # A queued or running analysis is about to replace the findings, so it applies the callgraph once final.
-            if await scan_repo.update_raw(
-                target_scan_id,
-                {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
-                guard={"status": {"$in": SCAN_ACTIVE_STATUSES}},
-            ):
-                continue
+            await scan_repo.update_raw(target_scan_id, {"$set": {"reachability_pending": True}})
             try:
-                reachability_result = await run_pending_reachability_for_scan(
-                    scan_id=target_scan_id,
-                    project_id=project_id,
-                    db=db,
-                )
-                if reachability_result["findings_enriched"] > 0:
-                    logger.info(
-                        f"Processed pending reachability for scan {target_scan_id}: "
-                        f"enriched {reachability_result['findings_enriched']} findings"
-                    )
+                dropped = await run_pending_reachability_for_scan(target_scan_id, project_id, db)
             except Exception as e:
-                logger.warning(f"Failed to run pending reachability analysis: {e}")
+                logger.exception("Failed to run pending reachability analysis for scan %s", target_scan_id)
                 warnings.append(f"Reachability analysis deferred: {e!s}")
+                continue
+            if dropped:
+                warnings.append(f"{dropped} findings beyond the per-run cap were left without a reachability verdict")
 
     return CallgraphUploadResponse(
         success=True,
         message=f"Callgraph uploaded successfully ({format_type} format)",
         project_id=project_id,
-        imports_parsed=len(imports),
-        calls_parsed=len(calls),
-        modules_detected=len(module_usage),
-        analyzed_modules_count=len(analyzed_modules),
+        imports_parsed=parsed.total_imports,
+        calls_parsed=parsed.total_calls,
+        modules_detected=len(parsed.module_usage),
+        analyzed_modules_count=len(parsed.analyzed_modules),
         warnings=warnings,
     )
 
@@ -263,23 +248,17 @@ async def get_module_usage(
     query: dict[str, Any] = {"project_id": project_id}
     if language:
         query["language"] = _canonical_language(language)
-    callgraph = await callgraph_repo.find_one(query)
+    callgraph = await callgraph_repo.find_one_raw(query, {"module_usage": 1, "language": 1})
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")
 
-    module_usage = callgraph.module_usage or {}
-
     sorted_modules = sorted(
-        module_usage.items(),
-        key=lambda x: x[1].import_count + x[1].call_count,
+        (ModuleUsageItem(name=key, **usage) for key, usage in callgraph["module_usage"].items()),
+        key=lambda item: item.import_count + item.call_count,
         reverse=True,
     )
 
-    return ModuleUsageResponse(
-        project_id=project_id,
-        language=callgraph.language,
-        modules=[{"name": k, "module": k, **v.model_dump()} for k, v in sorted_modules],
-    )
+    return ModuleUsageResponse(project_id=project_id, language=callgraph["language"], modules=sorted_modules)
 
 
 @router.delete("/{project_id}/callgraph", responses=RESP_AUTH_404)

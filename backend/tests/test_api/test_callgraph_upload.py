@@ -251,6 +251,23 @@ class TestProducerUploads:
         stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
         assert stored["analyzed_modules"] == []
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("payload", "totals"),
+        [
+            pytest.param(_envelope("madge", "javascript", _MADGE_DATA), (4, 0, 2), id="js-madge"),
+            pytest.param(_envelope("generic", "python", _PYTHON_DATA), (3, 0, 1), id="python-ast"),
+        ],
+    )
+    async def test_the_stored_callgraph_keeps_the_totals_but_no_edge_list(self, client, db, payload, totals):
+        response = await _upload(client, payload)
+
+        assert response.status_code == 200, response.text
+        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        assert (stored["total_imports"], stored["total_calls"], stored["source_files_analyzed"]) == totals
+        assert "imports" not in stored
+        assert "calls" not in stored
+
 
 # --- authentication and authorization ----------------------------------------
 
@@ -401,6 +418,24 @@ class TestPayloadValidation:
         assert threads
         assert threading.main_thread() not in threads
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "data",
+        [
+            pytest.param({"imports": [{"module": "requests", "file": 7, "line": 3, "symbols": []}]}, id="file"),
+            pytest.param({"imports": [{"module": "requests", "file": "app/client.py", "symbols": [7]}]}, id="symbol"),
+            pytest.param({"calls": [{"callee_module": "requests", "callee_function": 7}]}, id="callee-function"),
+            pytest.param(
+                {"calls": [{"caller_file": 7, "callee_module": "requests", "callee_function": "get"}]}, id="caller-file"
+            ),
+        ],
+    )
+    async def test_a_value_the_document_keeps_must_be_a_string(self, client, db, data):
+        response = await _upload(client, _envelope("generic", "python", data))
+
+        assert response.status_code == 400
+        assert await db.callgraphs.count_documents({}) == 0
+
 
 class TestReupload:
     @pytest.mark.asyncio
@@ -436,6 +471,47 @@ class TestModuleUsageEndpoint:
         for module in body["modules"]:
             assert module["name"] == module["module"]
         assert {m["module"] for m in body["modules"]} == {"lodash", "@babel/runtime", "express"}
+
+    @pytest.mark.asyncio
+    async def test_modules_are_listed_most_used_first(self, client, db):
+        second_import = {"module": "urllib3.util.retry", "file": "app/session.py", "line": 2, "symbols": ["Retry"]}
+        data = {**_PYTHON_DATA, "imports": [*_PYTHON_DATA["imports"], second_import]}
+        await _upload(client, _envelope("generic", "python", data))
+        headers = await _seed_user(db, "admin-1", PRESET_ADMIN)
+
+        response = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph/modules", headers=headers)
+
+        assert response.status_code == 200, response.text
+        [most_used, *_rest] = response.json()["modules"]
+        assert (most_used["module"], most_used["import_count"]) == ("urllib3.util.retry", 2)
+        assert most_used["import_locations"] == ["app/client.py", "app/session.py"]
+
+
+class TestCallgraphEndpoint:
+    @pytest.mark.asyncio
+    async def test_a_callgraph_stored_with_its_edge_lists_is_served_without_them(self, client, db):
+        await db.callgraphs.insert_one(
+            {
+                "_id": "cg-legacy",
+                "project_id": _PROJECT_ID,
+                "language": "python",
+                "tool": "generic",
+                "imports": [{"module": "requests", "file": "app/client.py", "line": 3, "imported_symbols": []}],
+                "calls": [],
+                "module_usage": {"requests": {"module": "requests", "import_count": 1}},
+                "total_imports": 1,
+                "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            }
+        )
+        headers = await _seed_user(db, "admin-1", PRESET_ADMIN)
+
+        response = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph", headers=headers)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert "imports" not in body
+        assert "calls" not in body
+        assert (body["total_imports"], set(body["module_usage"])) == (1, {"requests"})
 
 
 # --- reachability ------------------------------------------------------------
@@ -526,10 +602,7 @@ class TestReachabilityVerdicts:
 
         js_finding = await db.findings.find_one({"_id": "f-CVE-JS"})
         assert js_finding["reachable"] is None, "the python callgraph must not judge an npm package"
-
-        # Production clears the flag with $unset, which the in-process fake ignores; mirror the
-        # cleared state so the second upload faces the same scan the real one would.
-        await db.scans.update_one({"_id": _SCAN_ID}, {"$set": {"reachability_pending": False}})
+        assert not (await db.scans.find_one({"_id": _SCAN_ID})).get("reachability_pending")
 
         await _upload(client, _envelope("madge", "javascript", _MADGE_DATA))
 
@@ -587,6 +660,33 @@ class TestReachabilityVerdicts:
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 
         assert "reachable" not in await db.findings.find_one({"_id": "f-CVE-PY"})
+
+    @pytest.mark.asyncio
+    async def test_a_failed_enrichment_is_reported_and_left_pending(self, client, db, monkeypatch):
+        await _seed_scan_with_findings(db)
+
+        async def _unavailable_inventory(*_args):
+            raise RuntimeError("inventory unavailable")
+
+        monkeypatch.setattr("app.services.reachability_enrichment.build_component_language_map", _unavailable_inventory)
+
+        response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert response.status_code == 200, response.text
+        assert response.json()["warnings"] == ["Reachability analysis deferred: inventory unavailable"]
+        assert (await db.scans.find_one({"_id": _SCAN_ID}))["reachability_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_findings_beyond_the_per_run_cap_are_reported(self, client, db, monkeypatch):
+        await _seed_scan_with_findings(db)
+        monkeypatch.setattr("app.services.reachability_enrichment._MAX_FINDINGS_PER_RUN", 1)
+        monkeypatch.setattr("app.services.reachability_enrichment._FINDINGS_PAGE_SIZE", 1)
+
+        response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert response.json()["warnings"] == [
+            "1 findings beyond the per-run cap were left without a reachability verdict"
+        ]
 
     @pytest.mark.asyncio
     async def test_analyzed_but_unimported_package_is_unreachable(self, client, db):

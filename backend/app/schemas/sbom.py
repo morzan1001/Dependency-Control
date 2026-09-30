@@ -23,17 +23,6 @@ class SBOMFormat(Enum):
     UNKNOWN = "unknown"
 
 
-class SourceType(Enum):
-    """Source types for SBOM origin."""
-
-    IMAGE = "image"
-    DIRECTORY = "directory"
-    FILE = "file"
-    APPLICATION = "application"
-    FILESYSTEM = "file-system"
-    UNKNOWN = "unknown"
-
-
 class ParsedDependency(BaseModel):
     """Normalized dependency representation with all available SBOM fields."""
 
@@ -91,7 +80,6 @@ class ParsedSBOM(BaseModel):
     """Normalized SBOM representation."""
 
     format: SBOMFormat
-    format_version: str | None = None
 
     # Source information
     source_type: str | None = None
@@ -99,11 +87,6 @@ class ParsedSBOM(BaseModel):
 
     # Components/Dependencies
     dependencies: list[ParsedDependency] = Field(default_factory=list)
-
-    # Metadata
-    tool_name: str | None = None
-    tool_version: str | None = None
-    created_at: str | None = None
 
     # Statistics
     total_components: int = 0

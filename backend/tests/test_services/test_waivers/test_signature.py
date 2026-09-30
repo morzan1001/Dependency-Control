@@ -3,7 +3,7 @@ from app.services.waivers.signature import compute_match_signature, compute_matc
 
 
 def _sast_merged(component, line, scanner, rule_id, fingerprint, code):
-    """Build a Finding shaped like merge_sast_findings output (nested per-scanner entry)."""
+    """Build a Finding shaped like to_sast_aggregate output (nested per-scanner entry)."""
     return Finding(
         id=f"{scanner.upper()}-{rule_id}-{component}-{line}",
         type="sast",

@@ -35,14 +35,12 @@ from app.core.metrics import (
     analysis_gridfs_operations_total,
     analysis_kev_vulnerabilities_total,
     analysis_race_conditions_total,
-    analysis_reachable_vulnerabilities_total,
     analysis_rescan_operations_total,
     analysis_sbom_parse_errors_total,
     analysis_sbom_processed_total,
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
-from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -53,9 +51,9 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
+from app.schemas.finding_details import VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedSBOM
-from app.services.aggregation import ResultAggregator
+from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
 from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
@@ -66,11 +64,7 @@ from app.services.analysis.registry import (
     analyzer_factories,
     is_crypto_analyzer,
 )
-from app.services.analysis.stats import (
-    build_epss_kev_summary,
-    build_reachability_summary,
-    calculate_comprehensive_stats,
-)
+from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
@@ -79,8 +73,7 @@ from app.services.github import is_public_github
 from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
 from app.services.reachability_enrichment import (
     ComponentLanguages,
-    build_component_language_map,
-    enrich_findings_with_reachability,
+    apply_reachability,
     fetch_callgraphs,
     run_pending_reachability_for_scan,
 )
@@ -109,6 +102,11 @@ async def _get_github_instance_token(db: Database) -> str | None:
     return None
 
 
+def _regenerated_analyzer_names() -> list[str]:
+    """Rows the engine writes itself on every run, as opposed to results posted by external scanners."""
+    return [*analyzer_factories, *_POST_PROCESSOR_ANALYZERS]
+
+
 async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
     """Copy non-SBOM analyzer results (e.g. Secret Scanning, SAST) from the original scan to a rescan."""
     if not (scan_doc and scan_doc.is_rescan and scan_doc.original_scan_id):
@@ -117,15 +115,10 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
     original_scan_id = scan_doc.original_scan_id
     logger.info(f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}")
 
-    # Internal analyzers and post-processors are regenerated per run, never carried over.
-    excluded_names = list(analyzer_factories) + list(_POST_PROCESSOR_ANALYZERS)
     try:
-        carried = await AnalysisResultRepository(db).carry_over(original_scan_id, scan_id, excluded_names)
+        await AnalysisResultRepository(db).carry_over(original_scan_id, scan_id, _regenerated_analyzer_names())
     except Exception as e:
-        logger.exception("Failed to bulk carry over external results: %s", e)
-        return
-    if carried:
-        logger.info(f"Carried over {carried} external results to rescan {scan_id}")
+        logger.exception("Failed to carry over external results: %s", e)
 
 
 async def _carry_over_crypto_assets(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
@@ -200,8 +193,6 @@ async def process_analyzer(
             duration = time.time() - analyzer_start_time
             analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
 
-        await AnalysisResultRepository(db).insert_result(scan_id, analyzer_name, result)
-
         source: str = fallback_source
         if sbom.get("metadata") and sbom["metadata"].get("component"):
             source = str(sbom["metadata"]["component"].get("name", fallback_source))
@@ -210,8 +201,15 @@ async def process_analyzer(
 
         aggregator.aggregate(analyzer_name, result, source=source)
 
+        # The findings are already aggregated, so a refused raw row costs only the raw-results view.
+        # Keyed on the SBOM's position: root names repeat within a scan (multi-arch images).
+        try:
+            await AnalysisResultRepository(db).save_result(scan_id, analyzer_name, result, source=fallback_source)
+        except Exception as e:
+            logger.exception("Storing the raw %s result of %s failed: %s", analyzer_name, scan_id, e)
+
         # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
-        if isinstance(result, dict) and result.get("error"):
+        if is_error_result(result):
             if analysis_errors_total:
                 analysis_errors_total.labels(analyzer=analyzer_name).inc()
             logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
@@ -220,11 +218,7 @@ async def process_analyzer(
         partial_reason = _partial_result_reason(result)
         if partial_reason:
             # Surface the coverage gap as a finding and flag the analyzer as partial.
-            aggregator.aggregate(
-                analyzer_name,
-                {"error": f"partial result: {partial_reason}"},
-                source=f"System: {analyzer_name}",
-            )
+            aggregator.add_scan_error(analyzer_name, partial_reason, partial=True, source=f"System: {analyzer_name}")
             logger.warning(f"Analysis {analyzer_name} returned a partial result for {scan_id}: {partial_reason}")
             return f"{analyzer_name}: Partial ({partial_reason})"
 
@@ -236,7 +230,7 @@ async def process_analyzer(
         if analysis_errors_total:
             analysis_errors_total.labels(analyzer=analyzer_name).inc()
         # Surface the failure as a finding.
-        aggregator.aggregate(analyzer_name, {"error": str(e)}, source=f"System: {analyzer_name}")
+        aggregator.add_scan_error(analyzer_name, str(e), source=f"System: {analyzer_name}")
         return f"{analyzer_name}: Failed"
 
 
@@ -293,7 +287,7 @@ async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: Res
             logger.exception("Failed to fetch SBOM from GridFS %s: %s", gridfs_id, gridfs_err)
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
-            aggregator.aggregate("system", {"error": f"{_SBOM_GRIDFS_LOAD_ERROR}: {gridfs_err}"})
+            aggregator.add_scan_error("system", f"{_SBOM_GRIDFS_LOAD_ERROR}: {gridfs_err}")
             return None
     result: dict[str, Any] | None = item
     return result
@@ -540,7 +534,7 @@ async def _run_epss_kev_enrichment(
             vulnerability_findings, github_token=github_token
         )
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
-        await result_repo.insert_result(scan_id, "epss_kev", epss_kev_summary)
+        await result_repo.save_result(scan_id, "epss_kev", epss_kev_summary)
         outcome = f"Partial ({' and '.join(unavailable)} unavailable)" if unavailable else "Success"
         results_summary.append(f"epss_kev: {outcome} ({len(vulnerability_findings)} enriched)")
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
@@ -567,45 +561,23 @@ async def _run_reachability_enrichment(
     scan_id: str,
     project_id: str,
     db: Database,
-    result_repo: AnalysisResultRepository,
     scan_repo: ScanRepository,
     results_summary: list[str],
 ) -> ComponentLanguages | None:
     """Run reachability analysis on vulnerability findings; returns the inventory language map it built."""
     callgraphs = await fetch_callgraphs(project_id, scan_id, db)
     if not callgraphs:
-        await scan_repo.update_raw(
-            scan_id,
-            {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
-        )
+        await scan_repo.update_raw(scan_id, {"$set": {"reachability_pending": True}})
         logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
         return None
 
-    component_languages = None
     try:
-        component_languages = await build_component_language_map(db, scan_id)
-        enriched_count = enrich_findings_with_reachability(vulnerability_findings, callgraphs, component_languages)
-        reachability_summary = build_reachability_summary(
-            vulnerability_findings,
-            [cg.model_dump(by_alias=True) for cg in callgraphs],
-            enriched_count,
-        )
-        await result_repo.replace_result(scan_id, "reachability", reachability_summary)
-        results_summary.append(f"reachability: Success ({enriched_count} enriched)")
-        logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
-
-        if analysis_enrichment_total:
-            analysis_enrichment_total.labels(type="reachability").inc(enriched_count)
-
-        if analysis_reachable_vulnerabilities_total:
-            for vf in vulnerability_findings:
-                reachability = vf.get("details", {}).get("reachability", {})
-                if reachability.get("is_reachable") is True:
-                    level = reachability.get("analysis_level") or "unknown"
-                    analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
+        component_languages, enriched_count = await apply_reachability(db, scan_id, vulnerability_findings, callgraphs)
     except Exception as e:
         results_summary.append("reachability: Failed")
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
+        return None
+    results_summary.append(f"reachability: Success ({enriched_count} enriched)")
     return component_languages
 
 
@@ -639,38 +611,28 @@ async def _aggregate_external_results(
     results_summary: list[str],
 ) -> None:
     """Fetch external analyzer results and aggregate them; failures land in results_summary."""
-    external_results = await result_repo.find_by_scan(scan_id, limit=10000)
-    for res in external_results:
-        # Skip post-processor rows: they are engine outputs, not external scanner results.
-        if res.analyzer_name not in analyzer_factories and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
-            try:
-                aggregator.aggregate(res.analyzer_name, res.result)
-                if isinstance(res.result, dict) and res.result.get("error"):
-                    # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
-                    results_summary.append(f"{res.analyzer_name}: Failed")
-                else:
-                    results_summary.append(f"{res.analyzer_name}: Success")
-            except Exception as exc:
-                logger.warning(
-                    "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
-                    res.analyzer_name,
-                    scan_id,
-                    exc,
-                )
-                aggregator.add_finding(
-                    Finding(
-                        id=f"SCAN-ERROR-{res.analyzer_name}",
-                        type=FindingType.SYSTEM_WARNING,
-                        severity=Severity.HIGH,
-                        component="Scanner System",
-                        version="",
-                        description=f"External result for '{res.analyzer_name}' could not be aggregated: {exc}",
-                        scanners=[res.analyzer_name],
-                        details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
-                    )
-                )
-                results_summary.append(f"{res.analyzer_name}: Failed")
-    del external_results
+    query = {"scan_id": scan_id, "analyzer_name": {"$nin": _regenerated_analyzer_names()}}
+    async for row in result_repo.iterate_raw(query, {"analyzer_name": 1, "result": 1}):
+        analyzer_name = row["analyzer_name"]
+        try:
+            result = row["result"]
+            aggregator.aggregate(analyzer_name, result)
+            if is_error_result(result):
+                # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
+                results_summary.append(f"{analyzer_name}: Failed")
+            else:
+                results_summary.append(f"{analyzer_name}: Success")
+        except Exception as exc:
+            logger.warning(
+                "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
+                analyzer_name,
+                scan_id,
+                exc,
+            )
+            aggregator.add_scan_error(
+                analyzer_name, f"external result could not be aggregated: {exc}", error_details=str(exc)
+            )
+            results_summary.append(f"{analyzer_name}: Failed")
 
 
 def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
@@ -759,7 +721,7 @@ async def _run_vuln_enrichments(
 
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
         return await _run_reachability_enrichment(
-            vulnerability_findings, scan_id, project_id, db, result_repo, scan_repo, results_summary
+            vulnerability_findings, scan_id, project_id, db, scan_repo, results_summary
         )
     return None
 
@@ -801,9 +763,13 @@ async def _persist_findings_and_waivers(
 
 async def _apply_handed_over_callgraphs(scan_id: str, project_id: str | None, db: Database) -> None:
     # A callgraph uploaded during the run only flagged the scan, since the findings it would enrich were being replaced.
-    state = await ScanRepository(db).get_minimal_by_id(scan_id)
-    if project_id and state and state.reachability_pending:
-        await run_pending_reachability_for_scan(scan_id, project_id, db)
+    try:
+        state = await ScanRepository(db).get_minimal_by_id(scan_id)
+        if project_id and state and state.reachability_pending:
+            await run_pending_reachability_for_scan(scan_id, project_id, db)
+    except Exception:
+        # A failed pass stays flagged for the next upload; the final scan is still announced.
+        logger.exception("Scan %s: applying the callgraphs uploaded during the analysis failed", scan_id)
 
 
 async def _write_final_state(

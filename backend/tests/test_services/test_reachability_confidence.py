@@ -1,19 +1,23 @@
 """Tests for is_high_confidence_reachable — the gate distinguishing solid 'function actually called' evidence from import-only heuristics."""
 
+import copy
+
 import pytest
 
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
+from app.schemas.finding_details import ReachabilityInfo
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
-    _calculate_confidence,
     _enrich_finding_from_callgraphs,
-    _enrich_single_finding,
     _match_symbols,
     _prepare_callgraph,
     build_component_language_map,
+    enrich_findings_with_reachability,
     is_high_confidence_reachable,
+    reachability_set_fields,
+    store_reachability,
 )
 
 
@@ -58,8 +62,8 @@ class TestPendingSummaryTiers:
             self._f("b", True, "import"),
             self._f("c", False, "none"),
         ]
-        cg = [{"language": "python", "module_usage": {}}]
-        summary = build_reachability_summary(findings, cg, 3)
+        cg = [_callgraph()]
+        summary = build_reachability_summary(findings, cg)
         levels = summary["reachability_levels"]
         assert levels["confirmed"] == 1
         assert levels["likely"] == 1
@@ -69,16 +73,16 @@ class TestPendingSummaryTiers:
     def test_shared_summary_includes_high_confidence_flag(self):
         # The canonical builder includes is_high_confidence.
         findings = [self._f("a", True, "symbol")]
-        cg = [{"language": "python", "module_usage": {}}]
-        summary = build_reachability_summary(findings, cg, 1)
+        cg = [_callgraph()]
+        summary = build_reachability_summary(findings, cg)
         assert "is_high_confidence" in summary["reachable_vulnerabilities"][0]
 
     @pytest.mark.parametrize("confidence", [True, "0.9"], ids=["bool", "string"])
     def test_a_non_numeric_confidence_is_not_high_confidence(self, confidence):
         finding = self._f("a", True, "symbol")
         finding["details"]["reachability"]["confidence_score"] = confidence
-        cg = [{"language": "python", "module_usage": {}}]
-        summary = build_reachability_summary([finding], cg, 1)
+        cg = [_callgraph()]
+        summary = build_reachability_summary([finding], cg)
         assert summary["reachable_vulnerabilities"][0]["is_high_confidence"] is False
 
 
@@ -98,7 +102,7 @@ class TestImportMatchingUsesWholePackageKeys:
         finding = _vuln_finding(component=component)
         prepared = _prepared(_usage(imported, "a.src"), language=language, analyzed_modules=[component, imported])
 
-        _enrich_finding_from_callgraphs(finding, [prepared], {component: [("1.0.0", frozenset({language}))]})
+        _enrich_finding_from_callgraphs(finding, [prepared], {component: [("1.0.0", frozenset({language}), False)]})
 
         assert finding["details"]["reachability"]["is_reachable"] is False
 
@@ -110,11 +114,11 @@ class TestImportMatchingUsesWholePackageKeys:
         ],
     )
     def test_a_subpath_import_counts_for_its_package(self, component, imported, language):
-        _, _, module_usage, _ = parse_generic_format({"imports": [{"module": imported, "file": "a.src"}]}, language)
+        module_usage = parse_generic_format({"imports": [{"module": imported, "file": "a.src"}]}, language).module_usage
         prepared = _prepared({key: usage.model_dump() for key, usage in module_usage.items()}, language=language)
         finding = _vuln_finding(component=component)
 
-        _enrich_finding_from_callgraphs(finding, [prepared])
+        _enrich_finding_from_callgraphs(finding, [prepared], {})
 
         assert finding["details"]["reachability"]["import_locations"] == ["a.src"]
 
@@ -131,7 +135,7 @@ class TestEcosystemFromDependencyMap:
             language="python",
             analyzed_modules=["requests", "other"],
         )
-        comp_langs = {"requests": [("1.0.0", frozenset({"python"}))]}
+        comp_langs = {"requests": [("1.0.0", frozenset({"python"}), False)]}
         _enrich_finding_from_callgraphs(finding, [cg], comp_langs)
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is False
@@ -144,7 +148,7 @@ class TestEcosystemFromDependencyMap:
             language="javascript",
             analyzed_modules=["lodash", "requests"],
         )
-        comp_langs = {"requests": [("1.0.0", frozenset({"python"}))]}
+        comp_langs = {"requests": [("1.0.0", frozenset({"python"}), False)]}
         _enrich_finding_from_callgraphs(finding, [cg], comp_langs)
         assert finding["details"]["reachability"]["is_reachable"] is None
         assert finding["details"]["adjusted_risk_score"] == 80.0
@@ -156,15 +160,26 @@ class TestEcosystemFromDependencyMap:
         db = FakeDatabase()
         await db.dependencies.insert_one({"scan_id": "s1", "name": "requests", "version": "2.31.0", "type": "pypi"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "left-pad", "version": "1.3.0", "type": "npm"})
-        await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "version": "v1.0.0", "type": "go-module"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "version": "v1.0.0", "type": "golang"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})  # no callgraph lang
+        await db.dependencies.insert_one(
+            {
+                "scan_id": "s1",
+                "name": "certifi",
+                "version": "2024.7.4",
+                "type": "pypi",
+                "direct": False,
+                "direct_inferred": False,
+            }
+        )
         m = await build_component_language_map(db, "s1")
-        assert m["requests"] == [("2.31.0", frozenset({"python"}))]
-        assert m["left-pad"] == [("1.3.0", frozenset({"javascript", "typescript"}))]
-        assert m["mymod"] == [("v1.0.0", frozenset({"go"}))]
-        assert m["viapurl"] == [("", frozenset({"python"}))]
+        assert m["requests"] == [("2.31.0", frozenset({"python"}), False)]
+        assert m["left-pad"] == [("1.3.0", frozenset({"javascript", "typescript"}), False)]
+        assert m["mymod"] == [("v1.0.0", frozenset({"go"}), False)]
+        assert m["viapurl"] == [("", frozenset({"python"}), False)]
         assert "rpmpkg" not in m  # unsupported ecosystem omitted
+        assert m["certifi"] == [("2024.7.4", frozenset({"python"}), True)]
 
 
 class TestMatchSymbols:
@@ -198,16 +213,15 @@ class TestMatchSymbols:
         assert result == ["read", "io.read"]
 
 
-def _prepared(module_usage=None, language="python", analyzed_modules=None):
-    """Prepared callgraph built through the projection production reads."""
-    return _prepare_callgraph(
-        CallgraphMinimal(
-            _id="cg-1",
-            module_usage=module_usage or {},
-            language=language,
-            analyzed_modules=analyzed_modules or [],
-        )
+def _callgraph(module_usage=None, language="python", analyzed_modules=None):
+    """The projection production reads a stored callgraph through."""
+    return CallgraphMinimal(
+        _id="cg-1", module_usage=module_usage or {}, language=language, analyzed_modules=analyzed_modules or []
     )
+
+
+def _prepared(module_usage=None, language="python", analyzed_modules=None):
+    return _prepare_callgraph(_callgraph(module_usage, language, analyzed_modules))
 
 
 def _usage(module, location, symbols=()):
@@ -235,10 +249,7 @@ class TestReachabilityAdjustedScoreWiring:
             language="python",
             analyzed_modules=["not-imported-pkg", "other"],
         )
-        enriched = _enrich_finding_from_callgraphs(
-            finding, [cg], {"not-imported-pkg": [("1.0.0", frozenset({"python"}))]}
-        )
-        assert enriched is True
+        _enrich_finding_from_callgraphs(finding, [cg], {"not-imported-pkg": [("1.0.0", frozenset({"python"}), False)]})
         assert finding["details"]["reachability"]["is_reachable"] is False
         # 80 * 0.4 == 32.0
         assert finding["details"]["adjusted_risk_score"] == 32.0
@@ -256,10 +267,10 @@ class TestReachabilityFailClosed:
             language="javascript",
             analyzed_modules=["lodash", "requests"],
         )
-        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
+        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}), False)]})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
-        assert reach["unknown_reason"] == "language_not_analyzed"
+        assert "No python callgraph was uploaded" in reach["message"]
         assert finding["details"]["adjusted_risk_score"] == 80.0  # identity, no x0.4
 
     def test_unknown_ecosystem_does_not_downweight(self):
@@ -270,30 +281,30 @@ class TestReachabilityFailClosed:
             language="python",
             analyzed_modules=["other", "mystery"],
         )
-        _enrich_finding_from_callgraphs(finding, [cg])
+        _enrich_finding_from_callgraphs(finding, [cg], {})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
-        assert reach["unknown_reason"] == "unsupported_ecosystem"
+        assert "no callgraph tool supports" in reach["message"]
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_empty_coverage_universe_cannot_falsify(self):
         # The producer published no analyzed_modules -> it inspected nothing we can name.
         finding = _vuln_finding(component="requests", risk_score=80.0)
         cg = _prepared(module_usage=_usage("other", "a.py"), language="python")
-        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
+        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}), False)]})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
-        assert reach["unknown_reason"] == "no_coverage_universe"
+        assert "published no coverage universe" in reach["message"]
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_package_outside_coverage_universe_cannot_falsify(self):
         # The producer resolved a universe, but never resolved this package.
         finding = _vuln_finding(component="requests", risk_score=80.0)
         cg = _prepared(module_usage=_usage("other", "a.py"), language="python", analyzed_modules=["other"])
-        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
+        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}), False)]})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
-        assert reach["unknown_reason"] == "outside_coverage"
+        assert "outside the coverage universe" in reach["message"]
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_covering_language_still_downweights(self):
@@ -305,7 +316,7 @@ class TestReachabilityFailClosed:
             analyzed_modules=["lodash", "left-pad"],
         )
         _enrich_finding_from_callgraphs(
-            finding, [cg], {"left-pad": [("1.0.0", frozenset({"javascript", "typescript"}))]}
+            finding, [cg], {"left-pad": [("1.0.0", frozenset({"javascript", "typescript"}), False)]}
         )
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is False
@@ -321,7 +332,7 @@ class TestReachabilityFailClosed:
             analyzed_modules=["lodash", "left-pad"],
         )
         _enrich_finding_from_callgraphs(
-            finding, [cg], {"left-pad": [("1.0.0", frozenset({"javascript", "typescript"}))]}
+            finding, [cg], {"left-pad": [("1.0.0", frozenset({"javascript", "typescript"}), False)]}
         )
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is False
@@ -336,7 +347,9 @@ class TestReachabilityFailClosed:
             language="javascript",
             analyzed_modules=["left-pad"],
         )
-        _enrich_finding_from_callgraphs(finding, [cg], {"org.example:left-pad": [("1.0.0", frozenset({"javascript"}))]})
+        _enrich_finding_from_callgraphs(
+            finding, [cg], {"org.example:left-pad": [("1.0.0", frozenset({"javascript"}), False)]}
+        )
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is True
         assert reach["import_locations"] == ["a.js"]
@@ -347,7 +360,7 @@ class TestReachabilityFailClosed:
         finding = _vuln_finding(component="requests", risk_score=80.0)
         # Symbols only ever come from the structured OSV payload, never from prose.
         finding["details"]["vulnerabilities"] = [{"id": "CVE-2024-0001", "ecosystem_specific": {"symbols": ["get"]}}]
-        _enrich_single_finding(finding, _prepared(_usage("requests", "a.py", symbols=["get"])))
+        _enrich_finding_from_callgraphs(finding, [_prepared(_usage("requests", "a.py", symbols=["get"]))], {})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is True
         assert reach["analysis_level"] == "symbol"
@@ -357,7 +370,7 @@ class TestReachabilityFailClosed:
     def test_import_only_reachable_is_identity(self):
         """Imported but no extracted symbols -> import-level reachable -> identity (no boost)."""
         finding = _vuln_finding(component="requests", risk_score=80.0)
-        _enrich_single_finding(finding, _prepared(_usage("requests", "a.py")))
+        _enrich_finding_from_callgraphs(finding, [_prepared(_usage("requests", "a.py"))], {})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is True
         assert reach["analysis_level"] == "import"
@@ -368,14 +381,12 @@ class TestPureEnrichmentEntryPoint:
     """The reachability loop must run without a database, callgraph repository or scan id."""
 
     def test_enriches_only_vulnerability_findings_and_returns_the_count(self):
-        from app.services.reachability_enrichment import enrich_findings_from_callgraphs
-
         vuln = _vuln_finding(component="requests", risk_score=80.0)
         secret = {"type": "secret", "component": "config/aws.env", "details": {}}
-        cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
+        cg = _callgraph(module_usage=_usage("requests", "app/client.py"), language="python")
 
-        enriched = enrich_findings_from_callgraphs(
-            [vuln, secret], [cg], {"requests": [("1.0.0", frozenset({"python"}))]}
+        enriched = enrich_findings_with_reachability(
+            [vuln, secret], [cg], {"requests": [("1.0.0", frozenset({"python"}), False)]}
         )
 
         assert enriched == 1
@@ -383,14 +394,27 @@ class TestPureEnrichmentEntryPoint:
         assert "reachability" not in secret["details"]
 
     def test_mirrors_the_verdict_to_the_top_level_fields(self):
-        from app.services.reachability_enrichment import enrich_findings_from_callgraphs
-
         vuln = _vuln_finding(component="requests", risk_score=80.0)
-        cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
+        cg = _callgraph(module_usage=_usage("requests", "app/client.py"), language="python")
 
-        enrich_findings_from_callgraphs([vuln], [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
+        enrich_findings_with_reachability([vuln], [cg], {"requests": [("1.0.0", frozenset({"python"}), False)]})
 
         assert vuln["reachability_level"] == REACHABILITY_LEVEL_IMPORT
+
+
+class TestReachabilitySetFields:
+    @pytest.mark.parametrize("is_reachable", [True, False])
+    def test_names_every_field_store_reachability_writes(self, is_reachable):
+        finding = _vuln_finding()
+        before = copy.deepcopy(finding)
+
+        store_reachability(finding, ReachabilityInfo(is_reachable=is_reachable, analysis_level="import"))
+
+        written = {key for key in finding if key != "details" and finding[key] != before.get(key)}
+        written |= {
+            f"details.{key}" for key, value in finding["details"].items() if value != before["details"].get(key)
+        }
+        assert written == set(reachability_set_fields(finding))
 
 
 class TestRunPendingBulkPersist:
@@ -448,12 +472,10 @@ class TestRunPendingBulkPersist:
         monkeypatch.setattr(db.findings, "bulk_write", spy_bulk)
         monkeypatch.setattr(db.findings, "update_one", spy_update_one)
 
-        result = await run_pending_reachability_for_scan(sid, pid, db)
+        await run_pending_reachability_for_scan(sid, pid, db)
 
-        assert result["error"] is None
-        assert result["findings_enriched"] == 3
-        assert calls["bulk"] == 1  # single chunk for < _BULK_CHUNK_SIZE findings
-        assert calls["update_one"] == 0  # no sequential per-finding updates
+        assert calls["bulk"] == 1
+        assert calls["update_one"] == 0
 
         # All three findings persisted with reachability data.
         for i in range(3):
@@ -461,12 +483,11 @@ class TestRunPendingBulkPersist:
             assert doc["reachable"] is True
             assert doc["reachability_level"] == "import"
 
-        # Summary written via the shared builder; pending processing completed.
         summary = await db.analysis_results.find_one({"scan_id": sid})
         assert summary is not None
         assert summary["result"]["analyzed"] == 3
         scan = await db.scans.find_one({"_id": sid})
-        assert scan.get("reachability_completed_at") is not None
+        assert scan["stats"]["reachability"]["analyzed_count"] == 3
 
     @pytest.mark.asyncio
     async def test_second_language_callgraph_still_runs(self):
@@ -476,8 +497,8 @@ class TestRunPendingBulkPersist:
 
         db = FakeDatabase()
         pid, sid = "p1", "s1"
-        # No reachability_pending flag: the first upload already cleared it.
-        await db.scans.insert_one({"_id": sid, "project_id": pid, "branch": "main"})
+        # Every upload flags the scan again, even after the first language cleared it.
+        await db.scans.insert_one({"_id": sid, "project_id": pid, "branch": "main", "reachability_pending": True})
         await db.dependencies.insert_one({"scan_id": sid, "name": "left-pad", "type": "npm"})
         await db.callgraphs.insert_one(
             {
@@ -506,24 +527,7 @@ class TestRunPendingBulkPersist:
             }
         )
 
-        result = await run_pending_reachability_for_scan(sid, pid, db)
+        await run_pending_reachability_for_scan(sid, pid, db)
 
-        assert result["error"] is None
-        assert result["findings_enriched"] == 1
-        assert result["findings_dropped"] == 0
         doc = await db.findings.find_one({"_id": "f0"})
         assert doc["reachable"] is True
-
-
-@pytest.mark.parametrize(
-    ("extraction", "match_type", "expected"),
-    [
-        ("high", "matched", 1.0),
-        ("medium", "matched", 0.8),
-        ("high", "partial", 0.63),
-        ("unknown", "partial", 0.35),
-        ("medium", "none", 0.35),
-    ],
-)
-def test_confidence_blends_extraction_quality_with_match_type(extraction, match_type, expected):
-    assert _calculate_confidence(extraction, match_type) == pytest.approx(expected)

@@ -7,7 +7,11 @@ verdict written only under ``details.reachability`` leaves every counter at zero
 from datetime import datetime, timezone
 
 import pytest
+from prometheus_client import REGISTRY
 
+from app.core.init_db import create_indexes
+from app.repositories.distributed_locks import DistributedLocksRepository
+from app.services import reachability_enrichment
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.reachability_enrichment import (
     build_component_language_map,
@@ -56,6 +60,7 @@ async def _seed_callgraph(db) -> None:
                     "used_symbols": ["get"],
                 }
             },
+            "total_imports": 2,
             "created_at": datetime.now(timezone.utc),
         }
     )
@@ -117,9 +122,7 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
     )
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": "p", "latest_scan_id": _SCAN_ID, "stats": {"high": 2}})
 
-    result = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
-    assert result["error"] is None
-    assert result["findings_enriched"] == 2
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
 
     scan = await db.scans.find_one({"_id": _SCAN_ID})
     assert scan["stats"]["reachability"]["analyzed_count"] == 2
@@ -128,9 +131,9 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["stats"]["reachability"]["analyzed_count"] == 2
 
-    # The persisted summary is built from the minimal projection, which now carries both fields.
+    # The persisted summary is built from the minimal projection, which carries every field it shows.
     info = (await db.analysis_results.find_one({"scan_id": _SCAN_ID}))["result"]["callgraph_info"][0]
-    assert info["coverage_modules"] == 2
+    assert (info["coverage_modules"], info["total_imports"]) == (2, 2)
     assert info["generated_at"] is not None
 
 
@@ -163,9 +166,9 @@ async def test_a_deferred_run_reads_the_dependency_inventory_once(db, monkeypatc
 
     monkeypatch.setattr(db.dependencies, "find", _counting_find)
 
-    result = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
 
-    assert result["findings_enriched"] == 1
+    assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
     assert reads == [{"scan_id": _SCAN_ID}]
 
 
@@ -229,8 +232,6 @@ async def test_deferred_run_on_a_scan_the_pointer_still_names_caches_the_derived
 @pytest.mark.asyncio
 async def test_deferred_run_writes_no_stats_while_a_recalculation_holds_the_stats_lock(db, monkeypatch):
     """A recalculation resets every waiver flag before re-applying them, so stats read in between count none."""
-    from app.repositories.distributed_locks import DistributedLocksRepository
-
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     await db.findings.insert_one(_finding("CVE-1", "requests"))
@@ -239,9 +240,8 @@ async def test_deferred_run_writes_no_stats_while_a_recalculation_holds_the_stat
     await DistributedLocksRepository(db).acquire_lock(f"stats_recalc:{_PROJECT_ID}", "a-running-recalc", 300)
     monkeypatch.setattr("app.services.stats._LOCK_RETRY_BASE_DELAY", 0)
 
-    result = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
 
-    assert (result["error"], result["findings_enriched"]) == (None, 1)
     scan = await db.scans.find_one({"_id": _SCAN_ID})
     assert (scan["stats"], scan.get("reachability_pending")) == ({"high": 1}, None)
     assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
@@ -259,9 +259,9 @@ async def test_deferred_run_on_a_rescan_summarises_the_callgraph_of_its_build(db
     await db.findings.insert_one({**_finding("CVE-1", "requests"), "scan_id": rescan_id})
     await _pending_scan(db, scan_id=rescan_id, is_rescan=True, original_scan_id=_SCAN_ID)
 
-    result = await run_pending_reachability_for_scan(rescan_id, _PROJECT_ID, db)
+    await run_pending_reachability_for_scan(rescan_id, _PROJECT_ID, db)
 
-    assert result["findings_enriched"] == 1
+    assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
     summary = await db.analysis_results.find_one({"scan_id": rescan_id, "analyzer_name": "reachability"})
     assert summary is not None
     assert summary["result"]["languages"] == ["python"]
@@ -272,9 +272,9 @@ async def test_deferred_run_without_a_callgraph_keeps_the_scan_pending(db):
     await db.findings.insert_one(_finding("CVE-1", "requests"))
     await _pending_scan(db)
 
-    result = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
 
-    assert result["findings_enriched"] == 0
+    assert "reachable" not in await db.findings.find_one({"_id": "f-CVE-1"})
     assert (await db.scans.find_one({"_id": _SCAN_ID}))["reachability_pending"] is True
 
 
@@ -310,9 +310,8 @@ async def test_a_second_language_supersedes_the_first_summary(db):
             "created_at": datetime.now(timezone.utc),
         }
     )
-    second = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
-
-    assert second["findings_enriched"] == 1, "a callgraph arriving after the first must still be applied"
+    await db.scans.update_one({"_id": _SCAN_ID}, {"$set": {"reachability_pending": True}})
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
 
     results = await db.analysis_results.find({"scan_id": _SCAN_ID, "analyzer_name": "reachability"}).to_list(None)
     assert len(results) == 1, "a stale duplicate would render twice in the raw-data view"
@@ -357,7 +356,6 @@ async def test_coverable_count_is_zero_without_dependencies(db):
 @pytest.mark.asyncio
 async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analyses(db):
     """CI uploads the callgraph under the original build's id; a rescan carries a fresh id."""
-    from app.repositories.analysis_results import AnalysisResultRepository
     from app.repositories.scans import ScanRepository
     from app.services.analysis.engine import _run_reachability_enrichment
 
@@ -381,9 +379,7 @@ async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analys
     findings = [{**_finding("CVE-1", "requests"), "scan_id": rescan_id}]
     summary: list[str] = []
 
-    await _run_reachability_enrichment(
-        findings, rescan_id, _PROJECT_ID, db, AnalysisResultRepository(db), ScanRepository(db), summary
-    )
+    await _run_reachability_enrichment(findings, rescan_id, _PROJECT_ID, db, ScanRepository(db), summary)
 
     assert summary == ["reachability: Success (1 enriched)"]
     assert findings[0]["reachable"] is True
@@ -398,3 +394,114 @@ async def test_rescans_pointing_at_each_other_find_no_callgraph_instead_of_recur
         )
 
     assert await fetch_callgraphs(_PROJECT_ID, "rescan-a", db) == []
+
+
+@pytest.mark.asyncio
+async def test_the_stored_inventory_keeps_a_transitive_dependency_unfalsified(db):
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.dependencies.update_one({"_id": "dep-urllib3"}, {"$set": {"direct": False, "direct_inferred": False}})
+    findings = [_finding("CVE-2", "urllib3")]
+
+    enrich_findings_with_reachability(
+        findings,
+        await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db),
+        await build_component_language_map(db, _SCAN_ID),
+    )
+
+    assert findings[0]["reachable"] is None
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_run_that_finds_the_scan_locked_leaves_it_to_the_holder(db):
+    await create_indexes(db)
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.findings.insert_one(_finding("CVE-1", "requests"))
+    await _pending_scan(db)
+    await DistributedLocksRepository(db).acquire_lock(f"reachability:{_SCAN_ID}", "a-running-pass", 300)
+
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    assert "reachable" not in await db.findings.find_one({"_id": "f-CVE-1"})
+    assert (await db.scans.find_one({"_id": _SCAN_ID}))["reachability_pending"] is True
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_callgraph_uploaded_during_a_pass_is_applied_before_the_pass_ends(db, monkeypatch):
+    """Parallel CI jobs upload one callgraph per language; the pass that lacks one must not write last."""
+    await create_indexes(db)
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.dependencies.insert_one(
+        {"_id": "dep-lodash", "scan_id": _SCAN_ID, "name": "lodash", "purl": "pkg:npm/lodash@4.17.21"}
+    )
+    await db.findings.insert_one(_finding("CVE-1", "requests"))
+    await db.findings.insert_one(_finding("CVE-JS", "lodash"))
+    await _pending_scan(db)
+    real_language_map = reachability_enrichment.build_component_language_map
+    uploaded: list[str] = []
+
+    async def _upload_mid_pass(database, scan_id):
+        if not uploaded:
+            uploaded.append("javascript")
+            await db.callgraphs.insert_one(
+                {
+                    "_id": "cg-js",
+                    "project_id": _PROJECT_ID,
+                    "scan_id": _SCAN_ID,
+                    "language": "javascript",
+                    "analyzed_modules": ["lodash"],
+                    "module_usage": {"lodash": {"module": "lodash", "import_locations": ["src/app.js"]}},
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+            await db.scans.update_one({"_id": _SCAN_ID}, {"$set": {"reachability_pending": True}})
+            await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+        return await real_language_map(database, scan_id)
+
+    monkeypatch.setattr(reachability_enrichment, "build_component_language_map", _upload_mid_pass)
+
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    assert (await db.findings.find_one({"_id": "f-CVE-JS"}))["reachable"] is True
+    summary = await db.analysis_results.find_one({"scan_id": _SCAN_ID, "analyzer_name": "reachability"})
+    assert sorted(summary["result"]["languages"]) == ["javascript", "python"]
+    assert not (await db.scans.find_one({"_id": _SCAN_ID})).get("reachability_pending")
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_run_leaves_a_scan_under_analysis_to_that_analysis(db):
+    """Its findings are about to be replaced, so the engine applies the callgraphs once it is final."""
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.findings.insert_one(_finding("CVE-1", "requests"))
+    await _pending_scan(db, status="processing")
+
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    assert "reachable" not in await db.findings.find_one({"_id": "f-CVE-1"})
+    assert (await db.scans.find_one({"_id": _SCAN_ID}))["reachability_pending"] is True
+
+
+def _reachability_counters() -> tuple[float, float]:
+    return (
+        REGISTRY.get_sample_value("analysis_enrichment_total", {"type": "reachability"}) or 0.0,
+        REGISTRY.get_sample_value("analysis_reachable_vulnerabilities_total", {"reachability_level": "import"}) or 0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_run_counts_its_verdicts_in_the_reachability_metrics(db):
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.findings.insert_one(_finding("CVE-1", "requests"))
+    await _pending_scan(db)
+    enriched_before, reachable_before = _reachability_counters()
+
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    enriched_after, reachable_after = _reachability_counters()
+    assert (enriched_after - enriched_before, reachable_after - reachable_before) == (1, 1)

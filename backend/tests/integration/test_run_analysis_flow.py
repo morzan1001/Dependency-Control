@@ -498,7 +498,7 @@ async def test_a_callgraph_uploaded_during_the_run_is_applied_once_the_scan_is_f
 
 
 @pytest.mark.asyncio
-async def test_a_failing_hand_over_is_logged_and_leaves_the_final_scan_as_it_is(db, notified, handed_over, caplog):
+async def test_a_failing_hand_over_is_logged_and_the_final_scan_is_still_announced(db, notified, handed_over, caplog):
     scan_id = await _seed_scan(db)
     await _callgraph_upload(db, scan_id)
     handed_over.side_effect = RuntimeError("mongo down")
@@ -506,6 +506,7 @@ async def test_a_failing_hand_over_is_logged_and_leaves_the_final_scan_as_it_is(
     assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_COMPLETED
+    assert len(notified) == 1
     assert "mongo down" in caplog.text
 
 
@@ -539,3 +540,17 @@ async def test_a_re_analysis_that_keeps_the_earlier_analysis_applies_a_callgraph
     assert await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     handed_over.assert_awaited_once_with(scan.id, _PROJECT_ID, db)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_hand_over_after_keeping_the_earlier_analysis_still_returns_the_outcome(
+    db, notified, handed_over, monkeypatch, caplog
+):
+    ref = _gridfs_outage(monkeypatch)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
+    await _callgraph_upload(db, scan_id)
+    handed_over.side_effect = RuntimeError("mongo down")
+
+    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    assert "mongo down" in caplog.text

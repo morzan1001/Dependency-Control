@@ -40,4 +40,3 @@ class QualityAggregatedDetails(TypedDict, total=False):
     overall_score: float | None
     has_maintenance_issues: bool
     issue_count: int
-    scanners: list[str]

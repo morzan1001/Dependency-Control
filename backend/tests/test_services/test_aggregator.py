@@ -19,6 +19,7 @@ from app.services.aggregation.versions import (
     normalize_version,
     parse_version_key,
 )
+from app.services.analyzers.maintainer_risk import MaintainerRiskAnalyzer
 
 # One file carrying many SAST hits is a single "component" to the cross-linker.
 _CROWDED_FILE = "app/handlers.py"
@@ -633,6 +634,47 @@ class TestAddQualityFinding:
         assert agg.severity == "HIGH"
 
 
+class TestMaintenanceIssueFlag:
+    @staticmethod
+    def _quality_for(risks):
+        issue = {
+            "component": "jetty-util",
+            "version": "9.4.0",
+            "risks": risks,
+            "severity": MaintainerRiskAnalyzer()._calculate_overall_severity(risks),
+        }
+        agg = ResultAggregator()
+        agg.aggregate("maintainer_risk", {"maintainer_issues": [issue]})
+        [quality] = agg.get_findings()
+        return quality
+
+    def test_an_inactive_repository_alone_is_a_maintenance_issue(self):
+        """Outside npm/PyPI the GitHub push date is the only staleness signal."""
+        risks, _ = MaintainerRiskAnalyzer()._assess_all_risks(
+            {"github_info": {"days_since_push": 1200, "pushed_at": "2023-06-01T00:00:00Z"}}, "maven"
+        )
+        assert [r["type"] for r in risks] == ["inactive_repo"]
+
+        assert self._quality_for(risks).details["has_maintenance_issues"] is True
+
+    @pytest.mark.parametrize(
+        ("risk_type", "expected"),
+        [
+            ("stale_package", True),
+            ("infrequent_updates", True),
+            ("archived_repo", True),
+            ("inactive_repo", True),
+            ("unaddressed_issues", False),
+            ("single_maintainer", False),
+            ("free_email_maintainer", False),
+        ],
+    )
+    def test_every_emitted_risk_type_has_a_decided_flag(self, risk_type, expected):
+        risks = [{"type": risk_type, "severity_score": 2, "message": risk_type}]
+
+        assert self._quality_for(risks).details["has_maintenance_issues"] is expected
+
+
 class TestMergeFindingsData:
     """Tests for _merge_findings_data - merging two findings into one."""
 
@@ -884,28 +926,72 @@ class TestGetFindings:
         assert [e["id"] for e in entries] == ["CVE-2026-1", "CVE-2026-5", "CVE-2026-9"]
 
     def _add_sast_findings_on_one_file(self, count):
-        for index in range(count):
-            self.agg.add_finding(
-                Finding(
-                    id=f"SAST-{index}",
-                    type=FindingType.SAST,
-                    severity=Severity.MEDIUM,
-                    component=_CROWDED_FILE,
-                    version="",
-                    description="eval() detected",
-                    scanners=["opengrep"],
-                    details={"line": index + 1, "rule_id": f"rule-{index}"},
-                )
-            )
+        self.agg.aggregate(
+            "opengrep",
+            {
+                "results": [
+                    {
+                        "check_id": f"rules.python.eval-{index}",
+                        "path": _CROWDED_FILE,
+                        "start": {"line": index + 1, "col": 1},
+                        "end": {"line": index + 1, "col": 20},
+                        "extra": {"severity": "WARNING", "message": "eval() detected", "metadata": {}},
+                    }
+                    for index in range(count)
+                ]
+            },
+        )
 
-    def test_a_group_at_the_cap_is_still_cross_linked(self):
+    def _add_secret_on_the_crowded_file(self):
+        self.agg.aggregate(
+            "trufflehog",
+            {
+                "findings": [
+                    {
+                        "DetectorType": "2",
+                        "Raw": "AKIAIOSFODNN7EXAMPLE",
+                        "Verified": True,
+                        "SourceMetadata": {"Data": {"Filesystem": {"file": _CROWDED_FILE}}},
+                    }
+                ]
+            },
+        )
+
+    def test_same_type_hits_in_one_file_are_counted_not_linked(self):
+        """Pairwise ids of one file's SAST hits grow quadratically and exchange no context."""
         self._add_sast_findings_on_one_file(MAX_CROSS_LINK_GROUP_SIZE)
 
         findings = self.agg.get_findings()
 
         assert len(findings) == MAX_CROSS_LINK_GROUP_SIZE
-        assert all(len(f.related_findings) == MAX_CROSS_LINK_GROUP_SIZE - 1 for f in findings)
-        assert all(f.related_findings_omitted is None for f in findings)
+        assert all(f.related_findings == [] for f in findings)
+        assert all(f.related_findings_omitted == MAX_CROSS_LINK_GROUP_SIZE - 1 for f in findings)
+
+    def test_different_types_in_one_file_link_to_each_other(self):
+        self._add_sast_findings_on_one_file(2)
+        self._add_secret_on_the_crowded_file()
+
+        findings = self.agg.get_findings()
+
+        [secret] = [f for f in findings if f.type == FindingType.SECRET]
+        sast = [f for f in findings if f.type == FindingType.SAST]
+        assert sorted(secret.related_findings) == sorted(f.id for f in sast)
+        assert secret.related_findings_omitted is None
+        assert secret.details["additional_finding_types"] == [{"type": "sast", "severity": "MEDIUM"}]
+        for hit in sast:
+            assert hit.related_findings == [secret.id]
+            assert hit.related_findings_omitted == 1
+            assert hit.details["additional_finding_types"] == [{"type": "secret", "severity": "CRITICAL"}]
+
+    def test_a_group_past_the_cap_keeps_its_badges(self):
+        self._add_sast_findings_on_one_file(MAX_CROSS_LINK_GROUP_SIZE)
+        self._add_secret_on_the_crowded_file()
+
+        findings = self.agg.get_findings()
+
+        [secret] = [f for f in findings if f.type == FindingType.SECRET]
+        assert secret.related_findings == []
+        assert secret.details["additional_finding_types"] == [{"type": "sast", "severity": "MEDIUM"}]
 
     def test_a_group_past_the_cap_is_left_unlinked(self):
         """Pairwise linking of one crowded file is quadratic and tells a reader nothing."""
@@ -957,6 +1043,24 @@ class TestAggregateDispatch:
         f = next(iter(self.agg.findings.values()))
         assert f.type == "system_warning"
         assert "trivy" in f.description
+
+    @pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+    def test_every_failure_of_one_analyzer_stays_in_the_description(self, order):
+        # cli_base shapes: a timeout on one SBOM, an exception on another.
+        failures = [
+            ({"error": "osv analysis failed", "details": "osv timed out after 300 seconds"}, "sbom-a"),
+            ({"error": "Exception during osv analysis: 503 Service Unavailable"}, "sbom-b"),
+        ]
+        for i in order:
+            result, source = failures[i]
+            self.agg.aggregate("osv", result, source=source)
+
+        [f] = self.agg.get_findings()
+        assert f.description == (
+            "Scanner 'osv' failed: Exception during osv analysis: 503 Service Unavailable; "
+            "Scanner 'osv' failed: osv analysis failed"
+        )
+        assert {e["source"] for e in f.details["errors"]} == {"sbom-a", "sbom-b"}
 
 
 class TestStoredEntryShape:

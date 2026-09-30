@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 _STALENESS_TYPES = ("stale_package", "infrequent_updates")
+# unaddressed_issues stays out: a busy tracker on a half-year-quiet repo is no sign of abandonment.
+MAINTENANCE_RISK_TYPES = frozenset({"stale_package", "infrequent_updates", "archived_repo", "inactive_repo"})
 _UNADDRESSED_ISSUES_MIN = 100
 # PyPI project_urls labels that name the source repository, most specific first.
 _REPOSITORY_LABELS = ("source", "source code", "repository", "github", "homepage")

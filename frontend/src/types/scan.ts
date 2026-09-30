@@ -101,8 +101,6 @@ export interface VulnerabilityInfoSummary {
   vuln_count?: number;
   critical_count?: number;
   high_count?: number;
-  vulnerability_finding_id?: string;
-  vulnerabilities?: NestedVulnerability[];
 }
 
 export interface OutdatedInfoSummary {
@@ -110,23 +108,18 @@ export interface OutdatedInfoSummary {
   current_version?: string;
   latest_version?: string;
   message?: string;
-  outdated_finding_id?: string;
 }
 
 export interface QualityInfoSummary {
   has_quality_issues?: boolean;
   issue_count?: number;
-  overall_score?: number;
   has_maintenance_issues?: boolean;
-  quality_finding_id?: string;
-  quality_issues?: QualityIssue[];
 }
 
 export interface LicenseInfoSummary {
   has_license_issue?: boolean;
   license?: string;
   category?: string;
-  license_finding_id?: string;
 }
 
 export interface EolInfoSummary {
@@ -134,7 +127,6 @@ export interface EolInfoSummary {
   eol_date?: string;
   cycle?: string;
   latest_version?: string;
-  eol_finding_id?: string;
 }
 
 export interface ScorecardContext {

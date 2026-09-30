@@ -2,8 +2,8 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import (
     _aggregate_external_results,
@@ -12,6 +12,8 @@ from app.services.analysis.engine import (
     _filter_out_waived_findings,
 )
 from app.services.analysis.registry import CRYPTO_ANALYZERS
+from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 class _AsyncIter:
@@ -71,12 +73,6 @@ class TestCleanupAnalyzerNames:
         assert CRYPTO_ANALYZERS.issubset(names)
 
 
-class _FakeResult:
-    def __init__(self, analyzer_name, result):
-        self.analyzer_name = analyzer_name
-        self.result = result
-
-
 class TestAggregateExternalSkipsPostProcessors:
     def test_epss_kev_and_reachability_not_aggregated(self, monkeypatch):
         # No registered analyzer -> only _POST_PROCESSOR_ANALYZERS membership can exclude these.
@@ -92,14 +88,15 @@ class TestAggregateExternalSkipsPostProcessors:
 
         aggregator.aggregate = spy
 
-        results = [
-            _FakeResult("epss_kev", {"summary": 1}),
-            _FakeResult("reachability", {"summary": 1}),
-        ]
-        result_repo = SimpleNamespace(find_by_scan=AsyncMock(return_value=results))
+        db = FakeDatabase()
+        for analyzer_name, result in (
+            ("epss_kev", build_epss_kev_summary([])),
+            ("reachability", build_reachability_summary([], [])),
+        ):
+            asyncio.run(AnalysisResultRepository(db).save_result("scan-1", analyzer_name, result))
         results_summary: list = []
 
-        asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-1", results_summary))
+        asyncio.run(_aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1", results_summary))
 
         assert calls == [], f"post-processor rows must not be aggregated; got {calls}"
         assert results_summary == [], f"no spurious Success lines expected; got {results_summary}"
@@ -115,7 +112,6 @@ class TestCarryOverExcludesPostProcessors:
 
             async def carry_over(self, from_scan_id, to_scan_id, exclude_names):
                 captured["exclude_names"] = exclude_names
-                return 0
 
         monkeypatch.setattr("app.services.analysis.engine.AnalysisResultRepository", _FakeRepo)
 

@@ -25,6 +25,11 @@ def get_severity_value(severity: str | None) -> int:
     return SEVERITY_ORDER.get(severity.upper(), 0)
 
 
+def max_severity[S: str | None](*severities: S) -> S:
+    """The most severe label; the first one wins a tie."""
+    return max(severities, key=get_severity_value)
+
+
 def sort_by_severity(items: list, key: str = "severity", reverse: bool = True) -> list:
     """Sort a list of dicts (or objects) by severity, most severe first by default."""
     return sorted(
@@ -879,7 +884,6 @@ SOURCE_TYPE_IMAGE = "image"
 SOURCE_TYPE_APPLICATION = "application"
 SOURCE_TYPE_FILE = "file"
 SOURCE_TYPE_DIRECTORY = "directory"
-SOURCE_TYPE_FILE_SYSTEM = "file-system"
 
 # Package types that are typically OS/system packages (from container base images)
 OS_PACKAGE_TYPES = frozenset(
@@ -902,17 +906,11 @@ APP_PACKAGE_TYPES = frozenset(
         "npm",
         "pypi",
         "maven",
-        "gradle",
         "cargo",
         "gem",
         "nuget",
         "golang",
-        "go-module",
         "composer",
-        "pip",
-        "poetry",
-        "yarn",
-        "pnpm",
         "hex",
         "cocoapods",
         "swift",
@@ -930,13 +928,9 @@ REACHABILITY_LEVEL_SYMBOL = "symbol"
 REACHABILITY_CONFIDENCE_NOT_USED = 0.9  # High confidence package is NOT used
 REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS = 0.5  # Package imported, unknown functions
 REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO = 0.4  # Package imported, no symbol analysis available
-
-# Confidence base scores for symbol extraction
-REACHABILITY_EXTRACTION_CONFIDENCE = {
-    "high": 0.9,
-    "medium": 0.7,
-    "low": 0.5,
-}
+REACHABILITY_CONFIDENCE_SYMBOL_MATCHED = 1.0
+# Vulnerable symbols searched and none used directly: weaker evidence than having no symbol data.
+REACHABILITY_CONFIDENCE_SYMBOLS_NOT_USED = 0.35
 
 # Threshold above which a "reachable" verdict is considered high-confidence
 # enough to drive prioritisation/headline counts. Values below this still
@@ -944,17 +938,9 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
-# Why a finding carries no reachability verdict. "unsupported_ecosystem" and "absence_not_evidence"
-# are terminal — OS packages have no callgraph tooling, a JVM graph cannot rule a package out — while
-# the others name something a pipeline can fix.
-REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
-REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED = "language_not_analyzed"
-REACHABILITY_REASON_NO_COVERAGE_UNIVERSE = "no_coverage_universe"
-REACHABILITY_REASON_OUTSIDE_COVERAGE = "outside_coverage"
-REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE = "absence_not_evidence"
-
 # Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
 # calls, the symbols each import names, madge dependencies and the analyzed-modules list.
+# It bounds parse cost only; whether the parsed graph fits one document is checked on write.
 CALLGRAPH_MAX_ENTRIES = 200_000
 
 GITLAB_ACCESS_GUEST = 10

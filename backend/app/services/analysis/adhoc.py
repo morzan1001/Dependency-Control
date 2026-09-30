@@ -41,7 +41,7 @@ from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
-from app.services.aggregation import ResultAggregator
+from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
@@ -55,10 +55,8 @@ from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.reachability_enrichment import (
     ComponentLanguages,
-    _prepare_callgraph,
-    _PreparedCallgraph,
     component_language_map,
-    enrich_findings_from_callgraphs,
+    enrich_findings_with_reachability,
 )
 from app.services.recommendations import recommendation_engine
 from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, merge_duplicate_dependencies, parse_sbom
@@ -464,8 +462,7 @@ async def _run_one_analyzer(
     """
     try:
         result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
-        # The aggregator guards on membership, not truthiness, so ``{"error": ""}`` would reach it.
-        if "error" in result:
+        if is_error_result(result):
             _record_errored(report, name, f"{fallback_source}: {result['error']}")
             return
         aggregator.aggregate(name, result, source=_sbom_source(sbom, fallback_source))
@@ -487,16 +484,9 @@ async def _run_one_analyzer(
 
 
 def _aggregate_atomically(aggregator: ResultAggregator, name: str, payload: dict[str, Any], source: str) -> None:
-    """Normalise into a scratch aggregator, then hand over only a complete result.
-
-    The normalizers add each item as they read it, so a payload that dies half-way would
-    otherwise contribute whatever preceded the unreadable item — the same items in a different
-    order yielding a different set of findings alongside the same error.
-    """
-    staged = ResultAggregator()
-    staged.aggregate(name, payload, source=source)
-    for finding in staged.findings.values():
-        aggregator.add_finding(finding, source=source)
+    """Dry-run on a scratch aggregator: normalizers add item by item, so a half-read payload adds nothing."""
+    ResultAggregator().aggregate(name, payload, source=source)
+    aggregator.aggregate(name, payload, source=source)
 
 
 def _first_reason(exc: ValidationError) -> str:
@@ -549,7 +539,7 @@ def _aggregate_posted_scanners(
         if not payload:
             report.skipped[name] = _EMPTY_PAYLOAD
             continue
-        if "error" in payload:
+        if is_error_result(payload):
             _record_errored(report, name, str(payload["error"]))
             continue
         expected_keys = _SCANNER_RESULT_KEYS[name]
@@ -703,7 +693,7 @@ async def _enrich_vulnerabilities(
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
 
-def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], _PreparedCallgraph]:
+def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
     """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
     from app.api.v1.helpers.callgraph import detect_format, parse_generic_format, parse_madge_format
 
@@ -722,21 +712,14 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     if parser is None:
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
-    imports, _calls, module_usage, analyzed_modules = parser(data, language)
-    minimal = CallgraphMinimal(
+    parsed = parser(data, language)
+    return CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
-        module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
-        analyzed_modules=analyzed_modules,
+        module_usage={key: usage.model_dump() for key, usage in parsed.module_usage.items()},
+        analyzed_modules=parsed.analyzed_modules,
         language=language,
+        total_imports=parsed.total_imports,
     )
-    as_dict = {
-        "language": minimal.language,
-        "module_usage": minimal.module_usage,
-        "analyzed_modules": minimal.analyzed_modules,
-        "total_imports": len(imports),
-        "created_at": None,
-    }
-    return as_dict, _prepare_callgraph(minimal)
 
 
 def _run_reachability(
@@ -750,7 +733,7 @@ def _run_reachability(
         return None
 
     try:
-        callgraph_dict, prepared = _prepare_posted_callgraph(callgraph_payload)
+        callgraph = _prepare_posted_callgraph(callgraph_payload)
     except Exception as exc:
         logger.warning("adhoc: callgraph could not be prepared: %s", exc)
         _record_errored(report, _REACHABILITY, str(exc))
@@ -759,9 +742,9 @@ def _run_reachability(
     # The list holds the same dict objects as ``records``, so the mirroring store_reachability
     # does in place stays visible to every later stage.
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
-    enriched = enrich_findings_from_callgraphs(vulnerabilities, [prepared], languages)
+    enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
-    return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
+    return dict(build_reachability_summary(vulnerabilities, [callgraph]))
 
 
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:

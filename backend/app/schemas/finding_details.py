@@ -20,7 +20,7 @@ class _DetailsModel(BaseModel):
 
 
 class ScorecardContext(_DetailsModel):
-    """Written onto findings of any type by ``aggregation.scorecard.enrich_with_scorecard``."""
+    """Cross-link block from a package's quality aggregate onto its other findings (``aggregation.cross_link``)."""
 
     overall_score: float | None = None
     project_url: str | None = None
@@ -61,16 +61,14 @@ class OutdatedInfo(_DetailsModel):
 class QualityInfo(_DetailsModel):
     has_quality_issues: bool = True
     issue_count: int | None = None
-    overall_score: float | None = None
     has_maintenance_issues: bool = False
-    quality_finding_id: str | None = None
 
 
 class LicenseInfo(_DetailsModel):
     has_license_issue: bool = True
     license: str | None = None
     category: str | None = None
-    license_finding_id: str | None = None
+    license_severity: str | None = None
 
 
 class EolInfo(_DetailsModel):
@@ -78,7 +76,6 @@ class EolInfo(_DetailsModel):
     eol_date: Any = None
     cycle: Any = None
     latest_version: Any = None
-    eol_finding_id: str | None = None
 
 
 class VulnerabilityContextInfo(_DetailsModel):
@@ -174,7 +171,6 @@ class VulnerabilityDetails(_DetailsModel):
     license_info: LicenseInfo | None = None
     eol_info: EolInfo | None = None
     additional_finding_types: list[AdditionalFindingType] = []
-    # scorecard (aggregation.scorecard)
     scorecard_context: ScorecardContext | None = None
 
 
@@ -275,10 +271,8 @@ class QualityDetails(_DetailsModel):
     overall_score: float | None = None
     has_maintenance_issues: bool = False
     issue_count: int | None = None
-    scanners: list[str] = []
     additional_finding_types: list[AdditionalFindingType] = []
     vulnerability_info: VulnerabilityContextInfo | None = None
-    scorecard_context: ScorecardContext | None = None
 
 
 class SastScannerDetails(_DetailsModel):
@@ -320,7 +314,7 @@ class SastFindingEntry(_DetailsModel):
 
 
 class SastDetails(_DetailsModel):
-    """Merged SAST finding (aggregation.merging.merge_sast_findings)."""
+    """SAST finding as persisted (aggregation.merging.to_sast_aggregate)."""
 
     sast_findings: list[SastFindingEntry] = []
     file: str | None = None
@@ -382,6 +376,7 @@ class HashVerificationDetails(_DetailsModel):
 class SystemWarningDetails(_DetailsModel):
     # Failed analyzers report strings; malformed external results can carry structured blobs.
     error_details: Any = None
+    errors: list[dict[str, Any]] = []
 
 
 class MatchedRuleEntry(_DetailsModel):

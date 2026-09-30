@@ -4,7 +4,8 @@ import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.schemas.project import LicensePolicySchema
-from app.services.analysis.adhoc import run_adhoc_analysis
+from app.services.aggregation import ResultAggregator
+from app.services.analysis.adhoc import _aggregate_atomically, run_adhoc_analysis
 from app.services.analysis.registry import analyzer_factories
 from tests.helpers.analyzers import serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
@@ -183,7 +184,7 @@ _ONE_BAD_SUBFIELD_SBOM = {
         }
         for index in range(_HEALTHY_COMPONENTS)
     ],
-    "dependencies": [{"ref": "pkg:pypi/c0@1.0.0", "dependsOn": None}],
+    "dependencies": [{"ref": "pkg:pypi/c0@1.0.0", "dependsOn": "pkg:pypi/c1@1.0.0"}],
 }
 
 # An explicit null name is a present key, so a dict default never fires.
@@ -810,3 +811,27 @@ async def test_what_a_partial_analyzer_did_find_is_still_returned(monkeypatch):
     ]
     assert advisories == [_PARTIAL_CVE]
     assert list(response.analyzers.errored) == [_OSV_NAME]
+
+
+def _grype_match(cve: str) -> dict:
+    return {
+        "vulnerability": {
+            "id": cve,
+            "severity": "High",
+            "description": "Prototype pollution.",
+            "fix": {"versions": ["4.17.21"], "state": "fixed"},
+            "urls": [],
+        },
+        "artifact": {"name": "lodash", "version": "1.0.0"},
+    }
+
+
+def test_staged_aggregation_matches_a_direct_one_for_vulnerability_aggregates():
+    payload = {"matches": [_grype_match("CVE-2024-1"), _grype_match("CVE-2024-2")]}
+    direct, staged = ResultAggregator(), ResultAggregator()
+    direct.aggregate("grype", payload, source="posted:grype")
+    _aggregate_atomically(staged, "grype", payload, "posted:grype")
+
+    [finding] = staged.get_findings()
+    assert [entry["id"] for entry in finding.details["vulnerabilities"]] == ["CVE-2024-1", "CVE-2024-2"]
+    assert [f.model_dump() for f in staged.get_findings()] == [f.model_dump() for f in direct.get_findings()]

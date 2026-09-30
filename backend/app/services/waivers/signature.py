@@ -13,7 +13,7 @@ from typing import Any, Protocol
 from app.models.match_signature import AnchorKind, MatchSignature
 from app.services.normalizers.utils import FindingIdPrefix
 
-# Deterministic preference when several scanners confirm one SAST finding.
+# Stored SAST findings can hold several scanners' entries; pick one deterministically.
 _SCANNER_PREFERENCE = ("opengrep", "bearer")
 
 _WS = re.compile(r"\s+")
