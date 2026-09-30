@@ -55,6 +55,7 @@ class Project(MongoDocument, CreatedAtModel):
     retention_action: str = RETENTION_ACTION_DELETE
     default_branch: str | None = None
     enforce_notification_settings: bool = False
+    enforced_notification_preferences: NotificationPreferences = Field(default_factory=dict)
     # Preferences of users who reach the project only through an owning team, keyed by user id.
     notification_overrides: dict[str, NotificationPreferences] = Field(default_factory=dict)
     # GitLab Integration (Multi-Instance Support)

@@ -954,9 +954,10 @@ async def update_notification_settings(
     may_enforce = role == PROJECT_ROLE_ADMIN or is_write_superuser(current_user)
 
     if settings.enforce_notification_settings is not None and may_enforce:
-        await project_repo.update_raw(
-            project_id, {"$set": {"enforce_notification_settings": settings.enforce_notification_settings}}
-        )
+        fields: dict[str, Any] = {"enforce_notification_settings": settings.enforce_notification_settings}
+        if settings.enforce_notification_settings:
+            fields["enforced_notification_preferences"] = settings.notification_preferences
+        await project_repo.update_raw(project_id, {"$set": fields})
     elif project.enforce_notification_settings and not may_enforce:
         raise HTTPException(status_code=403, detail="Notification settings are enforced by the project admin")
 

@@ -36,42 +36,25 @@ describe("memberPreferences", () => {
 });
 
 describe("enforcedPreferences", () => {
-  it("picks the first admin that actually has preferences, as the backend does", () => {
-    const p = project([
-      { user_id: "u0", role: "admin", notification_preferences: {} },
-      { user_id: "u1", role: "admin", notification_preferences: ADMIN_PREFS },
-      { user_id: "u2", role: "viewer", notification_preferences: MEMBER_PREFS },
-    ]);
+  it("shows what the enforcing admin saved, not any admin member's own preferences", () => {
+    const p = {
+      ...project([{ user_id: "u1", role: "admin", notification_preferences: ADMIN_PREFS }]),
+      enforce_notification_settings: true,
+      enforced_notification_preferences: MEMBER_PREFS,
+    };
 
-    expect(enforcedPreferences(p)).toEqual(ADMIN_PREFS);
+    expect(enforcedPreferences(p)).toEqual(MEMBER_PREFS);
   });
 
-  it("ignores non-admin members", () => {
-    const p = project([{ user_id: "u2", role: "viewer", notification_preferences: MEMBER_PREFS }]);
+  it("keeps an enforced mute, so the form shows every event off", () => {
+    const muted = { analysis_completed: [], vulnerability_found: [] };
+
+    expect(enforcedPreferences({ ...project([]), enforced_notification_preferences: muted })).toEqual(muted);
+  });
+
+  it("returns nothing while no enforced preferences were saved", () => {
+    const p = project([{ user_id: "u1", role: "admin", notification_preferences: ADMIN_PREFS }]);
 
     expect(enforcedPreferences(p)).toBeUndefined();
-  });
-});
-
-describe("enforcedPreferences with owning teams", () => {
-  it("takes a team admin's preferences when no direct admin set any", () => {
-    const p = project([
-      { user_id: "u1", role: "viewer", effective_role: "viewer", notification_preferences: MEMBER_PREFS },
-      {
-        user_id: "u2",
-        role: "admin",
-        effective_role: "admin",
-        inherited_from: "Team: Ops",
-        notification_preferences: ADMIN_PREFS,
-      },
-    ]);
-
-    expect(enforcedPreferences(p)).toEqual(ADMIN_PREFS);
-  });
-
-  it("counts a direct viewer whom an owning team makes admin", () => {
-    const p = project([{ user_id: "u1", role: "viewer", effective_role: "admin", notification_preferences: ADMIN_PREFS }]);
-
-    expect(enforcedPreferences(p)).toEqual(ADMIN_PREFS);
   });
 });

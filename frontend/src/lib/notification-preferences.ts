@@ -9,13 +9,7 @@ export function memberPreferences(project: Project, userId: string): Record<stri
   return nonEmpty(project.members?.find(m => m.user_id === userId)?.notification_preferences)
 }
 
-/**
- * What the notification service enforces: the first admin, direct or through an owning team, that
- * has any preferences set. Mirrors NotificationService.notify_project_members.
- */
+/** What the notification service enforces: the preferences the enforcing admin last saved. */
 export function enforcedPreferences(project: Project): Record<string, string[]> | undefined {
-  return nonEmpty(
-    project.members?.find(m => (m.effective_role ?? m.role) === 'admin' && nonEmpty(m.notification_preferences))
-      ?.notification_preferences,
-  )
+  return nonEmpty(project.enforced_notification_preferences)
 }
