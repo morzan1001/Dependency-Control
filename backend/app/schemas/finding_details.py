@@ -20,7 +20,7 @@ class _DetailsModel(BaseModel):
 
 
 class ScorecardContext(_DetailsModel):
-    """Written onto findings of any type by ``aggregation.scorecard.enrich_with_scorecard``."""
+    """Cross-link block from a package's quality aggregate onto its other findings (``aggregation.cross_link``)."""
 
     overall_score: float | None = None
     project_url: str | None = None
@@ -61,7 +61,6 @@ class OutdatedInfo(_DetailsModel):
 class QualityInfo(_DetailsModel):
     has_quality_issues: bool = True
     issue_count: int | None = None
-    overall_score: float | None = None
     has_maintenance_issues: bool = False
 
 
@@ -174,7 +173,6 @@ class VulnerabilityDetails(_DetailsModel):
     license_info: LicenseInfo | None = None
     eol_info: EolInfo | None = None
     additional_finding_types: list[AdditionalFindingType] = []
-    # scorecard (aggregation.scorecard)
     scorecard_context: ScorecardContext | None = None
 
 
@@ -276,7 +274,6 @@ class QualityDetails(_DetailsModel):
     issue_count: int | None = None
     additional_finding_types: list[AdditionalFindingType] = []
     vulnerability_info: VulnerabilityContextInfo | None = None
-    scorecard_context: ScorecardContext | None = None
 
 
 class SastScannerDetails(_DetailsModel):

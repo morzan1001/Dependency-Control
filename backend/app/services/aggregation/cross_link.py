@@ -6,7 +6,14 @@ from typing import Any
 
 from app.core.constants import get_severity_value, max_severity
 from app.models.finding import Finding, FindingType
-from app.schemas.finding_details import EolInfo, LicenseInfo, OutdatedInfo, QualityInfo, VulnerabilityContextInfo
+from app.schemas.finding_details import (
+    EolInfo,
+    LicenseInfo,
+    OutdatedInfo,
+    QualityInfo,
+    ScorecardContext,
+    VulnerabilityContextInfo,
+)
 from app.services.aggregation.versions import normalize_version
 
 
@@ -23,6 +30,7 @@ def cross_link_pair(f1: Finding, f2: Finding) -> None:
     for primary, other in ((f1, f2), (f2, f1)):
         add_context_to_vulnerability(primary, other)
         _add_vulnerability_context(primary, other)
+        _add_scorecard_context(primary, other)
         _record_additional_type(primary, other)
 
 
@@ -73,6 +81,28 @@ def _add_vulnerability_context(finding: Finding, vuln_finding: Finding) -> None:
         info[key] += count
 
 
+def _add_scorecard_context(finding: Finding, quality_finding: Finding) -> None:
+    """Show the package's OpenSSF Scorecard, held by its quality aggregate, on its other findings."""
+    if (
+        quality_finding.type != FindingType.QUALITY
+        or finding.type == FindingType.QUALITY
+        or "scorecard_context" in finding.details
+    ):
+        return
+    issues = quality_finding.details.get("quality_issues", [])
+    scorecard = next((issue["details"] for issue in issues if issue["type"] == "scorecard"), None)
+    if scorecard is None:
+        return
+    critical = scorecard.get("critical_issues", [])
+    finding.details["scorecard_context"] = ScorecardContext(
+        overall_score=scorecard.get("overall_score"),
+        project_url=scorecard.get("project_url"),
+        critical_issues=critical,
+        maintenance_risk="Maintained" in critical,
+        has_vulnerabilities_issue="Vulnerabilities" in critical,
+    ).model_dump()
+
+
 def refresh_vulnerability_info(records: list[dict[str, Any]]) -> None:
     """Recount each sibling's vulnerability_info once enrichment has folded GHSA-linked advisories."""
     by_id: dict[Any, list[dict[str, Any]]] = {}
@@ -114,7 +144,6 @@ def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) 
         if "quality_info" not in details:
             details["quality_info"] = QualityInfo(
                 issue_count=len(other_details.get("quality_issues", [])),
-                overall_score=other_details.get("overall_score"),
                 has_maintenance_issues=other_details.get("has_maintenance_issues", False),
             ).model_dump()
 

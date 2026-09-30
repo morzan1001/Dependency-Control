@@ -48,11 +48,6 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
       <ContextBanner key="quality" icon={Activity} title="Quality Concerns" variant="warning">
         <span>
           {info.issue_count ? `${info.issue_count} quality issue(s) detected. ` : ''}
-          {info.overall_score != null && (
-            <span>
-              OpenSSF Score: <span className="font-medium">{info.overall_score.toFixed(1)}/10</span>
-            </span>
-          )}
           {info.has_maintenance_issues && (
             <span className="ml-2 text-muted-foreground font-medium">• Maintenance concerns</span>
           )}

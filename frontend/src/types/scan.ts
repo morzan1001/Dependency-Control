@@ -113,7 +113,6 @@ export interface OutdatedInfoSummary {
 export interface QualityInfoSummary {
   has_quality_issues?: boolean;
   issue_count?: number;
-  overall_score?: number;
   has_maintenance_issues?: boolean;
 }
 

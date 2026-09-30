@@ -26,18 +26,6 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
         component = safe_get(item, "component", "unknown")
         version = item.get("version") or ""
 
-        component_key = f"{component}@{version}" if version else component
-
-        scorecard_data = {
-            "overall_score": overall,
-            "failed_checks": failed_checks,
-            "critical_issues": critical_issues,
-            "project_url": project_url,
-            "checks": scorecard.get("checks") or [],
-        }
-
-        aggregator.record_scorecard(component_key, scorecard_data)
-
         if overall < 3.0 or "Maintained" in critical_issues or "Vulnerabilities" in critical_issues:
             severity = Severity.HIGH
         elif overall < 5.0 or critical_issues:

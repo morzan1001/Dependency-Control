@@ -32,7 +32,6 @@ from app.services.aggregation.merging import (
     to_sast_aggregate,
 )
 from app.services.aggregation.quality import update_quality_description
-from app.services.aggregation.scorecard import enrich_with_scorecard
 from app.services.aggregation.versions import aggregate_fixed_version, normalize_version
 from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import (
@@ -148,7 +147,6 @@ def _deps_dev_block(metadata: dict[str, Any]) -> dict[str, Any]:
 class ResultAggregator:
     def __init__(self) -> None:
         self.findings: dict[str, Finding] = {}
-        self._scorecard_cache: dict[str, dict[str, Any]] = {}
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
 
     def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
@@ -214,10 +212,6 @@ class ResultAggregator:
         enrichment.deps_dev.update(block)
         if new_links:
             enrichment.deps_dev.setdefault("links", {}).update(new_links)
-
-    def record_scorecard(self, component_key: str, data: dict[str, Any]) -> None:
-        """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
-        self._scorecard_cache[component_key] = data
 
     @staticmethod
     def _scanner_license_takes_primary(enrichment: DependencyEnrichment, category: str | None) -> bool:
@@ -375,7 +369,6 @@ class ResultAggregator:
                 f.details["fixed_version"] = aggregate_fixed_version(entries, f.version)
 
         self._link_related_findings_by_component(final_findings)
-        enrich_with_scorecard(final_findings, self._scorecard_cache)
 
         for f in final_findings:
             f.match = compute_match_signature(f)
