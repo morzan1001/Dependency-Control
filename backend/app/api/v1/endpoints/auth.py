@@ -1,5 +1,7 @@
+import hmac
 import logging
 import secrets
+from collections.abc import Awaitable
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from urllib.parse import urlencode
@@ -12,6 +14,7 @@ from fastapi import (
     Form,
     HTTPException,
     Request,
+    Response,
     status,
 )
 from fastapi.responses import RedirectResponse
@@ -37,6 +40,7 @@ from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.constants import (
     AUTH_PROVIDER_LOCAL,
+    OIDC_HANDOFF_TTL_SECONDS,
     OIDC_HTTP_TIMEOUT_SECONDS,
     OIDC_STATE_TTL_SECONDS,
 )
@@ -424,6 +428,21 @@ async def resend_verification_email_public(
     return generic_response
 
 
+_OIDC_CALLBACK_PATH = "/login/oidc/callback"
+_OIDC_EXCHANGE_PATH = "/login/oidc/exchange"
+_OIDC_STATE_COOKIE = "oidc_state"
+_OIDC_HANDOFF_COOKIE = "oidc_handoff"
+_SSO_COOKIE_FLAGS: dict[str, Any] = {"secure": True, "httponly": True, "samesite": "lax"}
+
+
+class _OidcLoginError(Exception):
+    """A failed SSO login; ``code`` is the metric status and the fixed error the login page maps to text."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
 @router.get(
     "/login/oidc/authorize",
     summary="Initiate OIDC login",
@@ -442,13 +461,8 @@ async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectRes
             detail="OIDC is not properly configured",
         )
 
-    redirect_uri = _resolve_oidc_redirect_uri(request)
-
-    # State prevents CSRF.
     state = secrets.token_urlsafe(32)
-
-    stored = await cache_service.set(f"oidc_state:{state}", {"valid": True}, OIDC_STATE_TTL_SECONDS)
-    if not stored:
+    if not await cache_service.set(f"oidc_state:{state}", True, OIDC_STATE_TTL_SECONDS):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service temporarily unavailable. Please try again.",
@@ -458,112 +472,55 @@ async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectRes
         "client_id": system_config.oidc_client_id,
         "response_type": "code",
         "scope": system_config.oidc_scopes,
-        "redirect_uri": redirect_uri,
+        "redirect_uri": _resolve_oidc_redirect_uri(request),
         "state": state,
     }
+    response = RedirectResponse(f"{system_config.oidc_authorization_endpoint}?{urlencode(params)}")
+    response.set_cookie(
+        _OIDC_STATE_COOKIE,
+        state,
+        max_age=OIDC_STATE_TTL_SECONDS,
+        path=f"{settings.API_V1_STR}{_OIDC_CALLBACK_PATH}",
+        **_SSO_COOKIE_FLAGS,
+    )
+    return response
 
-    url = f"{system_config.oidc_authorization_endpoint}?{urlencode(params)}"
-    return RedirectResponse(url)
 
-
-async def _validate_oidc_state(state: str | None) -> None:
-    """Validate and atomically consume the OIDC state token."""
-    if not state:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter")
-
-    state_key = f"oidc_state:{state}"
-    cached_state = await cache_service.get(state_key)
-    if not cached_state or not cached_state.get("valid"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired state parameter",
-        )
-    await cache_service.delete(state_key)
+async def _consume_oidc_state(request: Request, state: str | None) -> None:
+    """Spend the state, which only the browser it was issued to can present."""
+    cookie = request.cookies.get(_OIDC_STATE_COOKIE, "")
+    if not (
+        state
+        and hmac.compare_digest(cookie.encode(), state.encode())
+        and await cache_service.pop(f"oidc_state:{state}")
+    ):
+        raise _OidcLoginError("state_expired")
 
 
 def _resolve_oidc_redirect_uri(request: Request) -> str:
     """Prefer FRONTEND_BASE_URL (external URL behind a reverse proxy), else request.url_for for local dev."""
     if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
-        return f"{settings.FRONTEND_BASE_URL}/api/v1/login/oidc/callback"
+        return f"{settings.FRONTEND_BASE_URL}{settings.API_V1_STR}{_OIDC_CALLBACK_PATH}"
     return str(request.url_for("login_oidc_callback"))
 
 
-async def _oidc_exchange_code_for_token(
-    client: InstrumentedAsyncClient, system_config: SystemSettings, token_data: dict
-) -> str:
-    """Exchange OIDC code for token. Returns access_token string."""
-    assert system_config.oidc_token_endpoint  # validated upstream; assert for the type checker
+async def _idp_json(call: Awaitable[httpx.Response], failure: str) -> dict[str, Any]:
+    """The IdP's JSON object answer; raises ``failure`` for any other answer."""
     try:
-        response = await client.post(system_config.oidc_token_endpoint, data=token_data)
-    except httpx.TimeoutException as exc:
-        logger.exception("Timeout while requesting OIDC token from %s", system_config.oidc_token_endpoint)
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="OIDC provider request timed out. Please try again.",
-        ) from exc
+        response = await call
     except httpx.RequestError as exc:
-        logger.exception("An error occurred while requesting %r: %s", exc.request.url, exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. "
-                "Please check your system configuration."
-            ),
-        ) from exc
-
+        logger.warning("OIDC provider unreachable at %s: %s", exc.request.url, exc)
+        raise _OidcLoginError("provider_unreachable") from exc
     if response.status_code != 200:
-        logger.error(f"OIDC Token Error: {response.text}")
-        if auth_oidc_logins_total:
-            auth_oidc_logins_total.labels(status="token_error").inc()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to retrieve token from provider",
-        )
-
-    return str(response.json().get("access_token"))
-
-
-async def _oidc_fetch_user_info(
-    client: InstrumentedAsyncClient, system_config: SystemSettings, access_token: str
-) -> dict:
-    """Fetch and validate user info from OIDC provider."""
-    assert system_config.oidc_userinfo_endpoint
+        logger.error("OIDC %s (HTTP %s): %s", failure, response.status_code, response.text)
+        raise _OidcLoginError(failure)
     try:
-        user_info_response = await client.get(
-            system_config.oidc_userinfo_endpoint,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-    except httpx.TimeoutException as exc:
-        logger.exception("Timeout while requesting user info from %s", system_config.oidc_userinfo_endpoint)
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="OIDC provider request timed out. Please try again.",
-        ) from exc
-    except httpx.RequestError as exc:
-        logger.exception("An error occurred while requesting user info %r: %s", exc.request.url, exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}."
-            ),
-        ) from exc
-
-    if user_info_response.status_code != 200:
-        logger.error(f"OIDC User Info Error: {user_info_response.text}")
-        if auth_oidc_logins_total:
-            auth_oidc_logins_total.labels(status="userinfo_error").inc()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to retrieve user info",
-        )
-
-    user_info = user_info_response.json()
-    if not isinstance(user_info, dict):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Invalid user info response",
-        )
-    return user_info
+        body = response.json()
+    except ValueError as exc:
+        raise _OidcLoginError(failure) from exc
+    if not isinstance(body, dict):
+        raise _OidcLoginError(failure)
+    return body
 
 
 async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: dict, email: str) -> str:
@@ -602,25 +559,16 @@ async def _create_oidc_user(
 def _validate_existing_oidc_user(user: dict, email: str) -> None:
     """Verify an existing user can use OIDC and is active."""
     if is_local_account(user.get("auth_provider")):
-        if auth_oidc_logins_total:
-            auth_oidc_logins_total.labels(status="local_user_blocked").inc()
         logger.warning(f"OIDC login attempt blocked for local user: {email}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This account uses local authentication. Please login with your password.",
-        )
-
+        raise _OidcLoginError("local_user_blocked")
     if not user.get("is_active", True):
-        if auth_oidc_logins_total:
-            auth_oidc_logins_total.labels(status="inactive_user").inc()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_MSG_USER_INACTIVE,
-        )
+        raise _OidcLoginError("inactive_user")
 
 
-async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redirect_uri: str) -> dict:
-    """Run the full OIDC token-exchange + user-info HTTP flow."""
+async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redirect_uri: str) -> dict[str, Any]:
+    """Redeem the code at the token endpoint and read the account from the userinfo endpoint."""
+    if not system_config.oidc_token_endpoint or not system_config.oidc_userinfo_endpoint:
+        raise _OidcLoginError("not_configured")
     token_data = {
         "client_id": system_config.oidc_client_id,
         "client_secret": system_config.oidc_client_secret,
@@ -629,8 +577,15 @@ async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redire
         "redirect_uri": redirect_uri,
     }
     async with InstrumentedAsyncClient("OIDC Provider", timeout=OIDC_HTTP_TIMEOUT_SECONDS) as client:
-        access_token = await _oidc_exchange_code_for_token(client, system_config, token_data)
-        return await _oidc_fetch_user_info(client, system_config, access_token)
+        tokens = await _idp_json(client.post(system_config.oidc_token_endpoint, data=token_data), "token_error")
+        access_token = tokens.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            logger.error("OIDC token answer carries no access_token: %s", tokens.get("error"))
+            raise _OidcLoginError("token_error")
+        return await _idp_json(
+            client.get(system_config.oidc_userinfo_endpoint, headers={"Authorization": f"Bearer {access_token}"}),
+            "userinfo_error",
+        )
 
 
 def _email_unverified(user_info: dict[str, Any]) -> bool:
@@ -638,67 +593,89 @@ def _email_unverified(user_info: dict[str, Any]) -> bool:
     return str(user_info.get("email_verified")).strip().lower() in {"false", "0"}
 
 
-@router.get(
-    "/login/oidc/callback",
-    summary="OIDC callback",
-    description="Handles the callback from the OIDC provider after authentication.",
-    responses=RESP_400_500,
-)
-async def login_oidc_callback(
-    request: Request,
-    code: str,
-    db: DatabaseDep,
-    state: str | None = None,
-) -> RedirectResponse:
-    """Handle the OIDC callback: exchange the code for tokens and create/update the user."""
+async def _oidc_login_user(
+    request: Request, db: DatabaseDep, code: str | None, state: str | None, error: str | None
+) -> dict:
+    """The account an SSO callback signs in; raises _OidcLoginError with the reason otherwise."""
     system_config = await deps.get_system_settings(db)
     if not system_config.oidc_enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled")
+        raise _OidcLoginError("not_configured")
+    await _consume_oidc_state(request, state)
+    if error or not code:
+        raise _OidcLoginError("idp_error")
 
-    if not system_config.oidc_token_endpoint or not system_config.oidc_userinfo_endpoint:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OIDC endpoints not configured",
-        )
-
-    await _validate_oidc_state(state)
-
-    redirect_uri = _resolve_oidc_redirect_uri(request)
-    user_info = await _fetch_oidc_user_info(system_config, code, redirect_uri)
-
+    user_info = await _fetch_oidc_user_info(system_config, code, _resolve_oidc_redirect_uri(request))
     email = user_info.get("email")
     if not email:
-        if auth_oidc_logins_total:
-            auth_oidc_logins_total.labels(status="no_email").inc()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email not provided by OIDC provider",
-        )
-
+        raise _OidcLoginError("no_email")
     if _email_unverified(user_info):
-        if auth_oidc_logins_total:
-            auth_oidc_logins_total.labels(status="email_unverified").inc()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The identity provider has not verified this email address",
-        )
+        raise _OidcLoginError("email_unverified")
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
-    if not user:
-        user = await _create_oidc_user(user_repo, user_info, email, system_config)
-    else:
+    if user:
         _validate_existing_oidc_user(user, email)
+        return user
+    if not system_config.oidc_auto_provision:
+        raise _OidcLoginError("not_provisioned")
+    return await _create_oidc_user(user_repo, user_info, email, system_config)
 
-    # OIDC users are exempt from 2FA enforcement; we trust the provider.
-    access_token, refresh_token = security.create_token_pair(str(user["_id"]), list(user.get("permissions", [])))
 
+@router.get(
+    _OIDC_CALLBACK_PATH,
+    summary="OIDC callback",
+    description="Finishes the login the OIDC provider redirected back and sends the browser to the login page.",
+)
+async def login_oidc_callback(
+    request: Request,
+    db: DatabaseDep,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
+    """Leave the session for POST /login/oidc/exchange in a cookie, or send the browser a fixed error code."""
+    landing = f"{settings.FRONTEND_BASE_URL}/login/callback"
+    try:
+        user = await _oidc_login_user(request, db, code, state, error)
+        # OIDC users are exempt from 2FA enforcement; we trust the provider.
+        access_token, refresh_token = security.create_token_pair(str(user["_id"]), list(user.get("permissions", [])))
+        handoff = secrets.token_urlsafe(32)
+        tokens = {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+        if not await cache_service.set(f"oidc_handoff:{handoff}", tokens, OIDC_HANDOFF_TTL_SECONDS):
+            raise _OidcLoginError("unavailable")
+    except _OidcLoginError as exc:
+        outcome, response = exc.code, RedirectResponse(f"{landing}#error={exc.code}")
+    else:
+        outcome, response = "success", RedirectResponse(landing)
+        response.set_cookie(
+            _OIDC_HANDOFF_COOKIE,
+            handoff,
+            max_age=OIDC_HANDOFF_TTL_SECONDS,
+            path=f"{settings.API_V1_STR}{_OIDC_EXCHANGE_PATH}",
+            **_SSO_COOKIE_FLAGS,
+        )
+    response.delete_cookie(_OIDC_STATE_COOKIE, path=f"{settings.API_V1_STR}{_OIDC_CALLBACK_PATH}", **_SSO_COOKIE_FLAGS)
     if auth_oidc_logins_total:
-        auth_oidc_logins_total.labels(status="success").inc()
+        auth_oidc_logins_total.labels(status=outcome).inc()
+    return response
 
-    return RedirectResponse(
-        f"{settings.FRONTEND_BASE_URL}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
+
+@router.post(
+    _OIDC_EXCHANGE_PATH,
+    response_model=Token,
+    summary="Collect the OIDC session",
+    responses=RESP_400,
+)
+async def login_oidc_exchange(request: Request, response: Response) -> Any:
+    """Hand this browser the session its finished OIDC callback left, once."""
+    handoff = request.cookies.get(_OIDC_HANDOFF_COOKIE)
+    tokens = await cache_service.pop(f"oidc_handoff:{handoff}") if handoff else None
+    response.delete_cookie(
+        _OIDC_HANDOFF_COOKIE, path=f"{settings.API_V1_STR}{_OIDC_EXCHANGE_PATH}", **_SSO_COOKIE_FLAGS
     )
+    if not tokens:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No pending single sign-on")
+    return tokens
 
 
 @router.post(

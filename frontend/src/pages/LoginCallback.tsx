@@ -1,7 +1,21 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { authApi } from '@/api/auth'
 import { useAuth } from '@/context/useAuth'
 import { Skeleton } from '@/components/ui/skeleton'
+
+const SSO_FAILED = 'Single sign-on failed. Please try again.'
+
+const SSO_ERRORS = new Map([
+  ['state_expired', 'The sign-in expired or was started in another browser. Please try again.'],
+  ['idp_error', 'The identity provider did not complete the sign-in.'],
+  ['no_email', 'The identity provider did not share your email address.'],
+  ['email_unverified', 'The identity provider has not verified your email address.'],
+  ['local_user_blocked', 'This account signs in with a password. Please use the login form.'],
+  ['inactive_user', 'This account is inactive.'],
+  ['not_provisioned', 'No account exists for you yet. Please ask an administrator to create one.'],
+  ['not_configured', 'Single sign-on is not set up on this server.'],
+])
 
 export default function LoginCallback() {
   const navigate = useNavigate()
@@ -10,24 +24,19 @@ export default function LoginCallback() {
 
   useEffect(() => {
     if (processedRef.current) return
-    
-    const hash = globalThis.location.hash
-    if (!hash) {
-      navigate('/login', { state: { message: 'No token provided' }, replace: true })
+    processedRef.current = true
+
+    const error = new URLSearchParams(globalThis.location.hash.substring(1)).get('error')
+    globalThis.history.replaceState(null, '', globalThis.location.pathname)
+    const fail = (message: string) => navigate('/login', { state: { message }, replace: true })
+    if (error !== null) {
+      fail(SSO_ERRORS.get(error) ?? SSO_FAILED)
       return
     }
-
-    const params = new URLSearchParams(hash.substring(1))
-    const accessToken = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
-
-    if (accessToken && refreshToken) {
-      processedRef.current = true
-      globalThis.history.replaceState(null, '', globalThis.location.pathname)
-      login(accessToken, refreshToken, true)
-    } else {
-      navigate('/login', { state: { message: 'Invalid token response' }, replace: true })
-    }
+    authApi
+      .exchangeOidcLogin()
+      .then(({ access_token, refresh_token }) => login(access_token, refresh_token, true))
+      .catch(() => fail(SSO_FAILED))
   }, [navigate, login])
 
   useEffect(() => {

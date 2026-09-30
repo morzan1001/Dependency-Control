@@ -56,6 +56,7 @@ class SystemSettingsFields(BaseModel):
     oidc_token_endpoint: str | None = None
     oidc_userinfo_endpoint: str | None = None
     oidc_scopes: str = "openid profile email"
+    oidc_auto_provision: bool = True
 
     # GitLab Integration
     gitlab_integration_enabled: bool = False

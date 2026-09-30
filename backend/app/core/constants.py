@@ -770,6 +770,7 @@ PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 1
 
 # OIDC State TTL in seconds (5 minutes for authorization flow)
 OIDC_STATE_TTL_SECONDS = 300
+OIDC_HANDOFF_TTL_SECONDS = 60
 
 # TOTP (2FA) settings
 TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current

@@ -463,6 +463,32 @@ class CacheService:
             if cache_operation_duration_seconds:
                 cache_operation_duration_seconds.labels(operation="incr").observe(time.time() - _start)
 
+    async def pop(self, key: str) -> Any | None:
+        """Read and delete in one step, so only one caller receives the value; None if absent or unreachable."""
+        if not await self._ensure_available():
+            return None
+
+        _start = time.time()
+        try:
+            client = await self.get_client()
+            data = await asyncio.wait_for(
+                client.getdel(self._make_key(key)),
+                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            )
+            return json.loads(data) if data else None
+        except (redis.ConnectionError, asyncio.TimeoutError):
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
+            self._mark_unavailable()
+            return None
+        except Exception as e:
+            logger.warning(f"Cache pop error: {e}")
+            return None
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="pop").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="pop").observe(time.time() - _start)
+
     async def get_or_fetch_with_lock(
         self,
         key: str,

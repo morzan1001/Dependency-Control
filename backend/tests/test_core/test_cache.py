@@ -473,3 +473,10 @@ class TestAtomicPrimitives:
         fake_cache._client = fakeredis.aioredis.FakeRedis(server=server)
 
         assert await fake_cache.incr("rate_limit:k", 60) is None
+
+    @pytest.mark.asyncio
+    async def test_pop_hands_a_value_out_once(self, fake_cache):
+        await fake_cache.set("oidc_state:s", True, ttl_seconds=60)
+
+        assert await fake_cache.pop("oidc_state:s") is True
+        assert await fake_cache.pop("oidc_state:s") is None
