@@ -90,6 +90,7 @@ export function AnalyzerSettingsDialog({
   )
 }
 
+// Only stored keys are carried, so a key the user never touched keeps following the backend default.
 function initializeValues(
   schema: AnalyzerSettingsSchema,
   current: Record<string, unknown>
@@ -99,8 +100,6 @@ function initializeValues(
     const existing = current[field.key]
     if (existing !== undefined && existing !== null) {
       result[field.key] = existing as SettingValue
-    } else {
-      result[field.key] = field.default
     }
   }
   return result
@@ -114,6 +113,7 @@ interface FieldRendererProps {
 }
 
 function FieldRenderer({ field, value, onChange, disabled }: Readonly<FieldRendererProps>) {
+  const shown = value ?? field.default
   if (field.type === 'switch') {
     return (
       <div className="flex flex-row items-center justify-between rounded-lg border p-4">
@@ -124,7 +124,7 @@ function FieldRenderer({ field, value, onChange, disabled }: Readonly<FieldRende
           )}
         </div>
         <Switch
-          checked={value === true}
+          checked={shown === true}
           onCheckedChange={onChange}
           disabled={disabled}
         />
@@ -137,7 +137,7 @@ function FieldRenderer({ field, value, onChange, disabled }: Readonly<FieldRende
       <div className="space-y-2">
         <Label htmlFor={`field-${field.key}`}>{field.label}</Label>
         <Select
-          value={value !== undefined ? String(value) : undefined}
+          value={String(shown)}
           onValueChange={onChange}
           disabled={disabled}
         >
@@ -169,7 +169,7 @@ function FieldRenderer({ field, value, onChange, disabled }: Readonly<FieldRende
         min={field.min}
         max={field.max}
         step={field.step}
-        value={typeof value === 'number' ? value : Number(value ?? field.default)}
+        value={Number(shown)}
         onChange={(e) => {
           const num = Number.parseFloat(e.target.value)
           onChange(Number.isNaN(num) ? (field.default as number) : num)

@@ -1,10 +1,15 @@
 """A numeric analyzer setting the analyzer cannot use is refused on write: stored, it fails or silently
 disables that analyzer on every later scan of the project."""
 
+import re
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.project import ProjectCreate, ProjectUpdate
+from app.schemas.project import ANALYZER_TUNABLES, ProjectCreate, ProjectUpdate
+
+FRONTEND_SCHEMAS = Path(__file__).parents[3] / "frontend/src/lib/analyzer-settings-schemas.ts"
 
 
 @pytest.mark.parametrize(
@@ -57,3 +62,25 @@ def test_a_tunable_the_analyzer_cannot_use_is_refused(settings):
 )
 def test_a_usable_tunable_is_stored_as_written(settings):
     assert ProjectUpdate(analyzer_settings=settings).analyzer_settings == settings
+
+
+def test_the_settings_dialog_shows_the_defaults_and_ranges_the_backend_applies():
+    source = FRONTEND_SCHEMAS.read_text()
+    shown = {}
+    for key, block in re.findall(r"key: '(\w+)',(.*?)\n      \}", source, re.DOTALL):
+        numbers = dict(re.findall(r"^\s*(default|min|max): ([\d.]+),", block, re.MULTILINE))
+        if numbers:
+            described = re.search(r"Default: ([\d.]+)", block)
+            shown[key] = (
+                float(numbers["min"]),
+                float(numbers["max"]),
+                float(numbers["default"]),
+                float(described[1]) if described else float(numbers["default"]),
+            )
+
+    applied = {
+        key: (low, high, default, default)
+        for specs in ANALYZER_TUNABLES.values()
+        for key, (_, low, high, default) in specs.items()
+    }
+    assert shown == applied
