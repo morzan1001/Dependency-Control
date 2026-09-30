@@ -3,6 +3,8 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
+import httpx
+
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
@@ -176,6 +178,15 @@ class DepsDevAnalyzer(Analyzer):
             else None,
         }
 
+    @staticmethod
+    async def _fetch_dependents(client: InstrumentedAsyncClient, version_url: str) -> dict[str, Any] | None:
+        """Dependent counts only enrich the metadata, so their failure never costs the component."""
+        try:
+            return await fetch_deps_dev_json(client, f"{version_url}:dependents")
+        except (httpx.HTTPError, ValueError) as e:
+            logger.debug(f"deps.dev dependents unavailable at {version_url}: {e!r}")
+            return None
+
     async def _check_component(
         self,
         client: InstrumentedAsyncClient,
@@ -200,7 +211,7 @@ class DepsDevAnalyzer(Analyzer):
         project_id = self._select_project_id(data.get("relatedProjects", []))
         project, dependents = await asyncio.gather(
             self._cached_project(client, project_id),
-            fetch_deps_dev_json(client, f"{version_url}:dependents"),
+            self._fetch_dependents(client, version_url),
         )
 
         if dependents:

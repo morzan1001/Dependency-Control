@@ -259,9 +259,8 @@ class TestDepsDevLookups:
             (_CORE_URL, httpx.ReadTimeout("timed out")),
             (_CORE_URL, "<html>upstream error</html>"),
             (_PROJECT_URL, 503),
-            (f"{_CORE_URL}:dependents", 500),
         ],
-        ids=["version-500", "version-timeout", "version-bad-body", "project-503", "dependents-500"],
+        ids=["version-500", "version-timeout", "version-bad-body", "project-503"],
     )
     @pytest.mark.asyncio
     async def test_a_failed_lookup_marks_the_component_skipped_and_caches_nothing(
@@ -276,6 +275,25 @@ class TestDepsDevLookups:
         assert result["partial_components_skipped"] == 1
         assert result["package_metadata"] == {}
         assert await fake_cache.get(_CORE_KEY) is None
+
+    @pytest.mark.parametrize(
+        "answer",
+        [500, httpx.ReadTimeout("timed out"), "<html>upstream error</html>"],
+        ids=["dependents-500", "dependents-timeout", "dependents-bad-body"],
+    )
+    @pytest.mark.asyncio
+    async def test_a_failed_dependents_lookup_keeps_the_rest_of_the_component(self, fake_cache, monkeypatch, answer):
+        routes = _babel_routes()
+        routes[f"{_CORE_URL}:dependents"] = answer
+        _serve(monkeypatch, fake_cache, routes)
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
+
+        [metadata] = result["package_metadata"].values()
+        [issue] = result["scorecard_issues"]
+        assert "partial_components_skipped" not in result
+        assert "dependents" not in metadata
+        assert (metadata["licenses"], metadata["project"]["stars"], issue["purl"]) == (["MIT"], 43000, _CORE["purl"])
 
     @pytest.mark.asyncio
     async def test_packages_of_one_project_share_one_project_fetch(self, fake_cache, monkeypatch):
