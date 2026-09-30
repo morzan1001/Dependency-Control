@@ -102,7 +102,7 @@ async def compute_components_delta(
     if change in (None, "all", "changed"):
         items.extend(changed)
 
-    # Sort with purl and version tiebreakers so pagination is deterministic across set-iteration order.
+    # Sort with purl and version tiebreakers so pagination does not depend on fetch order.
     items.sort(key=lambda i: (i.change, i.name, i.purl or "", i.version or ""))
 
     paged, total_pages = paginate(items, page, page_size)

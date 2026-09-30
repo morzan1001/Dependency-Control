@@ -74,7 +74,7 @@ async def compute_crypto_delta_envelope(
     if change in (None, "all", "removed"):
         items.extend(_group_to_envelope_item(group, "removed") for group in removed)
 
-    # Sort with variant/primitive tiebreakers so pagination is deterministic across set-iteration order.
+    # Sort with variant/primitive tiebreakers so pagination does not depend on fetch order.
     items.sort(key=lambda i: (i.change, i.name, i.variant or "", i.primitive or ""))
     paged, total_pages = paginate(items, page, page_size)
 
