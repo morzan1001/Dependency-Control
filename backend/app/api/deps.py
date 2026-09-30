@@ -22,7 +22,7 @@ from app.core.constants import (
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import auth_token_validations_total
-from app.core.permissions import Permissions, has_permission
+from app.core.permissions import Permissions, has_permission, is_setup_2fa_scope
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.models.system import SystemSettings
@@ -105,11 +105,8 @@ async def get_current_user(
     _count_validation("valid")
 
     user_obj = User(**user)
-
-    # A single-scope setup_2fa token grants only that permission.
-    if token_data.permissions and "auth:setup_2fa" in token_data.permissions and len(token_data.permissions) == 1:
+    if is_setup_2fa_scope(token_data.permissions):
         user_obj.permissions = token_data.permissions
-
     return user_obj
 
 

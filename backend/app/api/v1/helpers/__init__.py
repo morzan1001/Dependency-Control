@@ -78,7 +78,6 @@ from app.api.v1.helpers.users import (
     ensure_can_manage_target,
     fetch_updated_user,
     get_user_or_404,
-    is_2fa_setup_mode,
 )
 from app.api.v1.helpers.webhooks import (
     check_team_webhook_create_permission,
@@ -153,7 +152,6 @@ __all__ = [
     "get_user_or_404",
     "get_user_project_ids",
     "get_webhook_or_404",
-    "is_2fa_setup_mode",
     "is_write_superuser",
     "last_admin_guard",
     "load_from_gridfs",

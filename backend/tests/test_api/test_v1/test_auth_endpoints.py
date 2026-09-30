@@ -12,6 +12,7 @@ from prometheus_client import REGISTRY
 
 from app.core import security
 from app.core.config import settings
+from app.core.permissions import Permissions
 from app.models.system import SystemSettings
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -82,7 +83,7 @@ class TestRefreshToken2FAGate:
 
         result = self._run_refresh(user, system_config)
 
-        assert _decode_permissions(result["access_token"]) == ["auth:setup_2fa"]
+        assert _decode_permissions(result["access_token"]) == [Permissions.AUTH_SETUP_2FA]
 
     def test_2fa_configured_user_keeps_full_permissions(self):
         user = {
@@ -142,7 +143,7 @@ class TestRefreshToken2FAGate:
 
         result = self._run_refresh(user, system_config)
 
-        assert _decode_permissions(result["access_token"]) == ["auth:setup_2fa"]
+        assert _decode_permissions(result["access_token"]) == [Permissions.AUTH_SETUP_2FA]
 
 
 class TestRefreshTokenEmailVerificationGate:

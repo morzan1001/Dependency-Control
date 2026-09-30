@@ -50,6 +50,7 @@ from app.core.metrics import (
     auth_password_resets_total,
     auth_signups_total,
 )
+from app.core.permissions import Permissions
 from app.models.system import SystemSettings
 from app.models.user import User, is_local_account
 from app.repositories.token_blacklist import TokenBlacklistRepository
@@ -145,7 +146,7 @@ def _session_tokens(user: dict, system_config: SystemSettings) -> dict[str, str]
         and not user.get("totp_enabled", False)
         and is_local_account(user.get("auth_provider"))
     ):
-        permissions = ["auth:setup_2fa"]
+        permissions = [Permissions.AUTH_SETUP_2FA]
     else:
         permissions = list(user.get("permissions", []))
     access_token, refresh_token = security.create_token_pair(str(user["_id"]), permissions)

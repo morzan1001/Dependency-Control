@@ -14,7 +14,7 @@ from app.api.deps import PermissionChecker, get_current_user
 from app.core import security
 from app.core.permissions import Permissions
 
-_SETUP_SCOPE = "auth:setup_2fa"
+_SETUP_SCOPE = Permissions.AUTH_SETUP_2FA
 _STORED_PERMISSIONS = [Permissions.SYSTEM_MANAGE, Permissions.PROJECT_CREATE]
 
 

@@ -16,7 +16,6 @@ from app.api.v1.helpers import (
     ensure_can_manage_target,
     fetch_updated_user,
     get_user_or_404,
-    is_2fa_setup_mode,
 )
 from app.api.v1.helpers.auth import (
     require_email_configured,
@@ -340,9 +339,6 @@ async def setup_2fa(
             detail="2FA must be configured in your identity provider, not in this application",
         )
 
-    if not is_2fa_setup_mode(current_user) and not current_user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-
     secret = pyotp.random_base32()
 
     # Store the secret but leave 2FA disabled until verified.
@@ -372,9 +368,6 @@ async def enable_2fa(
             status_code=400,
             detail="2FA must be configured in your identity provider, not in this application",
         )
-
-    if not is_2fa_setup_mode(current_user) and not current_user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
 
     user = await get_user_or_404(current_user.id, db)
 
