@@ -181,8 +181,7 @@ class VulnerabilityEnrichmentService:
     async def enrich_findings(
         self, findings: list[dict[str, Any]], github_token: str | None = None
     ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
-        """Resolve GHSAs to CVEs, fold EPSS/KEV onto each advisory and finding in place; returns per-CVE
-        enrichment and the sources that could not be read."""
+        """Fold GHSA, EPSS and KEV into the findings in place; returns per-CVE enrichment and the unreadable sources."""
         ghsa_ids = sorted(
             {i for f in findings for v in _vulnerabilities(f) if (i := v.get("id") or "").startswith("GHSA-")}
         )

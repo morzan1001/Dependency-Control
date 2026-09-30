@@ -31,8 +31,7 @@ from app.schemas.analytics import (
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
-from app.services.enrichment.service import vulnerability_enrichment_service
-from app.services.enrichment.service import apply_enrichments
+from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
 from app.services.recommendation import trends
 from app.services.recommendation.common import live_cves, get_attr
 from app.services.recommendations import recommendation_engine
