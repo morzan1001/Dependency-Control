@@ -149,11 +149,12 @@ class TeamRepository:
         )
         return bool(result.matched_count)
 
-    async def remove_instance(self, instance_id: str, source: str) -> None:
-        await self.collection.update_many(
+    async def remove_instance(self, instance_id: str, source: str) -> int:
+        result = await self.collection.update_many(
             {"$or": [{_BINDING_INSTANCE: instance_id}, {_MEMBERS_SOURCE: source}]},
             _detach_instance(instance_id, source),
         )
+        return result.modified_count
 
     async def update_with_binding(
         self,

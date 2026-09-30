@@ -93,7 +93,10 @@ async def delete_guarded(
                 "Delete those projects first, or edit this instance in place instead of re-creating it."
             ),
         )
+    # Teams first: a failure then leaves the instance in place, so the delete can be retried.
+    detached = await TeamRepository(db).remove_instance(instance_id, team_source(provider, instance_id))
     if not await repo.delete(instance_id):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete instance")
-    await TeamRepository(db).remove_instance(instance_id, team_source(provider, instance_id))
-    logger.warning("Deleted %s instance '%s' by user %s", provider, instance.name, username)
+    logger.warning(
+        "Deleted %s instance '%s' by user %s, detached from %d teams", provider, instance.name, username, detached
+    )

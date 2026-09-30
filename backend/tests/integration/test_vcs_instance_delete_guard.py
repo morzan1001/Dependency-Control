@@ -1,6 +1,9 @@
+import logging
 from functools import partial
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from pymongo.errors import PyMongoError
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
@@ -82,6 +85,20 @@ async def test_a_project_linked_through_the_other_provider_field_does_not_block_
 
 @pytest.mark.asyncio
 @_PROVIDERS
+async def test_a_failed_team_cleanup_keeps_the_instance_so_the_delete_can_be_retried(
+    db, client, admin_auth_headers, provider, repo_class, make_instance, make_binding, link_field, other_field
+):
+    repo = await _seed(db, repo_class, make_instance)
+    failing = AsyncMock(side_effect=PyMongoError("not primary"))
+
+    with patch.object(TeamRepository, "remove_instance", failing), pytest.raises(PyMongoError):
+        await client.delete(_path(provider), headers=admin_auth_headers)
+
+    assert await repo.get_by_id(_INSTANCE_ID) is not None
+
+
+@pytest.mark.asyncio
+@_PROVIDERS
 async def test_an_unknown_instance_is_not_found(
     db, client, admin_auth_headers, provider, repo_class, make_instance, make_binding, link_field, other_field
 ):
@@ -94,7 +111,7 @@ async def test_an_unknown_instance_is_not_found(
 @pytest.mark.asyncio
 @_PROVIDERS
 async def test_a_deleted_instance_leaves_no_binding_and_no_member_its_sync_added(
-    db, client, admin_auth_headers, provider, repo_class, make_instance, make_binding, link_field, other_field
+    db, client, admin_auth_headers, caplog, provider, repo_class, make_instance, make_binding, link_field, other_field
 ):
     """Only the instance's own sync ever retires the members it added, and none runs once it is gone."""
     await _seed(db, repo_class, make_instance)
@@ -141,9 +158,11 @@ async def test_a_deleted_instance_leaves_no_binding_and_no_member_its_sync_added
     )
     unrelated = await teams.get_raw_by_id("unrelated")
 
-    response = await client.delete(_path(provider), headers=admin_auth_headers)
+    with caplog.at_level(logging.WARNING, logger="app.api.v1.helpers.vcs_instances"):
+        response = await client.delete(_path(provider), headers=admin_auth_headers)
 
     assert response.status_code == _NO_CONTENT
+    assert "detached from 3 teams" in caplog.text
     mixed = await teams.get_raw_by_id("mixed")
     assert [binding["instance_id"] for binding in mixed["bindings"]] == [_OTHER_INSTANCE_ID]
     assert [member["user_id"] for member in mixed["members"]] == ["manual", "elsewhere"]
