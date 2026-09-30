@@ -6,12 +6,12 @@ from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
-    VulnerabilityInfo,
 )
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
+    VulnerabilityInfo,
     get_attr,
     sample_components,
     severity_impact,

@@ -17,10 +17,33 @@ from app.core.constants import (
 )
 from app.core.cve import canonical_cves
 from app.core.epss import bucket_epss
-from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
+from app.core.risk_scoring import is_actionable_vulnerability
+from app.schemas.recommendation import Priority, Recommendation
 from app.services.aggregation.versions import aggregate_fixed_version, newest_first, split_fixed_versions
 
 ModelOrDict = BaseModel | dict[str, Any]
+
+
+@dataclass
+class VulnerabilityInfo:
+    # The finding's unwaived advisories; every per-CVE mark and name is read off them.
+    advisories: list[dict[str, Any]]
+    severity: str
+    package_name: str
+    current_version: str
+    fixed_version: str | None
+    epss_score: float | None = None
+    is_kev: bool = False
+    kev_ransomware: bool = False
+    is_reachable: bool | None = None
+    risk_score: float | None = None
+    # The SBOM graph does not record the dependency; the parser guessed it is direct.
+    direct_inferred: bool = False
+
+    @property
+    def is_actionable(self) -> bool:
+        return is_actionable_vulnerability(epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable)
+
 
 # Components one recommendation lists. Every generator draws its evidence through
 # sample_components, so the cut is one number and the reader always gets the population.
@@ -120,9 +143,9 @@ def malware_kind(finding: ModelOrDict) -> str:
     return "hash_mismatch" if details.get("verification_failed") else "malware"
 
 
-def scorecard_score(details: Any) -> float | None:
+def scorecard_score(details: dict[str, Any]) -> float | None:
     """A quality finding's OpenSSF Scorecard score; None when it carries maintainer risk only."""
-    score = details.get("overall_score") if isinstance(details, dict) else None
+    score = details.get("overall_score")
     return None if score is None else float(score)
 
 
@@ -186,7 +209,6 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
     risk = [a["risk_score"] for a in advisories if a.get("risk_score") is not None]
 
     return VulnerabilityInfo(
-        finding_id=get_attr(f, "id", ""),
         advisories=advisories,
         severity=get_attr(f, "severity", "UNKNOWN"),
         package_name=get_attr(f, "component", ""),
@@ -196,7 +218,6 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
         is_kev=any(a.get(DETAILS_KEY_IN_KEV) for a in advisories),
         kev_ransomware=any(a.get(DETAILS_KEY_KEV_RANSOMWARE) for a in advisories),
         is_reachable=get_attr(f, "reachable"),
-        reachability_level=get_attr(f, "reachability_level"),
         risk_score=max(risk, default=None),
     )
 
@@ -218,7 +239,6 @@ class VulnStats:
     reachable_high: int
     unreachable_critical: int
     actionable: int
-    epss_scores: list[float]
     # Installed versions and distinct fixes, newest first.
     versions: list[str]
     fixed_versions: list[str]
@@ -231,7 +251,6 @@ class VulnStats:
             "kev_ransomware_count": self.kev_ransomware,
             "high_epss_count": self.high_epss,
             "medium_epss_count": self.medium_epss,
-            "avg_epss": round(sum(self.epss_scores) / len(self.epss_scores), 4) if self.epss_scores else None,
             "reachable_count": self.reachable,
             "unreachable_count": self.unreachable,
             "reachable_critical": self.reachable_critical,
@@ -260,7 +279,6 @@ def summarize_vulns(vulns: list[VulnerabilityInfo]) -> VulnStats:
         reachable_high=sum(v.severity == "HIGH" for v in reachable),
         unreachable_critical=sum(v.severity == "CRITICAL" for v in unreachable),
         actionable=sum(v.is_actionable for v in vulns),
-        epss_scores=epss_scores,
         versions=newest_first({v.current_version for v in vulns if v.current_version}),
         fixed_versions=newest_first({part for fix in fixes for part in split_fixed_versions(fix)}),
         best_fix=calculate_best_fix_version(fixes),

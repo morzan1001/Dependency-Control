@@ -136,31 +136,22 @@ def analyze_version_fragmentation(
     """Detect multiple versions of the same package in the dependency tree."""
     recommendations = []
 
-    deps_by_package: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    versions_by_package: dict[tuple[str, str], set[str]] = defaultdict(set)
     for dep in dependencies:
         identity = package_identity(
             get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group")
         )
-        deps_by_package[identity].append(
-            {"version": get_attr(dep, "version"), "direct": get_attr(dep, "direct", False)}
-        )
+        versions_by_package[identity].add(get_attr(dep, "version"))
 
-    fragmented: list[dict[str, Any]] = []
-    for (_, name), versions in deps_by_package.items():
-        unique_versions = {v["version"] for v in versions}
-        if len(unique_versions) > 1:
-            fragmented.append(
-                {
-                    "name": name,
-                    "versions": list(unique_versions),
-                    "count": len(unique_versions),
-                    "has_direct": any(v["direct"] for v in versions),
-                }
-            )
-
-    fragmented.sort(key=lambda x: x["count"], reverse=True)
-
-    significant_fragmented = [f for f in fragmented if f["count"] >= _FRAGMENTATION_MIN_VERSIONS]
+    significant_fragmented: list[dict[str, Any]] = sorted(
+        (
+            {"name": name, "versions": list(versions), "count": len(versions)}
+            for (_, name), versions in versions_by_package.items()
+            if len(versions) >= _FRAGMENTATION_MIN_VERSIONS
+        ),
+        key=lambda x: x["count"],
+        reverse=True,
+    )
 
     if significant_fragmented:
         priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
@@ -294,7 +285,7 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
         pkg = get_attr(f, "component", "")
         version = get_attr(f, "version", "")
         details = get_attr(f, "details", {})
-        eol_date = details.get("eol_date", "") if isinstance(details, dict) else ""
+        eol_date = details.get("eol_date", "")
         if eol_date:
             affected_packages.append(f"{pkg}@{version} (EOL: {eol_date})")
         else:

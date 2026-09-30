@@ -76,12 +76,6 @@ class TestEmptyFindings:
         result = process_vulnerabilities([], [], None)
         assert result == []
 
-    def test_no_vulnerability_type_findings_ignored(self):
-        finding = _make_finding(finding_type="secret")
-        dep = _make_dependency()
-        result = process_vulnerabilities([finding], [dep], None)
-        assert result == []
-
 
 class TestDirectDependencyUpdate:
     @pytest.mark.parametrize(
@@ -852,14 +846,6 @@ class TestUpdateCardsArePerInstalledVersion:
             "Update pkg-name@4.17.15": Priority.HIGH,
             "Update pkg-name@3.10.1": Priority.CRITICAL,
         }
-
-    def test_the_transitive_card_reports_the_average_epss_like_the_direct_one(self):
-        finding = _make_finding(component="trans", epss_score=0.2)
-        dep = _make_dependency(name="trans", direct=False)
-
-        [card] = self._cards([finding], [dep], RecommendationType.TRANSITIVE_FIX_VIA_PARENT)
-
-        assert card.impact["avg_epss"] == 0.2
 
 
 class TestInferredDirectnessIsNotPresentedAsDeclared:

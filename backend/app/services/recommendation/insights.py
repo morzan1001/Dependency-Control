@@ -48,9 +48,7 @@ def correlate_scorecard_with_vulnerabilities(
         scorecard_by_component[component] = {
             "overall_score": scorecard_score(details),
             "project_url": sc_details.get("project_url"),
-            "has_maintenance_issues": bool(details.get("has_maintenance_issues"))
-            if isinstance(details, dict)
-            else False,
+            "has_maintenance_issues": bool(details.get("has_maintenance_issues")),
         }
 
     # Quality findings keep the inventory name while a vulnerability component is group-qualified.

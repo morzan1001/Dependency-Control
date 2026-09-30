@@ -158,13 +158,11 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: list[Mo
     if finding_type == "crypto_weak_key":
         # RSA/DSA below policy get bumped to the next NIST tier (3072); others defer to policy.
         for f in findings:
-            details = get_attr(f, "details", {}) or {}
-            if isinstance(details, dict):
-                bits = details.get("key_size_bits")
-                if isinstance(bits, int) and bits > 0:
-                    if "RSA" in asset_name.upper() or "DSA" in asset_name.upper():
-                        return f"≥3072-bit (currently {bits})"
-                    return f"increase from {bits} bits per policy"
+            bits = get_attr(f, "details", {}).get("key_size_bits")
+            if isinstance(bits, int) and bits > 0:
+                if "RSA" in asset_name.upper() or "DSA" in asset_name.upper():
+                    return f"≥3072-bit (currently {bits})"
+                return f"increase from {bits} bits per policy"
         return None
     if finding_type == "crypto_weak_protocol":
         upper = asset_name.upper()
@@ -179,8 +177,5 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: list[Mo
 
 
 def _bom_ref(finding: ModelOrDict) -> str | None:
-    details = get_attr(finding, "details", {}) or {}
-    if isinstance(details, dict):
-        ref = details.get("bom_ref")
-        return str(ref) if ref else None
-    return None
+    ref = get_attr(finding, "details", {}).get("bom_ref")
+    return str(ref) if ref else None

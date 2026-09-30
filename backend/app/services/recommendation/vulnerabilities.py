@@ -17,13 +17,13 @@ from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
-    VulnerabilityInfo,
 )
 from app.services.aggregation.versions import normalize_version
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
+    VulnerabilityInfo,
     get_attr,
     priority_for,
     sample_components,
@@ -106,9 +106,6 @@ def _categorize_by_source(
     categories = defaultdict(list)
 
     for f in findings:
-        if get_attr(f, "type") != "vulnerability":
-            continue
-
         index = index_by_version.get(normalize_version(get_attr(f, "version")), {})
         dep = lookup_component(index, get_attr(f, "component") or "")
         vuln = vuln_info(f)

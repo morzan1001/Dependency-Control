@@ -200,15 +200,6 @@ class TestProcessQualityLowScorecard:
         low_recs = [r for r in recs if "Low-Quality" in r.title]
         assert str(SCORECARD_POOR_QUALITY_THRESHOLD) in low_recs[0].description
 
-    def test_impact_contains_average_score(self):
-        findings = [
-            _quality(component="lib-a", overall_score=2.0, finding_id="q1"),
-            _quality(component="lib-b", overall_score=3.0, finding_id="q2"),
-        ]
-        recs = process_quality(findings)
-        low_recs = [r for r in recs if "Low-Quality" in r.title]
-        assert low_recs[0].impact["average_score"] == 2.5
-
 
 class TestProcessQualityLowScoreWithUnmaintained:
     def test_no_low_quality_when_unmaintained_present(self):
@@ -497,7 +488,7 @@ class TestQualityCardsCountPackagesNotVersions:
         [rec] = [r for r in process_quality(self._versions()) if "Low-Quality" in r.title]
 
         assert rec.description.startswith("Found 1 packages with OpenSSF Scorecard")
-        assert rec.impact == {"total": 1, "average_score": 2.0}
+        assert rec.impact == {"total": 1}
         assert rec.action["packages"] == [{"name": "old-lib", "score": 2.0, "issues": []}]
 
     def test_a_vulnerable_package_at_three_versions_is_one_package(self):

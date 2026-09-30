@@ -13,13 +13,12 @@ from app.core.risk_scoring import (
     reachability_risk_modifier,
 )
 from app.models.finding import Severity
-from app.schemas.recommendation import VulnerabilityInfo
 from app.services.enrichment.scoring import calculate_secret_severity
+from app.services.recommendation.common import VulnerabilityInfo
 
 
 def _vuln(**kwargs) -> VulnerabilityInfo:
     base = {
-        "finding_id": "test-id",
         "advisories": [],
         "severity": "HIGH",
         "package_name": "pkg",
@@ -117,7 +116,6 @@ class TestConsumersDelegate:
     def test_vulnerability_info_matches(self, epss, kev, reachable):
         v = _vuln(epss_score=epss, is_kev=kev, is_reachable=reachable)
         assert v.is_actionable == is_actionable_vulnerability(epss_score=epss, is_kev=kev, reachable=reachable)
-        assert v.is_deprioritized == is_deprioritized_vulnerability(epss_score=epss, is_kev=kev, reachable=reachable)
 
     @pytest.mark.parametrize(
         ("verified", "in_tree"),

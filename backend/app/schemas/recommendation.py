@@ -1,10 +1,8 @@
 """Data classes for the recommendation engine output structures."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-
-from app.core.risk_scoring import is_actionable_vulnerability, is_deprioritized_vulnerability
 
 
 class RecommendationType(str, Enum):
@@ -84,62 +82,6 @@ class Effort(str, Enum):
     LOW = "low"  # Quick fix, minimal testing needed
     MEDIUM = "medium"  # Some development and testing required
     HIGH = "high"  # Significant development, testing, and coordination needed
-
-
-@dataclass
-class FindingInfo:
-    """Generic information about any finding."""
-
-    finding_id: str
-    finding_type: str  # vulnerability, secret, sast, iac, license, quality
-    severity: str
-    component: str  # package name or file path
-    version: str | None = None
-    description: str | None = None
-    fixed_version: str | None = None
-    cve_id: str | None = None
-    file_path: str | None = None
-    line_number: int | None = None
-    rule_id: str | None = None
-    details: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class VulnerabilityInfo:
-    """Specific information about a vulnerability finding."""
-
-    finding_id: str
-    # The finding's unwaived advisories; every per-CVE mark and name is read off them.
-    advisories: list[dict[str, Any]]
-    severity: str
-    package_name: str
-    current_version: str
-    fixed_version: str | None
-    description: str | None = None
-    source_type: str = "unknown"  # image or application
-
-    epss_score: float | None = None  # 0.0 to 1.0
-    is_kev: bool = False
-    kev_ransomware: bool = False
-    is_reachable: bool | None = None
-    reachability_level: str | None = None  # confirmed, likely, unknown, unreachable
-    risk_score: float | None = None  # 0-100
-    # The SBOM graph does not record the dependency; the parser guessed it is direct.
-    direct_inferred: bool = False
-
-    @property
-    def is_fixable(self) -> bool:
-        return self.fixed_version is not None
-
-    @property
-    def is_actionable(self) -> bool:
-        return is_actionable_vulnerability(epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable)
-
-    @property
-    def is_deprioritized(self) -> bool:
-        return is_deprioritized_vulnerability(
-            epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable
-        )
 
 
 @dataclass

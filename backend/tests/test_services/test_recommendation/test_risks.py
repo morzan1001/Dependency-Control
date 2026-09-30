@@ -373,7 +373,7 @@ class TestDetectToxicDependenciesMultipleFactors:
         rec = result[0]
         assert rec.type == RecommendationType.TOXIC_DEPENDENCY
         assert rec.priority == Priority.HIGH
-        assert rec.impact["risk_factor_count"] >= 2
+        assert len(rec.action["risk_factors"]) >= 2
 
     def test_vulns_plus_eol_is_toxic(self):
         findings = [
@@ -384,7 +384,7 @@ class TestDetectToxicDependenciesMultipleFactors:
         assert len(result) == 1
         rec = result[0]
         assert rec.type == RecommendationType.TOXIC_DEPENDENCY
-        assert rec.impact["risk_factor_count"] >= 2
+        assert len(rec.action["risk_factors"]) >= 2
 
 
 class TestDetectToxicDependenciesSingleFactor:
@@ -794,7 +794,6 @@ class TestHotspotRiskScoreIsOneScale:
         result = _hotspots(findings)
 
         assert "ghsa-only" in [r.action["package"] for r in result]
-        assert next(r for r in result if r.action["package"] == "ghsa-only").impact["risk_score"] == 120.0
 
     def test_an_unenriched_finding_counts_on_the_enriched_0_to_100_scale(self):
         findings = [
@@ -803,9 +802,9 @@ class TestHotspotRiskScoreIsOneScale:
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
             _vuln("pkg", "UNKNOWN", finding_id="CVE-2024-004"),
         ]
-        [hotspot] = _hotspots(findings)
+        [pkg] = roll_up_packages(findings)
         # 40 + 30 + 16, plus the 20 calculate_risk_score assumes for a CVE without a CVSS score.
-        assert hotspot.impact["risk_score"] == 106.0
+        assert pkg.risk_score == 106.0
 
 
 class TestToxicImpactCountsEachSeverityOnce:

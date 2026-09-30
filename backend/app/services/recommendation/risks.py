@@ -10,7 +10,6 @@ from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
-    VulnerabilityInfo,
 )
 from app.services.aggregation.versions import newest_first, normalize_version
 from app.services.component_identity import (
@@ -25,9 +24,10 @@ from app.services.recommendation.common import (
     MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
     VulnStats,
+    VulnerabilityInfo,
     dependency_label,
-    live_cves,
     get_attr,
+    live_cves,
     malware_kind,
     name_some,
     sample_components,
@@ -87,7 +87,6 @@ class _PackageRisks:
 def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
     finding_type = get_attr(finding, "type")
     details = get_attr(finding, "details", {})
-    details = details if isinstance(details, dict) else {}
     if finding_type == "vulnerability":
         # The vulnerability carries the most qualified spelling of the package.
         if not pkg.vulns:
@@ -145,8 +144,8 @@ def detect_toxic_dependencies(packages: list[_PackageRisks]) -> list[Recommendat
     ]
     toxic.sort(key=lambda t: t[2], reverse=True)
     return [
-        _toxic_recommendation(pkg, factors, score, rank, population)
-        for rank, (pkg, factors, score), population in take_top(toxic, TOXIC_DEPENDENCIES_SHOWN)
+        _toxic_recommendation(pkg, factors, rank, population)
+        for rank, (pkg, factors, _score), population in take_top(toxic, TOXIC_DEPENDENCIES_SHOWN)
     ]
 
 
@@ -229,7 +228,6 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
             "kev_count": stats.kev,
             "high_epss_count": stats.high_epss,
             "reachable_count": stats.reachable,
-            "risk_score": pkg.risk_score,
         },
         affected_components=components_shown,
         affected_components_total=components_total,
@@ -297,7 +295,7 @@ def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
 
 
 def _toxic_recommendation(
-    pkg: _PackageRisks, factors: list[dict[str, str]], score: int, rank: int, ranked_out_of: int
+    pkg: _PackageRisks, factors: list[dict[str, str]], rank: int, ranked_out_of: int
 ) -> Recommendation:
     stats = pkg.stats
     components_shown, components_total = sample_components(pkg.labels)
@@ -310,11 +308,7 @@ def _toxic_recommendation(
             f"{' | '.join(factor['description'] for factor in factors)}. "
             f"Consider replacing it with a safer alternative."
         ),
-        impact={
-            **severity_impact(stats.severity.elements()),
-            "risk_factor_count": len(factors),
-            "toxic_score": score,
-        },
+        impact=severity_impact(stats.severity.elements()),
         affected_components=components_shown,
         affected_components_total=components_total,
         action={

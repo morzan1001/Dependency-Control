@@ -137,9 +137,7 @@ async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, A
     """Fold vulnerability findings of a scan window into the scan set each CVE appeared in."""
     recurrence: dict[str, CveRecurrence] = defaultdict(CveRecurrence)
     async for finding in vulnerability_findings:
-        scan_id = finding.get("scan_id")
-        if not scan_id:
-            continue
+        scan_id = finding["scan_id"]
         fallback = finding.get("finding_id")
         for cve in canonical_cves([finding.get("details")]) or ([str(fallback)] if fallback else []):
             row = recurrence[cve]

@@ -40,7 +40,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         critical_issues = sc_details.get("critical_issues") or []
         failed_checks = sc_details.get("failed_checks") or []
         project_url = sc_details.get("project_url") or ""
-        has_maintenance = bool(details.get("has_maintenance_issues")) if isinstance(details, dict) else False
+        has_maintenance = bool(details.get("has_maintenance_issues"))
 
         if overall_score is not None and overall_score < SCORECARD_POOR_QUALITY_THRESHOLD:
             _keep_lowest(
@@ -75,10 +75,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"Found {unmaintained_total} potentially unmaintained packages. "
                     "These packages may not receive security updates, putting your application at risk."
                 ),
-                impact={
-                    "total": unmaintained_total,
-                    "packages": unmaintained_shown,
-                },
+                impact={"total": unmaintained_total},
                 affected_components=unmaintained_shown,
                 affected_components_total=unmaintained_total,
                 action={
@@ -146,10 +143,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"scores below {SCORECARD_POOR_QUALITY_THRESHOLD}/10. "
                     "These packages may have quality, security, or maintenance concerns."
                 ),
-                impact={
-                    "total": low_score_total,
-                    "average_score": sum(p["score"] for p in low_score_packages) / low_score_total,
-                },
+                impact={"total": low_score_total},
                 affected_components=low_score_shown,
                 affected_components_total=low_score_total,
                 action={
