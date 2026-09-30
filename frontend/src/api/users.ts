@@ -52,8 +52,8 @@ export const userApi = {
     return response.data;
   },
 
-  adminResetPassword: async (userId: string): Promise<{ message: string }> => {
-    const response = await api.post<{ message: string }>(`/users/${userId}/reset-password`);
+  adminResetPassword: async (userId: string): Promise<{ message: string; email_queued: boolean }> => {
+    const response = await api.post<{ message: string; email_queued: boolean }>(`/users/${userId}/reset-password`);
     return response.data;
   },
 
