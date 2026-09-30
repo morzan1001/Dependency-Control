@@ -185,7 +185,7 @@ export default function DashboardLayout() {
         </header>
 
         {/* Suspense wraps only the Outlet so a lazy route's chunk load keeps the sidebar chrome mounted. */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden">
+        <main className="relative flex-1 overflow-y-auto overflow-x-hidden">
           <div className="p-4 lg:p-8">
             <Suspense
               fallback={
