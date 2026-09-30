@@ -55,9 +55,15 @@ def _finding_id_identifier(finding: dict[str, Any]) -> str:
     return str(finding.get("finding_id") or "")
 
 
+def sast_rule_ids(details: dict[str, Any]) -> list[str]:
+    """The distinct rule ids of a merged SAST finding, in entry order."""
+    entries = details.get("sast_findings") or []
+    return list(dict.fromkeys(str(e["id"]) for e in entries if isinstance(e, dict) and e.get("id")))
+
+
 def _sast_identifier(finding: dict[str, Any]) -> str:
     """The merged rule-id set; the line moves with every edit above the hit, so it stays out."""
-    return _joined_ids((finding.get("details") or {}).get("sast_findings"))
+    return ",".join(sorted(sast_rule_ids(finding.get("details") or {})))
 
 
 def _iac_identifier(finding: dict[str, Any]) -> str:

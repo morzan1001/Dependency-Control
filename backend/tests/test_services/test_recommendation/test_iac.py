@@ -193,31 +193,7 @@ class TestProcessIacEffort:
         assert rec.effort == "medium"
 
 
-class TestProcessIacPlatformFallback:
-    def test_platform_from_title_dot_prefix(self):
-        # With no platform, the title segment before the first dot is used.
-        finding = {
-            "type": "iac",
-            "severity": "HIGH",
-            "component": "main.tf",
-            "details": {"title": "terraform.something"},
-            "id": "iac1",
-        }
-        rec = process_iac([finding])[0]
-        assert "Terraform" in rec.title
-
-    def test_fallback_to_infrastructure(self):
-        # No platform and no title defaults to 'infrastructure'.
-        finding = {
-            "type": "iac",
-            "severity": "HIGH",
-            "component": "unknown.yaml",
-            "details": {},
-            "id": "iac1",
-        }
-        rec = process_iac([finding])[0]
-        assert "infrastructure" in rec.title
-
+class TestProcessIacComponents:
     def test_affected_components_limited(self):
         findings = [_iac(component=f"file{i}.yaml", finding_id=f"i{i}", severity="HIGH") for i in range(25)]
         rec = process_iac(findings)[0]

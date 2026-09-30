@@ -53,6 +53,32 @@ def sampled(name: str, values: Sequence[Any], cap: int) -> dict[str, Any]:
     return {name: list(values[:cap]), f"{name}_total": len(values)}
 
 
+_IMPACT_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+_PRIORITY_BY_WORST = (("critical", Priority.CRITICAL), ("high", Priority.HIGH), ("medium", Priority.MEDIUM))
+# A group with no critical or high finding earns a card only from this many findings on.
+MIN_FINDINGS_FOR_CARD = 3
+
+
+def severity_impact(severities: Iterable[str]) -> dict[str, int]:
+    """The impact block calculate_score reads; severities outside the four scored ones count only in total."""
+    counts = Counter(severities)
+    return {severity.lower(): counts[severity] for severity in _IMPACT_SEVERITIES} | {"total": counts.total()}
+
+
+def priority_for(impact: dict[str, int]) -> Priority:
+    return next((priority for key, priority in _PRIORITY_BY_WORST if impact[key]), Priority.LOW)
+
+
+def worth_a_card(impact: dict[str, int]) -> bool:
+    return impact["critical"] + impact["high"] > 0 or impact["total"] >= MIN_FINDINGS_FOR_CARD
+
+
+def label_by_keywords(raw: str, table: Sequence[tuple[tuple[str, ...], str]]) -> str:
+    """The label of the first row with a keyword inside `raw`; `raw` itself when no row matches."""
+    lowered = raw.lower()
+    return next((label for keywords, label in table if any(keyword in lowered for keyword in keywords)), raw)
+
+
 def take_top(candidates: Sequence[Any], cap: int) -> list[tuple[int, Any, int]]:
     """The highest-ranked `cap` candidates as (rank, candidate, population).
 
@@ -183,11 +209,7 @@ class VulnStats:
 
     def impact(self) -> dict[str, Any]:
         return {
-            "critical": self.severity["CRITICAL"],
-            "high": self.severity["HIGH"],
-            "medium": self.severity["MEDIUM"],
-            "low": self.severity["LOW"],
-            "total": self.total,
+            **severity_impact(self.severity.elements()),
             "kev_count": self.kev,
             "kev_ransomware_count": self.kev_ransomware,
             "high_epss_count": self.high_epss,

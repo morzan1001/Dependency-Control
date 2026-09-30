@@ -24,11 +24,14 @@ from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
     get_attr,
+    priority_for,
     sample_components,
     sampled,
+    severity_impact,
     summarize_vulns,
     vuln_info,
     vuln_priority,
+    worth_a_card,
 )
 
 # Evidence samples inside the update action; each is paired with its population by `sampled`.
@@ -119,31 +122,11 @@ def _categorize_by_source(
 def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str | None) -> Recommendation | None:
     """Analyze if a base image update would be beneficial."""
 
-    if not vulns:
+    impact = severity_impact(v.severity for v in vulns)
+    if not worth_a_card(impact):
         return None
 
-    severity_counts: dict[str, int] = defaultdict(int)
-    affected_packages = set()
-
-    for v in vulns:
-        severity_counts[v.severity] += 1
-        affected_packages.add(v.package_name)
-
-    total_vulns = len(vulns)
-    critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
-
-    if total_vulns < 3 and critical_high < 1:
-        return None
-
-    if severity_counts.get("CRITICAL", 0) > 0:
-        priority = Priority.CRITICAL
-    elif severity_counts.get("HIGH", 0) > 0:
-        priority = Priority.HIGH
-    elif severity_counts.get("MEDIUM", 0) > 0:
-        priority = Priority.MEDIUM
-    else:
-        priority = Priority.LOW
-
+    affected_packages = {v.package_name for v in vulns}
     image_name = "your base image"
     if source_target:
         repository = source_target.split("@", 1)[0]
@@ -154,21 +137,14 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str
     packages_shown, packages_total = sample_components(sorted(affected_packages))
     return Recommendation(
         type=RecommendationType.BASE_IMAGE_UPDATE,
-        priority=priority,
+        priority=priority_for(impact),
         title="Update Base Image",
         description=(
-            f"Updating the base image could fix {total_vulns} vulnerabilities "
+            f"Updating the base image could fix {impact['total']} vulnerabilities "
             f"across {len(affected_packages)} OS packages. "
-            f"This includes {severity_counts.get('CRITICAL', 0)} critical and "
-            f"{severity_counts.get('HIGH', 0)} high severity issues."
+            f"This includes {impact['critical']} critical and {impact['high']} high severity issues."
         ),
-        impact={
-            "critical": severity_counts.get("CRITICAL", 0),
-            "high": severity_counts.get("HIGH", 0),
-            "medium": severity_counts.get("MEDIUM", 0),
-            "low": severity_counts.get("LOW", 0),
-            "total": total_vulns,
-        },
+        impact=impact,
         affected_components=packages_shown,
         affected_components_total=packages_total,
         action={
@@ -182,7 +158,7 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str
                 f"# FROM {image_name}:<newer-tag>",
             ],
         },
-        effort="low" if total_vulns > 10 else "medium",
+        effort="low" if impact["total"] > 10 else "medium",
     )
 
 
@@ -295,19 +271,7 @@ def _build_transitive_recommendation(
 def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
     """Analyze vulnerabilities whose advisories name no fixed version."""
 
-    if not vulns:
-        return []
-
-    severity_counts: dict[str, int] = defaultdict(int)
-    components = set()
-    crit_high_vulns = []
-
-    for v in vulns:
-        severity_counts[v.severity] += 1
-        components.add(v.package_name)
-        if v.severity in ["CRITICAL", "HIGH"]:
-            crit_high_vulns.append(v)
-
+    crit_high_vulns = [v for v in vulns if v.severity in ("CRITICAL", "HIGH")]
     if not crit_high_vulns:
         return []
 
@@ -323,13 +287,7 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
                 "no fixed version in their advisories. That is the absence of a recorded fix, not "
                 "proof that none exists, so confirm upstream before replacing a component."
             ),
-            impact={
-                "critical": severity_counts.get("CRITICAL", 0),
-                "high": severity_counts.get("HIGH", 0),
-                "medium": severity_counts.get("MEDIUM", 0),
-                "low": severity_counts.get("LOW", 0),
-                "total": len(vulns),
-            },
+            impact=severity_impact(v.severity for v in vulns),
             affected_components=unfixable_shown,
             affected_components_total=unfixable_total,
             action={

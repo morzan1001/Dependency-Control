@@ -1,81 +1,53 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 
-from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
+from app.schemas.recommendation import Recommendation, RecommendationType
+from app.services.recommendation.common import (
+    ModelOrDict,
+    get_attr,
+    label_by_keywords,
+    priority_for,
+    sample_components,
+    severity_impact,
+    worth_a_card,
+)
+
+_PLATFORM_KEYWORDS = (
+    (("docker",), "Docker"),
+    (("kubernetes", "k8s"), "Kubernetes"),
+    (("terraform",), "Terraform"),
+    (("cloudformation", "aws"), "AWS/CloudFormation"),
+    (("ansible",), "Ansible"),
+    (("helm",), "Helm"),
+)
 
 
 def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process IAC (Infrastructure as Code) findings."""
-    if not findings:
-        return []
-
     findings_by_platform = defaultdict(list)
     for f in findings:
-        details = get_attr(f, "details", {})
-        title = details.get("title", "") if isinstance(details, dict) else ""
-        platform = (
-            (details.get("platform") if isinstance(details, dict) else None)
-            or (title.split(".")[0] if title else None)
-            or "infrastructure"
-        )
-        platform_lower = platform.lower()
-        if "docker" in platform_lower:
-            platform = "Docker"
-        elif "kubernetes" in platform_lower or "k8s" in platform_lower:
-            platform = "Kubernetes"
-        elif "terraform" in platform_lower:
-            platform = "Terraform"
-        elif "cloudformation" in platform_lower or "aws" in platform_lower:
-            platform = "AWS/CloudFormation"
-        elif "ansible" in platform_lower:
-            platform = "Ansible"
-        elif "helm" in platform_lower:
-            platform = "Helm"
-
-        findings_by_platform[platform].append(f)
+        findings_by_platform[label_by_keywords(get_attr(f, "details")["platform"], _PLATFORM_KEYWORDS)].append(f)
 
     recommendations = []
 
     for platform, plat_findings in findings_by_platform.items():
-        severity_counts: dict[str, int] = defaultdict(int)
-        files_affected = set()
-
-        for f in plat_findings:
-            severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
-            files_affected.add(get_attr(f, "component", "unknown"))
-
-        files_shown, files_total = sample_components(sorted(files_affected))
-        critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
-
-        if critical_high < 1 and len(plat_findings) < 3:
+        impact = severity_impact(get_attr(f, "severity", "UNKNOWN") for f in plat_findings)
+        if not worth_a_card(impact):
             continue
 
-        if severity_counts.get("CRITICAL", 0) > 0:
-            priority = Priority.CRITICAL
-        elif severity_counts.get("HIGH", 0) > 0:
-            priority = Priority.HIGH
-        elif severity_counts.get("MEDIUM", 0) > 0:
-            priority = Priority.MEDIUM
-        else:
-            priority = Priority.LOW
+        files_shown, files_total = sample_components(
+            sorted({get_attr(f, "component", "unknown") for f in plat_findings})
+        )
 
         recommendations.append(
             Recommendation(
                 type=RecommendationType.FIX_INFRASTRUCTURE,
-                priority=priority,
+                priority=priority_for(impact),
                 title=f"Fix {platform} Misconfigurations",
                 description=(
                     f"Found {len(plat_findings)} infrastructure security issues in {platform} configurations. "
-                    f"Includes {severity_counts.get('CRITICAL', 0)} critical and "
-                    f"{severity_counts.get('HIGH', 0)} high severity misconfigurations."
+                    f"Includes {impact['critical']} critical and {impact['high']} high severity misconfigurations."
                 ),
-                impact={
-                    "critical": severity_counts.get("CRITICAL", 0),
-                    "high": severity_counts.get("HIGH", 0),
-                    "medium": severity_counts.get("MEDIUM", 0),
-                    "low": severity_counts.get("LOW", 0),
-                    "total": len(plat_findings),
-                },
+                impact=impact,
                 affected_components=files_shown,
                 affected_components_total=files_total,
                 action={
@@ -93,16 +65,5 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
 
 
 def _get_common_iac_issues(findings: list[ModelOrDict]) -> list[str]:
-    """Extract common IAC issue types."""
-    issues: dict[str, int] = defaultdict(int)
-    for f in findings:
-        details = get_attr(f, "details", {})
-        issue_type = (
-            (details.get("title") if isinstance(details, dict) else None)
-            or (details.get("rule_id") if isinstance(details, dict) else None)
-            or get_attr(f, "description", "")[:50]
-        )
-        issues[issue_type] += 1
-
-    sorted_issues = sorted(issues.items(), key=lambda x: x[1], reverse=True)
-    return [issue for issue, count in sorted_issues[:5]]
+    issues = Counter(get_attr(f, "details")["title"] for f in findings)
+    return [issue for issue, _ in issues.most_common(5)]

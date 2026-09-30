@@ -14,9 +14,11 @@ from app.services.recommendation.common import (
     calculate_best_fix_version,
     calculate_score,
     get_attr,
+    label_by_keywords,
     live_cves,
     name_some,
     sample_components,
+    severity_impact,
     sort_key,
     summarize_vulns,
     take_top,
@@ -515,3 +517,19 @@ class TestRecommendationTotal:
 
         assert rec.affected_components_total == covered
         assert rec.to_dict()["affected_components_total"] == covered
+
+
+class TestSeverityImpact:
+    def test_each_scored_severity_has_its_bucket_and_the_rest_count_in_total(self):
+        impact = severity_impact(["CRITICAL", "HIGH", "LOW", "LOW", "INFO", "UNKNOWN"])
+        assert impact == {"critical": 1, "high": 1, "medium": 0, "low": 2, "total": 6}
+
+
+class TestLabelByKeywords:
+    _TABLE = ((("inject", "sqli"), "Injection"), (("path",), "Path Traversal"))
+
+    def test_first_matching_row_wins(self):
+        assert label_by_keywords("Path Injection", self._TABLE) == "Injection"
+
+    def test_unmatched_label_is_returned_unchanged(self):
+        assert label_by_keywords("Active Debug Code", self._TABLE) == "Active Debug Code"
