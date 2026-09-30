@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.core.init_db import create_indexes
@@ -18,13 +17,13 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import (
     _aggregate_external_results,
     _carry_over_external_results,
-    _process_sbom,
     run_analysis,
 )
 from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analyzers.outdated import OutdatedAnalyzer
-from app.services.gridfs_maintenance import make_gridfs_ref, reap_orphan_gridfs_files
-from tests.helpers.analyzers import analyze_cyclonedx, build_analyzer, serve_analyzer
+from app.services.gridfs_maintenance import reap_orphan_gridfs_files
+from tests.helpers.analyzers import analyze_cyclonedx, build_analyzer, process_sbom_document, serve_analyzer
+from tests.helpers.sboms import store_sbom
 
 _RUN = {"pipeline_id": 616161, "commit_hash": "d" * 40, "branch": "main"}
 _ENVELOPE = {
@@ -137,9 +136,7 @@ def _kics_report_of_a_monorepo(services: int) -> dict[str, Any]:
 
 async def _analyze_sbom_of_a_new_scan(db, components: list[dict[str, Any]]) -> str:
     """One scan whose SBOM is stored the way ingest stores it, analysed by the outdated analyzer."""
-    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
-    file_id = await AsyncIOMotorGridFSBucket(db).upload_from_stream("sbom.json", json.dumps(sbom).encode())
-    ref = make_gridfs_ref(file_id, "sbom.json")
+    ref = await store_sbom(db, {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components})
     scan = Scan(project_id="p", branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     assert await run_analysis(scan.id, [ref], ["outdated_packages"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
@@ -239,7 +236,9 @@ async def test_each_sbom_keeps_its_own_row_and_a_rerun_replaces_it(db, monkeypat
 
     async def analyze(index: int) -> None:
         # the two images of a multi-arch build share their root component name
-        await _process_sbom(index, _sbom("storefront"), "scan-1", db, ResultAggregator(), ["outdated_packages"], None)
+        await process_sbom_document(
+            index, _sbom("storefront"), "scan-1", db, ResultAggregator(), ["outdated_packages"], None
+        )
 
     await analyze(0)
     await analyze(1)
@@ -285,7 +284,7 @@ async def test_an_engine_license_result_over_16_mib_is_stored_as_a_file(db):
     ]
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
 
-    summary = await _process_sbom(0, sbom, "scan-1", db, ResultAggregator(), ["license_compliance"], None)
+    summary = await process_sbom_document(0, sbom, "scan-1", db, ResultAggregator(), ["license_compliance"], None)
 
     assert summary == ["license_compliance: Success"]
     [row] = await _rows(db, "scan-1")

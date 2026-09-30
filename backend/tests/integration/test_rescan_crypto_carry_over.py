@@ -5,9 +5,6 @@ rescan cannot re-derive them; without the carry-over the rescan reports zero cry
 crypto delta reads that as risk having disappeared.
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from app.api.v1.helpers.ingest import process_findings_ingest
@@ -25,6 +22,7 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
 from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
+from tests.helpers.sboms import store_sbom
 
 _PROJECT_ID = "cbom-rescan-project"
 _WORKER = "pod-a/worker-0"
@@ -56,20 +54,6 @@ def _gridfs_ref() -> dict:
     return {"storage": "gridfs", "file_id": _FILE_ID, "type": "gridfs_reference", "gridfs_id": _FILE_ID}
 
 
-@pytest.fixture
-def _gridfs_patched(monkeypatch):
-    fs = MagicMock()
-
-    async def _open(_object_id):
-        stream = MagicMock()
-        stream.read = AsyncMock(return_value=json.dumps(_SBOM).encode())
-        return stream
-
-    fs.open_download_stream = AsyncMock(side_effect=_open)
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
-    return fs
-
-
 async def _ingest_assets(db, scan_id: str) -> None:
     await CryptoAssetRepository(db).bulk_upsert(
         _PROJECT_ID,
@@ -91,6 +75,7 @@ async def _ingest_assets(db, scan_id: str) -> None:
 async def _seed_lineage(db) -> tuple[str, str]:
     """An ingested-CBOM scan and a pending rescan of it, both carrying the same SBOM ref."""
     await create_indexes(db)
+    await store_sbom(db, _SBOM, _FILE_ID)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
     original = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref()], status="completed")
     await db.scans.insert_one(original.model_dump(by_alias=True))
@@ -118,14 +103,9 @@ async def _rescan_and_list(db) -> list[str]:
     return sorted(a.name for a in await repo.list_by_scan(_PROJECT_ID, rescan_id, limit=_ASSET_LIMIT))
 
 
-@pytest.mark.asyncio
-async def test_rescan_keeps_the_ingested_crypto_assets(db, _gridfs_patched):
-    assert await _rescan_and_list(db) == ["MD5", "RSA-1024"]
-
-
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_rescan_keeps_the_ingested_crypto_assets_on_a_real_server(db, _gridfs_patched):
+async def test_rescan_keeps_the_ingested_crypto_assets(db):
     assert await _rescan_and_list(db) == ["MD5", "RSA-1024"]
 
 
@@ -166,9 +146,7 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_rows_over(
-    db, monkeypatch, _gridfs_patched
-):
+async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_rows_over(db, monkeypatch):
     await create_indexes(db)
     expected = sorted([*CRYPTO_ANALYZERS, "trufflehog"])
 

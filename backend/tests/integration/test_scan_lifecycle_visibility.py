@@ -1,10 +1,9 @@
 """Partially-failed scans must surface the loss: status completed_with_errors, error text, failed_analyzers."""
 
-import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS, SCAN_STATUS_FAILED
 from app.core.init_db import create_indexes
@@ -14,6 +13,7 @@ from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.sboms import store_sbom
 
 _PROJECT_ID = "test-project-id"
 _WORKER = "pod-a/worker-0"
@@ -61,23 +61,16 @@ def _gridfs_ref(file_id: str) -> dict:
     }
 
 
-def _fake_gridfs(sboms_by_file_id: dict[str, dict]) -> MagicMock:
-    fs = MagicMock()
-
-    async def _open(object_id):
-        stream = MagicMock()
-        stream.read = AsyncMock(return_value=json.dumps(sboms_by_file_id[str(object_id)]).encode())
-        return stream
-
-    fs.open_download_stream = AsyncMock(side_effect=_open)
-    return fs
+@pytest_asyncio.fixture
+async def _stored_sboms(db):
+    await create_indexes(db)
+    await store_sbom(db, _SBOM_A, _FILE_ID_A)
+    await store_sbom(db, _SBOM_B, _FILE_ID_B)
 
 
 @pytest.fixture
-def _gridfs_patched(monkeypatch):
-    fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _SBOM_B})
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
-    return fs
+def _no_gridfs(monkeypatch):
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: None)
 
 
 async def _seed_scan(db, sbom_refs: list[dict], scan_type: str | None = None) -> str:
@@ -148,7 +141,8 @@ class _PartialResultAnalyzer:
 
 
 @pytest.mark.asyncio
-async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
+@pytest.mark.live_mongo
+async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "boom", _FailingAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
@@ -169,7 +163,8 @@ async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _gridfs_
 
 
 @pytest.mark.asyncio
-async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
+@pytest.mark.live_mongo
+async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
     """CLI analyzers (grype/trivy) report timeouts as error dicts, not exceptions — 95% of prod failures."""
     serve_analyzer(monkeypatch, "grype", _CliTimeoutAnalyzer())
     await _seed_project(db)
@@ -188,7 +183,8 @@ async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _gridfs
 
 
 @pytest.mark.asyncio
-async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors(db, _gridfs_patched):
+@pytest.mark.live_mongo
+async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors(db, _stored_sboms):
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
     await db.analysis_results.insert_one(
@@ -230,8 +226,7 @@ class _PartialOnTheSecondSbom:
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcome(db, _gridfs_patched, monkeypatch):
-    await create_indexes(db)
+async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcome(db, _stored_sboms, monkeypatch):
     announced: list[dict[str, str]] = []
 
     async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
@@ -250,10 +245,9 @@ async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcom
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, monkeypatch):
+async def test_enrichment_failure_is_recorded_on_the_scan(db, _stored_sboms, monkeypatch):
     """An EPSS/KEV outage writes no analysis_results document (the write sits inside the
     try) and must not change the status, so the scan field is its only queryable trace."""
-    await create_indexes(db)
 
     async def _enrichment_outage(*_args, **_kwargs):
         raise RuntimeError("EPSS feed unreachable")
@@ -279,8 +273,7 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, m
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_clean_scan_records_no_enrichment_failures(db, _gridfs_patched, monkeypatch):
-    await create_indexes(db)
+async def test_a_clean_scan_records_no_enrichment_failures(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
@@ -295,7 +288,8 @@ async def test_a_clean_scan_records_no_enrichment_failures(db, _gridfs_patched, 
 
 
 @pytest.mark.asyncio
-async def test_w12_scan_with_errors_still_becomes_project_latest(db, _gridfs_patched, monkeypatch):
+@pytest.mark.live_mongo
+async def test_w12_scan_with_errors_still_becomes_project_latest(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "boom", _FailingAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
@@ -311,8 +305,7 @@ async def test_w12_scan_with_errors_still_becomes_project_latest(db, _gridfs_pat
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
-    await create_indexes(db)
+async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "osv", _PartialResultAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
@@ -333,9 +326,7 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_failed(
-    db, _gridfs_patched, monkeypatch
-):
+async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_failed(db, monkeypatch):
     await create_indexes(db)
     real_evaluators = engine.crypto_evaluators
 
@@ -357,13 +348,16 @@ async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_
 
 
 @pytest.mark.asyncio
-async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
-    async def _fail_second_file(fs, file_id, **_kwargs):
+@pytest.mark.live_mongo
+async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
+    real_open = engine.open_gridfs_download_with_retry
+
+    async def _fail_second_file(fs, file_id, **kwargs):
         if str(file_id) == _FILE_ID_B:
             raise OSError("transient gridfs outage")
-        return await fs.open_download_stream(file_id)
+        return await real_open(fs, file_id, **kwargs)
 
-    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_second_file)
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_second_file)
     await _seed_project(db)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
@@ -376,11 +370,12 @@ async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _g
 
 
 @pytest.mark.asyncio
-async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _gridfs_patched, monkeypatch):
+@pytest.mark.live_mongo
+async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _stored_sboms, monkeypatch):
     async def _fail_all(fs, file_id, **_kwargs):
         raise OSError("gridfs outage")
 
-    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_all)
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_all)
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
@@ -391,7 +386,8 @@ async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _gridfs_patched
 
 
 @pytest.mark.asyncio
-async def test_k8_partial_findings_persistence_is_surfaced(db, _gridfs_patched, monkeypatch):
+@pytest.mark.live_mongo
+async def test_k8_partial_findings_persistence_is_surfaced(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "stub", _ErrorResultAnalyzer())
 
     async def _drop_all_docs(self, docs):
@@ -413,9 +409,7 @@ async def test_k8_partial_findings_persistence_is_surfaced(db, _gridfs_patched, 
 
 
 @pytest.mark.asyncio
-async def test_k10_sast_only_scan_does_not_replace_project_latest(db, monkeypatch):
-    fs = _fake_gridfs({})
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
+async def test_k10_sast_only_scan_does_not_replace_project_latest(db, _no_gridfs):
     await _seed_project(db, latest_scan_id="previous-sbom-scan")
     previous = Scan(
         id="previous-sbom-scan",
@@ -439,9 +433,7 @@ async def test_k10_sast_only_scan_does_not_replace_project_latest(db, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_k10_sast_only_scan_becomes_latest_when_project_has_none(db, monkeypatch):
-    fs = _fake_gridfs({})
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
+async def test_k10_sast_only_scan_becomes_latest_when_project_has_none(db, _no_gridfs):
     await _seed_project(db, latest_scan_id=None)
     scan_id = await _seed_scan(db, sbom_refs=[])
 

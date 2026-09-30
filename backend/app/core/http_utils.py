@@ -174,10 +174,23 @@ async def gather_bounded[T, R](
     items: Iterable[T], worker: Callable[[T], Awaitable[R]], limit: int
 ) -> list[R | BaseException]:
     """Run ``worker`` over ``items`` with at most ``limit`` in flight; a failure stays in its item's slot."""
-    semaphore = asyncio.Semaphore(limit)
+    slots = list(items)
+    results: list[Any] = [None] * len(slots)
+    pending = iter(enumerate(slots))
 
-    async def bounded(item: T) -> R:
-        async with semaphore:
-            return await worker(item)
+    async def runner() -> None:
+        this = asyncio.current_task()
+        assert this is not None
+        for index, item in pending:
+            try:
+                results[index] = await worker(item)
+            except asyncio.CancelledError as exc:
+                # A worker's own cancellation fills its slot; cancelling the run must still stop it.
+                if this.cancelling():
+                    raise
+                results[index] = exc
+            except Exception as exc:
+                results[index] = exc
 
-    return await asyncio.gather(*(bounded(item) for item in items), return_exceptions=True)
+    await asyncio.gather(*(runner() for _ in range(min(limit, len(slots)))))
+    return results

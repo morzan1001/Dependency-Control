@@ -6,7 +6,7 @@ import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
-from app.services.analysis import registry
+from app.services.analysis import engine, registry
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
@@ -32,6 +32,12 @@ async def analyze_cyclonedx(
     return await analyzer.analyze(
         sbom, settings, [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
     )
+
+
+async def process_sbom_document(index: int, sbom: dict[str, Any], *args: Any, **kwargs: Any) -> list[str]:
+    """Run ``engine._process_sbom`` on the document as run_analysis hands it a loaded SBOM, for the non-CLI analyzers."""
+    parsed, components, source, sbom_format = engine._parse_and_track_sbom(sbom)
+    return await engine._process_sbom(index, parsed, components, source, None, sbom_format, *args, **kwargs)
 
 
 def bundled_iana_catalog() -> dict[str, CipherSuiteEntry]:

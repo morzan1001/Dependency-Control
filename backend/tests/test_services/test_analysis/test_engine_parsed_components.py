@@ -8,11 +8,12 @@ from typing import Any
 
 import pytest
 
-from app.services import gridfs_maintenance
+from app.schemas.sbom import SBOMFormat
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analyzers import LicenseAnalyzer
 from app.services.sbom_parser import parse_sbom
+from tests.helpers.analyzers import process_sbom_document
 
 _CBOM_FIXTURE = Path(__file__).parents[2] / "fixtures" / "cbom" / "legacy_crypto_mixed.json"
 
@@ -33,7 +34,7 @@ async def _components_by_analyzer(monkeypatch, sbom: dict[str, Any], active: lis
         return f"{analyzer_name}: Success"
 
     monkeypatch.setattr(engine, "process_analyzer", record)
-    await engine._process_sbom(0, sbom, "scan-1", None, ResultAggregator(), active, None)
+    await process_sbom_document(0, sbom, "scan-1", None, ResultAggregator(), active, None)
     return seen
 
 
@@ -70,47 +71,35 @@ async def test_components_the_parser_skipped_produce_no_license_findings():
 _UV_SBOM = Path(__file__).parents[2] / "fixtures" / "sbom" / "uvdev.syft.cdx.json"
 
 
-@pytest.mark.asyncio
-async def test_the_sbom_is_parsed_off_the_event_loop(monkeypatch):
-    parse_threads: list[int] = []
-
-    def recording_parse(sbom):
-        parse_threads.append(threading.get_ident())
-        return parse_sbom(sbom)
-
-    monkeypatch.setattr(engine, "parse_sbom", recording_parse)
-
-    sbom = json.loads(_UV_SBOM.read_text())
-
-    seen = await _components_by_analyzer(monkeypatch, sbom, ["license_compliance"])
-
-    assert seen["license_compliance"] == [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
-    assert parse_threads
-    assert threading.get_ident() not in parse_threads
-
-
 class _StoredSbom:
     async def read(self) -> bytes:
         return _UV_SBOM.read_bytes()
 
 
 @pytest.mark.asyncio
-async def test_a_stored_sbom_is_decoded_off_the_event_loop(monkeypatch):
-    decode_threads: list[int] = []
+async def test_a_stored_sbom_is_decoded_and_parsed_off_the_event_loop(monkeypatch):
+    threads: dict[str, list[int]] = {"loads": [], "parse": []}
 
-    def recording_loads(raw):
-        decode_threads.append(threading.get_ident())
-        return json.loads(raw)
+    def recording(step, original):
+        def run(document):
+            threads[step].append(threading.get_ident())
+            return original(document)
+
+        return run
 
     async def stored(_fs, _file_id):
         return _StoredSbom()
 
-    monkeypatch.setattr(gridfs_maintenance, "open_gridfs_download_with_retry", stored)
-    monkeypatch.setattr(gridfs_maintenance, "json", SimpleNamespace(loads=recording_loads))
-    ref = {"storage": "gridfs", "type": "gridfs_reference", "gridfs_id": "69d5332257c8763c8d8c82d7"}
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", stored)
+    monkeypatch.setattr(engine, "json", SimpleNamespace(loads=recording("loads", json.loads)))
+    monkeypatch.setattr(engine, "parse_sbom", recording("parse", parse_sbom))
+    sbom = json.loads(_UV_SBOM.read_text())
 
-    sbom = await engine._resolve_sbom(ref, None, ResultAggregator())
+    path, (_, components, source, sbom_format) = await engine._load_sbom(None, "69d5332257c8763c8d8c82d7", False)
 
-    assert sbom == json.loads(_UV_SBOM.read_text())
-    assert decode_threads
-    assert threading.get_ident() not in decode_threads
+    assert path is None
+    assert components == [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
+    assert (source, sbom_format) == (sbom["metadata"]["component"]["name"], SBOMFormat.CYCLONEDX)
+    assert threads["loads"]
+    assert threads["parse"]
+    assert threading.get_ident() not in threads["loads"] + threads["parse"]

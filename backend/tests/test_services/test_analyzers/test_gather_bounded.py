@@ -45,6 +45,63 @@ async def test_a_failing_worker_leaves_its_exception_in_its_slot():
     assert results[2] == 2
 
 
+@pytest.mark.asyncio
+async def test_a_worker_that_cancels_itself_leaves_the_cancellation_in_its_slot():
+    async def worker(item: int) -> int:
+        if item == 1:
+            raise asyncio.CancelledError
+        return item
+
+    results = await gather_bounded([0, 1, 2], worker, _LIMIT)
+
+    assert (results[0], type(results[1]), results[2]) == (0, asyncio.CancelledError, 2)
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_starts_no_further_item():
+    started: list[int] = []
+    limit_started = asyncio.Event()
+
+    async def worker(item: int) -> int:
+        started.append(item)
+        if len(started) == _LIMIT:
+            limit_started.set()
+        await asyncio.sleep(0.01)
+        return item
+
+    run = asyncio.create_task(gather_bounded(range(_ITEMS), worker, _LIMIT))
+    await limit_started.wait()
+    run.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert started == list(range(_LIMIT))
+
+
+# A registry fan-out over one large SBOM's components, at the widest bound an analyzer uses.
+_LARGE_FANOUT = 150_000
+_WIDE_LIMIT = ANALYZER_BATCH_SIZES["outdated"]
+# all_tasks() walks every live task, so counting on each item would be quadratic in a task-per-item gather.
+_SAMPLE_EVERY = 1_000
+
+
+@pytest.mark.asyncio
+async def test_a_large_fanout_keeps_only_limit_tasks_alive_and_the_order():
+    peak = 0
+
+    async def worker(item: int) -> int:
+        nonlocal peak
+        if item % _SAMPLE_EVERY == 0:
+            peak = max(peak, len(asyncio.all_tasks()))
+        await asyncio.sleep(0)
+        return item
+
+    results = await gather_bounded(range(_LARGE_FANOUT), worker, _WIDE_LIMIT)
+
+    assert results == list(range(_LARGE_FANOUT))
+    assert peak <= _WIDE_LIMIT + 1
+
+
 def _components_without_a_registry(count: int) -> list[dict[str, str]]:
     return [
         {"name": f"pkg{index}", "version": "1.0.0", "purl": f"pkg:generic/pkg{index}@1.0.0"} for index in range(count)

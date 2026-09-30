@@ -32,6 +32,9 @@ else
 fi
 export GRYPE_DB_AUTO_UPDATE=false
 
+# SBOM copies (cli_base.TEMP_SBOM_PREFIX) a killed run left on /tmp, which survives container restarts.
+rm -f "${TMPDIR:-/tmp}"/dc-sbom-*
+
 # Build uvicorn command based on TLS settings
 if [ "$TLS_ENABLED" = "true" ]; then
     # Verify certificates exist

@@ -9,9 +9,15 @@ import tempfile
 from abc import abstractmethod
 from typing import Any
 
+from app.schemas.sbom import SBOMFormat
+from app.services.sbom_parser import sbom_parser
+
 from .base import Analyzer
 
 logger = logging.getLogger(__name__)
+
+# docker-entrypoint.sh sweeps this prefix, since a killed pod leaves its copies on the /tmp emptyDir.
+TEMP_SBOM_PREFIX = "dc-sbom-"
 
 
 async def run_process(args: list[str], time_limit: float) -> tuple[bytes, bytes, int] | None:
@@ -64,7 +70,15 @@ class CLIAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Run CLI analysis with automatic temp file management and retry."""
+        """Scan ``sbom`` from a temp file of its JSON."""
+        sbom_path = await asyncio.to_thread(self._create_temp_sbom, sbom)
+        try:
+            return await self.analyze_file(sbom_path, sbom_parser.detect_format(sbom))
+        finally:
+            self._cleanup_files([sbom_path])
+
+    async def analyze_file(self, sbom_path: str, sbom_format: SBOMFormat) -> dict[str, Any]:
+        """Scan the SBOM file at ``sbom_path``, which stays the caller's, retrying transient failures."""
         if not self.is_tool_available():
             logger.warning(f"{self.name}: CLI tool '{self.cli_command}' not found in PATH")
             return {
@@ -73,13 +87,9 @@ class CLIAnalyzer(Analyzer):
                 self.empty_result_key: [],
             }
 
-        tmp_sbom_path: str | None = None
         extra_paths: list[str] = []
-
         try:
-            tmp_sbom_path = await asyncio.to_thread(self._create_temp_sbom, sbom)
-
-            target_path, extra_paths = await self._preprocess_sbom(sbom, tmp_sbom_path)
+            target_path, extra_paths = await self._preprocess_sbom(sbom_path, sbom_format)
             args = self._build_command_args(target_path)
 
             attempt = 0
@@ -102,17 +112,17 @@ class CLIAnalyzer(Analyzer):
             return {"error": f"Exception during {self.name} analysis: {e!s}"}
 
         finally:
-            self._cleanup_files([p for p in [tmp_sbom_path, *extra_paths] if p is not None])
+            self._cleanup_files(extra_paths)
 
     def _create_temp_sbom(self, sbom: dict[str, Any]) -> str:
         """Create a temporary file containing the SBOM JSON."""
-        with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as tmp_file:
+        with tempfile.NamedTemporaryFile(mode="w+", prefix=TEMP_SBOM_PREFIX, suffix=".json", delete=False) as tmp_file:
             json.dump(sbom, tmp_file)
             return tmp_file.name
 
-    async def _preprocess_sbom(self, _sbom: dict[str, Any], tmp_sbom_path: str) -> tuple[str, list[str]]:
+    async def _preprocess_sbom(self, sbom_path: str, _sbom_format: SBOMFormat) -> tuple[str, list[str]]:
         """Preprocess SBOM before analysis; returns (target_path, extra_temp_files_to_cleanup)."""
-        return tmp_sbom_path, []
+        return sbom_path, []
 
     @abstractmethod
     def _build_command_args(self, sbom_path: str) -> list[str]:
@@ -154,10 +164,10 @@ class CLIAnalyzer(Analyzer):
                 "output": output_str,
             }
 
-    def _cleanup_files(self, paths: list[str | None]) -> None:
+    def _cleanup_files(self, paths: list[str]) -> None:
         """Remove temporary files."""
         for path in paths:
-            if path and os.path.exists(path):
+            if os.path.exists(path):
                 try:
                     os.remove(path)
                 except OSError as e:

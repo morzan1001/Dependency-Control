@@ -1,11 +1,15 @@
 import asyncio
 import contextlib
+import json
 import logging
+import os
 import re
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import bson
@@ -43,6 +47,7 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
+from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Scan
 from app.models.stats import Stats
@@ -57,7 +62,7 @@ from app.repositories.waivers import WaiverRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.finding_details import VulnerabilitySummaryDetails
-from app.schemas.sbom import ParsedSBOM
+from app.schemas.sbom import ParsedSBOM, SBOMFormat
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
@@ -71,20 +76,21 @@ from app.services.analysis.registry import (
 )
 from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
-from app.services.analyzers import Analyzer
+from app.services.analyzers import Analyzer, CLIAnalyzer
+from app.services.analyzers.cli_base import TEMP_SBOM_PREFIX
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load_iana_catalog
 from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.github import is_public_github
-from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
+from app.services.gridfs_maintenance import gridfs_ref_id
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     apply_reachability,
     fetch_callgraphs,
     run_pending_reachability_for_scan,
 )
-from app.services.sbom_parser import parse_sbom
+from app.services.sbom_parser import parse_sbom, sbom_parser
 from app.services.update_frequency_rollup import record_scan_update_delta
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
 from app.services.waivers.matching import route_waiver
@@ -203,33 +209,33 @@ def _analyzer_failed(analyzer_name: str, error: Exception, aggregator: ResultAgg
 async def process_analyzer(
     analyzer_name: str,
     analyzer: Analyzer,
-    sbom: dict[str, Any],
     scan_id: str,
     db: Database,
     aggregator: ResultAggregator,
-    settings: dict[str, Any] | None = None,
-    fallback_source: str = "unknown-sbom",
-    parsed_components: list[dict[str, Any]] | None = None,
+    *,
+    settings: dict[str, Any],
+    source: str,
+    row_source: str,
+    parsed_components: list[dict[str, Any]],
+    sbom_path: str | None,
+    sbom_format: SBOMFormat,
 ) -> str:
     analyzer_start_time = time.time()
     try:
         if analysis_scans_total:
             analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
-        result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
+        if isinstance(analyzer, CLIAnalyzer):
+            assert sbom_path is not None
+            result = await analyzer.analyze_file(sbom_path, sbom_format)
+        else:
+            result = await analyzer.analyze({}, settings=settings, parsed_components=parsed_components)
 
         if analysis_duration_seconds:
             duration = time.time() - analyzer_start_time
             analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
 
-        source: str = fallback_source
-        if sbom.get("metadata") and sbom["metadata"].get("component"):
-            source = str(sbom["metadata"]["component"].get("name", fallback_source))
-        elif sbom.get("serialNumber"):
-            source = str(sbom.get("serialNumber"))
-
-        # Keyed on the SBOM's position: root names repeat within a scan (multi-arch images).
-        return await _record_result(analyzer_name, result, scan_id, db, aggregator, source, row_source=fallback_source)
+        return await _record_result(analyzer_name, result, scan_id, db, aggregator, source, row_source=row_source)
     except Exception as e:
         return _analyzer_failed(analyzer_name, e, aggregator)
 
@@ -277,10 +283,6 @@ async def _run_crypto_analyzers(project_id: str, scan_id: str, db: Database, agg
 _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
-def _count_gridfs_refs(sboms_to_process: list[Any]) -> int:
-    return len(extract_gridfs_ids_from_refs(sboms_to_process))
-
-
 def _outcome_rank(status: str) -> int:
     return 2 if status.startswith("Failed") else int(status.startswith("Partial"))
 
@@ -304,33 +306,73 @@ def _failed_analyzer_names(outcomes: dict[str, str]) -> tuple[list[str], list[st
     )
 
 
-async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
-    """Resolve a single SBOM item from inline dict or GridFS reference."""
-    gridfs_id = gridfs_ref_id(item)
-    if gridfs_id:
-        try:
-            if analysis_gridfs_operations_total:
-                analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
-            sbom: dict[str, Any] = await load_gridfs_json(fs, gridfs_id)
-            if analysis_gridfs_operations_total:
-                analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
-            return sbom
-        except Exception as gridfs_err:
-            logger.exception("Failed to fetch SBOM from GridFS %s: %s", gridfs_id, gridfs_err)
-            if analysis_gridfs_operations_total:
-                analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
-            aggregator.add_scan_error("system", f"{_SBOM_GRIDFS_LOAD_ERROR}: {gridfs_err}")
-            return None
-    result: dict[str, Any] | None = item
-    return result
+def _sbom_load_failed(aggregator: ResultAggregator, reason: object) -> None:
+    if analysis_gridfs_operations_total:
+        analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
+    aggregator.add_scan_error("system", f"{_SBOM_GRIDFS_LOAD_ERROR}: {reason}")
 
 
-def _parse_and_track_sbom(current_sbom: Any) -> tuple[Any, list[dict[str, Any]]]:
-    """Try to pre-parse the SBOM and track metrics. Returns (parsed_sbom, parsed_components)."""
+async def _stored_sbom_ids(
+    fs: AsyncIOMotorGridFSBucket, sboms: list[Any], aggregator: ResultAggregator
+) -> list[str | None]:
+    """Each ref's GridFS id, or None with the load failure recorded when no stored file backs it."""
+    gridfs_ids = [gridfs_ref_id(item) for item in sboms]
+    wanted = [bson.ObjectId(gid) for gid in gridfs_ids if gid and bson.ObjectId.is_valid(gid)]
+    stored = {str(file._id) async for file in fs.find({"_id": {"$in": wanted}})} if wanted else set()
+    for gid in gridfs_ids:
+        if gid not in stored:
+            logger.error("%s: %s is not stored", _SBOM_GRIDFS_LOAD_ERROR, gid)
+            _sbom_load_failed(aggregator, f"{gid} is not stored")
+    return [gid if gid in stored else None for gid in gridfs_ids]
+
+
+_ParsedDocument = tuple[ParsedSBOM | None, list[dict[str, Any]], str | None, SBOMFormat]
+
+
+async def _load_sbom(
+    fs: AsyncIOMotorGridFSBucket, gridfs_id: str, write_file: bool
+) -> tuple[str | None, _ParsedDocument]:
+    """Download one stored SBOM, write its bytes for the CLI scanners when asked, and parse it."""
+    if analysis_gridfs_operations_total:
+        analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
+    data = await (await open_gridfs_download_with_retry(fs, bson.ObjectId(gridfs_id))).read()
+    path = None
+    try:
+        if write_file:
+            fd, path = tempfile.mkstemp(prefix=TEMP_SBOM_PREFIX, suffix=".json")
+            os.close(fd)
+            await asyncio.to_thread(Path(path).write_bytes, data)
+        document = await asyncio.to_thread(json.loads, data)
+        del data
+        if analysis_gridfs_operations_total:
+            analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
+        return path, await asyncio.to_thread(_parse_and_track_sbom, document)
+    except BaseException:
+        if path:
+            os.remove(path)
+        raise
+
+
+def _sbom_source(sbom: dict[str, Any]) -> str | None:
+    """The SBOM's root component name, else its serial number."""
+    metadata = sbom.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
+        # An explicit ``"name": null`` is a present key, so a dict default would never fire.
+        name = metadata["component"].get("name")
+        if name:
+            return str(name)
+    serial = sbom.get("serialNumber")
+    return str(serial) if serial else None
+
+
+def _parse_and_track_sbom(document: Any) -> _ParsedDocument:
+    """Pre-parse the SBOM and track metrics; a document that fails to parse leaves only the raw-document scanners."""
     parsed_components: list[dict[str, Any]] = []
     parsed_sbom = None
+    source, sbom_format = None, SBOMFormat.UNKNOWN
     try:
-        parsed_sbom = parse_sbom(current_sbom)
+        source, sbom_format = _sbom_source(document), sbom_parser.detect_format(document)
+        parsed_sbom = parse_sbom(document)
         parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
         logger.info(
             f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}, "
@@ -345,7 +387,7 @@ def _parse_and_track_sbom(current_sbom: Any) -> tuple[Any, list[dict[str, Any]]]
         logger.warning(f"Failed to pre-parse SBOM: {parse_err} - only the raw-document scanners will run")
         if analysis_sbom_parse_errors_total:
             analysis_sbom_parse_errors_total.inc()
-    return parsed_sbom, parsed_components
+    return parsed_sbom, parsed_components, source, sbom_format
 
 
 async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, scan_id: str, db: Database) -> None:
@@ -401,7 +443,11 @@ def _build_settings_resolver(
 
 async def _process_sbom(
     index: int,
-    current_sbom: dict[str, Any],
+    parsed_sbom: ParsedSBOM | None,
+    parsed_components: list[dict[str, Any]],
+    source: str | None,
+    sbom_path: str | None,
+    sbom_format: SBOMFormat,
     scan_id: str,
     db: Database,
     aggregator: ResultAggregator,
@@ -410,17 +456,11 @@ async def _process_sbom(
     project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
     project_id: str | None = None,
     scan_type: str | None = None,
-    payload: list[ParsedSBOM | None] | None = None,
     github_token: str | None = None,
 ) -> list[str]:
-    """Process a single resolved SBOM: parse, collect deps, run analyzers; returns the results summary."""
-    fallback_source = f"SBOM #{index + 1}"
-
-    parsed_sbom, parsed_components = await asyncio.to_thread(_parse_and_track_sbom, current_sbom)
-
-    # Collected rather than stored here: the inventory is replaced once per payload (see store_scan_dependencies).
-    if payload is not None and current_sbom:
-        payload.append(parsed_sbom)
+    """Run the analyzers over one loaded SBOM; returns the results summary."""
+    # Rows are keyed on the SBOM's position: root names repeat within a scan (multi-arch images).
+    row_source = f"SBOM #{index + 1}"
 
     if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
         await _persist_embedded_crypto_assets(parsed_sbom, project_id, scan_id, db)
@@ -433,21 +473,21 @@ async def _process_sbom(
         process_analyzer(
             analyzer_name,
             analyzer_factories[analyzer_name](),
-            current_sbom,
             scan_id,
             db,
             aggregator,
             settings=settings_for(analyzer_name),
-            fallback_source=fallback_source,
+            source=source or row_source,
+            row_source=row_source,
             parsed_components=parsed_components,
+            sbom_path=sbom_path,
+            sbom_format=sbom_format,
         )
         for analyzer_name in effective_analyzers
         if analyzer_name in analyzer_factories
     ]
 
-    batch_results = await asyncio.gather(*tasks)
-    del current_sbom, parsed_components
-    return list(batch_results)
+    return list(await asyncio.gather(*tasks))
 
 
 def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
@@ -1066,11 +1106,10 @@ async def run_analysis(
     fs = AsyncIOMotorGridFSBucket(db)
 
     load_start = datetime.now(timezone.utc)
-    # Resolved before the first delete, so an SBOM that fails to load leaves the stored analysis intact.
-    resolved_sboms: list[dict[str, Any] | None] = [await _resolve_sbom(item, fs, aggregator) for item in sboms]
-    sbom_load_failures = sum(1 for resolved in resolved_sboms if resolved is None)
-    sboms_expected = len(resolved_sboms)
-    gridfs_expected = _count_gridfs_refs(sboms)
+    # Checked before the first delete, so an SBOM that is gone leaves the stored analysis intact.
+    stored_ids = await _stored_sbom_ids(fs, sboms, aggregator)
+    sbom_load_failures = stored_ids.count(None)
+    sboms_expected = len(stored_ids)
     if sbom_load_failures and scan_doc.completed_at is not None:
         # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
         if scan_doc.retry_count + 1 < ANALYSIS_MAX_RETRIES:
@@ -1109,35 +1148,54 @@ async def run_analysis(
 
     project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
 
+    write_file = bool(RAW_SBOM_ANALYZERS & set(active_analyzers))
+    # Collected rather than stored per SBOM: the inventory is replaced once per payload (see store_scan_dependencies).
+    payload: list[ParsedSBOM | None] = []
+    for index, gridfs_id in enumerate(stored_ids):
+        if gridfs_id is None:
+            payload.append(None)
+            continue
+        try:
+            sbom_path, (parsed_sbom, components, source, sbom_format) = await _load_sbom(fs, gridfs_id, write_file)
+        except Exception as load_err:
+            logger.exception("Failed to load SBOM from GridFS %s", gridfs_id)
+            _sbom_load_failed(aggregator, load_err)
+            sbom_load_failures += 1
+            payload.append(None)
+            continue
+        payload.append(parsed_sbom)
+        try:
+            sbom_results = await _process_sbom(
+                index,
+                parsed_sbom,
+                components,
+                source,
+                sbom_path,
+                sbom_format,
+                scan_id,
+                db,
+                aggregator,
+                active_analyzers,
+                system_settings,
+                project_analyzer_settings=project_analyzer_settings,
+                project_id=project_id,
+                scan_type=scan_type,
+                github_token=github_token,
+            )
+        finally:
+            if sbom_path:
+                os.remove(sbom_path)
+        results_summary.extend(sbom_results)
+        # The component dicts must not stay alive while the next SBOM loads.
+        del components
+
     if sbom_load_failures:
         logger.warning(
-            "Scan %s: %d/%d SBOMs failed to resolve; skipping dependency persistence to keep stored dependencies",
+            "Scan %s: %d/%d SBOMs failed to load; skipping dependency persistence to keep stored dependencies",
             scan_id,
             sbom_load_failures,
             sboms_expected,
         )
-
-    payload: list[ParsedSBOM | None] = []
-    for index, current_sbom in enumerate(resolved_sboms):
-        if current_sbom is None:
-            payload.append(None)
-            continue
-        sbom_results = await _process_sbom(
-            index,
-            current_sbom,
-            scan_id,
-            db,
-            aggregator,
-            active_analyzers,
-            system_settings,
-            project_analyzer_settings=project_analyzer_settings,
-            project_id=project_id,
-            scan_type=scan_type,
-            payload=payload,
-            github_token=github_token,
-        )
-        resolved_sboms[index] = None
-        results_summary.extend(sbom_results)
 
     if project_id and (scan_type == "cbom" or any(p is not None and p.crypto_assets for p in payload)):
         results_summary.extend(await _run_crypto_analyzers(project_id, scan_id, db, aggregator))
@@ -1195,7 +1253,7 @@ async def run_analysis(
 
     # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
     sboms_unusable = (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
-        sbom_load_failures > 0 and sbom_load_failures == gridfs_expected
+        sbom_load_failures > 0 and sbom_load_failures == sboms_expected
     )
     if sboms_unusable:
         logger.error(

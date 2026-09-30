@@ -43,7 +43,7 @@ from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
-from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
+from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason, _sbom_source
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
@@ -422,18 +422,6 @@ def _input_label(parsed_input: _ParsedInput) -> str:
     return _SBOM_POSITION.format(position=parsed_input.position)
 
 
-def _sbom_source(sbom: dict[str, Any], fallback: str) -> str:
-    metadata = sbom.get("metadata")
-    if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
-        # An explicit ``"name": null`` is a present key, so a dict default would never fire.
-        name = metadata["component"].get("name")
-        if name:
-            return str(name)
-    if sbom.get("serialNumber"):
-        return str(sbom["serialNumber"])
-    return fallback
-
-
 def _record_ran(report: AnalyzerReport, name: str) -> None:
     if name not in report.ran and name not in report.errored:
         report.ran.append(name)
@@ -467,7 +455,7 @@ async def _run_one_analyzer(
         if is_error_result(result):
             _record_errored(report, name, f"{fallback_source}: {result['error']}")
             return
-        aggregator.aggregate(name, result, source=_sbom_source(sbom, fallback_source))
+        aggregator.aggregate(name, result, source=_sbom_source(sbom) or fallback_source)
     except Exception as exc:
         logger.warning("adhoc: analyzer %s failed: %s", name, exc)
         # Attributed to the input, so "failed on one of ten" is distinguishable from "failed on ten".
@@ -663,7 +651,7 @@ def _aggregate_crypto_rules(
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,
                 {"findings": findings},
-                source=_sbom_source(parsed_input.sbom, _input_label(parsed_input)),
+                source=_sbom_source(parsed_input.sbom) or _input_label(parsed_input),
             )
     _record_ran(report, _CRYPTO_RULES)
 

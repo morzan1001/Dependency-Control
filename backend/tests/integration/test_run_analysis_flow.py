@@ -2,9 +2,12 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
@@ -14,15 +17,16 @@ from app.core.constants import (
     SCAN_STATUS_PENDING,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
 )
+from app.core.init_db import create_indexes
 from app.models.project import Scan
 from app.models.stats import Stats
-from app.services import gridfs_maintenance
 from app.services.analysis import engine
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.notifications import notification_service
 from app.services.webhooks import webhook_service
 from tests.helpers.analyzers import serve_analyzer
 from tests.helpers.enrichment import Upstreams, serve_enrichment
+from tests.helpers.sboms import store_sbom
 
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -39,6 +43,14 @@ async def _seed_scan(db) -> str:
 @pytest.fixture(autouse=True)
 def _no_gridfs(monkeypatch):
     monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: None)
+
+
+@pytest_asyncio.fixture
+async def stored_sbom(db, monkeypatch) -> dict:
+    """A stored SBOM without components, for a run that has to reach its analyzers."""
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", AsyncIOMotorGridFSBucket)
+    await create_indexes(db)
+    return await store_sbom(db, {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []})
 
 
 @pytest.fixture
@@ -84,11 +96,15 @@ async def test_a_scan_that_is_not_finalized_is_not_notified(db, notified, monkey
     assert notified == []
 
 
-def _gridfs_outage(monkeypatch) -> dict:
-    async def _outage(fs, file_id, **_kwargs):
-        raise OSError("gridfs outage")
+def _gridfs_outage(monkeypatch, while_listing=lambda: asyncio.sleep(0)) -> dict:
+    """GridFS holds none of the scan's SBOM files."""
 
-    monkeypatch.setattr(gridfs_maintenance, "open_gridfs_download_with_retry", _outage)
+    async def _no_stored_files(_filter):
+        await while_listing()
+        for stored in ():
+            yield stored
+
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: SimpleNamespace(find=_no_stored_files))
     file_id = "69d5332257c8763c8d8c82d7"
     return {"storage": "gridfs", "file_id": file_id, "type": "gridfs_reference", "gridfs_id": file_id}
 
@@ -229,12 +245,12 @@ class _SettingsProbe:
 
 
 @pytest.mark.asyncio
-async def test_the_instance_token_reaches_the_analyzers_too(db, notified, enrichment_inputs, monkeypatch):
+@pytest.mark.live_mongo
+async def test_the_instance_token_reaches_the_analyzers_too(db, notified, enrichment_inputs, monkeypatch, stored_sbom):
     await db.github_instances.insert_one(_github_instance("gh", _T0, access_token="instance-token"))
     probe = serve_analyzer(monkeypatch, "maintainer_risk", _SettingsProbe())
-    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
 
-    await engine.run_analysis(await _seed_scan(db), [sbom], ["maintainer_risk"], db, worker_id=_WORKER)
+    await engine.run_analysis(await _seed_scan(db), [stored_sbom], ["maintainer_risk"], db, worker_id=_WORKER)
 
     assert probe.settings["github_token"] == "instance-token"
 
@@ -415,15 +431,14 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_on_its_last_attempt_keeps_
 
 @pytest.mark.asyncio
 async def test_a_result_that_arrives_while_the_last_attempt_loads_its_sbom_reschedules_it(db, notified, monkeypatch):
-    ref = _gridfs_outage(monkeypatch)
-    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
+    scan_id = ""
 
-    async def _result_lands_while_the_read_retries(fs, file_id, **_kwargs):
+    async def _result_lands_while_the_files_are_listed():
         await db.scans.update_one({"_id": scan_id}, {"$set": {"last_result_at": datetime.now(timezone.utc)}})
         await asyncio.sleep(0.01)
-        raise OSError("gridfs outage")
 
-    monkeypatch.setattr(gridfs_maintenance, "open_gridfs_download_with_retry", _result_lands_while_the_read_retries)
+    ref = _gridfs_outage(monkeypatch, _result_lands_while_the_files_are_listed)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
 
     assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
 
@@ -580,8 +595,9 @@ class _TrivyReport:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_waived_findings(
-    db, monkeypatch, fake_cache
+    db, monkeypatch, fake_cache, stored_sbom
 ):
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "default_branch": "main"})
     await db.waivers.insert_one(
@@ -615,8 +631,7 @@ async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_wai
     monkeypatch.setattr(webhook_service, "trigger_webhooks", delivered)
     monkeypatch.setattr(notification_service, "notify_project_members", AsyncMock())
 
-    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
-    await engine.run_analysis(scan_id, [sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
+    await engine.run_analysis(scan_id, [stored_sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
 
     alerts = {c.kwargs["event_type"]: c.kwargs["payload"] for c in delivered.await_args_list}
     vulnerabilities = alerts[WEBHOOK_EVENT_VULNERABILITY_FOUND]["vulnerabilities"]
