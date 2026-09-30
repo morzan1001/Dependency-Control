@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType
@@ -103,6 +104,7 @@ async def test_paging_a_scan_walks_its_assets_name_ascending(db):
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_an_asset_is_found_by_the_id_its_listing_names_and_so_is_its_rescan_copy(db):
+    await create_indexes(db)
     repo = CryptoAssetRepository(db)
     ingested = _asset("p1", "s1", "ref-a", "AES-128")
     await repo.bulk_upsert("p1", "s1", [ingested])

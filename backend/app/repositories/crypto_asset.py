@@ -61,12 +61,18 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
 
     async def carry_over_to_scan(self, project_id: str, from_scan_id: str, to_scan_id: str) -> None:
         """Copy a scan's assets onto a rescan server-side, since /ingest/cbom assets have no SBOM to
-        re-derive them from; the derived ``_id`` makes a repeated copy a no-op."""
+        re-derive them from; joining on the unique bom_ref key keeps any row the rescan already holds."""
         await self.aggregate(
             [
                 {"$match": {"project_id": project_id, "scan_id": from_scan_id}},
                 {"$set": {"_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]}, "scan_id": to_scan_id}},
-                {"$merge": {"into": self.collection_name, "on": "_id", "whenMatched": "keepExisting"}},
+                {
+                    "$merge": {
+                        "into": self.collection_name,
+                        "on": ["project_id", "scan_id", "bom_ref"],
+                        "whenMatched": "keepExisting",
+                    }
+                },
             ]
         )
 

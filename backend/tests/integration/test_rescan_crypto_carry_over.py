@@ -90,6 +90,7 @@ async def _ingest_assets(db, scan_id: str) -> None:
 
 async def _seed_lineage(db) -> tuple[str, str]:
     """An ingested-CBOM scan and a pending rescan of it, both carrying the same SBOM ref."""
+    await create_indexes(db)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
     original = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref()], status="completed")
     await db.scans.insert_one(original.model_dump(by_alias=True))
@@ -193,3 +194,31 @@ async def test_a_carry_over_past_the_old_asset_cap_copies_every_asset_once(db):
     await repo.bulk_upsert(_PROJECT_ID, "scan-rescan", [embedded])
     assert await db.crypto_assets.count_documents({"scan_id": "scan-rescan"}) == OLD_ASSET_CAP + 1
     assert (await db.crypto_assets.find_one({"_id": first["_id"]}))["name"] == "SHA-512"
+
+
+async def _carry_over_onto_a_partly_filled_rescan(db, count: int) -> None:
+    """A failed earlier run left the embedded persist's rows on the rescan, under fresh ids."""
+    await create_indexes(db)
+    components = filler_components(range(count))
+    await store_cbom(db, _PROJECT_ID, "scan-original", cbom_of(components))
+    await store_cbom(db, _PROJECT_ID, "scan-rescan", cbom_of([components[0], components[-1]]))
+    held = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-rescan"})}
+    source = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-original"})}
+    repo = CryptoAssetRepository(db)
+
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+
+    carried = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-rescan"})}
+    assert carried == {ref: held.get(ref, f"scan-rescan:{src}") for ref, src in source.items()}
+
+
+@pytest.mark.asyncio
+async def test_a_carry_over_keeps_the_rows_the_rescan_already_holds(db):
+    await _carry_over_onto_a_partly_filled_rescan(db, 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_carry_over_past_the_old_asset_cap_keeps_the_rows_the_rescan_already_holds(db):
+    await _carry_over_onto_a_partly_filled_rescan(db, OLD_ASSET_CAP + 1)
