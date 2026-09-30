@@ -2,12 +2,13 @@
 CryptoTrendService — time-bucketed crypto finding + asset aggregations.
 """
 
-import hashlib
 from datetime import datetime, timedelta
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.cache import scope_digest
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.analytics import Bucket, Metric, TrendPoint, TrendSeries
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
@@ -15,7 +16,7 @@ from app.services.analytics.scopes import ResolvedScope
 _MAX_RANGE = timedelta(days=730)
 
 _METRIC_FILTER: dict[str, dict[str, Any]] = {
-    "total_crypto_findings": {"type": {"$regex": "^crypto_"}},
+    "total_crypto_findings": {"type": {"$in": sorted(CRYPTO_FINDING_TYPES)}},
     "quantum_vulnerable_findings": {"type": "crypto_quantum_vulnerable"},
     "weak_algo_findings": {"type": "crypto_weak_algorithm"},
     "weak_key_findings": {"type": "crypto_weak_key"},
@@ -51,13 +52,24 @@ class CryptoTrendService:
         if range_end < range_start:
             raise ValueError("range_end must be after range_start")
 
-        cache_key = self._cache_key(resolved, metric, bucket, range_start, range_end)
-        hit, cached = self.cache.get(cache_key)
-        if hit:
-            cached_resp = TrendSeries.model_validate(cached)
-            cached_resp.cache_hit = True
-            return cached_resp
+        # scope="user" carries no scope_id, so the project set is what keeps two tenants apart.
+        key = (
+            "crypto-trends",
+            resolved.scope,
+            resolved.scope_id,
+            metric,
+            bucket,
+            range_start,
+            range_end,
+            scope_digest(resolved.project_ids),
+        )
+        return await self.cache.get_or_compute(
+            key, lambda: self._build(resolved, metric, bucket, range_start, range_end)
+        )
 
+    async def _build(
+        self, resolved: ResolvedScope, metric: Metric, bucket: Bucket, range_start: datetime, range_end: datetime
+    ) -> TrendSeries:
         if metric in _METRIC_FILTER:
             points = await self._finding_buckets(
                 resolved,
@@ -88,7 +100,7 @@ class CryptoTrendService:
         else:
             raise ValueError(f"unsupported metric: {metric!r}")
 
-        series = TrendSeries(
+        return TrendSeries(
             scope=resolved.scope,
             scope_id=resolved.scope_id,
             metric=metric,
@@ -97,8 +109,6 @@ class CryptoTrendService:
             range_start=range_start,
             range_end=range_end,
         )
-        self.cache.set(cache_key, series.model_dump())
-        return series
 
     async def _finding_buckets(
         self,
@@ -195,32 +205,3 @@ class CryptoTrendService:
             TrendPoint(timestamp=row["_id"], metric=metric_name, value=float(row["value"]))
             async for row in self.db.crypto_assets.aggregate(pipeline)
         ]
-
-    def _cache_key(
-        self,
-        resolved: ResolvedScope,
-        metric: Metric,
-        bucket: Bucket,
-        range_start: datetime,
-        range_end: datetime,
-    ) -> tuple:
-        rs = range_start.isoformat()
-        re = range_end.isoformat()
-        fingerprint = hashlib.sha256(f"{rs}|{re}".encode()).hexdigest()[:16]
-        # Fingerprint the resolved project set so two callers sharing (scope, scope_id)
-        # but resolving to different projects never collide (tenant isolation for
-        # scope="user", where scope_id is always None). None (global) gets a distinct
-        # sentinel so it can't alias an empty set.
-        if resolved.project_ids is None:
-            projects_fp = "*"
-        else:
-            projects_fp = hashlib.sha256("|".join(sorted(resolved.project_ids)).encode()).hexdigest()[:16]
-        return (
-            "trends",
-            resolved.scope,
-            resolved.scope_id,
-            metric,
-            bucket,
-            fingerprint,
-            projects_fp,
-        )

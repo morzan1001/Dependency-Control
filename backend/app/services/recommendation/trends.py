@@ -1,150 +1,157 @@
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from typing import Any
 
-from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD, get_severity_value
+from app.core.constants import (
+    FINDING_DELTA_THRESHOLD,
+    RECURRING_ISSUE_THRESHOLD,
+    get_severity_value,
+    max_severity,
+)
+from app.core.cve import canonical_cves, counted_cves
+from app.models.finding import FindingType
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.analytics.findings_delta import finding_identity_key
-from app.core.cve import canonical_cves
-from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
+from app.services.analytics.findings_delta import (
+    FINDING_IDENTITY_PROJECTION,
+    IDENTITY_FIELDS,
+    advisory_keys,
+    finding_identity_key,
+)
+from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
+    ModelOrDict,
+    get_attr,
+    live_advisories,
+    sample_components,
+    sampled,
+    severity_impact,
+)
 
-# What finding_identity_key reads; the scan-scoped ``_id`` stays out, it never matches across a pair.
-_IDENTITY_FIELDS = ("type", "component", "version", "details", "finding_id", "description", "found_in")
 _RECURRING_ROWS_SHOWN = 10
+_NON_SECURITY_TYPES = frozenset({FindingType.OUTDATED.value, FindingType.SYSTEM_WARNING.value})
+_FLAGGED_SEVERITIES = frozenset({"CRITICAL", "HIGH"})
+
+PREVIOUS_SCAN_PROJECTION = {
+    **FINDING_IDENTITY_PROJECTION,
+    "details.vulnerabilities.resolved_cve": 1,
+    "details.vulnerabilities.aliases": 1,
+}
 
 
-def _identity(finding: ModelOrDict) -> tuple[str, str, str]:
-    """The same cross-scan identity the scan delta matches findings on."""
-    return finding_identity_key({field: get_attr(finding, field) for field in _IDENTITY_FIELDS})
+@dataclass
+class PreviousScan:
+    """What the regression check keeps of the preceding scan: identity keys and per-artifact advisories."""
+
+    keys: set[tuple[str, str, str]] = field(default_factory=set)
+    advisories: set[tuple[str, str]] = field(default_factory=set)
+
+    def add(self, doc: dict[str, Any]) -> None:
+        if doc.get("type") == FindingType.VULNERABILITY:
+            self.advisories |= advisory_keys(doc)
+        elif doc.get("type") not in _NON_SECURITY_TYPES:
+            self.keys.add(finding_identity_key(doc))
 
 
-def _cves(findings: list[ModelOrDict]) -> set[str]:
-    """The CVE ids these findings report; one finding aggregates a whole advisory list."""
-    return {cve for f in findings for cve in canonical_cves([get_attr(f, "details", {})])}
+def _introduced_cves(doc: dict[str, Any], previous: PreviousScan) -> list[tuple[str, str | None]]:
+    """Each live CVE the previous scan did not report on this artifact, with its own advisory's severity."""
+    new = {cve for _, cve in advisory_keys(doc) - previous.advisories}
+    return [
+        (cve, entry.get("severity"))
+        for entry in live_advisories(doc["details"])
+        for cve in new.intersection(counted_cves(entry))
+    ]
 
 
-def analyze_regressions(
-    current_findings: list[ModelOrDict],
-    previous_findings: list[ModelOrDict],
-) -> list[Recommendation]:
-    """Detect regressions - vulnerabilities that were fixed but have returned."""
-    recommendations = []
+def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousScan) -> list[Recommendation]:
+    """Findings and advisories the preceding scan did not report."""
+    new_count = 0
+    new_cves: dict[str, str | None] = {}
+    flagged: set[str] = set()
+    for finding in current_findings:
+        doc = {name: get_attr(finding, name) for name in IDENTITY_FIELDS}
+        if doc["type"] == FindingType.VULNERABILITY:
+            introduced = _introduced_cves(doc, previous)
+            new_count += bool(introduced)
+            for cve, severity in introduced:
+                new_cves[cve] = max_severity(new_cves.get(cve), severity)
+            if any(severity in _FLAGGED_SEVERITIES for _, severity in introduced):
+                flagged.add(doc["component"] or "unknown")
+        elif doc["type"] not in _NON_SECURITY_TYPES and finding_identity_key(doc) not in previous.keys:
+            new_count += 1
 
-    previous_keys = {_identity(f) for f in previous_findings}
-    new_findings = [f for f in current_findings if _identity(f) not in previous_keys]
-
-    new_vulns = [f for f in new_findings if get_attr(f, "type") == "vulnerability"]
-    new_critical = [f for f in new_vulns if get_attr(f, "severity") == "CRITICAL"]
-    new_high = [f for f in new_vulns if get_attr(f, "severity") == "HIGH"]
-
-    regression_shown, regression_total = sample_components(
-        sorted({get_attr(f, "component", "unknown") for f in new_critical + new_high})
-    )
-
-    finding_delta = len(current_findings) - len(previous_findings)
-
-    if new_critical or new_high:
-        recommendations.append(
+    impact = severity_impact(new_cves.values())
+    critical, high = impact["critical"], impact["high"]
+    if critical or high:
+        regression_shown, regression_total = sample_components(sorted(flagged))
+        return [
             Recommendation(
                 type=RecommendationType.REGRESSION_DETECTED,
-                priority=Priority.HIGH if new_critical else Priority.MEDIUM,
-                title=(
-                    f"Regression: {len(new_critical)} critical, "
-                    f"{len(new_high)} high severity vulnerabilities introduced"
-                ),
+                priority=Priority.HIGH if critical else Priority.MEDIUM,
+                title=f"Regression: {critical} critical, {high} high severity vulnerabilities introduced",
                 description=(
-                    f"This scan detected {len(new_findings)} new findings compared to "
+                    f"This scan detected {new_count} new findings compared to "
                     "the previous scan. This may indicate dependency updates that "
                     "introduced new vulnerabilities or new code with security issues."
                 ),
-                impact={
-                    "critical": len(new_critical),
-                    "high": len(new_high),
-                    "medium": len([f for f in new_vulns if get_attr(f, "severity") == "MEDIUM"]),
-                    "low": len([f for f in new_vulns if get_attr(f, "severity") == "LOW"]),
-                    "total": len(new_vulns),
-                },
+                impact=impact,
                 affected_components=regression_shown,
                 affected_components_total=regression_total,
                 action={
                     "type": "investigate_regression",
-                    # A record whose advisory list merely grew is new as a whole, so the CVEs the
-                    # previous build already reported are not what this build introduced.
-                    "new_critical_cves": sorted(_cves(new_critical) - _cves(previous_findings)),
+                    **sampled(
+                        "new_critical_cves",
+                        sorted(cve for cve, severity in new_cves.items() if severity == "CRITICAL"),
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                     "suggestion": "Review recent dependency updates and code changes",
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
-        )
-    elif finding_delta > FINDING_DELTA_THRESHOLD:
-        recommendations.append(
+        ]
+    if new_count > FINDING_DELTA_THRESHOLD:
+        return [
             Recommendation(
                 type=RecommendationType.REGRESSION_DETECTED,
                 priority=Priority.LOW,
-                title=f"Finding count increased by {finding_delta}",
-                description="The total number of security findings has increased significantly since the last scan.",
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": finding_delta,
-                    "total": finding_delta,
-                },
+                title=f"{new_count} new findings since the last scan",
+                description=f"This scan reports {new_count} security findings the previous scan did not.",
+                impact={"total": 0},
                 affected_components=[],
-                action={"type": "review_changes", "delta": finding_delta},
-                effort="low",
+                action={"type": "review_changes", "new_findings": new_count},
+                effort=Effort.LOW,
             )
-        )
-
-    return recommendations
+        ]
+    return []
 
 
 @dataclass
 class CveRecurrence:
-    """The scans one CVE was found in, and a row describing it."""
+    """The scans and components one CVE was found in, and its severity."""
 
     scans: set[str] = field(default_factory=set)
+    components: set[str] = field(default_factory=set)
     severity: str | None = None
-    component: str | None = None
 
 
-def _cve_keys(finding: ModelOrDict) -> list[str]:
-    """Every CVE the finding reports, or the identifier it is known by when it names none."""
-    details = get_attr(finding, "details", {})
-    cves = canonical_cves([details]) if isinstance(details, dict) else []
-    if cves:
-        return cves
-    fallback = get_attr(finding, "finding_id") or get_attr(finding, "_id")
-    return [str(fallback)] if fallback else []
-
-
-async def build_cve_recurrence(vulnerability_findings: AsyncIterator[ModelOrDict]) -> dict[str, CveRecurrence]:
-    """Fold vulnerability findings of a scan window into the scan set each CVE appeared in.
-
-    Folded off the findings collection rather than the scan document's ``findings_summary``,
-    which is bounded to keep the scan under Mongo's document limit.
-    """
+async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, Any]]) -> dict[str, CveRecurrence]:
+    """Fold vulnerability findings of a scan window into the scan set each CVE appeared in."""
     recurrence: dict[str, CveRecurrence] = defaultdict(CveRecurrence)
     async for finding in vulnerability_findings:
-        scan_id = get_attr(finding, "scan_id")
-        if not scan_id:
-            continue
-        for cve in _cve_keys(finding):
+        scan_id = finding["scan_id"]
+        fallback = finding.get("finding_id")
+        for cve in canonical_cves([finding.get("details")]) or ([str(fallback)] if fallback else []):
             row = recurrence[cve]
             row.scans.add(scan_id)
-            if row.component is None:
-                row.severity = get_attr(finding, "severity")
-                row.component = get_attr(finding, "component")
+            if component := finding.get("component"):
+                row.components.add(component)
+            row.severity = row.severity or finding.get("severity")
     return recurrence
-
-
-def _count_recurring_by_severity(recurring: list[tuple[str, CveRecurrence]], severity: str) -> int:
-    """Count recurring issues matching a given severity."""
-    return len([1 for _cve, row in recurring if row.severity == severity])
 
 
 def analyze_recurring_issues(
@@ -166,40 +173,39 @@ def analyze_recurring_issues(
         reverse=True,
     )
 
-    critical_count = _count_recurring_by_severity(recurring, "CRITICAL")
-    recurring_shown, recurring_total = sample_components(
-        f"{cve} ({row.component or 'unknown'}) - {len(row.scans)} scans" for cve, row in recurring
-    )
+    impact = severity_impact(row.severity for _, row in recurring)
+    recurring_shown, recurring_total = sample_components(c for _, row in recurring for c in sorted(row.components))
 
     return [
         Recommendation(
             type=RecommendationType.RECURRING_VULNERABILITY,
-            priority=Priority.MEDIUM if critical_count > 0 else Priority.LOW,
+            priority=Priority.MEDIUM if impact["critical"] else Priority.LOW,
             title=f"{len(recurring)} vulnerabilities keep recurring across scans",
             description=(
                 f"These vulnerabilities have appeared in {RECURRING_ISSUE_THRESHOLD} "
                 f"or more of the last {window_scans} scans without being fixed. Consider creating "
                 "waivers with justification, or addressing the root cause architecturally."
             ),
-            impact={
-                "critical": critical_count,
-                "high": _count_recurring_by_severity(recurring, "HIGH"),
-                "medium": _count_recurring_by_severity(recurring, "MEDIUM"),
-                "low": _count_recurring_by_severity(recurring, "LOW"),
-                "total": len(recurring),
-            },
+            impact=impact,
             affected_components=recurring_shown,
             affected_components_total=recurring_total,
             action={
                 "type": "address_recurring",
-                "cves": [cve for cve, _row in recurring[:_RECURRING_ROWS_SHOWN]],
-                "suggestions": [
+                **sampled(
+                    "cves",
+                    [
+                        {"cve": cve, "components": sorted(row.components), "scans": len(row.scans)}
+                        for cve, row in recurring
+                    ],
+                    _RECURRING_ROWS_SHOWN,
+                ),
+                "steps": [
                     "Create waivers with documented justification for accepted risks",
                     "Look for alternative packages without these vulnerabilities",
                     "Consider if the affected functionality can be removed",
                     "Check if upgrading to a different major version resolves the issues",
                 ],
             },
-            effort="high",
+            effort=Effort.HIGH,
         )
     ]

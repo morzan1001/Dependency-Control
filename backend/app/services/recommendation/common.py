@@ -17,13 +17,36 @@ from app.core.constants import (
 )
 from app.core.cve import canonical_cves
 from app.core.epss import bucket_epss
-from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
+from app.core.risk_scoring import is_actionable_vulnerability
+from app.schemas.recommendation import Priority, Recommendation
 from app.services.aggregation.versions import aggregate_fixed_version, newest_first, split_fixed_versions
 
 ModelOrDict = BaseModel | dict[str, Any]
 
-# Components one recommendation lists. Every generator draws its evidence through
-# sample_components, so the cut is one number and the reader always gets the population.
+
+@dataclass
+class VulnerabilityInfo:
+    # The finding's unwaived advisories; every per-CVE mark and name is read off them.
+    advisories: list[dict[str, Any]]
+    severity: str
+    package_name: str
+    current_version: str
+    fixed_version: str | None
+    epss_score: float | None = None
+    is_kev: bool = False
+    kev_ransomware: bool = False
+    is_reachable: bool | None = None
+    risk_score: float | None = None
+    # The SBOM graph does not record the dependency; the parser guessed it is direct.
+    direct_inferred: bool = False
+
+    @property
+    def is_actionable(self) -> bool:
+        return is_actionable_vulnerability(epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable)
+
+
+# Components one recommendation lists. Generators draw them through sample_components and cut
+# action lists with sampled, so every list travels with its population.
 AFFECTED_COMPONENTS_SHOWN = 20
 
 
@@ -53,6 +76,32 @@ def sampled(name: str, values: Sequence[Any], cap: int) -> dict[str, Any]:
     return {name: list(values[:cap]), f"{name}_total": len(values)}
 
 
+_IMPACT_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+_PRIORITY_BY_WORST = (("critical", Priority.CRITICAL), ("high", Priority.HIGH), ("medium", Priority.MEDIUM))
+# A group with no critical or high finding earns a card only from this many findings on.
+MIN_FINDINGS_FOR_CARD = 3
+
+
+def severity_impact(severities: Iterable[str | None]) -> dict[str, int]:
+    """The impact block calculate_score reads; severities outside the four scored ones count only in total."""
+    counts = Counter(severities)
+    return {severity.lower(): counts[severity] for severity in _IMPACT_SEVERITIES} | {"total": counts.total()}
+
+
+def priority_for(impact: dict[str, int]) -> Priority:
+    return next((priority for key, priority in _PRIORITY_BY_WORST if impact[key]), Priority.LOW)
+
+
+def worth_a_card(impact: dict[str, int]) -> bool:
+    return impact["critical"] + impact["high"] > 0 or impact["total"] >= MIN_FINDINGS_FOR_CARD
+
+
+def label_by_keywords(raw: str, table: Sequence[tuple[tuple[str, ...], str]]) -> str:
+    """The label of the first row with a keyword inside `raw`; `raw` itself when no row matches."""
+    lowered = raw.lower()
+    return next((label for keywords, label in table if any(keyword in lowered for keyword in keywords)), raw)
+
+
 def take_top(candidates: Sequence[Any], cap: int) -> list[tuple[int, Any, int]]:
     """The highest-ranked `cap` candidates as (rank, candidate, population).
 
@@ -77,9 +126,26 @@ def dependency_label(dep: ModelOrDict) -> str:
     return f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
-def scorecard_score(details: Any) -> float | None:
+MALWARE_REMEDIATION_STEPS = (
+    "Immediately remove the malicious package(s)",
+    "Check if npm install/pip install scripts ran malicious code",
+    "Rotate any credentials that may have been exposed",
+    "Audit your systems for signs of compromise",
+    "Report to your security team and follow your incident response procedures",
+)
+
+
+def malware_kind(finding: ModelOrDict) -> str:
+    """Typosquat heuristics and failed hash checks are stored as MALWARE findings beside confirmed malware."""
+    details = get_attr(finding, "details", {})
+    if details.get("imitated_package"):
+        return "typosquat"
+    return "hash_mismatch" if details.get("verification_failed") else "malware"
+
+
+def scorecard_score(details: dict[str, Any]) -> float | None:
     """A quality finding's OpenSSF Scorecard score; None when it carries maintainer risk only."""
-    score = details.get("overall_score") if isinstance(details, dict) else None
+    score = details.get("overall_score")
     return None if score is None else float(score)
 
 
@@ -143,7 +209,6 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
     risk = [a["risk_score"] for a in advisories if a.get("risk_score") is not None]
 
     return VulnerabilityInfo(
-        finding_id=get_attr(f, "id", ""),
         advisories=advisories,
         severity=get_attr(f, "severity", "UNKNOWN"),
         package_name=get_attr(f, "component", ""),
@@ -153,7 +218,6 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
         is_kev=any(a.get(DETAILS_KEY_IN_KEV) for a in advisories),
         kev_ransomware=any(a.get(DETAILS_KEY_KEV_RANSOMWARE) for a in advisories),
         is_reachable=get_attr(f, "reachable"),
-        reachability_level=get_attr(f, "reachability_level"),
         risk_score=max(risk, default=None),
     )
 
@@ -175,7 +239,6 @@ class VulnStats:
     reachable_high: int
     unreachable_critical: int
     actionable: int
-    epss_scores: list[float]
     # Installed versions and distinct fixes, newest first.
     versions: list[str]
     fixed_versions: list[str]
@@ -183,16 +246,11 @@ class VulnStats:
 
     def impact(self) -> dict[str, Any]:
         return {
-            "critical": self.severity["CRITICAL"],
-            "high": self.severity["HIGH"],
-            "medium": self.severity["MEDIUM"],
-            "low": self.severity["LOW"],
-            "total": self.total,
+            **severity_impact(self.severity.elements()),
             "kev_count": self.kev,
             "kev_ransomware_count": self.kev_ransomware,
             "high_epss_count": self.high_epss,
             "medium_epss_count": self.medium_epss,
-            "avg_epss": round(sum(self.epss_scores) / len(self.epss_scores), 4) if self.epss_scores else None,
             "reachable_count": self.reachable,
             "unreachable_count": self.unreachable,
             "reachable_critical": self.reachable_critical,
@@ -221,7 +279,6 @@ def summarize_vulns(vulns: list[VulnerabilityInfo]) -> VulnStats:
         reachable_high=sum(v.severity == "HIGH" for v in reachable),
         unreachable_critical=sum(v.severity == "CRITICAL" for v in unreachable),
         actionable=sum(v.is_actionable for v in vulns),
-        epss_scores=epss_scores,
         versions=newest_first({v.current_version for v in vulns if v.current_version}),
         fixed_versions=newest_first({part for fix in fixes for part in split_fixed_versions(fix)}),
         best_fix=calculate_best_fix_version(fixes),
@@ -240,91 +297,52 @@ def vuln_priority(stats: VulnStats) -> Priority:
     return Priority.MEDIUM if stats.severity["MEDIUM"] else Priority.LOW
 
 
-# Module-level cache to avoid repeated dict lookups on the hot scoring path.
+_W, _R = RECOMMENDATION_SCORING_WEIGHTS, REACHABILITY_SCORING_WEIGHTS
 _PRIORITY_SCORES = {
-    Priority.CRITICAL: RECOMMENDATION_SCORING_WEIGHTS["priority_critical"],
-    Priority.HIGH: RECOMMENDATION_SCORING_WEIGHTS["priority_high"],
-    Priority.MEDIUM: RECOMMENDATION_SCORING_WEIGHTS["priority_medium"],
-    Priority.LOW: RECOMMENDATION_SCORING_WEIGHTS["priority_low"],
+    Priority.CRITICAL: _W["priority_critical"],
+    Priority.HIGH: _W["priority_high"],
+    Priority.MEDIUM: _W["priority_medium"],
+    Priority.LOW: _W["priority_low"],
 }
-_IMPACT_CRITICAL = RECOMMENDATION_SCORING_WEIGHTS["impact_critical"]
-_IMPACT_HIGH = RECOMMENDATION_SCORING_WEIGHTS["impact_high"]
-_IMPACT_MEDIUM = RECOMMENDATION_SCORING_WEIGHTS["impact_medium"]
-_IMPACT_LOW = RECOMMENDATION_SCORING_WEIGHTS["impact_low"]
-_KEV_BONUS = RECOMMENDATION_SCORING_WEIGHTS["kev_bonus"]
-_KEV_RANSOMWARE_BONUS = RECOMMENDATION_SCORING_WEIGHTS["kev_ransomware_bonus"]
-_HIGH_EPSS_BONUS = RECOMMENDATION_SCORING_WEIGHTS["high_epss_bonus"]
-_MEDIUM_EPSS_BONUS = RECOMMENDATION_SCORING_WEIGHTS["medium_epss_bonus"]
-_REACH_CRITICAL_BONUS = REACHABILITY_SCORING_WEIGHTS["critical_bonus"]
-_REACH_HIGH_BONUS = REACHABILITY_SCORING_WEIGHTS["high_bonus"]
-_REACH_OTHER_BONUS = REACHABILITY_SCORING_WEIGHTS["other_bonus"]
-_HIGH_UNREACH_THRESHOLD = REACHABILITY_MODIFIERS["high_unreachable_ratio_threshold"]
-_HIGH_UNREACH_PENALTY = REACHABILITY_MODIFIERS["high_unreachable_penalty"]
-_MED_UNREACH_THRESHOLD = REACHABILITY_MODIFIERS["medium_unreachable_ratio_threshold"]
-_MED_UNREACH_PENALTY = REACHABILITY_MODIFIERS["medium_unreachable_penalty"]
+_IMPACT_WEIGHTS = (
+    ("critical", _W["impact_critical"]),
+    ("high", _W["impact_high"]),
+    ("medium", _W["impact_medium"]),
+    ("low", _W["impact_low"]),
+    ("kev_count", _W["kev_bonus"]),
+    ("kev_ransomware_count", _W["kev_ransomware_bonus"]),
+    ("high_epss_count", _W["high_epss_bonus"]),
+    ("medium_epss_count", _W["medium_epss_bonus"]),
+    ("reachable_critical", _R["critical_bonus"]),
+    ("reachable_high", _R["high_bonus"]),
+    ("actionable_count", ACTIONABLE_VULN_BONUS),
+)
+
+
+def _reachability_modifier(impact: dict[str, Any]) -> float:
+    total = impact.get("total", 1)
+    unreachable_ratio = impact.get("unreachable_count", 0) / total if total > 0 else 0.0
+    if unreachable_ratio > REACHABILITY_MODIFIERS["high_unreachable_ratio_threshold"]:
+        return REACHABILITY_MODIFIERS["high_unreachable_penalty"]
+    if unreachable_ratio > REACHABILITY_MODIFIERS["medium_unreachable_ratio_threshold"]:
+        return REACHABILITY_MODIFIERS["medium_unreachable_penalty"]
+    return 1.0
 
 
 def calculate_score(rec: Recommendation) -> int:
     """Score a recommendation for sorting; mostly-unreachable findings get a multiplicative penalty."""
     impact = rec.impact
-    base_score = _PRIORITY_SCORES.get(rec.priority, 0)
-
-    impact_score = (
-        impact.get("critical", 0) * _IMPACT_CRITICAL
-        + impact.get("high", 0) * _IMPACT_HIGH
-        + impact.get("medium", 0) * _IMPACT_MEDIUM
-        + impact.get("low", 0) * _IMPACT_LOW
+    reachable_other = (
+        impact.get("reachable_count", 0) - impact.get("reachable_critical", 0) - impact.get("reachable_high", 0)
     )
-
-    threat_intel_score = 0
-
-    kev_count = impact.get("kev_count", 0)
-    if kev_count > 0:
-        threat_intel_score += kev_count * _KEV_BONUS
-
-    kev_ransomware_count = impact.get("kev_ransomware_count", 0)
-    if kev_ransomware_count > 0:
-        threat_intel_score += kev_ransomware_count * _KEV_RANSOMWARE_BONUS
-
-    high_epss_count = impact.get("high_epss_count", 0)
-    if high_epss_count > 0:
-        threat_intel_score += high_epss_count * _HIGH_EPSS_BONUS
-
-    medium_epss_count = impact.get("medium_epss_count", 0)
-    if medium_epss_count > 0:
-        threat_intel_score += medium_epss_count * _MEDIUM_EPSS_BONUS
-
-    reachability_modifier = 1.0
-
-    reachable_count = impact.get("reachable_count", 0)
-    if reachable_count > 0:
-        reachable_critical = impact.get("reachable_critical", 0)
-        reachable_high = impact.get("reachable_high", 0)
-        threat_intel_score += reachable_critical * _REACH_CRITICAL_BONUS
-        threat_intel_score += reachable_high * _REACH_HIGH_BONUS
-        threat_intel_score += (reachable_count - reachable_critical - reachable_high) * _REACH_OTHER_BONUS
-
-    unreachable_count = impact.get("unreachable_count", 0)
-    total_count = impact.get("total", 1)
-    if unreachable_count > 0 and total_count > 0:
-        unreachable_ratio = unreachable_count / total_count
-        if unreachable_ratio > _HIGH_UNREACH_THRESHOLD:
-            reachability_modifier = _HIGH_UNREACH_PENALTY
-        elif unreachable_ratio > _MED_UNREACH_THRESHOLD:
-            reachability_modifier = _MED_UNREACH_PENALTY
-
-    actionable_count = impact.get("actionable_count", 0)
-    if actionable_count > 0:
-        threat_intel_score += actionable_count * ACTIONABLE_VULN_BONUS
-
-    # Both Effort enum and raw string are accepted.
-    effort_key = rec.effort.value if hasattr(rec.effort, "value") else rec.effort
-    effort_bonus = EFFORT_BONUSES.get(effort_key, 0)
-
-    type_bonus = RECOMMENDATION_TYPE_BONUSES.get(rec.type.value, 0)
-
-    total_score = base_score + impact_score + threat_intel_score + effort_bonus + type_bonus
-    return int(total_score * reachability_modifier)
+    score = (
+        _PRIORITY_SCORES[rec.priority]
+        + sum(impact.get(key, 0) * weight for key, weight in _IMPACT_WEIGHTS)
+        + reachable_other * _R["other_bonus"]
+        + EFFORT_BONUSES[rec.effort]
+        + RECOMMENDATION_TYPE_BONUSES[rec.type]
+    )
+    return int(score * _reachability_modifier(impact))
 
 
 _PRIORITY_RANK = {Priority.CRITICAL: 3, Priority.HIGH: 2, Priority.MEDIUM: 1, Priority.LOW: 0}

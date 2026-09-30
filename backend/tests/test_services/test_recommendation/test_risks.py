@@ -1,12 +1,15 @@
 """Tests for risk detection: hotspots, toxic dependencies, and attack surface analysis."""
 
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.aggregation import ResultAggregator
+from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN, MALWARE_REMEDIATION_STEPS
 from app.services.recommendation.risks import (
     CRITICAL_HOTSPOTS_SHOWN,
     TOXIC_DEPENDENCIES_SHOWN,
     analyze_attack_surface,
-    _roll_up_packages,
-    detect_package_risks,
+    detect_critical_hotspots,
+    detect_toxic_dependencies,
+    roll_up_packages,
 )
 
 
@@ -79,11 +82,11 @@ def _license(component, severity="HIGH", license_name="GPL-3.0"):
 
 
 def _hotspots(findings):
-    return [r for r in detect_package_risks(findings) if r.type == RecommendationType.CRITICAL_HOTSPOT]
+    return detect_critical_hotspots(roll_up_packages(findings))
 
 
 def _toxic(findings):
-    return [r for r in detect_package_risks(findings) if r.type == RecommendationType.TOXIC_DEPENDENCY]
+    return detect_toxic_dependencies(roll_up_packages(findings))
 
 
 def _dep(name, version="1.0", direct=True):
@@ -251,16 +254,14 @@ class TestDetectCriticalHotspotsSorting:
 
 class TestDetectCriticalHotspotsRemediation:
     def test_malware_remediation_steps(self):
-        findings = [_malware("evil")]
-        result = _hotspots(findings)
-        steps = result[0].action["steps"]
-        assert any("malware" in s.lower() for s in steps)
+        result = _hotspots([_malware("evil")])
+        assert result[0].action["steps"] == list(MALWARE_REMEDIATION_STEPS)
+        assert result[0].effort == "low"
 
     def test_kev_remediation_steps(self):
         findings = [_vuln("pkg", "CRITICAL", is_kev=True)]
         result = _hotspots(findings)
-        steps = result[0].action["steps"]
-        assert any("exploited" in s.lower() for s in steps)
+        assert result[0].action["steps"][0] == "Update to a fixed version immediately if available"
 
     def test_fixable_remediation_steps(self):
         # Need hotspot criteria: 3+ vulns with at least 1 critical
@@ -270,7 +271,7 @@ class TestDetectCriticalHotspotsRemediation:
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
         ]
         result = _hotspots(findings)
-        assert result[0].action["steps"][0] == "1. Update pkg to version 2.0 or later"
+        assert result[0].action["steps"][0] == "Update pkg to version 2.0 or later"
 
     def test_no_fix_remediation_steps(self):
         # 3 vulns with critical but no fixed_version
@@ -373,7 +374,7 @@ class TestDetectToxicDependenciesMultipleFactors:
         rec = result[0]
         assert rec.type == RecommendationType.TOXIC_DEPENDENCY
         assert rec.priority == Priority.HIGH
-        assert rec.impact["risk_factor_count"] >= 2
+        assert len(rec.action["risk_factors"]) >= 2
 
     def test_vulns_plus_eol_is_toxic(self):
         findings = [
@@ -384,7 +385,7 @@ class TestDetectToxicDependenciesMultipleFactors:
         assert len(result) == 1
         rec = result[0]
         assert rec.type == RecommendationType.TOXIC_DEPENDENCY
-        assert rec.impact["risk_factor_count"] >= 2
+        assert len(rec.action["risk_factors"]) >= 2
 
 
 class TestDetectToxicDependenciesSingleFactor:
@@ -396,16 +397,13 @@ class TestDetectToxicDependenciesSingleFactor:
         assert result == []
 
 
-class TestDetectToxicDependenciesMalwareScore:
-    def test_malware_adds_100_to_score(self):
+class TestDetectToxicDependenciesSkipsMalware:
+    def test_a_malware_package_gets_no_toxic_card(self):
         findings = [
             _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
             _malware("pkg"),
         ]
-        result = _toxic(findings)
-        assert len(result) == 1
-        rec = result[0]
-        assert rec.impact["toxic_score"] >= 100
+        assert _toxic(findings) == []
 
 
 class TestDetectToxicDependenciesTop5Limit:
@@ -425,9 +423,9 @@ class TestDetectToxicDependenciesSortedByScore:
             # Low-score package: 1 vuln + eol
             _vuln("pkg-low", "LOW", finding_id="CVE-2024-001"),
             _eol("pkg-low"),
-            # High-score package: 1 vuln + malware (malware adds 100)
+            # High-score package: 1 critical vuln + eol
             _vuln("pkg-high", "CRITICAL", finding_id="CVE-2024-002"),
-            _malware("pkg-high"),
+            _eol("pkg-high"),
         ]
         result = _toxic(findings)
         assert len(result) == 2
@@ -659,6 +657,22 @@ class TestHotspotNamesEveryInstalledVersionAndOneTarget:
         assert rec.action["target_version"] == "2.12.7.1"
         assert "Available fix: Update to 2.12.7.1" in rec.description
 
+    def test_an_unfixable_hotspot_names_no_target(self):
+        [rec] = _hotspots([_vuln("lib", "CRITICAL", is_kev=True)])
+
+        assert rec.action["target_version"] is None
+
+    def test_the_impact_counts_every_severity(self):
+        findings = [
+            _vuln("lib", "CRITICAL", is_kev=True, finding_id="CVE-1"),
+            _vuln("lib", "MEDIUM", finding_id="CVE-2"),
+            _vuln("lib", "LOW", finding_id="CVE-3"),
+        ]
+
+        [rec] = _hotspots(findings)
+
+        assert [rec.impact[k] for k in ("critical", "high", "medium", "low", "total")] == [1, 0, 1, 1, 3]
+
     def test_the_target_agrees_with_the_quick_win_whatever_the_set_order(self):
         findings = [
             _vuln("lib", "CRITICAL", is_kev=True, fixed_version=fix, finding_id=f"CVE-{fix}")
@@ -668,7 +682,7 @@ class TestHotspotNamesEveryInstalledVersionAndOneTarget:
         [rec] = _hotspots(findings)
 
         assert rec.action["fixed_versions"] == ["2.0.1", "1.3.0", "1.2.5"]
-        assert rec.action["steps"][0] == "URGENT: This vulnerability is being actively exploited in the wild"
+        assert rec.action["steps"][0] == "Update to a fixed version immediately if available"
         assert "Available fix: Update to 2.0.1" in rec.description
 
     def test_a_fix_per_release_line_is_listed_as_single_versions(self):
@@ -684,8 +698,10 @@ class TestCardsWithoutVulnerabilitiesKeepTheirVersion:
 
         assert rec.affected_components == ["evil@0.1.0"]
 
-    def test_a_malware_and_eol_toxic_card_names_the_installed_version(self):
-        [rec] = _toxic([{**_malware("old"), "version": "1.2.3"}, {**_eol("old"), "version": "1.2.3"}])
+    def test_an_eol_and_scorecard_toxic_card_names_the_installed_version(self):
+        [rec] = _toxic(
+            [{**_quality("old", overall_score=2.0), "version": "1.2.3"}, {**_eol("old"), "version": "1.2.3"}]
+        )
 
         assert rec.affected_components == ["old@1.2.3"]
         assert rec.action["versions"] == ["1.2.3"]
@@ -722,9 +738,8 @@ class TestCardsNameTheFlaggedCopies:
         ]
 
         [hotspot] = _hotspots(findings)
-        [toxic] = _toxic(findings)
 
-        assert hotspot.affected_components == toxic.affected_components == ["event-stream@3.3.6", "event-stream@3.3.4"]
+        assert hotspot.affected_components == ["event-stream@3.3.6", "event-stream@3.3.4"]
 
 
 class TestPackageFindingsJoinAcrossSpellings:
@@ -780,7 +795,6 @@ class TestHotspotRiskScoreIsOneScale:
         result = _hotspots(findings)
 
         assert "ghsa-only" in [r.action["package"] for r in result]
-        assert next(r for r in result if r.action["package"] == "ghsa-only").impact["risk_score"] == 120.0
 
     def test_an_unenriched_finding_counts_on_the_enriched_0_to_100_scale(self):
         findings = [
@@ -789,9 +803,9 @@ class TestHotspotRiskScoreIsOneScale:
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
             _vuln("pkg", "UNKNOWN", finding_id="CVE-2024-004"),
         ]
-        [hotspot] = _hotspots(findings)
+        [pkg] = roll_up_packages(findings)
         # 40 + 30 + 16, plus the 20 calculate_risk_score assumes for a CVE without a CVSS score.
-        assert hotspot.impact["risk_score"] == 106.0
+        assert pkg.risk_score == 106.0
 
 
 class TestToxicImpactCountsEachSeverityOnce:
@@ -821,7 +835,7 @@ class TestOnlyPackageFindingsAreRolledUp:
             _vuln("pkg"),
         ]
 
-        assert [pkg.name for pkg in _roll_up_packages(findings)] == ["pkg"]
+        assert [pkg.name for pkg in roll_up_packages(findings)] == ["pkg"]
 
 
 def _advisories(component, version, *cves):
@@ -862,6 +876,64 @@ class TestAttackSurfaceCountsEachInstalledCopy:
 
         assert rec.affected_components == ["github.com/gin-gonic/gin@v1.6.0"]
         assert rec.impact["total"] == 2
+
+
+def _trivy_findings(*vulnerabilities):
+    aggregator = ResultAggregator()
+    aggregator.aggregate("trivy", {"Results": [{"Target": "app", "Vulnerabilities": list(vulnerabilities)}]})
+    return [f.model_dump() for f in aggregator.get_findings()]
+
+
+class TestAttackSurfaceImpactHoldsSeverities:
+    def test_each_advisory_counts_at_its_own_severity(self):
+        findings = _trivy_findings(
+            {
+                "VulnerabilityID": "CVE-2021-44906",
+                "PkgName": "minimist",
+                "InstalledVersion": "0.0.8",
+                "Severity": "CRITICAL",
+            },
+            {
+                "VulnerabilityID": "CVE-2020-7598",
+                "PkgName": "minimist",
+                "InstalledVersion": "0.0.8",
+                "Severity": "MEDIUM",
+            },
+        )
+
+        [rec] = analyze_attack_surface([_dep("minimist", "0.0.8", direct=False)], findings)
+
+        assert rec.impact == {"critical": 1, "high": 0, "medium": 1, "low": 0, "total": 2}
+
+    def test_the_large_tree_card_counts_no_findings(self):
+        deps = [_dep(f"direct-{i}", direct=True) for i in range(10)]
+        deps += [_dep(f"transitive-{i}", direct=False) for i in range(491)]
+
+        [rec] = analyze_attack_surface(deps, [])
+
+        assert rec.impact == {"total": 0}
+        assert rec.affected_components == []
+        assert (rec.action["total_deps"], rec.action["direct_deps"]) == (501, 10)
+
+    def test_the_action_names_how_many_transitives_it_sampled(self):
+        population = AFFECTED_COMPONENTS_SHOWN + 2
+        findings = _trivy_findings(
+            *(
+                {
+                    "VulnerabilityID": f"CVE-2021-{i:05d}{n}",
+                    "PkgName": f"lib-{i:02d}",
+                    "InstalledVersion": "1.0",
+                    "Severity": "HIGH",
+                }
+                for i in range(population)
+                for n in range(2)
+            )
+        )
+
+        [rec] = analyze_attack_surface([_dep(f"lib-{i:02d}", direct=False) for i in range(population)], findings)
+
+        assert len(rec.action["transitive_deps"]) == AFFECTED_COMPONENTS_SHOWN
+        assert rec.action["transitive_deps_total"] == population
 
 
 class TestAttackSurfaceNamesTheParents:
@@ -915,5 +987,5 @@ class TestHotspotsReadTheLiveAdvisories:
         ]
 
         assert _hotspots([finding]) == []
-        [pkg] = _roll_up_packages([finding])
+        [pkg] = roll_up_packages([finding])
         assert pkg.risk_score == 41.0

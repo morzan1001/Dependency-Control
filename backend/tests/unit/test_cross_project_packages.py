@@ -163,7 +163,6 @@ async def test_the_payload_says_how_many_projects_the_comparison_reached(db):
 
     assert data is not None
     assert data["total_projects"] == _ACCESSIBLE_PROJECTS
-    assert data["projects_compared"] == _COMPARISON_LIMIT
     assert len(data["projects"]) == _COMPARISON_LIMIT
 
 

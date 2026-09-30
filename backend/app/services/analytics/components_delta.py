@@ -15,8 +15,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import MAX_FETCH, delta_truncation, paginate
-from app.services.analytics._delta_reachability import side_reachability
+from app.services.analytics._delta_pagination import MAX_FETCH, both_sides, by_side, delta_truncation, pair_versions
 
 # Served by the {scan_id, name, version} index, so a capped side is cut at the same point in the
 # component namespace on both sides instead of at two arbitrary points in natural order.
@@ -30,6 +29,11 @@ async def _fetch_components(
 ) -> tuple[list[dict], int]:
     query = {"project_id": project_id, "scan_id": scan_id}
     return await find_window(db["dependencies"], query, MAX_FETCH, sort=_SIDE_SORT)
+
+
+def _one_per_version(rows: list[dict]) -> list[dict]:
+    """Qualifier variants of one version (arch, classifier) are the same version."""
+    return list({row.get("version") or "": row for row in rows}.values())
 
 
 def _to_added_or_removed(doc: dict, change: str) -> ComponentDeltaItem:
@@ -54,56 +58,38 @@ def _to_changed(from_doc: dict, to_doc: dict, change: str) -> ComponentDeltaItem
     )
 
 
-async def compute_components_delta(
-    db: AsyncIOMotorDatabase,
-    *,
-    project_id: str,
-    from_scan: str,
-    to_scan: str,
-    page: int,
-    page_size: int,
-    change: str | None,
+async def compare_components(
+    db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
-    """Compute the delta between two scans' components as a paginated envelope."""
-    from_docs, from_total = await _fetch_components(db, project_id, from_scan)
-    to_docs, to_total = await _fetch_components(db, project_id, to_scan)
+    """Every component change between two scans, sorted, with totals and coverage."""
+    (from_docs, from_total), (to_docs, to_total) = await both_sides(
+        lambda scan_id: _fetch_components(db, project_id, scan_id), from_scan, to_scan
+    )
 
-    from_map = {
-        package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")): d for d in from_docs
-    }
-    to_map = {package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")): d for d in to_docs}
-
-    added_keys = to_map.keys() - from_map.keys()
-    removed_keys = from_map.keys() - to_map.keys()
-    common_keys = to_map.keys() & from_map.keys()
-
-    version_changed: list[ComponentDeltaItem] = []
-    license_changed: list[ComponentDeltaItem] = []
+    groups = by_side(
+        lambda d: package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")),
+        from_docs,
+        to_docs,
+    )
+    added: list[ComponentDeltaItem] = []
+    removed: list[ComponentDeltaItem] = []
+    changed: list[ComponentDeltaItem] = []
     unchanged = 0
-    for k in common_keys:
-        f, t = from_map[k], to_map[k]
-        v_diff = (f.get("version") or "") != (t.get("version") or "")
-        l_diff = (f.get("license") or "") != (t.get("license") or "")
-        if v_diff:
-            version_changed.append(_to_changed(f, t, "version_changed"))
-        elif l_diff:
-            license_changed.append(_to_changed(f, t, "license_changed"))
-        else:
-            unchanged += 1
+    for from_rows, to_rows in groups.values():
+        pairs, gone, new = pair_versions(_one_per_version(from_rows), _one_per_version(to_rows))
+        added += (_to_added_or_removed(d, "added") for d in new)
+        removed += (_to_added_or_removed(d, "removed") for d in gone)
+        for f, t in pairs:
+            if (f.get("version") or "") != (t.get("version") or ""):
+                changed.append(_to_changed(f, t, "version_changed"))
+            elif (f.get("license") or "") != (t.get("license") or ""):
+                changed.append(_to_changed(f, t, "license_changed"))
+            else:
+                unchanged += 1
 
-    items: list[ComponentDeltaItem] = []
-    if change in (None, "all", "added"):
-        items.extend(_to_added_or_removed(to_map[k], "added") for k in added_keys)
-    if change in (None, "all", "removed"):
-        items.extend(_to_added_or_removed(from_map[k], "removed") for k in removed_keys)
-    if change in (None, "all", "changed"):
-        items.extend(version_changed)
-        items.extend(license_changed)
-
-    # Sort with purl tiebreaker so pagination is deterministic across set-iteration order.
-    items.sort(key=lambda i: (i.change, i.name, i.purl or ""))
-
-    paged, total_pages = paginate(items, page, page_size)
+    items = [*added, *removed, *changed]
+    # Sort with purl and version tiebreakers so pagination does not depend on fetch order.
+    items.sort(key=lambda i: (i.change, i.name, i.purl or "", i.version or ""))
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,
@@ -111,17 +97,12 @@ async def compute_components_delta(
         project_id=project_id,
         category=DeltaCategory.COMPONENTS,
         totals=ScanDeltaTotals(
-            added=len(added_keys),
-            removed=len(removed_keys),
-            changed=len(version_changed) + len(license_changed),
+            added=len(added),
+            removed=len(removed),
+            changed=len(changed),
             unchanged=unchanged,
         ),
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-        items=paged,
-        from_reachability=await side_reachability(db, from_scan),
-        to_reachability=await side_reachability(db, to_scan),
+        items=items,
         truncation=delta_truncation(
             MAX_FETCH,
             from_compared=len(from_docs),

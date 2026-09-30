@@ -14,8 +14,9 @@ import pytest
 from app.api.v1.endpoints.analytics.update_frequency import _rollup_project_metrics
 from app.core.constants import RECENT_UPDATES_LIMIT
 from app.models.project import Project
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import ProjectUpdateSummary
-from app.services.update_frequency import rank_summaries
+from app.services.update_frequency import elect_primary_branch, rank_summaries, window_cutoff
 from scripts import verify_update_frequency_parity as parity
 from scripts.verify_update_frequency_parity import (
     compare_comparisons,
@@ -234,8 +235,11 @@ class TestLedgerGaps:
         project = await _seed_project(db)
 
         report = await verify_project(db, project, WINDOW_DAYS)
-        live = await parity._live_metrics(db, project, WINDOW_DAYS)
-        rolled = await _rollup_project_metrics(db, Project(**project), WINDOW_DAYS)
+        branch, by_branch = await elect_primary_branch(
+            ScanRepository(db), PROJECT, window_cutoff(WINDOW_DAYS), project.get("default_branch"), None
+        )
+        live = await parity._live_metrics(db, project, branch, WINDOW_DAYS)
+        rolled = await _rollup_project_metrics(db, Project(**project), WINDOW_DAYS, branch, by_branch)
 
         assert [e.scan_id for e in live.scan_timeline] == [e.scan_id for e in rolled.scan_timeline]
         assert report.scan_diff.live_only == (("b2", "no delta written yet"),)

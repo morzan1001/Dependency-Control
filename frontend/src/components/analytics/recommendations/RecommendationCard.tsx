@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Recommendation, RecommendationAction, CrossProjectCve } from '@/types/analytics'
+import { Recommendation, RecommendationAction, CrossProjectCve, RecurringCve } from '@/types/analytics'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,6 +39,12 @@ import {
 import { priorityConfig, typeConfig, effortConfig } from './config'
 
 const FILES_LISTED = 5
+const SEVERITY_CHIPS = [
+  ['critical', 'Critical'],
+  ['high', 'High'],
+  ['medium', 'Medium'],
+  ['low', 'Low'],
+] as const
 
 /** Files the recommendation covers beyond the ones listed; the action's own list is already a sample. */
 function filesBeyond(action: RecommendationAction): number {
@@ -61,6 +67,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
   const priorityInfo = priorityConfig[recommendation.priority] || priorityConfig.medium
   const effortInfo = effortConfig[recommendation.effort] || effortConfig.medium
   const TypeIcon = typeInfo.icon
+  const severityCounts = SEVERITY_CHIPS.filter(([key]) => (recommendation.impact[key] ?? 0) > 0)
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -100,33 +107,28 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
               {recommendation.description}
             </p>
             <div className="flex items-center gap-4 mt-2">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1.5 text-sm">
-                      <Zap className="h-4 w-4 text-yellow-500" />
-                      <span className="font-medium">{recommendation.impact.total}</span>
-                      <span className="text-muted-foreground">vulns fixed</span>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <div className="space-y-1">
-                      {recommendation.impact.critical > 0 && (
-                        <div>Critical: {recommendation.impact.critical}</div>
-                      )}
-                      {recommendation.impact.high > 0 && (
-                        <div>High: {recommendation.impact.high}</div>
-                      )}
-                      {recommendation.impact.medium > 0 && (
-                        <div>Medium: {recommendation.impact.medium}</div>
-                      )}
-                      {recommendation.impact.low > 0 && (
-                        <div>Low: {recommendation.impact.low}</div>
-                      )}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              {recommendation.impact.total > 0 && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-1.5 text-sm">
+                        <Zap className="h-4 w-4 text-yellow-500" />
+                        <span className="font-medium">{recommendation.impact.total}</span>
+                        <span className="text-muted-foreground">vulns fixed</span>
+                      </div>
+                    </TooltipTrigger>
+                    {severityCounts.length > 0 && (
+                      <TooltipContent>
+                        <div className="space-y-1">
+                          {severityCounts.map(([key, label]) => (
+                            <div key={key}>{label}: {recommendation.impact[key]}</div>
+                          ))}
+                        </div>
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
+              )}
 
               <div className={cn("text-sm", effortInfo.color)}>
                 {effortInfo.label}
@@ -213,13 +215,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                     Update <strong>{recommendation.action.package}</strong> to{' '}
                     <span className="text-success">{recommendation.action.target_version}</span>
                   </div>
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
               </div>
             )}
@@ -475,24 +470,14 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                   Recurring Issues
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.cves && (
-                    <div>
-                      <span className="text-muted-foreground">Recurring CVEs: </span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.cves.map((cve) => {
-                          const cveStr = typeof cve === 'string' ? cve : cve.cve
-                          return <Badge key={cveStr} variant="outline">{cveStr}</Badge>
-                        })}
-                      </div>
+                  {(recommendation.action.cves as RecurringCve[] | undefined)?.map((row) => (
+                    <div key={row.cve} className="flex items-center gap-2">
+                      <Badge variant="outline">{row.cve}</Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {`${row.components.join(', ')} · ${row.scans} scans`}
+                      </span>
                     </div>
-                  )}
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
+                  ))}
                 </div>
               </div>
             )}
@@ -516,13 +501,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       )}
                     </div>
                   ))}
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
               </div>
             )}
@@ -621,14 +599,18 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       )}
                     </div>
                   ))}
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2 text-xs">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
+              </div>
+            )}
+
+            {recommendation.action.steps && recommendation.action.steps.length > 0 && (
+              <div className="space-y-2">
+                <h5 className="text-sm font-medium">Steps</h5>
+                <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1">
+                  {recommendation.action.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
               </div>
             )}
 

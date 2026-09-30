@@ -34,7 +34,6 @@ vi.mock("@/api/cryptoAnalytics", () => ({
         ],
         total: 1,
         generated_at: "",
-        cache_hit: false,
       });
     }
     return Promise.resolve({
@@ -57,7 +56,6 @@ vi.mock("@/api/cryptoAnalytics", () => ({
       ],
       total: 1,
       generated_at: "",
-      cache_hit: false,
     });
   }),
 }));

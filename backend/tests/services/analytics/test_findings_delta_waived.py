@@ -35,6 +35,7 @@ _VERSION = "1.0.0"
 _NOTHING = 0
 _ONE = 1
 _TWO = 2
+_THREE = 3
 
 _LIVE_CVE = "CVE-3001"
 _WAIVED_CVE = "CVE-3002"
@@ -178,15 +179,8 @@ async def test_a_side_with_no_waivers_reports_nothing_excluded(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "filters",
-    [
-        {"finding_type": [FindingType.SECRET.value]},
-        {"severity": [Severity.LOW.value]},
-    ],
-)
-async def test_the_counts_cover_the_same_item_set_as_the_delta(db, filters):
-    """Counting outside the caller's filters would describe findings the delta never looked at."""
+async def test_the_counts_cover_the_findings_the_delta_read(db):
+    """The type filter narrows what is read; severity only narrows the reported items, after matching."""
     await db.findings.insert_one(_finding(_WAIVED_FINDING, _FROM_SCAN, component=_WAIVED_COMPONENT, waived=True))
     await db.findings.insert_one(
         _finding(
@@ -207,9 +201,11 @@ async def test_the_counts_cover_the_same_item_set_as_the_delta(db, filters):
         )
     )
 
-    result = await _delta(db, **filters)
+    by_type = await _delta(db, finding_type=[FindingType.SECRET.value])
+    by_severity = await _delta(db, severity=[Severity.LOW.value])
 
-    assert result.from_waived_excluded == _ONE
+    assert by_type.from_waived_excluded == _ONE
+    assert by_severity.from_waived_excluded == _THREE
 
 
 def _aggregated(fid: str, scan_id: str, entries: list[dict], *, waived: bool = False) -> dict:
@@ -266,9 +262,69 @@ async def test_waiving_one_cve_of_a_record_is_reported_as_a_waiver_difference(db
 
     result = await _delta(db)
 
+    assert (result.totals.added, result.totals.removed, result.totals.changed) == (_NOTHING, _NOTHING, _ONE)
+    assert result.waiver_only_changes == _ONE
+
+
+@pytest.mark.asyncio
+async def test_a_new_cve_on_a_record_with_a_per_cve_waiver_is_a_code_difference(db):
+    waived_entry = {"id": _WAIVED_CVE, "waived": True}
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}, waived_entry]))
+    await db.findings.insert_one(
+        _aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _LIVE_CVE}, waived_entry, {"id": "CVE-3003"}])
+    )
+
+    result = await _delta(db)
+
+    assert result.totals.changed == _ONE
+    assert result.waiver_only_changes == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_a_version_change_on_a_record_with_a_per_cve_waiver_is_a_code_difference(db):
+    waived_entry = {"id": _WAIVED_CVE, "waived": True}
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}, waived_entry]))
+    bumped = _aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _LIVE_CVE}, waived_entry])
+    bumped["version"] = "1.0.1"
+    await db.findings.insert_one(bumped)
+
+    result = await _delta(db)
+
+    assert result.totals.changed == _ONE
+    assert result.waiver_only_changes == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_a_new_record_carrying_a_waived_entry_is_a_code_difference(db):
+    await db.findings.insert_one(
+        _aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _LIVE_CVE}, {"id": _WAIVED_CVE, "waived": True}])
+    )
+
+    result = await _delta(db)
+
     assert result.totals.added == _ONE
-    assert result.totals.removed == _ONE
-    assert result.waiver_only_changes == _TWO
+    assert result.waiver_only_changes == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_a_second_version_under_one_license_finding_is_a_code_difference(db):
+    def license_finding(scan_id: str, version: str) -> dict:
+        doc = _finding(_SHARED_FINDING, scan_id, component=_WAIVED_COMPONENT, waived=None)
+        return doc | {
+            "_id": f"{scan_id}:{version}",
+            "type": FindingType.LICENSE.value,
+            "version": version,
+            "details": {"license": "GPL-3.0-only"},
+        }
+
+    await db.findings.insert_many(
+        [license_finding(_FROM_SCAN, "1.0"), license_finding(_TO_SCAN, "1.0"), license_finding(_TO_SCAN, "2.0")]
+    )
+
+    result = await _delta(db)
+
+    assert (result.totals.added, result.totals.unchanged) == (_ONE, _ONE)
+    assert result.waiver_only_changes == _NOTHING
 
 
 @pytest.mark.asyncio

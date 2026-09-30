@@ -1,4 +1,4 @@
-"""Routing test: the MCP get_scan_delta tool must delegate to compute_crypto_delta_envelope and return its envelope."""
+"""The get_scan_delta chat tool must delegate to the scan-delta dispatcher and return its envelope."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -21,7 +21,7 @@ def admin_user():
 
 
 @pytest.mark.asyncio
-async def test_get_scan_delta_routes_through_crypto_envelope(db, admin_user):
+async def test_get_scan_delta_routes_through_the_dispatcher(db, admin_user):
     db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
     await db["scans"].insert_many(
         [
@@ -43,7 +43,7 @@ async def test_get_scan_delta_routes_through_crypto_envelope(db, admin_user):
     )
 
     with patch(
-        "app.services.chat.tools.registry.compute_crypto_delta_envelope",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(return_value=fake_response),
     ) as mock:
         result = await ChatToolRegistry()._dispatch(
@@ -56,11 +56,14 @@ async def test_get_scan_delta_routes_through_crypto_envelope(db, admin_user):
     mock.assert_awaited_once()
     call_kwargs = mock.await_args.kwargs
     assert call_kwargs["project_id"] == "p1"
+    assert call_kwargs["category"] == "crypto"
     assert call_kwargs["from_scan"] == "s1"
     assert call_kwargs["to_scan"] == "s2"
     assert call_kwargs["page"] == 1
     assert call_kwargs["page_size"] == 50
     assert call_kwargs["change"] is None
+    assert (call_kwargs["severity"], call_kwargs["finding_type"]) == (None, None)
+    assert call_kwargs["allow_same_scan"] is False
     assert result["category"] == "crypto"
     assert result["totals"]["added"] == 2
     assert result["totals"]["removed"] == 1
@@ -72,7 +75,7 @@ async def test_get_scan_delta_routes_through_crypto_envelope(db, admin_user):
 @pytest.mark.asyncio
 async def test_get_scan_delta_returns_error_when_project_not_authorized(db, admin_user):
     with patch(
-        "app.services.chat.tools.registry.compute_crypto_delta_envelope",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(),
     ) as mock:
         result = await ChatToolRegistry()._dispatch(
@@ -97,7 +100,7 @@ async def test_get_scan_delta_rejects_scan_from_another_project(db, admin_user):
     )
 
     with patch(
-        "app.services.chat.tools.registry.compute_crypto_delta_envelope",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(),
     ) as mock:
         result = await ChatToolRegistry()._dispatch(

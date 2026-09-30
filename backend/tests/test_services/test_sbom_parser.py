@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -2578,8 +2579,10 @@ class TestCycloneDXParentRefs:
     )
     def test_the_dependency_tree_nests_every_sbom_format(self, sbom):
         from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
+        from app.services.dependency_store import _parsed_dep_to_dependency
 
-        dependencies = [d.to_dict() for d in parse_sbom(sbom).dependencies]
+        now = datetime.now(timezone.utc)
+        dependencies = [_parsed_dep_to_dependency(d, "p", "s", now) for d in parse_sbom(sbom).dependencies]
         graph = _build_dependency_graph(dependencies, {}, len(dependencies))
 
         nodes = {node.name: node for node in graph.nodes}

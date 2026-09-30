@@ -12,6 +12,10 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from app.repositories.dependencies import DependencyRepository
+from app.services.dependency_store import store_scan_dependencies
+from app.services.sbom_parser import parse_sbom
+
 SCAN_ID = "scan-join"
 QUALIFIED = "com.fasterxml.jackson.core:jackson-databind"
 BARE = "jackson-databind"
@@ -317,6 +321,11 @@ async def _analytics(client, path: str, headers: dict, **params):
     return resp.json()
 
 
+async def _store_cyclonedx(db, *components: dict) -> None:
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": list(components)}
+    await store_scan_dependencies([parse_sbom(sbom)], "p", SCAN_ID, DependencyRepository(db))
+
+
 @pytest.mark.asyncio
 async def test_a_qualified_hotspot_lists_the_findings_stored_under_the_bare_name(client, db, seeded):
     """Outdated and license findings keep the SBOM's bare name; the vulnerability carries the coordinate."""
@@ -446,6 +455,64 @@ async def test_hotspot_type_comes_from_the_hotspot_s_own_scans_and_version(clien
 
     assert types["openssl"] == "deb"
     assert types["zlib"] == "apk/deb"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_hotspot_type_matches_the_version_whatever_its_v_prefix(client, db, seeded):
+    await db.dependencies.insert_one(
+        {
+            **_dependency("net-old", name="golang.org/x/net"),
+            "group": None,
+            "version": "v0.17.0",
+            "type": "golang",
+            "purl": "pkg:golang/golang.org/x/net@v0.17.0",
+        }
+    )
+    await db.dependencies.insert_one(
+        {
+            **_dependency("net-new", name="golang.org/x/net"),
+            "group": None,
+            "version": "v0.23.0",
+            "type": "library",
+            "purl": None,
+        }
+    )
+    await db.findings.insert_one({**_finding("f-net", "golang.org/x/net"), "version": "0.17.0"})
+
+    types = {row["component"]: row["type"] for row in await _analytics(client, "hotspots", seeded)}
+
+    assert types["golang.org/x/net"] == "golang"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_metadata_survives_rows_that_differ_only_in_stored_type(client, db, seeded):
+    lodash = {"type": "library", "name": "lodash", "version": "4.17.21"}
+    await _store_cyclonedx(
+        db,
+        lodash,
+        {**lodash, "purl": "pkg:npm/lodash@4.17.21", "licenses": [{"license": {"id": "MIT"}}]},
+    )
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="lodash")
+
+    assert metadata is not None
+    assert (metadata["purl"], metadata["type"], metadata["license"]) == ("pkg:npm/lodash@4.17.21", "npm", "MIT")
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_metadata_does_not_merge_two_ecosystems_that_share_a_path(client, db, seeded):
+    debug = {"type": "library", "name": "debug", "version": "1.0.0"}
+    await _store_cyclonedx(
+        db,
+        {**debug, "purl": "pkg:npm/debug@1.0.0"},
+        {**debug, "purl": "pkg:pypi/debug@1.0.0"},
+        debug,
+    )
+
+    assert await _analytics(client, "dependency-metadata", seeded, component="debug") is None
 
 
 @pytest.mark.live_mongo

@@ -46,10 +46,20 @@ describe('RecommendationCard CVE rendering', () => {
     renderExpanded(
       makeRecommendation({
         type: 'address_recurring',
-        cves: ['CVE-2021-0001'],
+        cves: [{ cve: 'CVE-2021-0001', components: ['lodash'], scans: 3 }],
       }),
     )
     expect(screen.getAllByText('CVE-2021-0001')).toHaveLength(1)
+  })
+
+  it('names the components and scans of each recurring CVE', () => {
+    renderExpanded(
+      makeRecommendation({
+        type: 'address_recurring',
+        cves: [{ cve: 'CVE-2021-0001', components: ['lodash', 'lodash-es'], scans: 4 }],
+      }),
+    )
+    expect(screen.getByText('lodash, lodash-es · 4 scans')).toBeInTheDocument()
   })
 
   it('renders each cross-project CVE only once', () => {
@@ -109,6 +119,52 @@ describe('RecommendationCard CVE rendering', () => {
     expect(screen.queryByText(/^Ranked /)).not.toBeInTheDocument()
   })
 
+  it('counts the vulnerabilities a card fixes', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard recommendation={makeRecommendation({ type: 'update_dependency' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('vulns fixed')).toBeInTheDocument()
+  })
+
+  it('breaks the vulnerability count down by severity on focus', async () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard recommendation={makeRecommendation({ type: 'update_dependency' })} />
+      </MemoryRouter>,
+    )
+    fireEvent.focus(screen.getByText('vulns fixed').parentElement!)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('High: 1')
+  })
+
+  it('opens no empty breakdown for a count that carries no severities', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation(
+            { type: 'fix_cross_project_vuln', cves: [{ cve: 'CVE-2021-0002', total_affected: 3 }] },
+            { type: 'shared_vulnerability', impact: { total: 3 } },
+          )}
+        />
+      </MemoryRouter>,
+    )
+    fireEvent.focus(screen.getByText('vulns fixed').parentElement!)
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('shows no vulnerability count on a hygiene card, which counts no findings', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation({ type: 'audit_dependencies' }, { impact: { total: 0 } })}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('vulns fixed')).not.toBeInTheDocument()
+  })
+
   it('still renders the generic Related Vulnerabilities block for other action types', () => {
     renderExpanded(
       makeRecommendation({
@@ -118,5 +174,16 @@ describe('RecommendationCard CVE rendering', () => {
     )
     expect(screen.getByText('Related Vulnerabilities')).toBeInTheDocument()
     expect(screen.getAllByText('CVE-2021-0003')).toHaveLength(1)
+  })
+})
+
+describe('RecommendationCard steps', () => {
+  it('numbers the steps of any action type in order', () => {
+    const steps = ['Remove the package', 'Rotate exposed credentials']
+    renderExpanded(makeRecommendation({ type: 'fix_hotspot', steps }))
+
+    const list = screen.getByText(steps[0]).closest('ol')
+    expect(list).not.toBeNull()
+    expect(Array.from(list!.querySelectorAll('li'), (li) => li.textContent)).toEqual(steps)
   })
 })

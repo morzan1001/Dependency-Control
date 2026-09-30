@@ -34,6 +34,7 @@ from app.services.update_frequency import (
     compute_trend,
     compute_update_frequency,
     compute_update_frequency_comparison,
+    elect_primary_branch,
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
@@ -536,11 +537,17 @@ class TestBranchScopedScanSelection:
     """The timeline must cover exactly one branch and exclude rescans/storms."""
 
     @staticmethod
-    async def _compute(scans, deps, **kwargs):
+    async def _compute(scans, deps, *, default_branch=None, deleted_branches=None, **kwargs):
+        scan_repo = FakeScanRepo(scans)
+        if "branch" not in kwargs:
+            since = window_cutoff(kwargs.get("window_days"))
+            kwargs["branch"], _activity = await elect_primary_branch(
+                scan_repo, "proj-1", since, default_branch, deleted_branches
+            )
         return await compute_update_frequency(
             project_id="proj-1",
             project_name="Project",
-            scan_repo=FakeScanRepo(scans),
+            scan_repo=scan_repo,
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
             **kwargs,
@@ -792,6 +799,7 @@ class TestIdentityKeying:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
         )
 
     @pytest.mark.asyncio
@@ -897,6 +905,7 @@ class TestOutdatedTracking:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo(analysis_results),
+            branch="main",
         )
 
     @pytest.mark.asyncio
@@ -986,6 +995,7 @@ class TestUnmeasuredScans:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo(analysis_results),
+            branch="main",
         )
 
     @pytest.mark.asyncio
@@ -1068,6 +1078,7 @@ class TestAggregationAccuracy:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
         )
         assert m.total_updates == 0
         assert m.downgrade_updates == 1
@@ -1093,6 +1104,7 @@ class TestAggregationAccuracy:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
         )
         assert m.time_range_days == pytest.approx(1.5)
 
@@ -1113,6 +1125,7 @@ class TestAggregationAccuracy:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             window_days=window_days,
             hard_limit=10,
         )
@@ -1160,6 +1173,7 @@ class TestAggregationAccuracy:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo(results),
+            branch="main",
         )
         names = [p.name for p in m.slowest_packages]
         assert names == ["pkg-b"]  # pkg-a was resolved; only remaining backlog is listed
@@ -1181,6 +1195,7 @@ class TestAggregationAccuracy:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
         )
         assert m.avg_days_between_scans == 0.5
 
@@ -1211,6 +1226,7 @@ class TestAggregationAccuracy:
             scan_repo=FakeScanRepo([_make_scan("s1", 0), _make_scan("s2", 30)]),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo(results),
+            branch="main",
         )
         assert m.slowest_packages[0].name == "core"
         assert m.slowest_packages[0].current_version == "7.0.0"
@@ -1245,6 +1261,7 @@ class TestAggregationAccuracy:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
         )
         assert m.dominant_ecosystem == "maven"
         assert m.recent_updates[0].package_type == "maven"
@@ -1268,6 +1285,7 @@ class TestStreamingOrchestrator:
             scan_repo=scan_repo,
             dep_repo=dep_repo,
             analysis_repo=analysis_repo,
+            branch="main",
         )
 
         assert m.scan_count == 2
@@ -1291,6 +1309,7 @@ class TestStreamingOrchestrator:
             scan_repo=scan_repo,
             dep_repo=dep_repo,
             analysis_repo=analysis_repo,
+            branch="main",
             max_scans=100,
         )
 
@@ -1315,6 +1334,7 @@ class TestStreamingOrchestrator:
             scan_repo=scan_repo,
             dep_repo=dep_repo,
             analysis_repo=analysis_repo,
+            branch="main",
             max_scans=5,
         )
 
@@ -1336,6 +1356,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             window_days=11,
         )
 
@@ -1359,6 +1380,7 @@ class TestStreamingOrchestrator:
             scan_repo=scan_repo,
             dep_repo=dep_repo,
             analysis_repo=analysis_repo,
+            branch="main",
             max_scans=200,
         )
         # Headline: it returns at all and reports 200 scans plus the
@@ -1379,6 +1401,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
         )
         assert m.upstream_releases_last_12m_median is None
         assert m.upstream_days_between_releases_median is None
@@ -1419,6 +1442,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             release_fetcher=fetcher,
         )
 
@@ -1447,6 +1471,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             max_scans=5,
             window_days=40,
         )
@@ -1465,6 +1490,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             max_scans=5,
             window_days=3000,
             hard_limit=100,
@@ -1485,6 +1511,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             max_scans=5,
             window_days=3000,
             hard_limit=100,
@@ -1613,6 +1640,7 @@ class TestStreamingOrchestrator:
             scan_repo=scan_repo,
             dep_repo=dep_repo,
             analysis_repo=analysis_repo,
+            branch="main",
         )
 
         # No call should use {"$in": [...all scan ids...]}; calls are per-scan.
@@ -1641,6 +1669,7 @@ class TestStreamingOrchestrator:
             scan_repo=scan_repo,
             dep_repo=dep_repo,
             analysis_repo=analysis_repo,
+            branch="main",
             max_scans=20,
         )
 
@@ -1686,6 +1715,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             release_fetcher=fetcher,
         )
 
@@ -1723,6 +1753,7 @@ class TestStreamingOrchestrator:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
             release_fetcher=fetcher,
         )
 
@@ -1819,12 +1850,17 @@ class TestBranchRuleDifferential:
         )
 
     async def _live(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
+        """The walk over the branch the per-project endpoint elects."""
+        branch, _activity = await elect_primary_branch(
+            ScanRepository(db), self._PROJECT, window_cutoff(self._WINDOW), None, []
+        )
         return await compute_update_frequency(
             project_id=self._PROJECT,
             project_name="Diff",
             scan_repo=ScanRepository(db),
             dep_repo=DependencyRepository(db),
             analysis_repo=AnalysisResultRepository(db),
+            branch=branch,
             window_days=self._WINDOW,
         )
 
@@ -1975,6 +2011,7 @@ class TestRecentUpdatesSelection:
             scan_repo=FakeScanRepo(scans),
             dep_repo=FakeDepRepo(deps),
             analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
         )
 
     @pytest.mark.asyncio

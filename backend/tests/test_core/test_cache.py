@@ -10,7 +10,7 @@ import pytest
 import redis.asyncio as redis
 from fakeredis import TcpFakeServer
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL, settings, suppress_cache_writes
+from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, settings, suppress_cache_writes
 
 
 class TestCacheTTLValues:
@@ -62,18 +62,34 @@ class TestCacheTTLExpectedValues:
         assert CacheTTL.NEGATIVE_RESULT == 3600
 
 
+class TestScopeDigest:
+    """One digest bounds every analytics cache entry to the caller's id set."""
+
+    def test_order_of_the_ids_does_not_matter(self):
+        assert scope_digest(["b", "a", "c"]) == scope_digest(["c", "b", "a"])
+
+    def test_different_sets_differ(self):
+        assert scope_digest(["a", "b"]) != scope_digest(["a", "c"])
+
+    def test_the_global_scope_is_not_the_empty_scope(self):
+        assert scope_digest(None) != scope_digest([])
+
+
 class TestCacheKeysRecommendations:
-    """Recommendations key isolates by scan and caller scope to prevent cross-project cache sharing."""
+    """Recommendations key isolates by scan, analysis and caller scope."""
 
     def test_includes_all_components(self):
-        key = CacheKeys.recommendations("proj1", "scanA", "deadbeef")
-        assert "proj1" in key and "scanA" in key and "deadbeef" in key
+        key = CacheKeys.recommendations("proj1", "scanA", "2026-09-30T10:00:00", "deadbeef")
+        assert "proj1" in key and "scanA" in key and "2026-09-30T10:00:00" in key and "deadbeef" in key
 
     def test_differs_by_scan(self):
-        assert CacheKeys.recommendations("p", "s1", "h") != CacheKeys.recommendations("p", "s2", "h")
+        assert CacheKeys.recommendations("p", "s1", "t", "h") != CacheKeys.recommendations("p", "s2", "t", "h")
+
+    def test_differs_by_analysis(self):
+        assert CacheKeys.recommendations("p", "s", "t1", "h") != CacheKeys.recommendations("p", "s", "t2", "h")
 
     def test_differs_by_scope(self):
-        assert CacheKeys.recommendations("p", "s", "h1") != CacheKeys.recommendations("p", "s", "h2")
+        assert CacheKeys.recommendations("p", "s", "t", "h1") != CacheKeys.recommendations("p", "s", "t", "h2")
 
 
 class TestCacheKeysKevCatalog:

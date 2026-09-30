@@ -677,6 +677,19 @@ def select_primary_branch(
     return max(live, key=lambda branch: (live[branch].commit_count, live[branch].last_scan_at, branch))
 
 
+async def elect_primary_branch(
+    scan_repo: ScanRepository,
+    project_id: str,
+    since: datetime | None,
+    default_branch: str | None,
+    deleted_branches: Sequence[str] | None,
+) -> tuple[str | None, dict[str, BranchWindowActivity]]:
+    """One project's primary branch in the window, with what each branch was scanned there."""
+    activity = await window_scans_by_branch(scan_repo, [project_id], since)
+    by_branch = {branch: seen for (_project_id, branch), seen in activity.items()}
+    return select_primary_branch(by_branch, default_branch, deleted_branches), by_branch
+
+
 # Slack for the scans the ledger reached between the two reads. A missing backfill
 # or a broken delta chain loses far more than a fifth of a window.
 READY_COVERAGE_RATIO = 0.8
@@ -801,36 +814,26 @@ async def compute_update_frequency(
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
+    branch: str | None,
     max_scans: int = 20,
     window_days: int | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
     hard_limit: int = WINDOW_HARD_LIMIT,
-    branch: str | None = None,
-    deleted_branches: list[str] | None = None,
-    default_branch: str | None = None,
 ) -> UpdateFrequencyMetrics:
     """Compute update-frequency metrics for one project on one branch.
 
-    ``branch`` defaults to ``select_primary_branch``'s pick over the same window;
-    comparing across branches would count branch differences as updates. With
+    Comparing across branches would count branch differences as updates;
+    ``branch`` is None when the project has no live branch to describe. With
     ``window_days`` set, all scans of that calendar window are analysed (up
     to ``hard_limit``). Otherwise the newest ``max_scans`` are taken and no
     monthly rate is reported, since there is no shared denominator.
     """
-    since = window_cutoff(window_days)
-    analyzed_branch = branch
-    if analyzed_branch is None:
-        activity = await window_scans_by_branch(scan_repo, [project_id], since)
-        analyzed_branch = select_primary_branch(
-            {seen_branch: seen for (_project_id, seen_branch), seen in activity.items()},
-            default_branch,
-            deleted_branches,
-        )
-    if analyzed_branch is None:
+    if branch is None:
         return _empty_metrics(project_id, project_name, 0, "", branch=None)
+    since = window_cutoff(window_days)
 
     completed_scans, truncated = await _load_completed_scans(
-        scan_repo, project_id, analyzed_branch, max_scans, since, hard_limit
+        scan_repo, project_id, branch, max_scans, since, hard_limit
     )
 
     state = _AccumulatorState()
@@ -889,7 +892,7 @@ async def compute_update_frequency(
     bars = fold_runs_into_bars(state.scan_timeline, [scan["commit_hash"] for scan in analysed])
 
     if len(bars) < 2:
-        return _empty_metrics(project_id, project_name, len(bars), bars[0].date if bars else "", branch=analyzed_branch)
+        return _empty_metrics(project_id, project_name, len(bars), bars[0].date if bars else "", branch=branch)
 
     upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
 
@@ -909,7 +912,7 @@ async def compute_update_frequency(
         type_counter=state.type_counter,
         recent_events=state.recent_events(),
         upstream=upstream,
-        branch=analyzed_branch,
+        branch=branch,
         latest_outdated=latest_outdated,
         final_versions=_final_versions_by_name(prev_deps),
         window_days=rate_days,

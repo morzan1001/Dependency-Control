@@ -1,8 +1,10 @@
 """Tests for app.services.recommendation.secrets."""
 
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.aggregation import ResultAggregator
 from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN
 from app.services.recommendation.secrets import _SECRET_TYPES_NAMED, process_secrets
+from tests.test_services.test_normalizers.test_secret import _GIT_FINDING
 
 
 def _secret(
@@ -156,52 +158,58 @@ class TestProcessSecretsFilesAffected:
         assert len(rec.affected_components) == 0
 
 
-class TestProcessSecretsPriority:
-    def test_only_medium_severity_gives_high_priority(self):
-        findings = [
-            _secret(severity="MEDIUM", finding_id="s1"),
-            _secret(severity="MEDIUM", finding_id="s2"),
-        ]
-        rec = process_secrets(findings)[0]
-        assert rec.priority == Priority.HIGH
+def _trufflehog(*entries):
+    aggregator = ResultAggregator()
+    aggregator.aggregate("trufflehog", {"findings": list(entries)})
+    return [f.model_dump() for f in aggregator.get_findings()]
 
-    def test_only_low_severity_gives_high_priority(self):
-        findings = [_secret(severity="LOW")]
-        rec = process_secrets(findings)[0]
-        assert rec.priority == Priority.HIGH
 
-    def test_mix_of_medium_and_high_gives_critical(self):
-        findings = [
-            _secret(severity="MEDIUM", finding_id="s1"),
-            _secret(severity="HIGH", finding_id="s2"),
-        ]
-        rec = process_secrets(findings)[0]
+def _git_leak(file, raw, *, in_current_tree, verified=False):
+    git = {**_GIT_FINDING["SourceMetadata"]["Data"]["Git"], "file": file}
+    return {
+        **_GIT_FINDING,
+        "SourceMetadata": {"Data": {"Git": git}},
+        "Raw": raw,
+        "RawV2": raw,
+        "Verified": verified,
+        "DcInCurrentTree": in_current_tree,
+    }
+
+
+class TestProcessSecretsSplitsLiveFromDeprioritized:
+    def test_secrets_only_left_in_history_and_unverified_rank_low(self):
+        [rec] = process_secrets(_trufflehog(_git_leak("old.py", "AKIAOLD0000000000001", in_current_tree=False)))
+
+        assert rec.priority == Priority.LOW
+        assert rec.impact == {"critical": 0, "high": 0, "medium": 0, "low": 1, "total": 1}
+        assert not any("Remove secrets from code" in step for step in rec.action["steps"])
+
+    def test_a_verified_secret_in_history_is_still_live(self):
+        leak = _git_leak("old.py", "AKIAOLD0000000000001", in_current_tree=False, verified=True)
+
+        [rec] = process_secrets(_trufflehog(leak))
+
         assert rec.priority == Priority.CRITICAL
 
-    def test_single_critical_among_lows_gives_critical(self):
-        findings = [
-            _secret(severity="LOW", finding_id="s1"),
-            _secret(severity="LOW", finding_id="s2"),
-            _secret(severity="CRITICAL", finding_id="s3"),
+    def test_live_and_historical_secrets_get_their_own_cards(self):
+        historical = [
+            _git_leak(f"a{i:02d}.py", f"AKIAOLD{i:013d}", in_current_tree=False)
+            for i in range(AFFECTED_COMPONENTS_SHOWN)
         ]
-        rec = process_secrets(findings)[0]
-        assert rec.priority == Priority.CRITICAL
+        live = _git_leak("z_app.py", "AKIALIVE000000000001", in_current_tree=True)
 
+        live_card, historical_card = process_secrets(_trufflehog(*historical, live))
 
-class TestProcessSecretsSeverityCounts:
-    def test_severity_counts_correct(self):
-        findings = [
-            _secret(severity="CRITICAL", finding_id="s1"),
-            _secret(severity="HIGH", finding_id="s2"),
-            _secret(severity="HIGH", finding_id="s3"),
-            _secret(severity="MEDIUM", finding_id="s4"),
-        ]
-        rec = process_secrets(findings)[0]
-        assert rec.impact["critical"] == 1
-        assert rec.impact["high"] == 2
-        assert rec.impact["medium"] == 1
-        assert rec.impact["low"] == 0
-        assert rec.impact["total"] == 4
+        assert (live_card.priority, live_card.affected_components, live_card.impact["total"]) == (
+            Priority.CRITICAL,
+            ["z_app.py"],
+            1,
+        )
+        assert (historical_card.priority, historical_card.affected_components_total) == (
+            Priority.LOW,
+            AFFECTED_COMPONENTS_SHOWN,
+        )
+        assert live_card.title != historical_card.title
 
 
 class TestProcessSecretsDetectorFallbacks:

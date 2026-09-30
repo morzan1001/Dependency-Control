@@ -10,7 +10,7 @@ import pytest
 
 from app.services.analytics import components_delta as components_delta_module
 from app.services.analytics import findings_delta as findings_delta_module
-from app.services.analytics.components_delta import compute_components_delta
+from app.services.analytics.components_delta import compare_components
 from app.services.analytics.findings_delta import compute_findings_delta
 
 _PROJECT = "p1"
@@ -119,18 +119,50 @@ async def test_a_windowed_components_delta_reports_what_it_read(db, monkeypatch)
     monkeypatch.setattr(components_delta_module, "MAX_FETCH", _CAP)
     _seed_diverging_natural_order(db["dependencies"], _component, _POPULATION)
 
-    resp = await compute_components_delta(
-        db,
-        project_id=_PROJECT,
-        from_scan=_FROM_SCAN,
-        to_scan=_TO_SCAN,
-        page=_PAGE,
-        page_size=_PAGE_SIZE,
-        change=_NO_CHANGE_FILTER,
-    )
+    resp = await compare_components(db, project_id=_PROJECT, from_scan=_FROM_SCAN, to_scan=_TO_SCAN)
 
     assert resp.totals.added == 0
     assert resp.totals.removed == 0
     assert resp.truncation is not None
     assert resp.truncation.from_compared == _CAP
     assert resp.truncation.from_total == _POPULATION
+
+
+_PARTIALLY_WAIVED = 3
+
+
+@pytest.mark.asyncio
+async def test_a_partially_waived_record_counts_once_in_the_coverage(db, monkeypatch):
+    """Such a record is in both the live and the waiver-touched read; counting it twice claims rows the scan does not hold."""
+    monkeypatch.setattr(findings_delta_module, "MAX_FETCH", _CAP)
+    _seed_diverging_natural_order(db["findings"], _vuln, _POPULATION)
+    for doc in db["findings"]._docs.values():
+        if int(doc["_id"].rsplit("-", 1)[1]) < _PARTIALLY_WAIVED:
+            doc["waived"] = False
+            doc["details"]["vulnerabilities"].append({"id": "CVE-2026-99999", "waived": True})
+
+    resp = await _findings_delta(db)
+
+    assert resp.truncation is not None
+    assert (resp.truncation.from_compared, resp.truncation.from_total) == (_CAP, _POPULATION)
+    assert (resp.truncation.to_compared, resp.truncation.to_total) == (_CAP, _POPULATION)
+    assert resp.from_waived_excluded == _PARTIALLY_WAIVED
+
+
+@pytest.mark.asyncio
+async def test_a_delta_under_the_cap_runs_no_count(db, monkeypatch):
+    """Below the cap every total is the length of what was read, so a count is a wasted pass over the scan."""
+    _seed_diverging_natural_order(db["findings"], _vuln, _POPULATION)
+    counted: list[dict] = []
+    findings = db["findings"]
+    original_count = findings.count_documents
+
+    async def spy_count(query, *args, **kwargs):
+        counted.append(query)
+        return await original_count(query, *args, **kwargs)
+
+    monkeypatch.setattr(findings, "count_documents", spy_count)
+
+    await _findings_delta(db)
+
+    assert counted == []

@@ -28,7 +28,6 @@ def _run_summary(severity_counts):
         patch(f"{MODULE}.FindingRepository") as finding_repo_cls,
     ):
         dep_repo = dep_repo_cls.return_value
-        dep_repo.count = AsyncMock(return_value=0)
         dep_repo.get_unique_packages = AsyncMock(return_value=0)
         dep_repo.get_type_distribution = AsyncMock(return_value=[])
         finding_repo_cls.return_value.get_severity_distribution = AsyncMock(return_value=severity_counts)

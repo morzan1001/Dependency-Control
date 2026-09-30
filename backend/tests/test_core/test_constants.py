@@ -7,6 +7,7 @@ from app.core.constants import (
     sort_by_severity,
 )
 from app.models.finding import Severity
+from app.schemas.recommendation import RecommendationType
 
 
 class TestGetSeverityValue:
@@ -117,6 +118,9 @@ class TestRecommendationTypeBonusesOrdering:
         assert self._bonus("known_exploit") > self._bonus("actively_exploited")
         assert self._bonus("actively_exploited") > self._bonus("critical_hotspot")
 
+    def test_an_integrity_mismatch_ranks_between_a_typosquat_and_confirmed_malware(self):
+        assert self._bonus("typosquat_detected") < self._bonus("hash_mismatch") < self._bonus("malware_detected")
+
     def test_regression_tier_below_impact_tier(self):
         regression_max = max(self._bonus(k) for k in ("regression_detected", "recurring_vulnerability"))
         impact_min = min(
@@ -144,10 +148,8 @@ class TestRecommendationTypeBonusesOrdering:
         assert hygiene_max < self._bonus("outdated_dependency")
         assert hygiene_max < self._bonus("license_compliance")
 
-    def test_all_bonuses_are_positive(self):
-        # A zero/negative bonus would silently demote a category; guard against a typo.
-        for key, value in RECOMMENDATION_TYPE_BONUSES.items():
-            assert value > 0, f"{key} has non-positive bonus {value}"
+    def test_every_recommendation_type_has_a_bonus_and_nothing_else_does(self):
+        assert set(RECOMMENDATION_TYPE_BONUSES) == {t.value for t in RecommendationType}
 
 
 class TestEffortBonusesOrdering:

@@ -1,12 +1,12 @@
 """Vulnerability search reads the KEV roll-up enrichment persists (in_kev / kev_ransomware_use / kev_due_date)."""
 
-from types import SimpleNamespace
-
 from app.api.v1.endpoints.analytics.search import _row_matches, _vuln_results_for_finding
+from app.models.finding_record import FindingRecord
 
 
 def _finding(details):
-    return SimpleNamespace(
+    return FindingRecord(
+        id="log4j-core:2.14.1",
         finding_id="log4j-core:2.14.1",
         aliases=[],
         severity="CRITICAL",
@@ -18,6 +18,7 @@ def _finding(details):
         description="",
         waived=False,
         waiver_reason=None,
+        scanners=["trivy"],
         details=details,
     )
 

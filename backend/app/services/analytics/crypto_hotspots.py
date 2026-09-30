@@ -2,12 +2,13 @@
 name, primitive, asset_type, weakness_tag, or severity.
 """
 
-import hashlib
 from datetime import datetime, timezone
 from typing import Any, get_args
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.cache import scope_digest
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
@@ -52,30 +53,26 @@ class CryptoHotspotService:
         limit = max(1, min(limit, 500))
 
         latest_scan_ids = await self._pick_scan_ids(resolved, scan_id)
-        cache_key = self._cache_key(resolved, group_by, latest_scan_ids, limit)
-        hit, cached = self.cache.get(cache_key)
-        if hit:
-            cached_resp = HotspotResponse.model_validate(cached)
-            cached_resp.cache_hit = True
-            return cached_resp
+        key = ("crypto-hotspots", resolved.scope, resolved.scope_id, group_by, scope_digest(latest_scan_ids), limit)
+        return await self.cache.get_or_compute(key, lambda: self._build(resolved, group_by, latest_scan_ids, limit))
 
+    async def _build(
+        self, resolved: ResolvedScope, group_by: GroupBy, scan_ids: list[str], limit: int
+    ) -> HotspotResponse:
         items = await self._aggregate(
             project_ids=resolved.project_ids,
-            scan_ids=latest_scan_ids,
+            scan_ids=scan_ids,
             group_by=group_by,
             limit=limit,
         )
-        resp = HotspotResponse(
+        return HotspotResponse(
             scope=resolved.scope,
             scope_id=resolved.scope_id,
             grouping_dimension=group_by,
             items=items,
             total=len(items),
             generated_at=datetime.now(timezone.utc),
-            cache_hit=False,
         )
-        self.cache.set(cache_key, resp.model_dump())
-        return resp
 
     async def _pick_scan_ids(
         self,
@@ -170,7 +167,7 @@ class CryptoHotspotService:
         # Exclude waived findings (a risk decision, not current posture) so hotspots
         # agree with crypto_trends. Empty scan_ids matches nothing ($in: []).
         match: dict[str, Any] = {
-            "type": {"$regex": "^crypto_"},
+            "type": {"$in": sorted(CRYPTO_FINDING_TYPES)},
             "waived": {"$ne": True},
             "scan_id": {"$in": scan_ids},
         }
@@ -285,7 +282,7 @@ class CryptoHotspotService:
             return
         match: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
-            "type": {"$regex": "^crypto_"},
+            "type": {"$in": sorted(CRYPTO_FINDING_TYPES)},
             # Exclude waived findings to match crypto_trends posture semantics.
             "waived": {"$ne": True},
         }
@@ -328,20 +325,3 @@ class CryptoHotspotService:
         if group_by == "asset_type":
             return "$details.asset_type"
         return None
-
-    def _cache_key(
-        self,
-        resolved: ResolvedScope,
-        group_by: GroupBy,
-        scan_ids: list[str],
-        limit: int,
-    ) -> tuple:
-        fingerprint = hashlib.sha256("|".join(sorted(scan_ids)).encode()).hexdigest()[:16]
-        return (
-            "hotspots",
-            resolved.scope,
-            resolved.scope_id,
-            group_by,
-            fingerprint,
-            limit,
-        )

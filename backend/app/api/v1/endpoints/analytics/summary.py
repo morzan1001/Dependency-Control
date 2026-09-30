@@ -3,6 +3,7 @@
 from typing import Annotated, Any
 
 from fastapi import Query
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -16,6 +17,7 @@ from app.api.v1.helpers.analytics import (
     vuln_details_by,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.core.cache import scope_digest
 from app.core.permissions import Permissions
 from app.core.purl import package_identity_expr
 from app.repositories.dependencies import DependencyRepository
@@ -28,6 +30,8 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
+from app.schemas.projections import ProjectWithScanId
+from app.services.analytics.cache import get_analytics_cache
 from app.services.component_identity import (
     artifact_name_expr,
     build_component_index,
@@ -75,6 +79,19 @@ async def get_analytics_scope(
     )
 
 
+async def _heads_and_types(
+    db: AsyncIOMotorDatabase, projects: list[ProjectWithScanId], release_environment: str | None
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """The scope's resolved scans and their dependency type distribution, shared by /summary and /dependency-types."""
+
+    async def compute() -> tuple[list[str], list[dict[str, Any]]]:
+        scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
+        return scan_ids, await DependencyRepository(db).get_type_distribution(scan_ids) if scan_ids else []
+
+    key = ("dep-types", scope_digest(p.id for p in projects), release_environment)
+    return await get_analytics_cache().get_or_compute(key, compute)
+
+
 @router.get("/summary", responses=RESP_AUTH)
 async def get_analytics_summary(
     current_user: CurrentUserDep,
@@ -85,9 +102,15 @@ async def get_analytics_summary(
     require_analytics_permission(current_user, Permissions.ANALYTICS_SUMMARY)
 
     projects = await get_user_projects(current_user, db)
-    project_ids = [p.id for p in projects]
-    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
-    resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
+    key = ("summary", scope_digest(p.id for p in projects), release_environment)
+    return await get_analytics_cache().get_or_compute(key, lambda: _summary(db, projects, release_environment))
+
+
+async def _summary(
+    db: AsyncIOMotorDatabase, projects: list[ProjectWithScanId], release_environment: str | None
+) -> AnalyticsSummary:
+    scan_ids, type_results = await _heads_and_types(db, projects, release_environment)
+    resolved_projects, projects_without_release = scope_resolution_counts([p.id for p in projects], scan_ids)
 
     if not scan_ids:
         return AnalyticsSummary(
@@ -100,14 +123,8 @@ async def get_analytics_summary(
             projects_without_release=projects_without_release,
         )
 
-    dep_repo = DependencyRepository(db)
-    finding_repo = FindingRepository(db)
-
-    total_deps = await dep_repo.count({"scan_id": {"$in": scan_ids}})
-
-    unique_packages = await dep_repo.get_unique_packages(scan_ids)
-
-    type_results = await dep_repo.get_type_distribution(scan_ids)
+    total_deps = sum(t["count"] for t in type_results)
+    unique_packages = await DependencyRepository(db).get_unique_packages(scan_ids)
 
     dependency_types = [
         DependencyTypeStats(
@@ -119,7 +136,7 @@ async def get_analytics_summary(
         if t["_id"]
     ]
 
-    severity_counts = await finding_repo.get_severity_distribution(scan_ids)
+    severity_counts = await FindingRepository(db).get_severity_distribution(scan_ids)
 
     return AnalyticsSummary(
         total_dependencies=total_deps,
@@ -144,6 +161,19 @@ async def get_top_dependencies(
     require_analytics_permission(current_user, Permissions.ANALYTICS_DEPENDENCIES)
 
     projects = await get_user_projects(current_user, db)
+    key = ("top-deps", scope_digest(p.id for p in projects), release_environment, limit, type)
+    return await get_analytics_cache().get_or_compute(
+        key, lambda: _top_dependencies(db, projects, release_environment, limit, type)
+    )
+
+
+async def _top_dependencies(
+    db: AsyncIOMotorDatabase,
+    projects: list[ProjectWithScanId],
+    release_environment: str | None,
+    limit: int,
+    type: str | None,
+) -> list[DependencyUsage]:
     project_ids = [p.id for p in projects]
     scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     if not scan_ids:
@@ -232,9 +262,5 @@ async def get_dependency_types(
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     projects = await get_user_projects(current_user, db)
-    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
-    if not scan_ids:
-        return []
-
-    dep_repo = DependencyRepository(db)
-    return await dep_repo.get_distinct_types(scan_ids)
+    _, type_results = await _heads_and_types(db, projects, release_environment)
+    return sorted(t["_id"] for t in type_results if t["_id"])

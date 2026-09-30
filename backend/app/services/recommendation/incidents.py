@@ -4,16 +4,21 @@ from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, E
 from app.core.cve import counted_cves
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
 )
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
+    MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
     get_attr,
     live_advisories,
     name_some,
     sample_components,
+    sampled,
+    severity_impact,
 )
 
 _CVES_NAMED = 5
@@ -52,12 +57,17 @@ def _exploited_cves(
     return ransomware, kev, epss
 
 
+def _package_evidence(findings: list[ModelOrDict]) -> tuple[list[str], list[str], int]:
+    """(every affected package, the sample a card lists, the population)."""
+    packages = sorted({get_attr(f, "component", "") for f in findings})
+    return packages, *sample_components(packages)
+
+
 def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Process malware detection findings."""
     if not malware_findings:
         return []
 
-    affected_packages = sorted({get_attr(f, "component", "") for f in malware_findings})
+    packages, packages_shown, packages_total = _package_evidence(malware_findings)
 
     return [
         Recommendation(
@@ -65,53 +75,69 @@ def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]
             priority=Priority.CRITICAL,
             title="CRITICAL: Malware Detected in Dependencies",
             description=(
-                f"Found {len(malware_findings)} packages containing known malware. "
+                f"Found {len(packages)} packages containing known malware. "
                 f"These packages may steal credentials, install backdoors, or cause other harm. "
                 f"Remove immediately!"
             ),
-            impact={
-                "critical": len(malware_findings),
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "total": len(malware_findings),
-            },
-            affected_components=affected_packages,
+            impact=severity_impact("CRITICAL" for _ in packages),
+            affected_components=packages_shown,
+            affected_components_total=packages_total,
             action={
                 "type": "remove_malware",
-                "packages": affected_packages,
+                **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                 "urgency": "immediate",
-                "steps": [
-                    "STOP - This is a critical security incident",
-                    "1. Immediately remove the malicious package(s)",
-                    "2. Check if npm install/pip install scripts ran malicious code",
-                    "3. Rotate any credentials that may have been exposed",
-                    "4. Audit your systems for signs of compromise",
-                    "5. Report to your security team",
-                    "6. Consider incident response procedures",
-                ],
+                "steps": list(MALWARE_REMEDIATION_STEPS),
             },
-            effort="low",
+            effort=Effort.LOW,
         )
     ]
 
 
-def process_typosquatting(
-    typosquat_findings: list[ModelOrDict],
-) -> list[Recommendation]:
-    """Process potential typosquatting package findings."""
+def process_hash_mismatch(findings: list[ModelOrDict]) -> list[Recommendation]:
+    """Mirrors, tarball and git sources fail the registry hash check too, so the card asks to verify first."""
+    if not findings:
+        return []
+
+    packages, packages_shown, packages_total = _package_evidence(findings)
+
+    return [
+        Recommendation(
+            type=RecommendationType.HASH_MISMATCH,
+            priority=Priority.HIGH,
+            title="Package Integrity Check Failed",
+            description=(
+                f"{len(packages)} packages do not match the hashes their registry publishes. "
+                "The artifact may have been tampered with, or it came from a mirror, tarball or git source."
+            ),
+            impact=severity_impact("HIGH" for _ in packages),
+            affected_components=packages_shown,
+            affected_components_total=packages_total,
+            action={
+                "type": "verify_integrity",
+                **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
+                "steps": [
+                    "Compare the lockfile integrity hash with the hash the registry publishes",
+                    "Check whether the package came from a private registry, mirror, tarball or git source",
+                    "Re-fetch the package from the canonical registry and scan again",
+                    "Escalate as tampering only if the mismatch persists",
+                ],
+            },
+            effort=Effort.LOW,
+        )
+    ]
+
+
+def process_typosquatting(typosquat_findings: list[ModelOrDict]) -> list[Recommendation]:
     if not typosquat_findings:
         return []
 
-    affected_packages = []
-    for f in typosquat_findings:
-        pkg = get_attr(f, "component", "")
-        details = get_attr(f, "details", {})
-        imitated = details.get("imitated_package", "") if isinstance(details, dict) else ""
-        if pkg and imitated:
-            affected_packages.append(f"{pkg} (looks like: {imitated})")
-        elif pkg:
-            affected_packages.append(pkg)
+    affected_packages = sorted(
+        {
+            f"{get_attr(f, 'component')} (looks like: {get_attr(f, 'details')['imitated_package']})"
+            for f in typosquat_findings
+        }
+    )
+    packages_shown, packages_total = sample_components(affected_packages)
 
     return [
         Recommendation(
@@ -119,30 +145,25 @@ def process_typosquatting(
             priority=Priority.HIGH,
             title="Potential Typosquatting Packages Detected",
             description=(
-                f"Found {len(typosquat_findings)} packages that may be typosquatting attempts. "
+                f"Found {len(affected_packages)} packages that may be typosquatting attempts. "
                 f"Typosquatting packages mimic popular packages to trick developers into installing malware. "
                 f"Verify these are the intended packages."
             ),
-            impact={
-                "critical": 0,
-                "high": len(typosquat_findings),
-                "medium": 0,
-                "low": 0,
-                "total": len(typosquat_findings),
-            },
-            affected_components=affected_packages,
+            impact=severity_impact("HIGH" for _ in affected_packages),
+            affected_components=packages_shown,
+            affected_components_total=packages_total,
             action={
                 "type": "verify_packages",
-                "packages": affected_packages,
+                **sampled("packages", affected_packages, AFFECTED_COMPONENTS_SHOWN),
                 "steps": [
-                    "1. Verify each flagged package is the intended package",
-                    "2. Check the package source repository",
-                    "3. Compare with the legitimate package name",
-                    "4. If typosquat, replace with the correct package",
-                    "5. Audit for any malicious activity",
+                    "Verify each flagged package is the intended package",
+                    "Check the package source repository",
+                    "Compare with the legitimate package name",
+                    "If typosquat, replace with the correct package",
+                    "Audit for any malicious activity",
                 ],
             },
-            effort="low",
+            effort=Effort.LOW,
         )
     ]
 
@@ -175,8 +196,7 @@ def detect_known_exploits(
             max_epss = max(max_epss, *epss.values())
 
     if ransomware_vulns:
-        affected_packages = sorted({get_attr(f, "component", "") for f in ransomware_vulns})
-        packages_shown, packages_total = sample_components(affected_packages)
+        packages, packages_shown, packages_total = _package_evidence(ransomware_vulns)
         cves = sorted(ransomware_cves)
 
         recommendations.append(
@@ -190,38 +210,31 @@ def detect_known_exploits(
                     f"Affected: {name_some(cves, _CVES_NAMED)}"
                 ),
                 impact={
-                    "critical": len(ransomware_vulns),
-                    "high": 0,
-                    "medium": 0,
-                    "low": 0,
-                    "total": len(ransomware_vulns),
+                    **severity_impact(get_attr(f, "severity") for f in ransomware_vulns),
                     "kev_ransomware_count": len(ransomware_vulns),
                 },
                 affected_components=packages_shown,
                 affected_components_total=packages_total,
                 action={
                     "type": "fix_ransomware_vulns",
-                    "cves": cves,
-                    "packages": affected_packages,
+                    **sampled("cves", cves, AFFECTED_COMPONENTS_SHOWN),
+                    **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                     "urgency": "immediate",
                     "steps": [
-                        "This is a CRITICAL security issue - act within hours, not days",
-                        "1. Identify all systems running affected packages",
-                        "2. Apply patches or updates immediately",
-                        "3. If patches unavailable, take affected systems offline",
-                        "4. Implement network segmentation to limit blast radius",
-                        "5. Enable enhanced logging and monitoring",
-                        "6. Brief your security team and management",
+                        "Identify all systems running affected packages",
+                        "Apply patches or updates immediately",
+                        "If patches unavailable, take affected systems offline",
+                        "Implement network segmentation to limit blast radius",
+                        "Enable enhanced logging and monitoring",
+                        "Brief your security team and management",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
     if kev_vulns:
-        affected_packages = sorted({get_attr(f, "component", "") for f in kev_vulns})
-        packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted(kev_cves)
+        packages, packages_shown, packages_total = _package_evidence(kev_vulns)
 
         recommendations.append(
             Recommendation(
@@ -233,36 +246,27 @@ def detect_known_exploits(
                     f"These are being actively exploited in real-world attacks. "
                     f"Federal agencies are required to patch these within specific timeframes."
                 ),
-                impact={
-                    "critical": len([v for v in kev_vulns if get_attr(v, "severity") == "CRITICAL"]),
-                    "high": len([v for v in kev_vulns if get_attr(v, "severity") == "HIGH"]),
-                    "medium": len([v for v in kev_vulns if get_attr(v, "severity") == "MEDIUM"]),
-                    "low": 0,
-                    "total": len(kev_vulns),
-                    "kev_count": len(kev_vulns),
-                },
+                impact={**severity_impact(get_attr(f, "severity") for f in kev_vulns), "kev_count": len(kev_vulns)},
                 affected_components=packages_shown,
                 affected_components_total=packages_total,
                 action={
                     "type": "fix_kev_vulns",
-                    "cves": cves,
-                    "packages": affected_packages,
+                    **sampled("cves", sorted(kev_cves), AFFECTED_COMPONENTS_SHOWN),
+                    **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                     "steps": [
-                        "1. Prioritize patching these vulnerabilities above all others",
-                        "2. Check CISA KEV catalog for remediation deadlines",
-                        "3. Update affected packages to fixed versions",
-                        "4. If no fix available, implement compensating controls",
-                        "5. Document remediation efforts for compliance",
+                        "Prioritize patching these vulnerabilities above all others",
+                        "Check CISA KEV catalog for remediation deadlines",
+                        "Update affected packages to fixed versions",
+                        "If no fix available, implement compensating controls",
+                        "Document remediation efforts for compliance",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
     if high_epss_vulns:
-        affected_packages = sorted({get_attr(f, "component", "") for f in high_epss_vulns})
-        packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted(high_epss_cves)
+        packages, packages_shown, packages_total = _package_evidence(high_epss_vulns)
 
         recommendations.append(
             Recommendation(
@@ -275,11 +279,7 @@ def detect_known_exploits(
                     f"Highest EPSS: {max_epss * 100:.1f}%"
                 ),
                 impact={
-                    "critical": len([v for v in high_epss_vulns if get_attr(v, "severity") == "CRITICAL"]),
-                    "high": len([v for v in high_epss_vulns if get_attr(v, "severity") == "HIGH"]),
-                    "medium": len([v for v in high_epss_vulns if get_attr(v, "severity") == "MEDIUM"]),
-                    "low": 0,
-                    "total": len(high_epss_vulns),
+                    **severity_impact(get_attr(f, "severity") for f in high_epss_vulns),
                     "high_epss_count": len(high_epss_vulns),
                     "max_epss": max_epss,
                 },
@@ -287,17 +287,16 @@ def detect_known_exploits(
                 affected_components_total=packages_total,
                 action={
                     "type": "fix_high_epss_vulns",
-                    "cves": cves,
-                    "packages": affected_packages,
+                    **sampled("cves", sorted(high_epss_cves), AFFECTED_COMPONENTS_SHOWN),
+                    **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                     "max_epss_percent": f"{max_epss * 100:.1f}%",
                     "steps": [
-                        "1. These vulnerabilities are likely to be exploited soon",
-                        "2. Prioritize remediation before exploit code becomes public",
-                        "3. Update affected packages to fixed versions",
-                        "4. Monitor threat intelligence for exploit activity",
+                        "Prioritize remediation before exploit code becomes public",
+                        "Update affected packages to fixed versions",
+                        "Monitor threat intelligence for exploit activity",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 

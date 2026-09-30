@@ -25,7 +25,7 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, BranchWindowActivity
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
-from app.services.update_frequency import compute_update_frequency
+from app.services.update_frequency import compute_update_frequency, elect_primary_branch, window_cutoff
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -113,25 +113,36 @@ def _project(**overrides: Any) -> dict[str, Any]:
     return {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []} | overrides
 
 
+async def _elected(db: FakeDatabase, project: dict[str, Any]) -> tuple[str | None, dict[str, BranchWindowActivity]]:
+    return await elect_primary_branch(
+        ScanRepository(db),
+        str(project["_id"]),
+        window_cutoff(WINDOW_DAYS),
+        project.get("default_branch"),
+        project.get("deleted_branches"),
+    )
+
+
 async def _live(
     db: FakeDatabase, project: dict[str, Any] | None = None, hard_limit: int = WINDOW_HARD_LIMIT
 ) -> UpdateFrequencyMetrics:
     project = project or _project()
+    branch, _activity = await _elected(db, project)
     return await compute_update_frequency(
         project_id=str(project["_id"]),
         project_name=project["name"],
         scan_repo=ScanRepository(db),
         dep_repo=DependencyRepository(db),
         analysis_repo=AnalysisResultRepository(db),
+        branch=branch,
         window_days=WINDOW_DAYS,
         hard_limit=hard_limit,
-        deleted_branches=project.get("deleted_branches"),
-        default_branch=project.get("default_branch"),
     )
 
 
 async def _rollup(db: FakeDatabase, project: dict[str, Any] | None = None) -> UpdateFrequencyMetrics | None:
-    return await _rollup_project_metrics(db, Project(**(project or _project())), WINDOW_DAYS)
+    project = project or _project()
+    return await _rollup_project_metrics(db, Project(**project), WINDOW_DAYS, *await _elected(db, project))
 
 
 # Fields both paths must agree on. dominant_ecosystem is excluded on purpose:

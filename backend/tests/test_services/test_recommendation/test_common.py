@@ -4,6 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -14,9 +15,11 @@ from app.services.recommendation.common import (
     calculate_best_fix_version,
     calculate_score,
     get_attr,
+    label_by_keywords,
     live_cves,
     name_some,
     sample_components,
+    severity_impact,
     sort_key,
     summarize_vulns,
     take_top,
@@ -239,7 +242,7 @@ def _make_recommendation(
     priority=Priority.MEDIUM,
     rec_type=RecommendationType.DIRECT_DEPENDENCY_UPDATE,
     impact=None,
-    effort="medium",
+    effort=Effort.MEDIUM,
 ) -> Recommendation:
     return Recommendation(
         type=rec_type,
@@ -367,8 +370,8 @@ class TestCalculateScore:
     @pytest.mark.parametrize(
         ("lighter", "heavier"),
         [
-            pytest.param("low", "high", id="low_over_high"),
-            pytest.param("medium", "high", id="medium_over_high"),
+            pytest.param(Effort.LOW, Effort.HIGH, id="low_over_high"),
+            pytest.param(Effort.MEDIUM, Effort.HIGH, id="medium_over_high"),
         ],
     )
     def test_a_lighter_effort_scores_higher(self, lighter, heavier):
@@ -515,3 +518,19 @@ class TestRecommendationTotal:
 
         assert rec.affected_components_total == covered
         assert rec.to_dict()["affected_components_total"] == covered
+
+
+class TestSeverityImpact:
+    def test_each_scored_severity_has_its_bucket_and_the_rest_count_in_total(self):
+        impact = severity_impact(["CRITICAL", "HIGH", "LOW", "LOW", "INFO", "UNKNOWN"])
+        assert impact == {"critical": 1, "high": 1, "medium": 0, "low": 2, "total": 6}
+
+
+class TestLabelByKeywords:
+    _TABLE = ((("inject", "sqli"), "Injection"), (("path",), "Path Traversal"))
+
+    def test_first_matching_row_wins(self):
+        assert label_by_keywords("Path Injection", self._TABLE) == "Injection"
+
+    def test_unmatched_label_is_returned_unchanged(self):
+        assert label_by_keywords("Active Debug Code", self._TABLE) == "Active Debug Code"

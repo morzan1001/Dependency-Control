@@ -4,12 +4,13 @@ from functools import cached_property
 from typing import Any
 
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
+from app.core.cve import counted_cves
 from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
-    VulnerabilityInfo,
 )
 from app.services.aggregation.versions import newest_first, normalize_version
 from app.services.component_identity import (
@@ -21,14 +22,19 @@ from app.services.component_identity import (
 from app.services.recommendation.graph import build_dependency_edges
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
+    MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
     VulnStats,
+    VulnerabilityInfo,
     dependency_label,
-    live_cves,
     get_attr,
+    live_advisories,
+    malware_kind,
     name_some,
     sample_components,
+    sampled,
     scorecard_score,
+    severity_impact,
     summarize_vulns,
     take_top,
     vuln_info,
@@ -83,13 +89,12 @@ class _PackageRisks:
 def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
     finding_type = get_attr(finding, "type")
     details = get_attr(finding, "details", {})
-    details = details if isinstance(details, dict) else {}
     if finding_type == "vulnerability":
         # The vulnerability carries the most qualified spelling of the package.
         if not pkg.vulns:
             pkg.name = get_attr(finding, "component")
         pkg.vulns.append(vuln_info(finding))
-    elif finding_type == "malware":
+    elif finding_type == "malware" and malware_kind(finding) == "malware":
         pkg.has_malware = True
     elif finding_type == "eol":
         pkg.is_eol = True
@@ -103,7 +108,7 @@ def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
             pkg.license_issue = (severity, details.get("license", "unknown"))
 
 
-def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
+def roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
     package_findings = [
         f for f in findings if get_attr(f, "component") and get_attr(f, "type") in PACKAGE_FINDING_TYPES
     ]
@@ -121,29 +126,28 @@ def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
     return list(packages.values())
 
 
-def detect_package_risks(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Critical-hotspot and toxic-dependency cards, both read off one roll-up per package."""
-    hotspots: list[tuple[_PackageRisks, list[str]]] = []
-    toxic: list[tuple[_PackageRisks, list[dict[str, str]], int]] = []
-    for pkg in _roll_up_packages(findings):
-        is_hotspot, reasons = _hotspot_reasons(pkg)
-        if is_hotspot:
-            hotspots.append((pkg, reasons))
-        factors, score = _toxic_risk_factors(pkg)
-        if len(factors) >= 2:
-            toxic.append((pkg, factors, score))
-
+def detect_critical_hotspots(packages: list[_PackageRisks]) -> list[Recommendation]:
+    hotspots = [(pkg, reasons) for pkg in packages for is_hotspot, reasons in [_hotspot_reasons(pkg)] if is_hotspot]
     hotspots.sort(key=lambda h: (h[0].has_malware, h[0].stats.kev, h[0].stats.high_epss, h[0].risk_score), reverse=True)
+    return [
+        _hotspot_recommendation(pkg, reasons, rank, population)
+        for rank, (pkg, reasons), population in take_top(hotspots, CRITICAL_HOTSPOTS_SHOWN)
+    ]
+
+
+def detect_toxic_dependencies(packages: list[_PackageRisks]) -> list[Recommendation]:
+    # The malware and hotspot cards already tell the user to remove a malware package.
+    toxic = [
+        (pkg, factors, score)
+        for pkg in packages
+        if not pkg.has_malware
+        for factors, score in [_toxic_risk_factors(pkg)]
+        if len(factors) >= 2
+    ]
     toxic.sort(key=lambda t: t[2], reverse=True)
     return [
-        *(
-            _hotspot_recommendation(pkg, reasons, rank, population)
-            for rank, (pkg, reasons), population in take_top(hotspots, CRITICAL_HOTSPOTS_SHOWN)
-        ),
-        *(
-            _toxic_recommendation(pkg, factors, score, rank, population)
-            for rank, (pkg, factors, score), population in take_top(toxic, TOXIC_DEPENDENCIES_SHOWN)
-        ),
+        _toxic_recommendation(pkg, factors, rank, population)
+        for rank, (pkg, factors, _score), population in take_top(toxic, TOXIC_DEPENDENCIES_SHOWN)
     ]
 
 
@@ -179,34 +183,27 @@ def _hotspot_reasons(pkg: _PackageRisks) -> tuple[bool, list[str]]:
 def _hotspot_steps(pkg: _PackageRisks) -> list[str]:
     """Specific remediation steps for a hotspot."""
     if pkg.has_malware:
-        return [
-            "URGENT: This package contains known malware",
-            "1. Immediately remove this package from your project",
-            "2. Check if any malicious code was executed during installation",
-            "3. Audit your systems for signs of compromise",
-            "4. Find a legitimate alternative package",
-        ]
+        return list(MALWARE_REMEDIATION_STEPS)
     if pkg.stats.kev > 0:
         return [
-            "URGENT: This vulnerability is being actively exploited in the wild",
-            "1. Update to a fixed version immediately if available",
-            "2. If no fix exists, implement compensating controls",
-            "3. Monitor for signs of exploitation in your environment",
-            "4. Consider WAF rules or network segmentation as temporary mitigation",
+            "Update to a fixed version immediately if available",
+            "If no fix exists, implement compensating controls",
+            "Monitor for signs of exploitation in your environment",
+            "Consider WAF rules or network segmentation as temporary mitigation",
         ]
     if pkg.stats.fixed_versions:
         return [
-            f"1. Update {pkg.name} to version {pkg.stats.best_fix} or later",
-            "2. Run tests to ensure compatibility",
-            "3. Deploy the updated dependency",
-            "4. Verify the vulnerabilities are resolved in your next scan",
+            f"Update {pkg.name} to version {pkg.stats.best_fix} or later",
+            "Run tests to ensure compatibility",
+            "Deploy the updated dependency",
+            "Verify the vulnerabilities are resolved in your next scan",
         ]
     return [
-        "1. Evaluate if this package is essential to your application",
-        "2. Search for alternative packages with better security posture",
-        "3. If no alternatives exist, implement compensating controls",
-        "4. Monitor for security updates from the package maintainer",
-        "5. Consider contributing a fix if the package is open source",
+        "Evaluate if this package is essential to your application",
+        "Search for alternative packages with better security posture",
+        "If no alternatives exist, implement compensating controls",
+        "Monitor for security updates from the package maintainer",
+        "Consider contributing a fix if the package is open source",
     ]
 
 
@@ -229,15 +226,10 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
         title=f"Critical Hotspot: {pkg.name}",
         description=" | ".join(desc_parts),
         impact={
-            "critical": stats.severity["CRITICAL"],
-            "high": stats.severity["HIGH"],
-            "medium": 0,
-            "low": 0,
-            "total": stats.total,
+            **severity_impact(stats.severity.elements()),
             "kev_count": stats.kev,
             "high_epss_count": stats.high_epss,
             "reachable_count": stats.reachable,
-            "risk_score": pkg.risk_score,
         },
         affected_components=components_shown,
         affected_components_total=components_total,
@@ -246,13 +238,13 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
             "package": pkg.name,
             "current_versions": pkg.versions,
             "fixed_versions": stats.fixed_versions,
-            "target_version": stats.best_fix,
+            "target_version": stats.best_fix if stats.fixed_versions else None,
             "reasons": reasons,
             "is_malware": pkg.has_malware,
             "is_kev": stats.kev > 0,
             "steps": _hotspot_steps(pkg),
         },
-        effort="low" if stats.fixed_versions else "high",
+        effort=Effort.LOW if pkg.has_malware or stats.fixed_versions else Effort.HIGH,
         rank=rank,
         ranked_out_of=ranked_out_of,
     )
@@ -271,9 +263,6 @@ def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
     """A package's independent risk factors and the score ranking toxic packages."""
     factors: list[dict[str, str]] = []
     score = 0
-    if pkg.has_malware:
-        factors.append({"type": "malware", "severity": "CRITICAL", "description": "Known malware package"})
-        score += 100
     if pkg.is_eol:
         factors.append({"type": "eol", "severity": "HIGH", "description": "End-of-Life - no security updates"})
         score += 40
@@ -308,7 +297,7 @@ def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
 
 
 def _toxic_recommendation(
-    pkg: _PackageRisks, factors: list[dict[str, str]], score: int, rank: int, ranked_out_of: int
+    pkg: _PackageRisks, factors: list[dict[str, str]], rank: int, ranked_out_of: int
 ) -> Recommendation:
     stats = pkg.stats
     components_shown, components_total = sample_components(pkg.labels)
@@ -321,15 +310,7 @@ def _toxic_recommendation(
             f"{' | '.join(factor['description'] for factor in factors)}. "
             f"Consider replacing it with a safer alternative."
         ),
-        impact={
-            "critical": stats.severity["CRITICAL"],
-            "high": stats.severity["HIGH"],
-            "medium": stats.severity["MEDIUM"],
-            "low": 0,
-            "total": stats.total,
-            "risk_factor_count": len(factors),
-            "toxic_score": score,
-        },
+        impact=severity_impact(stats.severity.elements()),
         affected_components=components_shown,
         affected_components_total=components_total,
         action={
@@ -338,14 +319,14 @@ def _toxic_recommendation(
             "versions": pkg.versions,
             "risk_factors": factors,
             "steps": [
-                f"1. Evaluate if {pkg.name} is essential to your application",
-                "2. Search for alternative packages with better security posture",
-                "3. Check npm/pypi/crates.io for actively maintained alternatives",
-                "4. If essential, implement additional security controls",
-                "5. Plan migration to a safer alternative",
+                f"Evaluate if {pkg.name} is essential to your application",
+                "Search for alternative packages with better security posture",
+                "Check npm/pypi/crates.io for actively maintained alternatives",
+                "If essential, implement additional security controls",
+                "Plan migration to a safer alternative",
             ],
         },
-        effort="high",
+        effort=Effort.HIGH,
         rank=rank,
         ranked_out_of=ranked_out_of,
     )
@@ -361,42 +342,46 @@ def analyze_attack_surface(
 
     recommendations = []
 
-    # Advisories per installed copy: another version of the package carries its own.
-    counts_by_version: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    # Advisory severities per installed copy: another version of the package carries its own.
+    severities_by_version: dict[str, dict[str, list[str | None]]] = defaultdict(lambda: defaultdict(list))
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
-            counts_by_version[normalize_version(get_attr(f, "version"))][get_attr(f, "component", "")] += (
-                len(live_cves([get_attr(f, "details")])) or 1
-            )
+            by_cve = {
+                cve: advisory.get("severity")
+                for advisory in live_advisories(get_attr(f, "details", {}))
+                for cve in counted_cves(advisory)
+            }
+            severities_by_version[normalize_version(get_attr(f, "version"))][get_attr(f, "component", "")] += list(
+                by_cve.values()
+            ) or [get_attr(f, "severity")]
     # Findings carry the qualified component while the inventory keeps the bare name.
-    index_by_version = {version: build_component_index(counts) for version, counts in counts_by_version.items()}
+    index_by_version = {version: build_component_index(sev) for version, sev in severities_by_version.items()}
     edges = build_dependency_edges(dependencies)
     by_label: dict[str, dict[str, Any]] = {}
+    listed_severities: list[str | None] = []
     for key, dep in edges.dep_by_key.items():
         version = get_attr(dep, "version") or ""
-        vuln_count = (
-            lookup_component(index_by_version.get(normalize_version(version), {}), get_attr(dep, "name", "")) or 0
+        label = dependency_label(dep)
+        severities = (
+            lookup_component(index_by_version.get(normalize_version(version), {}), get_attr(dep, "name", "")) or []
         )
-        if key not in edges.direct_keys and vuln_count >= 2:
-            by_label.setdefault(
-                dependency_label(dep),
-                {
-                    "name": get_attr(dep, "name", ""),
-                    "version": version,
-                    "vuln_count": vuln_count,
-                    # A parent ref naming no inventory entry is shown as stored.
-                    "parents": [
-                        dependency_label(edges.dep_by_key[ref]) if ref in edges.dep_by_key else ref
-                        for ref in edges.parents_by_key[key]
-                    ],
-                },
-            )
-    transitive_with_vulns = list(by_label.values())
+        if key not in edges.direct_keys and len(severities) >= 2 and label not in by_label:
+            by_label[label] = {
+                "name": get_attr(dep, "name", ""),
+                "version": version,
+                "vuln_count": len(severities),
+                # A parent ref naming no inventory entry is shown as stored.
+                "parents": [
+                    dependency_label(edges.dep_by_key[ref]) if ref in edges.dep_by_key else ref
+                    for ref in edges.parents_by_key[key]
+                ],
+            }
+            listed_severities += severities
 
-    if transitive_with_vulns:
-        transitive_with_vulns.sort(key=lambda x: x["vuln_count"], reverse=True)
-
-        total_vulns = sum(t["vuln_count"] for t in transitive_with_vulns)
+    if by_label:
+        transitive_with_vulns = sorted(by_label.values(), key=lambda t: t["vuln_count"], reverse=True)
+        impact = severity_impact(listed_severities)
+        total_vulns = impact["total"]
         transitive_shown, transitive_total = sample_components(
             f"{t['name']}@{t['version']}"
             + (f" (via {name_some(t['parents'], _PARENTS_NAMED)})" if t["parents"] else "")
@@ -414,26 +399,20 @@ def analyze_attack_surface(
                     "Consider updating or replacing their parent dependencies "
                     "to reduce attack surface."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": total_vulns,
-                    "low": 0,
-                    "total": total_vulns,
-                },
+                impact=impact,
                 affected_components=transitive_shown,
                 affected_components_total=transitive_total,
                 action={
                     "type": "reduce_attack_surface",
-                    "transitive_deps": transitive_with_vulns[:AFFECTED_COMPONENTS_SHOWN],
+                    **sampled("transitive_deps", transitive_with_vulns, AFFECTED_COMPONENTS_SHOWN),
                     "steps": [
-                        "1. Review which parent dependencies introduce vulnerable transitives",
-                        "2. Check if parent dependencies have updates that use fixed versions",
-                        "3. Consider using dependency overrides to force specific versions",
-                        "4. Evaluate if parent dependencies are essential or could be removed",
+                        "Review which parent dependencies introduce vulnerable transitives",
+                        "Check if parent dependencies have updates that use fixed versions",
+                        "Consider using dependency overrides to force specific versions",
+                        "Evaluate if parent dependencies are essential or could be removed",
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
@@ -450,27 +429,21 @@ def analyze_attack_surface(
                     f"Your project has {total_deps} total dependencies but only {direct_deps} direct dependencies. "
                     f"This large transitive tree increases attack surface. Consider auditing heavy dependencies."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": total_deps,
-                    "total": total_deps,
-                },
-                affected_components=[f"Total: {total_deps} deps, Direct: {direct_deps} deps"],
+                impact={"total": 0},
+                affected_components=[],
                 action={
                     "type": "audit_dependencies",
                     "total_deps": total_deps,
                     "direct_deps": direct_deps,
                     "steps": [
-                        "1. Run 'npm ls' or 'pip show' to understand dependency tree",
-                        "2. Identify 'heavy' packages that bring many transitive deps",
-                        "3. Consider lighter alternatives for heavy packages",
-                        "4. Remove unused dependencies",
-                        "5. Use tools like depcheck (npm) to find unused deps",
+                        "Run 'npm ls' or 'pip show' to understand dependency tree",
+                        "Identify 'heavy' packages that bring many transitive deps",
+                        "Consider lighter alternatives for heavy packages",
+                        "Remove unused dependencies",
+                        "Use tools like depcheck (npm) to find unused deps",
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 

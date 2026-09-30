@@ -321,6 +321,7 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "actively_exploited": 2500,
     "critical_hotspot": 2000,
     "rotate_secrets": 2000,
+    "hash_mismatch": 1800,
     "typosquat_detected": 1500,
     "critical_risk": 1500,
     # High impact updates
@@ -349,6 +350,13 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "deep_dependency_chain": 15,
     "duplicate_functionality": 10,
     "dev_in_production": 10,
+    # No type bonus: these rank on priority, impact and effort alone.
+    "license_drift": 0,
+    "replace_weak_algorithm": 0,
+    "increase_key_size": 0,
+    "upgrade_protocol": 0,
+    "pqc_migration": 0,
+    "rotate_certificate": 0,
 }
 
 # Effort-based bonuses (lower effort = higher bonus)
@@ -360,8 +368,6 @@ EFFORT_BONUSES: dict[str, int] = {
 
 # Dependencies nested deeper than this below their nearest direct dependency are reported.
 MAX_DEPENDENCY_DEPTH: int = 5
-# Reported chains at least this deep count as medium impact, shallower ones as low.
-DEEP_CHAIN_MEDIUM_IMPACT_DEPTH: int = 8
 
 # Thresholds for recommendation analysis
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"

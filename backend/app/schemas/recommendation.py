@@ -1,10 +1,8 @@
 """Data classes for the recommendation engine output structures."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-
-from app.core.risk_scoring import is_actionable_vulnerability, is_deprioritized_vulnerability
 
 
 class RecommendationType(str, Enum):
@@ -15,10 +13,8 @@ class RecommendationType(str, Enum):
     DIRECT_DEPENDENCY_UPDATE = "direct_dependency_update"
     TRANSITIVE_FIX_VIA_PARENT = "transitive_fix_via_parent"
     NO_FIX_AVAILABLE = "no_fix_available"
-    CONSIDER_WAIVER = "consider_waiver"
     # Secret-related
     ROTATE_SECRETS = "rotate_secrets"
-    REMOVE_SECRETS = "remove_secrets"
     # SAST-related
     FIX_CODE_SECURITY = "fix_code_security"
     # IAC-related
@@ -26,7 +22,6 @@ class RecommendationType(str, Enum):
     # License-related
     LICENSE_COMPLIANCE = "license_compliance"
     LICENSE_DRIFT = "license_drift"
-    LICENSE_INCOMPATIBILITY = "license_incompatibility"
     # Quality-related
     SUPPLY_CHAIN_RISK = "supply_chain_risk"
     CRITICAL_RISK = "critical_risk"  # Combined vuln + scorecard risk
@@ -34,7 +29,6 @@ class RecommendationType(str, Enum):
     OUTDATED_DEPENDENCY = "outdated_dependency"
     VERSION_FRAGMENTATION = "version_fragmentation"
     DEV_IN_PRODUCTION = "dev_in_production"
-    UNMAINTAINED_PACKAGE = "unmaintained_package"
     # Trend-based
     RECURRING_VULNERABILITY = "recurring_vulnerability"
     REGRESSION_DETECTED = "regression_detected"
@@ -91,62 +85,6 @@ class Effort(str, Enum):
 
 
 @dataclass
-class FindingInfo:
-    """Generic information about any finding."""
-
-    finding_id: str
-    finding_type: str  # vulnerability, secret, sast, iac, license, quality
-    severity: str
-    component: str  # package name or file path
-    version: str | None = None
-    description: str | None = None
-    fixed_version: str | None = None
-    cve_id: str | None = None
-    file_path: str | None = None
-    line_number: int | None = None
-    rule_id: str | None = None
-    details: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class VulnerabilityInfo:
-    """Specific information about a vulnerability finding."""
-
-    finding_id: str
-    # The finding's unwaived advisories; every per-CVE mark and name is read off them.
-    advisories: list[dict[str, Any]]
-    severity: str
-    package_name: str
-    current_version: str
-    fixed_version: str | None
-    description: str | None = None
-    source_type: str = "unknown"  # image or application
-
-    epss_score: float | None = None  # 0.0 to 1.0
-    is_kev: bool = False
-    kev_ransomware: bool = False
-    is_reachable: bool | None = None
-    reachability_level: str | None = None  # confirmed, likely, unknown, unreachable
-    risk_score: float | None = None  # 0-100
-    # The SBOM graph does not record the dependency; the parser guessed it is direct.
-    direct_inferred: bool = False
-
-    @property
-    def is_fixable(self) -> bool:
-        return self.fixed_version is not None
-
-    @property
-    def is_actionable(self) -> bool:
-        return is_actionable_vulnerability(epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable)
-
-    @property
-    def is_deprioritized(self) -> bool:
-        return is_deprioritized_vulnerability(
-            epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable
-        )
-
-
-@dataclass
 class Recommendation:
     """A remediation recommendation."""
 
@@ -157,7 +95,7 @@ class Recommendation:
     impact: dict[str, Any]  # {critical: X, high: Y, total: Z, ...} + optional metadata
     affected_components: list[str]
     action: dict[str, Any]  # Specific action details
-    effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
+    effort: Effort = Effort.MEDIUM
     affected_components_total: int = 0
     # Where this sat in the ranked list its generator emitted, and how many were ranked; both 0
     # unless that list was cut, in which case they are what says the rest exist.
@@ -170,7 +108,6 @@ class Recommendation:
         self.affected_components_total = max(self.affected_components_total, len(self.affected_components))
 
     def to_dict(self) -> dict[str, Any]:
-        effort_value = self.effort.value if isinstance(self.effort, Effort) else self.effort
         return {
             "type": self.type.value,
             "priority": self.priority.value,
@@ -182,5 +119,5 @@ class Recommendation:
             "rank": self.rank,
             "ranked_out_of": self.ranked_out_of,
             "action": self.action,
-            "effort": effort_value,
+            "effort": self.effort.value,
         }

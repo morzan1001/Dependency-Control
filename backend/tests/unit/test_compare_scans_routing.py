@@ -1,4 +1,4 @@
-"""The compare_scans chat tool must delegate to compute_findings_delta and return its envelope."""
+"""The compare_scans chat tool must delegate to the scan-delta dispatcher and return its envelope."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
@@ -22,8 +22,8 @@ def admin_user():
 
 
 @pytest.mark.asyncio
-async def test_compare_scans_routes_through_findings_service(db, admin_user):
-    """compare_scans must call compute_findings_delta and return its envelope."""
+async def test_compare_scans_routes_through_the_dispatcher(db, admin_user):
+    """compare_scans must run the same cached findings comparison the REST delta serves."""
     db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
     await db["scans"].insert_many(
         [
@@ -45,7 +45,7 @@ async def test_compare_scans_routes_through_findings_service(db, admin_user):
     )
 
     with patch(
-        "app.services.chat.tools.registry.compute_findings_delta",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(return_value=fake_response),
     ) as mock:
         result = await ChatToolRegistry()._dispatch(
@@ -58,8 +58,11 @@ async def test_compare_scans_routes_through_findings_service(db, admin_user):
     mock.assert_awaited_once()
     call_kwargs = mock.await_args.kwargs
     assert call_kwargs["project_id"] == "p1"
+    assert call_kwargs["category"] == "findings"
     assert call_kwargs["from_scan"] == "sa"
     assert call_kwargs["to_scan"] == "sb"
+    assert (call_kwargs["page"], call_kwargs["page_size"], call_kwargs["change"]) == (1, 50, None)
+    assert call_kwargs["allow_same_scan"] is False
     assert result["category"] == "findings"
     assert result["totals"]["added"] == 1
     assert result["from_scan_id"] == "sa"
@@ -70,7 +73,7 @@ async def test_compare_scans_routes_through_findings_service(db, admin_user):
 async def test_compare_scans_returns_error_when_project_not_authorized(db, admin_user):
     """Auth check still runs: unknown project_id is rejected before the service is called."""
     with patch(
-        "app.services.chat.tools.registry.compute_findings_delta",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(),
     ) as mock:
         result = await ChatToolRegistry()._dispatch(
@@ -114,7 +117,7 @@ async def test_compare_scans_coerces_string_severity_to_list(db, admin_user):
     await _seed_project_and_scans(db)
 
     with patch(
-        "app.services.chat.tools.registry.compute_findings_delta",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(return_value=_fake_findings_delta_response()),
     ) as mock:
         await ChatToolRegistry()._dispatch(
@@ -141,7 +144,7 @@ async def test_compare_scans_passes_list_severity_through_unchanged(db, admin_us
     await _seed_project_and_scans(db)
 
     with patch(
-        "app.services.chat.tools.registry.compute_findings_delta",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(return_value=_fake_findings_delta_response()),
     ) as mock:
         await ChatToolRegistry()._dispatch(
@@ -168,7 +171,7 @@ async def test_compare_scans_passes_none_when_severity_missing(db, admin_user):
     await _seed_project_and_scans(db)
 
     with patch(
-        "app.services.chat.tools.registry.compute_findings_delta",
+        "app.services.chat.tools.registry.compute_scan_delta_dispatch",
         new=AsyncMock(return_value=_fake_findings_delta_response()),
     ) as mock:
         await ChatToolRegistry()._dispatch(

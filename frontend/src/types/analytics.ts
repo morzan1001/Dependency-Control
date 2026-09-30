@@ -319,9 +319,7 @@ export type RecommendationType =
   | 'direct_dependency_update'
   | 'transitive_fix_via_parent'
   | 'no_fix_available'
-  | 'consider_waiver'
   | 'rotate_secrets'
-  | 'remove_secrets'
   | 'fix_code_security'
   | 'fix_infrastructure'
   | 'license_compliance'
@@ -329,7 +327,6 @@ export type RecommendationType =
   | 'outdated_dependency'
   | 'version_fragmentation'
   | 'dev_in_production'
-  | 'unmaintained_package'
   | 'recurring_vulnerability'
   | 'regression_detected'
   | 'deep_dependency_chain'
@@ -339,11 +336,12 @@ export type RecommendationType =
 
 export type RecommendationPriority = 'critical' | 'high' | 'medium' | 'low';
 
+// Severity counts are optional; hygiene cards count no findings (total 0).
 export interface RecommendationImpact {
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
+  critical?: number;
+  high?: number;
+  medium?: number;
+  low?: number;
   total: number;
 }
 
@@ -353,17 +351,23 @@ export interface CrossProjectCve {
   affected_projects?: string[];
 }
 
+export interface RecurringCve {
+  cve: string;
+  components: string[];
+  scans: number;
+}
+
 export interface RecommendationAction {
   type: string;
   package?: string;
   current_version?: string;
-  target_version?: string;
+  target_version?: string | null;
   current_image?: string;
   suggestion?: string;
   commands?: string[];
-  cves?: Array<string | CrossProjectCve>;
+  cves?: Array<string | CrossProjectCve | RecurringCve>;
   options?: string[];
-  suggestions?: string[];
+  steps?: string[];
   file_path?: string;
   line_number?: number;
   secret_type?: string;
