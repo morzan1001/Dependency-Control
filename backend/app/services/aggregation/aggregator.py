@@ -63,11 +63,34 @@ from app.services.normalizers.vulnerability import (
     normalize_osv,
     normalize_trivy,
 )
+from app.services.waivers.signature import compute_match_signature
 
 _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
 _SPDX_WITH_SPLIT = re.compile(r"\s++WITH\s++")
 _ENTRY_LEVEL_KEYS = frozenset({"ecosystem_specific", "fixed_version", "cvss_score", "cvss_vector", "references"})
+_NORMALIZERS = {
+    "trivy": normalize_trivy,
+    "grype": normalize_grype,
+    "osv": normalize_osv,
+    "outdated_packages": normalize_outdated,
+    "license_compliance": normalize_license,
+    "deps_dev": normalize_scorecard,
+    "os_malware": normalize_malware,
+    "end_of_life": normalize_eol,
+    "typosquatting": normalize_typosquatting,
+    "trufflehog": normalize_trufflehog,
+    "opengrep": normalize_opengrep,
+    "kics": normalize_kics,
+    "bearer": normalize_bearer,
+    "hash_verification": normalize_hash_verification,
+    "maintainer_risk": normalize_maintainer_risk,
+    "crypto_weak_algorithm": normalize_crypto,
+    "crypto_weak_key": normalize_crypto,
+    "crypto_quantum_vulnerable": normalize_crypto,
+    "crypto_certificate_lifecycle": normalize_crypto,
+    "crypto_protocol_cipher": normalize_crypto,
+}
 
 
 def _package_key(finding: Finding) -> tuple[str, str]:
@@ -250,31 +273,8 @@ class ResultAggregator:
             self.add_scan_error(analyzer_name, str(result["error"]), error_details=error_details, source=source)
             return
 
-        normalizers = {
-            "trivy": normalize_trivy,
-            "grype": normalize_grype,
-            "osv": normalize_osv,
-            "outdated_packages": normalize_outdated,
-            "license_compliance": normalize_license,
-            "deps_dev": normalize_scorecard,
-            "os_malware": normalize_malware,
-            "end_of_life": normalize_eol,
-            "typosquatting": normalize_typosquatting,
-            "trufflehog": normalize_trufflehog,
-            "opengrep": normalize_opengrep,
-            "kics": normalize_kics,
-            "bearer": normalize_bearer,
-            "hash_verification": normalize_hash_verification,
-            "maintainer_risk": normalize_maintainer_risk,
-            "crypto_weak_algorithm": normalize_crypto,
-            "crypto_weak_key": normalize_crypto,
-            "crypto_quantum_vulnerable": normalize_crypto,
-            "crypto_certificate_lifecycle": normalize_crypto,
-            "crypto_protocol_cipher": normalize_crypto,
-        }
-
-        if analyzer_name in normalizers:
-            normalizers[analyzer_name](self, result, source=source)
+        if normalize := _NORMALIZERS.get(analyzer_name):
+            normalize(self, result, source=source)
 
     def add_scan_error(
         self,
@@ -317,9 +317,9 @@ class ResultAggregator:
         """Merge one package's findings into the entry carrying the most qualified name."""
         if len(cluster) == 1:
             return cluster[0]
-        primary = next(f for f in cluster if normalize_component(f.component or "") == representative)
+        primary = next(f for f in cluster if normalize_component(f.component) == representative)
         # Merge in name order so the outcome does not depend on analyzer completion order.
-        for other in sorted(cluster, key=lambda f: normalize_component(f.component or "")):
+        for other in sorted(cluster, key=lambda f: normalize_component(f.component)):
             if other is primary:
                 continue
             merge_findings_data(primary, other)
@@ -330,17 +330,17 @@ class ResultAggregator:
         if len(group) == 1:
             return [group[0]]
 
-        representatives = cluster_by_package_identity(f.component or "" for f in group)
+        representatives = cluster_by_package_identity(f.component for f in group)
         clusters: dict[str, list[Finding]] = {}
         for f in group:
-            key = representatives[normalize_component(f.component or "")]
+            key = representatives[normalize_component(f.component)]
             clusters.setdefault(key, []).append(f)
 
         return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
 
     @staticmethod
     def _finding_sort_key(f: Finding) -> tuple[str, str, str, str]:
-        return (str(f.type), normalize_component(f.component or ""), f.version or "", f.id)
+        return (str(f.type), normalize_component(f.component), f.version or "", f.id)
 
     def get_findings(self) -> list[Finding]:
         """Return deduplicated findings with merge/link post-processing applied.
@@ -368,15 +368,13 @@ class ResultAggregator:
 
         final_findings.sort(key=self._finding_sort_key)
         for f in final_findings:
-            entries = f.details.get("vulnerabilities") if isinstance(f.details, dict) else None
+            entries = f.details.get("vulnerabilities")
             if entries:
                 entries.sort(key=lambda entry: str(entry.get("id")))
                 f.details["fixed_version"] = aggregate_fixed_version(entries, f.version)
 
         self._link_related_findings_by_component(final_findings)
         enrich_with_scorecard(final_findings, self._scorecard_cache)
-
-        from app.services.waivers.signature import compute_match_signature
 
         for f in final_findings:
             f.match = compute_match_signature(f)
@@ -461,9 +459,9 @@ class ResultAggregator:
             "cvss_score": (float(cvss) if (cvss := finding.details.get("cvss_score")) is not None else None),
             "cvss_vector": (str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None),
             "references": sorted(set(refs_from_details)),
-            "aliases": finding.aliases or [],
-            "scanners": finding.scanners or [],
-            "details": {k: v for k, v in (finding.details or {}).items() if k not in _ENTRY_LEVEL_KEYS},
+            "aliases": finding.aliases,
+            "scanners": finding.scanners,
+            "details": {k: v for k, v in finding.details.items() if k not in _ENTRY_LEVEL_KEYS},
         }
         ecosystem_specific = finding.details.get("ecosystem_specific")
         if ecosystem_specific:
@@ -507,23 +505,16 @@ class ResultAggregator:
 
     @staticmethod
     def _quality_issue_type(finding: Finding) -> str:
-        """Determine the quality issue-type bucket for a finding id."""
-        if finding.id.startswith(f"{FindingIdPrefix.SCORECARD}-"):
-            return "scorecard"
-        if finding.id.startswith(f"{FindingIdPrefix.MAINT}-"):
-            return "maintainer_risk"
-        return "other"
+        """Only the scorecard and maintainer_risk normalizers emit QUALITY findings."""
+        return "scorecard" if finding.id.startswith(f"{FindingIdPrefix.SCORECARD}-") else "maintainer_risk"
 
     @staticmethod
     def _has_maintenance_issue(finding: Finding, issue_type: str) -> bool:
         """Detect whether the finding carries a maintenance signal."""
         if issue_type == "scorecard":
             return "Maintained" in finding.details.get("critical_issues", [])
-        if issue_type == "maintainer_risk":
-            maintenance_risk_types = ("stale_package", "infrequent_updates", "archived_repo")
-            risks = finding.details.get("risks", [])
-            return any(r.get("type", "") in maintenance_risk_types for r in risks)
-        return False
+        maintenance_risk_types = ("stale_package", "infrequent_updates", "archived_repo")
+        return any(r.get("type", "") in maintenance_risk_types for r in finding.details.get("risks", []))
 
     def _merge_quality_into_existing(
         self,
@@ -565,8 +556,8 @@ class ResultAggregator:
             "type": issue_type,
             "severity": finding.severity,
             "description": finding.description,
-            "scanners": finding.scanners or [],
-            "details": finding.details or {},
+            "scanners": finding.scanners,
+            "details": finding.details,
         }
 
         if agg_key in self.findings:
@@ -580,7 +571,6 @@ class ResultAggregator:
             "overall_score": (finding.details.get("overall_score") if issue_type == "scorecard" else None),
             "has_maintenance_issues": has_maintenance,
             "issue_count": 1,
-            "scanners": finding.scanners or [],
         }
         self.findings[agg_key] = Finding(
             id=f"QUALITY:{finding.component}:{finding.version}",

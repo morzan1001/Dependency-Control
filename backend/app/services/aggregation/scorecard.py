@@ -30,6 +30,8 @@ def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, di
     for finding in findings:
         if finding.type not in PACKAGE_FINDING_TYPES:
             continue
+        if any(issue["type"] == "scorecard" for issue in finding.details.get("quality_issues", [])):
+            continue
 
         component_key = f"{finding.component}@{finding.version}" if finding.version else finding.component
         scorecard_data = scorecard_cache.get(component_key)

@@ -276,7 +276,6 @@ class QualityDetails(_DetailsModel):
     overall_score: float | None = None
     has_maintenance_issues: bool = False
     issue_count: int | None = None
-    scanners: list[str] = []
     additional_finding_types: list[AdditionalFindingType] = []
     vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None

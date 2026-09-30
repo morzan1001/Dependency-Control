@@ -6,7 +6,9 @@ carries the group-qualified coordinate, so the join has to bridge the two spelli
 """
 
 from app.models.finding import Finding, FindingType, Severity
+from app.services.aggregation import ResultAggregator
 from app.services.aggregation.scorecard import enrich_with_scorecard
+from app.services.analyzers.deps_dev import DepsDevAnalyzer
 
 SCORECARD = {
     "overall_score": 2.4,
@@ -101,3 +103,23 @@ class TestScorecardStaysOnPackageFindings:
         enrich_with_scorecard([secret], {"rails@7.0.0": SCORECARD})
 
         assert "scorecard_context" not in secret.details
+
+
+class TestScorecardContextSkipsItsOwnAggregate:
+    def test_a_quality_aggregate_holding_the_scorecard_gets_no_second_copy(self):
+        scorecard = {
+            "overallScore": 2.4,
+            "date": "2026-08-01",
+            "checks": [{"name": "Maintained", "score": 0, "reason": "0 commits in 90 days"}],
+            "repository": {"name": "github.com/left-pad/left-pad"},
+        }
+        issue = DepsDevAnalyzer()._create_scorecard_issue(
+            "left-pad", "1.3.0", "pkg:npm/left-pad@1.3.0", "github.com/left-pad/left-pad", scorecard
+        )
+        aggregator = ResultAggregator()
+        aggregator.aggregate("deps_dev", {"scorecard_issues": [issue], "package_metadata": {}})
+
+        [quality] = aggregator.get_findings()
+
+        assert [entry["type"] for entry in quality.details["quality_issues"]] == ["scorecard"]
+        assert "scorecard_context" not in quality.details
