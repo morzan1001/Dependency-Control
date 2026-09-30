@@ -42,7 +42,7 @@ class InstrumentedAsyncClient:
     def __init__(
         self,
         service_name: str,
-        timeout: float = 30.0,
+        timeout: float | httpx.Timeout = 30.0,
         **kwargs: Any,
     ) -> None:
         self.service_name = service_name

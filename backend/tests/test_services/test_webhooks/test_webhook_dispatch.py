@@ -7,6 +7,8 @@ the consecutive-failure counter are the only places an operator can see that a h
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import importlib
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
@@ -16,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from app.core.config import settings
 from tests.mocks.fake_mongo import FakeDatabase
 
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
@@ -83,7 +86,7 @@ async def _streamed(body: bytes) -> AsyncIterator[bytes]:
 
 
 async def _deliver(status_code: int) -> tuple[bool, AsyncMock, AsyncMock]:
-    service = ws_module.WebhookService(timeout=1.0, max_retries=1)
+    service = ws_module.WebhookService(timeout=1.0, max_attempts=1)
     webhook = SimpleNamespace(id="wh-1", url="https://example.com/hook", webhook_type="generic", secret=None)
     status = AsyncMock()
     log = AsyncMock()
@@ -121,3 +124,142 @@ class TestDeliveryOutcome:
         assert delivered is True
         assert status.await_args.kwargs["success"] is True
         assert log.await_args.kwargs["success"] is True
+
+
+def _answering(*answers: httpx.Response | Exception) -> tuple[httpx.MockTransport, list[httpx.Request]]:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        answer = answers[len(sent) - 1]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return httpx.MockTransport(handler), sent
+
+
+def _answer(status_code: int, **headers: str) -> httpx.Response:
+    return httpx.Response(status_code, headers=headers, content=_streamed(b"nope"))
+
+
+async def _run(transport: httpx.MockTransport, *, attempts: int = 3, **webhook_fields) -> tuple[bool, dict, list]:
+    with patch.object(settings, "WEBHOOK_MAX_RETRIES", attempts):
+        service = ws_module.WebhookService(timeout=1.0)
+    webhook = SimpleNamespace(
+        **{"id": "wh-1", "url": "https://example.com/hook", "webhook_type": "generic", "secret": None, "headers": None}
+        | webhook_fields
+    )
+    log = AsyncMock()
+    sleep = AsyncMock()
+    with (
+        patch.object(ws_module, "build_pinned_transport", new=AsyncMock(return_value=transport)),
+        patch.object(service, "_update_webhook_status", new=AsyncMock()),
+        patch.object(service, "_log_webhook_delivery", new=log),
+        patch.object(ws_module.asyncio, "sleep", new=sleep),
+    ):
+        delivered = await service._send_webhook(db=MagicMock(), webhook=webhook, payload={}, event_type=_EVENT)
+    return delivered, log.await_args.kwargs, [call.args[0] for call in sleep.await_args_list]
+
+
+class TestRetryPolicy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [400, 401, 403, 404, 410, 413])
+    async def test_a_permanent_rejection_is_sent_once(self, status_code: int):
+        transport, sent = _answering(*(_answer(status_code) for _ in range(3)))
+
+        delivered, logged, sleeps = await _run(transport)
+
+        assert (delivered, len(sent), sleeps) == (False, 1, [])
+        assert (logged["status_code"], logged["error"], logged["retry_count"]) == (
+            status_code,
+            f"HTTP {status_code}: nope",
+            0,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [408, 500, 503])
+    async def test_a_transient_answer_is_retried_with_backoff(self, status_code: int):
+        transport, sent = _answering(*(_answer(status_code) for _ in range(3)))
+
+        delivered, logged, sleeps = await _run(transport)
+
+        assert (delivered, len(sent), sleeps) == (False, 3, [1, 2])
+        assert (logged["status_code"], logged["retry_count"]) == (status_code, 2)
+
+    @pytest.mark.asyncio
+    async def test_a_retry_after_within_the_cap_is_waited_for(self):
+        transport, sent = _answering(_answer(429, **{"Retry-After": "7"}), _answer(204))
+
+        delivered, logged, sleeps = await _run(transport)
+
+        assert (delivered, len(sent), sleeps) == (True, 2, [7])
+        assert logged["retry_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_retry_after_beyond_the_cap_ends_the_delivery(self):
+        transport, sent = _answering(*(_answer(429, **{"Retry-After": "3600"}) for _ in range(3)))
+
+        delivered, logged, sleeps = await _run(transport)
+
+        assert (delivered, len(sent), sleeps) == (False, 1, [])
+        assert logged["status_code"] == 429
+
+    @pytest.mark.asyncio
+    async def test_the_logged_status_and_error_belong_to_the_last_attempt(self):
+        transport, _ = _answering(_answer(503), httpx.ConnectTimeout("slow"), httpx.ConnectTimeout("slow"))
+
+        _, logged, _ = await _run(transport)
+
+        assert (logged["status_code"], logged["error"], logged["retry_count"]) == (
+            None,
+            "Request timed out after 1.0s",
+            2,
+        )
+
+    @pytest.mark.asyncio
+    async def test_zero_configured_retries_still_sends_once(self):
+        transport, sent = _answering(_answer(204))
+
+        delivered, logged, _ = await _run(transport, attempts=0)
+
+        assert (delivered, len(sent), logged["retry_count"]) == (True, 1, 0)
+
+
+class TestDeliveryHeaders:
+    @pytest.mark.asyncio
+    async def test_every_retry_carries_the_same_delivery_id(self):
+        transport, sent = _answering(_answer(503), _answer(204))
+
+        await _run(transport)
+
+        ids = [request.headers["X-Webhook-Delivery"] for request in sent]
+        assert ids[0] == ids[1]
+        assert len(ids[0]) == 32
+
+    @pytest.mark.asyncio
+    async def test_the_v2_signature_covers_the_timestamp_and_the_body(self):
+        transport, sent = _answering(_answer(204))
+
+        await _run(transport, secret="s3cret")
+
+        request = sent[0]
+        timestamp = request.headers["X-Webhook-Timestamp"]
+        signed = hmac.new(b"s3cret", f"{timestamp}.".encode() + request.content, hashlib.sha256).hexdigest()
+        assert request.headers["X-Webhook-Signature-V2"] == f"t={timestamp},v1={signed}"
+        body_signed = hmac.new(b"s3cret", request.content, hashlib.sha256).hexdigest()
+        assert request.headers["X-Webhook-Signature"] == f"sha256={body_signed}"
+
+    @pytest.mark.asyncio
+    async def test_stored_custom_headers_are_sent_but_cannot_replace_protocol_headers(self):
+        transport, sent = _answering(_answer(204))
+
+        delivered, _, _ = await _run(
+            transport, secret="s3cret", headers={"X-Webhook-Signature": "forged", "X-Team": "Müller"}
+        )
+
+        request = sent[0]
+        assert delivered is True
+        assert request.headers.get_list("X-Webhook-Signature") != ["forged"]
+        assert request.headers.get_list("X-Webhook-Signature")[0].startswith("sha256=")
+        assert (b"X-Team", "Müller".encode("latin-1")) in request.headers.raw

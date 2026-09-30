@@ -1,5 +1,7 @@
 """Tests for webhook URL and event validation."""
 
+import asyncio
+import socket
 from unittest.mock import patch
 
 import httpx
@@ -7,10 +9,7 @@ import pytest
 
 from app.core.constants import WEBHOOK_VALID_EVENTS
 from app.core.http_utils import InstrumentedAsyncClient
-from app.services.webhooks.validation import (
-    _PinnedIPTransport,
-    assert_safe_webhook_target,
-    build_pinned_transport,
+from app.schemas.webhook import (
     detect_webhook_type,
     validate_webhook_event_type,
     validate_webhook_events,
@@ -18,6 +17,23 @@ from app.services.webhooks.validation import (
     validate_webhook_url,
     validate_webhook_url_optional,
 )
+from app.services.webhooks.validation import (
+    WebhookTargetBlocked,
+    _PinnedIPTransport,
+    _resolve_and_vet,
+    build_pinned_transport,
+)
+
+
+def _resolving(*sockaddrs, seen: list[str] | None = None):
+    """Stand in for the running loop's resolver; must be entered inside the test's event loop."""
+
+    async def getaddrinfo(host, port, type=None):
+        if seen is not None:
+            seen.append(host)
+        return [(0, 0, 0, "", sockaddr) for sockaddr in sockaddrs]
+
+    return patch.object(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
 
 
 class TestValidateWebhookUrl:
@@ -103,7 +119,7 @@ class TestValidateWebhookUrl:
             validate_webhook_url(f"https://{host}/latest/meta-data/")
 
     def test_localhost_disabled_via_setting(self):
-        with patch("app.services.webhooks.validation.settings") as s:
+        with patch("app.schemas.webhook.settings") as s:
             s.WEBHOOK_ALLOW_LOCALHOST = False
             with pytest.raises(ValueError, match="Localhost"):
                 validate_webhook_url("http://localhost:8080/hook")
@@ -124,79 +140,65 @@ class TestValidateWebhookUrlOptional:
             validate_webhook_url_optional("http://example.com/hook")
 
 
-class TestAssertSafeWebhookTarget:
+class TestResolveAndVet:
     @pytest.mark.asyncio
-    async def test_loopback_host_skipped(self):
-        await assert_safe_webhook_target("http://localhost:8080/hook")
-        await assert_safe_webhook_target("http://127.0.0.1/hook")
-        await assert_safe_webhook_target("http://[::1]/hook")
-
-    @pytest.mark.asyncio
-    async def test_blocked_ip_literal_rejected(self):
-        with pytest.raises(ValueError, match="blocked IP range"):
-            await assert_safe_webhook_target("https://192.168.1.1/hook")
+    @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1"])
+    async def test_loopback_hosts_are_exempt_from_pinning(self, host):
+        assert await _resolve_and_vet(host) is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("sockaddr", "url"),
+        ("sockaddr", "host"),
         [
-            pytest.param(("10.0.0.5", 0), "https://attacker.example.com/hook", id="private-ipv4"),
-            pytest.param(("169.254.169.254", 0), "https://metadata-spoof.example.com/", id="metadata-ipv4"),
-            pytest.param(("4000::1", 0, 0, 0), "https://attacker.example.com/hook", id="reserved-ipv6"),
+            pytest.param(("10.0.0.5", 0), "attacker.example.com", id="private-ipv4"),
+            pytest.param(("169.254.169.254", 0), "metadata-spoof.example.com", id="metadata-ipv4"),
+            pytest.param(("4000::1", 0, 0, 0), "attacker.example.com", id="reserved-ipv6"),
         ],
     )
-    async def test_resolved_to_blocked_ip_rejected(self, sockaddr, url):
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", sockaddr)]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            with pytest.raises(ValueError, match="resolves to"):
-                await assert_safe_webhook_target(url)
-
-    @pytest.mark.asyncio
-    async def test_resolved_to_public_ip_passes(self):
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("93.184.216.34", 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            await assert_safe_webhook_target("https://example.com/hook")
+    async def test_a_name_resolving_to_a_blocked_address_is_refused(self, sockaddr, host):
+        with _resolving(sockaddr), pytest.raises(WebhookTargetBlocked) as refused:
+            await _resolve_and_vet(host)
+        assert str(refused.value) == "Target is not an allowed webhook destination"
+        assert f"resolves to blocked address {sockaddr[0]}" in refused.value.detail
 
     @pytest.mark.asyncio
     async def test_returns_vetted_ip_for_hostname(self):
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("93.184.216.34", 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            assert await assert_safe_webhook_target("https://example.com/hook") == "93.184.216.34"
+        with _resolving(("93.184.216.34", 0)):
+            assert await _resolve_and_vet("example.com") == "93.184.216.34"
 
     @pytest.mark.asyncio
-    async def test_returns_ip_literal_for_public_ip(self):
-        assert await assert_safe_webhook_target("https://93.184.216.34/hook") == "93.184.216.34"
+    async def test_a_public_ip_literal_pins_to_itself(self):
+        assert await _resolve_and_vet("93.184.216.34") == "93.184.216.34"
 
     @pytest.mark.asyncio
-    async def test_returns_none_for_loopback(self):
-        assert await assert_safe_webhook_target("http://localhost:8080/hook") is None
+    async def test_a_blocked_ip_literal_is_refused(self):
+        with pytest.raises(WebhookTargetBlocked):
+            await _resolve_and_vet("192.168.1.1")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("resolved", "url"),
+        "sockaddrs",
         [
-            pytest.param([(0, 0, 0, "", ("not-an-ip", 0))], "https://weird.example.com/hook", id="unparseable"),
-            pytest.param([], "https://empty.example.com/hook", id="empty"),
+            pytest.param([("not-an-ip", 0)], id="unparseable"),
+            pytest.param([], id="empty"),
         ],
     )
-    async def test_resolution_without_a_usable_ip_fails_closed(self, resolved, url):
+    async def test_resolution_without_a_usable_ip_fails_closed(self, sockaddrs):
         # Returning None would let an unpinned transport reopen the rebinding window.
-        async def fake_getaddrinfo(host, port, type=None):
-            return resolved
+        with _resolving(*sockaddrs), pytest.raises(WebhookTargetBlocked) as refused:
+            await _resolve_and_vet("weird.example.com")
+        assert "no usable IP" in refused.value.detail
 
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            with pytest.raises(ValueError, match="no usable IP"):
-                await assert_safe_webhook_target(url)
+    @pytest.mark.asyncio
+    async def test_a_resolver_failure_is_a_retryable_connect_error(self):
+        async def failing(host, port, type=None):
+            raise socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution")
+
+        with (
+            patch.object(asyncio.get_running_loop(), "getaddrinfo", failing),
+            pytest.raises(httpx.ConnectError, match="Could not resolve"),
+        ):
+            await _resolve_and_vet("flaky.example.com")
 
 
 class TestBuildPinnedTransport:
@@ -204,11 +206,7 @@ class TestBuildPinnedTransport:
 
     @pytest.mark.asyncio
     async def test_hostname_pins_to_vetted_ip(self):
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("93.184.216.34", 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
+        with _resolving(("93.184.216.34", 0)):
             transport = await build_pinned_transport("https://attacker.example.com/hook")
 
         assert isinstance(transport, _PinnedIPTransport)
@@ -228,11 +226,7 @@ class TestBuildPinnedTransport:
     @pytest.mark.asyncio
     async def test_rebinding_cannot_redirect_pinned_connection(self):
         # DNS returns a public IP at vetting time; transport is pinned to it.
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("93.184.216.34", 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
+        with _resolving(("93.184.216.34", 0)):
             transport = await build_pinned_transport("https://attacker.example.com/hook")
 
         # A later resolution to the metadata IP is ignored; the pinned target stays the vetted address.
@@ -242,19 +236,10 @@ class TestBuildPinnedTransport:
         assert request.url.host != "169.254.169.254"
 
     @pytest.mark.asyncio
-    async def test_blocked_resolution_raises(self):
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("169.254.169.254", 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            with pytest.raises(ValueError, match="resolves to"):
-                await build_pinned_transport("https://metadata-spoof.example.com/")
-
-    @pytest.mark.asyncio
-    async def test_blocked_ip_literal_raises(self):
-        with pytest.raises(ValueError, match="blocked IP range"):
+    async def test_a_url_that_breaks_the_stored_url_rules_is_refused(self):
+        with pytest.raises(WebhookTargetBlocked) as refused:
             await build_pinned_transport("https://192.168.1.1/hook")
+        assert "private, reserved, or link-local" in refused.value.detail
 
     @pytest.mark.asyncio
     async def test_ip_literal_pins_to_itself(self):
@@ -279,22 +264,10 @@ class TestBuildPinnedTransport:
         assert plain._pool._ssl_context is shared
 
     @pytest.mark.asyncio
-    async def test_unpinnable_resolution_does_not_fall_back_to_plain_transport(self):
-        # A non-loopback host resolving to no usable IP must raise, not yield a re-resolving plain transport.
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("garbage", 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            with pytest.raises(ValueError, match="no usable IP"):
-                await build_pinned_transport("https://weird.example.com/hook")
-
-    @pytest.mark.asyncio
-    async def test_pin_only_applies_to_matching_host(self):
-        # A request whose host differs from the pinned hostname must not be rewritten.
+    async def test_a_request_for_another_host_is_refused(self):
         transport = _PinnedIPTransport("attacker.example.com", "93.184.216.34")
-        request = httpx.Request("POST", "https://other.example.com/hook")
-        assert (request.url.host or "").lower() != transport._hostname
+        with pytest.raises(ValueError, match="not an allowed webhook destination"):
+            await transport.handle_async_request(httpx.Request("POST", "https://other.example.com/hook"))
 
 
 class TestValidateWebhookEvents:
@@ -320,13 +293,9 @@ class TestValidateWebhookEvents:
         with pytest.raises(ValueError, match="Invalid event"):
             validate_webhook_events(events)
 
-    def test_empty_list_raises_when_not_allowed(self):
+    def test_empty_list_raises(self):
         with pytest.raises(ValueError, match="At least one"):
-            validate_webhook_events([], allow_empty=False)
-
-    def test_empty_list_passes_when_allowed(self):
-        result = validate_webhook_events([], allow_empty=True)
-        assert result == []
+            validate_webhook_events([])
 
 
 class TestValidateWebhookEventsOptional:
@@ -389,3 +358,45 @@ class TestDetectWebhookType:
     )
     def test_webhook_type_detected_from_url(self, url, expected):
         assert detect_webhook_type(url) == expected
+
+
+async def _sent_through(transport: httpx.AsyncHTTPTransport, url: str) -> httpx.Request:
+    sent: list[httpx.Request] = []
+
+    async def capture(self, request):
+        sent.append(request)
+        return httpx.Response(204)
+
+    with patch.object(httpx.AsyncHTTPTransport, "handle_async_request", capture):
+        async with httpx.AsyncClient(transport=transport) as client:
+            await client.post(url)
+    return sent[0]
+
+
+class TestIdnHostPinning:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("url", "a_label"),
+        [
+            pytest.param("https://xn--mnchen-3ya.de/hook", "xn--mnchen-3ya.de", id="punycode"),
+            pytest.param(
+                "https://xn--mnchen-3ya.attacker.example/hook",
+                "xn--mnchen-3ya.attacker.example",
+                id="punycode-subdomain",
+            ),
+            pytest.param("https://XN--MNCHEN-3YA.DE/hook", "xn--mnchen-3ya.de", id="uppercase-punycode"),
+            pytest.param("https://münchen.de/hook", "xn--mnchen-3ya.de", id="unicode"),
+            pytest.param("https://example.com。evil/hook", "example.com.evil", id="ideographic-full-stop"),
+        ],
+    )
+    async def test_the_request_goes_to_the_vetted_ip_of_the_name_that_was_vetted(self, url, a_label):
+        seen: list[str] = []
+        with _resolving(("93.184.216.34", 0), seen=seen):
+            transport = await build_pinned_transport(url)
+
+        request = await _sent_through(transport, url)
+
+        assert seen == [a_label]
+        assert request.url.host == "93.184.216.34"
+        assert request.extensions["sni_hostname"] == a_label
+        assert request.headers["Host"] == a_label

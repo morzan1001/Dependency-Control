@@ -8,12 +8,10 @@ import hmac
 import json
 import logging
 import time
+import uuid
 from collections.abc import Mapping
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from app.models.webhook import Webhook
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -28,9 +26,11 @@ from app.core.constants import (
     WEBHOOK_EVENT_SCAN_COMPLETED,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
     WEBHOOK_HEADER_CONTENT_TYPE,
+    WEBHOOK_HEADER_DELIVERY,
     WEBHOOK_HEADER_EVENT,
     WEBHOOK_HEADER_ID,
     WEBHOOK_HEADER_SIGNATURE,
+    WEBHOOK_HEADER_SIGNATURE_V2,
     WEBHOOK_HEADER_TEST,
     WEBHOOK_HEADER_TIMESTAMP,
     WEBHOOK_HEADER_USER_AGENT,
@@ -38,9 +38,12 @@ from app.core.constants import (
     WEBHOOK_USER_AGENT_VALUE,
     WebhookType,
 )
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, _retry_after_seconds
 from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
+from app.models.webhook import Webhook
+from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
 from app.repositories.webhooks import GLOBAL_WEBHOOK_SCOPE
+from app.schemas.webhook import effective_webhook_type
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
@@ -51,7 +54,16 @@ from app.services.webhooks.types import (
     TestWebhookPayload,
     VulnerabilityFoundPayload,
 )
-from app.services.webhooks.validation import build_pinned_transport, effective_webhook_type, validate_webhook_url
+from app.services.webhooks.validation import WebhookTargetBlocked, build_pinned_transport
+
+_CIRCUIT_BREAKER_THRESHOLD = 5
+_CIRCUIT_BREAKER_DURATION = timedelta(hours=1)
+# Longer waits are not worth it: delivery is awaited inside the ingest request or worker slot.
+_RETRY_AFTER_CAP_SECONDS = 10.0
+
+
+def _circuit_closed(now: datetime) -> dict[str, Any]:
+    return {"$or": [{"circuit_breaker_until": None}, {"circuit_breaker_until": {"$lte": now}}]}
 
 
 def _event_match_set(event_type: str) -> list[str]:
@@ -69,10 +81,11 @@ class WebhookService:
     def __init__(
         self,
         timeout: float | None = None,
-        max_retries: int | None = None,
+        max_attempts: int | None = None,
     ):
         self.timeout = timeout if timeout is not None else settings.WEBHOOK_TIMEOUT_SECONDS
-        self.max_retries = max_retries if max_retries is not None else settings.WEBHOOK_MAX_RETRIES
+        # WEBHOOK_MAX_RETRIES counts attempts; even 0 still delivers once.
+        self.max_attempts = max(1, max_attempts if max_attempts is not None else settings.WEBHOOK_MAX_RETRIES)
 
     def _generate_signature(self, secret: str, payload: str) -> str:
         return hmac.new(
@@ -91,22 +104,22 @@ class WebhookService:
         timestamp = str(int(time.time()))
 
         headers = {
+            **(webhook.headers or {}),
             WEBHOOK_HEADER_CONTENT_TYPE: "application/json",
             WEBHOOK_HEADER_USER_AGENT: WEBHOOK_USER_AGENT_VALUE,
             WEBHOOK_HEADER_EVENT: event_type,
             WEBHOOK_HEADER_TIMESTAMP: timestamp,
             WEBHOOK_HEADER_ID: webhook.id,
+            WEBHOOK_HEADER_DELIVERY: uuid.uuid4().hex,
         }
 
         if is_test:
             headers[WEBHOOK_HEADER_TEST] = "true"
 
         if webhook.secret:
-            signature = self._generate_signature(webhook.secret, json_payload)
-            headers[WEBHOOK_HEADER_SIGNATURE] = f"sha256={signature}"
-
-        if webhook.headers:
-            headers.update(webhook.headers)
+            headers[WEBHOOK_HEADER_SIGNATURE] = f"sha256={self._generate_signature(webhook.secret, json_payload)}"
+            timed_signature = self._generate_signature(webhook.secret, f"{timestamp}.{json_payload}")
+            headers[WEBHOOK_HEADER_SIGNATURE_V2] = f"t={timestamp},v1={timed_signature}"
 
         return headers
 
@@ -141,8 +154,6 @@ class WebhookService:
     ) -> None:
         """Track delivery state in DB with circuit-breaker — required for multi-pod
         deployments where any pod may fire a webhook."""
-        from datetime import timedelta
-
         try:
             now = datetime.now(timezone.utc)
 
@@ -159,9 +170,6 @@ class WebhookService:
                     },
                 )
             else:
-                CIRCUIT_BREAKER_THRESHOLD = 5
-                CIRCUIT_BREAKER_DURATION_HOURS = 1
-
                 await db.webhooks.update_one(
                     {"_id": webhook_id},
                     {
@@ -171,16 +179,12 @@ class WebhookService:
                 )
 
                 # Conditional update is race-safe: flips only once per threshold breach, avoiding duplicate logs.
-                circuit_until = now + timedelta(hours=CIRCUIT_BREAKER_DURATION_HOURS)
+                circuit_until = now + _CIRCUIT_BREAKER_DURATION
                 result = await db.webhooks.find_one_and_update(
                     {
                         "_id": webhook_id,
-                        "consecutive_failures": {"$gte": CIRCUIT_BREAKER_THRESHOLD},
-                        "$or": [
-                            {"circuit_breaker_until": {"$exists": False}},
-                            {"circuit_breaker_until": None},
-                            {"circuit_breaker_until": {"$lte": now}},
-                        ],
+                        "consecutive_failures": {"$gte": _CIRCUIT_BREAKER_THRESHOLD},
+                        **_circuit_closed(now),
                     },
                     {"$set": {"circuit_breaker_until": circuit_until}},
                     return_document=True,
@@ -208,8 +212,6 @@ class WebhookService:
         error: str | None = None,
         retry_count: int = 0,
     ) -> None:
-        from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
-
         try:
             deliveries_repo = WebhookDeliveriesRepository(db)
 
@@ -296,28 +298,49 @@ class WebhookService:
         return TeamsFormatter.build_generic_card(subject=subject, message=message, url=None)
 
     async def _post_bounded(
-        self, client_name: str, url: str, content: str, headers: Mapping[str, str]
-    ) -> tuple[int, str]:
-        """POST under one overall deadline; returns the status and, for a non-2xx answer, a capped body prefix."""
-        # A stored URL predates today's rules, which WebhookCreate/WebhookUpdate enforce only inbound.
-        validate_webhook_url(url)
-        async with asyncio.timeout(self.timeout):
-            transport = await build_pinned_transport(url)
-            async with (
-                InstrumentedAsyncClient(client_name, timeout=self.timeout, transport=transport) as client,
-                # identity keeps the raw prefix readable; decoding compressed chunks has no output limit.
-                client.stream(
-                    "POST", url, content=content, headers={**headers, "Accept-Encoding": "identity"}
-                ) as response,
-            ):
-                if 200 <= response.status_code < 300:
-                    return response.status_code, ""
-                body = bytearray()
-                async for chunk in response.aiter_raw():
-                    body += chunk
-                    if len(body) >= WEBHOOK_RESPONSE_BODY_LIMIT_BYTES:
-                        break
-                return response.status_code, body[:WEBHOOK_RESPONSE_BODY_LIMIT_BYTES].decode("utf-8", "replace")
+        self, client_name: str, webhook: Webhook, content: str, headers: Mapping[str, str]
+    ) -> tuple[int | None, str | None, float | None]:
+        """One POST under one overall deadline: the status, the error text, and the delay before a retry (None: do not retry)."""
+        try:
+            async with asyncio.timeout(self.timeout):
+                transport = await build_pinned_transport(webhook.url)
+                request_headers = httpx.Headers(encoding="latin-1")
+                # Item assignment is case-insensitive, so a stored case-variant cannot duplicate a protocol header.
+                for name, value in {**headers, "Accept-Encoding": "identity"}.items():
+                    request_headers[name] = value
+                async with (
+                    InstrumentedAsyncClient(
+                        client_name, timeout=httpx.Timeout(self.timeout, connect=5.0), transport=transport
+                    ) as client,
+                    # identity keeps the raw prefix readable; decoding compressed chunks has no output limit.
+                    client.stream("POST", webhook.url, content=content, headers=request_headers) as response,
+                ):
+                    status = response.status_code
+                    if 200 <= status < 300:
+                        return status, None, None
+                    body = bytearray()
+                    async for chunk in response.aiter_raw():
+                        body += chunk
+                        if len(body) >= WEBHOOK_RESPONSE_BODY_LIMIT_BYTES:
+                            break
+                    text = body[:WEBHOOK_RESPONSE_BODY_LIMIT_BYTES].decode("utf-8", "replace")
+                    error = f"HTTP {status}: {text[:200]}"
+                    if status < 500 and status not in (408, 429):
+                        return status, error, None
+                    delay = _retry_after_seconds(response) or 0.0
+                    return status, error, delay if delay <= _RETRY_AFTER_CAP_SECONDS else None
+        except WebhookTargetBlocked as exc:
+            logger.warning("Webhook %s refused: %s", webhook.id, exc.detail)
+            return None, str(exc), None
+        except UnicodeEncodeError:
+            return None, "Invalid header value", None
+        except (httpx.TimeoutException, TimeoutError):
+            return None, f"Request timed out after {self.timeout}s", 0.0
+        except httpx.RequestError as exc:
+            return None, str(exc), 0.0
+        except Exception as exc:
+            logger.exception("Unexpected error delivering webhook %s", webhook.id)
+            return None, f"Unexpected error: {exc}", 0.0
 
     async def _send_webhook(
         self,
@@ -331,77 +354,38 @@ class WebhookService:
         json_payload = json.dumps(self._format_payload(webhook_type, event_type, payload))
         headers = self._build_headers(webhook, event_type, json_payload)
 
-        retry_count = 0
-        last_error: str | None = None
-        last_status_code: int | None = None
-
-        while retry_count < self.max_retries:
-            try:
-                status_code, body_prefix = await self._post_bounded(
-                    "Webhook Delivery", webhook.url, json_payload, headers
-                )
-                last_status_code = status_code
-
-                if 200 <= status_code < 300:
-                    logger.info(f"Webhook {webhook.id} triggered successfully for {event_type} (status: {status_code})")
-                    await self._update_webhook_status(db, webhook.id, success=True)
-                    await self._log_webhook_delivery(
-                        db,
-                        webhook.id,
-                        event_type,
-                        payload,
-                        success=True,
-                        status_code=status_code,
-                        retry_count=retry_count,
-                    )
-                    return True
-                logger.warning(
-                    f"Webhook {webhook.id} returned non-success status {status_code} "
-                    f"for {event_type}: {body_prefix[:200]}"
-                )
-                last_error = f"HTTP {status_code}: {body_prefix[:200]}"
-
-            except ValueError as e:
-                # SSRF policy violation — don't retry.
-                logger.warning(f"Webhook {webhook.id} blocked for {event_type}: {e}")
-                last_error = f"Blocked target: {e}"
+        for attempt in range(1, self.max_attempts + 1):
+            status_code, error, retry_delay = await self._post_bounded(
+                "Webhook Delivery", webhook, json_payload, headers
+            )
+            if error is None:
+                logger.info(f"Webhook {webhook.id} triggered successfully for {event_type} (status: {status_code})")
                 break
-            except (httpx.TimeoutException, TimeoutError):
-                logger.warning(f"Webhook {webhook.id} timed out for {event_type} (attempt {retry_count + 1})")
-                last_error = "Timeout"
-            except httpx.RequestError as e:
-                logger.warning(f"Webhook {webhook.id} request failed for {event_type}: {e} (attempt {retry_count + 1})")
-                last_error = str(e)
-            except Exception as e:
-                logger.exception("Unexpected error sending webhook %s for %s: %s", webhook.id, event_type, e)
-                last_error = str(e)
+            if retry_delay is None or attempt == self.max_attempts:
+                logger.error(
+                    f"Webhook {webhook.id} failed after {attempt} attempts for {event_type}. Last error: {error}"
+                )
+                break
+            logger.warning(f"Webhook {webhook.id} attempt {attempt} for {event_type} failed, retrying: {error}")
+            await asyncio.sleep(max(retry_delay, WEBHOOK_BACKOFF_BASE ** (attempt - 1)))
 
-            retry_count += 1
-            if retry_count < self.max_retries:
-                # Exponential backoff: 1s, 2s, 4s (with base=2)
-                await asyncio.sleep(WEBHOOK_BACKOFF_BASE ** (retry_count - 1))
-
-        logger.error(
-            f"Webhook {webhook.id} failed after {self.max_retries} attempts for {event_type}. Last error: {last_error}"
-        )
-        await self._update_webhook_status(db, webhook.id, success=False)
+        success = error is None
+        await self._update_webhook_status(db, webhook.id, success=success)
         await self._log_webhook_delivery(
             db,
             webhook.id,
             event_type,
             payload,
-            success=False,
-            status_code=last_status_code,
-            error=last_error,
-            retry_count=retry_count,
+            success=success,
+            status_code=status_code,
+            error=error,
+            retry_count=attempt - 1,
         )
-        return False
+        return success
 
     async def _fetch_webhooks_by_query(
         self, db: AsyncIOMotorDatabase, query: dict[str, Any], label: str
     ) -> list[Webhook]:
-        from app.models.webhook import Webhook
-
         results: list[Webhook] = []
         cursor = db.webhooks.find(query)
         async for webhook_data in cursor:
@@ -415,20 +399,11 @@ class WebhookService:
         self, db: AsyncIOMotorDatabase, project_id: str | None, event_type: str
     ) -> list[Webhook]:
         """Active webhooks for the event across project, team, and global scope, excluding circuit-broken ones."""
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc)
-
         # Match both dot-notation and snake_case alias forms stored in subscriptions.
-        event_names = _event_match_set(event_type)
         base_conditions: dict[str, Any] = {
             "is_active": True,
-            "events": {"$in": event_names},
-            "$or": [
-                {"circuit_breaker_until": {"$exists": False}},
-                {"circuit_breaker_until": None},
-                {"circuit_breaker_until": {"$lt": now}},
-            ],
+            "events": {"$in": _event_match_set(event_type)},
+            **_circuit_closed(datetime.now(timezone.utc)),
         }
 
         webhooks: list[Webhook] = []
@@ -605,18 +580,9 @@ class WebhookService:
         event_type: str = WEBHOOK_EVENT_SCAN_COMPLETED,
     ) -> dict[str, Any]:
         test_payload: TestWebhookPayload = {
-            "event": event_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **self._build_base_payload(event_type, "test-scan-id", "test-project-id", "Test Project"),
             "test": True,
             "message": "This is a test webhook from DependencyControl",
-            "scan": {
-                "id": "test-scan-id",
-                "url": None,
-            },
-            "project": {
-                "id": "test-project-id",
-                "name": "Test Project",
-            },
         }
 
         # Teams gets the test card: formatting test_payload's event would produce a scan card.
@@ -625,53 +591,13 @@ class WebhookService:
         headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
 
         start_time = time.monotonic()
-
-        try:
-            status_code, body_prefix = await self._post_bounded("Webhook Test", webhook.url, json_payload, headers)
-            response_time_ms = (time.monotonic() - start_time) * 1000
-
-            if 200 <= status_code < 300:
-                return {
-                    "success": True,
-                    "status_code": status_code,
-                    "error": None,
-                    "response_time_ms": round(response_time_ms, 2),
-                }
-            return {
-                "success": False,
-                "status_code": status_code,
-                "error": f"HTTP {status_code}: {body_prefix[:200]}",
-                "response_time_ms": round(response_time_ms, 2),
-            }
-
-        except ValueError as e:
-            return {
-                "success": False,
-                "status_code": None,
-                "error": f"Blocked target: {e}",
-                "response_time_ms": None,
-            }
-        except (httpx.TimeoutException, TimeoutError):
-            return {
-                "success": False,
-                "status_code": None,
-                "error": f"Request timed out after {self.timeout}s",
-                "response_time_ms": None,
-            }
-        except httpx.RequestError as e:
-            return {
-                "success": False,
-                "status_code": None,
-                "error": str(e),
-                "response_time_ms": None,
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "status_code": None,
-                "error": f"Unexpected error: {e}",
-                "response_time_ms": None,
-            }
+        status_code, error, _ = await self._post_bounded("Webhook Test", webhook, json_payload, headers)
+        return {
+            "success": error is None,
+            "status_code": status_code,
+            "error": error,
+            "response_time_ms": None if status_code is None else round((time.monotonic() - start_time) * 1000, 2),
+        }
 
 
 webhook_service = WebhookService()

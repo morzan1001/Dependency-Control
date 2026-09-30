@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.core.constants import WEBHOOK_EVENT_ALIASES, WEBHOOK_EVENT_SCAN_COMPLETED
 from app.models.webhook import Webhook
-from app.services.webhooks.validation import (
+from app.schemas.webhook import (
     validate_webhook_event_type,
     validate_webhook_events,
 )

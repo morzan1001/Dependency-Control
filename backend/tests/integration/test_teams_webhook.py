@@ -4,7 +4,7 @@ import pytest
 
 from app.models.webhook import Webhook
 from app.schemas.webhook import WebhookCreate, WebhookUpdate
-from app.services.webhooks.validation import detect_webhook_type
+from app.schemas.webhook import detect_webhook_type
 
 
 class TestDetectWebhookTypeIntegration:

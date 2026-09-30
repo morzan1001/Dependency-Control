@@ -1,4 +1,4 @@
-"""Shared validation for webhook URLs and events."""
+"""DNS-pinned transport that keeps webhook delivery on the address that was vetted."""
 
 from __future__ import annotations
 
@@ -6,195 +6,80 @@ import asyncio
 import ipaddress
 import socket
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
-from app.core.config import settings
-from app.core.constants import (
-    WEBHOOK_ACCEPTED_EVENT_NAMES,
-    WEBHOOK_BLOCKED_HOSTNAMES,
-    WEBHOOK_EVENT_ALIASES,
-    WEBHOOK_LOOPBACK_HOSTS,
-    WEBHOOK_VALID_EVENTS,
-    WebhookType,
-)
+from app.core.constants import WEBHOOK_LOOPBACK_HOSTS
 from app.core.http_utils import SSL_CONTEXT
-
-IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
-
-
-def _is_blocked_ip(ip: IPAddress) -> bool:
-    return bool(
-        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
-    )
+from app.schemas.webhook import is_blocked_ip, validate_webhook_url
 
 
-def _parse_ip(host: str) -> IPAddress | None:
-    try:
-        return ipaddress.ip_address(host)
-    except ValueError:
+class WebhookTargetBlocked(ValueError):
+    """Carries the resolved address in ``detail`` for the server log; the public message stays fixed."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__("Target is not an allowed webhook destination")
+        self.detail = detail
+
+
+async def _resolve_and_vet(host: str) -> str | None:
+    """Return the first vetted IP for ``host``; None only for loopback hosts, which are exempt from pinning."""
+    if host in WEBHOOK_LOOPBACK_HOSTS:
         return None
-
-
-def validate_webhook_url(url: str) -> str:
-    """Reject empty, non-http(s), userinfo-bypass, and private/metadata targets."""
-    if not url:
-        raise ValueError("URL cannot be empty")
-
     try:
-        parsed = urlparse(url)
-    except ValueError as exc:
-        raise ValueError(f"Invalid URL: {exc}") from exc
-
-    scheme = (parsed.scheme or "").lower()
-    if scheme not in ("http", "https"):
-        raise ValueError("Webhook URL scheme must be http or https")
-
-    host = (parsed.hostname or "").lower()
-    if not host:
-        raise ValueError("Webhook URL must have a hostname")
-
-    if host in WEBHOOK_BLOCKED_HOSTNAMES:
-        raise ValueError(f"Webhook host '{host}' is not an allowed target")
-
-    is_loopback_host = host in WEBHOOK_LOOPBACK_HOSTS
-
-    if is_loopback_host and not settings.WEBHOOK_ALLOW_LOCALHOST:
-        raise ValueError("Localhost webhook targets are disabled in this environment")
-
-    if scheme == "http" and not is_loopback_host:
-        raise ValueError("Plain HTTP is only allowed for loopback hosts")
-
-    ip = _parse_ip(host)
-    if ip is not None and not is_loopback_host and _is_blocked_ip(ip):
-        raise ValueError(f"Webhook host '{host}' is in a private, reserved, or link-local range")
-
-    return url
-
-
-def validate_webhook_url_optional(url: str | None) -> str | None:
-    if url is None:
-        return None
-    return validate_webhook_url(url)
-
-
-async def _resolve_and_vet(url: str) -> str | None:
-    """Resolve the host and return the first vetted-safe IP to pin to; None only for pin-exempt (empty/loopback) hosts. Raises (fail-closed) if any resolved IP is blocked or none is usable."""
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    if not host or host in WEBHOOK_LOOPBACK_HOSTS:
-        return None
-
-    ip_literal = _parse_ip(host)
-    if ip_literal is not None:
-        if _is_blocked_ip(ip_literal):
-            raise ValueError(f"Refusing webhook delivery: host '{host}' is in a blocked IP range")
-        return str(ip_literal)
-
-    loop = asyncio.get_event_loop()
-    try:
-        infos = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise ValueError(f"Could not resolve webhook host '{host}': {exc}") from exc
+        raise httpx.ConnectError(f"Could not resolve webhook host '{host}': {exc}") from exc
 
     safe_ip: str | None = None
     for info in infos:
         addr = info[4][0]
         if not isinstance(addr, str):
             continue
-        ip_str = addr.split("%", 1)[0]
         try:
-            resolved = ipaddress.ip_address(ip_str)
+            resolved = ipaddress.ip_address(addr.split("%", 1)[0])
         except ValueError:
             continue
-        if _is_blocked_ip(resolved):
-            raise ValueError(f"Refusing webhook delivery: host '{host}' resolves to blocked address {resolved}")
+        if is_blocked_ip(resolved):
+            raise WebhookTargetBlocked(f"host '{host}' resolves to blocked address {resolved}")
         if safe_ip is None:
             safe_ip = str(resolved)
     if safe_ip is None:
-        # Fail closed: no usable IP means we cannot pin, so refuse rather than connect unpinned.
-        raise ValueError(f"Refusing webhook delivery: host '{host}' resolved to no usable IP address")
+        raise WebhookTargetBlocked(f"host '{host}' resolved to no usable IP address")
     return safe_ip
 
 
-async def assert_safe_webhook_target(url: str) -> str | None:
-    """Return the vetted-safe IP the caller MUST pin to (httpx re-resolves at connect, so the IP alone is not DNS-rebinding-safe — use build_pinned_transport)."""
-    return await _resolve_and_vet(url)
-
-
 class _PinnedIPTransport(httpx.AsyncHTTPTransport):
-    """httpx transport that pins every connection for ``hostname`` to the pre-vetted ``ip`` (only the TCP target changes; hostname stays for Host header and TLS SNI)."""
+    """Sends every request for ``hostname`` to the vetted ``ip``; Host header and TLS SNI keep the hostname."""
 
     def __init__(self, hostname: str, ip: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._hostname = hostname.lower()
+        self._hostname = hostname
         self._ip = ip
 
     def _pin(self, request: httpx.Request) -> httpx.Request:
         resolved = ipaddress.ip_address(self._ip)
-        if _is_blocked_ip(resolved):
-            raise ValueError(f"Refusing webhook delivery: pinned address {resolved} is in a blocked range")
+        if is_blocked_ip(resolved):
+            raise WebhookTargetBlocked(f"pinned address {resolved} is in a blocked range")
         request.extensions = {**request.extensions, "sni_hostname": self._hostname}
         request.url = request.url.copy_with(host=self._ip)
         return request
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if (request.url.host or "").lower() == self._hostname:
-            request = self._pin(request)
-        return await super().handle_async_request(request)
+        if request.url.raw_host.decode("ascii") != self._hostname:
+            raise WebhookTargetBlocked(f"request for '{request.url.host}' on a transport pinned to '{self._hostname}'")
+        return await super().handle_async_request(self._pin(request))
 
 
 async def build_pinned_transport(url: str) -> httpx.AsyncHTTPTransport:
-    """Return an httpx transport pinned to ``url``'s vetted IP (defeats DNS rebinding); raises if the host resolves to a blocked address; plain transport for loopback/unpinnable targets."""
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    safe_ip = await _resolve_and_vet(url)
+    """Transport pinned to the vetted IP of ``url``'s host, so a rebinding DNS answer cannot redirect delivery."""
+    try:
+        # A stored URL predates today's rules, which WebhookCreate/WebhookUpdate enforce only inbound.
+        validate_webhook_url(url)
+    except ValueError as exc:
+        raise WebhookTargetBlocked(str(exc)) from exc
+    host = httpx.URL(url).raw_host.decode("ascii")
+    safe_ip = await _resolve_and_vet(host)
     if safe_ip is None:
-        # Reached only for empty/loopback hosts (pin-exempt).
         return httpx.AsyncHTTPTransport(verify=SSL_CONTEXT)
     return _PinnedIPTransport(host, safe_ip, verify=SSL_CONTEXT)
-
-
-def validate_webhook_events(events: list[str], allow_empty: bool = False) -> list[str]:
-    if not allow_empty and not events:
-        raise ValueError("At least one event type is required")
-
-    invalid_events = [e for e in events if e not in WEBHOOK_ACCEPTED_EVENT_NAMES]
-    if invalid_events:
-        raise ValueError(f"Invalid event types: {invalid_events}. Valid events: {WEBHOOK_VALID_EVENTS}")
-    return list(dict.fromkeys(WEBHOOK_EVENT_ALIASES.get(e, e) for e in events))
-
-
-def validate_webhook_events_optional(
-    events: list[str] | None,
-) -> list[str] | None:
-    if events is None:
-        return None
-    return validate_webhook_events(events, allow_empty=False)
-
-
-def validate_webhook_event_type(event_type: str) -> str:
-    if event_type not in WEBHOOK_ACCEPTED_EVENT_NAMES:
-        raise ValueError(f"Invalid event type: {event_type}. Valid events: {WEBHOOK_VALID_EVENTS}")
-    return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
-
-
-def detect_webhook_type(url: str) -> WebhookType:
-    """Returns "teams" for *.webhook.office.com, *.logic.azure.com/workflows/, and *.api.powerplatform.com/workflows/."""
-    parsed = urlparse(url)
-    hostname = (parsed.hostname or "").lower()
-    path = parsed.path or ""
-
-    if hostname == "webhook.office.com" or hostname.endswith(".webhook.office.com"):
-        return "teams"
-    if (hostname == "logic.azure.com" or hostname.endswith(".logic.azure.com")) and "/workflows/" in path:
-        return "teams"
-    if (hostname == "api.powerplatform.com" or hostname.endswith(".api.powerplatform.com")) and "/workflows/" in path:
-        return "teams"
-    return "generic"
-
-
-def effective_webhook_type(stored: WebhookType, url: str) -> WebhookType:
-    """Delivered as Teams when stored so or when the URL is a Teams workflow, whatever type was stored."""
-    return "teams" if stored == "teams" else detect_webhook_type(url)

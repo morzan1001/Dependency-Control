@@ -182,7 +182,7 @@ class TestLogWebhookDeliveryProjectId:
             async def log_delivery(self, **kwargs):
                 captured.update(kwargs)
 
-        with patch("app.repositories.webhook_deliveries.WebhookDeliveriesRepository", FakeRepo):
+        with patch("app.services.webhooks.webhook_service.WebhookDeliveriesRepository", FakeRepo):
             await service._log_webhook_delivery(
                 db=MagicMock(),
                 webhook_id="w1",
@@ -206,7 +206,7 @@ class TestLogWebhookDeliveryProjectId:
             async def log_delivery(self, **kwargs):
                 captured.update(kwargs)
 
-        with patch("app.repositories.webhook_deliveries.WebhookDeliveriesRepository", FakeRepo):
+        with patch("app.services.webhooks.webhook_service.WebhookDeliveriesRepository", FakeRepo):
             await service._log_webhook_delivery(
                 db=MagicMock(),
                 webhook_id="w1",
@@ -350,7 +350,7 @@ class TestDeliverySignature:
         webhook = make_webhook(webhook_type)
         webhook.url = url
         webhook.secret = "s3cret"
-        service = WebhookService(timeout=1.0, max_retries=1)
+        service = WebhookService(timeout=1.0, max_attempts=1)
         transport, requests = _recording_transport()
 
         with (

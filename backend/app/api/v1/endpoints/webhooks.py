@@ -26,8 +26,8 @@ from app.schemas.webhook import (
     WebhookTestRequest,
     WebhookTestResponse,
     WebhookUpdate,
+    detect_webhook_type,
 )
-from app.services.webhooks.validation import detect_webhook_type
 from app.services.webhooks.webhook_service import webhook_service
 
 router = CustomAPIRouter()
