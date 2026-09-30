@@ -1,5 +1,6 @@
+import importlib
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -11,13 +12,16 @@ from app.schemas.scan_delta import (
     ScanDeltaSide,
     ScanDeltaTotals,
 )
-from app.services.analytics.cache import get_analytics_cache
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_PROCESSING
+from app.services.analytics import cache as cache_module
+from app.services.analytics.cache import get_delta_cache
 from app.services.analytics.scan_delta import _MAX_PAGE_SIZE, InvalidDeltaQuery, compute_scan_delta_dispatch
 
 _PROJECT = "p1"
 _FROM_SCAN = "a"
 _TO_SCAN = "b"
 _SAME_SCAN = "same"
+_OTHER_SCAN = "c"
 
 _FINDINGS = "findings"
 _COMPONENTS = "components"
@@ -43,6 +47,7 @@ _FROM_COMMIT = "aaa111"
 _TO_COMMIT = "bbb222"
 _RELEASED_AT = datetime(2026, 8, 1, tzinfo=timezone.utc)
 _BUILT_AT = datetime(2026, 9, 1, tzinfo=timezone.utc)
+_REANALYSED_AT = datetime(2026, 9, 2, tzinfo=timezone.utc)
 
 
 async def _dispatch(db, **overrides) -> ScanDeltaResponse:
@@ -457,8 +462,19 @@ async def test_a_side_whose_scan_is_gone_still_names_its_id(db):
     assert result.to_side == ScanDeltaSide(scan_id=_TO_SCAN)
 
 
+async def _seed_finished_sides(db, **fields) -> None:
+    await db.scans.insert_many(
+        [
+            {"_id": scan_id, "status": SCAN_STATUS_COMPLETED, "completed_at": _BUILT_AT, "waiver_fingerprint": "w1"}
+            | fields
+            for scan_id in (_FROM_SCAN, _TO_SCAN)
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_pages_and_change_filters_slice_one_comparison(db):
+    await _seed_finished_sides(db)
     with patch(
         "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_findings_comparison("added", "added", "changed", "removed")),
@@ -475,6 +491,7 @@ async def test_pages_and_change_filters_slice_one_comparison(db):
 
 @pytest.mark.asyncio
 async def test_the_comparison_is_keyed_on_the_filter_set_not_its_spelling(db):
+    await _seed_finished_sides(db)
     with patch(
         "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_findings_comparison("added")),
@@ -487,25 +504,76 @@ async def test_the_comparison_is_keyed_on_the_filter_set_not_its_spelling(db):
 
 
 @pytest.mark.asyncio
-async def test_a_waiver_edit_drops_the_cached_comparison(db):
-    """Waiver writes clear the shared analytics cache; the delta must live in that cache to follow."""
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        pytest.param({"waiver_fingerprint": "w2"}, id="waiver re-stamp"),
+        pytest.param({"completed_at": _REANALYSED_AT}, id="re-analysis"),
+    ],
+)
+async def test_a_side_whose_rows_were_rewritten_is_compared_again(db, rewrite):
+    """The re-stamp runs after the waiver request returns and writes the fingerprint last, on whichever pod runs it."""
+    await _seed_finished_sides(db)
     with patch(
         "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_findings_comparison("added")),
     ) as mock:
         await _dispatch(db)
-        get_analytics_cache().clear()
+        await db.scans.update_one({"_id": _TO_SCAN}, {"$set": rewrite})
         await _dispatch(db)
 
     assert mock.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_a_pair_resolved_onto_one_scan_is_answered_without_a_read():
-    db = MagicMock()
+async def test_a_side_still_being_analysed_is_never_cached(db):
+    """Re-analysis deletes the scan's findings before inserting the new ones, so a comparison read meanwhile is partial."""
+    await _seed_finished_sides(db, status=SCAN_STATUS_PROCESSING)
+    with patch(
+        "app.services.analytics.scan_delta.compare_findings",
+        new=AsyncMock(return_value=_findings_comparison("added")),
+    ) as mock:
+        await _dispatch(db)
+        await _dispatch(db)
 
-    result = await _dispatch(db, from_scan=_SAME_SCAN, to_scan=_SAME_SCAN, allow_same_scan=True)
+    assert mock.await_count == 2
 
-    assert (result.totals, result.items) == (ScanDeltaTotals(), [])
-    assert result.from_side == result.to_side == ScanDeltaSide(scan_id=_SAME_SCAN)
-    assert db.mock_calls == []
+
+@pytest.mark.asyncio
+async def test_cached_comparisons_are_bounded_by_their_summed_items(db, monkeypatch):
+    monkeypatch.setattr(cache_module, "_DELTA_ROW_BUDGET", 4)
+    get_delta_cache.cache_clear()
+    await _seed_finished_sides(db)
+    await db.scans.insert_one({"_id": _OTHER_SCAN, "status": SCAN_STATUS_COMPLETED})
+    try:
+        with patch(
+            "app.services.analytics.scan_delta.compare_findings",
+            new=AsyncMock(side_effect=[_findings_comparison("added", "added"), _findings_comparison("removed")] * 2),
+        ) as mock:
+            await _dispatch(db)
+            await _dispatch(db, to_scan=_OTHER_SCAN)
+            await _dispatch(db)
+    finally:
+        get_delta_cache.cache_clear()
+
+    assert mock.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "module", "reads"),
+    [
+        (_FINDINGS, "findings_delta", 2),
+        (_COMPONENTS, "components_delta", 1),
+        (_CRYPTO, "crypto_delta", 1),
+    ],
+)
+async def test_a_pair_resolved_onto_one_scan_reads_it_once(db, category, module, reads):
+    """Live plus waiver-touched is one findings side."""
+    await db.scans.insert_one({"_id": _SAME_SCAN, "status": SCAN_STATUS_COMPLETED, "branch": _MAIN_BRANCH})
+    real = importlib.import_module(f"app.services.analytics.{module}").find_window
+    with patch(f"app.services.analytics.{module}.find_window", new=AsyncMock(side_effect=real)) as spy:
+        result = await _dispatch(db, category=category, from_scan=_SAME_SCAN, to_scan=_SAME_SCAN, allow_same_scan=True)
+
+    assert spy.await_count == reads
+    assert result.from_side == result.to_side == ScanDeltaSide(scan_id=_SAME_SCAN, branch=_MAIN_BRANCH)

@@ -1,9 +1,10 @@
-"""Shared paging, side grouping, version pairing and per-scan fetch cap for scan-delta services."""
+"""Shared side reads, paging, side grouping, version pairing and per-scan fetch cap for scan-delta services."""
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TypeVar
 
 from app.schemas.scan_delta import DeltaTruncation, ScanDeltaResponse
@@ -17,6 +18,14 @@ _FILTER_OF = {"version_changed": "changed", "license_changed": "changed"}
 
 T = TypeVar("T")
 K = TypeVar("K")
+
+
+async def both_sides(read: Callable[[str], Awaitable[T]], from_scan: str, to_scan: str) -> tuple[T, T]:
+    """Each side's read, concurrently; a pair resolved onto one scan is read once."""
+    if from_scan == to_scan:
+        side = await read(from_scan)
+        return side, side
+    return await asyncio.gather(read(from_scan), read(to_scan))
 
 
 def page_of(comparison: ScanDeltaResponse, change: str | None, page: int, page_size: int) -> ScanDeltaResponse:

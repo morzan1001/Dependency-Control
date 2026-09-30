@@ -2,8 +2,6 @@
 (``bom_ref`` is regenerated per scan and unusable for matching), as a ScanDeltaResponse.
 """
 
-import asyncio
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
@@ -15,7 +13,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import by_side, delta_truncation, page_of
+from app.services.analytics._delta_pagination import both_sides, by_side, delta_truncation, page_of
 
 # Name-ascending like the asset list, so a capped side is cut at the same alphabetical point on both sides.
 _SIDE_SORT: list[tuple[str, int]] = [("name", 1), ("bom_ref", 1)]
@@ -52,8 +50,8 @@ async def compare_crypto(
     db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
     """Every crypto change between two scans, sorted, with totals and coverage."""
-    (from_assets, from_total), (to_assets, to_total) = await asyncio.gather(
-        _side_assets(db, project_id, from_scan), _side_assets(db, project_id, to_scan)
+    (from_assets, from_total), (to_assets, to_total) = await both_sides(
+        lambda scan_id: _side_assets(db, project_id, scan_id), from_scan, to_scan
     )
 
     groups = list(by_side(_key, from_assets, to_assets).values())

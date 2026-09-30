@@ -23,7 +23,14 @@ from app.schemas.scan_delta import (
     ScanDeltaTotals,
 )
 from app.services.component_identity import extract_artifact_name
-from app.services.analytics._delta_pagination import MAX_FETCH, by_side, delta_truncation, page_of, pair_versions
+from app.services.analytics._delta_pagination import (
+    MAX_FETCH,
+    both_sides,
+    by_side,
+    delta_truncation,
+    page_of,
+    pair_versions,
+)
 from app.services.recommendation.common import live_cves
 
 # Served by the {scan_id, component, version} index, so a capped side is cut at the same point in
@@ -299,9 +306,8 @@ async def compare_findings(
     finding_type: list[str] | None,
 ) -> ScanDeltaResponse:
     """Every finding change between two scans, sorted, with totals, waiver counts and coverage."""
-    (from_live, from_read, from_total, from_waived), (to_live, to_read, to_total, to_waived) = await asyncio.gather(
-        _read_side(db, _side_query(project_id, from_scan, finding_type)),
-        _read_side(db, _side_query(project_id, to_scan, finding_type)),
+    (from_live, from_read, from_total, from_waived), (to_live, to_read, to_total, to_waived) = await both_sides(
+        lambda scan_id: _read_side(db, _side_query(project_id, scan_id, finding_type)), from_scan, to_scan
     )
 
     # Severity is not part of the identity, so it filters after matching: a rescored finding stays one finding.

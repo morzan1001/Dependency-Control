@@ -6,21 +6,20 @@ checks live one layer above (REST handler / chat tool registry).
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.models.finding import FindingType, Severity
 from app.schemas.scan_delta import (
     DeltaCategory,
     ScanDeltaReachability,
     ScanDeltaResponse,
     ScanDeltaSide,
-    ScanDeltaTotals,
 )
 from app.services.analytics._delta_pagination import page_of
-from app.services.analytics.cache import get_analytics_cache
+from app.services.analytics.cache import get_delta_cache
 from app.services.analytics.components_delta import compare_components
 from app.services.analytics.crypto_delta import compare_crypto
 from app.services.analytics.findings_delta import compare_findings
@@ -37,7 +36,9 @@ _VALID_CHANGES = {"added", "removed", "changed", "all"}
 _MIN_PAGE = 1
 _MIN_PAGE_SIZE = 1
 _MAX_PAGE_SIZE = 200
-_SIDE_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "stats.reachability": 1}
+_SIDE_PROJECTION = dict.fromkeys(
+    ("branch", "commit_hash", "created_at", "stats.reachability", "status", "completed_at", "waiver_fingerprint"), 1
+)
 
 
 def _reject_unknown(
@@ -91,13 +92,11 @@ def _validate_query(
     return cat
 
 
-async def _describe_sides(db: AsyncIOMotorDatabase, from_scan: str, to_scan: str) -> dict[str, Any]:
+def _describe_sides(sides: list[tuple[str, dict]]) -> dict[str, Any]:
     """Each side's build and the reachability it was scored with, as envelope fields, so a caller can
     check a symbolic side resolved to what it expected."""
-    docs = {doc["_id"]: doc async for doc in db["scans"].find({"_id": {"$in": [from_scan, to_scan]}}, _SIDE_PROJECTION)}
     fields: dict[str, Any] = {}
-    for side, scan_id in (("from", from_scan), ("to", to_scan)):
-        doc = docs.get(scan_id) or {}
+    for side, (scan_id, doc) in zip(("from", "to"), sides, strict=True):
         reach = (doc.get("stats") or {}).get("reachability")
         fields[f"{side}_side"] = ScanDeltaSide(
             scan_id=scan_id,
@@ -140,19 +139,10 @@ async def compute_scan_delta_dispatch(
         finding_type=finding_type,
         allow_same_scan=allow_same_scan,
     )
-    if from_scan == to_scan:
-        side = ScanDeltaSide(scan_id=from_scan)
-        return ScanDeltaResponse(
-            from_scan_id=from_scan,
-            to_scan_id=to_scan,
-            project_id=project_id,
-            category=cat,
-            totals=ScanDeltaTotals(),
-            page=page,
-            page_size=page_size,
-            from_side=side,
-            to_side=side,
-        )
+    found = {
+        doc["_id"]: doc async for doc in db["scans"].find({"_id": {"$in": [from_scan, to_scan]}}, _SIDE_PROJECTION)
+    }
+    sides = [(scan_id, found.get(scan_id) or {}) for scan_id in (from_scan, to_scan)]
 
     compare = {
         DeltaCategory.FINDINGS: lambda: compare_findings(
@@ -168,17 +158,17 @@ async def compute_scan_delta_dispatch(
         ),
         DeltaCategory.CRYPTO: lambda: compare_crypto(db, project_id=project_id, from_scan=from_scan, to_scan=to_scan),
     }[cat]
-    # `change` and the page only slice the comparison, so they stay out of the key.
-    key = (
-        "scan_delta",
-        cat,
-        project_id,
-        from_scan,
-        to_scan,
-        tuple(sorted({s.upper() for s in severity or ()})),
-        tuple(sorted(set(finding_type or ()))),
-    )
-    comparison, sides = await asyncio.gather(
-        get_analytics_cache().get_or_compute(key, compare), _describe_sides(db, from_scan, to_scan)
-    )
-    return page_of(comparison, change, page, page_size).model_copy(update=sides)
+    # A finished scan's rows change only by re-analysis (new completed_at) or a waiver re-stamp (new fingerprint).
+    if all(doc.get("status") in SCAN_USABLE_STATUSES for _, doc in sides):
+        # `change` and the page only slice the comparison, so they stay out of the key.
+        key = (
+            cat,
+            project_id,
+            *((scan_id, doc.get("completed_at"), doc.get("waiver_fingerprint")) for scan_id, doc in sides),
+            tuple(sorted({s.upper() for s in severity or ()})),
+            tuple(sorted(set(finding_type or ()))),
+        )
+        comparison = await get_delta_cache().get_or_compute(key, compare)
+    else:
+        comparison = await compare()
+    return page_of(comparison, change, page, page_size).model_copy(update=_describe_sides(sides))

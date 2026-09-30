@@ -5,8 +5,6 @@ added+removed, and a license-only change reads as ``license_changed``.
 
 from __future__ import annotations
 
-import asyncio
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.purl import package_identity
@@ -17,7 +15,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import MAX_FETCH, by_side, delta_truncation, pair_versions
+from app.services.analytics._delta_pagination import MAX_FETCH, both_sides, by_side, delta_truncation, pair_versions
 
 # Served by the {scan_id, name, version} index, so a capped side is cut at the same point in the
 # component namespace on both sides instead of at two arbitrary points in natural order.
@@ -64,8 +62,8 @@ async def compare_components(
     db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
     """Every component change between two scans, sorted, with totals and coverage."""
-    (from_docs, from_total), (to_docs, to_total) = await asyncio.gather(
-        _fetch_components(db, project_id, from_scan), _fetch_components(db, project_id, to_scan)
+    (from_docs, from_total), (to_docs, to_total) = await both_sides(
+        lambda scan_id: _fetch_components(db, project_id, scan_id), from_scan, to_scan
     )
 
     groups = by_side(

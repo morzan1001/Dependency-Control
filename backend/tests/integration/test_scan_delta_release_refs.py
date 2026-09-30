@@ -49,6 +49,7 @@ _COMPONENTS = "components"
 _CRYPTO = "crypto"
 
 _NOTHING = 0
+_ONE_SEEDED = 1
 _NO_ITEMS: list[dict] = []
 
 _SEEDED_FINDING = "seeded-finding"
@@ -93,8 +94,7 @@ async def _seed(db) -> None:
 
 async def _seed_one_scan_that_is_head_and_release(db) -> None:
     """The healthiest state: the only scan is both the branch tip and what production runs.
-    Seeded with one row per category, which a computed comparison would count as unchanged; the
-    answer is known without reading either side, so it counts nothing."""
+    Seeded with one row per category so an empty delta is provably "all unchanged", not "both sides empty"."""
     await _seed_scan(db, _ONLY_SCAN, created_at=_NOW)
     await _seed_release(db, _ONLY_SCAN, released_at=_NOW)
     await db.findings.insert_one(
@@ -170,8 +170,9 @@ async def test_a_release_that_is_also_head_reports_an_empty_delta(client, db, me
     assert body["totals"]["added"] == _NOTHING
     assert body["totals"]["removed"] == _NOTHING
     assert body["totals"]["changed"] == _NOTHING
-    assert body["totals"]["unchanged"] == _NOTHING
+    assert body["totals"]["unchanged"] == _ONE_SEEDED
     assert body["items"] == _NO_ITEMS
+    assert body["from_side"]["branch"] == body["to_side"]["branch"] == _BRANCH
 
 
 @pytest.mark.asyncio
@@ -181,7 +182,7 @@ async def test_head_against_head_reports_an_empty_delta(client, db, member_auth_
     resp = await _delta(client, member_auth_headers, **{"from": _HEAD_REF, "to": _HEAD_REF})
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["totals"]["unchanged"] == _NOTHING
+    assert resp.json()["totals"]["unchanged"] == _ONE_SEEDED
 
 
 @pytest.mark.asyncio
