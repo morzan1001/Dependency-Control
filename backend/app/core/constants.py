@@ -350,7 +350,7 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "deep_dependency_chain": 15,
     "duplicate_functionality": 10,
     "dev_in_production": 10,
-    # Zero until weighed against the tiers above, so adding them left today's order unchanged.
+    # No type bonus: these rank on priority, impact and effort alone.
     "license_drift": 0,
     "replace_weak_algorithm": 0,
     "increase_key_size": 0,

@@ -45,7 +45,7 @@ class FindingDeltaItem(BaseModel):
     component: str | None = None
     cve_id: str | None = None
     file_path: str | None = None
-    # The earliest detection in the project, not the compared scan's date.
+    # The project's earliest detection of this finding, across all of its scans.
     first_seen: datetime | None = None
     from_version: str | None = None
     to_version: str | None = None

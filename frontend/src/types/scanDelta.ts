@@ -19,7 +19,7 @@ export interface FindingDeltaItem {
   component: string | null;
   cve_id: string | null;
   file_path: string | null;
-  // The earliest detection in the project, not the compared scan's date.
+  // The project's earliest detection of this finding, across all of its scans.
   first_seen: string | null;
   from_version: string | null;
   to_version: string | null;
