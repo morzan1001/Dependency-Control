@@ -637,11 +637,8 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "spring-framework": "spring-framework",
     "spring-boot": "spring-boot",
     "spring": "spring-framework",
-    # NVD CPE product names
-    "spring_framework": "spring-framework",
-    "spring_boot": "spring-boot",
-    "http_server": "apache-http-server",
-    "ruby_on_rails": "rails",
+    # NVD CPE product that does not normalise to its slug
+    "http-server": "apache-http-server",
     "laravel": "laravel",
     "symfony": "symfony",
     "express": "nodejs",

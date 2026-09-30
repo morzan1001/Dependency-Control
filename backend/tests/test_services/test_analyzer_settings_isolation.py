@@ -30,12 +30,16 @@ def _eol_cycle_in_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """Serve the EOL cycle from cache, so the analyzer reaches its grading step without a fetch."""
     eol_date = (datetime.now(timezone.utc) - timedelta(days=_DAYS_PAST_EOL)).strftime("%Y-%m-%d")
 
-    async def _mget(keys: list[str]) -> dict[str, Any]:
+    cached = {"eol:all": [_PRODUCT], f"eol:{_PRODUCT}": [{"cycle": "1.0", "eol": eol_date}]}
+
+    async def _get_or_fetch_with_lock(key: str, **_kwargs: Any) -> Any:
         # A cache round trip yields the loop; without that the two runs never interleave.
         await asyncio.sleep(0)
-        return {key: [{"cycle": "1.0", "eol": eol_date}] for key in keys}
+        return cached[key]
 
-    monkeypatch.setattr("app.services.analyzers.end_of_life.cache_service.mget", _mget)
+    monkeypatch.setattr(
+        "app.services.analyzers.end_of_life.cache_service.get_or_fetch_with_lock", _get_or_fetch_with_lock
+    )
 
 
 def _severities(result: dict[str, Any]) -> list[str]:

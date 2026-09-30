@@ -1,11 +1,26 @@
-"""Tests for the EndOfLifeAnalyzer - end-of-life detection for components."""
+"""End-of-life detection: components resolve to endoflife.date products, versions to that product's release cycles."""
 
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Self
 
+import httpx
 import pytest
 
+from app.core.constants import EOL_API_URL
 from app.models.finding import Severity
-from app.services.analyzers.end_of_life import EndOfLifeAnalyzer
+from app.services.analyzers import end_of_life
+from app.services.analyzers.end_of_life import (
+    EndOfLifeAnalyzer,
+    _check_version,
+    _version_matches_cycle,
+    collect_products_to_check,
+)
+from tests.helpers.analyzers import analyze_cyclonedx
+
+# /api/all.json of endoflife.date, fetched 2026-09-29.
+_PRODUCT_INDEX = json.loads((Path(__file__).parents[2] / "fixtures" / "endoflife_products.json").read_text())
 
 
 def _days_ago(days: int) -> str:
@@ -16,294 +31,450 @@ def _days_ahead(days: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-class TestExtractProductsFromCpes:
-    def setup_method(self):
-        self.analyzer = EndOfLifeAnalyzer()
+def _cycle(cycle: str, eol: Any, latest: str, lts: bool = False) -> dict[str, Any]:
+    return {"cycle": cycle, "releaseDate": "2015-01-01", "eol": eol, "latest": latest, "lts": lts}
 
-    @pytest.mark.parametrize(
-        "cpes",
-        [
-            pytest.param(["cpe:/2.3:a:python:python:3.8.5:*:*:*:*:*:*:*"], id="cpe23_with_slash"),
-            pytest.param(["cpe:/a:python:python:3.8.5"], id="cpe22"),
-            pytest.param(["cpe:/a:python:python:3.8.5", "cpe:/a:python:python:3.8.6"], id="two_versions_one_product"),
-            # The slash after `cpe:` is optional in canonical CPE 2.3, which must still match.
-            pytest.param(["cpe:2.3:a:python:python:3.8.5:*:*:*:*:*:*:*"], id="canonical_cpe23_without_slash"),
-        ],
-    )
-    def test_python_cpes_yield_the_python_product(self, cpes):
-        result = self.analyzer._extract_products_from_cpes(cpes)
-        assert len(result) >= 1
-        assert "python" in result
 
-    def test_name_to_eol_mapping_applied(self):
-        cpes = ["cpe:/a:nodejs:node.js:18.0.0"]
-        result = self.analyzer._extract_products_from_cpes(cpes)
-        # "node.js" should map to "nodejs" via NAME_TO_EOL_MAPPING.
-        assert "nodejs" in result or "node.js" in result
+# Cycle lists in the shape of /api/<product>.json, newest cycle first.
+_OPENSSL = [
+    _cycle("3.5", _days_ahead(1500), "3.5.0", lts=True),
+    _cycle("1.1.1", _days_ago(1100), "1.1.1w", lts=True),
+    _cycle("1.1.0", _days_ago(2500), "1.1.0l"),
+    _cycle("1.0.2", _days_ago(2400), "1.0.2u", lts=True),
+    _cycle("0.9.8", _days_ago(3900), "0.9.8zh"),
+]
+_NODEJS = [_cycle("22", _days_ahead(600), "22.9.0", lts=True), _cycle("16", _days_ago(1100), "16.20.2", lts=True)]
+_PERL = [_cycle("5.40", False, "5.40.0"), _cycle("5.32", True, "5.32.1")]
+_GO = [_cycle("1.23", False, "1.23.1"), _cycle("1.19", _days_ago(1300), "1.19.13")]
+_NGINX = [
+    _cycle("1.29", False, "1.29.1"),
+    _cycle("1.28", _days_ago(400), "1.28.3"),
+    _cycle("1.22", _days_ago(900), "1.22.1"),
+]
+_SPRING_BOOT = [_cycle("3.3", _days_ahead(200), "3.3.4"), _cycle("2.5", _days_ago(1400), "2.5.15")]
+_HTTPD = [_cycle("2.4", False, "2.4.62"), _cycle("2.2", _days_ago(2800), "2.2.34")]
+_AMAZON_LINUX = [
+    _cycle("2023", _days_ahead(900), "2023.5"),
+    _cycle("2", _days_ago(90), "2.0.20250929"),
+    _cycle("2018.03", _days_ago(1000), "2018.03.0"),
+]
+_ORACLE_LINUX = [_cycle("9", _days_ahead(2000), "9.4"), _cycle("7", _days_ago(600), "7.9")]
+_OPENSUSE = [_cycle("15.6", _days_ahead(300), "15.6"), _cycle("15.3", _days_ago(900), "15.3")]
+_ANGULARJS = [_cycle("1.8", _days_ago(1000), "1.8.3"), _cycle("1.7", _days_ago(1500), "1.7.9")]
+_PYTHON = [_cycle("3.13", _days_ahead(1500), "3.13.0"), _cycle("2.7", True, "2.7.18")]
 
-    @pytest.mark.parametrize(
-        "cpes",
-        [
-            pytest.param([], id="empty_list"),
-            pytest.param(["not-a-cpe-string", "random:garbage"], id="unparseable_strings"),
-        ],
-    )
-    def test_cpes_without_a_parseable_product_return_empty_set(self, cpes):
-        result = self.analyzer._extract_products_from_cpes(cpes)
-        assert result == set()
 
-    @pytest.mark.parametrize(
-        "cpes",
-        [
-            # "tomcat" maps to the "tomcat" product via NAME_TO_EOL_MAPPING.
-            pytest.param(["cpe:/a:apache:tomcat:9.0.0"], id="vendor_product_combo"),
-            pytest.param(["not-valid", "cpe:/a:redis:redis:6.0.0"], id="mixed_valid_and_invalid"),
-        ],
-    )
-    def test_at_least_one_product_is_extracted(self, cpes):
-        result = self.analyzer._extract_products_from_cpes(cpes)
-        assert len(result) >= 1
+class _EndOfLifeDate:
+    """endoflife.date: the product index, a cycle list for each product it serves, and 404 for anything else."""
+
+    def __init__(self, cycles: dict[str, Any], index: Any = _PRODUCT_INDEX, index_status: int = 200):
+        self.cycles = cycles
+        self.index = index
+        self.index_status = index_status
+        self.requested: list[str] = []
+
+    def __call__(self, *_args: Any, **_kwargs: Any) -> Self:
+        return self
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+    async def get(self, url: str) -> httpx.Response:
+        slug = url.removeprefix(f"{EOL_API_URL}/").removesuffix(".json")
+        self.requested.append(slug)
+        if slug == "all":
+            return httpx.Response(self.index_status, json=self.index)
+        if slug in self.cycles:
+            return httpx.Response(200, json=self.cycles[slug])
+        return httpx.Response(404, json={"message": "Product not found"})
+
+
+class _MemoryCache:
+    """cache_service's locked fetch: a stored value wins, a fetch result is stored, None stores the failure marker."""
+
+    def __init__(self) -> None:
+        self.entries: dict[str, Any] = {}
+
+    async def get_or_fetch_with_lock(self, key: str, fetch_fn, ttl_seconds: int | None = None) -> Any:
+        if self.entries.get(key) is not None:
+            return self.entries[key]
+        value = await fetch_fn()
+        self.entries[key] = {} if value is None else value
+        return value
+
+
+@pytest.fixture
+def serve(monkeypatch: pytest.MonkeyPatch):
+    def _serve(cycles: dict[str, Any], **index: Any) -> tuple[_EndOfLifeDate, _MemoryCache]:
+        upstream, cache = _EndOfLifeDate(cycles, **index), _MemoryCache()
+        monkeypatch.setattr(end_of_life, "InstrumentedAsyncClient", upstream)
+        monkeypatch.setattr(end_of_life, "cache_service", cache)
+        return upstream, cache
+
+    return _serve
+
+
+def _component(name: str, version: str, purl: str | None = None, cpe: str | None = None, **extra: Any) -> dict:
+    component = {"type": "library", "name": name, "version": version, **extra}
+    if purl:
+        component["purl"] = purl
+    if cpe:
+        component["cpe"] = cpe
+    return component
+
+
+def _openssl_binary(version: str) -> dict:
+    """Syft's binary classifier: an application component identified by its CPE."""
+    return _component("openssl", version, cpe=f"cpe:2.3:a:openssl:openssl:{version}:*:*:*:*:*:*:*", type="application")
+
+
+def _os(name: str, version: str) -> dict:
+    return {"type": "operating-system", "name": name, "version": version}
+
+
+async def _issues(components: list[dict], settings: dict | None = None) -> list[dict]:
+    return (await analyze_cyclonedx(EndOfLifeAnalyzer(), components, settings))["eol_issues"]
+
+
+def _cycles_of(issues: list[dict]) -> dict[str, str]:
+    return {issue["component"]: issue["eol_info"]["cycle"] for issue in issues}
 
 
 class TestVersionMatchesCycle:
-    def setup_method(self):
-        self.analyzer = EndOfLifeAnalyzer()
-
     @pytest.mark.parametrize(
         ("version", "cycle", "expected"),
         [
-            pytest.param("3.8", "3.8", True, id="exact_match"),
-            pytest.param("3.8.5", "3.8", True, id="prefix_match"),
-            pytest.param("3.8.5", "3", True, id="major_version_match"),
-            pytest.param("3", "3", True, id="single_part_version_exact"),
-            pytest.param("3.8.5", "2.7", False, id="different_major"),
-            pytest.param("3.8.5", "3.9", False, id="different_minor"),
-            # Prefix match needs a dot separator, so "3.80" must not match cycle "3.8".
-            pytest.param("3.80", "3.8", False, id="prefix_substring_without_separator"),
-            pytest.param("", "3.8", False, id="empty_version"),
-            pytest.param("3.8.5", "", False, id="empty_cycle"),
-            pytest.param("", "", False, id="both_empty"),
+            pytest.param("3.8", "3.8", True, id="exact"),
+            pytest.param("3.8.5", "3.8", True, id="patch-of-cycle"),
+            pytest.param("3.8.5", "3", True, id="major-cycle"),
+            pytest.param("1.1.1w", "1.1.1", True, id="openssl-letter-release"),
+            pytest.param("1.1.1n-0+deb11u5", "1.1.1", True, id="openssl-debian-build"),
+            pytest.param("1.1.1-1ubuntu2.1~18.04.23", "1.1.1", True, id="openssl-ubuntu-build"),
+            pytest.param("0.9.8zh", "0.9.8", True, id="openssl-double-letter"),
+            pytest.param("1.1.10", "1.1.1", False, id="longer-number-is-another-release"),
+            pytest.param("3.10.2", "3.1", False, id="minor-10-is-not-minor-1"),
+            pytest.param("3.80", "3.8", False, id="minor-80-is-not-minor-8"),
+            pytest.param("3.8.5", "3.9", False, id="other-minor"),
+            pytest.param("", "3.8", False, id="empty-version"),
+            pytest.param("3.8.5", "", False, id="empty-cycle"),
         ],
     )
-    def test_version_matches_cycle(self, version, cycle, expected):
-        assert self.analyzer._version_matches_cycle(version, cycle) is expected
-
-
-class TestCreateEolIssue:
-    def setup_method(self):
-        self.analyzer = EndOfLifeAnalyzer()
-
-    @pytest.mark.parametrize(
-        ("eol", "cycle", "version", "expected"),
-        [
-            pytest.param(True, "3.6", "3.6.15", Severity.HIGH.value, id="eol_flag_true"),
-            pytest.param(_days_ago(400), "3.6", "3.6.15", Severity.HIGH.value, id="eol_over_365_days_ago"),
-            pytest.param(_days_ago(250), "3.7", "3.7.0", Severity.MEDIUM.value, id="eol_over_180_days_ago"),
-            pytest.param(_days_ago(30), "3.8", "3.8.0", Severity.LOW.value, id="eol_under_180_days_ago"),
-            pytest.param("not-a-date", "3.6", "3.6.15", Severity.MEDIUM.value, id="invalid_date_format"),
-            pytest.param(12345, "3.6", "3.6.15", Severity.MEDIUM.value, id="non_string_non_bool_eol"),
-        ],
-    )
-    def test_severity_derived_from_eol_value(self, eol, cycle, version, expected):
-        eol_info = {"eol": eol, "cycle": cycle}
-        result = self.analyzer._create_eol_issue("python", version, "python", eol_info)
-        assert result["severity"] == expected
-
-    @pytest.mark.parametrize(
-        ("field", "expected"),
-        [
-            pytest.param("component", "python", id="component"),
-            pytest.param("version", "3.6.15", id="version"),
-            pytest.param("product", "python", id="product"),
-            pytest.param("eol_info", {"eol": True, "cycle": "3.6"}, id="eol_info"),
-        ],
-    )
-    def test_issue_carries_input_field(self, field, expected):
-        eol_info = {"eol": True, "cycle": "3.6"}
-        result = self.analyzer._create_eol_issue("python", "3.6.15", "python", eol_info)
-        assert result[field] == expected
-
-    def test_issue_contains_message(self):
-        eol_info = {"eol": True, "cycle": "3.6"}
-        result = self.analyzer._create_eol_issue("python", "3.6.15", "python", eol_info)
-        assert "end-of-life" in result["message"]
+    def test_a_version_belongs_to_a_cycle_it_extends_with_a_non_digit(self, version, cycle, expected):
+        assert _version_matches_cycle(version, cycle) is expected
 
 
 class TestCheckVersion:
-    def setup_method(self):
-        self.analyzer = EndOfLifeAnalyzer()
-
-    # Cycle dicts are in endoflife.date API format.
     @pytest.mark.parametrize(
-        ("version", "cycles", "expected_cycle"),
+        ("version", "expected_cycle"),
         [
-            pytest.param("3.6.15", [{"cycle": "3.6", "eol": True}], "3.6", id="matching_cycle_eol_true"),
+            pytest.param("v2.7.18", "2.7", id="v-prefix"),
+            pytest.param("V2.7.18", "2.7", id="upper-case-v-prefix"),
+            pytest.param("1:2.7.18-4.el9", "2.7", id="rpm-epoch"),
+        ],
+    )
+    def test_version_decoration_does_not_hide_the_cycle(self, version, expected_cycle):
+        assert _check_version(version, _PYTHON)["cycle"] == expected_cycle
+
+    @pytest.mark.parametrize(
+        "version",
+        [
+            pytest.param("3.13.0", id="cycle-still-supported"),
+            pytest.param("3.12.0", id="no-cycle-matches"),
+            pytest.param("", id="no-version"),
+        ],
+    )
+    def test_a_supported_or_unknown_version_is_not_end_of_life(self, version):
+        assert _check_version(version, _PYTHON) is None
+
+    def test_the_most_specific_cycle_decides(self):
+        cycles = [_cycle("3", _days_ago(3000), "3.99"), _cycle("3.8", _days_ahead(300), "3.8.99")]
+        assert _check_version("3.8.0", cycles) is None
+
+    def test_lts_wins_a_tie_between_equally_specific_cycles(self):
+        cycles = [_cycle("8", _days_ago(300), "8.0.1"), _cycle("8", _days_ahead(300), "8.0.2", lts=True)]
+        assert _check_version("8.0.342", cycles) is None
+
+
+class TestSeverity:
+    @pytest.mark.parametrize(
+        ("eol", "expected"),
+        [
+            pytest.param(True, Severity.HIGH.value, id="eol-without-date"),
+            pytest.param(_days_ago(365), Severity.HIGH.value, id="exactly-high-threshold"),
+            pytest.param(_days_ago(364), Severity.MEDIUM.value, id="just-below-high"),
+            pytest.param(_days_ago(180), Severity.MEDIUM.value, id="exactly-medium-threshold"),
+            pytest.param(_days_ago(179), Severity.LOW.value, id="just-below-medium"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_severity_grows_with_the_days_past_eol(self, serve, eol, expected):
+        serve({"python": [_cycle("3.13", False, "3.13.0"), _cycle("3.6", eol, "3.6.15")]})
+
+        [issue] = await _issues([_component("python", "3.6.15", "pkg:generic/python@3.6.15")])
+
+        assert issue["severity"] == expected
+
+    @pytest.mark.asyncio
+    async def test_the_project_thresholds_apply(self, serve):
+        serve({"python": [_cycle("3.6", _days_ago(60), "3.6.15")]})
+        components = [_component("python", "3.6.15", "pkg:generic/python@3.6.15")]
+
+        [issue] = await _issues(components, {"eol_high_after_days": 30, "eol_medium_after_days": 15})
+
+        assert issue["severity"] == Severity.HIGH.value
+
+
+class TestVersionsThatNamedTheirCycle:
+    @pytest.mark.parametrize(
+        ("version", "expected_cycle"),
+        [
+            pytest.param("1.1.1w", "1.1.1", id="openssl-1.1.1w"),
+            pytest.param("1.0.2k-fips", "1.0.2", id="amazon-linux-openssl-1.0.2k-fips"),
+            pytest.param("0.9.8zh", "0.9.8", id="openssl-0.9.8zh"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_letter_suffixed_openssl_releases_reach_their_cycle(self, serve, version, expected_cycle):
+        serve({"openssl": _OPENSSL})
+
+        issues = await _issues([_openssl_binary(version)])
+
+        assert _cycles_of(issues) == {"openssl": expected_cycle}
+
+    @pytest.mark.parametrize(
+        ("component", "product", "expected_cycle"),
+        [
             pytest.param(
-                "3.8.5",
-                [{"cycle": "3.8", "eol": _days_ago(100)}, {"cycle": "3.7", "eol": True}],
-                "3.8",
-                id="multiple_cycles_first_match_wins",
+                _component("nodejs", "1:16.20.2-3.el9_2", "pkg:rpm/redhat/nodejs@1:16.20.2-3.el9_2?distro=rhel-9"),
+                "nodejs",
+                "16",
+                id="rhel-nodejs-with-epoch",
+            ),
+            pytest.param(
+                _component("perl", "4:5.32.1-480.el9", "pkg:rpm/redhat/perl@4:5.32.1-480.el9?distro=rhel-9"),
+                "perl",
+                "5.32",
+                id="rhel-perl-with-epoch",
+            ),
+            pytest.param(
+                _component(
+                    "stdlib",
+                    "go1.19.4",
+                    "pkg:golang/stdlib@go1.19.4",
+                    "cpe:2.3:a:golang:go:1.19.4:-:*:*:*:*:*:*",
+                ),
+                "go",
+                "1.19",
+                id="syft-go-stdlib",
+            ),
+            pytest.param(
+                _component("stdlib", "v1.19.4", "pkg:golang/stdlib@v1.19.4"), "go", "1.19", id="trivy-go-stdlib"
             ),
         ],
     )
-    def test_matching_eol_cycle_is_returned(self, version, cycles, expected_cycle):
-        result = self.analyzer._check_version(version, cycles)
-        assert result is not None
-        assert result["cycle"] == expected_cycle
+    @pytest.mark.asyncio
+    async def test_epoch_and_toolchain_prefixes_do_not_hide_the_cycle(self, serve, component, product, expected_cycle):
+        serve({"nodejs": _NODEJS, "perl": _PERL, "go": _GO})
 
+        [issue] = await _issues([component])
+
+        assert (issue["product"], issue["eol_info"]["cycle"]) == (product, expected_cycle)
+
+
+class TestOperatingSystems:
     @pytest.mark.parametrize(
-        ("version", "cycles"),
+        ("name", "version", "product", "expected_cycle"),
         [
-            pytest.param("3.7.5", [{"cycle": "3.7", "eol": _days_ago(100)}], id="eol_date_in_the_past"),
-            pytest.param("v3.6.15", [{"cycle": "3.6", "eol": True}], id="version_with_v_prefix"),
-            pytest.param(3, [{"cycle": "3", "eol": True}], id="non_string_version_converted"),
+            pytest.param("amzn", "2018.03", "amazon-linux", "2018.03", id="syft-amazon-linux"),
+            pytest.param("ol", "7.9", "oracle-linux", "7", id="syft-oracle-linux"),
+            pytest.param("opensuse-leap", "15.3", "opensuse", "15.3", id="syft-opensuse-leap"),
+            pytest.param("oracle", "7.9", "oracle-linux", "7", id="trivy-oracle-linux"),
+            pytest.param("amazon", "2 (Karoo)", "amazon-linux", "2", id="trivy-amazon-linux-with-codename"),
         ],
     )
-    def test_end_of_life_version_is_flagged(self, version, cycles):
-        result = self.analyzer._check_version(version, cycles)
-        assert result is not None
+    @pytest.mark.asyncio
+    async def test_os_release_ids_reach_their_product(self, serve, name, version, product, expected_cycle):
+        serve({"amazon-linux": _AMAZON_LINUX, "oracle-linux": _ORACLE_LINUX, "opensuse": _OPENSUSE})
 
+        [issue] = await _issues([_os(name, version)])
+
+        assert (issue["product"], issue["eol_info"]["cycle"]) == (product, expected_cycle)
+
+    @pytest.mark.asyncio
+    async def test_a_library_sharing_an_os_id_is_no_operating_system(self, serve):
+        upstream, _ = serve({"oracle-linux": _ORACLE_LINUX})
+
+        assert await _issues([_component("ol", "7.9.0", "pkg:npm/ol@7.9.0")]) == []
+        assert upstream.requested == ["all"]
+
+
+class TestProductResolution:
     @pytest.mark.parametrize(
-        ("version", "cycles"),
+        ("component", "product"),
         [
-            pytest.param("3.11.5", [{"cycle": "3.11", "eol": False}], id="matching_cycle_eol_false"),
-            pytest.param("3.12.0", [{"cycle": "3.12", "eol": _days_ahead(365)}], id="eol_date_in_the_future"),
-            pytest.param("3.8.5", [{"cycle": "2.7", "eol": True}], id="no_matching_cycle"),
-            pytest.param("", [{"cycle": "3.6", "eol": True}], id="empty_version"),
+            pytest.param(
+                _component(
+                    "spring-boot",
+                    "2.5.0",
+                    "pkg:maven/org.springframework.boot/spring-boot@2.5.0",
+                    "cpe:2.3:a:vmware:spring_boot:2.5.0:*:*:*:*:*:*:*",
+                ),
+                "spring-boot",
+                id="nvd-underscore-product",
+            ),
+            pytest.param(
+                _component(
+                    "httpd", "2.2.34", cpe="cpe:2.3:a:apache:http_server:2.2.34:*:*:*:*:*:*:*", type="application"
+                ),
+                "apache-http-server",
+                id="nvd-http-server",
+            ),
+            pytest.param(
+                _component(
+                    "libnode72", "16.20.2", cpe="cpe:2.3:a:nodejs:node\\.js:16.20.2:*:*:*:*:*:*:*", type="application"
+                ),
+                "nodejs",
+                id="escaped-cpe-product",
+            ),
         ],
     )
-    def test_supported_version_returns_none(self, version, cycles):
-        result = self.analyzer._check_version(version, cycles)
-        assert result is None
+    @pytest.mark.asyncio
+    async def test_nvd_cpe_spellings_reach_the_product(self, serve, component, product):
+        serve({"spring-boot": _SPRING_BOOT, "apache-http-server": _HTTPD, "nodejs": _NODEJS})
 
+        [issue] = await _issues([component])
 
-class TestSeverityBoundary:
-    """Severity thresholds use inclusive comparison: exactly N days past EOL sits at that tier."""
+        assert issue["product"] == product
 
-    def setup_method(self):
-        self.analyzer = EndOfLifeAnalyzer()
-        self.analyzer._high_after_days = 365
-        self.analyzer._medium_after_days = 180
+    @pytest.mark.asyncio
+    async def test_only_products_endoflife_date_lists_are_looked_up(self, serve):
+        upstream, _ = serve({"openssl": _OPENSSL})
+        components = [
+            _openssl_binary("1.1.1w"),
+            _component(
+                "aiohttp",
+                "3.9.0",
+                "pkg:pypi/aiohttp@3.9.0",
+                "cpe:2.3:a:python-aiohttp:python_aiohttp:3.9.0:*:*:*:*:*:*:*",
+            ),
+            _component("left-pad", "1.3.0", "pkg:npm/left-pad@1.3.0"),
+        ]
 
-    def _issue_for_eol_days_ago(self, days_ago: int) -> str:
-        eol_date = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
-        issue = self.analyzer._create_eol_issue("pkg", "1.0", "pkg", {"eol": eol_date, "cycle": "1.0"})
-        return issue["severity"]
+        issues = await _issues(components)
+
+        assert _cycles_of(issues) == {"openssl": "1.1.1"}
+        assert upstream.requested == ["all", "openssl"]
+
+    @pytest.mark.asyncio
+    async def test_a_component_named_all_neither_fetches_the_index_as_cycles_nor_breaks_the_scan(self, serve):
+        upstream, cache = serve({"openssl": _OPENSSL})
+
+        issues = await _issues([_component("all", "0.0.1", "pkg:npm/all@0.0.1"), _openssl_binary("1.1.1w")])
+
+        assert _cycles_of(issues) == {"openssl": "1.1.1"}
+        assert upstream.requested.count("all") == 1
+        assert cache.entries["eol:all"] == _PRODUCT_INDEX
 
     @pytest.mark.parametrize(
-        ("days_ago", "expected"),
+        "index",
         [
-            pytest.param(365, Severity.HIGH.value, id="exactly_high_threshold"),
-            pytest.param(364, Severity.MEDIUM.value, id="just_below_high"),
-            pytest.param(180, Severity.MEDIUM.value, id="exactly_medium_threshold"),
-            pytest.param(179, Severity.LOW.value, id="just_below_medium"),
+            pytest.param({"index_status": 503}, id="index-unreachable"),
+            pytest.param({"index": {"products": []}}, id="index-in-another-shape"),
         ],
     )
-    def test_severity_at_threshold(self, days_ago, expected):
-        assert self._issue_for_eol_days_ago(days_ago) == expected
+    @pytest.mark.asyncio
+    async def test_without_the_index_every_candidate_is_looked_up_directly(self, serve, index):
+        upstream, _ = serve({"openssl": _OPENSSL}, **index)
+
+        issues = await _issues([_openssl_binary("1.1.1w"), _component("all", "0.0.1", "pkg:npm/all@0.0.1")])
+
+        assert _cycles_of(issues) == {"openssl": "1.1.1"}
+        assert upstream.requested.count("all") == 1
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param(["1.1.1", "3.0"], id="list-of-strings"),
+            pytest.param({"cycles": _OPENSSL}, id="object"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_cycle_payload_in_another_shape_counts_as_no_data(self, serve, payload):
+        _, cache = serve({"openssl": payload, "nodejs": _NODEJS})
+
+        issues = await _issues([_openssl_binary("1.1.1w"), _component("node", "16.20.2", "pkg:generic/node@16.20.2")])
+
+        assert _cycles_of(issues) == {"node": "16"}
+        assert cache.entries["eol:openssl"] == []
+
+
+class TestDistroBuilds:
+    @pytest.mark.asyncio
+    async def test_a_debian_rebuild_is_capped_at_low_and_offers_no_upstream_upgrade(self, serve):
+        serve({"nginx": _NGINX})
+        purl = "pkg:deb/debian/nginx@1.22.1-9%2Bdeb12u1?arch=amd64&distro=debian-12"
+
+        [issue] = await _issues(
+            [_component("nginx", "1.22.1-9+deb12u1", purl, "cpe:2.3:a:nginx:nginx:1.22.1:*:*:*:*:*:*:*")]
+        )
+
+        assert issue["severity"] == Severity.LOW.value
+        assert issue["distro_build"] is True
+        assert "recommended_version" not in issue["eol_info"]
+
+    @pytest.mark.parametrize(
+        "component",
+        [
+            pytest.param(
+                _component("nginx", "1.28.3-1~bookworm", "pkg:deb/debian/nginx@1.28.3-1~bookworm?distro=debian-12"),
+                id="nginx-org-deb",
+            ),
+            pytest.param(_component("nginx", "1.28.3", "pkg:generic/nginx@1.28.3"), id="upstream-build"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_vendor_build_keeps_the_upstream_severity(self, serve, component):
+        serve({"nginx": _NGINX})
+
+        [issue] = await _issues([component])
+
+        assert (issue["severity"], issue["distro_build"]) == (Severity.HIGH.value, False)
+        assert issue["eol_info"]["recommended_version"] == "1.29.1"
+
+
+class TestRecommendation:
+    @pytest.mark.asyncio
+    async def test_the_recommended_upgrade_is_the_newest_supported_cycle(self, serve):
+        serve({"nodejs": _NODEJS})
+
+        [issue] = await _issues([_component("node", "16.20.2", "pkg:generic/node@16.20.2")])
+
+        assert (issue["eol_info"]["recommended_cycle"], issue["eol_info"]["recommended_version"]) == ("22", "22.9.0")
+
+    @pytest.mark.asyncio
+    async def test_the_cached_cycle_list_stays_as_upstream_sent_it(self, serve):
+        _, cache = serve({"nodejs": _NODEJS})
+
+        await _issues([_component("node", "16.20.2", "pkg:generic/node@16.20.2")])
+
+        assert cache.entries["eol:nodejs"] == _NODEJS
+        assert all("recommended_version" not in cycle for cycle in cache.entries["eol:nodejs"])
+
+
+def test_the_analyzer_output_carries_no_unread_message():
+    issue = EndOfLifeAnalyzer()._create_eol_issue("python", "2.7.18", "python", _PYTHON[1], None, False)
+    assert "message" not in issue
 
 
 class TestCollectProductsToCheck:
-    """Each distinct (name, version) of a product must be kept for its own EOL check."""
+    def test_distinct_versions_of_a_product_are_checked_separately(self):
+        out = collect_products_to_check(
+            [_component("python", "3.8.0"), _component("python", "3.11.0"), _component("python", "3.11.0")]
+        )
+        assert [version for _, version, _ in out["python"]] == ["3.8.0", "3.11.0"]
 
-    def test_distinct_versions_of_same_product_kept(self):
-        from app.services.analyzers.end_of_life import collect_products_to_check
-
-        components = [
-            {"name": "python", "version": "3.8.0"},
-            {"name": "python", "version": "3.11.0"},
-        ]
-        out = collect_products_to_check(components)
-        versions = {v for _, v in out["python"]}
-        assert versions == {"3.8.0", "3.11.0"}
-
-    def test_identical_components_deduplicated(self):
-        from app.services.analyzers.end_of_life import collect_products_to_check
-
-        components = [
-            {"name": "python", "version": "3.11.0"},
-            {"name": "python", "version": "3.11.0"},
-        ]
-        out = collect_products_to_check(components)
-        assert len(out["python"]) == 1
-
-    def test_empty_components_returns_empty_dict(self):
-        from app.services.analyzers.end_of_life import collect_products_to_check
-
+    def test_no_components_no_products(self):
         assert collect_products_to_check([]) == {}
-
-
-class TestCheckVersionPreference:
-    """When several cycles match a version, prefer the most-specific, then LTS within that bucket."""
-
-    def setup_method(self):
-        self.analyzer = EndOfLifeAnalyzer()
-
-    def _eol_cycle(self, cycle: str, lts: bool = False) -> dict:
-        # Always EOL — this exercises the selection, not the EOL detection.
-        return {"cycle": cycle, "eol": "2020-01-01", "lts": lts, "latest": f"{cycle}.99"}
-
-    def test_picks_more_specific_cycle_over_major(self):
-        # 3.8.0 matches both "3" and "3.8"; most-specific wins.
-        cycles = [self._eol_cycle("3"), self._eol_cycle("3.8")]
-        result = self.analyzer._check_version("3.8.0", cycles)
-        assert result is not None
-        assert result["cycle"] == "3.8"
-
-    @pytest.mark.parametrize(
-        ("version", "cycles"),
-        [
-            pytest.param(
-                "8.0.342",
-                [
-                    {"cycle": "8", "eol": "2020-01-01", "lts": False, "latest": "8.99"},
-                    {"cycle": "8", "eol": "2030-01-01", "lts": True, "latest": "8.LTS"},
-                ],
-                id="lts_wins_the_specificity_tie_and_is_still_supported",
-            ),
-            pytest.param(
-                "3.8.0",
-                [
-                    {"cycle": "3", "eol": "2015-01-01", "lts": False, "latest": "3.99"},
-                    {"cycle": "3.8", "eol": "2030-01-01", "lts": True, "latest": "3.8.99"},
-                ],
-                id="specific_active_cycle_overrides_eol_major",
-            ),
-            pytest.param(
-                "3.8.0",
-                [
-                    {"cycle": "4", "eol": "2020-01-01", "lts": False, "latest": "4.99"},
-                    {"cycle": "5", "eol": "2020-01-01", "lts": False, "latest": "5.99"},
-                ],
-                id="no_cycle_matches",
-            ),
-        ],
-    )
-    def test_selected_cycle_yields_no_eol_verdict(self, version, cycles):
-        assert self.analyzer._check_version(version, cycles) is None
-
-
-class TestRecommendedUpgradeCycle:
-    """The upgrade offered as the remediation for an EOL component must itself still be supported."""
-
-    def setup_method(self):
-        self.analyzer = EndOfLifeAnalyzer()
-
-    def _cycles(self):
-        def offset(days):
-            return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
-
-        return [
-            {"cycle": "3", "latest": "3.9.0", "eol": offset(365)},
-            {"cycle": "2", "latest": "2.7.18", "eol": offset(-400)},
-            {"cycle": "1", "latest": "1.5.2", "eol": offset(-2000)},
-        ]
-
-    def test_recommended_cycle_is_not_itself_end_of_life(self):
-        cycles = self._cycles()
-        result = self.analyzer._check_version("1.5.2", cycles)
-        assert result is not None
-        recommended = next(c for c in cycles if c["cycle"] == result["recommended_cycle"])
-        eol_date = datetime.strptime(recommended["eol"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        assert eol_date > datetime.now(timezone.utc)
-        assert result["recommended_version"] == recommended["latest"]

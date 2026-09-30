@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.core.constants import NAME_TO_EOL_MAPPING
-from app.services.analyzers.end_of_life import EndOfLifeAnalyzer, collect_products_to_check
+from app.services.analyzers.end_of_life import _check_version, collect_products_to_check
 
 # /api/all.json of endoflife.date, fetched 2026-09-29; refresh it when a product is renamed upstream.
 _PRODUCTS = set(json.loads((Path(__file__).parents[2] / "fixtures" / "endoflife_products.json").read_text()))
@@ -31,6 +31,10 @@ def test_every_mapping_target_is_an_endoflife_product():
         ("angular", [], {"angularjs", "angular"}),
         ("@angular/core", [], {"angular"}),
         ("angular-app", ["cpe:2.3:a:angular:angular:12.0.0:*:*:*:*:*:*:*"], {"angularjs", "angular"}),
+        ("python", ["cpe:/a:python:python:3.8.5"], {"python"}),
+        ("python", ["cpe:/2.3:a:python:python:3.8.5:*:*:*:*:*:*:*"], {"python"}),
+        ("redis", ["not-a-cpe", "cpe:/a:redis:redis:6.0.0"], {"redis"}),
+        ("left-pad", ["random:garbage"], {"left-pad"}),
     ],
 )
 def test_the_products_checked_for_a_component(name, cpes, expected):
@@ -45,4 +49,4 @@ def test_the_products_checked_for_a_component(name, cpes, expected):
     ],
 )
 def test_angular_and_angularjs_versions_never_match_each_others_cycles(version, cycles):
-    assert EndOfLifeAnalyzer()._check_version(version, cycles) is None
+    assert _check_version(version, cycles) is None
