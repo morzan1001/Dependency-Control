@@ -128,3 +128,20 @@ async def test_license_policy_entries_isolated_from_crypto(client, db, owner_aut
     crypto_entries = await repo.list(policy_scope="project", project_id="p", policy_type="crypto", limit=10)
     assert len(license_entries) == 1
     assert crypto_entries == []
+
+
+@pytest.mark.asyncio
+async def test_a_license_change_after_a_prune_takes_a_fresh_version(client, db, owner_auth_headers_proj):
+    """Counting the surviving entries handed out a number an existing entry already holds."""
+    for model in ("internal_only", "distributed", "internal_only"):
+        resp = await client.put(
+            "/api/v1/projects/p", json=_license_settings(distribution_model=model), headers=owner_auth_headers_proj
+        )
+        assert resp.status_code == 200, resp.text
+    await db.crypto_policy_history.delete_one({"policy_type": "license", "version": 1})
+
+    await client.put(
+        "/api/v1/projects/p", json=_license_settings(distribution_model="distributed"), headers=owner_auth_headers_proj
+    )
+
+    assert [e.version for e in await _license_entries(db)] == [4, 3, 2]

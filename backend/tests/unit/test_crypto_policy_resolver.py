@@ -84,3 +84,43 @@ async def test_cache_invalidates_on_version_bump(db):
     await repo.upsert_system_policy(CryptoPolicy(scope="system", rules=[_rule("a"), _rule("b")], version=2))
     e2 = await resolver.resolve("x")
     assert {r.rule_id for r in e2.rules} == {"a", "b"}
+
+
+async def _lock_overrides_with_a_stored_one(db) -> None:
+    from app.repositories.system_settings import SystemSettingsRepository
+
+    repo = CryptoPolicyRepository(db)
+    await repo.upsert_system_policy(CryptoPolicy(scope="system", rules=[_rule("a", severity=Severity.HIGH)], version=1))
+    await repo.upsert_project_policy(
+        CryptoPolicy(scope="project", project_id="p", rules=[_rule("a", severity=Severity.LOW), _rule("x")], version=3)
+    )
+    await SystemSettingsRepository(db).update({"crypto_policy_mode": "global"})
+
+
+@pytest.mark.asyncio
+async def test_a_stored_override_is_reported_but_not_applied_under_the_global_lock(db):
+    """The override page shows 'stored but ignored' from override_version while override_locked is set."""
+    await _lock_overrides_with_a_stored_one(db)
+
+    effective = await CryptoPolicyResolver(db).resolve("p")
+
+    assert (effective.override_version, effective.override_locked) == (3, True)
+    assert effective.rules == effective.system_rules
+
+
+@pytest.mark.asyncio
+async def test_the_chat_tool_says_a_stored_override_is_locked_out(db):
+    from app.services.chat.tools.crypto_tools import get_project_crypto_policy
+
+    await _lock_overrides_with_a_stored_one(db)
+
+    answer = await get_project_crypto_policy(db, project_id="p")
+
+    assert (answer["override_version"], answer["override_locked"]) == (3, True)
+    assert [r["rule_id"] for r in answer["rules"]] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_resolving_without_a_system_policy_fails_loud(db):
+    with pytest.raises(RuntimeError, match="startup seeding did not run"):
+        await CryptoPolicyResolver(db).resolve("p")

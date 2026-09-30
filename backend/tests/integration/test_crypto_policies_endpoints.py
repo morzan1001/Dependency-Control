@@ -278,3 +278,77 @@ async def test_a_revert_refuses_a_snapshot_holding_a_rule_a_write_would_refuse(c
     assert resp.status_code == 422
     assert resp.json()["detail"].startswith("Version 1 holds rules a write would refuse: rule 'fires-on-everything'")
     assert (await CryptoPolicyRepository(db).get_system_policy()).version == 2
+
+
+@pytest.mark.asyncio
+async def test_get_system_policy_answers_404_instead_of_seeding(client, db, admin_auth_headers):
+    """Startup seeds the system policy; a read must not write a policy and a SEED audit entry."""
+    resp = await client.get("/api/v1/crypto-policies/system", headers=admin_auth_headers)
+
+    assert resp.status_code == 404
+    assert await CryptoPolicyRepository(db).get_system_policy() is None
+    assert await db.crypto_policy_history.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_absent_override_records_nothing(client, db, owner_auth_headers_proj):
+    resp = await client.delete("/api/v1/projects/p/crypto-policy", headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 204
+    assert await db.crypto_policy_history.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_override_recreated_after_a_delete_continues_the_version_count(client, db, owner_auth_headers_proj):
+    """A revert addresses a revision by version, so a recreated override must not reuse the deleted one's numbers."""
+    from app.repositories.policy_audit_entry import PolicyAuditRepository
+
+    path = "/api/v1/projects/p/crypto-policy"
+    await client.put(path, json={"rules": [_rule_dict("first")]}, headers=owner_auth_headers_proj)
+    await client.delete(path, headers=owner_auth_headers_proj)
+
+    recreated = await client.put(path, json={"rules": [_rule_dict("second")]}, headers=owner_auth_headers_proj)
+
+    assert recreated.json()["version"] == 3
+    entries = await PolicyAuditRepository(db).list(policy_scope="project", project_id="p")
+    assert [(e.version, e.action) for e in entries] == [(3, "create"), (2, "delete"), (1, "create")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        pytest.param("DELETE", "/api/v1/projects/p/crypto-policy", None, id="delete"),
+        pytest.param("POST", "/api/v1/projects/p/crypto-policy/revert", {"target_version": 1}, id="revert"),
+    ],
+)
+async def test_the_global_lock_refuses_every_write_to_an_override(
+    client, db, owner_auth_headers_proj, method, path, body
+):
+    await client.put(
+        "/api/v1/projects/p/crypto-policy", json={"rules": [_rule_dict("stored")]}, headers=owner_auth_headers_proj
+    )
+    await SystemSettingsRepository(db).update({"crypto_policy_mode": "global"})
+
+    resp = await client.request(method, path, json=body, headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 403, resp.text
+    stored = await CryptoPolicyRepository(db).get_project_policy("p")
+    assert stored is not None
+    assert (stored.version, [r.rule_id for r in stored.rules]) == (1, ["stored"])
+    assert await db.crypto_policy_history.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_admin_save_keeps_the_seed_version_so_the_next_start_does_not_reseed(client, db, admin_auth_headers):
+    from app.services.crypto_policy.seeder import CURRENT_SEED_VERSION, seed_crypto_policies
+
+    await seed_crypto_policies(db)
+    await client.put("/api/v1/crypto-policies/system", json={"rules": [_rule_dict("mine")]}, headers=admin_auth_headers)
+
+    await seed_crypto_policies(db)
+
+    stored = await CryptoPolicyRepository(db).get_system_policy()
+    assert [r.rule_id for r in stored.rules] == ["mine"]
+    assert (stored.seed_version, stored.updated_by) == (CURRENT_SEED_VERSION, "admin-user")

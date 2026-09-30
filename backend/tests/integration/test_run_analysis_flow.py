@@ -17,6 +17,7 @@ from app.models.project import Scan
 from app.models.stats import Stats
 from app.services import gridfs_maintenance
 from app.services.analysis import engine
+from app.services.crypto_policy.seeder import seed_crypto_policies
 
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -163,6 +164,7 @@ def enrichment_inputs(monkeypatch) -> dict:
 
 @pytest.mark.asyncio
 async def test_a_cbom_scan_runs_the_crypto_analyzers_once_beside_the_configured_ones(db, notified, enrichment_inputs):
+    await seed_crypto_policies(db)
     scan = Scan(
         project_id=_PROJECT_ID, branch="main", sbom_refs=[], status="processing", scan_type="cbom", worker_id=_WORKER
     )

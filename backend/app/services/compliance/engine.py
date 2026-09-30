@@ -118,11 +118,11 @@ class ComplianceReportEngine:
         project_ids = resolved.project_ids or []
         if resolved.scope == "project" and len(project_ids) == 1:
             effective = await CryptoPolicyResolver(db).resolve(project_ids[0])
-            policy_rules, policy_version = effective.rules, effective.system_version or None
-            override_version = effective.override_version
+            policy_rules, policy_version = effective.rules, effective.system_version
+            override_version = None if effective.override_locked else effective.override_version
         else:
-            system = await CryptoPolicyRepository(db).get_system_policy()
-            policy_rules, policy_version = (system.rules, system.version) if system else ([], None)
+            system = await CryptoPolicyRepository(db).require_system_policy()
+            policy_rules, policy_version = system.rules, system.version
             override_version = None
         scope_desc = self._scope_description(resolved)
         return EvaluationInput(

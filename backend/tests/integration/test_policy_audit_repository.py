@@ -103,3 +103,17 @@ async def test_delete_older_than_spares_an_entry_stamped_at_the_cutoff(db):
     assert deleted == 1
     remaining = await repo.list(policy_scope="system", limit=_LIST_LIMIT)
     assert [e.version for e in remaining] == [2]
+
+
+@pytest.mark.asyncio
+async def test_a_duplicated_version_resolves_to_its_newest_entry(db):
+    """Older histories hold one version number twice; a revert to it means the later revision."""
+    earlier = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    repo = PolicyAuditRepository(db)
+    await repo.create(_entry(version=1, ts=earlier).model_copy(update={"comment": "oldest"}))
+    await repo.create(_entry(version=1, ts=earlier + timedelta(days=1)).model_copy(update={"comment": "newest"}))
+
+    hit = await repo.get_by_version(policy_scope="system", project_id=None, version=1)
+
+    assert hit is not None
+    assert hit.comment == "newest"

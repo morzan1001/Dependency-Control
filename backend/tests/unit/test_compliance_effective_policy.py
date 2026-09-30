@@ -70,3 +70,19 @@ async def test_a_team_report_keeps_judging_by_the_system_rules(db):
 
     assert next(r for r in inputs.policy_rules if r.rule_id == "nist-131a-md5").enabled
     assert (inputs.policy_version, inputs.override_version) == (3, None)
+
+
+@pytest.mark.asyncio
+async def test_a_project_report_under_the_global_lock_names_no_override(db):
+    """The stored override is dormant, so it is neither judged by nor part of the report's inputs."""
+    from app.repositories.system_settings import SystemSettingsRepository
+
+    await _project_with_md5_and_an_override_disabling_its_rule(db)
+    await SystemSettingsRepository(db).update({"crypto_policy_mode": "global"})
+
+    inputs = await ComplianceReportEngine()._gather_inputs(
+        db, ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]), None
+    )
+
+    assert next(r for r in inputs.policy_rules if r.rule_id == "nist-131a-md5").enabled
+    assert (inputs.policy_version, inputs.override_version) == (3, None)

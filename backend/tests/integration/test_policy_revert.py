@@ -159,3 +159,21 @@ async def test_revert_without_target_version_is_rejected(client, db, admin_auth_
     resp = await client.post("/api/v1/crypto-policies/system/revert", json={}, headers=admin_auth_headers)
 
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_revert_names_the_admin_who_made_it(client, db, admin_auth_headers):
+    """The policy page shows 'last edited by' from updated_by."""
+    for rule_id in ("alpha", "beta"):
+        await client.put(
+            "/api/v1/crypto-policies/system", json={"rules": [_rule_dict(rule_id)]}, headers=admin_auth_headers
+        )
+
+    resp = await client.post(
+        "/api/v1/crypto-policies/system/revert", json={"target_version": 1}, headers=admin_auth_headers
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["version"], resp.json()["updated_by"]) == (3, "admin-user")
+    stored = await CryptoPolicyRepository(db).get_system_policy()
+    assert ([r.rule_id for r in stored.rules], stored.updated_by) == (["alpha"], "admin-user")

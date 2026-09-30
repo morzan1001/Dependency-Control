@@ -123,6 +123,22 @@ def _seed_project(db: FakeDatabase, project_id: str, marker: str, member: str) -
         "requested_by": marker,
         "requested_at": _NOW,
     }
+    db.crypto_policies._docs[f"{project_id}-cp"] = {
+        "_id": f"{project_id}-cp",
+        "scope": "project",
+        "project_id": project_id,
+        "rules": [
+            {
+                "rule_id": marker,
+                "name": marker,
+                "description": marker,
+                "finding_type": "crypto_weak_algorithm",
+                "default_severity": "LOW",
+                "source": "custom",
+            }
+        ],
+        "version": 1,
+    }
     db.crypto_policy_history._docs[f"{project_id}-pa"] = {
         "_id": f"{project_id}-pa",
         "policy_type": "crypto",
@@ -140,6 +156,7 @@ def _seed_project(db: FakeDatabase, project_id: str, marker: str, member: str) -
 def _seeded() -> FakeDatabase:
     """The foreign project is inserted first, so an unscoped query meets its rows before the caller's."""
     db = FakeDatabase()
+    db.crypto_policies._docs["system"] = {"_id": "system", "scope": "system", "project_id": None, "rules": []}
     _seed_project(db, _THEIRS, _SENTINEL, "someone-else")
     _seed_project(db, _MINE, "mine", _CALLER)
     return db

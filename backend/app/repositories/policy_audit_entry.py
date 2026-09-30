@@ -59,14 +59,15 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "version": version,
             **_policy_type_filter(policy_type),
         }
-        doc = await self.collection.find_one(query)
+        # Older histories hold duplicate versions; the newest entry is the revision a reader means.
+        doc = await self.collection.find_one(query, sort=[("timestamp", DESCENDING)])
         return PolicyAuditEntry.model_validate(doc) if doc else None
 
-    async def count_entries(
+    async def max_version(
         self,
         *,
         policy_scope: Literal["system", "project"],
-        project_id: str | None = None,
+        project_id: str | None,
         policy_type: PolicyType = "crypto",
     ) -> int:
         query: dict[str, Any] = {
@@ -74,7 +75,8 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "project_id": project_id,
             **_policy_type_filter(policy_type),
         }
-        return await self.collection.count_documents(query)
+        doc = await self.collection.find_one(query, {"version": 1}, sort=[("version", DESCENDING)])
+        return doc["version"] if doc else 0
 
     async def delete_older_than(
         self,

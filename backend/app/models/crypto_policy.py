@@ -26,4 +26,7 @@ class CryptoPolicy(MongoDocument):
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="Last write timestamp (UTC)"
     )
-    updated_by: str | None = Field(None, description="User ID of the last editor")
+    updated_by: str | None = Field(None, description="User ID of the last editor; None when the seeder wrote it")
+    seed_version: int | None = Field(
+        None, description="CURRENT_SEED_VERSION the seeder last applied to the system policy"
+    )

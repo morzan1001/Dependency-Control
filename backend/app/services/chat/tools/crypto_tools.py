@@ -103,6 +103,7 @@ async def get_project_crypto_policy(
     return {
         "system_version": effective.system_version,
         "override_version": effective.override_version,
+        "override_locked": effective.override_locked,
         "rules": [r.model_dump() for r in effective.rules],
     }
 

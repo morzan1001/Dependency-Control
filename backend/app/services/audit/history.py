@@ -246,18 +246,13 @@ async def record_license_policy_change(
     actor: Any,
     comment: str | None = None,
 ) -> PolicyAuditEntry | None:
-    """Persist a license-policy audit entry (best-effort); returns None if no effective change. Version derives from existing entry count since the project doc has no version column."""
+    """Persist a license-policy audit entry (best-effort); returns None if no effective change. Version continues the highest audited one since the project doc has no version column."""
     summary = compute_license_policy_change_summary(old_policy, new_policy)
     if summary == _NO_CHANGES_SUMMARY:
         return None
 
     repo = PolicyAuditRepository(db)
-    existing = await repo.count_entries(
-        policy_scope="project",
-        project_id=project_id,
-        policy_type="license",
-    )
-    version = existing + 1
+    version = await repo.max_version(policy_scope="project", project_id=project_id, policy_type="license") + 1
 
     entry = PolicyAuditEntry(
         policy_type="license",

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.metrics import compliance_reports_total
+from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
@@ -254,7 +255,9 @@ async def test_engine_gather_inputs_builds_evaluation_input():
 
     db.findings.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
 
-    policy_repo_mock = MagicMock(get_system_policy=AsyncMock(return_value=None))
+    policy_repo_mock = MagicMock(
+        require_system_policy=AsyncMock(return_value=CryptoPolicy(scope="system", rules=[], version=1))
+    )
 
     resolved = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
 
@@ -308,8 +311,10 @@ def _make_engine_db(*, agg_rows, project_doc=None):
 
 async def _run_gather(engine, db, resolved, framework, asset_repo_mock=None):
     asset_repo_mock = asset_repo_mock or MagicMock(list_by_scan=AsyncMock(return_value=[]))
-    policy_repo_mock = MagicMock(get_system_policy=AsyncMock(return_value=None))
-    no_policy = EffectivePolicy(rules=[], system_rules=[], system_version=0, override_version=None)
+    policy_repo_mock = MagicMock(
+        require_system_policy=AsyncMock(return_value=CryptoPolicy(scope="system", rules=[], version=1))
+    )
+    no_policy = EffectivePolicy(rules=[], system_rules=[], system_version=1, override_version=None)
     with (
         patch("app.services.compliance.engine.CryptoAssetRepository", return_value=asset_repo_mock),
         patch("app.services.compliance.engine.CryptoPolicyRepository", return_value=policy_repo_mock),
