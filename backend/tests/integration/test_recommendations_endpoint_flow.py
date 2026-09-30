@@ -11,10 +11,14 @@ import pytest
 
 from app.api.v1.endpoints.analytics import recommendations as rec_module
 from app.core.cache import CacheService
+from app.core.init_db import create_indexes
 from app.models.finding import Finding
+from app.models.waiver import Waiver
+from app.repositories.waivers import WaiverRepository
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.analysis.engine import _prepare_finding_records
 from app.services.sbom_parser import parse_sbom
+from app.services.stats import recalculate_project_stats
 from tests.helpers.findings import stored_vulnerability
 
 _NOW = datetime.now(timezone.utc)
@@ -141,6 +145,38 @@ async def test_a_reanalysed_scan_is_not_served_its_earlier_recommendations(
     assert runs == [1, 2]
     assert after.json()["total_findings"] == 2
     assert after.json()["summary"]["sast_issues"] == 1
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_waiver_restamp_is_not_served_the_recommendations_from_before_it(
+    client, db, owner_auth_headers_proj, redis_cache
+):
+    await create_indexes(db)
+    await _insert_scan(db, "s")
+    await db.findings.insert_many([_finding("f-live", "secret"), _finding("f-waived", "secret")])
+    before = await client.get(_path("p"), headers=owner_auth_headers_proj)
+    await WaiverRepository(db).create(
+        Waiver(project_id="p", finding_id="f-waived", finding_type="secret", reason="test key", created_by="u")
+    )
+
+    await recalculate_project_stats("p", db)
+    after = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert before.status_code == after.status_code == 200, after.text
+    assert (before.json()["findings_total"], after.json()["findings_total"]) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_an_archive_restored_string_completion_date_still_keys_the_cache(
+    client, db, owner_auth_headers_proj, redis_cache
+):
+    await _insert_scan(db, "s")
+    await db.scans.update_one({"_id": "s"}, {"$set": {"completed_at": _NOW.isoformat()}})
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio

@@ -120,12 +120,17 @@ async def get_project_recommendations(
     dep_repo = DependencyRepository(db)
     user_project_ids = await get_user_project_ids(current_user, db)
 
-    stamped = await scan_repo.find_many_raw({"_id": scan_id}, limit=1, projection={"completed_at": 1})
-    completed_at = stamped[0].get("completed_at") if stamped else None
-    # Per analysis + caller scope so users with different project access never share an
+    stamped = await scan_repo.find_many_raw(
+        {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1}
+    )
+    stamp = stamped[0] if stamped else {}
+    # Per analysis, waiver set and caller scope so users with different project access never share an
     # entry; cross-project signal isn't in the key and may be TTL-stale.
     cache_key = CacheKeys.recommendations(
-        project_id, scan_id, completed_at.isoformat() if completed_at else "none", scope_digest(user_project_ids)
+        project_id,
+        scan_id,
+        f"{stamp.get('completed_at')}|{stamp.get('waiver_fingerprint')}",
+        scope_digest(user_project_ids),
     )
 
     async def _compute() -> dict[str, Any]:
