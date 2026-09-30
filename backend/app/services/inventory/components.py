@@ -11,6 +11,7 @@ from app.models.project import Scan
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.schemas.inventory import ComponentItem
+from app.services.aggregation.cross_link import is_ahead_of_default
 
 COMPONENT_COLUMNS = [
     "name",
@@ -34,9 +35,11 @@ async def _lifecycle_by_component(db: AsyncIOMotorDatabase, scan_id: str) -> dic
     lifecycle: dict[str, dict[str, Any]] = {}
     docs = FindingRepository(db).iterate_raw(
         {"scan_id": scan_id, "type": {"$in": [FindingType.EOL.value, FindingType.OUTDATED.value]}},
-        {"component": 1, "version": 1, "type": 1, "details.fixed_version": 1},
+        {"component": 1, "version": 1, "type": 1, "details.fixed_version": 1, "details.ahead_of_default": 1},
     )
     async for doc in docs:
+        if is_ahead_of_default(doc["type"], doc.get("details")):
+            continue
         key = f"{doc.get('component')}@{doc.get('version')}"
         entry = lifecycle.setdefault(key, {})
         if doc.get("type") == FindingType.EOL.value:

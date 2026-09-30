@@ -4,6 +4,7 @@ the aggregator has always known both relationships but wrote neither."""
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
 from app.services.aggregation.cross_link import cross_link_pair
+from app.services.analyzers.outdated import OutdatedAnalyzer
 
 
 def _finding(finding_id: str, ftype: FindingType, severity: Severity, component: str, **details) -> Finding:
@@ -145,3 +146,30 @@ class TestContextStaysWithItsVersion:
         cross_link_pair(vuln, outdated)
 
         assert outdated.details["vulnerability_info"]["vuln_count"] == 2
+
+
+class TestAheadOfDefaultIsNotOutdated:
+    """An install newer than the registry default is minted as OUTDATED with ahead_of_default set."""
+
+    @staticmethod
+    def _findings_by_type() -> dict:
+        ahead: list = []
+        component = {"name": "requests", "version": "1.0.0", "purl": "pkg:pypi/requests@1.0.0"}
+        OutdatedAnalyzer()._classify_version(component, "0.9.0", [], ahead)
+        agg = ResultAggregator()
+        agg.aggregate("outdated_packages", {"outdated_dependencies": [], "ahead_of_default": ahead})
+        agg.add_finding(_finding("CVE-2026-1", FindingType.VULNERABILITY, Severity.HIGH, "requests"))
+        return {f.type: f for f in agg.get_findings()}
+
+    def test_the_vulnerability_gets_no_outdated_banner_or_badge(self):
+        vuln = self._findings_by_type()[FindingType.VULNERABILITY]
+
+        assert "outdated_info" not in vuln.details
+        assert "additional_finding_types" not in vuln.details
+
+    def test_the_ahead_finding_still_learns_about_the_vulnerability(self):
+        by_type = self._findings_by_type()
+        ahead = by_type[FindingType.OUTDATED]
+
+        assert ahead.id in by_type[FindingType.VULNERABILITY].related_findings
+        assert ahead.details["additional_finding_types"] == [{"type": "vulnerability", "severity": "HIGH"}]

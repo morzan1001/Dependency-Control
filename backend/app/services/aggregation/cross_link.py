@@ -25,9 +25,14 @@ def cross_link_pair(f1: Finding, f2: Finding) -> None:
         _record_additional_type(primary, other)
 
 
+def is_ahead_of_default(finding_type: str, details: dict[str, Any] | None) -> bool:
+    """The outdated normalizer also mints installs newer than the registry default as OUTDATED."""
+    return finding_type == FindingType.OUTDATED and bool((details or {}).get("ahead_of_default"))
+
+
 def _record_additional_type(finding: Finding, other: Finding) -> None:
     """List the other finding types this package carries, for the multi-type badge row."""
-    if finding.type == other.type:
+    if finding.type == other.type or is_ahead_of_default(other.type, other.details):
         return
 
     # use_enum_values=True stores the raw strings, so no .value here.
@@ -100,7 +105,9 @@ def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) 
         return
 
     if other_finding.type == FindingType.OUTDATED:
-        if "outdated_info" not in vuln_finding.details:
+        if "outdated_info" not in vuln_finding.details and not is_ahead_of_default(
+            other_finding.type, other_finding.details
+        ):
             vuln_finding.details["outdated_info"] = {
                 "is_outdated": True,
                 "current_version": other_finding.version,
