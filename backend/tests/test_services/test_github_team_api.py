@@ -16,6 +16,7 @@ from app.services.github import (
     _GITHUB_ORG_WALK_CONCURRENCY,
     _REPOSITORY_ACCEPT,
     GitHubService,
+    _org_walk_gate,
     _RepositoryHolder,
     build_team_slug_map,
 )
@@ -793,6 +794,32 @@ class TestOrgRepositoryMap:
             await big
 
         assert small == {"acme/widgets": [4711]}
+
+    @pytest.mark.asyncio
+    async def test_a_waiter_never_walks_beside_a_walker_still_queued_at_the_gate(self, fake_cache):
+        """The walk budget starts at the gate, so the queue before it counts against no budget of the
+        walk's; a waiter that gave up then and walked as well is the stampede the lock is for."""
+        service = _service()
+        api = self._listings({"payments": ["acme/widgets"]})
+        gate = _org_walk_gate(str(service.instance.id))
+        for _ in range(_GITHUB_ORG_WALK_CONCURRENCY):
+            await gate.acquire()
+
+        with (
+            patch("app.services.github._GITHUB_ORG_WALK_TIMEOUT", 0.1),
+            patch("app.services.github._GITHUB_RESOLUTION_TIMEOUT", 2.0),
+            patch.object(service, "_api_client", new=api.client),
+        ):
+            walker = asyncio.create_task(service.get_org_repository_map("acme", {4711: "payments"}))
+            await asyncio.sleep(0.01)
+            waiter = asyncio.create_task(service.get_org_repository_map("acme", {4711: "payments"}))
+            await asyncio.sleep(0.5)
+            for _ in range(_GITHUB_ORG_WALK_CONCURRENCY):
+                gate.release()
+            results = await asyncio.gather(walker, waiter)
+
+        assert results == [{"acme/widgets": [4711]}] * 2
+        assert api.paths == ["/orgs/acme/teams/payments/repos"]
 
 
 class TestOrgTeamCount:

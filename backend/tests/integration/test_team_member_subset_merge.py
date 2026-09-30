@@ -116,6 +116,7 @@ async def test_the_write_replaces_only_its_own_subset_on_real_mongo(db, stored, 
 
 
 _ADA = {"user_id": "u-ada", "role": "member", "source": _OWN}
+_BOB = {"user_id": "u-bob", "role": "member", "source": _OWN}
 
 _REFRESH_CASES = [
     pytest.param(
@@ -128,6 +129,22 @@ _REFRESH_CASES = [
         "payments",
         False,
         id="unchanged beside a hand-added member",
+    ),
+    pytest.param(
+        [_ADA, {"user_id": "u-eve", "role": "member", "source": _THEIRS}],
+        [TeamMember(user_id="u-ada", source=_OWN)],
+        "Payments Guild",
+        "payments",
+        False,
+        id="unchanged ahead of another instance's member",
+    ),
+    pytest.param(
+        [_ADA, _BOB],
+        [TeamMember(user_id="u-bob", source=_OWN), TeamMember(user_id="u-ada", source=_OWN)],
+        "Payments Guild",
+        "payments",
+        False,
+        id="unchanged in another listing order",
     ),
     pytest.param(
         [_ADA],

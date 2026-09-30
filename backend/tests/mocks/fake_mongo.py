@@ -676,6 +676,9 @@ def _eval_expr(doc: dict, expr):
                 return None
             concatenated.extend(value)
         return concatenated
+    if "$setEquals" in expr:
+        first, second = (_eval_expr(doc, operand) for operand in expr["$setEquals"])
+        return all(element in second for element in first) and all(element in first for element in second)
     if "$mergeObjects" in expr:
         merged: dict = {}
         for operand in expr["$mergeObjects"]:

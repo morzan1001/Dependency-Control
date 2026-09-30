@@ -166,7 +166,8 @@ class TeamRepository:
             query: dict[str, Any] = {"_id": team_id}
             if not update_data and not binding_fields:
                 # An unchanged subset must not bump updated_at, or every ingest rewrites every holder.
-                query["$expr"] = {"$ne": [members, {"$ifNull": [f"${_MEMBERS}", []]}]}
+                # As sets: each sync appends its entries last, so two sources would reorder forever.
+                query["$expr"] = {"$not": [{"$setEquals": [members, {"$ifNull": [f"${_MEMBERS}", []]}]}]}
             stages: list[dict[str, Any]] = [{"$set": {_MEMBERS: members}}]
             if binding_fields:
                 stages.append(_binding_restamp_stage(key, binding_fields))

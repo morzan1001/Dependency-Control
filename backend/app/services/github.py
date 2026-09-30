@@ -63,8 +63,6 @@ _GITHUB_ORG_WALK_CONCURRENCY = 16
 # cache instead of paying the whole walk again.
 _GITHUB_ORG_WALK_TIMEOUT = 15.0
 
-_GITHUB_ORG_WALK_LOCK_WAIT = _GITHUB_ORG_WALK_TIMEOUT + 3.0
-
 # The locking helper stores a failed fetch as a bare {} for an hour, which would read as an empty
 # answer; an answer wrapped in this field carries its own None for the TTL it is cached under.
 _CACHED_FIELD = "value"
@@ -570,7 +568,8 @@ class GitHubService:
             lambda: self._walk_org_repository_map(org, slug_map),
             dict,
             ttl_seconds=GITHUB_ORG_REPO_MAP_CACHE_TTL,
-            max_wait_seconds=_GITHUB_ORG_WALK_LOCK_WAIT,
+            # The walk's budget starts at the gate, so only deadlines bound it; a waiter's own ends its wait first.
+            max_wait_seconds=_GITHUB_RESOLUTION_TIMEOUT,
         )
         return repo_map
 
