@@ -521,8 +521,11 @@ export function CICDInstancesManagement() {
           <DialogHeader>
             <DialogTitle>Delete {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} Instance?</DialogTitle>
             <DialogDescription>
-              This will remove the {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} instance
-              "{deleteInstance?.name}". Projects linked to this instance will lose their CI/CD integration.
+              This permanently removes the {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} instance
+              "{deleteInstance?.name}", its team bindings and every team membership its sync added. A team
+              whose only admin came from this sync is left without one, and re-creating the instance does not
+              restore the bindings. An instance that projects still link to is refused; edit it in place
+              instead.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

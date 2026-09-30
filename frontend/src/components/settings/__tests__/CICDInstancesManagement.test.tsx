@@ -360,3 +360,20 @@ describe('CICDInstancesManagement owner and namespace allowlists', () => {
     expect(mockGitLabUpdate.mock.calls[0][1]).not.toHaveProperty('is_default')
   })
 })
+
+describe('CICDInstancesManagement delete confirmation', () => {
+  it('states that linked instances are refused and what a delete takes from teams', () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    renderManagement()
+
+    const row = screen.getByRole('row', { name: /Internal GitLab/ })
+    fireEvent.click(within(row).getAllByRole('button')[2])
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('its team bindings and every team membership its sync added')
+    expect(dialog).toHaveTextContent('A team whose only admin came from this sync is left without one')
+    expect(dialog).toHaveTextContent('An instance that projects still link to is refused')
+    expect(dialog).not.toHaveTextContent('lose their CI/CD integration')
+  })
+})
