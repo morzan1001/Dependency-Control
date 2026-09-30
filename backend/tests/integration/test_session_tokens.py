@@ -40,6 +40,9 @@ class _UnavailableCache:
     async def set(self, key, value, ttl_seconds=None):
         return False
 
+    async def incr(self, key, ttl_seconds):
+        return None
+
 
 @pytest_asyncio.fixture
 async def api(db):

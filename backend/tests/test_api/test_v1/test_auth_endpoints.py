@@ -11,6 +11,7 @@ from jose import jwt
 from prometheus_client import REGISTRY
 
 from app.core import security
+from app.core.cache import CacheService
 from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.system import SystemSettings
@@ -336,20 +337,6 @@ class TestForgotPasswordSmtpGate:
         assert background_tasks.add_task.call_args.kwargs["system_settings"] is system_config
 
 
-class _MemoryCache:
-    """Stand-in for the Redis-backed cache so the real rate limiter can actually count."""
-
-    def __init__(self):
-        self._data: dict = {}
-
-    async def get(self, key):
-        return self._data.get(key)
-
-    async def set(self, key, value, ttl_seconds=None):
-        self._data[key] = value
-        return True
-
-
 def _run_forgot_password(user=None, cache=None, host="1.2.3.4", send_mock=None):
     from app.api.v1.endpoints.auth import forgot_password
 
@@ -385,23 +372,51 @@ class TestForgotPasswordRateLimit:
     """The budget on this unauthenticated endpoint is the only thing standing between a caller and
     unlimited password-reset mail to an address they do not own."""
 
-    def test_a_client_gets_three_attempts_before_being_rejected(self):
-        cache = _MemoryCache()
-
+    def test_a_client_gets_three_attempts_before_being_rejected(self, fake_cache):
         for _ in range(3):
-            assert _run_forgot_password(cache=cache) is not None
+            assert _run_forgot_password(cache=fake_cache) is not None
 
         with pytest.raises(HTTPException) as exc_info:
-            _run_forgot_password(cache=cache)
+            _run_forgot_password(cache=fake_cache)
 
         assert exc_info.value.status_code == 429
 
-    def test_the_budget_is_counted_per_client_address(self):
-        cache = _MemoryCache()
+    def test_the_budget_is_counted_per_client_address(self, fake_cache):
         for _ in range(3):
-            _run_forgot_password(cache=cache, host="1.2.3.4")
+            _run_forgot_password(cache=fake_cache, host="1.2.3.4")
 
-        assert _run_forgot_password(cache=cache, host="5.6.7.8") is not None
+        assert _run_forgot_password(cache=fake_cache, host="5.6.7.8") is not None
+
+    def test_one_address_gets_three_reset_mails_an_hour_whatever_the_client(self, fake_cache):
+        user = {"email": "user@test.com", "username": "user", "is_active": True, "auth_provider": "local"}
+        send = MagicMock()
+
+        for host in ("1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"):
+            assert _run_forgot_password(user=user, cache=fake_cache, host=host, send_mock=send) is not None
+
+        assert send.call_count == 3
+
+
+class TestLoginRateLimit:
+    @pytest.mark.asyncio
+    async def test_a_burst_of_parallel_attempts_gets_no_more_than_the_budget(self, tcp_redis):
+        from app.api.v1.endpoints.auth import _check_rate_limit
+
+        async def admitted() -> bool:
+            try:
+                await _check_rate_limit("login:bob")
+            except HTTPException:
+                return False
+            return True
+
+        cache = CacheService()
+        try:
+            with patch(f"{MODULE}.cache_service", cache):
+                results = await asyncio.gather(*(admitted() for _ in range(20)))
+        finally:
+            await cache.close()
+
+        assert sum(results) == 5
 
 
 class TestForgotPasswordConstantTime:
@@ -420,21 +435,55 @@ class TestForgotPasswordConstantTime:
         assert unknown_duration >= _TIMING_PAD_FLOOR_SECONDS
 
 
-class TestResendVerificationSmtpGate:
-    def test_db_smtp_unset_returns_501(self):
-        from app.api.v1.endpoints.auth import resend_verification_email_public
+def _run_resend_verification(cache, email="user@test.com", host="1.2.3.4", send_mock=None, smtp_host="smtp.test"):
+    from app.api.v1.endpoints.auth import resend_verification_email_public
 
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                resend_verification_email_public(
-                    background_tasks=MagicMock(),
-                    email="user@test.com",
-                    db=MagicMock(),
-                    system_config=_make_settings(smtp_host=None),
-                )
+    request = MagicMock()
+    request.client.host = host
+    unverified = {"email": "user@test.com", "username": "user", "is_active": True, "is_verified": False}
+    with (
+        patch(f"{MODULE}.cache_service", cache),
+        patch(f"{MODULE}.UserRepository", return_value=MagicMock(get_raw_by_email=AsyncMock(return_value=unverified))),
+        patch(f"{MODULE}.send_verification_email", send_mock or MagicMock()),
+    ):
+        return asyncio.run(
+            resend_verification_email_public(
+                request=request,
+                background_tasks=MagicMock(),
+                email=email,
+                db=MagicMock(),
+                system_config=_make_settings(smtp_host=smtp_host),
             )
+        )
+
+
+class TestResendVerificationSmtpGate:
+    def test_db_smtp_unset_returns_501(self, fake_cache):
+        with pytest.raises(HTTPException) as exc_info:
+            _run_resend_verification(fake_cache, smtp_host=None)
 
         assert exc_info.value.status_code == 501
+
+
+class TestResendVerificationThrottle:
+    def test_one_address_gets_three_mails_an_hour_whatever_the_client(self, fake_cache):
+        send = MagicMock()
+
+        for email, host in [("user@test.com", "1.1.1.1"), ("user@test.com", "2.2.2.2"), ("user@test.com", "3.3.3.3")]:
+            _run_resend_verification(fake_cache, email=email, host=host, send_mock=send)
+        response = _run_resend_verification(fake_cache, email=" User@Test.com ", host="4.4.4.4", send_mock=send)
+
+        assert send.call_count == 3
+        assert response.message.startswith("If an account with this email exists")
+
+    def test_a_client_gets_ten_requests_before_being_rejected(self, fake_cache):
+        for i in range(10):
+            _run_resend_verification(fake_cache, email=f"user{i}@test.com")
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_resend_verification(fake_cache, email="user10@test.com")
+
+        assert exc_info.value.status_code == 429
 
 
 class TestRequestVerificationSmtpGate:

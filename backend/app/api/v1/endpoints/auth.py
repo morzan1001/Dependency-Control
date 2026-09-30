@@ -73,16 +73,27 @@ _MSG_CREDENTIALS = "Could not validate credentials"
 _MSG_INVALID_RESET_TOKEN = "Invalid or expired reset token"
 
 
+async def _within_rate_limit(key: str, max_attempts: int, window_seconds: int) -> bool:
+    """Count this attempt; True while the budget holds or Redis is unreachable."""
+    attempts = await cache_service.incr(f"rate_limit:{key}", window_seconds)
+    return attempts is None or attempts <= max_attempts
+
+
 async def _check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int = 300) -> None:
-    """Check rate limit using Redis cache. Raises 429 if exceeded."""
-    cache_key = f"rate_limit:{key}"
-    attempts = await cache_service.get(cache_key)
-    if attempts is not None and attempts >= max_attempts:
+    if not await _within_rate_limit(key, max_attempts, window_seconds):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Too many attempts. Please try again in {window_seconds // 60} minutes.",
         )
-    await cache_service.set(cache_key, (attempts or 0) + 1, ttl_seconds=window_seconds)
+
+
+def _client_host(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+async def _within_email_budget(scope: str, email: str) -> bool:
+    """Counted for every request, known address or not, so the budget reveals nothing."""
+    return await _within_rate_limit(f"{scope}_email:{email.strip().lower()}", max_attempts=3, window_seconds=3600)
 
 
 async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> dict | None:
@@ -387,17 +398,21 @@ async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: Data
     responses=RESP_501,
 )
 async def resend_verification_email_public(
+    request: Request,
     background_tasks: BackgroundTasks,
     email: Annotated[str, Body(embed=True)],
     db: DatabaseDep,
     system_config: Annotated[SystemSettings, Depends(deps.get_system_settings)],
 ) -> VerificationEmailResponse:
     """Resend a verification email; public so unverified users can request a new token."""
+    await _check_rate_limit(f"resend_verif:{_client_host(request)}", max_attempts=10, window_seconds=600)
     generic_response = VerificationEmailResponse(
         message="If an account with this email exists, a verification email has been sent."
     )
 
     require_email_configured(system_config)
+    if not await _within_email_budget("resend_verif", email):
+        return generic_response
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
@@ -698,9 +713,7 @@ async def forgot_password(
     db: DatabaseDep,
 ) -> ForgotPasswordResponse:
     """Request a password reset email; always returns success with a constant-time response to prevent email enumeration and timing attacks."""
-    await _check_rate_limit(
-        f"forgot_pw:{request.client.host if request.client else 'unknown'}", max_attempts=3, window_seconds=600
-    )
+    await _check_rate_limit(f"forgot_pw:{_client_host(request)}", max_attempts=3, window_seconds=600)
     import asyncio
     import time
 
@@ -713,10 +726,11 @@ async def forgot_password(
     system_config = await deps.get_system_settings(db)
     require_email_configured(system_config)
 
+    within_budget = await _within_email_budget("forgot_pw", email)
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
 
-    if user and user.get("is_active", True) and is_local_account(user.get("auth_provider")):
+    if within_budget and user and user.get("is_active", True) and is_local_account(user.get("auth_provider")):
         send_password_reset_email(background_tasks, user, system_config)
 
     # Pad to a constant ~200ms so response time never reveals whether the email exists.
@@ -735,9 +749,7 @@ async def forgot_password(
 )
 async def reset_password(request: Request, reset_in: UserPasswordReset, db: DatabaseDep) -> PasswordResetResponse:
     """Reset password using the token from email; a reset voids that link and every other one issued before it."""
-    await _check_rate_limit(
-        f"reset_pw:{request.client.host if request.client else 'unknown'}", max_attempts=5, window_seconds=600
-    )
+    await _check_rate_limit(f"reset_pw:{_client_host(request)}", max_attempts=5, window_seconds=600)
     verified = security.verify_password_reset_token(reset_in.token)
     if not verified:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MSG_INVALID_RESET_TOKEN)

@@ -128,6 +128,38 @@ def sample_purls():
 
 
 @pytest.fixture
+def fake_cache():
+    """A CacheService backed by an in-memory fakeredis async client."""
+    import fakeredis.aioredis
+
+    from app.core.cache import CacheService
+
+    svc = CacheService()
+    svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    svc._pool = object()  # non-None so get_client() short-circuits to the fake
+    svc._available = True
+    return svc
+
+
+@pytest.fixture
+def tcp_redis(monkeypatch):
+    """A Redis speaking RESP over a real socket, so the service builds its own connection pool."""
+    import threading
+
+    from fakeredis import TcpFakeServer
+
+    from app.core.config import settings
+
+    server = TcpFakeServer(("127.0.0.1", 0), server_type="redis")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address[:2]
+    monkeypatch.setattr(settings, "REDIS_URL", f"redis://{host}:{port}/0")
+    yield
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.fixture
 def admin_permissions():
     from tests.helpers.permission_presets import PRESET_ADMIN
 
