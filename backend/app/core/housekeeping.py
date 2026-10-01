@@ -333,7 +333,9 @@ async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
     """Delete the scans a pin, a release or a new run has not taken out of retention since it picked them."""
     expirable = await db.scans.distinct("_id", {**scans, **_EXPIRABLE})
     released = await release_protected_scan_ids(db, expirable)
-    return await delete_scans_and_related_data(db, [sid for sid in expirable if sid not in released], label)
+    doomed = [sid for sid in expirable if sid not in released]
+    await db.scans.update_many({"_id": {"$in": doomed}}, {"$set": {"retention_deleting": True}})
+    return await delete_scans_and_related_data(db, doomed, label)
 
 
 async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) -> int:
@@ -367,8 +369,14 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
     archived = {"$in": scan_ids, "$nin": failed_ids}
     # A scan written to since its archive began holds data its bundle lacks.
     deleted = await _delete_expirable(db, {"_id": archived, "$nor": [{"updated_at": {"$gt": picked_at}}]}, label)
-    # Archive anew a kept scan its new bundle predates; a runner that trusted that bundle saw no later write.
-    kept = {"_id": archived, "created_at": {"$lt": picked_at}, "updated_at": {"$gt": picked_at}}
+    # Archive anew a kept scan its new bundle predates, unless a cascade or a restore still relies on that bundle.
+    kept = {
+        "_id": archived,
+        "created_at": {"$lt": picked_at},
+        "updated_at": {"$gt": picked_at},
+        "retention_deleting": {"$ne": True},
+        "restore_in_progress": {"$ne": True},
+    }
     async for scan in db.scans.find(kept, {"updated_at": 1}):
         stale = {"$gte": picked_at, "$lt": scan["updated_at"]}
         await db.archive_metadata.delete_one({"scan_id": scan["_id"], "archived_at": stale})

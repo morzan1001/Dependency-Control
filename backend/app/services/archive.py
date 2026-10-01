@@ -546,8 +546,9 @@ async def _handle_header_event(
     """
     scan_data = data["scan"]
     scan_data["pinned"] = True
-    # restored_at is the reaper's evidence of a finished restore; a re-archived scan's bundle carries its old one.
+    # A re-archived scan's bundle carries its old restored_at, the reaper's restore evidence, and a cut cascade's mark.
     scan_data.pop("restored_at", None)
+    scan_data.pop("retention_deleting", None)
     scan_data["restore_in_progress"] = True
     await db.scans.insert_one(scan_data)
     collections_restored.append("scans")

@@ -662,3 +662,66 @@ async def test_a_retention_run_whose_lock_an_operator_took_over_stops_archiving(
     assert await _remaining(db) == {"old1", "old2", "head"}
     assert await db.archive_metadata.count_documents({}) == 0
     assert await db.distributed_locks.find_one({"_id": "retention"}, {"_id": 0}) == operator_lock
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("cascade_resumes", [False, True], ids=["cascade-died", "cascade-finishes-later"])
+async def test_a_run_written_to_while_an_overlapping_runner_cascades_it_keeps_that_runners_archive(
+    client, db, api_key_headers, retention_archives, monkeypatch, cascade_resumes
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    cut_short, resume = asyncio.Event(), asyncio.Event()
+    real_cascade, real_archive_scan = housekeeping.delete_scans_and_related_data, archive.archive_scan
+    other: list[asyncio.Task] = []
+
+    async def cascade(db_, scan_ids, label):
+        if label == "other runner":
+            await db_.analysis_results.delete_many({"scan_id": {"$in": scan_ids}})
+            cut_short.set()
+            if not cascade_resumes:
+                return 0
+            await resume.wait()
+        return await real_cascade(db_, scan_ids, label)
+
+    async def other_runner_cascades_then_a_job_writes(db_, scan_id_):
+        monkeypatch.setattr(archive, "archive_scan", real_archive_scan)
+        other.append(asyncio.create_task(_archive_scans_and_delete(db_, [scan_id_], "other runner")))
+        await cut_short.wait()
+        metadata = await real_archive_scan(db_, scan_id_)
+        await _retried_job(client, db, api_key_headers)
+        return metadata
+
+    monkeypatch.setattr(housekeeping, "delete_scans_and_related_data", cascade)
+    monkeypatch.setattr(archive, "archive_scan", other_runner_cascades_then_a_job_writes)
+    await _archive_scans_and_delete(db, [scan_id], "this runner")
+    resume.set()
+    await other[0]
+
+    assert await db.archive_metadata.count_documents({"scan_id": scan_id}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps_that_archive(
+    client, db, api_key_headers, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    real_archive_scan = archive.archive_scan
+    finish_the_restore: list[Callable[[], Awaitable[None]]] = []
+
+    async def other_runner_archives_then_a_job_meets_a_restore(db_, scan_id_):
+        monkeypatch.setattr(archive, "archive_scan", real_archive_scan)
+        await _archive_scans_and_delete(db_, [scan_id_], "other runner")
+        metadata = await real_archive_scan(db_, scan_id_)
+        restore = restore_scan(db_, scan_id_)
+        finish_the_restore.append(await _paused_before(monkeypatch, archive, "_handle_doc_event", restore))
+        await _retried_job(client, db, api_key_headers)
+        return metadata
+
+    monkeypatch.setattr(archive, "archive_scan", other_runner_archives_then_a_job_meets_a_restore)
+    await _archive_scans_and_delete(db, [scan_id], "this runner")
+    restoring_scan_kept_its_archive = await db.archive_metadata.count_documents({"scan_id": scan_id}) == 1
+    await finish_the_restore[0]()
+
+    assert restoring_scan_kept_its_archive

@@ -775,7 +775,7 @@ async def test_archive_hashes_the_plaintext_secret_of_a_legacy_trufflehog_row(ar
 
 @pytest.mark.asyncio
 async def test_replay_inserts_the_scan_as_a_restore_in_progress():
-    """restored_at tells the reaper the restore finished, so the header must not carry one, not even the bundle's own."""
+    """The header drops the bundle's restored_at, the reaper's sign of a finished restore, and a cut cascade's mark."""
     from app.services.archive import _replay_bundle
     from app.services.archive_bundle import BundleFrames, BundleStats
 
@@ -783,7 +783,7 @@ async def test_replay_inserts_the_scan_as_a_restore_in_progress():
 
     async def bundle():
         async for chunk in BundleFrames.write(
-            scan_doc={"_id": "scan-1", "project_id": "p", "restored_at": earlier_restore},
+            scan_doc={"_id": "scan-1", "project_id": "p", "restored_at": earlier_restore, "retention_deleting": True},
             collections={},
             stats=BundleStats(),
         ):
@@ -798,6 +798,7 @@ async def test_replay_inserts_the_scan_as_a_restore_in_progress():
     assert inserted["restore_in_progress"] is True
     assert inserted["pinned"] is True
     assert "restored_at" not in inserted
+    assert "retention_deleting" not in inserted
 
 
 @pytest.mark.asyncio
