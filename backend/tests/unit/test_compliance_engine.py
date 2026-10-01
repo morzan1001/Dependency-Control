@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import threading
 import weakref
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -507,6 +508,41 @@ async def test_generate_lets_go_of_the_inputs_before_rendering():
     assert alive_at_render == [False]
     assert update_status.call_args_list[-1].kwargs["policy_version_snapshot"] == 3
     assert update_status.call_args_list[-1].kwargs["iana_catalog_version_snapshot"] == 4
+
+
+@pytest.mark.asyncio
+async def test_the_event_loop_keeps_running_while_a_report_renders():
+    """A PDF of a large scope lays out for tens of seconds; a blocked loop fails the liveness probe."""
+    engine = ComplianceReportEngine()
+    loop, loop_ran = asyncio.get_running_loop(), threading.Event()
+    loop_ran_during_render: list[bool] = []
+
+    def slow_render(fmt, framework, evaluation, rep):
+        loop.call_soon_threadsafe(loop_ran.set)
+        loop_ran_during_render.append(loop_ran.wait(timeout=5))
+        return b"{}", "x.json", "application/json"
+
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=AsyncMock()),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=MagicMock(resolve=AsyncMock(return_value=_project_scope())),
+        ),
+        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=evaluation_input())),
+        patch.object(engine, "_render", side_effect=slow_render),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
+    ):
+        outcome = await engine.generate(
+            report=_report(framework=ReportFramework.CVE_REMEDIATION_SLA),
+            db=MagicMock(),
+            user=MagicMock(id="u1", permissions=frozenset()),
+        )
+
+    assert outcome[0] == ReportStatus.COMPLETED
+    assert loop_ran_during_render == [True]
 
 
 @pytest.mark.asyncio

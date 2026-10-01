@@ -79,7 +79,8 @@ class ComplianceReportEngine:
             policy_version, iana_version = inputs.policy_version, inputs.iana_catalog_version
             # The findings stay alive through render, upload and the status write otherwise.
             del inputs
-            artifact_bytes, filename, mime = self._render(
+            artifact_bytes, filename, mime = await asyncio.to_thread(
+                self._render,
                 report.format,
                 framework,
                 evaluation,
