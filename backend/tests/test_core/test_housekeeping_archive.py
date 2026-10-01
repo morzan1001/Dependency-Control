@@ -28,6 +28,17 @@ def _mock_db() -> MagicMock:
     return db
 
 
+async def _store_with(*scan_ids: str) -> FakeDatabase:
+    db = FakeDatabase()
+    for scan_id in scan_ids:
+        await db.scans.insert_one({"_id": scan_id, "status": "completed"})
+    return db
+
+
+async def _remaining(db: FakeDatabase) -> set[str]:
+    return {doc["_id"] async for doc in db.scans.find({})}
+
+
 def _make_archive_metadata(scan_id="scan-1"):
     return ArchiveMetadata(
         project_id="proj-1",
@@ -47,71 +58,62 @@ class TestArchiveScansAndDelete:
         result = asyncio.run(_archive_scans_and_delete(MagicMock(), [], "test"))
         assert result == 0
 
-    def test_archives_and_deletes_successfully(self):
+    @pytest.mark.asyncio
+    async def test_archives_and_deletes_successfully(self):
+        db = await _store_with("scan-1")
         metadata = _make_archive_metadata()
 
-        with (
-            patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=1),
-        ):
-            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
+        with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive:
+            result = await _archive_scans_and_delete(db, ["scan-1"], "test")
 
         assert result == 1
         mock_archive.assert_called_once()
+        assert await _remaining(db) == set()
 
-    def test_skips_delete_for_failed_archives(self):
-        with (
-            patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=None) as mock_archive,
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
-        ):
-            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
+    @pytest.mark.asyncio
+    async def test_skips_delete_for_failed_archives(self):
+        db = await _store_with("scan-1")
+
+        with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=None) as mock_archive:
+            result = await _archive_scans_and_delete(db, ["scan-1"], "test")
 
         assert result == 0
         mock_archive.assert_called_once()
-        # Delete is called with an empty list because the failed scan is excluded.
-        call_args = mock_delete.call_args[0]
-        assert call_args[1] == []
+        assert await _remaining(db) == {"scan-1"}
 
-    def test_partial_failure_only_deletes_successful(self):
-        # scan-1 archives ok, scan-2 fails.
+    @pytest.mark.asyncio
+    async def test_partial_failure_only_deletes_successful(self):
+        db = await _store_with("scan-1", "scan-2")
+
         async def mock_archive_fn(db, scan_id):
-            await asyncio.sleep(0)
             if scan_id == "scan-1":
                 return _make_archive_metadata(scan_id="scan-1")
             return None
 
-        with (
-            patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=mock_archive_fn),
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=1) as mock_delete,
-        ):
-            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1", "scan-2"], "test"))
+        with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=mock_archive_fn):
+            result = await _archive_scans_and_delete(db, ["scan-1", "scan-2"], "test")
 
         assert result == 1
-        call_args = mock_delete.call_args[0]
-        assert "scan-1" in call_args[1]
-        assert "scan-2" not in call_args[1]
+        assert await _remaining(db) == {"scan-2"}
 
-    def test_handles_archive_exception(self):
-        with (
-            patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=Exception("Archive crashed")),
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
-        ):
-            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
+    @pytest.mark.asyncio
+    async def test_handles_archive_exception(self):
+        db = await _store_with("scan-1")
+
+        with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=Exception("Archive crashed")):
+            result = await _archive_scans_and_delete(db, ["scan-1"], "test")
 
         assert result == 0
-        call_args = mock_delete.call_args[0]
-        assert call_args[1] == []
+        assert await _remaining(db) == {"scan-1"}
 
-    def test_processes_all_provided_scan_ids(self):
+    @pytest.mark.asyncio
+    async def test_processes_all_provided_scan_ids(self):
         # Chunking is _process_scans_in_batches's job; this must process every ID it receives.
         scan_ids = [f"scan-{i}" for i in range(100)]
         metadata = _make_archive_metadata()
 
-        with (
-            patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=100),
-        ):
-            asyncio.run(_archive_scans_and_delete(MagicMock(), scan_ids, "test"))
+        with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive:
+            await _archive_scans_and_delete(await _store_with(*scan_ids), scan_ids, "test")
 
         assert mock_archive.call_count == 100
 
@@ -123,7 +125,7 @@ class TestArchiveScansAndDelete:
 
 class TestHandleRetentionAction:
     def test_delete_action_calls_delete(self):
-        with patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete:
+        with patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete:
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "delete", "test"))
 
         mock_delete.assert_called_once()
@@ -141,7 +143,7 @@ class TestHandleRetentionAction:
         with (
             patch(f"{MODULE}.is_archive_enabled", return_value=False),
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
             patch(f"{MODULE}.logger") as mock_logger,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "archive", "test"))
@@ -153,7 +155,7 @@ class TestHandleRetentionAction:
     def test_none_action_does_nothing(self):
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
 
@@ -164,7 +166,7 @@ class TestHandleRetentionAction:
         """ "none" is a deliberate no-op, so it must not be reported as a misconfiguration."""
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock),
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock),
+            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock),
             patch(f"{MODULE}.logger") as mock_logger,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
@@ -176,7 +178,7 @@ class TestHandleRetentionAction:
         otherwise skip the scans forever with no log line at all."""
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
             patch(f"{MODULE}.logger") as mock_logger,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1", "scan-2"], "Delete", "test"))
@@ -191,7 +193,7 @@ class TestHandleRetentionAction:
     def test_empty_scan_list_returns_early(self):
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), [], "delete", "test"))
 

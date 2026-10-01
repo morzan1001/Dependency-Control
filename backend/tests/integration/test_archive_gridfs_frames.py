@@ -79,6 +79,14 @@ async def _seed_scan(db, sbom: dict[str, Any]) -> Scan:
     return scan
 
 
+async def _seed_finished_rescan(db, scan: Scan) -> Scan:
+    """A rescan whose analysis finished, so retention may archive it."""
+    rescan = build_rescan(scan.model_dump(by_alias=True))
+    rescan.status = "completed"
+    await db.scans.insert_one(rescan.model_dump(by_alias=True))
+    return rescan
+
+
 async def _seed_scan_with_result_and_callgraph(client, db, sbom: dict[str, Any]) -> None:
     await _seed_scan(db, sbom)
     await AnalysisResultRepository(db).save_result(_SCAN_ID, "kics", _KICS_REPORT)
@@ -251,8 +259,7 @@ async def test_concurrent_restores_of_scans_sharing_an_absent_file_both_finish_w
     db, archive_env, monkeypatch, sbom_size
 ):
     scan = await _seed_scan(db, _sbom_of(sbom_size))
-    rescan = build_rescan(scan.model_dump(by_alias=True))
-    await db.scans.insert_one(rescan.model_dump(by_alias=True))
+    rescan = await _seed_finished_rescan(db, scan)
     before = await _stored_files(db)
     for scan_id in (_SCAN_ID, rescan.id):
         assert await archive_scan(db, scan_id) is not None
@@ -278,8 +285,7 @@ async def test_a_legacy_restore_racing_a_chunk_frame_restore_of_a_shared_absent_
 ):
     sbom = _sbom_of(_MIB)
     scan = await _seed_scan(db, sbom)
-    rescan = build_rescan(scan.model_dump(by_alias=True))
-    await db.scans.insert_one(rescan.model_dump(by_alias=True))
+    rescan = await _seed_finished_rescan(db, scan)
     before = await _stored_files(db)
     assert await archive_scan(db, rescan.id) is not None
     await _archive_without_chunk_frames(db, archive_env, sbom)

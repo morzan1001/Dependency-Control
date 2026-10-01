@@ -327,6 +327,20 @@ async def _reap_orphan_s3_objects(db: Any) -> int:
     return deleted
 
 
+async def _delete_unchanged(db: Any, scan_ids: list[str], picked_at: datetime, label: str) -> int:
+    """Delete the scans that are still expirable and that no ingest wrote to since retention picked them."""
+    unchanged = await db.scans.distinct(
+        "_id",
+        {
+            "_id": {"$in": scan_ids},
+            "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
+            "status": {"$nin": SCAN_ACTIVE_STATUSES},
+            "$nor": [{"updated_at": {"$gt": picked_at}}],
+        },
+    )
+    return await delete_scans_and_related_data(db, unchanged, label)
+
+
 async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "") -> int:
     """
     Archive scans to S3, then delete from MongoDB.
@@ -339,6 +353,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "
 
     from app.services.archive import archive_scan
 
+    picked_at = datetime.now(timezone.utc)
     archived_count = 0
     failed_ids: list[str] = []
 
@@ -364,7 +379,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "
 
     successfully_archived = [sid for sid in scan_ids if sid not in failed_ids]
 
-    deleted = await delete_scans_and_related_data(db, successfully_archived, label)
+    deleted = await _delete_unchanged(db, successfully_archived, picked_at, label)
 
     if label:
         logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
@@ -380,7 +395,7 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
     if action == RETENTION_ACTION_ARCHIVE and is_archive_enabled():
         await _archive_scans_and_delete(db, scan_ids, label)
     elif action == RETENTION_ACTION_DELETE:
-        await delete_scans_and_related_data(db, scan_ids, label)
+        await _delete_unchanged(db, scan_ids, datetime.now(timezone.utc), label)
     elif action == RETENTION_ACTION_ARCHIVE:
         logger.warning(
             f"{label}: Retention action is 'archive' but S3 is not configured. "

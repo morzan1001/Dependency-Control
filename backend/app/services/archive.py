@@ -25,6 +25,8 @@ from app.core.constants import (
     ARCHIVE_RESTORE_LOCK_TEMPLATE,
     ENCRYPTION_MAGIC,
     RESTORE_INSERT_BATCH_SIZE,
+    RETENTION_PROTECTED_FLAG_VALUES,
+    SCAN_ACTIVE_STATUSES,
     SCAN_SCOPED_COLLECTIONS,
 )
 from app.core.encryption import EncryptionStreamWriter, decrypt_stream, is_encryption_enabled
@@ -298,7 +300,7 @@ async def _load_scan_for_archive(
 ) -> tuple[ArchiveMetadata | None, dict[str, Any] | None]:
     """Look up the scan for archival, returning (existing_metadata, scan_doc).
 
-    Exactly one is non-None on the happy path; both None means not-found (metrics recorded).
+    Exactly one is non-None on the happy path; both None means there is nothing to archive (metrics recorded).
     """
     existing = await repo.find_by_scan_id(scan_id)
     if existing:
@@ -315,6 +317,14 @@ async def _load_scan_for_archive(
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
         archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.NOT_FOUND).inc()
+        archive_operations_total.labels(operation="archive", status="failure").inc()
+        return None, None
+    if scan_doc.get("pinned") in RETENTION_PROTECTED_FLAG_VALUES or scan_doc.get("status") in SCAN_ACTIVE_STATUSES:
+        logger.info(
+            "Scan pinned or under analysis, not archiving it",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.PROTECTED).inc()
         archive_operations_total.labels(operation="archive", status="failure").inc()
         return None, None
 
@@ -359,7 +369,7 @@ async def archive_scan(
 ) -> ArchiveMetadata | None:
     """Archive one scan and its related data to S3 under a distributed lock on archive:{scan_id}.
 
-    Returns ArchiveMetadata on success; None on lock-held, not-found, or upload failure.
+    Returns ArchiveMetadata on success; None on lock-held, not-found, protected, or upload failure.
     """
     if not is_archive_enabled():
         logger.warning("Archive requested but S3 is not configured.")
