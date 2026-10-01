@@ -370,10 +370,11 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "
     archived = {"$in": scan_ids, "$nin": failed_ids}
     # A scan written to since its archive began holds data its bundle lacks.
     deleted = await _delete_expirable(db, {"_id": archived, "$nor": [{"updated_at": {"$gt": picked_at}}]}, label)
-    # Such a scan, unless an ingest recreated it after the delete, holds all its new bundle does: archive it anew.
+    # Archive anew a kept scan its new bundle predates; a runner that trusted that bundle saw no later write.
     kept = {"_id": archived, "created_at": {"$lt": picked_at}, "updated_at": {"$gt": picked_at}}
-    stale = {"scan_id": {"$in": await db.scans.distinct("_id", kept)}, "archived_at": {"$gte": picked_at}}
-    await db.archive_metadata.delete_many(stale)
+    async for scan in db.scans.find(kept, {"updated_at": 1}):
+        stale = {"$gte": picked_at, "$lt": scan["updated_at"]}
+        await db.archive_metadata.delete_one({"scan_id": scan["_id"], "archived_at": stale})
 
     if label:
         logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")

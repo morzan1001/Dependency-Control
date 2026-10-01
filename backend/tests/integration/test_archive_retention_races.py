@@ -427,6 +427,62 @@ async def test_a_run_written_to_during_its_batch_is_archived_afresh_by_the_next_
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+@pytest.mark.parametrize("other_archives_first", [True, False], ids=["other-archives-first", "this-archives-first"])
+async def test_a_run_written_to_while_a_second_runner_overlaps_its_batch_stays_restorable(
+    client, db, api_key_headers, retention_archives, monkeypatch, other_archives_first
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    other_holds_its_delete, this_runner_done = asyncio.Event(), asyncio.Event()
+    other: list[asyncio.Task] = []
+    real_delete = housekeeping._delete_expirable
+
+    async def start_the_other_runner() -> None:
+        other.append(asyncio.create_task(_archive_scans_and_delete(db, [scan_id], "other runner")))
+        await other_holds_its_delete.wait()
+
+    async def delete_expirable(db_, scans, label):
+        if label == "other runner":
+            other_holds_its_delete.set()
+            await this_runner_done.wait()
+        elif not other:
+            await start_the_other_runner()
+        return await real_delete(db_, scans, label)
+
+    async def write_then_overlap() -> None:
+        await _retried_job(client, db, api_key_headers)
+        if other_archives_first:
+            await start_the_other_runner()
+
+    monkeypatch.setattr(housekeeping, "_delete_expirable", delete_expirable)
+    _interleave(monkeypatch, archive, "archive_scan", write_then_overlap)
+    await _archive_scans_and_delete(db, [scan_id], "this runner")
+    this_runner_done.set()
+    await other[0]
+
+    assert await _remaining(db) == set()
+    assert await restore_scan(db, scan_id) is not None
+    assert await _analyzers(db, scan_id) == {"trufflehog", "opengrep"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_run_written_to_during_a_batch_that_reused_its_older_archive_keeps_that_archive(
+    client, db, api_key_headers, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    # A pass archived the run and died inside its cascade, leaving that bundle the only copy of the result.
+    await archive.archive_scan(db, scan_id)
+    await db.analysis_results.delete_many({"scan_id": scan_id})
+    _interleave(
+        monkeypatch, archive, "_load_scan_for_archive", partial(_retried_job, client, db, api_key_headers), after=True
+    )
+    await _archive_scans_and_delete(db, [scan_id], "second pass")
+
+    assert await db.archive_metadata.count_documents({"scan_id": scan_id}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 @pytest.mark.parametrize("header_keys_scan", [True, False], ids=["header-with-its-scan", "header-without-a-scan"])
 async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_scan_alone(
     client, db, api_key_headers, retention_archives, monkeypatch, header_keys_scan
