@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from functools import partial
+from itertools import batched
 from typing import TYPE_CHECKING, Any, Optional
 
 
@@ -437,19 +438,16 @@ async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[d
     """Each build's rescans older than its newest RESCAN_HISTORY_RUNS usable ones, except the one its
     latest_rescan_id names."""
     # Keyed on original_scan_id so its index, not a pass over every build, finds the rescans.
-    runs = {
-        **scope,
-        "original_scan_id": {"$ne": None},
-        **_EXPIRABLE,
-    }
-    crowded = db.scans.aggregate(
+    runs = {**scope, "original_scan_id": {"$ne": None}, **_EXPIRABLE}
+    # Read up front: its cursor would sit idle past the session timeout while the batches archive.
+    crowded = await db.scans.aggregate(
         [
             {"$match": runs},
             {"$group": {"_id": "$original_scan_id", "runs": {"$sum": 1}}},
             {"$match": {"runs": {"$gt": RESCAN_HISTORY_RUNS}}},
         ]
-    )
-    async for groups in abatched(crowded, ARCHIVE_BATCH_SIZE):
+    ).to_list(None)
+    for groups in batched(crowded, ARCHIVE_BATCH_SIZE, strict=False):
         roots = [group["_id"] for group in groups]
         current = set(await db.scans.distinct("latest_rescan_id", {"_id": {"$in": roots}}))
         usable_kept: Counter[str] = Counter()

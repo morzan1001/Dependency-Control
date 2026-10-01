@@ -14,6 +14,7 @@ from pymongo.errors import AutoReconnect, NetworkTimeout
 
 from app.api.v1.endpoints import callgraph
 from app.core import housekeeping
+from app.core.constants import ARCHIVE_BATCH_SIZE, RESCAN_HISTORY_RUNS
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
 from app.models.release import Release
 from app.repositories.archive_metadata import ArchiveMetadataRepository
@@ -196,6 +197,28 @@ async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
         await housekeeping.housekeeping_loop()
 
     assert bid.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_rescan_history_cap_whose_build_cursor_died_still_caps_every_build(db, monkeypatch):
+    builds = 2 * ARCHIVE_BATCH_SIZE + 2
+    await db.scans.insert_many(
+        _scan(f"rescan-{build}-{age}", age, original_scan_id=f"build-{build}", is_rescan=True)
+        for build in range(builds)
+        for age in range(RESCAN_HISTORY_RUNS + 1)
+    )
+
+    async def kill_the_idle_build_cursor() -> None:
+        idle = {"type": "idleCursor", "ns": f"{db.name}.scans", "cursor.originatingCommand.aggregate": "scans"}
+        ops = await db.client.admin.aggregate([{"$currentOp": {"idleCursors": True}}, {"$match": idle}]).to_list(None)
+        if ops:
+            await db.command("killCursors", "scans", cursors=[op["cursor"]["cursorId"] for op in ops])
+
+    _interleave(monkeypatch, housekeeping, "_handle_retention_action", kill_the_idle_build_cursor)
+    await _expire_group(db, 90, {}, "delete", "retention")
+
+    assert await db.scans.count_documents({}) == builds * RESCAN_HISTORY_RUNS
 
 
 @pytest.mark.asyncio
