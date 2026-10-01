@@ -581,11 +581,6 @@ async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redire
         )
 
 
-def _email_unverified(user_info: dict[str, Any]) -> bool:
-    # Providers send the claim as a bool, a string in any case, or 0/1; absent means unasserted.
-    return str(user_info.get("email_verified")).strip().lower() in {"false", "0"}
-
-
 async def _oidc_login_user(
     request: Request, db: DatabaseDep, code: str | None, state: str | None, error: str | None
 ) -> dict:
@@ -601,8 +596,6 @@ async def _oidc_login_user(
     email = user_info.get("email")
     if not email:
         raise _OidcLoginError("no_email")
-    if _email_unverified(user_info):
-        raise _OidcLoginError("email_unverified")
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)

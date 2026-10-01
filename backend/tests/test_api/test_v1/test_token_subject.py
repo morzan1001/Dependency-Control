@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -136,30 +135,10 @@ async def _oidc_callback(user_info: dict, db: FakeDatabase, cache):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "claim",
-    [False, "false", "False", "FALSE", " false ", "0", 0],
-    ids=["boolean", "string", "capitalised", "upper", "padded", "zero-string", "zero"],
-)
-async def test_an_oidc_login_whose_email_the_provider_has_not_verified_is_refused(claim, fake_cache):
+async def test_an_oidc_login_names_the_account_by_id(fake_cache):
     db = await _db_with()
 
-    response = await _oidc_callback({"email": "new@corp.com", "email_verified": claim}, db, fake_cache)
-
-    assert urlsplit(response.headers["location"]).fragment == "error=email_unverified"
-    assert await db.users.find_one({"email": "new@corp.com"}) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "claims",
-    [{}, {"email_verified": True}, {"email_verified": "True"}, {"email_verified": None}],
-    ids=["claim-absent", "claim-true", "claim-true-string", "claim-null"],
-)
-async def test_an_oidc_login_names_the_account_by_id(claims, fake_cache):
-    db = await _db_with()
-
-    response = await _oidc_callback({"email": "new@corp.com", "preferred_username": "newbie", **claims}, db, fake_cache)
+    response = await _oidc_callback({"email": "new@corp.com", "preferred_username": "newbie"}, db, fake_cache)
 
     cookies: SimpleCookie = SimpleCookie()
     for header in response.headers.getlist("set-cookie"):

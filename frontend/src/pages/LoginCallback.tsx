@@ -10,7 +10,6 @@ const SSO_ERRORS = new Map([
   ['state_expired', 'The sign-in expired or was started in another browser. Please try again.'],
   ['idp_error', 'The identity provider did not complete the sign-in.'],
   ['no_email', 'The identity provider did not share your email address.'],
-  ['email_unverified', 'The identity provider has not verified your email address.'],
   ['local_user_blocked', 'This account signs in with a password. Please use the login form.'],
   ['inactive_user', 'This account is inactive.'],
   ['not_provisioned', 'No account exists for you yet. Please ask an administrator to create one.'],
