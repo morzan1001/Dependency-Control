@@ -1,4 +1,5 @@
 import json
+import tracemalloc
 
 import pytest
 from bson import Binary, ObjectId
@@ -375,3 +376,19 @@ async def test_rewrite_that_changes_no_line_reproduces_a_bundle_read_in_tiny_chu
     chunks = [original[i : i + 3] for i in range(0, len(original), 3)]
 
     assert await _collect(rewrite_bundle_frames(_async_iter(chunks), lambda _collection, line: line)) == original
+
+
+@pytest.mark.asyncio
+async def test_a_line_handed_out_is_no_longer_held_by_the_reader():
+    from app.services.archive_bundle import _bundle_lines
+
+    line = b"x" * (8 * 1024 * 1024) + b"\n"
+    lines = _bundle_lines(_async_iter([line[:1024], line[1024:]]))
+    tracemalloc.start()
+    try:
+        handed_out = await anext(lines)
+        held = tracemalloc.get_traced_memory()[0]
+    finally:
+        tracemalloc.stop()
+    assert handed_out == line
+    assert held < 1.5 * len(line)

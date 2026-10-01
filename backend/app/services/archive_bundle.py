@@ -140,8 +140,10 @@ async def _bundle_lines(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
         # The buffered bytes hold no newline, so searching only the new chunk scans a long line once.
         idx = buffer.find(b"\n", scanned)
         while idx >= 0:
-            yield bytes(memoryview(buffer)[: idx + 1])
+            # Dropped before the yield, so the buffer holds no second copy while the consumer works on it.
+            line = bytes(memoryview(buffer)[: idx + 1])
             del buffer[: idx + 1]
+            yield line
             idx = buffer.find(b"\n")
     if buffer:
         # Trailing data without a newline: yield as one final line.
