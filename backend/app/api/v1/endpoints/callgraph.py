@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -192,7 +193,9 @@ async def upload_callgraph(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
         )
         for target_scan_id in [scan_id, *pending_rescans]:
-            await scan_repo.update_raw(target_scan_id, {"$set": {"reachability_pending": True}})
+            # Retention and archive tell from updated_at that a scan was written to after they read it.
+            written = {"reachability_pending": True, "updated_at": datetime.now(timezone.utc)}
+            await scan_repo.update_raw(target_scan_id, {"$set": written})
             try:
                 dropped = await run_pending_reachability_for_scan(target_scan_id, project_id, db)
             except Exception as e:

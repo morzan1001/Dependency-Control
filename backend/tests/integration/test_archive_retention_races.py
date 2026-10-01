@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -19,6 +20,7 @@ from app.services.archive import restore_scan
 _NOW = datetime.now(timezone.utc)
 _PROJECT_ID = "test-project-id"
 _RUN = {"pipeline_id": 515151, "commit_hash": "e" * 40, "branch": "main"}
+_CALLGRAPH = {"format": "generic", "language": "python", "data": {"imports": [], "analyzed_modules": []}}
 _SECRET = json.loads((Path(__file__).parents[1] / "fixtures/secrets/trufflehog_v3_line.json").read_text())
 
 
@@ -57,15 +59,21 @@ async def _retried_job(client, db, headers) -> None:
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "completed"}})
 
 
-def _retry_the_job_before_the_metadata_save(monkeypatch, client, db, headers) -> None:
+async def _callgraph_upload(client, headers, project) -> None:
+    with patch("app.api.deps._authenticate_ci", new_callable=AsyncMock, return_value=project):
+        resp = await client.post(f"/api/v1/projects/{_PROJECT_ID}/callgraph", json={**_RUN, **_CALLGRAPH}, headers=headers)
+    assert resp.status_code == 200, resp.text
+
+
+def _before_the_metadata_save(monkeypatch, write: Callable[[], Awaitable[None]]) -> None:
     real_save = archive._save_archive_metadata
 
-    async def retry_then_save(*args, **kwargs):
+    async def write_then_save(*args, **kwargs):
         monkeypatch.setattr(archive, "_save_archive_metadata", real_save)
-        await _retried_job(client, db, headers)
+        await write()
         return await real_save(*args, **kwargs)
 
-    monkeypatch.setattr(archive, "_save_archive_metadata", retry_then_save)
+    monkeypatch.setattr(archive, "_save_archive_metadata", write_then_save)
 
 
 async def _analyzers(db, scan_id: str) -> set[str]:
@@ -159,10 +167,22 @@ async def test_a_scan_ingested_into_while_it_was_archived_is_kept(
     client, db, api_key_headers, retention_archives, monkeypatch
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
-    _retry_the_job_before_the_metadata_save(monkeypatch, client, db, api_key_headers)
+    _before_the_metadata_save(monkeypatch, lambda: _retried_job(client, db, api_key_headers))
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert await _analyzers(db, scan_id) == {"trufflehog", "opengrep"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_callgraph_posted_while_its_run_was_archived_is_kept(
+    client, db, api_key_headers, _project, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    _before_the_metadata_save(monkeypatch, lambda: _callgraph_upload(client, api_key_headers, _project))
+    await _archive_scans_and_delete(db, [scan_id], "retention")
+
+    assert await db.callgraphs.count_documents({"scan_id": scan_id}) == 1
 
 
 @pytest.mark.asyncio
@@ -219,7 +239,7 @@ async def test_a_run_ingested_into_after_its_archive_began_is_not_deleted_for_th
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
     if during_the_archive:
-        _retry_the_job_before_the_metadata_save(monkeypatch, client, db, api_key_headers)
+        _before_the_metadata_save(monkeypatch, lambda: _retried_job(client, db, api_key_headers))
     await _archive_scans_and_delete(db, [scan_id], "first pass")
     if not during_the_archive:
         await _retried_job(client, db, api_key_headers)
