@@ -35,6 +35,9 @@ class TrivyAnalyzer(CLIAnalyzer):
             "--format",
             "json",
             "--quiet",
+            # Past cli_timeout, so a slow scan ends on the wrapper's non-retryable timeout, not trivy's retryable one.
+            "--timeout",
+            f"{self.cli_timeout + 60}s",
         ]
 
         if settings.TRIVY_SERVER_URL:

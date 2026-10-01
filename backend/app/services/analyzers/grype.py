@@ -24,7 +24,6 @@ class GrypeAnalyzer(CLIAnalyzer):
         "failed to update vulnerability database",
         "database integrity check failed",
         "no such file or directory",  # grype-db filesystem race during sweep
-        "timed out after",  # the cli_base timeout wrapper's own stderr string
     )
     # Empty stderr on a non-zero exit means grype was killed (signal/OOM) before reporting.
     retry_on_empty_stderr = True
