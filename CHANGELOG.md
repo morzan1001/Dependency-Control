@@ -16,7 +16,7 @@ A running retention keeps its lock at most 10 minutes ahead, so this filter leav
 db.distributed_locks.replaceOne({_id: "retention"}, {holder: "operator", expires_at: new Date(Date.now() + 86400000)}, {upsert: true});
 ```
 
-The running pod stops at its next renewal, within about 200 seconds, and no pod starts a run until the lock expires; the `deleteOne` above lifts it earlier. A run stopped inside a batch's delete leaves that batch's scans partly deleted until the next run removes them.
+The running pod stops at its next renewal, within about 200 seconds, and no pod starts a run until the lock expires; the `deleteOne` above lifts it earlier. A run stopped inside a batch's delete leaves up to 50 of that batch's scans partly deleted and marked `retention_deleting`. A later run removes them while the settings still expire them; otherwise, while no retention runs, list them with `db.scans.find({retention_deleting: true}, {_id: 1})` and delete each in a backend pod as the next section shows, which in archive mode leaves its archive restorable.
 
 ## After the rollout (review): scans kept beside their archive
 
