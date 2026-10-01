@@ -31,10 +31,9 @@ async def run_holding_lock[T](
 ) -> T:
     """Run ``work`` while renewing its lock; cancel it and raise LockLost once another holder took the lock over."""
     task = asyncio.create_task(work)
-    lost = False
 
     async def heartbeat() -> None:
-        nonlocal lost
+        lost = False
         while True:
             await asyncio.sleep(ttl_seconds / LOCK_RENEWALS_PER_TTL)
             try:
@@ -47,7 +46,7 @@ async def run_holding_lock[T](
 
     beat = asyncio.create_task(heartbeat())
     try:
-        result = await task
+        return await task
     except asyncio.CancelledError:
         # Only the heartbeat cancels the work without cancelling us; our own cancellation must propagate.
         this_task = asyncio.current_task()
@@ -57,9 +56,6 @@ async def run_holding_lock[T](
     finally:
         beat.cancel()
         await asyncio.gather(beat, return_exceptions=True)
-    if lost:
-        raise LockLost
-    return result
 
 
 class DistributedLocksRepository:
