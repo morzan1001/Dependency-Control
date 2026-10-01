@@ -332,12 +332,12 @@ async def _load_scan_for_archive(
         return None, None
     if existing is None:
         return None, scan_doc
-    written_at = scan_doc.get("updated_at")
-    if written_at is None or written_at <= existing.archived_at:
+    # A restore since the archive leaves metadata the stale-metadata reaper may delete at any moment.
+    if all(scan_doc[field] <= existing.archived_at for field in ("updated_at", "restored_at") if scan_doc.get(field)):
         return existing, None
     # Its bundle lacks what ingest wrote since, and a recreated scan lacks what only the bundle holds.
     logger.warning(
-        "Scan written to since it was archived, keeping both",
+        "Scan written to or restored since it was archived, keeping both",
         extra={"scan_id": sanitize_for_log(scan_id)},
     )
     archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.ALREADY_EXISTS).inc()

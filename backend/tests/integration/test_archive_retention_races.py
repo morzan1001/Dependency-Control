@@ -185,15 +185,27 @@ async def test_an_archive_whose_metadata_insert_landed_but_timed_out_stays_resto
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_restore_whose_metadata_delete_failed_leaves_the_archive_restorable(db, retention_archives):
-    await db.scans.insert_one(_scan("x", 200))
+async def test_a_restore_whose_metadata_delete_failed_leaves_the_archive_restorable(
+    db, retention_archives, monkeypatch
+):
+    await db.scans.insert_many([_scan("x", 200), _scan("y", 200)])
     await _archive_scans_and_delete(db, ["x"], "first pass")
     with patch.object(
         ArchiveMetadataRepository, "delete_by_scan_id", AsyncMock(side_effect=AutoReconnect("primary stepped down"))
     ):
         assert await restore_scan(db, "x") is not None
     await db.scans.update_one({"_id": "x"}, {"$set": {"pinned": False}})
-    await _archive_scans_and_delete(db, ["x"], "second pass")
+    real_archive_scan = archive.archive_scan
+
+    async def another_pod_reaps_stale_metadata_during_the_batch(db_, scan_id):
+        if scan_id == "y":
+            await housekeeping._reap_stale_metadata(db_)
+        return await real_archive_scan(db_, scan_id)
+
+    monkeypatch.setattr(archive, "archive_scan", another_pod_reaps_stale_metadata_during_the_batch)
+    await _archive_scans_and_delete(db, ["x", "y"], "second pass")
+    monkeypatch.setattr(archive, "archive_scan", real_archive_scan)
+    await _archive_scans_and_delete(db, ["x"], "third pass")
 
     assert await _remaining(db) == set()
     assert await restore_scan(db, "x") is not None
