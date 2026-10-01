@@ -64,6 +64,7 @@ async def test_restore_rebuilds_the_delta_and_repoints_the_successor(archive_env
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
         LockCls.return_value.renew_lock = AsyncMock(return_value=True)
+        LockCls.return_value.held_locks = AsyncMock(return_value=set())
         meta = await archive_scan(db, "scan-1")
     assert meta is not None
 

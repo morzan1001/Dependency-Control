@@ -185,7 +185,11 @@ def _patch_archive_deps(monkeypatch, archive_module):
     monkeypatch.setattr(
         archive_module,
         "DistributedLocksRepository",
-        lambda _db: MagicMock(acquire_lock=AsyncMock(return_value=True), release_lock=AsyncMock()),
+        lambda _db: MagicMock(
+            acquire_lock=AsyncMock(return_value=True),
+            release_lock=AsyncMock(),
+            held_locks=AsyncMock(return_value=set()),
+        ),
     )
 
 

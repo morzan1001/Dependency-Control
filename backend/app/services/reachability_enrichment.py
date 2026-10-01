@@ -19,6 +19,7 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
+    REACHABILITY_LOCK_TEMPLATE,
     SCAN_ACTIVE_STATUSES,
 )
 from app.core.metrics import analysis_enrichment_total, analysis_reachable_vulnerabilities_total
@@ -529,7 +530,7 @@ async def run_pending_reachability_for_scan(scan_id: str, project_id: str, db: A
     a flag set during a pass runs another. Returns how many findings the per-run cap left without a verdict."""
     scan_repo = ScanRepository(db)
     lock_repo = DistributedLocksRepository(db)
-    lock_name, holder_id = f"reachability:{scan_id}", new_lock_holder()
+    lock_name, holder_id = REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id), new_lock_holder()
     dropped = 0
     while await lock_repo.acquire_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
         try:

@@ -24,6 +24,7 @@ from app.core.constants import (
     ARCHIVE_PATH_TEMPLATE,
     ARCHIVE_RESTORE_LOCK_TEMPLATE,
     ENCRYPTION_MAGIC,
+    REACHABILITY_LOCK_TEMPLATE,
     RESTORE_INSERT_BATCH_SIZE,
     RETENTION_PROTECTED_FLAG_VALUES,
     SCAN_ACTIVE_STATUSES,
@@ -324,7 +325,12 @@ async def _load_scan_for_archive(
         )
         _count_failure("archive", ArchiveFailureReason.NOT_FOUND)
         return None, None
-    if scan_doc.get("pinned") in RETENTION_PROTECTED_FLAG_VALUES or scan_doc.get("status") in SCAN_ACTIVE_STATUSES:
+    # Checked after the scan read: a reachability pass locking later claims later, so the bundle keeps its flag.
+    if (
+        scan_doc.get("pinned") in RETENTION_PROTECTED_FLAG_VALUES
+        or scan_doc.get("status") in SCAN_ACTIVE_STATUSES
+        or await DistributedLocksRepository(db).held_locks([REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id)])
+    ):
         logger.info(
             "Scan pinned or under analysis, not archiving it",
             extra={"scan_id": sanitize_for_log(scan_id)},

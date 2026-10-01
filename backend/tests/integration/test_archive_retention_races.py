@@ -20,6 +20,7 @@ from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run
 from app.models.release import Release
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.findings import FindingRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.services import archive, reachability_enrichment
@@ -367,6 +368,23 @@ async def test_reachability_verdicts_written_while_their_run_was_archived_are_ke
     finish_the_upload = await _paused_before(monkeypatch, reachability_enrichment, "apply_reachability", upload)
     _interleave(monkeypatch, housekeeping, "_delete_expirable", finish_the_upload)
     await _archive_scans_and_delete(db, [scan_id], "first pass")
+    await _archive_scans_and_delete(db, [scan_id], "second pass")
+
+    assert await restore_scan(db, scan_id) is not None
+    assert (await db.findings.find_one({"scan_id": scan_id}))["details"].get("reachability")
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_run_whose_reachability_pass_is_under_way_is_left_to_the_next_pass(
+    client, db, api_key_headers, _project, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    await db.findings.insert_one(_VULNERABILITY | {"scan_id": scan_id})
+    upload = _callgraph_upload(client, api_key_headers, _project)
+    finish_the_upload = await _paused_before(monkeypatch, FindingRepository, "set_fields", upload)
+    await _archive_scans_and_delete(db, [scan_id], "first pass")
+    await finish_the_upload()
     await _archive_scans_and_delete(db, [scan_id], "second pass")
 
     assert await restore_scan(db, scan_id) is not None

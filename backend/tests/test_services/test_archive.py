@@ -124,6 +124,7 @@ def _patch_repos(lock_acquires: bool = True, existing_metadata=None):
             LockCls.return_value.acquire_lock = AsyncMock(return_value=lock_acquires)
             LockCls.return_value.release_lock = AsyncMock(return_value=True)
             LockCls.return_value.renew_lock = AsyncMock(return_value=True)
+            LockCls.return_value.held_locks = AsyncMock(return_value=set())
             yield RepoCls, LockCls
 
     return cm
@@ -534,6 +535,7 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
         LockCls.return_value.renew_lock = AsyncMock(return_value=True)
+        LockCls.return_value.held_locks = AsyncMock(return_value=set())
 
         result = await archive_scan(db, "scan-1")
 

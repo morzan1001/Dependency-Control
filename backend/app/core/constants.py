@@ -1073,6 +1073,7 @@ SETTINGS_MODE_GLOBAL: SettingsMode = "global"
 ARCHIVE_BUNDLE_VERSION = 2
 ARCHIVE_PATH_TEMPLATE = "{project_id}/{scan_id}-{archived_at_unix}.bundle"
 ARCHIVE_RESTORE_LOCK_TEMPLATE = "restore:{scan_id}"
+REACHABILITY_LOCK_TEMPLATE = "reachability:{scan_id}"
 
 # Encryption wire format (chunked AES-GCM)
 ENCRYPTION_MAGIC = b"DCEN"
