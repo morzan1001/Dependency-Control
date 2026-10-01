@@ -1,3 +1,47 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.43. Run mongosh commands in-pod against the application database.
+
+## After the rollout: retention runs once a day, on one pod
+
+Retention runs under the `retention` lock on one pod at a time, and a finished run holds that lock for 24 hours. A restart or rollout starts no run, and a retention settings change takes effect with the next run, up to 24 hours later. To start a run within about 5 minutes after a settings change, clear the hold a finished run leaves:
+
+```javascript
+db.distributed_locks.deleteOne({_id: "retention", expires_at: {$gt: new Date(Date.now() + 600000)}});
+```
+
+A running retention keeps its lock at most 10 minutes ahead, so this filter leaves it undisturbed. To stop a running retention, set the retention action to `none`, then delete its lock with `db.distributed_locks.deleteOne({_id: "retention"})`: the running pod stops at its next renewal, within about 200 seconds, and the run another pod starts finds nothing to do.
+
+## After the rollout (review): scans kept beside their archive
+
+A scan written to after its archive began, for example recreated by a retried CI job of an archived pipeline, keeps both the scan and its archive. Each retention run that expires it counts an archive failure with the reason `written_since_archive` of `archive_failures_total`, and its restore answers 409. This lists them:
+
+```javascript
+db.archive_metadata.aggregate([
+  {$lookup: {from: "scans", localField: "scan_id", foreignField: "_id", as: "scan"}},
+  {$unwind: "$scan"},
+  {$match: {$expr: {$and: [{$gt: ["$scan.updated_at", "$archived_at"]},
+                           {$not: [{$gt: ["$scan.restored_at", "$archived_at"]}]}]}}},
+  {$project: {scan_id: 1, project_id: 1, archived_at: 1, updated_at: "$scan.updated_at"}}
+]);
+```
+
+Decide per scan which copy stays. To keep the scan, delete its metadata row with `db.archive_metadata.deleteOne({scan_id: "<scan_id>"})`: the next run that expires the scan archives it anew, and the orphan reaper deletes the old bundle after 24 hours. To keep the archive, delete the scan in a backend pod (`kubectl exec -it <backend-pod> -- python`), then restore it from the Archives page:
+
+```python
+import asyncio
+from app.db.mongodb import connect_to_mongo, get_database
+from app.services.scan_cascade import delete_scans_and_related_data
+
+async def main(scan_id):
+    await connect_to_mongo()
+    await delete_scans_and_related_data(await get_database(), [scan_id])
+
+asyncio.run(main("<scan_id>"))
+```
+
+
+
 # Release 1.9.43
 
 ## 📦 Build & CI
