@@ -506,7 +506,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
 
 @pytest.mark.asyncio
 async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, monkeypatch):
-    """A DuplicateKeyError from repo.create must be labeled ALREADY_EXISTS, not UNKNOWN."""
+    """Losing the metadata insert counts ALREADY_EXISTS, not UNKNOWN, and deletes this archive's upload."""
     from pymongo.errors import DuplicateKeyError
 
     from app.core.metrics import archive_failures_total
@@ -540,6 +540,7 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
     assert result is None
     assert "already_exists" in seen_reasons
     assert "unknown" not in seen_reasons
+    assert archive_env.objects == {}
 
 
 @pytest.mark.asyncio
