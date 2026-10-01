@@ -1,4 +1,4 @@
-"""Crypto readers over scans holding more assets than the per-scan budget they used to apply."""
+"""Crypto readers over scans holding more than 50,000 assets."""
 
 import pytest
 

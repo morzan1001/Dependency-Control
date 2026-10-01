@@ -1,4 +1,4 @@
-"""CBOMs past the per-scan asset budget crypto reads used to apply, inflated from a fixture component."""
+"""Large CBOMs inflated from a fixture component, for size proofs."""
 
 import copy
 import json

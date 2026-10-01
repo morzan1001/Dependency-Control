@@ -23,7 +23,7 @@ from tests.helpers.findings import grype_findings
 
 _PROJECT = "sla-project"
 _SCAN = "sla-scan"
-# One past the 20,000 findings a report used to read.
+# More overdue findings than 20,000.
 _OVERDUE = 20_001
 
 
