@@ -417,6 +417,29 @@ async def test_a_run_whose_reachability_pass_is_under_way_is_left_to_the_next_pa
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+async def test_a_reachability_pass_that_claims_as_its_run_is_read_leaves_it_to_the_next_pass(
+    db, retention_archives, monkeypatch
+):
+    await db.scans.insert_one(_scan("x", 200, reachability_pending=True))
+    collection = type(db.scans)
+    real_find_one = collection.find_one
+
+    async def lock_and_claim_first(self, *args, **kwargs):
+        if self.name == "scans":
+            monkeypatch.setattr(collection, "find_one", real_find_one)
+            assert await DistributedLocksRepository(db).acquire_lock("reachability:x", "pass", 600)
+            await db.scans.update_one({"_id": "x"}, {"$unset": {"reachability_pending": ""}})
+        return await real_find_one(self, *args, **kwargs)
+
+    monkeypatch.setattr(collection, "find_one", lock_and_claim_first)
+    await _archive_scans_and_delete(db, ["x"], "retention")
+
+    assert await _remaining(db) == {"x"}
+    assert await db.archive_metadata.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_retried_job_whose_ingest_meets_the_batch_delete_keeps_its_result(
     client, db, api_key_headers, retention_archives, monkeypatch
 ):
