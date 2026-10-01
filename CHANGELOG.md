@@ -10,11 +10,17 @@ Retention runs under the `retention` lock on one pod at a time, and a finished r
 db.distributed_locks.deleteOne({_id: "retention", expires_at: {$gt: new Date(Date.now() + 600000)}});
 ```
 
-A running retention keeps its lock at most 10 minutes ahead, so this filter leaves it undisturbed. To stop a running retention, set the retention action to `none`, then delete its lock with `db.distributed_locks.deleteOne({_id: "retention"})`: the running pod stops at its next renewal, within about 200 seconds, and the run another pod starts finds nothing to do.
+A running retention keeps its lock at most 10 minutes ahead, so this filter leaves it undisturbed. To stop a running retention, take its lock over for 24 hours:
+
+```javascript
+db.distributed_locks.replaceOne({_id: "retention"}, {holder: "operator", expires_at: new Date(Date.now() + 86400000)}, {upsert: true});
+```
+
+The running pod stops at its next renewal, within about 200 seconds, and no pod starts a run until the lock expires; the `deleteOne` above lifts it earlier. A run stopped inside a batch's delete leaves that batch's scans partly deleted until the next run removes them.
 
 ## After the rollout (review): scans kept beside their archive
 
-A scan written to after its archive began, for example recreated by a retried CI job of an archived pipeline, keeps both the scan and its archive. Each retention run that expires it counts an archive failure with the reason `written_since_archive` of `archive_failures_total`, and its restore answers 409. This lists them:
+A scan written to after an earlier retention run archived it, for example recreated by a retried CI job of an archived pipeline, keeps both the scan and its archive. Each retention run that expires it counts an archive failure with the reason `written_since_archive` of `archive_failures_total`, and its restore answers 409. This lists them:
 
 ```javascript
 db.archive_metadata.aggregate([
@@ -26,7 +32,7 @@ db.archive_metadata.aggregate([
 ]);
 ```
 
-Decide per scan which copy stays. To keep the scan, delete its metadata row with `db.archive_metadata.deleteOne({scan_id: "<scan_id>"})`: the next run that expires the scan archives it anew, and the orphan reaper deletes the old bundle after 24 hours. To keep the archive, delete the scan in a backend pod (`kubectl exec -it <backend-pod> -- python`), then restore it from the Archives page:
+Decide per scan which copy stays. To keep the scan, delete its metadata row with `db.archive_metadata.deleteOne({scan_id: "<scan_id>"})`: the next run that expires the scan archives it anew, and the orphan reaper deletes the old bundle after 24 hours. To keep the archive, delete the scan in a backend pod (`kubectl exec -it <backend-pod> -- python`); the archive stays listed on the Archives page and restorable:
 
 ```python
 import asyncio
