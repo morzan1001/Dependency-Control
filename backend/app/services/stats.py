@@ -170,7 +170,8 @@ async def refresh_scan_stats(
     try:
         scan_repo = ScanRepository(db)
         tally = await calculate_comprehensive_stats(db, scan_id, component_languages)
-        await scan_repo.set_stats(scan_id, tally.stats)
+        # Stamped so a retention batch that bundled the stats before this write keeps the scan.
+        await scan_repo.set_stats(scan_id, tally.stats, {"updated_at": datetime.now(timezone.utc)})
         await scan_repo.sync_project_head(project_id)
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
