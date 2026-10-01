@@ -769,3 +769,15 @@ async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps
     await finish_the_restore[0]()
 
     assert restoring_scan_kept_its_archive
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_archiving_a_scan_another_runner_archived_and_deleted_returns_that_archive(db, retention_archives):
+    await db.scans.insert_one(_scan("x", 200))
+    first = await archive.archive_scan(db, "x")
+    await db.scans.delete_one({"_id": "x"})
+    second = await archive.archive_scan(db, "x")
+
+    assert getattr(second, "s3_key", None) == first.s3_key
+    assert set(retention_archives.objects) == {first.s3_key}
