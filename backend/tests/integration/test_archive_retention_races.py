@@ -12,6 +12,7 @@ from pymongo.errors import AutoReconnect, NetworkTimeout
 from app.core import housekeeping
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
 from app.repositories.archive_metadata import ArchiveMetadataRepository
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.services import archive
 from app.services.archive import restore_scan
 
@@ -233,3 +234,26 @@ async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_sca
     assert await restore_scan(db, scan_id) is None
     assert await _remaining(db) == {scan_id}
     assert await _analyzers(db, scan_id) == {"opengrep"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_archive_whose_lock_another_pod_took_over_during_the_upload_gives_the_scan_up(
+    db, retention_archives, monkeypatch
+):
+    await db.scans.insert_one(_scan("x", 200))
+    real_upload = archive.upload_stream
+
+    async def upload_then_lose_the_lock(*args, **kwargs):
+        total = await real_upload(*args, **kwargs)
+        await db.distributed_locks.update_one({"_id": "archive:x"}, {"$set": {"expires_at": _NOW}})
+        assert await DistributedLocksRepository(db).acquire_lock("archive:x", "other-pod", ttl_seconds=600)
+        return total
+
+    monkeypatch.setattr(archive, "upload_stream", upload_then_lose_the_lock)
+    await _archive_scans_and_delete(db, ["x"], "retention")
+
+    assert await _remaining(db) == {"x"}
+    assert await db.archive_metadata.count_documents({}) == 0
+    assert retention_archives.objects == {}
+    assert (await db.distributed_locks.find_one({"_id": "archive:x"}))["holder"] == "other-pod"

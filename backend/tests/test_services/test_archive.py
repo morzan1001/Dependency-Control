@@ -123,6 +123,7 @@ def _patch_repos(lock_acquires: bool = True, existing_metadata=None):
             RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
             LockCls.return_value.acquire_lock = AsyncMock(return_value=lock_acquires)
             LockCls.return_value.release_lock = AsyncMock(return_value=True)
+            LockCls.return_value.renew_lock = AsyncMock(return_value=True)
             yield RepoCls, LockCls
 
     return cm
@@ -357,6 +358,7 @@ async def test_restore_scan_aborts_when_scan_already_exists(archive_env):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -375,6 +377,7 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=None)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -532,6 +535,7 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
         RepoCls.return_value.create = AsyncMock(side_effect=DuplicateKeyError("dup"))
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await archive_scan(db, "scan-1")
 

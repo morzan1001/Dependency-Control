@@ -234,6 +234,16 @@ def _build_archive_payload(
     return count_through(gzipped), "application/gzip"
 
 
+async def _drop_upload(s3_key: str, reason: str) -> None:
+    """Delete an upload whose metadata this archive must not write, and count the failed archive."""
+    try:
+        await delete_object(s3_key)
+    except Exception:
+        logger.exception("Cleanup delete failed for orphan S3 upload")
+    archive_failures_total.labels(operation="archive", reason=reason).inc()
+    archive_operations_total.labels(operation="archive", status="failure").inc()
+
+
 async def _save_archive_metadata(
     repo: ArchiveMetadataRepository,
     scan_doc: dict[str, Any],
@@ -274,12 +284,7 @@ async def _save_archive_metadata(
             "Lost archive race, cleaning up our S3 orphan",
             extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
-        try:
-            await delete_object(s3_key)
-        except Exception:
-            logger.exception("Cleanup delete failed for orphan S3 upload")
-        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.ALREADY_EXISTS).inc()
-        archive_operations_total.labels(operation="archive", status="failure").inc()
+        await _drop_upload(s3_key, ArchiveFailureReason.ALREADY_EXISTS)
         return None
     except Exception as e:
         # The insert may still have landed, so the upload stays; the orphan reaper takes it if nothing points at it.
@@ -426,6 +431,14 @@ async def archive_scan(
         if upload_result is None:
             return None
         total, stats = upload_result
+        # A pod that took the lock over archives on its own, possibly while this archive's delete runs.
+        if not await lock_repo.renew_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
+            logger.error(
+                "Archive lost its lock to another worker, dropping its upload",
+                extra={"scan_id": sanitize_for_log(scan_id)},
+            )
+            await _drop_upload(s3_key, ArchiveFailureReason.LOCK_HELD)
+            return None
 
         metadata = await _save_archive_metadata(repo, scan_doc, scan_id, s3_key, total, stats, archived_at)
         if metadata is None:
