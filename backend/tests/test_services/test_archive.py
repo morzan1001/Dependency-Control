@@ -576,7 +576,7 @@ async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_en
 
 @pytest.mark.asyncio
 async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypatch):
-    """delete_by_scan_id failure after restore must NOT bubble up — log and return success."""
+    """A failed metadata delete after a restore still reports success and keeps the bundle the metadata points at."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
@@ -587,8 +587,8 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
     )
     monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
-    # delete_object succeeds, but delete_by_scan_id raises
-    monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
+    delete_bundle = AsyncMock(return_value=None)
+    monkeypatch.setattr(f"{MODULE}.delete_object", delete_bundle)
 
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
@@ -602,9 +602,9 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
 
         result = await restore_scan(db, "scan-1")
 
-    # Restore still reports success despite the metadata-delete glitch
     assert result is not None
     assert result.scan_id == "scan-1"
+    delete_bundle.assert_not_awaited()
 
 
 async def _aiter(items):
