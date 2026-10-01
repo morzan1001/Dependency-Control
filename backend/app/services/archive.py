@@ -340,7 +340,7 @@ async def _load_scan_for_archive(
         "Scan written to or restored since it was archived, keeping both",
         extra={"scan_id": sanitize_for_log(scan_id)},
     )
-    archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.ALREADY_EXISTS).inc()
+    archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.WRITTEN_SINCE_ARCHIVE).inc()
     archive_operations_total.labels(operation="archive", status="failure").inc()
     return None, None
 

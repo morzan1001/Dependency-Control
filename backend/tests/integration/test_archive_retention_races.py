@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from prometheus_client import REGISTRY
 from pymongo.errors import AutoReconnect, NetworkTimeout
 
 from app.api.v1.endpoints import callgraph
@@ -100,6 +101,10 @@ def _delete_during(monkeypatch, post: Callable[[], Awaitable[None]], owner, name
         await post()
 
     monkeypatch.setattr(housekeeping, "_delete_expirable", post_around_the_delete)
+
+
+def _archive_failures(reason: str) -> float:
+    return REGISTRY.get_sample_value("archive_failures_total", {"operation": "archive", "reason": reason}) or 0.0
 
 
 async def _analyzers(db, scan_id: str) -> set[str]:
@@ -389,9 +394,11 @@ async def test_a_run_ingested_into_after_its_archive_began_is_not_deleted_for_th
     else:
         _interleave(monkeypatch, housekeeping, "delete_scans_and_related_data", retried_job, after=True)
         await _archive_scans_and_delete(db, [scan_id], "first pass")
+    kept_both = _archive_failures("written_since_archive")
     await _archive_scans_and_delete(db, [scan_id], "second pass")
 
     assert "opengrep" in await _analyzers(db, scan_id)
+    assert _archive_failures("written_since_archive") == kept_both + 1
 
 
 @pytest.mark.asyncio
