@@ -22,7 +22,7 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
-from app.services import archive
+from app.services import archive, reachability_enrichment
 from app.services.archive import restore_scan
 from app.services.scan_manager import ScanManager
 
@@ -31,6 +31,18 @@ _PROJECT_ID = "test-project-id"
 _RUN = {"pipeline_id": 515151, "commit_hash": "e" * 40, "branch": "main"}
 _CALLGRAPH = {"format": "generic", "language": "python", "data": {"imports": [], "analyzed_modules": []}}
 _SECRET = json.loads((Path(__file__).parents[1] / "fixtures/secrets/trufflehog_v3_line.json").read_text())
+_VULNERABILITY = {
+    "_id": "vulnerability",
+    "id": "CVE-2024-0001",
+    "finding_id": "CVE-2024-0001",
+    "project_id": _PROJECT_ID,
+    "type": "vulnerability",
+    "severity": "HIGH",
+    "component": "requests",
+    "description": "CVE-2024-0001 in requests",
+    "scanners": ["osv"],
+    "details": {},
+}
 _CBOM = json.loads((Path(__file__).parents[1] / "fixtures/cbom/legacy_crypto_mixed.json").read_text())
 
 
@@ -96,6 +108,27 @@ def _interleave(monkeypatch, owner, name: str, write: Callable[[], Awaitable[obj
         return result
 
     monkeypatch.setattr(owner, name, call)
+
+
+async def _paused_before(monkeypatch, owner, name: str, post: Awaitable[None]) -> Callable[[], Awaitable[None]]:
+    """Start post, pause it right before its call of owner.name, and return what lets it finish."""
+    paused, resume = asyncio.Event(), asyncio.Event()
+
+    async def pause() -> None:
+        paused.set()
+        await resume.wait()
+
+    _interleave(monkeypatch, owner, name, pause)
+    task = asyncio.create_task(post)
+    await asyncio.wait([asyncio.ensure_future(paused.wait()), task], return_when=asyncio.FIRST_COMPLETED)
+    if task.done():
+        task.result()
+
+    async def finish() -> None:
+        resume.set()
+        await task
+
+    return finish
 
 
 def _delete_during(monkeypatch, post: Callable[[], Awaitable[None]], owner, name: str) -> None:
@@ -302,24 +335,29 @@ async def test_a_callgraph_posted_while_its_run_was_archived_is_kept(
     client, db, api_key_headers, _project, retention_archives, monkeypatch
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
-    paused, resume = asyncio.Event(), asyncio.Event()
-
-    async def pause() -> None:
-        paused.set()
-        await resume.wait()
-
-    _interleave(monkeypatch, callgraph, "upload_gridfs_json", pause)
-    upload = asyncio.create_task(_callgraph_upload(client, api_key_headers, _project))
-    await paused.wait()
-
-    async def finish_the_upload() -> None:
-        resume.set()
-        await upload
-
+    upload = _callgraph_upload(client, api_key_headers, _project)
+    finish_the_upload = await _paused_before(monkeypatch, callgraph, "upload_gridfs_json", upload)
     _interleave(monkeypatch, archive, "_save_archive_metadata", finish_the_upload)
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert await db.callgraphs.count_documents({"scan_id": scan_id}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_reachability_verdicts_written_while_their_run_was_archived_are_kept(
+    client, db, api_key_headers, _project, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    await db.findings.insert_one(_VULNERABILITY | {"scan_id": scan_id})
+    upload = _callgraph_upload(client, api_key_headers, _project)
+    finish_the_upload = await _paused_before(monkeypatch, reachability_enrichment, "apply_reachability", upload)
+    _interleave(monkeypatch, housekeeping, "_delete_expirable", finish_the_upload)
+    await _archive_scans_and_delete(db, [scan_id], "first pass")
+    await _archive_scans_and_delete(db, [scan_id], "second pass")
+
+    assert await restore_scan(db, scan_id) is not None
+    assert (await db.findings.find_one({"scan_id": scan_id}))["details"].get("reachability")
 
 
 @pytest.mark.asyncio
