@@ -241,6 +241,7 @@ async def _save_archive_metadata(
     s3_key: str,
     total: int,
     stats: BundleStats,
+    archived_at: datetime,
 ) -> ArchiveMetadata | None:
     """Persist ArchiveMetadata; on unique-key collision delete the S3 orphan and return None."""
     sbom_filenames = [
@@ -262,6 +263,7 @@ async def _save_archive_metadata(
         high_findings_count=stats.high_findings,
         dependencies_count=stats.dependencies,
         sbom_filenames=sbom_filenames,
+        archived_at=archived_at,
     )
     try:
         await repo.create(metadata)
@@ -300,15 +302,14 @@ async def _load_scan_for_archive(
     Exactly one is non-None on the happy path; both None means there is nothing to archive (metrics recorded).
     """
     existing = await repo.find_by_scan_id(scan_id)
-    if existing:
-        logger.info(
-            "Scan already archived, returning existing metadata",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        return existing, None
-
     scan_doc = await db.scans.find_one({"_id": scan_id})
     if not scan_doc:
+        if existing:
+            logger.info(
+                "Scan already archived, returning existing metadata",
+                extra={"scan_id": sanitize_for_log(scan_id)},
+            )
+            return existing, None
         logger.error(
             "Scan not found for archiving",
             extra={"scan_id": sanitize_for_log(scan_id)},
@@ -324,8 +325,19 @@ async def _load_scan_for_archive(
         archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.PROTECTED).inc()
         archive_operations_total.labels(operation="archive", status="failure").inc()
         return None, None
-
-    return None, scan_doc
+    if existing is None:
+        return None, scan_doc
+    written_at = scan_doc.get("updated_at")
+    if written_at is None or written_at <= existing.archived_at:
+        return existing, None
+    # Its bundle lacks what ingest wrote since, and a recreated scan lacks what only the bundle holds.
+    logger.warning(
+        "Scan written to since it was archived, keeping both",
+        extra={"scan_id": sanitize_for_log(scan_id)},
+    )
+    archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.ALREADY_EXISTS).inc()
+    archive_operations_total.labels(operation="archive", status="failure").inc()
+    return None, None
 
 
 async def _upload_archive_bundle(
@@ -387,6 +399,8 @@ async def archive_scan(
         return None
 
     try:
+        # Taken before the scan is read, so any ingest the bundle may have missed is dated after it.
+        archived_at = datetime.now(timezone.utc)
         existing, scan_doc = await _load_scan_for_archive(db, repo, scan_id)
         if existing is not None:
             return existing
@@ -404,7 +418,7 @@ async def archive_scan(
             return None
 
         project_id = scan_doc["project_id"]
-        archived_at_unix = int(datetime.now(timezone.utc).timestamp())
+        archived_at_unix = int(archived_at.timestamp())
         s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix)
 
         start_time = time.monotonic()
@@ -413,7 +427,7 @@ async def archive_scan(
             return None
         total, stats = upload_result
 
-        metadata = await _save_archive_metadata(repo, scan_doc, scan_id, s3_key, total, stats)
+        metadata = await _save_archive_metadata(repo, scan_doc, scan_id, s3_key, total, stats, archived_at)
         if metadata is None:
             return None
 

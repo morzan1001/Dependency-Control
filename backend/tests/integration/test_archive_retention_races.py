@@ -50,6 +50,23 @@ async def _analysed_run(client, db, headers) -> str:
     return scan_id
 
 
+async def _retried_job(client, db, headers) -> None:
+    """A retried CI job of the run posts again, and the analysis it triggers finishes."""
+    scan_id = await _ingest(client, headers, "opengrep", [])
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "completed"}})
+
+
+def _retry_the_job_before_the_metadata_save(monkeypatch, client, db, headers) -> None:
+    real_save = archive._save_archive_metadata
+
+    async def retry_then_save(*args, **kwargs):
+        monkeypatch.setattr(archive, "_save_archive_metadata", real_save)
+        await _retried_job(client, db, headers)
+        return await real_save(*args, **kwargs)
+
+    monkeypatch.setattr(archive, "_save_archive_metadata", retry_then_save)
+
+
 async def _analyzers(db, scan_id: str) -> set[str]:
     return {row["analyzer_name"] async for row in db.analysis_results.find({"scan_id": scan_id})}
 
@@ -141,14 +158,7 @@ async def test_a_scan_ingested_into_while_it_was_archived_is_kept(
     client, db, api_key_headers, retention_archives, monkeypatch
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
-    real_save = archive._save_archive_metadata
-
-    async def ingest_and_analyse_before_the_save(*args, **kwargs):
-        await _ingest(client, api_key_headers, "opengrep", [])
-        await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "completed"}})
-        return await real_save(*args, **kwargs)
-
-    monkeypatch.setattr(archive, "_save_archive_metadata", ingest_and_analyse_before_the_save)
+    _retry_the_job_before_the_metadata_save(monkeypatch, client, db, api_key_headers)
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert await _analyzers(db, scan_id) == {"trufflehog", "opengrep"}
@@ -186,3 +196,20 @@ async def test_a_restore_whose_metadata_delete_failed_leaves_the_archive_restora
 
     assert await _remaining(db) == set()
     assert await restore_scan(db, "x") is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("during_the_archive", [False, True], ids=["recreated-after-it", "written-during-it"])
+async def test_a_run_ingested_into_after_its_archive_began_is_not_deleted_for_that_archive(
+    client, db, api_key_headers, retention_archives, monkeypatch, during_the_archive
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    if during_the_archive:
+        _retry_the_job_before_the_metadata_save(monkeypatch, client, db, api_key_headers)
+    await _archive_scans_and_delete(db, [scan_id], "first pass")
+    if not during_the_archive:
+        await _retried_job(client, db, api_key_headers)
+    await _archive_scans_and_delete(db, [scan_id], "second pass")
+
+    assert "opengrep" in await _analyzers(db, scan_id)
