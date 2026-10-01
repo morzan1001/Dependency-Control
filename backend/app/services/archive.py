@@ -777,11 +777,7 @@ async def _finalize_restore_cleanup(
     metadata: ArchiveMetadata,
     scan_id: str,
 ) -> None:
-    """Delete the metadata record, then the S3 object, after a successful restore.
-
-    A failed deletion is logged, not rolled back. The object goes only after its metadata, so no metadata
-    is ever left pointing at a deleted bundle; the stale-metadata and orphan reapers sweep what remains.
-    """
+    """Delete the metadata, then its S3 object, so no metadata points at a deleted bundle; reapers retry failures."""
     try:
         await repo.delete_by_scan_id(scan_id)
     except Exception as e:
