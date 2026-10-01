@@ -426,19 +426,24 @@ async def archive_scan(
         archived_at_unix = int(archived_at.timestamp())
         s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix)
 
+        renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
         start_time = time.monotonic()
-        upload_result = await _upload_archive_bundle(db, scan_doc, scan_id, s3_key)
-        if upload_result is None:
-            return None
-        total, stats = upload_result
-        # A pod that took the lock over archives on its own, possibly while this archive's delete runs.
-        if not await lock_repo.renew_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
+        try:
+            upload = _upload_archive_bundle(db, scan_doc, scan_id, s3_key)
+            upload_result = await run_holding_lock(renew_lock, _ARCHIVE_LOCK_TTL_SECONDS, upload)
+            # A pod that took the lock over archives on its own, possibly while this archive's delete runs.
+            if upload_result is not None and not await renew_lock():
+                raise LockLost
+        except LockLost:
             logger.error(
                 "Archive lost its lock to another worker, dropping its upload",
                 extra={"scan_id": sanitize_for_log(scan_id)},
             )
             await _drop_upload(s3_key, ArchiveFailureReason.LOCK_HELD)
             return None
+        if upload_result is None:
+            return None
+        total, stats = upload_result
 
         metadata = await _save_archive_metadata(repo, scan_doc, scan_id, s3_key, total, stats, archived_at)
         if metadata is None:

@@ -269,3 +269,22 @@ async def test_an_archive_whose_lock_another_pod_took_over_during_the_upload_giv
     assert await db.archive_metadata.count_documents({}) == 0
     assert retention_archives.objects == {}
     assert (await db.distributed_locks.find_one({"_id": "archive:x"}))["holder"] == "other-pod"
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_archive_that_outlasts_its_lock_ttl_still_lands(db, retention_archives, monkeypatch):
+    await db.scans.insert_one(_scan("x", 200))
+    real_upload = archive.upload_stream
+
+    async def slow_upload_while_the_ttl_monitor_runs(*args, **kwargs):
+        await asyncio.sleep(0.9)
+        await db.distributed_locks.delete_many({"expires_at": {"$lt": datetime.now(timezone.utc)}})
+        return await real_upload(*args, **kwargs)
+
+    monkeypatch.setattr(archive, "_ARCHIVE_LOCK_TTL_SECONDS", 0.3)
+    monkeypatch.setattr(archive, "upload_stream", slow_upload_while_the_ttl_monitor_runs)
+    await _archive_scans_and_delete(db, ["x"], "retention")
+
+    assert await _remaining(db) == set()
+    assert await db.archive_metadata.count_documents({}) == 1
