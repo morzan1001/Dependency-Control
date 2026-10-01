@@ -78,7 +78,7 @@ async def test_a_project_that_names_no_action_is_cleaned_by_deleting(monkeypatch
 async def test_a_stored_retention_no_cutoff_can_be_computed_for_stops_nothing_else(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """timedelta overflows near 740 000 days; one such project used to abort every later group."""
+    """timedelta overflows near 740 000 days."""
     db = FakeDatabase()
     await db.system_settings.insert_one({"_id": "current", "retention_mode": "project"})
     await db.projects.insert_one({"_id": "forever", "name": "f", "retention_days": 999999})
