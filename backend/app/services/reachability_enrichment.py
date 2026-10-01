@@ -3,7 +3,6 @@
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -519,7 +518,7 @@ async def _apply_to_stored_findings(
         judged = {fd["_id"]: reachability_set_fields(fd) for fd in findings_dicts if "reachability" in fd["details"]}
         await finding_repo.set_fields(scan_id, judged)
         # Tells a retention batch that archived the scan before these verdicts to keep it and archive it anew.
-        await ScanRepository(db).update_raw(scan_id, {"$set": {"updated_at": datetime.now(timezone.utc)}})
+        await ScanRepository(db).touch(scan_id)
         # The scan's stats were frozen at completion, before any reachability verdict existed.
         await refresh_scan_stats(db, project_id, scan_id, component_languages)
     return dropped

@@ -185,6 +185,9 @@ class ScanRepository:
         await self.collection.update_one({"_id": scan_id}, {"$set": update_data})
         return await self.get_by_id(scan_id)
 
+    async def touch(self, scan_id: str) -> None:
+        await self.collection.update_one({"_id": scan_id}, {"$set": {"updated_at": datetime.now(timezone.utc)}})
+
     async def update_raw(self, scan_id: str, update_ops: dict[str, Any], guard: dict[str, Any] | None = None) -> bool:
         """False when ``guard`` no longer held, so nothing was written."""
         result = await self.collection.update_one({"_id": scan_id, **(guard or {})}, update_ops)

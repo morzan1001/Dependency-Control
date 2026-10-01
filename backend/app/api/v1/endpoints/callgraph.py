@@ -171,7 +171,7 @@ async def upload_callgraph(
     graph = {field: callgraph_data.pop(field) for field in _GRAPH_FIELDS}
     scan_repo = ScanRepository(db)
     if scan_exists and scan_id:
-        await scan_repo.update_raw(scan_id, {"$set": {"updated_at": datetime.now(timezone.utc)}})
+        await scan_repo.touch(scan_id)
     graph_gridfs_id = await upload_gridfs_json(db, f"callgraph-{project_id}-{language}.json", graph)
     await callgraph_repo.collection.update_one(
         upsert_filter,

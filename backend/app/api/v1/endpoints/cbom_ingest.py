@@ -104,7 +104,7 @@ async def ingest_cbom(
         )
 
     project_id = str(project.id)
-    await ScanRepository(db).update_raw(scan_id, {"$set": {"updated_at": datetime.now(timezone.utc)}})
+    await ScanRepository(db).touch(scan_id)
 
     try:
         summary = await _store_crypto_assets(db, project_id, scan_id, parsed)
