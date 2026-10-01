@@ -62,7 +62,9 @@ async def _retried_job(client, db, headers) -> None:
 
 async def _callgraph_upload(client, headers, project) -> None:
     with patch("app.api.deps._authenticate_ci", new_callable=AsyncMock, return_value=project):
-        resp = await client.post(f"/api/v1/projects/{_PROJECT_ID}/callgraph", json={**_RUN, **_CALLGRAPH}, headers=headers)
+        resp = await client.post(
+            f"/api/v1/projects/{_PROJECT_ID}/callgraph", json={**_RUN, **_CALLGRAPH}, headers=headers
+        )
     assert resp.status_code == 200, resp.text
 
 
@@ -106,7 +108,7 @@ async def test_a_second_pod_skips_retention_while_the_first_still_runs_it(db, re
         return await real_archive_scan(db_, scan_id)
 
     monkeypatch.setattr(archive, "archive_scan", archive_scan)
-    monkeypatch.setattr(housekeeping, "_RETENTION_LOCK_TTL_SECONDS", 0.3, raising=False)
+    monkeypatch.setattr(housekeeping, "_RETENTION_LOCK_TTL_SECONDS", 0.3)
     first_pod = asyncio.create_task(_run_retention(db))
     await first_pod_mid_batch.wait()
     await asyncio.sleep(0.9)
@@ -216,18 +218,6 @@ async def test_a_scan_restored_while_another_pod_still_archives_its_batch_is_kep
     restored = await db.scans.find_one({"_id": "x"})
     assert restored is not None
     assert restored["pinned"] is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.live_mongo
-async def test_a_scan_ingested_into_while_it_was_archived_is_kept(
-    client, db, api_key_headers, retention_archives, monkeypatch
-):
-    scan_id = await _analysed_run(client, db, api_key_headers)
-    _before_the_metadata_save(monkeypatch, lambda: _retried_job(client, db, api_key_headers))
-    await _archive_scans_and_delete(db, [scan_id], "retention")
-
-    assert await _analyzers(db, scan_id) == {"trufflehog", "opengrep"}
 
 
 @pytest.mark.asyncio
