@@ -45,3 +45,9 @@ class TestTrivyRetryablePatternMatching:
         # the lowercased stderr.
         for pattern in TrivyAnalyzer.retryable_patterns:
             assert pattern == pattern.lower(), pattern
+
+
+def test_trivy_own_deadline_outlasts_cli_timeout():
+    analyzer = TrivyAnalyzer()
+    args = analyzer._build_command_args("sbom.json")
+    assert int(args[args.index("--timeout") + 1].removesuffix("s")) > analyzer.cli_timeout

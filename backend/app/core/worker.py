@@ -1,17 +1,22 @@
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
 from app.core.constants import (
+    ADHOC_JOB_TTL_SECONDS,
     ANALYSIS_MAX_RETRIES,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
     HOUSEKEEPING_STARTUP_RECOVERY_LIMIT,
     INSTANCE_ID,
+    SCAN_STATUS_COMPLETED,
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
@@ -24,9 +29,11 @@ from app.core.metrics import (
     worker_jobs_processed_total,
     worker_queue_size,
 )
-from app.db.mongodb import get_database
+from app.db.mongodb import get_database, open_gridfs_download_with_retry
 from app.repositories.scans import ScanRepository
+from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis import run_analysis
+from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.notifications import notify_analysis_failed
 
 logger = logging.getLogger(__name__)
@@ -37,18 +44,43 @@ DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
 # Far below HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS, so a live run is never taken for a stuck one.
 _CLAIM_RENEW_SECONDS = 60
 
+_ADHOC_JOB = "adhoc:"
+
 # Strong references: the event loop keeps only weak ones to running tasks.
 _failure_notices: set[asyncio.Task[None]] = set()
 
 
-async def _keep_claim(scan_repo: ScanRepository, scan_id: str, worker_id: str) -> None:
+async def _keep_claim(renew: Callable[[], Awaitable[bool]], label: str) -> None:
     while True:
         await asyncio.sleep(_CLAIM_RENEW_SECONDS)
         try:
-            if not await scan_repo.renew_claim(scan_id, worker_id):
+            if not await renew():
                 return
         except Exception:
-            logger.exception("Could not renew the claim on scan %s", scan_id)
+            logger.exception("Could not renew the claim on %s", label)
+
+
+async def _renew_adhoc_claim(db: AsyncIOMotorDatabase, job_id: str, worker_id: str) -> bool:
+    renewed = await db.adhoc_jobs.update_one(
+        {"_id": job_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
+        {"$set": {"heartbeat_at": datetime.now(timezone.utc)}},
+    )
+    return bool(renewed.matched_count)
+
+
+async def _run_adhoc_job(db: AsyncIOMotorDatabase, job: dict[str, Any]) -> dict[str, Any]:
+    """The fields that finish the job: its result file, or the error that ended it."""
+    fs = AsyncIOMotorGridFSBucket(db)
+    try:
+        raw = await (await open_gridfs_download_with_retry(fs, ObjectId(job["input_file_id"]))).read()
+        request = await asyncio.to_thread(AdhocAnalyzeRequest.model_validate_json, raw)
+        result = await run_adhoc_analysis(request, db)
+        data = await asyncio.to_thread(lambda: result.model_dump_json().encode())
+        result_file_id = await fs.upload_from_stream(f"adhoc-{job['_id']}-result.json", data)
+    except Exception as exc:
+        logger.exception("Ad-hoc analysis %s failed", job["_id"])
+        return {"status": SCAN_STATUS_FAILED, "error": str(exc)}
+    return {"status": SCAN_STATUS_COMPLETED, "result_file_id": str(result_file_id)}
 
 
 def _record_job(status: str, started: float) -> None:
@@ -245,6 +277,9 @@ class AnalysisWorkerManager:
 
         return True
 
+    async def add_adhoc_job(self, job_id: str) -> bool:
+        return await self.add_job(_ADHOC_JOB + job_id)
+
     async def _handle_rescheduled(self, scan: dict[str, Any], db: AsyncIOMotorDatabase, started: float) -> None:
         """Re-queue a scan the engine sent back to pending, or fail it once its retry budget is spent."""
         scan_id = scan["_id"]
@@ -274,7 +309,9 @@ class AnalysisWorkerManager:
             return
 
         self._track_scan(scan_id)
-        claim_keeper = asyncio.create_task(_keep_claim(scan_repo, scan_id, worker_id))
+        claim_keeper = asyncio.create_task(
+            _keep_claim(partial(scan_repo.renew_claim, scan_id, worker_id), f"scan {scan_id}")
+        )
         try:
             project = await db.projects.find_one({"_id": scan["project_id"]})
             if not project:
@@ -302,6 +339,39 @@ class AnalysisWorkerManager:
             self._untrack_scan(scan_id)
         logger.info(f"Worker {worker_id} finished scan {scan_id}")
 
+    async def _process_adhoc(self, job_id: str, worker_id: str) -> None:
+        started = time.time()
+        db = await get_database()
+        job = await db.adhoc_jobs.find_one_and_update(
+            {"_id": job_id, "status": SCAN_STATUS_PENDING},
+            {
+                "$set": {
+                    "status": SCAN_STATUS_PROCESSING,
+                    "worker_id": worker_id,
+                    "heartbeat_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        if not job:
+            logger.info(f"Ad-hoc job {job_id} already claimed, finished or expired. Skipping.")
+            return
+
+        self._track_scan(job_id)
+        claim_keeper = asyncio.create_task(
+            _keep_claim(partial(_renew_adhoc_claim, db, job_id, worker_id), f"ad-hoc job {job_id}")
+        )
+        try:
+            outcome = await _run_adhoc_job(db, job)
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=ADHOC_JOB_TTL_SECONDS)
+            await db.adhoc_jobs.update_one(
+                {"_id": job_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
+                {"$set": {**outcome, "expires_at": expires_at}},
+            )
+            _record_job("success" if outcome["status"] == SCAN_STATUS_COMPLETED else "failed", started)
+        finally:
+            claim_keeper.cancel()
+            self._untrack_scan(job_id)
+
     async def worker(self, name: str) -> None:
         worker_id = f"{INSTANCE_ID}/{name}"
         logger.info(f"Worker {worker_id} started")
@@ -326,7 +396,10 @@ class AnalysisWorkerManager:
                         # Leave the scan as 'pending' in DB so other pods can pick it up.
                         logger.info(f"Worker {worker_id} returning scan {scan_id} to queue - shutting down")
                         break
-                    await self._process(scan_id, worker_id)
+                    if scan_id.startswith(_ADHOC_JOB):
+                        await self._process_adhoc(scan_id.removeprefix(_ADHOC_JOB), worker_id)
+                    else:
+                        await self._process(scan_id, worker_id)
                 finally:
                     self.queue.task_done()
 

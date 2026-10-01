@@ -1,11 +1,13 @@
 """MongoDB access for the crypto_assets collection."""
 
+import itertools
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from pymongo import UpdateOne
 
-from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, MAX_CRYPTO_ASSETS_PER_SCAN
+from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
@@ -36,14 +38,11 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         self,
         project_id: str,
         scan_id: str,
-        assets: list[CryptoAsset],
+        assets: Iterable[CryptoAsset],
         chunk_size: int = CRYPTO_ASSET_BULK_CHUNK_SIZE,
     ) -> int:
-        if not assets:
-            return 0
         total = 0
-        for start in range(0, len(assets), chunk_size):
-            chunk = assets[start : start + chunk_size]
+        for chunk in itertools.batched(assets, chunk_size, strict=False):
             ops = [
                 UpdateOne(
                     {
@@ -60,24 +59,22 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
             total += len(ops)
         return total
 
-    async def carry_over_to_scan(
-        self,
-        project_id: str,
-        from_scan_id: str,
-        to_scan_id: str,
-        limit: int = MAX_CRYPTO_ASSETS_PER_SCAN,
-    ) -> int:
-        """Re-key one scan's assets onto another. Assets ingested through /ingest/cbom have no
-        stored SBOM to re-derive them from, so a rescan reports none unless they are copied.
-
-        Upserts on (project_id, scan_id, bom_ref), so an asset the rescan does re-derive from an
-        embedded CBOM overwrites the carried copy rather than duplicating it.
-        """
-        # Without the source _id each copy gets a fresh one, which bulk_upsert inserts under the new scan.
-        cursor = self.collection.find({"project_id": project_id, "scan_id": from_scan_id}, {"_id": 0}).limit(limit)
-        docs = await cursor.to_list(length=limit)
-        assets = [CryptoAsset.model_validate({**doc, "scan_id": to_scan_id}) for doc in docs]
-        return await self.bulk_upsert(project_id, to_scan_id, assets)
+    async def carry_over_to_scan(self, project_id: str, from_scan_id: str, to_scan_id: str) -> None:
+        """Copy a scan's assets onto a rescan server-side, since /ingest/cbom assets have no SBOM to
+        re-derive them from; joining on the unique bom_ref key keeps any row the rescan already holds."""
+        await self.aggregate(
+            [
+                {"$match": {"project_id": project_id, "scan_id": from_scan_id}},
+                {"$set": {"_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]}, "scan_id": to_scan_id}},
+                {
+                    "$merge": {
+                        "into": self.collection_name,
+                        "on": ["project_id", "scan_id", "bom_ref"],
+                        "whenMatched": "keepExisting",
+                    }
+                },
+            ]
+        )
 
     async def list_by_scan(
         self,

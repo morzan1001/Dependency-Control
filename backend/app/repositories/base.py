@@ -2,10 +2,12 @@
 
 import logging
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pydantic import BaseModel
+from pymongo import ReplaceOne
 from pymongo.errors import BulkWriteError
 
 
@@ -102,6 +104,12 @@ class BaseRepository[T: BaseModel]:
         cursor = cursor.skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
+    async def find_all_raw(
+        self, query: dict[str, Any], projection: dict[str, int] | None = None
+    ) -> list[dict[str, Any]]:
+        """Every match, unbounded, for callers that fold the whole set."""
+        return await self.collection.find(query, projection).to_list(None)
+
     async def count(self, query: dict[str, Any] | None = None) -> int:
         return await self.collection.count_documents(query or {})
 
@@ -115,26 +123,28 @@ class BaseRepository[T: BaseModel]:
     async def create_raw(self, data: dict[str, Any]) -> None:
         await self.collection.insert_one(data)
 
-    async def create_many_raw(self, docs: list[dict[str, Any]]) -> int:
-        """ordered=False so a duplicate-key error doesn't abort the batch."""
+    async def replace_many_raw(self, docs: list[dict[str, Any]]) -> int:
+        """Upsert each document whole by ``_id``; ordered=False so one failed write doesn't abort the batch."""
         if not docs:
             return 0
         try:
-            result = await self.collection.insert_many(docs, ordered=False)
-            return len(result.inserted_ids)
+            result = await self.collection.bulk_write(
+                [ReplaceOne({"_id": doc["_id"]}, doc, upsert=True) for doc in docs], ordered=False
+            )
+            return result.upserted_count + result.matched_count
         except BulkWriteError as e:
             if e.details.get("writeConcernErrors"):
                 raise
             write_errors = e.details["writeErrors"]
             logger.warning(
-                "Bulk insert into %s dropped %d of %d docs (first error: %s)",
+                "Bulk replace into %s dropped %d of %d docs (first error: %s)",
                 self.collection_name,
                 len(write_errors),
                 len(docs),
                 (write_errors[0].get("errmsg", "") or "")[:200] if write_errors else "",
             )
-            inserted_count: int = e.details.get("nInserted", 0)
-            return inserted_count
+            written: int = e.details.get("nUpserted", 0) + e.details.get("nMatched", 0)
+            return written
 
     async def update(self, id: str, update_data: dict[str, Any]) -> T | None:
         if update_data:
@@ -164,6 +174,10 @@ class BaseRepository[T: BaseModel]:
     async def delete_many(self, query: dict[str, Any]) -> int:
         result = await self.collection.delete_many(query)
         return result.deleted_count
+
+    async def delete_older_writes(self, query: dict[str, Any], written_at: datetime) -> None:
+        """Delete the matches no write since ``written_at`` has touched, undated rows included."""
+        await self.delete_many({**query, "$nor": [{"created_at": {"$gte": written_at}}]})
 
     async def aggregate(
         self,

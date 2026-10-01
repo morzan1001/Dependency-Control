@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 import app.services.chat.rate_limiter as rate_limiter_mod
 from app.core.metrics import REGISTRY
-from app.services.chat.rate_limiter import SURFACE_CHAT, ChatRateLimiter, enforce_rate_limit
+from app.services.chat.rate_limiter import ChatRateLimiter, enforce_rate_limit
 
 _START = 1_000_000.0
 _PREFIX = "test:chat:rl:"
@@ -132,7 +132,7 @@ def built_clients(monkeypatch):
 
 
 async def _enforce(owner_id: str = "owner-1", per_minute: int = 5) -> None:
-    await enforce_rate_limit(owner_id, prefix=_PREFIX, surface=SURFACE_CHAT, per_minute=per_minute, per_hour=100)
+    await enforce_rate_limit(owner_id, prefix=_PREFIX, per_minute=per_minute, per_hour=100)
 
 
 @pytest.mark.asyncio

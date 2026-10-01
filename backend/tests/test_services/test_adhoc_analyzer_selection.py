@@ -133,3 +133,9 @@ def test_empty_explicit_list_runs_nothing():
 
     assert resolve_adhoc_analyzers([], report) == []
     assert set(report.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS
+
+
+def test_an_analyzer_named_twice_runs_once():
+    report = AnalyzerReport()
+
+    assert resolve_adhoc_analyzers([_OSV, _OSV], report) == [_OSV]

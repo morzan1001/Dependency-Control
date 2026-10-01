@@ -67,7 +67,7 @@ class Permissions:
     # MCP (external LLM clients calling our tools via API key)
     MCP_ACCESS = "mcp:access"
 
-    # Ad-hoc analysis (stateless /analyze endpoint)
+    # Ad-hoc analysis (/analyze endpoint)
     ANALYZE_ADHOC = "analyze:adhoc"
 
     # The only scope of a session that must enrol in 2FA first; never granted to an account.

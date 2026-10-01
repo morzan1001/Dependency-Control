@@ -1,4 +1,5 @@
-"""B5: ad-hoc analysis must leave no MongoDB document, no GridFS blob, no file and no caller-derived cache entry."""
+"""Ad-hoc analysis leaves no MongoDB document, no GridFS blob, no file and no caller-derived cache entry; its
+endpoint keeps only the job it queued."""
 
 from __future__ import annotations
 
@@ -23,7 +24,6 @@ from app.db import mongodb
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
-from app.services.chat import rate_limiter
 from tests.helpers.analyzers import build_analyzer, serve_analyzer
 from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
@@ -71,17 +71,14 @@ _REDIS_CLIENT_LABEL = "redis.asyncio.Redis"
 _REDIS_FROM_URL_LABEL = "redis.asyncio.from_url"
 
 # Captured at import, before any test rebinds them, so the fixture patches by original identity.
-_MONGO_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
+_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
     (_MOTOR_CLIENT_LABEL, motor_asyncio.AsyncIOMotorClient),
     (_GRIDFS_BUCKET_LABEL, motor_asyncio.AsyncIOMotorGridFSBucket),
     (_PYMONGO_CLIENT_LABEL, pymongo.MongoClient),
     (_PYMONGO_ASYNC_CLIENT_LABEL, pymongo.AsyncMongoClient),
-)
-_REDIS_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
     (_REDIS_CLIENT_LABEL, redis.asyncio.Redis),
     (_REDIS_FROM_URL_LABEL, redis.asyncio.from_url),
 )
-_DRIVER_ENTRY_POINTS = _MONGO_DRIVER_ENTRY_POINTS + _REDIS_DRIVER_ENTRY_POINTS
 
 # Upstream reference lists shared by every caller: the key names the source, never the payload.
 _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset({CacheKeys.popular_packages("pypi"), CacheKeys.kev_catalog()})
@@ -99,16 +96,13 @@ _TEMP_ROOT_NAME = "adhoc-temp"
 _CALLER_DERIVED_CACHE_KEY = "osv3:0123456789abcdef"
 _SEEDED_POPULAR_PYPI = ["requests", "flask", "django"]
 _MONGO_URL = "mongodb://localhost:27017"
-_BASE_URL = "http://test"
 _ANALYZE_PATH = "/api/v1/analyze"
 _KEY_OWNER = "adhoc-user"
 _KEY_NAME = "ci"
 _KEY_DAYS = 30
 _ANALYZE_ADHOC = "analyze:adhoc"
-_RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
-_ALLOWED = 1
-_FORMAT_JSON = "json"
-_FORMAT_HTML = "html"
+_JOB_COLLECTIONS = frozenset({"adhoc_jobs", "fs.files", "fs.chunks"})
+_INPUT_AND_RESULT = 2
 _RAN_LINE = re.compile(r"<strong>Ran:</strong>([^<]*)<")
 _FAILING_ANALYZER = "license_compliance"
 _CACHING_ANALYZER = "typosquatting"
@@ -319,20 +313,6 @@ async def assert_nothing_persisted(db: Any) -> None:
         assert count == 0, f"ad-hoc analysis wrote {count} document(s) into '{name}'"
 
 
-async def collection_counts(db: Any) -> dict[str, int]:
-    """A baseline for a handle that had to be seeded — with the caller's own key, say."""
-    return {name: await db[name].count_documents({}) for name in _collection_names(db)}
-
-
-async def assert_no_new_documents(db: Any, before: dict[str, int]) -> None:
-    for name in _collection_names(db):
-        count = await db[name].count_documents({})
-        # A collection the run vivified is absent from the baseline, and a floor of zero is
-        # what "the run must not create it" means.
-        seeded = before.get(name, 0)
-        assert count == seeded, f"ad-hoc analysis wrote {count - seeded} document(s) into '{name}'"
-
-
 def assert_no_write_calls(db: _WriteRecordingDatabase) -> None:
     assert db.writes == [], f"ad-hoc analysis made write calls: {db.writes}"
 
@@ -373,30 +353,16 @@ def _rebind_everywhere(monkeypatch: pytest.MonkeyPatch, replacements: list[tuple
                     monkeypatch.setattr(module, attribute, replacement, raising=False)
 
 
-def _install_tripwires(monkeypatch: pytest.MonkeyPatch, drivers: tuple[tuple[str, Any], ...]) -> list[str]:
+@pytest.fixture
+def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     touched: list[str] = []
     replacements: list[tuple[Any, Any]] = [
         (getattr(mongodb, name), _BypassTripwire(f"app.db.mongodb.{name}", touched)) for name in _BYPASS_ENTRY_POINTS
     ]
-    replacements += [(original, _BypassTripwire(label, touched)) for label, original in drivers]
+    replacements += [(original, _BypassTripwire(label, touched)) for label, original in _DRIVER_ENTRY_POINTS]
     _rebind_everywhere(monkeypatch, replacements)
     monkeypatch.setattr(mongodb.db, "client", _TripwireClient(touched))
     return touched
-
-
-@pytest.fixture
-def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    return _install_tripwires(monkeypatch, _DRIVER_ENTRY_POINTS)
-
-
-@pytest.fixture
-def mongo_bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Redis left untripwired for the HTTP layer, which opens it for the rate-limit window.
-
-    The analysis behind the endpoint still may not, so the caller of this fixture has to say
-    which Redis keys it accepts instead of accepting the whole datastore.
-    """
-    return _install_tripwires(monkeypatch, _MONGO_DRIVER_ENTRY_POINTS)
 
 
 # ── Nets 3 and 4: Redis key and value policy
@@ -659,22 +625,6 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
     assert _CACHING_ANALYZER in response.analyzers.ran
 
 
-@pytest.fixture
-def injected_database() -> Any:
-    """Bound before the bypass tripwires replace the module attribute the app imported."""
-    from app.db.mongodb import get_database
-    from app.main import app
-
-    database = _WriteRecordingDatabase()
-
-    async def _use_it() -> _WriteRecordingDatabase:
-        return database
-
-    app.dependency_overrides[get_database] = _use_it
-    yield database
-    app.dependency_overrides.pop(get_database, None)
-
-
 async def _seed_adhoc_key(db: Any) -> str:
     from app.core.constants import API_KEY_SURFACE_ADHOC
     from app.repositories.api_keys import ApiKeyRepository
@@ -693,79 +643,62 @@ async def _seed_adhoc_key(db: Any) -> str:
     return str(plaintext)
 
 
-class _RateLimitRedis:
-    """Serves the sliding-window script and records the key of every call."""
-
-    def __init__(self, keys: list[str]) -> None:
-        self._keys = keys
-
-    async def eval(self, _script: str, _numkeys: int, key: str, *_args: Any) -> list[int]:
-        self._keys.append(key)
-        return [_ALLOWED, 0]
-
-
 def _ran_from_html(html: str) -> set[str]:
     match = _RAN_LINE.search(html)
     assert match, "the report must name the stages that ran, or this case proves nothing"
     return {name.strip() for name in match.group(1).split(",")}
 
 
+async def _snapshot(db: Any) -> dict[str, list[dict[str, Any]]]:
+    return {name: await db[name].find({}).to_list(None) for name in await db.list_collection_names()}
+
+
+def _without_last_use(keys: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{field: value for field, value in key.items() if field != "last_used_at"} for key in keys]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response_format", [_FORMAT_JSON, _FORMAT_HTML])
-async def test_the_endpoint_persists_nothing(
-    injected_database, mongo_bypass_attempts, recording_cache, filesystem_watch, monkeypatch, response_format
-):
-    """Same guarantee one layer up, over both exits: authentication resolves a key and stamps
-    nothing on it, and rendering a report reads a template rather than writing one."""
-    from httpx import ASGITransport, AsyncClient
-
-    from app.main import app
-
-    db = injected_database
+@pytest.mark.live_mongo
+async def test_the_endpoint_writes_only_its_job(client, db, running_worker, recording_cache, filesystem_watch):
+    """Same guarantee one layer up, over both exits: the job, its input and result files and the key's
+    last use are the only writes, and rendering a report reads a template rather than writing one."""
     token = await _seed_adhoc_key(db)
-    before = await collection_counts(db)
-    # The key and its owner are the caller's credentials, not the run's output.
-    db.writes.clear()
+    headers = {"Authorization": f"Bearer {token}"}
+    before = await _snapshot(db)
 
-    redis_keys: list[str] = []
-    monkeypatch.setattr(rate_limiter, "_client", lambda: _RateLimitRedis(redis_keys))
+    posted = await client.post(
+        _ANALYZE_PATH, json=_full_request().model_dump(mode="json", exclude_none=True), headers=headers
+    )
+    assert posted.status_code == 202, posted.text
+    job_id = posted.json()["job_id"]
+    await running_worker.queue.join()
+    as_json = await client.get(f"{_ANALYZE_PATH}/{job_id}", headers=headers)
+    as_html = await client.get(f"{_ANALYZE_PATH}/{job_id}", params={"format": "html"}, headers=headers)
+    after = await _snapshot(db)
 
-    request = _full_request()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url=_BASE_URL) as ac:
-        resp = await ac.post(
-            _ANALYZE_PATH,
-            json={**request.model_dump(exclude_none=True), "format": response_format},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    assert as_json.status_code == 200, as_json.text
+    body = as_json.json()
+    assert body["findings"], "the request must actually produce findings, or the proof is vacuous"
+    assert set(body["analyzers"]["ran"]) == set(_EXPECTED_RAN)
+    assert _ran_from_html(as_html.text) == set(_EXPECTED_RAN)
 
-    assert resp.status_code == 200, resp.text
-    if response_format == _FORMAT_HTML:
-        assert _ran_from_html(resp.text) == set(_EXPECTED_RAN)
-    else:
-        body = resp.json()
-        assert body["findings"], "the request must actually produce findings, or the proof is vacuous"
-        assert set(body["analyzers"]["ran"]) == set(_EXPECTED_RAN)
-
-    assert_no_write_calls(db)
-    await assert_no_new_documents(db, before)
-    assert mongo_bypass_attempts == []
+    changed = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
+    assert changed == _JOB_COLLECTIONS | {"api_keys"}
+    assert _without_last_use(after["api_keys"]) == _without_last_use(before["api_keys"])
+    assert [job["_id"] for job in after["adhoc_jobs"]] == [job_id]
+    assert len(after["fs.files"]) == _INPUT_AND_RESULT
     assert_no_caller_derived_cache_writes(recording_cache.writes)
     assert_no_caller_data_in_shared_cache(recording_cache.writes)
     assert_no_files_left_behind(filesystem_watch)
     assert recording_cache.writes == []
-
-    # The one thing the HTTP layer is allowed to leave in a datastore, named rather than excused.
-    assert redis_keys, "the rate-limit window must reach Redis, or this net is vacuous"
-    assert all(key.startswith(_RATE_LIMIT_PREFIX) for key in redis_keys), redis_keys
 
 
 @pytest.mark.asyncio
 async def test_a_cancelled_cli_analyzer_leaves_no_scanner_running_and_no_file(
     monkeypatch, bypass_attempts, recording_cache, filesystem_watch
 ):
-    """The deadline that cancels an ad-hoc request cancels the scanner's own ``cli_timeout`` with
-    it, so nothing downstream is left to bound the process — and the semaphore is released, so a
-    retry starts another one."""
+    """Cancelling an ad-hoc run cancels the scanner's own ``cli_timeout`` with it, so nothing
+    downstream is left to bound the process."""
     analyzer = build_analyzer(_CLI_ANALYZER)
     monkeypatch.setattr(analyzer, "is_tool_available", lambda: True)
     monkeypatch.setattr(analyzer, "_build_command_args", lambda _path: list(_HANGING_SCANNER))
@@ -816,31 +749,6 @@ async def test_a_write_into_a_collection_no_one_named_is_caught():
     assert db.writes == [f"{_UNNAMED_COLLECTION}.insert_one"]
     with pytest.raises(AssertionError, match=_UNNAMED_COLLECTION):
         await assert_nothing_persisted(db)
-
-
-@pytest.mark.asyncio
-async def test_a_document_added_after_the_baseline_is_caught():
-    """The HTTP proof has to seed a key, so its net compares against a baseline rather than zero."""
-    db = _WriteRecordingDatabase()
-    await db.users.insert_one({"_id": _KEY_OWNER})
-    before = await collection_counts(db)
-
-    await assert_no_new_documents(db, before)
-
-    await db.users.insert_one({"_id": _LEAK_ID})
-    with pytest.raises(AssertionError, match="users"):
-        await assert_no_new_documents(db, before)
-
-
-@pytest.mark.asyncio
-async def test_a_collection_the_baseline_never_saw_is_caught():
-    db = _WriteRecordingDatabase()
-    before = await collection_counts(db)
-
-    await db[_UNNAMED_COLLECTION].insert_one({"_id": _LEAK_ID})
-
-    with pytest.raises(AssertionError, match=_UNNAMED_COLLECTION):
-        await assert_no_new_documents(db, before)
 
 
 @pytest.mark.asyncio

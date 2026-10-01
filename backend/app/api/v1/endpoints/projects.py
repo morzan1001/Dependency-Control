@@ -1,14 +1,20 @@
-import io
-import json
 import logging
 import re
 import uuid
 import zipfile
+from contextlib import ExitStack
+from functools import partial
+from tempfile import SpooledTemporaryFile
 from typing import Annotated, Any
 
+from bson import ObjectId
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from gridfs import DEFAULT_CHUNK_SIZE
+from gridfs.errors import NoFile
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo.errors import DuplicateKeyError
+from starlette.background import BackgroundTask
 
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -25,10 +31,8 @@ from app.api.v1.helpers import (
     get_user_project_ids,
     is_write_superuser,
     last_admin_guard,
-    load_from_gridfs,
     may_read_projects,
     parse_sort_direction,
-    resolve_sbom_refs,
     resolve_team_names,
     team_refs,
 )
@@ -61,11 +65,12 @@ from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.worker import worker_manager
+from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.base import and_filters
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -108,7 +113,7 @@ from app.schemas.project import (
 from app.services.branch_sync import sync_project_branches
 from app.services.component_identity import component_match_expr
 from app.services.gitlab import GitLabService
-from app.services.gridfs_maintenance import gridfs_ref_id
+from app.services.gridfs_maintenance import gridfs_ref_id, iter_gridfs_chunks
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, ExportedScan, iter_findings_rows
 from app.services.rescan import create_rescan
@@ -130,6 +135,7 @@ _MSG_LAST_ADMIN_OWNER = "This would leave the project without an admin; add one 
 _MSG_NO_VERIFIED_USER = "No user has verified this email address"
 
 _SCAN_HISTORY_PAGE_SIZE = 100
+_EXPORT_SPOOL_MAX_MEMORY = 8 * 1024 * 1024
 
 
 def _release_refs(releases: list[Release]) -> list[ScanReleaseRef]:
@@ -928,7 +934,7 @@ async def read_analysis_results(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> list[AnalysisResult]:
-    """Get the results of all analyzers for a specific scan."""
+    """List the analyzer result rows of a scan, without the results themselves."""
     await _require_scan_access(scan_id, current_user, db)
     return await AnalysisResultRepository(db).find_by_scan(scan_id, limit=1000)
 
@@ -945,9 +951,28 @@ async def read_scan(
     return (await _with_releases(db, [scan.model_dump(by_alias=True)]))[0]
 
 
+def _attachment(filename: str) -> dict[str, str]:
+    return {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+
+def _stream_json(stream: Any, filename: str) -> StreamingResponse:
+    return StreamingResponse(iter_gridfs_chunks(stream), media_type="application/json", headers=_attachment(filename))
+
+
+async def _open_sbom(db: Any, ref: Any) -> Any:
+    """An open download stream of one stored SBOM, or the HTTP error, raised before any byte is sent."""
+    gridfs_id = gridfs_ref_id(ref)
+    if not gridfs_id:
+        raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
+    try:
+        return await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), ObjectId(gridfs_id))
+    except NoFile as exc:
+        raise HTTPException(status_code=404, detail="SBOM file not found in GridFS") from exc
+
+
 @router.get(
     "/scans/{scan_id}/sboms",
-    summary="Get raw SBOMs for a scan",
+    summary="List the SBOMs of a scan",
     responses=RESP_AUTH_404,
 )
 async def read_scan_sboms(
@@ -955,13 +980,62 @@ async def read_scan_sboms(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> list[dict[str, Any]]:
-    """Get raw SBOM data for a scan, resolved from GridFS on demand."""
-    sbom_refs = (await _load_scan_with_access(scan_id, current_user, db)).sbom_refs or []
+    """Index, filename and stored size of each SBOM; size is None when its file is gone."""
+    sbom_refs = (await _load_scan_with_access(scan_id, current_user, db)).sbom_refs
 
     if not sbom_refs:
         raise HTTPException(status_code=404, detail="No SBOM data available for this scan")
 
-    return await resolve_sbom_refs(db, sbom_refs)
+    file_ids = [ObjectId(gid) for ref in sbom_refs if (gid := gridfs_ref_id(ref))]
+    files = db["fs.files"].find({"_id": {"$in": file_ids}}, {"length": 1})
+    sizes = {str(doc["_id"]): doc["length"] async for doc in files}
+    return [
+        {"index": index, "filename": ref.get("filename"), "size": sizes.get(gridfs_ref_id(ref) or "")}
+        for index, ref in enumerate(sbom_refs)
+    ]
+
+
+@router.get(
+    "/scans/{scan_id}/sboms/{index}",
+    summary="Download one SBOM of a scan",
+    responses=RESP_AUTH_404_500,
+)
+async def download_scan_sbom(
+    scan_id: str,
+    index: int,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> StreamingResponse:
+    """The stored SBOM at ``index`` (0-based), streamed as uploaded."""
+    sbom_refs = (await _load_scan_with_access(scan_id, current_user, db)).sbom_refs
+    if not 0 <= index < len(sbom_refs):
+        raise HTTPException(status_code=404, detail="SBOM not found")
+    return _stream_json(await _open_sbom(db, sbom_refs[index]), f"scan_{scan_id}_sbom_{index + 1}.json")
+
+
+@router.get(
+    "/scans/{scan_id}/results/{result_id}",
+    summary="Download one raw analysis result",
+    responses=RESP_AUTH_404,
+)
+async def download_analysis_result(
+    scan_id: str,
+    result_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> Response:
+    """The stored result of one row of the scan, as the analyzer produced it."""
+    await _require_scan_access(scan_id, current_user, db)
+    row = await AnalysisResultRepository(db).find_one_raw({"_id": result_id, "scan_id": scan_id}, RESULT_PROJECTION)
+    if not row:
+        raise HTTPException(status_code=404, detail="Analysis result not found")
+    name = "_".join(filter(None, ("scan", scan_id, row["analyzer_name"], row.get("source"))))
+    filename = re.sub(r"[^\w.-]+", "_", name) + ".json"
+    if file_id := row.get("result_gridfs_id"):
+        stream = await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), ObjectId(file_id))
+        return _stream_json(stream, filename)
+    # Legacy rows in live data carry the result inline.
+    return JSONResponse(row["result"], headers=_attachment(filename))
 
 
 def _build_scan_findings_match(
@@ -1330,35 +1404,27 @@ async def export_project_sbom(
     if not scan:
         raise HTTPException(status_code=404, detail="No completed scans found for this project")
 
-    if not scan.sbom_refs or len(scan.sbom_refs) == 0:
+    if not scan.sbom_refs:
         raise HTTPException(status_code=404, detail="No SBOM data found for this scan")
 
-    sbom_contents: list[Any] = []
-    for ref in scan.sbom_refs:
-        gridfs_id = gridfs_ref_id(ref)
-        if not gridfs_id:
-            raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
-        sbom_content = await load_from_gridfs(db, gridfs_id)
-        if not sbom_content:
-            raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
-        sbom_contents.append(sbom_content)
+    if len(scan.sbom_refs) == 1:
+        return _stream_json(await _open_sbom(db, scan.sbom_refs[0]), f"project_{project_id}_sbom.json")
 
-    if len(sbom_contents) == 1:
-        return Response(
-            content=json.dumps(sbom_contents[0], indent=2),
-            media_type="application/json",
-            headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"},
-        )
-
-    # Multi-SBOM scans export every SBOM, not just the first upload.
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for index, sbom_content in enumerate(sbom_contents):
-            archive.writestr(f"sbom-{index + 1}.json", json.dumps(sbom_content, indent=2))
-    return Response(
-        content=buffer.getvalue(),
+    with ExitStack() as close_on_error:
+        spool = close_on_error.enter_context(SpooledTemporaryFile(max_size=_EXPORT_SPOOL_MAX_MEMORY))
+        with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED) as archive:
+            for index, ref in enumerate(scan.sbom_refs):
+                stream = await _open_sbom(db, ref)
+                with archive.open(f"sbom-{index + 1}.json", "w", force_zip64=True) as entry:
+                    async for chunk in iter_gridfs_chunks(stream):
+                        entry.write(chunk)
+        close_on_error.pop_all()
+    spool.seek(0)
+    return StreamingResponse(
+        iter(partial(spool.read, DEFAULT_CHUNK_SIZE), b""),
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sboms.zip"},
+        headers=_attachment(f"project_{project_id}_sboms.zip"),
+        background=BackgroundTask(spool.close),
     )
 
 

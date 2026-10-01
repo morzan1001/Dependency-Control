@@ -5,9 +5,6 @@ rescan cannot re-derive them; without the carry-over the rescan reports zero cry
 crypto delta reads that as risk having disappeared.
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from app.api.v1.helpers.ingest import process_findings_ingest
@@ -24,6 +21,8 @@ from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
+from tests.helpers.sboms import store_sbom
 
 _PROJECT_ID = "cbom-rescan-project"
 _WORKER = "pod-a/worker-0"
@@ -55,20 +54,6 @@ def _gridfs_ref() -> dict:
     return {"storage": "gridfs", "file_id": _FILE_ID, "type": "gridfs_reference", "gridfs_id": _FILE_ID}
 
 
-@pytest.fixture
-def _gridfs_patched(monkeypatch):
-    fs = MagicMock()
-
-    async def _open(_object_id):
-        stream = MagicMock()
-        stream.read = AsyncMock(return_value=json.dumps(_SBOM).encode())
-        return stream
-
-    fs.open_download_stream = AsyncMock(side_effect=_open)
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
-    return fs
-
-
 async def _ingest_assets(db, scan_id: str) -> None:
     await CryptoAssetRepository(db).bulk_upsert(
         _PROJECT_ID,
@@ -89,6 +74,8 @@ async def _ingest_assets(db, scan_id: str) -> None:
 
 async def _seed_lineage(db) -> tuple[str, str]:
     """An ingested-CBOM scan and a pending rescan of it, both carrying the same SBOM ref."""
+    await create_indexes(db)
+    await store_sbom(db, _SBOM, _FILE_ID)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
     original = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref()], status="completed")
     await db.scans.insert_one(original.model_dump(by_alias=True))
@@ -116,14 +103,9 @@ async def _rescan_and_list(db) -> list[str]:
     return sorted(a.name for a in await repo.list_by_scan(_PROJECT_ID, rescan_id, limit=_ASSET_LIMIT))
 
 
-@pytest.mark.asyncio
-async def test_rescan_keeps_the_ingested_crypto_assets(db, _gridfs_patched):
-    assert await _rescan_and_list(db) == ["MD5", "RSA-1024"]
-
-
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_rescan_keeps_the_ingested_crypto_assets_on_a_real_server(db, _gridfs_patched):
+async def test_rescan_keeps_the_ingested_crypto_assets(db):
     assert await _rescan_and_list(db) == ["MD5", "RSA-1024"]
 
 
@@ -162,22 +144,59 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     return sorted(row["analyzer_name"] for row in rows), announced[-1]
 
 
-def _assert_crypto_rows_are_regenerated_not_carried(rows: list[str], announced: list[str]) -> None:
-    assert rows == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
-    assert announced == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
-
-
 @pytest.mark.asyncio
-async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_rows_over(
-    db, monkeypatch, _gridfs_patched
-):
-    _assert_crypto_rows_are_regenerated_not_carried(*await _rescan_an_analysed_cbom_scan(db, monkeypatch))
-
-
 @pytest.mark.live_mongo
-@pytest.mark.asyncio
-async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_rows_over_on_a_real_server(
-    db, monkeypatch, _gridfs_patched
-):
+async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_rows_over(db, monkeypatch):
     await create_indexes(db)
-    _assert_crypto_rows_are_regenerated_not_carried(*await _rescan_an_analysed_cbom_scan(db, monkeypatch))
+    expected = sorted([*CRYPTO_ANALYZERS, "trufflehog"])
+
+    assert await _rescan_an_analysed_cbom_scan(db, monkeypatch) == (expected, expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_carry_over_past_the_old_asset_cap_copies_every_asset_once(db):
+    await create_indexes(db)
+    await store_cbom(db, _PROJECT_ID, "scan-original", cbom_of(filler_components(range(OLD_ASSET_CAP + 1))))
+    source_ids = await db.crypto_assets.distinct("_id", {"scan_id": "scan-original"})
+    repo = CryptoAssetRepository(db)
+
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+    carried = await db.crypto_assets.find({"scan_id": "scan-rescan"}).sort("_id").to_list(None)
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+
+    assert [a["_id"] for a in carried] == sorted(f"scan-rescan:{i}" for i in source_ids)
+    assert await db.crypto_assets.find({"scan_id": "scan-rescan"}).sort("_id").to_list(None) == carried
+    first = carried[0]
+    embedded = CryptoAsset.model_validate({**first, "_id": "embedded", "name": "SHA-512"})
+    await repo.bulk_upsert(_PROJECT_ID, "scan-rescan", [embedded])
+    assert await db.crypto_assets.count_documents({"scan_id": "scan-rescan"}) == OLD_ASSET_CAP + 1
+    assert (await db.crypto_assets.find_one({"_id": first["_id"]}))["name"] == "SHA-512"
+
+
+async def _carry_over_onto_a_partly_filled_rescan(db, count: int) -> None:
+    """A failed earlier run left the embedded persist's rows on the rescan, under fresh ids."""
+    await create_indexes(db)
+    components = filler_components(range(count))
+    await store_cbom(db, _PROJECT_ID, "scan-original", cbom_of(components))
+    await store_cbom(db, _PROJECT_ID, "scan-rescan", cbom_of([components[0], components[-1]]))
+    held = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-rescan"})}
+    source = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-original"})}
+    repo = CryptoAssetRepository(db)
+
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+
+    carried = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-rescan"})}
+    assert carried == {ref: held.get(ref, f"scan-rescan:{src}") for ref, src in source.items()}
+
+
+@pytest.mark.asyncio
+async def test_a_carry_over_keeps_the_rows_the_rescan_already_holds(db):
+    await _carry_over_onto_a_partly_filled_rescan(db, 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_carry_over_past_the_old_asset_cap_keeps_the_rows_the_rescan_already_holds(db):
+    await _carry_over_onto_a_partly_filled_rescan(db, OLD_ASSET_CAP + 1)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _aggregate_external_results
 
@@ -32,16 +32,18 @@ def _payload(detector_name: str) -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_the_ingested_detector_name_is_stored_and_named(client, db, api_key_headers):
     resp = await client.post(_INGEST_URL, json=_payload("AWS"), headers=api_key_headers)
     assert resp.status_code == 200, resp.text
     scan_id = resp.json()["scan_id"]
+    repo = AnalysisResultRepository(db)
 
-    stored = await db.analysis_results.find_one({"scan_id": scan_id, "analyzer_name": "trufflehog"})
-    assert stored["result"]["findings"][0]["DetectorName"] == "AWS"
+    row = await db.analysis_results.find_one({"scan_id": scan_id, "analyzer_name": "trufflehog"}, RESULT_PROJECTION)
+    assert (await repo.load_result(row))["findings"][0]["DetectorName"] == "AWS"
 
     aggregator = ResultAggregator()
-    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), scan_id, [])
+    await _aggregate_external_results(aggregator, repo, scan_id, [])
     (finding,) = aggregator.get_findings()
     assert (
         finding.description,

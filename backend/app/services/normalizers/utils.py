@@ -144,7 +144,6 @@ def prefer_cve_as_primary_id(vuln_id: str, aliases: list[str]) -> tuple[str, lis
     """Swap a non-CVE primary id with a CVE from aliases, keeping the original as an alias."""
     cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
     if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
-        if vuln_id not in aliases:
-            aliases.append(vuln_id)
-        return cve_alias, aliases
+        others = [alias for alias in aliases if alias != cve_alias]
+        return cve_alias, others if vuln_id in others else [*others, vuln_id]
     return vuln_id, aliases

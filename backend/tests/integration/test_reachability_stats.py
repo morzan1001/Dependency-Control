@@ -10,6 +10,7 @@ import pytest
 from prometheus_client import REGISTRY
 
 from app.core.init_db import create_indexes
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.services import reachability_enrichment
 from app.services.analysis.stats import calculate_comprehensive_stats
@@ -40,6 +41,11 @@ def _finding(finding_id: str, component: str, severity: str = "HIGH") -> dict:
         "waived": False,
         "details": {"risk_score": 40.0, "vulnerabilities": [{"id": finding_id, "severity": severity}]},
     }
+
+
+async def _reachability_summary(db, scan_id: str = _SCAN_ID) -> dict:
+    row = await db.analysis_results.find_one({"scan_id": scan_id, "analyzer_name": "reachability"})
+    return await AnalysisResultRepository(db).load_result(row)
 
 
 async def _seed_callgraph(db) -> None:
@@ -104,7 +110,9 @@ async def test_inline_enrichment_reaches_the_stats_pipeline(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_deferred_run_recomputes_and_persists_scan_stats(db):
+    await create_indexes(db)
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     for finding in (_finding("CVE-1", "requests"), _finding("CVE-2", "urllib3")):
@@ -135,7 +143,7 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
     assert project["stats"]["reachability"]["analyzed_count"] == 2
 
     # The persisted summary is built from the minimal projection, which carries every field it shows.
-    info = (await db.analysis_results.find_one({"scan_id": _SCAN_ID}))["result"]["callgraph_info"][0]
+    info = (await _reachability_summary(db))["callgraph_info"][0]
     assert (info["coverage_modules"], info["total_imports"]) == (2, 2)
     assert info["generated_at"] is not None
 
@@ -155,19 +163,23 @@ async def _pending_scan(db, scan_id: str = _SCAN_ID, branch: str = "main", **fie
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_deferred_run_reads_the_dependency_inventory_once(db, monkeypatch):
+    await create_indexes(db)
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     await db.findings.insert_one(_finding("CVE-1", "requests"))
     await _pending_scan(db)
     reads: list[dict] = []
-    real_find = db.dependencies.find
+    collection_type = type(db.dependencies)
+    real_find = collection_type.find
 
-    def _counting_find(query, *args, **kwargs):
-        reads.append(query)
-        return real_find(query, *args, **kwargs)
+    def _counting_find(collection, query, *args, **kwargs):
+        if collection.name == "dependencies":
+            reads.append(query)
+        return real_find(collection, query, *args, **kwargs)
 
-    monkeypatch.setattr(db.dependencies, "find", _counting_find)
+    monkeypatch.setattr(collection_type, "find", _counting_find)
 
     await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
 
@@ -176,7 +188,9 @@ async def test_a_deferred_run_reads_the_dependency_inventory_once(db, monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_deferred_run_leaves_a_superseded_project_alone(db):
+    await create_indexes(db)
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     await db.findings.insert_one(_finding("CVE-1", "requests"))
@@ -205,8 +219,10 @@ async def test_deferred_run_leaves_a_superseded_project_alone(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_deferred_run_on_a_scan_the_pointer_still_names_caches_the_derived_head(db):
     """The default branch moved off the pointer's branch, so the pointer no longer names head."""
+    await create_indexes(db)
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     await db.findings.insert_one(_finding("CVE-1", "requests"))
@@ -233,8 +249,10 @@ async def test_deferred_run_on_a_scan_the_pointer_still_names_caches_the_derived
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_deferred_run_writes_no_stats_while_a_recalculation_holds_the_stats_lock(db, monkeypatch):
     """A recalculation resets every waiver flag before re-applying them, so stats read in between count none."""
+    await create_indexes(db)
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     await db.findings.insert_one(_finding("CVE-1", "requests"))
@@ -252,8 +270,10 @@ async def test_deferred_run_writes_no_stats_while_a_recalculation_holds_the_stat
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_deferred_run_on_a_rescan_summarises_the_callgraph_of_its_build(db):
     """CI uploads the callgraph under the original build's id; the summary must describe the one enrichment used."""
+    await create_indexes(db)
     rescan_id = "rescan-reach"
     await _seed_callgraph(db)
     await db.dependencies.insert_one(
@@ -265,9 +285,7 @@ async def test_deferred_run_on_a_rescan_summarises_the_callgraph_of_its_build(db
     await run_pending_reachability_for_scan(rescan_id, _PROJECT_ID, db)
 
     assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
-    summary = await db.analysis_results.find_one({"scan_id": rescan_id, "analyzer_name": "reachability"})
-    assert summary is not None
-    assert summary["result"]["languages"] == ["python"]
+    assert (await _reachability_summary(db, rescan_id))["languages"] == ["python"]
 
 
 @pytest.mark.asyncio
@@ -282,8 +300,10 @@ async def test_deferred_run_without_a_callgraph_keeps_the_scan_pending(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_second_language_supersedes_the_first_summary(db):
     """Each callgraph re-runs enrichment, so the scan must keep exactly one, current summary."""
+    await create_indexes(db)
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     await db.findings.insert_one(_finding("CVE-1", "requests"))
@@ -318,7 +338,7 @@ async def test_a_second_language_supersedes_the_first_summary(db):
 
     results = await db.analysis_results.find({"scan_id": _SCAN_ID, "analyzer_name": "reachability"}).to_list(None)
     assert len(results) == 1, "a stale duplicate would render twice in the raw-data view"
-    assert sorted(results[0]["result"]["languages"]) == ["javascript", "python"]
+    assert sorted((await _reachability_summary(db))["languages"]) == ["javascript", "python"]
 
 
 @pytest.mark.asyncio
@@ -357,8 +377,10 @@ async def test_coverable_count_is_zero_without_dependencies(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analyses(db):
     """CI uploads the callgraph under the original build's id; a rescan carries a fresh id."""
+    await create_indexes(db)
     from app.repositories.scans import ScanRepository
     from app.services.analysis.engine import _run_reachability_enrichment
 
@@ -470,8 +492,7 @@ async def test_a_callgraph_uploaded_during_a_pass_is_applied_before_the_pass_end
     await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
 
     assert (await db.findings.find_one({"_id": "f-CVE-JS"}))["reachable"] is True
-    summary = await db.analysis_results.find_one({"scan_id": _SCAN_ID, "analyzer_name": "reachability"})
-    assert sorted(summary["result"]["languages"]) == ["javascript", "python"]
+    assert sorted((await _reachability_summary(db))["languages"]) == ["javascript", "python"]
     assert not (await db.scans.find_one({"_id": _SCAN_ID})).get("reachability_pending")
 
 
@@ -497,7 +518,9 @@ def _reachability_counters() -> tuple[float, float]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_deferred_run_counts_its_verdicts_in_the_reachability_metrics(db):
+    await create_indexes(db)
     await _seed_callgraph(db)
     await _seed_dependencies(db)
     await db.findings.insert_one(_finding("CVE-1", "requests"))

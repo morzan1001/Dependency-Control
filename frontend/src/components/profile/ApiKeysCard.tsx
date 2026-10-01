@@ -62,7 +62,7 @@ const SURFACE_LABELS: Record<ApiKeySurface, string> = {
 
 const SURFACE_HINTS: Record<ApiKeySurface, string> = {
   mcp: 'Lets an external LLM client call DependencyControl tools as you.',
-  adhoc: 'Lets a pipeline POST an SBOM to /api/v1/analyze.',
+  adhoc: 'POST an SBOM to /api/v1/analyze, then GET /api/v1/analyze/{job_id}',
 };
 
 /** Mirrors the backend table the auth dependency and the mint endpoint share. */
@@ -70,10 +70,6 @@ const SURFACE_PERMISSIONS: Record<ApiKeySurface, string> = {
   mcp: Permissions.MCP_ACCESS,
   adhoc: Permissions.ANALYZE_ADHOC,
 };
-
-// /analyze persists nothing about a call, so an ad-hoc-only key is never stamped: an absent
-// stamp says nothing about whether the key is in use.
-const STAMPING_SURFACES: ReadonlySet<ApiKeySurface> = new Set<ApiKeySurface>(['mcp']);
 
 function statusLabel(key: ApiKey): { text: string; tone: string } {
   if (key.revoked_at) return { text: 'Revoked', tone: MUTED_TONE };
@@ -106,15 +102,9 @@ function expiryText(key: ApiKey): string {
 }
 
 function usageText(key: ApiKey): string {
-  if (key.last_used_at) {
-    return `last used ${formatDistanceToNow(new Date(key.last_used_at), { addSuffix: true })}`;
-  }
-  // An absent stamp only proves disuse when every surface the key names would have written one;
-  // a key naming any non-stamping surface may be in constant use through it.
-  const everySurfaceStamps =
-    key.surfaces.length > 0 &&
-    key.surfaces.every((surface) => STAMPING_SURFACES.has(surface));
-  return everySurfaceStamps ? 'never used' : 'usage not recorded';
+  return key.last_used_at
+    ? `last used ${formatDistanceToNow(new Date(key.last_used_at), { addSuffix: true })}`
+    : 'never used';
 }
 
 export function ApiKeysCard() {

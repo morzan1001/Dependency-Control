@@ -544,14 +544,14 @@ async def run_housekeeping() -> None:
             logger.exception("Orphan reaper failed: %s", e)
 
         try:
-            await reap_orphan_gridfs_files(db)
-        except Exception as e:
-            logger.exception("GridFS orphan reaper failed: %s", e)
-
-        try:
             await _reap_orphan_callgraphs(db)
         except Exception as e:
             logger.exception("Callgraph orphan reaper failed: %s", e)
+
+        try:
+            await reap_orphan_gridfs_files(db)
+        except Exception as e:
+            logger.exception("GridFS orphan reaper failed: %s", e)
 
     except Exception as e:
         logger.exception("Housekeeping task failed: %s", e)
@@ -601,6 +601,21 @@ async def trigger_stale_pending_scans(
 
     except Exception as e:
         logger.exception("Stale pending scan check failed: %s", e)
+
+
+async def requeue_waiting_adhoc_jobs(worker_manager: Optional["WorkerManager"] = None) -> None:
+    """Queue again the oldest pending ad-hoc jobs whose queue entry died with its pod."""
+    if not worker_manager or worker_manager.is_saturated():
+        return
+    db = await get_database()
+    waiting_since = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
+    cursor = (
+        db.adhoc_jobs.find({"status": SCAN_STATUS_PENDING, "created_at": {"$lt": waiting_since}}, {"_id": 1})
+        .sort("created_at", 1)
+        .limit(worker_manager.num_workers)
+    )
+    async for job in cursor:
+        await worker_manager.add_adhoc_job(job["_id"])
 
 
 async def recover_stuck_scans(
@@ -702,6 +717,7 @@ async def stale_scan_loop(
     while True:
         try:
             await trigger_stale_pending_scans(worker_manager)
+            await requeue_waiting_adhoc_jobs(worker_manager)
         except Exception as e:
             logger.exception("Stale scan loop failed: %s", e)
 

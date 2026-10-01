@@ -407,8 +407,9 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
               .map((result) => (
                 <PostProcessorResultCard
                   key={result.id}
+                  scanId={result.scan_id}
+                  resultId={result.id}
                   analyzerName={result.analyzer_name}
-                  result={result.result}
                 />
               ))}
           </div>

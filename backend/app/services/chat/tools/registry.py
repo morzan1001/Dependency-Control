@@ -52,6 +52,7 @@ from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
 from app.repositories.base import and_filters
+from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.projects import ProjectRepository
@@ -206,6 +207,7 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
     "_id": 1,
     "module_usage": 1,
     "analyzed_modules": 1,
+    "graph_gridfs_id": 1,
     "language": 1,
     "updated_at": 1,
     "scan_id": 1,
@@ -1428,7 +1430,8 @@ class ChatToolRegistry:
             {"$sort": {"language": 1}},
         ]
         newest = await ctx.db["callgraphs"].aggregate(pipeline).to_list(length=None)
-        return {"callgraphs": [_serialize_doc(doc) for doc in newest]}
+        repo = CallgraphRepository(ctx.db)
+        return {"callgraphs": [_serialize_doc(await repo.load_graph(doc)) for doc in newest]}
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)

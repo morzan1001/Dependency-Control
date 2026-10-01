@@ -233,10 +233,9 @@ async def get_framework_evaluation_summary(
 
     framework_obj = pkg.FRAMEWORK_REGISTRY[fw_enum]
     _, eval_result = await pkg.ComplianceReportEngine().evaluate(db, resolved, framework_obj)
-    coverage = coverage_statement(eval_result.coverage)
     return {
         "framework": framework,
         "framework_name": eval_result.framework_name,
         "summary": eval_result.summary,
-        **({"coverage": coverage} if coverage else {}),
+        "coverage": coverage_statement(eval_result.coverage),
     }

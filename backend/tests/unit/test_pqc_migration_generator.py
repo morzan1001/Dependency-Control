@@ -15,10 +15,18 @@ _DEFAULT_BRANCH = "main"
 _DELETED_BRANCH = "feature/gone"
 
 
-def _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=2048, bom_ref="r", variant=None):
+def _asset(
+    name="RSA",
+    primitive=CryptoPrimitive.PKE,
+    key_size_bits=2048,
+    bom_ref="r",
+    variant=None,
+    project_id="p1",
+    scan_id="s1",
+):
     return CryptoAsset(
-        project_id="p1",
-        scan_id="s1",
+        project_id=project_id,
+        scan_id=scan_id,
         bom_ref=bom_ref,
         name=name,
         variant=variant,
@@ -77,10 +85,9 @@ async def test_generate_sorts_items_descending_priority():
     assert resp.items[0].asset_bom_ref == "r1"
 
 
-def _vulnerable_asset_repo():
-    repo = MagicMock()
-    repo.list_by_scan = AsyncMock(return_value=[_asset(name="RSA", primitive=CryptoPrimitive.PKE)])
-    return repo
+def _store(db, *assets):
+    for asset in assets:
+        db.crypto_assets._docs[asset.id] = asset.model_dump(by_alias=True)
 
 
 def _scanned_project(db, project_id, scans):
@@ -108,14 +115,13 @@ async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
     db = FakeDatabase()
     for pid in ("p1", "p2"):
         _scanned_project(db, pid, [(f"scan-{pid}", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
-    gen = PQCMigrationPlanGenerator(db)
-    repo = _vulnerable_asset_repo()
+        _store(db, _asset(project_id=pid, scan_id=f"scan-{pid}"))
 
-    with patch("app.services.pqc_migration.generator.CryptoAssetRepository", return_value=repo):
-        assets = await gen._list_vulnerable_assets(ResolvedScope(scope="global", scope_id=None, project_ids=None))
+    assets = await PQCMigrationPlanGenerator(db)._list_vulnerable_assets(
+        ResolvedScope(scope="global", scope_id=None, project_ids=None)
+    )
 
-    assert {call.args[1] for call in repo.list_by_scan.await_args_list} == {"scan-p1", "scan-p2"}
-    assert len(assets) == 2  # one vulnerable RSA asset per enumerated project
+    assert sorted(a.scan_id for a in assets) == ["scan-p1", "scan-p2"]
 
 
 @pytest.mark.asyncio
@@ -123,13 +129,12 @@ async def test_list_vulnerable_assets_empty_project_ids_stays_empty():
     # an explicit empty list means "no projects" and must not fall through to enumerating everything.
     db = FakeDatabase()
     _scanned_project(db, "p1", [("scan-p1", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
-    gen = PQCMigrationPlanGenerator(db)
-    repo = _vulnerable_asset_repo()
+    _store(db, _asset(scan_id="scan-p1"))
 
-    with patch("app.services.pqc_migration.generator.CryptoAssetRepository", return_value=repo):
-        assets = await gen._list_vulnerable_assets(ResolvedScope(scope="team", scope_id="t1", project_ids=[]))
+    assets = await PQCMigrationPlanGenerator(db)._list_vulnerable_assets(
+        ResolvedScope(scope="team", scope_id="t1", project_ids=[])
+    )
 
-    repo.list_by_scan.assert_not_awaited()
     assert assets == []
 
 
@@ -146,13 +151,13 @@ async def test_list_vulnerable_assets_reads_the_head_build_not_a_deleted_branch(
             ("scan-gone", _DELETED_BRANCH, SCAN_STATUS_COMPLETED, 1),
         ],
     )
-    gen = PQCMigrationPlanGenerator(db)
-    repo = _vulnerable_asset_repo()
+    _store(db, _asset(bom_ref="head", scan_id="scan-head"), _asset(bom_ref="gone", scan_id="scan-gone"))
 
-    with patch("app.services.pqc_migration.generator.CryptoAssetRepository", return_value=repo):
-        await gen._list_vulnerable_assets(ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]))
+    assets = await PQCMigrationPlanGenerator(db)._list_vulnerable_assets(
+        ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
+    )
 
-    assert [call.args[1] for call in repo.list_by_scan.await_args_list] == ["scan-head"]
+    assert [a.scan_id for a in assets] == ["scan-head"]
 
 
 @pytest.mark.asyncio
@@ -199,12 +204,10 @@ async def _plan_for(assets):
     """The plan for one project whose head scan holds these assets, through the vulnerability filter."""
     db = FakeDatabase()
     _scanned_project(db, "p1", [("scan-head", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
-    repo = MagicMock()
-    repo.list_by_scan = AsyncMock(return_value=assets)
-    with patch("app.services.pqc_migration.generator.CryptoAssetRepository", return_value=repo):
-        resp = await PQCMigrationPlanGenerator(db).generate(
-            resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
-        )
+    _store(db, *(asset.model_copy(update={"scan_id": "scan-head"}) for asset in assets))
+    resp = await PQCMigrationPlanGenerator(db).generate(
+        resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
+    )
     return {item.asset_bom_ref: item for item in resp.items}
 
 

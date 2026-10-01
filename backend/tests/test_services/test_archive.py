@@ -99,37 +99,13 @@ def _make_mock_db(
     db.dependencies.insert_many = AsyncMock()
     db.analysis_results.find = MagicMock(return_value=_AsyncCursorMock(analysis_results or []))
     db.analysis_results.insert_many = AsyncMock()
+    db.analysis_results.distinct = AsyncMock(return_value=_NO_IDS)
     db.callgraphs.find = MagicMock(return_value=_AsyncCursorMock(callgraphs or []))
     db.callgraphs.insert_many = AsyncMock()
+    db.callgraphs.distinct = AsyncMock(return_value=_NO_IDS)
     db.crypto_assets.find = MagicMock(return_value=_AsyncCursorMock(crypto_assets or []))
     db.crypto_assets.insert_many = AsyncMock()
     return db
-
-
-# ---------------------------------------------------------------------------
-# Archive environment fixture: patches S3 + lock + encryption + bucket settings
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def archive_env(monkeypatch):
-    """Set up S3 fake, lock repo, encryption off, bucket name."""
-    from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
-
-    fake = FakeS3Client()
-
-    monkeypatch.setattr("app.core.s3.get_s3_client", lambda: fake_get_s3_client(fake))
-    monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
-    monkeypatch.setattr("app.services.archive.is_archive_enabled", lambda: True)
-    monkeypatch.setattr("app.services.archive.is_encryption_enabled", lambda: False)
-
-    class _S:
-        S3_BUCKET_NAME = "test-bucket"
-
-    monkeypatch.setattr("app.core.s3.settings", _S)
-    monkeypatch.setattr("app.core.config.settings", _S, raising=False)
-
-    return fake
 
 
 def _patch_repos(lock_acquires: bool = True, existing_metadata=None):
@@ -425,7 +401,7 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
     db.scans.insert_one = fail_insert
 
-    reason, _, _ = await _replay_bundle(db, "x", src())
+    reason, _ = await _replay_bundle(db, "x", src())
     assert reason == "unknown"
     assert reason != "s3_error"
 
@@ -449,7 +425,7 @@ async def test_replay_labels_invalid_tag_as_encryption():
     src = _RaisingStream()
 
     db = MagicMock()
-    reason, _, _ = await _replay_bundle(db, "x", src)
+    reason, _ = await _replay_bundle(db, "x", src)
     assert reason == "encryption"
 
 
@@ -504,7 +480,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
     # Force _replay_bundle to return a failure reason
     monkeypatch.setattr(
         f"{MODULE}._replay_bundle",
-        AsyncMock(return_value=("integrity", ["scans"], [])),
+        AsyncMock(return_value=("integrity", ["scans"])),
     )
     # Bypass the S3 stream construction
     monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
@@ -565,71 +541,19 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
 
 
 @pytest.mark.asyncio
-async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeypatch):
-    """GridFS-fail path must also trigger _rollback_partial_restore."""
-    meta = _make_archive_metadata()
-    db = _make_mock_db()
-    db.scans.find_one = AsyncMock(return_value=None)  # no pre-existing scan
-    db.scans.delete_one = AsyncMock()
-    db.findings.delete_many = AsyncMock()
-    db.finding_records.delete_many = AsyncMock()
-    db.dependencies.delete_many = AsyncMock()
-    db.analysis_results.delete_many = AsyncMock()
-    db.callgraphs.delete_many = AsyncMock()
-    db.crypto_assets.delete_many = AsyncMock()
-
-    # Replay succeeds and returns gridfs entries
-    monkeypatch.setattr(
-        f"{MODULE}._replay_bundle",
-        AsyncMock(
-            return_value=(
-                None,  # no failure_reason
-                ["scans", "findings"],  # collections_restored
-                [{"gridfs_id": "abc", "filename": "x.json", "data": {}}],  # gridfs_entries
-            )
-        ),
-    )
-    # GridFS restore returns False (failure)
-    monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
-    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
-
-    with (
-        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
-        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
-    ):
-        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
-        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
-        LockCls.return_value.release_lock = AsyncMock(return_value=True)
-        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
-
-        result = await restore_scan(db, "scan-1")
-
-    assert result is None
-    db.scans.update_one.assert_not_awaited()
-    # Rollback must run even though replay succeeded — GridFS failed
-    db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
-    db.findings.delete_many.assert_awaited()
-    db.dependencies.delete_many.assert_awaited()
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "renewal",
     [{"return_value": False}, {"side_effect": AutoReconnect("primary stepped down")}],
     ids=["lock-taken-over", "renewal-failed"],
 )
-async def test_a_failed_gridfs_restore_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal):
+async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal):
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
     # An unguarded rollback stops at the first delete that is not awaitable, so every target must be one.
     db.scans.delete_one = AsyncMock()
     for coll in SCAN_SCOPED_COLLECTIONS:
         getattr(db, coll).delete_many = AsyncMock()
-    monkeypatch.setattr(
-        f"{MODULE}._replay_bundle",
-        AsyncMock(return_value=(None, ["scans"], [{"gridfs_id": "abc", "filename": "x.json", "data": {}}])),
-    )
-    monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
+    monkeypatch.setattr(f"{MODULE}._replay_bundle", AsyncMock(return_value=("s3_error", ["scans"])))
     monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     with (
@@ -657,7 +581,7 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
 
     monkeypatch.setattr(
         f"{MODULE}._replay_bundle",
-        AsyncMock(return_value=(None, ["scans"], [])),
+        AsyncMock(return_value=(None, ["scans"])),
     )
     monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
@@ -768,7 +692,7 @@ async def test_replay_rejects_unknown_collection_marker():
 
     db = _make_mock_db(scan_doc={"_id": "scan-1"})
 
-    reason, _collections_restored, _gridfs_entries = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", bundle())
 
     assert reason == "integrity"
     # Nothing was written into the forbidden collection.
@@ -787,7 +711,7 @@ async def test_replay_maps_bad_version_to_version_mismatch():
 
     db = _make_mock_db()
 
-    reason, _, _ = await _replay_bundle(db, "x", src())
+    reason, _ = await _replay_bundle(db, "x", src())
     assert reason == "version_mismatch"
 
 
@@ -815,7 +739,7 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
 
     db = _make_mock_db()
 
-    reason, _, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", bundle())
 
     assert reason is None
     (restored,) = db.analysis_results.insert_many.await_args.args[0]
@@ -866,7 +790,7 @@ async def test_replay_inserts_the_scan_as_a_restore_in_progress():
 
     db = _make_mock_db()
 
-    reason, _, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", bundle())
 
     assert reason is None
     inserted = db.scans.insert_one.await_args.args[0]
@@ -876,29 +800,14 @@ async def test_replay_inserts_the_scan_as_a_restore_in_progress():
 
 
 @pytest.mark.asyncio
-async def test_restore_stamps_completion_only_after_the_gridfs_restore(archive_env, monkeypatch):
+async def test_restore_stamps_completion_on_the_scan_it_left_in_progress(archive_env, monkeypatch):
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
-    calls: list[str] = []
-
-    async def restore_gridfs(*_args):
-        calls.append("gridfs")
-        return True
-
-    monkeypatch.setattr(
-        f"{MODULE}._replay_bundle",
-        AsyncMock(return_value=(None, ["scans"], [{"gridfs_id": "abc", "filename": "x.json", "data": {}}])),
-    )
+    monkeypatch.setattr(f"{MODULE}._replay_bundle", AsyncMock(return_value=(None, ["scans"])))
     monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
-    monkeypatch.setattr(f"{MODULE}._restore_gridfs", restore_gridfs)
     monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
-
-    async def complete(*_args):
-        calls.append("complete")
-        return MagicMock(matched_count=1)
-
-    db.scans.update_one = AsyncMock(side_effect=complete)
+    db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
     before = datetime.now(timezone.utc)
 
     with (
@@ -914,7 +823,6 @@ async def test_restore_stamps_completion_only_after_the_gridfs_restore(archive_e
         result = await restore_scan(db, "scan-1")
 
     assert result is not None
-    assert calls == ["gridfs", "complete"]
     query, update = db.scans.update_one.await_args.args
     assert query == {"_id": "scan-1", "restore_in_progress": True}
     assert update["$unset"] == {"restore_in_progress": ""}

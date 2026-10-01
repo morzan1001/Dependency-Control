@@ -13,13 +13,12 @@ from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.crypto_asset import CryptoAsset
 from app.models.user import User
-from app.repositories.base import find_window
 from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
     EvaluationCoverage,
     FrameworkEvaluation,
-    InputCoverage,
     ReportFormat,
     ReportFramework,
     ReportStatus,
@@ -38,13 +37,9 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
-# Per report; a crypto finding, the widest projection, measures 1.7 KiB, so the cap holds ~33 MiB.
-_FINDINGS_LIMIT = 20000
-
-# Per report across all its scans; a validated CryptoAsset measures 2.3 KiB, so the cap holds ~22 MiB.
-_CRYPTO_ASSETS_LIMIT = 10000
-
 _REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
+# A large-scope PDF layout peaks at hundreds of MB, and under the GIL parallel renders finish no sooner.
+_RENDER_SLOT = asyncio.Semaphore(1)
 
 _NON_CRYPTO_FRAMEWORKS = frozenset(
     {ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT, ReportFramework.PQC_MIGRATION_PLAN}
@@ -86,12 +81,14 @@ class ComplianceReportEngine:
             policy_version, iana_version = inputs.policy_version, inputs.iana_catalog_version
             # The findings stay alive through render, upload and the status write otherwise.
             del inputs
-            artifact_bytes, filename, mime = self._render(
-                report.format,
-                framework,
-                evaluation,
-                report,
-            )
+            async with _RENDER_SLOT:
+                artifact_bytes, filename, mime = await asyncio.to_thread(
+                    self._render,
+                    report.format,
+                    framework,
+                    evaluation,
+                    report,
+                )
             gridfs_id = await self._store_artifact(
                 db,
                 artifact_bytes,
@@ -148,14 +145,11 @@ class ComplianceReportEngine:
         scan_by_project, gaps = await self._pick_scan_ids(db, resolved, producers)
         scan_ids = list(scan_by_project.values())
         findings: list[dict] = []
-        findings_read = assets_read = None
         if finding_query:
-            findings, in_scope = await self._collect_findings(db, resolved, scan_ids, clause, fields)
-            findings_read = InputCoverage(evaluated=len(findings), in_scope=in_scope, limit=_FINDINGS_LIMIT)
+            findings = await self._collect_findings(db, scan_ids, clause, fields)
         assets: list[CryptoAsset] = []
         if framework.key not in _NON_CRYPTO_FRAMEWORKS:
-            assets, in_scope = await self._collect_crypto_assets(db, scan_by_project)
-            assets_read = InputCoverage(evaluated=len(assets), in_scope=in_scope, limit=_CRYPTO_ASSETS_LIMIT)
+            assets = await self._collect_crypto_assets(db, scan_by_project)
         project_ids = resolved.project_ids or []
         if resolved.scope == "project" and len(project_ids) == 1:
             effective = await CryptoPolicyResolver(db).resolve(project_ids[0])
@@ -178,7 +172,7 @@ class ComplianceReportEngine:
             iana_catalog_version=IANA_WEAKNESS_RULES_VERSION,
             scan_ids=scan_ids,
             db=db,
-            coverage=EvaluationCoverage(findings=findings_read, crypto_assets=assets_read, gaps=gaps),
+            coverage=EvaluationCoverage(gaps=gaps),
         )
 
     async def _pick_scan_ids(
@@ -218,44 +212,20 @@ class ComplianceReportEngine:
         self,
         db: AsyncIOMotorDatabase,
         scan_by_project: dict[str, str],
-    ) -> tuple[list[CryptoAsset], int]:
-        """The inventory and the scope's asset count; one budget for the whole report, not one per scan."""
+    ) -> list[CryptoAsset]:
         query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": list(scan_by_project.values())}}
-        docs, in_scope = await find_window(
-            db.crypto_assets, query, _CRYPTO_ASSETS_LIMIT, projection=dict.fromkeys(_CRYPTO_ASSET_FIELDS, 1)
-        )
-        if len(docs) < in_scope:
-            logger.warning(
-                "Compliance evaluation hit crypto-asset cap (%d of %d); "
-                "inventory-backed verdicts are withheld — consider narrowing the scope",
-                _CRYPTO_ASSETS_LIMIT,
-                in_scope,
-            )
-        return [CryptoAsset.model_validate(doc) for doc in docs], in_scope
+        docs = await CryptoAssetRepository(db).find_all_raw(query, dict.fromkeys(_CRYPTO_ASSET_FIELDS, 1))
+        return [CryptoAsset.model_validate(doc) for doc in docs]
 
     async def _collect_findings(
         self,
         db: AsyncIOMotorDatabase,
-        resolved: ResolvedScope,
         scan_ids: list[str],
         clause: dict[str, Any],
         fields: tuple[str, ...],
-    ) -> tuple[list[dict], int]:
-        """The findings the controls are evaluated over, and how many the scope holds. The count
-        costs a round trip only once the fetch has saturated."""
+    ) -> list[dict]:
         query = {"scan_id": {"$in": scan_ids}, **clause}
-        projection = dict.fromkeys((*_BASE_FINDING_FIELDS, *fields), 1)
-        results, in_scope = await find_window(db.findings, query, _FINDINGS_LIMIT, projection=projection)
-        if in_scope == len(results):
-            return results, in_scope
-        logger.warning(
-            "Compliance evaluation hit findings cap (%d of %d) for scope %s; "
-            "report may understate exposure — consider narrowing the scope",
-            _FINDINGS_LIMIT,
-            in_scope,
-            self._scope_description(resolved),
-        )
-        return results, in_scope
+        return await db.findings.find(query, dict.fromkeys((*_BASE_FINDING_FIELDS, *fields), 1)).to_list(None)
 
     def _finding_type_filter(
         self, framework: ComplianceFramework

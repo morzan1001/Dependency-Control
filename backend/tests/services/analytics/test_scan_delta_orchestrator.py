@@ -1,4 +1,3 @@
-import importlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -561,19 +560,21 @@ async def test_cached_comparisons_are_bounded_by_their_summed_items(db, monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("category", "module", "reads"),
-    [
-        (_FINDINGS, "findings_delta", 2),
-        (_COMPONENTS, "components_delta", 1),
-        (_CRYPTO, "crypto_delta", 1),
-    ],
+    ("category", "collection"),
+    [(_FINDINGS, "findings"), (_COMPONENTS, "dependencies"), (_CRYPTO, "crypto_assets")],
 )
-async def test_a_pair_resolved_onto_one_scan_reads_it_once(db, category, module, reads):
-    """Live plus waiver-touched is one findings side."""
+async def test_a_pair_resolved_onto_one_scan_reads_it_once(db, monkeypatch, category, collection):
     await db.scans.insert_one({"_id": _SAME_SCAN, "status": SCAN_STATUS_COMPLETED, "branch": _MAIN_BRANCH})
-    real = importlib.import_module(f"app.services.analytics.{module}").find_window
-    with patch(f"app.services.analytics.{module}.find_window", new=AsyncMock(side_effect=real)) as spy:
-        result = await _dispatch(db, category=category, from_scan=_SAME_SCAN, to_scan=_SAME_SCAN, allow_same_scan=True)
+    side = db[collection]
+    reads = []
+    real_find = side.find
 
-    assert spy.await_count == reads
+    def spy_find(*args, **kwargs):
+        reads.append(args)
+        return real_find(*args, **kwargs)
+
+    monkeypatch.setattr(side, "find", spy_find)
+    result = await _dispatch(db, category=category, from_scan=_SAME_SCAN, to_scan=_SAME_SCAN, allow_same_scan=True)
+
+    assert len(reads) == 1
     assert result.from_side == result.to_side == ScanDeltaSide(scan_id=_SAME_SCAN, branch=_MAIN_BRANCH)

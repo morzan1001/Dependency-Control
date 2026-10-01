@@ -180,6 +180,4 @@ class Scan(MongoDocument, CreatedAtModel):
 class AnalysisResult(MongoDocument, CreatedAtModel):
     scan_id: str
     analyzer_name: str
-    result: dict[str, Any]
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    source: str | None = None

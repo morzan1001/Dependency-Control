@@ -1,7 +1,6 @@
 """Compliance report REST endpoints; generation runs in a BackgroundTask that announces its outcome."""
 
 import logging
-from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,8 +27,8 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
-from app.services.compliance.retention import delete_report_artifact
 from app.services.compliance.visibility import report_visibility_filter
+from app.services.gridfs_maintenance import iter_gridfs_chunks
 from app.services.notifications.service import safe_notify_project_event
 from app.services.webhooks import webhook_service
 
@@ -175,22 +174,9 @@ async def download_report(
     except Exception as exc:
         raise HTTPException(status_code=410, detail="Artifact storage error") from exc
 
-    async def _iter() -> AsyncIterator[bytes]:
-        try:
-            while True:
-                chunk = await stream.readchunk()
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            # motor's AgnosticGridOut.close() returns a coroutine at runtime though the stub claims None.
-            close_result: Any = stream.close()  # type: ignore[func-returns-value]
-            if close_result is not None:
-                await close_result
-
     headers = {"Content-Disposition": f'attachment; filename="{r.artifact_filename}"'}
     return StreamingResponse(
-        _iter(),
+        iter_gridfs_chunks(stream),
         media_type=r.artifact_mime_type or "application/octet-stream",
         headers=headers,
     )
@@ -218,7 +204,6 @@ async def delete_report(
             status_code=403,
             detail="Cannot delete a report you did not request",
         )
-    await delete_report_artifact(db, r.artifact_gridfs_id)
     await repo.delete(report_id)
 
 

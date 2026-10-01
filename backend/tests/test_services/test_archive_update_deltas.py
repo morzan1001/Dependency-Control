@@ -15,23 +15,6 @@ PROJECT = "proj-1"
 T0 = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 
-@pytest.fixture
-def archive_env(monkeypatch):
-    from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
-
-    fake = FakeS3Client()
-    monkeypatch.setattr("app.core.s3.get_s3_client", lambda: fake_get_s3_client(fake))
-    monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
-    monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: True)
-    monkeypatch.setattr(f"{MODULE}.is_encryption_enabled", lambda: False)
-
-    class _S:
-        S3_BUCKET_NAME = "test-bucket"
-
-    monkeypatch.setattr("app.core.s3.settings", _S)
-    return fake
-
-
 async def _seed_scan(db: FakeDatabase, scan_id: str, created_at: datetime, version: str) -> None:
     await db.scans.insert_one(
         {

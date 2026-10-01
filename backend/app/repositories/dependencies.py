@@ -1,6 +1,5 @@
 """Repository for dependencies."""
 
-from datetime import datetime
 from typing import Any
 
 from pymongo import UpdateOne
@@ -22,10 +21,6 @@ class DependencyRepository(BaseRepository[Dependency]):
         rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)
         return self._to_model_list(rows), total
 
-    async def find_raw_by_scan(self, scan_id: str, projection: dict[str, int]) -> list[dict[str, Any]]:
-        """Every dependency of one scan, unbounded: a scan's inventory is read whole to be folded."""
-        return await self.collection.find({"scan_id": scan_id}, projection).to_list(None)
-
     async def upsert_many(self, dependencies: list[Dependency]) -> None:
         """Write each dependency over its scan's (name, version, purl) row; the row keeps its newest created_at."""
         await self.collection.bulk_write(
@@ -43,10 +38,6 @@ class DependencyRepository(BaseRepository[Dependency]):
             ],
             ordered=False,
         )
-
-    async def delete_older_writes(self, scan_id: str, written_at: datetime) -> None:
-        """Delete the scan's rows no write since ``written_at`` has touched, undated rows included."""
-        await self.delete_many({"scan_id": scan_id, "$nor": [{"created_at": {"$gte": written_at}}]})
 
     async def count_by_scan(self, project_id: str, scan_id: str) -> int:
         return await self.count({"project_id": project_id, "scan_id": scan_id})

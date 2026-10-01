@@ -4,8 +4,6 @@
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
-from app.repositories.base import find_window
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.schemas.scan_delta import (
     CryptoDeltaItem,
@@ -13,10 +11,8 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import both_sides, by_side, delta_truncation
+from app.services.analytics._delta_pagination import both_sides, by_side
 
-# Name-ascending like the asset list, so a capped side is cut at the same alphabetical point on both sides.
-_SIDE_SORT: list[tuple[str, int]] = [("name", 1), ("bom_ref", 1)]
 _PROJECTION = dict.fromkeys(("name", "variant", "primitive", "occurrence_locations"), 1)
 
 
@@ -36,22 +32,14 @@ def _group_to_envelope_item(group: list[dict], change: str) -> CryptoDeltaItem:
     )
 
 
-async def _side_assets(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> tuple[list[dict], int]:
-    return await find_window(
-        db[CryptoAssetRepository.collection_name],
-        scan_query(project_id, scan_id),
-        MAX_CRYPTO_ASSETS_PER_SCAN,
-        projection=_PROJECTION,
-        sort=_SIDE_SORT,
-    )
+async def _side_assets(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> list[dict]:
+    return await CryptoAssetRepository(db).find_all_raw(scan_query(project_id, scan_id), _PROJECTION)
 
 
 async def compare_crypto(
     db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
-    (from_assets, from_total), (to_assets, to_total) = await both_sides(
-        lambda scan_id: _side_assets(db, project_id, scan_id), from_scan, to_scan
-    )
+    from_assets, to_assets = await both_sides(lambda scan_id: _side_assets(db, project_id, scan_id), from_scan, to_scan)
 
     groups = list(by_side(_key, from_assets, to_assets).values())
     added = [new for gone, new in groups if not gone]
@@ -73,11 +61,4 @@ async def compare_crypto(
             unchanged=len(groups) - len(added) - len(removed),
         ),
         items=items,
-        truncation=delta_truncation(
-            MAX_CRYPTO_ASSETS_PER_SCAN,
-            from_compared=len(from_assets),
-            from_total=from_total,
-            to_compared=len(to_assets),
-            to_total=to_total,
-        ),
     )

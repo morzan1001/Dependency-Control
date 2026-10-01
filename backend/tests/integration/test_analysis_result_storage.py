@@ -1,24 +1,29 @@
-"""Raw results: one row per scan, analyzer and source, replaced on resubmission, refused with a 413 when too large."""
+"""Raw results: one GridFS file per scan, analyzer and source, replaced on resubmission, read through one loader."""
 
 import asyncio
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-import bson
 import pytest
+from bson import ObjectId
 
+from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.init_db import create_indexes
 from app.models.project import Scan
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import (
     _aggregate_external_results,
     _carry_over_external_results,
-    _process_sbom,
-    process_analyzer,
+    run_analysis,
 )
 from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analyzers.outdated import OutdatedAnalyzer
-from tests.helpers.analyzers import serve_analyzer
+from app.services.gridfs_maintenance import reap_orphan_gridfs_files
+from tests.helpers.analyzers import analyze_cyclonedx, build_analyzer, process_sbom_document, serve_analyzer
+from tests.helpers.sboms import store_sbom
 
 _RUN = {"pipeline_id": 616161, "commit_hash": "d" * 40, "branch": "main"}
 _ENVELOPE = {
@@ -30,29 +35,13 @@ _ENVELOPE = {
     "is_release": False,
 }
 _MONGO_DOCUMENT_LIMIT = 16 * 1024 * 1024
-_OVER_THE_DOCUMENT_LIMIT = "x" * (17 * 1024 * 1024)
+_FIXTURES = Path(__file__).parents[1] / "fixtures"
+_KICS_REPORT = json.loads((_FIXTURES / "iac/kics_2.1.20_results.json").read_text())
+_SYFT_COMPONENT = json.loads((_FIXTURES / "sbom/npmpeer.syft.cdx.json").read_text())["components"][0]
+_SECRET = json.loads((_FIXTURES / "secrets/trufflehog_v3_line.json").read_text())
+_OPENGREP_FINDING = json.loads((_FIXTURES / "sast/opengrep_result.json").read_text())
+_WORKER = "pod-a/worker-0"
 _BRACE = {"name": "brace-expansion", "version": "2.0.2", "purl": "pkg:npm/brace-expansion@2.0.2"}
-
-# trufflehog v3 `--json` line
-_SECRET = {
-    "SourceMetadata": {"Data": {"Filesystem": {"file": "tests/fixtures/aws.env", "line": 3}}},
-    "SourceID": 1,
-    "SourceType": 15,
-    "SourceName": "trufflehog - filesystem",
-    "DetectorType": 2,
-    "DecoderName": "PLAIN",
-    "Verified": False,
-    "Raw": "AKIAIOSFODNN7EXAMPLE",
-}
-
-# opengrep `--json` result
-_OPENGREP_FINDING = {
-    "check_id": "python.lang.security.audit.eval-detected",
-    "path": "src/app.py",
-    "start": {"line": 12, "col": 5},
-    "end": {"line": 12, "col": 21},
-    "extra": {"message": "Detected the use of eval()", "severity": "WARNING"},
-}
 
 # kics `--report-formats json` query
 _KICS_QUERY = {
@@ -119,6 +108,41 @@ async def _rows(db, scan_id: str) -> list[dict[str, Any]]:
     return await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
 
 
+async def _stored(db, row: dict[str, Any]) -> Any:
+    return await AnalysisResultRepository(db).load_result(row)
+
+
+async def _file_length(db, file_id: str) -> int:
+    return (await db["fs.files"].find_one({"_id": ObjectId(file_id)}))["length"]
+
+
+def _kics_report_of_a_monorepo(services: int) -> dict[str, Any]:
+    """The real kics report as if every one of ``services`` services held the scanned files."""
+    return {
+        **_KICS_REPORT,
+        "queries": [
+            {
+                **query,
+                "files": [
+                    {**file, "file_name": f"services/svc-{n:05d}/{file['file_name']}"}
+                    for n in range(services)
+                    for file in query["files"]
+                ],
+            }
+            for query in _KICS_REPORT["queries"]
+        ],
+    }
+
+
+async def _analyze_sbom_of_a_new_scan(db, components: list[dict[str, Any]]) -> str:
+    """One scan whose SBOM is stored the way ingest stores it, analysed by the outdated analyzer."""
+    ref = await store_sbom(db, {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components})
+    scan = Scan(project_id="p", branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    assert await run_analysis(scan.id, [ref], ["outdated_packages"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    return scan.id
+
+
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_retried_scanner_job_replaces_the_result_of_the_first_attempt(client, db, api_key_headers):
@@ -132,7 +156,9 @@ async def test_a_retried_scanner_job_replaces_the_result_of_the_first_attempt(cl
     retry = await client.post("/api/v1/ingest/trufflehog", json={**_RUN, "findings": []}, headers=api_key_headers)
 
     assert retry.status_code == 200, retry.text
-    assert [(row["_id"], row["result"]) for row in await _rows(db, scan_id)] == [(first_row["_id"], {"findings": []})]
+    assert [(row["_id"], await _stored(db, row)) for row in await _rows(db, scan_id)] == [
+        (first_row["_id"], {"findings": []})
+    ]
 
 
 @pytest.mark.asyncio
@@ -153,7 +179,7 @@ async def test_a_resubmission_replaces_every_row_stored_without_a_source(db):
 
     await AnalysisResultRepository(db).save_result("scan-1", "kics", {"queries": []})
 
-    assert [row["result"] for row in await _rows(db, "scan-1")] == [{"queries": []}]
+    assert [await _stored(db, row) for row in await _rows(db, "scan-1")] == [{"queries": []}]
 
 
 @pytest.mark.asyncio
@@ -185,43 +211,7 @@ async def test_the_stored_result_holds_the_scanner_payload_alone(client, db, api
 
     assert resp.status_code == 200, resp.text
     [row] = await _rows(db, resp.json()["scan_id"])
-    assert set(row["result"]) == set(scanner_fields)
-
-
-@pytest.mark.asyncio
-@pytest.mark.live_mongo
-@pytest.mark.parametrize(
-    ("scanner", "scanner_fields"),
-    [
-        pytest.param("trufflehog", {"findings": [{**_SECRET, "Redacted": _OVER_THE_DOCUMENT_LIMIT}]}, id="trufflehog"),
-        pytest.param(
-            "opengrep",
-            {
-                "findings": [
-                    {**_OPENGREP_FINDING, "extra": {"message": _OVER_THE_DOCUMENT_LIMIT, "severity": "WARNING"}}
-                ]
-            },
-            id="opengrep",
-        ),
-        pytest.param("kics", {"queries": [{**_KICS_QUERY, "description": _OVER_THE_DOCUMENT_LIMIT}]}, id="kics"),
-        pytest.param(
-            "bearer",
-            {"findings": {"high": [{**_BEARER_FINDINGS["high"][0], "description": _OVER_THE_DOCUMENT_LIMIT}]}},
-            id="bearer",
-        ),
-    ],
-)
-async def test_a_refused_release_upload_writes_no_scan_and_no_release(
-    client, db, api_key_headers, scanner, scanner_fields
-):
-    release = {**_RUN, "is_release": True, "release_version": "v9.9.9"}
-
-    resp = await client.post(f"/api/v1/ingest/{scanner}", json={**release, **scanner_fields}, headers=api_key_headers)
-
-    assert resp.status_code == 413, resp.text
-    assert await db.analysis_results.count_documents({}) == 0
-    assert await db.scans.count_documents({}) == 0
-    assert await db.releases.count_documents({}) == 0
+    assert set(await _stored(db, row)) == set(scanner_fields)
 
 
 @pytest.mark.asyncio
@@ -241,40 +231,14 @@ async def test_a_run_without_a_pipeline_stores_its_result_under_its_own_scan(cli
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-@pytest.mark.parametrize(
-    "pipeline_id",
-    [
-        pytest.param(_RUN["pipeline_id"], id="replacing-a-row"),
-        pytest.param(_RUN["pipeline_id"] + 1, id="inserting-a-row"),
-    ],
-)
-async def test_a_result_the_server_finds_just_over_the_limit_is_refused_with_413(
-    client, db, api_key_headers, pipeline_id
-):
-    first = await client.post(
-        "/api/v1/ingest/opengrep", json={**_RUN, "findings": [_OPENGREP_FINDING]}, headers=api_key_headers
-    )
-    [row] = await _rows(db, first.json()["scan_id"])
-    padding = "x" * (_MONGO_DOCUMENT_LIMIT + 1000 - len(bson.encode(row)))
-    grown = {**_OPENGREP_FINDING, "extra": {"message": "Detected the use of eval()" + padding, "severity": "WARNING"}}
-
-    resp = await client.post(
-        "/api/v1/ingest/opengrep",
-        json={**_RUN, "pipeline_id": pipeline_id, "findings": [grown]},
-        headers=api_key_headers,
-    )
-
-    assert resp.status_code == 413, resp.text
-
-
-@pytest.mark.asyncio
-@pytest.mark.live_mongo
 async def test_each_sbom_keeps_its_own_row_and_a_rerun_replaces_it(db, monkeypatch):
     serve_analyzer(monkeypatch, "outdated_packages", _DepsDevAnswers())
 
     async def analyze(index: int) -> None:
         # the two images of a multi-arch build share their root component name
-        await _process_sbom(index, _sbom("storefront"), "scan-1", db, ResultAggregator(), ["outdated_packages"], None)
+        await process_sbom_document(
+            index, _sbom("storefront"), "scan-1", db, ResultAggregator(), ["outdated_packages"], None
+        )
 
     await analyze(0)
     await analyze(1)
@@ -284,28 +248,140 @@ async def test_each_sbom_keeps_its_own_row_and_a_rerun_replaces_it(db, monkeypat
     rows = await _rows(db, "scan-1")
     assert len(first_ids) == 2
     assert sorted(row["_id"] for row in rows) == first_ids
-    assert all(row["result"]["outdated_dependencies"] for row in rows)
+    assert all([(await _stored(db, row))["outdated_dependencies"] for row in rows])
 
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_raw_result_too_large_to_store_keeps_the_analyzer_findings(db):
-    component = {**_BRACE, "name": _OVER_THE_DOCUMENT_LIMIT, "purl": "pkg:npm/huge@2.0.2"}
-    aggregator = ResultAggregator()
+async def test_a_kics_result_over_16_mib_is_stored_and_every_finding_aggregated(client, db, api_key_headers):
+    report = _kics_report_of_a_monorepo(6500)
+    file_entries = sum(len(query["files"]) for query in report["queries"])
 
-    status = await process_analyzer(
-        "outdated_packages",
-        _DepsDevAnswers(),
-        _sbom("storefront"),
-        "scan-1",
-        db,
-        aggregator,
-        parsed_components=[component],
+    resp = await client.post("/api/v1/ingest/kics", json={**_RUN, **report}, headers=api_key_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["findings_count"] == file_entries
+    [row] = await _rows(db, resp.json()["scan_id"])
+    assert "result" not in row
+    assert await _file_length(db, row["result_gridfs_id"]) > _MONGO_DOCUMENT_LIMIT
+    aggregator = ResultAggregator()
+    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), row["scan_id"], [])
+    assert len(aggregator.get_findings()) == file_entries
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_engine_license_result_over_16_mib_is_stored_as_a_file(db):
+    components = [
+        {
+            **_SYFT_COMPONENT,
+            "bom-ref": f"pkg:npm/js-tokens-{i}@4.0.0",
+            "name": f"js-tokens-{i}",
+            "purl": f"pkg:npm/js-tokens-{i}@4.0.0",
+            "licenses": [{"license": {"id": "GPL-3.0-only"}}],
+        }
+        for i in range(12_000)
+    ]
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
+
+    summary = await process_sbom_document(0, sbom, "scan-1", db, ResultAggregator(), ["license_compliance"], None)
+
+    assert summary == ["license_compliance: Success"]
+    [row] = await _rows(db, "scan-1")
+    assert await _file_length(db, row["result_gridfs_id"]) > _MONGO_DOCUMENT_LIMIT
+    assert await _stored(db, row) == await analyze_cyclonedx(build_analyzer("license_compliance"), components)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_rollup_reads_the_outdated_file_and_the_predecessor_set(db, monkeypatch):
+    await create_indexes(db)
+    serve_analyzer(monkeypatch, "outdated_packages", _DepsDevAnswers())
+    behind = {"type": "library", "bom-ref": _BRACE["purl"], **_BRACE}
+    first = await _analyze_sbom_of_a_new_scan(db, [behind])
+    await db.analysis_results.delete_many({"scan_id": first})
+
+    second = await _analyze_sbom_of_a_new_scan(
+        db, [{**behind, "version": "5.0.0", "purl": "pkg:npm/brace-expansion@5.0.0"}]
     )
 
-    assert status == "outdated_packages: Success"
-    assert [finding.type for finding in aggregator.get_findings()] == ["outdated"]
-    assert await _rows(db, "scan-1") == []
+    delta = await db.scan_update_deltas.find_one({"_id": second})
+    assert (delta["prev_scan_id"], delta["outdated_count"], delta["outdated_resolved"]) == (
+        first,
+        0,
+        ["brace-expansion"],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_legacy_inline_row_is_aggregated_and_listed(db):
+    await db.analysis_results.insert_one(
+        {
+            "_id": "0b6f2a4e-3c1d-4f5a-9e8b-7d6c5b4a3f21",
+            "scan_id": "scan-1",
+            "analyzer_name": "kics",
+            "result": {"kics_version": "2.1.3", "queries": [_KICS_QUERY]},
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        }
+    )
+    aggregator = ResultAggregator()
+
+    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1", [])
+
+    assert [finding.type for finding in aggregator.get_findings()] == ["iac"]
+    [listed] = await AnalysisResultRepository(db).find_by_scan("scan-1", limit=10)
+    assert (listed.id, listed.analyzer_name, listed.source) == ("0b6f2a4e-3c1d-4f5a-9e8b-7d6c5b4a3f21", "kics", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_results_endpoint_returns_metadata_for_file_and_inline_rows(
+    client, db, api_key_headers, member_auth_headers
+):
+    resp = await client.post("/api/v1/ingest/kics", json={**_RUN, "queries": [_KICS_QUERY]}, headers=api_key_headers)
+    scan_id = resp.json()["scan_id"]
+    await db.analysis_results.insert_one(
+        {
+            "_id": "legacy-row",
+            "scan_id": scan_id,
+            "analyzer_name": "trufflehog",
+            "result": {"findings": [_SECRET]},
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        }
+    )
+
+    served = await client.get(f"/api/v1/projects/scans/{scan_id}/results", headers=member_auth_headers)
+
+    assert served.status_code == 200, served.text
+    assert sorted((set(row), row["analyzer_name"], row["source"]) for row in served.json()) == [
+        ({"id", "scan_id", "analyzer_name", "source", "created_at"}, "kics", None),
+        ({"id", "scan_id", "analyzer_name", "source", "created_at"}, "trufflehog", None),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_rescan_shares_the_result_file_and_the_reaper_keeps_it_until_both_rows_are_gone(
+    client, db, api_key_headers, monkeypatch
+):
+    resp = await client.post("/api/v1/ingest/kics", json={**_RUN, "queries": [_KICS_QUERY]}, headers=api_key_headers)
+    scan_id = resp.json()["scan_id"]
+    rescan = Scan(id="rescan-1", project_id="p", branch="main", is_rescan=True, original_scan_id=scan_id)
+    await _carry_over_external_results("rescan-1", rescan, db)
+    [original] = await _rows(db, scan_id)
+    [copy] = await _rows(db, "rescan-1")
+    file_id = ObjectId(original["result_gridfs_id"])
+    monkeypatch.setattr("app.services.gridfs_maintenance.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
+
+    await db.analysis_results.delete_one({"_id": original["_id"]})
+    await reap_orphan_gridfs_files(db)
+    kept = await db["fs.files"].count_documents({"_id": file_id})
+    await db.analysis_results.delete_one({"_id": copy["_id"]})
+    await reap_orphan_gridfs_files(db)
+
+    assert copy["result_gridfs_id"] == original["result_gridfs_id"]
+    assert (kept, await db["fs.files"].count_documents({"_id": file_id})) == (1, 0)
 
 
 @pytest.mark.asyncio

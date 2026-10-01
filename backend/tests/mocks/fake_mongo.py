@@ -1159,18 +1159,29 @@ def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
 
 
 def _run_merge(docs: list, spec: dict, database: Any) -> None:
+    """An unmatched document is inserted, so it collides on the target's unique indexes as on the server."""
     when_matched = spec.get("whenMatched", "merge")
-    if spec.get("on", "_id") != "_id" or when_matched not in ("keepExisting", "merge", "replace"):
-        raise NotImplementedError(
-            f"FakeDatabase $merge supports on=_id with keepExisting, merge or replace, not {spec}"
-        )
+    if when_matched not in ("keepExisting", "merge", "replace"):
+        raise NotImplementedError(f"FakeDatabase $merge supports keepExisting, merge or replace, not {spec}")
+    on = spec.get("on", "_id")
+    fields = (on,) if isinstance(on, str) else tuple(on)
     target = database[spec["into"]]
+    if fields != ("_id",) and set(fields) not in [set(key) for key in target._unique_keys]:
+        raise OperationFailure(f"Cannot find index to verify that join fields will be unique: {fields}", 51183)
+    matched_ids = {tuple(d.get(f) for f in fields): key for key, d in target._docs.items()}
     for doc in docs:
-        existing = target._docs.get(doc["_id"])
-        if existing is None or when_matched == "replace":
+        join = tuple(doc.get(f) for f in fields)
+        existing_id = matched_ids.get(join)
+        if existing_id is None:
+            collision = target._duplicate_key(doc)
+            if collision is not None:
+                raise _duplicate_key_error(collision)
             target._docs[doc["_id"]] = _bsonify(doc)
+            matched_ids[join] = doc["_id"]
+        elif when_matched == "replace":
+            target._docs[existing_id] = _bsonify(doc)
         elif when_matched == "merge":
-            target._docs[doc["_id"]] = {**existing, **_bsonify(doc)}
+            target._docs[existing_id] = {**target._docs[existing_id], **_bsonify(doc)}
 
 
 # ---------------------------------------------------------------------------
@@ -1744,6 +1755,18 @@ class FakeCollection:
             flt = op._filter
             upd = op._doc
             upsert = op._upsert
+            if type(op).__name__ == "ReplaceOne":
+                key = _matched_key(self._docs, flt)
+                if key is not None:
+                    matched += 1
+                    replacement = _bsonify({**upd, "_id": key})
+                    modified += not _bson_identical(replacement, self._docs[key])
+                    self._docs[key] = replacement
+                elif upsert:
+                    upserted += 1
+                    inserted = _bsonify({"_id": flt.get("_id", ObjectId()), **upd})
+                    self._docs[inserted["_id"]] = inserted
+                continue
             assert_no_path_conflict(upd)
             matched_keys = [key for key, doc in self._docs.items() if _match_doc(doc, flt)]
             if matched_keys:
@@ -1804,9 +1827,10 @@ class FakeCollection:
     async def distinct(self, field: str, filter: dict | None = None):
         seen: list = []
         for doc in self._docs.values():
-            if filter and not _match_doc(doc, filter):
+            # MongoDB's distinct skips documents that lack the field.
+            if field not in doc or (filter and not _match_doc(doc, filter)):
                 continue
-            val = doc.get(field)
+            val = doc[field]
             if val not in seen:
                 seen.append(val)
         return seen

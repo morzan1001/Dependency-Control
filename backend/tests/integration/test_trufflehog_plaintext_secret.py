@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _aggregate_external_results
 
@@ -43,24 +43,28 @@ async def _aggregated_ids(db, scan_id: str) -> list[str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_ingest_neither_stores_nor_serves_the_plaintext_secret(client, db, api_key_headers, member_auth_headers):
     resp = await client.post(_INGEST_URL, json=_payload(), headers=api_key_headers)
     assert resp.status_code == 200, resp.text
     scan_id = resp.json()["scan_id"]
 
-    stored = await db.analysis_results.find_one({"scan_id": scan_id, "analyzer_name": _TRUFFLEHOG})
-    assert _SECRET not in json.dumps(stored, default=str)
-    assert _FULL_DIGEST not in json.dumps(stored, default=str)
-    assert stored["result"]["findings"][0]["RawHash"] == _PINNED_DIGEST_PREFIX
+    row = await db.analysis_results.find_one({"scan_id": scan_id, "analyzer_name": _TRUFFLEHOG}, RESULT_PROJECTION)
+    stored = json.dumps(await AnalysisResultRepository(db).load_result(row))
+    assert _SECRET not in stored
+    assert _FULL_DIGEST not in stored
+    assert json.loads(stored)["findings"][0]["RawHash"] == _PINNED_DIGEST_PREFIX
 
-    served = await client.get(f"/api/v1/projects/scans/{scan_id}/results", headers=member_auth_headers)
+    served = await client.get(f"/api/v1/projects/scans/{scan_id}/results/{row['_id']}", headers=member_auth_headers)
     assert served.status_code == 200, served.text
-    assert _SECRET not in served.text
-    assert _FULL_DIGEST not in served.text
-    assert "Raw" not in served.json()[0]["result"]["findings"][0]
+    assert served.json()["findings"][0]["RawHash"] == _PINNED_DIGEST_PREFIX
+    assert b'"Raw"' not in served.content
+    assert _SECRET.encode() not in served.content
+    assert _FULL_DIGEST.encode() not in served.content
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_ingested_secret_keeps_its_finding_id(client, db, api_key_headers):
     resp = await client.post(_INGEST_URL, json=_payload(), headers=api_key_headers)
     assert resp.status_code == 200, resp.text

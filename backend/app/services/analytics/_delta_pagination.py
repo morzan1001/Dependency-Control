@@ -1,4 +1,4 @@
-"""Shared side reads, paging, side grouping, version pairing and per-scan fetch cap for scan-delta services."""
+"""Shared side reads, paging, side grouping and version pairing for scan-delta services."""
 
 from __future__ import annotations
 
@@ -7,11 +7,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TypeVar
 
-from app.schemas.scan_delta import DeltaTruncation, ScanDeltaResponse
-
-# Per-scan cap on documents loaded into memory, bounding worker memory. The findings projection
-# measures 2.14 KiB per document, and a findings delta holds four of these fetches at once.
-MAX_FETCH = 50_000
+from app.schemas.scan_delta import ScanDeltaResponse
 
 # Component items split `changed` into two kinds; the filter vocabulary keeps one.
 _FILTER_OF = {"version_changed": "changed", "license_changed": "changed"}
@@ -39,27 +35,6 @@ def page_of(comparison: ScanDeltaResponse, change: str | None, page: int, page_s
             "page_size": page_size,
             "total_pages": max(1, -(-len(items) // page_size)),
         }
-    )
-
-
-def delta_truncation(
-    limit: int,
-    *,
-    from_compared: int,
-    from_total: int,
-    to_compared: int,
-    to_total: int,
-) -> DeltaTruncation | None:
-    """The record a caller needs to tell a windowed comparison from a whole one; None when neither
-    side was windowed."""
-    if from_compared >= from_total and to_compared >= to_total:
-        return None
-    return DeltaTruncation(
-        limit=limit,
-        from_compared=from_compared,
-        from_total=from_total,
-        to_compared=to_compared,
-        to_total=to_total,
     )
 
 

@@ -71,9 +71,10 @@ async def db(request):
 async def running_worker(db, monkeypatch):
     """One in-process analysis worker bound to the test's database.
 
-    The worker resolves its database and the ingest path resolves its queue through
-    module-level singletons, so both have to be replaced for a job to reach this worker.
+    The worker resolves its database and the ingest and ad-hoc paths resolve their queue through
+    module-level singletons, so all of them have to be replaced for a job to reach this worker.
     """
+    from app.api.v1.endpoints import analyze as analyze_mod
     from app.core import worker as worker_mod
     from app.services import scan_manager as scan_manager_mod
 
@@ -84,6 +85,7 @@ async def running_worker(db, monkeypatch):
     monkeypatch.setattr(worker_mod, "get_database", _get_database)
     monkeypatch.setattr(worker_mod, "worker_manager", manager)
     monkeypatch.setattr(scan_manager_mod, "worker_manager", manager)
+    monkeypatch.setattr(analyze_mod, "worker_manager", manager)
 
     task = asyncio.create_task(manager.worker(_WORKER_NAME))
     try:

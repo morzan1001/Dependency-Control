@@ -98,10 +98,8 @@ class InputCoverage(BaseModel):
 
 
 class EvaluationCoverage(BaseModel):
-    """What the control verdicts were computed over, per input the framework reads; None for one it never reads."""
+    """What the control verdicts were computed over: the scope's gaps and, for a plan framework, its bounded plan."""
 
-    findings: InputCoverage | None = None
-    crypto_assets: InputCoverage | None = None
     # Set only by a framework that builds one control per row of a bounded plan.
     plan_items: InputCoverage | None = None
     # Parts of the scope no input could cover: an unscanned project or a missing or failed analyzer.
@@ -109,8 +107,7 @@ class EvaluationCoverage(BaseModel):
 
     @property
     def complete(self) -> bool:
-        inputs = (self.findings, self.crypto_assets, self.plan_items)
-        return not self.gaps and all(read.complete for read in inputs if read is not None)
+        return not self.gaps and (self.plan_items is None or self.plan_items.complete)
 
 
 class FrameworkEvaluation(BaseModel):

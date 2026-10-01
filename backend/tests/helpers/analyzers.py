@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
-from app.repositories.crypto_asset import CryptoAssetRepository
-from app.services.analysis import registry
+from app.models.crypto_asset import CryptoAsset
+from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
+from app.services.analysis import engine, registry
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
@@ -34,12 +34,19 @@ async def analyze_cyclonedx(
     )
 
 
+async def process_sbom_document(index: int, sbom: dict[str, Any], *args: Any, **kwargs: Any) -> list[str]:
+    """Run ``engine._process_sbom`` on the document as run_analysis hands it a loaded SBOM, for the non-CLI analyzers."""
+    parsed, components, source, sbom_format = engine._parse_and_track_sbom(sbom)
+    return await engine._process_sbom(index, parsed, components, source, None, sbom_format, *args, **kwargs)
+
+
 def bundled_iana_catalog() -> dict[str, CipherSuiteEntry]:
     return _materialize(_load_fallback_yaml())
 
 
 async def evaluate_crypto(name: str, db: Any, project_id: str = "p", scan_id: str = "s") -> dict[str, Any]:
     """What the engine's crypto pass records for ``name`` over the stored assets and the resolved policy."""
-    assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
+    docs = await CryptoAssetRepository(db).find_all_raw(scan_query(project_id, scan_id))
+    assets = [CryptoAsset.model_validate(doc) for doc in docs]
     policy = await CryptoPolicyResolver(db).resolve(project_id)
     return registry.crypto_evaluators(bundled_iana_catalog())[name](assets, policy)

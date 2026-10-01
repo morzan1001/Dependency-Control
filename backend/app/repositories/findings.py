@@ -1,5 +1,6 @@
 """Repository for finding database operations."""
 
+from collections import defaultdict
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -24,6 +25,8 @@ _VULNERABILITY_IDENTITY_PROJECTION = {
 }
 
 FindingIdentity = tuple[Any, Any, Any, Any]
+
+_DETECTION_CHUNK_COMPONENTS = 1000
 
 # What names an advisory, and its per-advisory waiver state.
 _ADVISORY_WAIVER_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "waiver_reason")
@@ -92,33 +95,42 @@ class FindingRepository(BaseRepository[FindingRecord]):
     ) -> dict[FindingIdentity, datetime]:
         """Earliest detection per identity among the project's stored copies; a copy predating first_seen_at
         counts from its scan. Runs on every persist, so it reads only fields the covering index in init_db holds."""
-        if not records:
-            return {}
-        pipeline: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "project_id": project_id,
-                    "component": {"$in": list({r["component"] for r in records})},
-                    "type": {"$in": list({r["type"] for r in records})},
-                    "finding_id": {"$in": list({r["finding_id"] for r in records})},
-                }
-            },
-            {
-                "$group": {
-                    "_id": {
-                        "type": "$type",
-                        "component": "$component",
-                        "version": "$version",
-                        "finding_id": "$finding_id",
-                    },
-                    "first_seen_at": {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}},
-                }
-            },
-        ]
-        rows = await self.aggregate(pipeline, allow_disk_use=True)
-        return {
-            finding_identity(row["_id"]): first_seen for row in rows if (first_seen := row["first_seen_at"]) is not None
-        }
+        by_component: dict[Any, list[Mapping[str, Any]]] = defaultdict(list)
+        for record in records:
+            by_component[record["component"]].append(record)
+        components = list(by_component)
+        types = list({r["type"] for r in records})
+        earliest: dict[FindingIdentity, datetime] = {}
+        # One $match naming every component outgrows the 16 MiB command limit on large inventories.
+        for start in range(0, len(components), _DETECTION_CHUNK_COMPONENTS):
+            chunk = components[start : start + _DETECTION_CHUNK_COMPONENTS]
+            finding_ids = list({r["finding_id"] for component in chunk for r in by_component[component]})
+            pipeline: list[dict[str, Any]] = [
+                {
+                    "$match": {
+                        "project_id": project_id,
+                        "component": {"$in": chunk},
+                        "type": {"$in": types},
+                        "finding_id": {"$in": finding_ids},
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "type": "$type",
+                            "component": "$component",
+                            "version": "$version",
+                            "finding_id": "$finding_id",
+                        },
+                        "first_seen_at": {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}},
+                    }
+                },
+            ]
+            rows = await self.aggregate(pipeline, allow_disk_use=True)
+            earliest.update(
+                {finding_identity(row["_id"]): first for row in rows if (first := row["first_seen_at"]) is not None}
+            )
+        return earliest
 
     async def delete_by_scan(self, scan_id: str) -> int:
         return await self.delete_many({"scan_id": scan_id})

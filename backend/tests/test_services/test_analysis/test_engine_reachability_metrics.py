@@ -50,7 +50,7 @@ _PYTHON_CALLGRAPH = CallgraphMinimal(
 
 
 @pytest.mark.asyncio
-async def test_only_reachable_verdicts_are_counted_under_their_persisted_level():
+async def test_only_reachable_verdicts_are_counted_under_their_persisted_level(fake_gridfs):
     db = await _seeded_db()
     findings = [_finding("requests"), _finding("urllib3"), _finding("left-pad")]
     before = _counters()
@@ -69,7 +69,7 @@ async def test_only_reachable_verdicts_are_counted_under_their_persisted_level()
 
 
 @pytest.mark.asyncio
-async def test_the_inventory_map_it_built_is_handed_on_for_the_stats():
+async def test_the_inventory_map_it_built_is_handed_on_for_the_stats(fake_gridfs):
     db = await _seeded_db()
 
     languages, _enriched = await apply_reachability(db, _SCAN_ID, [_finding("requests")], [_PYTHON_CALLGRAPH])

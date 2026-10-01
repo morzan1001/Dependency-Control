@@ -17,22 +17,6 @@ class ParsedCallgraph(NamedTuple):
     source_files: int
 
 
-def callgraph_entry_count(data: dict[str, Any]) -> int:
-    """What either parser walks, counted off the raw payload: every top-level list, plus the
-    symbols each import names."""
-    total = 0
-    for value in data.values():
-        if not isinstance(value, list):
-            continue
-        total += len(value)
-        total += sum(
-            len(entry["symbols"])
-            for entry in value
-            if isinstance(entry, dict) and isinstance(entry.get("symbols"), list)
-        )
-    return total
-
-
 def _canonical_module_list(names: Any, language: str) -> list[str]:
     """Canonicalise and de-duplicate an uploaded analyzed_modules list, order-stable."""
     if not isinstance(names, list):

@@ -1,3 +1,4 @@
+import asyncio
 import difflib
 import logging
 from typing import Any
@@ -142,8 +143,8 @@ class TyposquattingAnalyzer(Analyzer):
 
     name = "typosquatting"
 
-    async def _ensure_popular_packages(self) -> dict[str, set[str]]:
-        """PyPI's cached top-package ranking (built-in names while it is unavailable) and the npm constant."""
+    async def _ensure_popular_packages(self) -> dict[str, list[str]]:
+        """PyPI's cached top-package ranking (built-in names while it is unavailable) and the npm constant, sorted."""
         # Lock and wait outlast the 30 s fetch, so peers wait for the holder instead of re-downloading.
         pypi = await cache_service.get_or_fetch_with_lock(
             CacheKeys.popular_packages("pypi"),
@@ -152,7 +153,7 @@ class TyposquattingAnalyzer(Analyzer):
             lock_ttl_seconds=60,
             max_wait_seconds=35,
         )
-        return {"pypi": set(pypi or _STATIC_PYPI_FALLBACK), "npm": set(_STATIC_NPM_PACKAGES)}
+        return {"pypi": sorted(pypi or _STATIC_PYPI_FALLBACK), "npm": sorted(_STATIC_NPM_PACKAGES)}
 
     async def _fetch_pypi_packages(self) -> list[str] | None:
         """The top PyPI package names, or None when the ranking cannot be read."""
@@ -189,28 +190,15 @@ class TyposquattingAnalyzer(Analyzer):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         popular_packages = await self._ensure_popular_packages()
-
-        components = parsed_components or []
-        issues = []
-
         settings = settings or {}
-        similarity_threshold = settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD)
-        critical_at = settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY)
-        high_at = settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY)
-
-        normalized_popular: dict[str, set[str]] = {}  # lazy per-ecosystem cache
-
-        for component in components:
-            issue = self._scan_component(
-                component,
-                popular_packages,
-                normalized_popular,
-                similarity_threshold,
-                critical_at,
-                high_at,
-            )
-            if issue is not None:
-                issues.append(issue)
+        issues = await asyncio.to_thread(
+            self._scan_components,
+            parsed_components or [],
+            popular_packages,
+            settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD),
+            settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY),
+            settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY),
+        )
 
         # A name similar to a package outside this corpus produces no finding, so the corpus
         # the comparison ran against travels with the result.
@@ -221,11 +209,29 @@ class TyposquattingAnalyzer(Analyzer):
             },
         }
 
+    def _scan_components(
+        self,
+        components: list[dict[str, Any]],
+        popular_packages: dict[str, list[str]],
+        similarity_threshold: float,
+        critical_at: float,
+        high_at: float,
+    ) -> list[dict[str, Any]]:
+        normalized_popular: dict[str, dict[str, None]] = {}  # lazy per-ecosystem cache, in sorted order
+        issues = []
+        for component in components:
+            issue = self._scan_component(
+                component, popular_packages, normalized_popular, similarity_threshold, critical_at, high_at
+            )
+            if issue is not None:
+                issues.append(issue)
+        return issues
+
     def _scan_component(
         self,
         component: dict[str, Any],
-        popular_packages: dict[str, set[str]],
-        normalized_popular: dict[str, set[str]],
+        popular_packages: dict[str, list[str]],
+        normalized_popular: dict[str, dict[str, None]],
         similarity_threshold: float,
         critical_at: float,
         high_at: float,
@@ -241,23 +247,28 @@ class TyposquattingAnalyzer(Analyzer):
             return None
 
         if ecosystem not in normalized_popular:
-            normalized_popular[ecosystem] = {_normalize_pkg_name(p) for p in popular_packages[ecosystem]}
-        popular_list = normalized_popular[ecosystem]
+            normalized_popular[ecosystem] = dict.fromkeys(_normalize_pkg_name(p) for p in popular_packages[ecosystem])
+        popular_names = normalized_popular[ecosystem]
 
-        if name in popular_list:
+        if name in popular_names:
             return None
 
-        for popular in popular_list:
+        matcher = difflib.SequenceMatcher(None, b=name)
+        best_ratio, best_popular = similarity_threshold, None
+        for popular in popular_names:
             if abs(len(name) - len(popular)) > 2:
                 continue
+            # Both quick ratios bound ratio() from above in either orientation; ratio() itself is not symmetric.
+            matcher.set_seq1(popular)
+            if matcher.real_quick_ratio() <= best_ratio or matcher.quick_ratio() <= best_ratio:
+                continue
             ratio = difflib.SequenceMatcher(None, name, popular).ratio()
-            if ratio <= similarity_threshold:
-                continue
-            if not self._is_suspicious(name, popular):
-                continue
-            severity = _severity_for_ratio(ratio, critical_at, high_at)
-            return _build_typosquat_issue(component, popular, ratio, severity)
-        return None
+            if ratio > best_ratio and self._is_suspicious(name, popular):
+                best_ratio, best_popular = ratio, popular
+        if best_popular is None:
+            return None
+        severity = _severity_for_ratio(best_ratio, critical_at, high_at)
+        return _build_typosquat_issue(component, best_popular, best_ratio, severity)
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
         """Whether ``name`` near-matches another ``popular``; a prefix then ``-`` (``react-dom``) is legitimate."""

@@ -56,7 +56,8 @@ APP_ROOT = Path(finding_details.__file__).resolve().parents[1]
 # Every entry needs a reason; do not park real drift here.
 ALLOWED_UNDECLARED: dict[tuple[str, str], str] = {
     ("writeErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
-    ("nInserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
+    ("nUpserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
+    ("nMatched", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("writeConcernErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("keyPattern", "app/repositories/users.py"): "pymongo DuplicateKeyError.details key",
 }

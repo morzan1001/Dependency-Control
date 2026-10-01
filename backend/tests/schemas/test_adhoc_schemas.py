@@ -4,8 +4,6 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.adhoc import (
-    MAX_ADHOC_ANALYZERS,
-    MAX_ADHOC_SBOMS,
     AdhocAnalyzeRequest,
     AdhocAnalyzeResponse,
     AnalyzerReport,
@@ -32,7 +30,6 @@ _NETWORK_FACING = "network_facing"
 def test_request_defaults():
     req = AdhocAnalyzeRequest(sboms=[_SBOM])
     assert req.apply_global_waivers is True
-    assert req.format == "json"
     assert req.analyzers is None
     assert req.callgraph is None
     assert req.license_policy is None
@@ -126,22 +123,6 @@ def test_the_project_policy_schema_refuses_the_same_key():
         LicensePolicySchema(**{_MISSPELLED_POLICY_KEY: _INTERNAL_ONLY})
 
 
-def test_too_many_sboms_is_rejected():
-    with pytest.raises(ValidationError):
-        AdhocAnalyzeRequest(sboms=[_SBOM] * (MAX_ADHOC_SBOMS + 1))
-
-
-def test_too_many_analyzers_is_rejected():
-    """Every name is echoed back in the report, so an unbounded list amplifies the response."""
-    with pytest.raises(ValidationError):
-        AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[_ANALYZER] * (MAX_ADHOC_ANALYZERS + 1))
-
-
-def test_unknown_format_is_rejected():
-    with pytest.raises(ValidationError):
-        AdhocAnalyzeRequest(sboms=[_SBOM], format="pdf")
-
-
 def test_response_defaults_are_a_complete_envelope():
     resp = AdhocAnalyzeResponse()
     dumped = resp.model_dump()
@@ -152,7 +133,6 @@ def test_response_defaults_are_a_complete_envelope():
     assert dumped["reachability_summary"] is None
     assert dumped["waivers_applied"] == "none"
     assert dumped["waived_count"] == 0
-    assert dumped["truncated"] is None
     assert dumped["analyzers"] == {"ran": [], "skipped": {}, "errored": {}, "skipped_inputs": {}, "notes": {}}
     assert dumped["stats"]["threat_intel"] is None
     assert dumped["stats"]["risk_score"] == 0.0

@@ -10,16 +10,26 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 
+from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analysis.engine import _carry_over_crypto_assets
+from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT = "p1"
 _ORIGINAL_SCAN = "s-original"
 _RESCAN = "s-rescan"
 _OTHER_SCAN = "s-other"
+
+
+@pytest_asyncio.fixture
+async def db():
+    database = FakeDatabase()
+    await create_indexes(database)
+    return database
 
 
 def _asset(bom_ref: str, scan_id: str, name: str = "MD5") -> CryptoAsset:
@@ -42,9 +52,8 @@ async def test_ingested_assets_reach_the_rescan(db):
     repo = CryptoAssetRepository(db)
     await _seed(repo, _ORIGINAL_SCAN, ["ref-a", "ref-b", "ref-c"])
 
-    carried = await repo.carry_over_to_scan(_PROJECT, _ORIGINAL_SCAN, _RESCAN)
+    await repo.carry_over_to_scan(_PROJECT, _ORIGINAL_SCAN, _RESCAN)
 
-    assert carried == 3
     assert await repo.count_by_scan(_PROJECT, _RESCAN) == 3
     assert {a.bom_ref for a in await repo.list_by_scan(_PROJECT, _RESCAN, limit=10)} == {"ref-a", "ref-b", "ref-c"}
 
@@ -83,6 +92,23 @@ async def test_an_embedded_cbom_asset_overwrites_the_carried_copy(db):
 
 
 @pytest.mark.asyncio
+async def test_a_carry_over_keeps_the_assets_the_rescan_already_holds(db):
+    repo = CryptoAssetRepository(db)
+    source_b = _asset("ref-b", _ORIGINAL_SCAN)
+    held = _asset("ref-a", _RESCAN, name="SHA-256")
+    await repo.bulk_upsert(_PROJECT, _ORIGINAL_SCAN, [_asset("ref-a", _ORIGINAL_SCAN), source_b])
+    await repo.bulk_upsert(_PROJECT, _RESCAN, [held])
+
+    await repo.carry_over_to_scan(_PROJECT, _ORIGINAL_SCAN, _RESCAN)
+
+    listed = await repo.list_by_scan(_PROJECT, _RESCAN, limit=10)
+    assert {(a.bom_ref, a.id, a.name) for a in listed} == {
+        ("ref-a", held.id, "SHA-256"),
+        ("ref-b", f"{_RESCAN}:{source_b.id}", "MD5"),
+    }
+
+
+@pytest.mark.asyncio
 async def test_only_the_named_scan_is_copied(db):
     repo = CryptoAssetRepository(db)
     await _seed(repo, _ORIGINAL_SCAN, ["ref-a"])
@@ -94,7 +120,7 @@ async def test_only_the_named_scan_is_copied(db):
 
 
 def _repo_spy(monkeypatch):
-    spy = SimpleNamespace(carry_over_to_scan=AsyncMock(return_value=0))
+    spy = SimpleNamespace(carry_over_to_scan=AsyncMock())
     monkeypatch.setattr("app.services.analysis.engine.CryptoAssetRepository", lambda _db: spy)
     return spy
 

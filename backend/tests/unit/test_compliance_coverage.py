@@ -1,14 +1,8 @@
 """A compliance report may not claim a verdict it did not compute over the whole scope.
 
-Against a live MongoDB, a project holding 20 050 findings — 50 of them criticals 400 days past
-their SLA — produced a report whose CVE-SLA-CRITICAL control read `passed`, because the 50 sat
-past the engine's 20 000-finding cap. The same project holding 10 001 crypto assets, the last of
-them MD5, produced a FIPS-140-3 report whose hash-function control read `passed`.
-
-A verdict whose evidence is the absence of a match is withheld as `not_evaluated` once the input
-it rests on stops covering the scope; a failure stands, because a cut input can under-report a
-violation but cannot invent one. Which input a verdict rests on is per control, so a truncated
-finding set may not suppress a verdict read off a complete inventory, or the other way round.
+A verdict whose evidence is the absence of a match is withheld as `not_evaluated` once a gap leaves
+part of the scope unread; a failure stands, because a partial scope can under-report a violation but
+cannot invent one.
 """
 
 import json
@@ -19,8 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
+from app.models.project import Project, Scan
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import (
     ControlDefinition,
@@ -31,6 +27,7 @@ from app.schemas.compliance import (
     ReportFramework,
 )
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.services.cbom_parser import parse_cbom
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
@@ -47,65 +44,37 @@ from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from app.services.compliance.renderers.json_renderer import JsonRenderer
 from app.services.compliance.renderers.pdf_renderer import build_template_context
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
+from app.services.crypto_policy.seeder import seed_crypto_policies
+from tests.helpers.cbom import cbom_of, filler_components
 from tests.helpers.compliance import evaluation_input
 from tests.unit.test_renderer_json import _evaluation, _report
 
 _PROJECT = "p1"
 _SCAN = "s1"
-_CAP = 4
 _POPULATION = 6
 _TEMPLATE_DIR = Path(engine_module.__file__).resolve().parent / "templates"
 
-_EVALUATED = 20000
-_IN_SCOPE = 20050
-_MISSING = _IN_SCOPE - _EVALUATED
-_ASSET_CAP = 10000
-_ASSETS_IN_SCOPE = 10001
-_ASSETS_MISSING = _ASSETS_IN_SCOPE - _ASSET_CAP
 _WITHHELD_STATEMENT = "would have rested on finding no match in a capped input"
-_PLAN_ITEMS_EVALUATED = 1000
+_PLAN_ITEM_CAP = 1000
 _PLAN_ITEMS_IN_SCOPE = 4200
-_PLAN_ITEM_STATEMENT = f"Evaluated {_PLAN_ITEMS_EVALUATED} of {_PLAN_ITEMS_IN_SCOPE} migration plan items"
+_PLAN_ITEMS_MISSING = _PLAN_ITEMS_IN_SCOPE - _PLAN_ITEM_CAP
+_PLAN_ITEM_STATEMENT = f"Evaluated {_PLAN_ITEM_CAP} of {_PLAN_ITEMS_IN_SCOPE} migration plan items"
+_ASSETS_PAST_THE_OLD_BUDGET = 10_001
 _FIPS = FRAMEWORK_REGISTRY[ReportFramework.FIPS_140_3]
 
 
-def _findings_coverage(evaluated: int) -> InputCoverage:
-    return InputCoverage(evaluated=evaluated, in_scope=_IN_SCOPE, limit=_EVALUATED)
-
-
-def _assets_coverage(evaluated: int) -> InputCoverage:
-    return InputCoverage(evaluated=evaluated, in_scope=_ASSETS_IN_SCOPE, limit=_ASSET_CAP)
-
-
-def _partial() -> EvaluationCoverage:
-    """The findings stop short of the scope; the inventory covers it."""
+def _plan_items(in_scope: int) -> EvaluationCoverage:
     return EvaluationCoverage(
-        findings=_findings_coverage(_EVALUATED),
-        crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE),
+        plan_items=InputCoverage(evaluated=min(in_scope, _PLAN_ITEM_CAP), in_scope=in_scope, limit=_PLAN_ITEM_CAP)
     )
 
 
 def _complete() -> EvaluationCoverage:
-    return EvaluationCoverage(
-        findings=_findings_coverage(_IN_SCOPE),
-        crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE),
-    )
+    return _plan_items(_PLAN_ITEM_CAP)
 
 
-def _plan_items_coverage() -> InputCoverage:
-    return InputCoverage(
-        evaluated=_PLAN_ITEMS_EVALUATED,
-        in_scope=_PLAN_ITEMS_IN_SCOPE,
-        limit=_PLAN_ITEMS_EVALUATED,
-    )
-
-
-def _assets_partial() -> EvaluationCoverage:
-    """The inventory stops short of the scope; the findings cover it."""
-    return EvaluationCoverage(
-        findings=_findings_coverage(_IN_SCOPE),
-        crypto_assets=_assets_coverage(_ASSET_CAP),
-    )
+def _partial() -> EvaluationCoverage:
+    return _plan_items(_PLAN_ITEMS_IN_SCOPE)
 
 
 def _finding(index: int) -> dict:
@@ -132,36 +101,17 @@ def _render_report(evaluation, disclaimer: str | None = None) -> str:
 
 
 @pytest.mark.asyncio
-async def test_a_capped_collection_reports_the_scope_it_did_not_read(db, monkeypatch):
-    monkeypatch.setattr(engine_module, "_FINDINGS_LIMIT", _CAP)
+async def test_the_collection_reads_every_finding_in_scope(db):
     for index in range(_POPULATION):
         doc = _finding(index)
         db.findings._docs[doc["_id"]] = doc
-    resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
 
     engine = ComplianceReportEngine()
     clause, fields, _ = engine._finding_type_filter(CveRemediationSlaFramework())
 
-    findings, in_scope = await engine._collect_findings(db, resolved, [_SCAN], clause, fields)
-
-    assert len(findings) == _CAP
-    assert in_scope == _POPULATION
-
-
-@pytest.mark.asyncio
-async def test_an_uncapped_collection_counts_what_it_read(db):
-    for index in range(_POPULATION):
-        doc = _finding(index)
-        db.findings._docs[doc["_id"]] = doc
-    resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
-
-    engine = ComplianceReportEngine()
-    clause, fields, _ = engine._finding_type_filter(CveRemediationSlaFramework())
-
-    findings, in_scope = await engine._collect_findings(db, resolved, [_SCAN], clause, fields)
+    findings = await engine._collect_findings(db, [_SCAN], clause, fields)
 
     assert len(findings) == _POPULATION
-    assert in_scope == _POPULATION
 
 
 @pytest.mark.asyncio
@@ -196,41 +146,20 @@ async def test_the_engine_hands_the_coverage_to_the_renderer_and_to_the_stored_r
     assert update_status.call_args_list[-1].kwargs["coverage"] == _partial()
 
 
-def test_the_partial_statement_names_the_verdicts_it_withholds():
-    statement = coverage_statement(_partial())
-
-    assert str(_EVALUATED) in statement
-    assert str(_IN_SCOPE) in statement
-    assert str(_MISSING) in statement
-    assert _WITHHELD_STATEMENT in statement
-
-
 def test_the_partial_statement_counts_the_unread_remainder_against_the_scope():
     """A cut input has read exactly its cap, so a remainder measured against the cap is always zero."""
-    assert f"the remaining {_MISSING} were not read" in coverage_statement(_partial())
-    assert f"the remaining {_ASSETS_MISSING} were not read" in coverage_statement(_assets_partial())
+    assert f"the remaining {_PLAN_ITEMS_MISSING} were not read" in coverage_statement(_partial())
 
 
 def test_the_complete_statement_says_the_scope_was_covered():
-    statement = coverage_statement(_complete())
-
-    assert statement == (
-        f"Evaluated all {_IN_SCOPE} findings in scope. Evaluated all {_ASSETS_IN_SCOPE} crypto assets in scope."
-    )
-
-
-def test_the_statement_names_whichever_input_was_capped():
-    statement = coverage_statement(_assets_partial())
-
-    assert f"Evaluated all {_IN_SCOPE} findings in scope." in statement
-    assert f"Evaluated {_ASSET_CAP} of {_ASSETS_IN_SCOPE} crypto assets" in statement
-    assert _WITHHELD_STATEMENT in statement
+    assert coverage_statement(_complete()) == f"Evaluated all {_PLAN_ITEM_CAP} migration plan items in scope."
 
 
 def test_the_statement_names_the_plan_items_left_out():
-    coverage = _complete().model_copy(update={"plan_items": _plan_items_coverage()})
+    statement = coverage_statement(_partial())
 
-    assert _PLAN_ITEM_STATEMENT in coverage_statement(coverage)
+    assert _PLAN_ITEM_STATEMENT in statement
+    assert _WITHHELD_STATEMENT in statement
 
 
 def test_json_carries_the_statement_and_the_numbers():
@@ -238,8 +167,8 @@ def test_json_carries_the_statement_and_the_numbers():
     payload = json.loads(body)
 
     assert payload["coverage"]["complete"] is False
-    assert payload["coverage"]["findings"]["in_scope"] == _IN_SCOPE
-    assert payload["coverage"]["crypto_assets"]["in_scope"] == _ASSETS_IN_SCOPE
+    assert payload["coverage"]["plan_items"]["in_scope"] == _PLAN_ITEMS_IN_SCOPE
+    assert "crypto_assets" not in payload["coverage"]
     assert _WITHHELD_STATEMENT in payload["coverage"]["statement"]
 
 
@@ -271,7 +200,7 @@ def test_the_pdf_cover_prints_the_coverage_banner(coverage, expects_alarm):
 
 
 _SLA_OVERDUE_DAYS = 400
-_WITHHELD_REASON_FRAGMENT = "would have rested on finding no match"
+_GAP = "project 'payments' has no usable scan"
 
 
 def _sla_input(findings: list[dict], coverage: EvaluationCoverage) -> EvaluationInput:
@@ -298,16 +227,6 @@ def _by_id(evaluation) -> dict[str, ControlResult]:
 
 
 @pytest.mark.asyncio
-async def test_a_pass_over_a_truncated_finding_set_is_withheld():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
-
-    critical = _by_id(evaluation)["CVE-SLA-CRITICAL"]
-    assert critical.status == ControlStatus.NOT_EVALUATED.value
-    assert _WITHHELD_REASON_FRAGMENT in (critical.status_reason or "")
-    assert str(_MISSING) in (critical.status_reason or "")
-
-
-@pytest.mark.asyncio
 async def test_the_same_pass_stands_when_the_scope_was_fully_read():
     evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _complete()))
 
@@ -317,46 +236,11 @@ async def test_the_same_pass_stands_when_the_scope_was_fully_read():
 
 
 @pytest.mark.asyncio
-async def test_a_failure_survives_truncation_because_a_cut_list_cannot_invent_a_finding():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([_overdue_critical()], _partial()))
-
-    assert _by_id(evaluation)["CVE-SLA-CRITICAL"].status == ControlStatus.FAILED.value
-
-
-@pytest.mark.asyncio
-async def test_a_waived_verdict_is_withheld_because_it_rests_on_no_active_match():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([_overdue_critical(waived=True)], _partial()))
-
-    assert _by_id(evaluation)["CVE-SLA-CRITICAL"].status == ControlStatus.NOT_EVALUATED.value
-
-
-@pytest.mark.asyncio
 async def test_the_summary_counts_the_withheld_verdicts():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     assert evaluation.summary["not_evaluated"] == evaluation.summary["total"]
     assert evaluation.summary["passed"] == 0
-
-
-@pytest.mark.asyncio
-async def test_a_verdict_read_from_the_asset_inventory_survives_a_truncated_finding_set():
-    """The findings cap says nothing about the crypto assets FIPS reads, so blanket-suppressing
-    every absence-backed status would claim the report skipped work it actually did."""
-    asset = CryptoAsset(
-        _id="a1",
-        project_id=_PROJECT,
-        scan_id=_SCAN,
-        bom_ref="ref-a",
-        name="AES",
-        asset_type=CryptoAssetType.ALGORITHM,
-        primitive=CryptoPrimitive.BLOCK_CIPHER,
-    )
-    data = _sla_input([], _partial())
-    data.crypto_assets = [asset]
-
-    evaluation = await _FIPS.evaluate(data)
-
-    assert _by_id(evaluation)["FIPS-140-3-SYMMETRIC_CIPHERS"].status == ControlStatus.PASSED.value
 
 
 def _algorithm(name: str, primitive: CryptoPrimitive) -> CryptoAsset:
@@ -378,26 +262,8 @@ async def _fips_input(assets: list[CryptoAsset], coverage: EvaluationCoverage):
 
 
 @pytest.mark.asyncio
-async def test_a_fips_pass_over_a_truncated_inventory_is_withheld():
-    """The verdict rests on no disallowed algorithm being present, and a cut inventory fakes that."""
-    evaluation = await _fips_input([_algorithm("SHA-256", CryptoPrimitive.HASH)], _assets_partial())
-
-    control = _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"]
-    assert control.status == ControlStatus.NOT_EVALUATED.value
-    assert "crypto assets" in (control.status_reason or "")
-    assert str(_ASSETS_MISSING) in (control.status_reason or "")
-
-
-@pytest.mark.asyncio
-async def test_a_fips_not_applicable_over_a_truncated_inventory_is_withheld():
-    evaluation = await _fips_input([_algorithm("AES-256", CryptoPrimitive.BLOCK_CIPHER)], _assets_partial())
-
-    assert _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"].status == ControlStatus.NOT_EVALUATED.value
-
-
-@pytest.mark.asyncio
-async def test_a_fips_failure_survives_a_truncated_inventory():
-    evaluation = await _fips_input([_algorithm("MD5", CryptoPrimitive.HASH)], _assets_partial())
+async def test_a_fips_failure_survives_a_scope_with_a_gap():
+    evaluation = await _fips_input([_algorithm("MD5", CryptoPrimitive.HASH)], _with_gaps(_GAP))
 
     control = _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"]
     assert control.status == ControlStatus.FAILED.value
@@ -406,7 +272,7 @@ async def test_a_fips_failure_survives_a_truncated_inventory():
 
 @pytest.mark.asyncio
 async def test_the_same_fips_pass_stands_when_the_inventory_covered_the_scope():
-    evaluation = await _fips_input([_algorithm("SHA-256", CryptoPrimitive.HASH)], _partial())
+    evaluation = await _fips_input([_algorithm("SHA-256", CryptoPrimitive.HASH)], _complete())
 
     assert _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"].status == ControlStatus.PASSED.value
 
@@ -424,7 +290,7 @@ def _rule(*, enabled: bool, match_primitive: CryptoPrimitive | None = None) -> C
     )
 
 
-def test_a_not_applicable_decided_by_the_policy_stands_over_a_truncated_inventory():
+def test_a_not_applicable_decided_by_the_policy_stands_over_a_scope_with_a_gap():
     """Only the inventory-read answer is unsafe; a control whose backing rules are all disabled
     cannot change whatever the unread assets hold."""
     control = ControlDefinition(
@@ -435,7 +301,7 @@ def test_a_not_applicable_decided_by_the_policy_stands_over_a_truncated_inventor
         remediation="r",
         maps_to_rule_ids=["rule-1"],
     )
-    data = _sla_input([], _assets_partial())
+    data = _sla_input([], _with_gaps(_GAP))
     data.crypto_assets = [_algorithm("SHA-256", CryptoPrimitive.HASH)]
     data.policy_rules = [_rule(enabled=False)]
 
@@ -445,7 +311,7 @@ def test_a_not_applicable_decided_by_the_policy_stands_over_a_truncated_inventor
     assert result.status_reason is None
 
 
-def test_a_not_applicable_read_off_the_inventory_is_withheld_over_a_truncated_one():
+def test_a_not_applicable_read_off_the_inventory_is_withheld_over_a_scope_with_a_gap():
     control = ControlDefinition(
         control_id="C1",
         title="t",
@@ -454,7 +320,7 @@ def test_a_not_applicable_read_off_the_inventory_is_withheld_over_a_truncated_on
         remediation="r",
         maps_to_rule_ids=["rule-1"],
     )
-    data = _sla_input([], _assets_partial())
+    data = _sla_input([], _with_gaps(_GAP))
     data.crypto_assets = [_algorithm("SHA-256", CryptoPrimitive.HASH)]
     data.policy_rules = [_rule(enabled=True, match_primitive=CryptoPrimitive.BLOCK_CIPHER)]
 
@@ -465,84 +331,57 @@ def test_a_not_applicable_read_off_the_inventory_is_withheld_over_a_truncated_on
 
 
 @pytest.mark.asyncio
-async def test_the_asset_budget_spans_the_report_rather_than_each_scan(db, monkeypatch):
-    """A global-scope report over many scans would otherwise hold the per-scan cap times the
-    scan count, which bounds nothing."""
-    monkeypatch.setattr(engine_module, "_CRYPTO_ASSETS_LIMIT", _CAP)
-    scan_by_project = {f"project-{scan}": scan for scan in ("s1", "s2", "s3")}
-    for project, scan in scan_by_project.items():
-        for index in range(_POPULATION):
-            doc = {
-                "_id": f"{scan}-a{index}",
-                "project_id": project,
-                "scan_id": scan,
-                "bom_ref": f"ref-{scan}-{index}",
-                "name": f"ALG-{index}",
-                "asset_type": CryptoAssetType.ALGORITHM.value,
-                "primitive": CryptoPrimitive.HASH.value,
-            }
-            db.crypto_assets._docs[doc["_id"]] = doc
-
-    assets, in_scope = await ComplianceReportEngine()._collect_crypto_assets(db, scan_by_project)
-
-    assert len(assets) == _CAP
-    assert in_scope == _POPULATION * len(scan_by_project)
-
-
-@pytest.mark.asyncio
-async def test_an_uncapped_asset_collection_counts_what_it_read(db):
-    for index in range(_POPULATION):
-        doc = {
-            "_id": f"a{index}",
-            "project_id": _PROJECT,
-            "scan_id": _SCAN,
-            "bom_ref": f"ref-{index}",
-            "name": f"ALG-{index}",
-            "asset_type": CryptoAssetType.ALGORITHM.value,
-            "primitive": CryptoPrimitive.HASH.value,
-        }
+async def test_a_crypto_control_is_evaluated_over_every_asset_past_the_old_budget(db):
+    await seed_crypto_policies(db)
+    await db.projects.insert_one(Project(id=_PROJECT, name=_PROJECT, latest_scan_id=_SCAN).model_dump(by_alias=True))
+    scan = Scan(id=_SCAN, project_id=_PROJECT, branch="main", status=SCAN_STATUS_COMPLETED)
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    for parsed in parse_cbom(cbom_of(filler_components(range(_ASSETS_PAST_THE_OLD_BUDGET)))).assets:
+        doc = CryptoAsset(project_id=_PROJECT, scan_id=_SCAN, **parsed.model_dump()).model_dump(by_alias=True)
         db.crypto_assets._docs[doc["_id"]] = doc
 
-    assets, in_scope = await ComplianceReportEngine()._collect_crypto_assets(db, {_PROJECT: _SCAN})
+    inputs, evaluation = await ComplianceReportEngine().evaluate(
+        db, ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT]), _FIPS
+    )
 
-    assert len(assets) == _POPULATION
-    assert in_scope == _POPULATION
+    assert len(inputs.crypto_assets) == _ASSETS_PAST_THE_OLD_BUDGET
+    assert _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"].status == ControlStatus.PASSED.value
 
 
 @pytest.mark.asyncio
 async def test_sarif_reports_a_withheld_verdict_as_open_rather_than_pass():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     body, _, _ = SarifRenderer().render(evaluation, _report())
     results = json.loads(body)["runs"][0]["results"]
 
     assert {r["kind"] for r in results} == {"open"}
-    assert all(_WITHHELD_REASON_FRAGMENT in r["message"]["text"] for r in results)
+    assert all(_GAP in r["message"]["text"] for r in results)
 
 
 @pytest.mark.asyncio
 async def test_csv_and_json_carry_the_reason_beside_the_withheld_status():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     csv_body, _, _ = CsvRenderer().render(evaluation, _report())
     json_body, _, _ = JsonRenderer().render(evaluation, _report())
 
     assert "status_reason" in csv_body.decode().splitlines()[1]
-    assert _WITHHELD_REASON_FRAGMENT in csv_body.decode()
+    assert _GAP in csv_body.decode()
     controls = json.loads(json_body)["controls"]
     assert all(c["status"] == ControlStatus.NOT_EVALUATED.value for c in controls)
-    assert all(_WITHHELD_REASON_FRAGMENT in c["status_reason"] for c in controls)
+    assert all(_GAP in c["status_reason"] for c in controls)
 
 
 @pytest.mark.asyncio
 async def test_the_pdf_prints_the_withheld_count_and_the_per_control_reason():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     html = _render_report(evaluation)
 
     assert "Not Evaluated" in html
     assert 'class="status-reason"' in html
-    assert _WITHHELD_REASON_FRAGMENT in html
+    assert "has no usable scan" in html
 
 
 def _control(control_id: str, status: ControlStatus) -> ControlResult:
@@ -571,14 +410,11 @@ def test_residual_risks_lists_the_failed_control_and_nothing_else():
     assert [risk.control_id for risk in risks] == ["c-failed"]
 
 
-def test_the_statement_leaves_out_an_input_the_framework_never_read():
-    coverage = EvaluationCoverage(findings=_findings_coverage(_IN_SCOPE))
+def test_a_report_over_findings_alone_states_that_it_covered_the_whole_scope():
+    coverage = EvaluationCoverage()
 
     assert coverage.complete is True
-    assert coverage_statement(coverage) == f"Evaluated all {_IN_SCOPE} findings in scope."
-
-
-_GAP = "project 'payments' has no usable scan"
+    assert coverage_statement(coverage) == "The verdicts cover the whole scope."
 
 
 def _with_gaps(*gaps: str) -> EvaluationCoverage:

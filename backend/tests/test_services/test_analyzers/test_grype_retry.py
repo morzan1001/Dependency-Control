@@ -45,7 +45,6 @@ class TestGrypeRetryablePatternMatching:
             "EOF while parsing",
             "connection refused",
             "no such file or directory: /grype-db/vulnerability.db",
-            "grype timed out after 600 seconds",
         ],
     )
     def test_recognises_transient_error(self, stderr_text):
@@ -59,6 +58,7 @@ class TestGrypeRetryablePatternMatching:
             "unknown subcommand: scan-everything",
             "permission denied: /etc/grype.yaml",
             "unsupported SBOM schema version 9.0",
+            "grype timed out after 600 seconds",
         ],
     )
     def test_non_transient_error_not_retried(self, stderr_text):

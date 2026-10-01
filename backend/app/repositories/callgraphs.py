@@ -1,13 +1,19 @@
 """Repository for callgraphs."""
 
+from typing import Any
+
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+
 from app.models.callgraph import Callgraph
 from app.repositories.base import BaseRepository
 from app.schemas.projections import CallgraphMinimal
+from app.services.gridfs_maintenance import load_gridfs_json
 
 _MINIMAL_PROJECTION = {
     "_id": 1,
     "module_usage": 1,
     "analyzed_modules": 1,
+    "graph_gridfs_id": 1,
     "language": 1,
     "total_imports": 1,
     "created_at": 1,
@@ -18,13 +24,19 @@ class CallgraphRepository(BaseRepository[Callgraph]):
     collection_name = "callgraphs"
     model_class = Callgraph
 
+    async def load_graph(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """Merge the graph file into ``doc``; legacy docs carry module_usage and analyzed_modules inline."""
+        if file_id := doc.pop("graph_gridfs_id", None):
+            doc.update(await load_gridfs_json(AsyncIOMotorGridFSBucket(self.db), file_id))
+        return doc
+
     async def find_all_minimal_by_scan(self, project_id: str, scan_id: str) -> list[CallgraphMinimal]:
         cursor = self.collection.find({"project_id": project_id, "scan_id": scan_id}, _MINIMAL_PROJECTION)
-        return [CallgraphMinimal(**doc) async for doc in cursor]
+        return [CallgraphMinimal(**await self.load_graph(doc)) async for doc in cursor]
 
     async def find_all_minimal_by_pipeline(self, project_id: str, pipeline_id: int) -> list[CallgraphMinimal]:
         cursor = self.collection.find({"project_id": project_id, "pipeline_id": pipeline_id}, _MINIMAL_PROJECTION)
-        return [CallgraphMinimal(**doc) async for doc in cursor]
+        return [CallgraphMinimal(**await self.load_graph(doc)) async for doc in cursor]
 
     async def delete_by_project(self, project_id: str) -> int:
         return await self.delete_many({"project_id": project_id})

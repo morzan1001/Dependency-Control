@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ChevronLeft, ChevronRight, Archive, GitBranch, GitCommit, Package, FileText } from 'lucide-react'
-import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
 import {
   Tooltip,
   TooltipContent,
@@ -16,14 +16,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import type { ArchiveFilters } from '@/types/archive'
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
-}
 
 const ARCHIVE_SKELETON_KEYS = ['s1', 's2', 's3', 's4', 's5']
 

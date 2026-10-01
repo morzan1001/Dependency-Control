@@ -30,8 +30,6 @@ export interface InputCoverage {
 
 // What each input the verdicts rest on covered; null for an input the framework never reads.
 export interface EvaluationCoverage {
-  findings?: InputCoverage | null;
-  crypto_assets?: InputCoverage | null;
   plan_items?: InputCoverage | null;
   // Parts of the scope no input could cover; each one withholds every verdict resting on finding no match.
   gaps?: string[];

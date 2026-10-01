@@ -23,7 +23,7 @@ from app.core.constants import (
     UpdateKind,
 )
 from app.core.purl import package_identity, parse_purl
-from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.update_frequency import (
@@ -163,14 +163,10 @@ def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
 
 
 async def load_scan_deps(dep_repo: DependencyRepository, scan_id: str) -> dict[str, dict[str, str]]:
-    return fold_scan_deps(await dep_repo.find_raw_by_scan(scan_id, DEP_PROJECTION))
+    return fold_scan_deps(await dep_repo.find_all_raw({"scan_id": scan_id}, DEP_PROJECTION))
 
 
-async def load_outdated_entries(
-    analysis_repo: AnalysisResultRepository,
-    scan_id: str,
-    projection: dict[str, int] | None = None,
-) -> list[dict[str, Any]] | None:
+async def load_outdated_entries(analysis_repo: AnalysisResultRepository, scan_id: str) -> list[dict[str, Any]] | None:
     """The scan's ``outdated_dependencies`` entries, or None when it carries no such analysis.
 
     An analyzer that raised leaves no document behind and one that failed stores a
@@ -183,10 +179,9 @@ async def load_outdated_entries(
     entries: list[dict[str, Any]] = []
     measured = False
     async for doc in analysis_repo.iterate_raw(
-        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
-        projection=projection,
+        {"scan_id": scan_id, "analyzer_name": "outdated_packages"}, projection=RESULT_PROJECTION
     ):
-        found = (doc.get("result") or {}).get("outdated_dependencies")
+        found = (await analysis_repo.load_result(doc) or {}).get("outdated_dependencies")
         if not isinstance(found, list):
             continue
         measured = True

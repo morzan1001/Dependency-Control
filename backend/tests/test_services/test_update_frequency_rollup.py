@@ -937,11 +937,8 @@ class TestReadShape:
             assert projection
             assert set(projection) <= {"name", "version", "type", "purl", "group"}
 
-        # An outdated_packages document averages 48 KB; only component names may be pulled.
-        assert len(finds["analysis_results"]) == 2
-        for projection in finds["analysis_results"]:
-            assert projection
-            assert all(key.startswith("result.outdated_dependencies.") for key in projection)
+        # The predecessor's names come from its outdated set, so only the current result is loaded.
+        assert len(finds["analysis_results"]) == 1
 
 
 def _spy_on_find(collection: Any, log: list[Any]) -> None:

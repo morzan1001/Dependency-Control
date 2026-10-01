@@ -1,6 +1,6 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { SbomResponse, SbomTool, SbomToolComponent } from '@/types/scan'
+import { scanApi } from '@/api/scans'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
@@ -11,12 +11,11 @@ import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSecti
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, X } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Download, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
-import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
@@ -24,8 +23,8 @@ import { SCAN_STATUS_COMPLETED_WITH_ERRORS, isScanInProgress } from '@/lib/scan-
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
-import { logger } from '@/lib/logger'
-import { formatDateTime, getErrorMessage, shortCommitHash } from '@/lib/utils'
+import { downloadServerFile } from '@/lib/download'
+import { formatBytes, formatDateTime, getErrorMessage, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -46,30 +45,6 @@ function ScmLink({ href, children }: Readonly<{ href: string | undefined | null;
     )
   }
   return <>{children}</>
-}
-
-function extractSbomToolName(sbom: SbomResponse['sbom']): string {
-  if (!sbom?.metadata?.tools) return ''
-  try {
-    if (Array.isArray(sbom.metadata.tools)) {
-      return sbom.metadata.tools.map((t: SbomTool) => t.name || t.vendor).join(', ')
-    }
-    if (sbom.metadata.tools.components) {
-      return sbom.metadata.tools.components.map((c: SbomToolComponent) => c.name).join(', ')
-    }
-  } catch (e) {
-    logger.warn("Failed to extract tool name", e)
-  }
-  return ''
-}
-
-function resolveSbomName(sbomResponse: SbomResponse): string {
-  const fallback = sbomResponse.filename || `SBOM #${sbomResponse.index + 1}`
-  const sbom = sbomResponse.sbom
-  if (!sbom) return fallback
-  if (sbom.metadata?.component?.name) return sbom.metadata.component.name
-  if (sbom.serialNumber) return sbom.serialNumber
-  return fallback
 }
 
 export default function ScanDetails() {
@@ -100,8 +75,8 @@ export default function ScanDetails() {
   };
 
   const { data: project, isLoading: isProjectLoading } = useProject(projectId!)
-  const { data: scanResults, isLoading: isResultsLoading } = useScanResults(scanId!)
-  const { data: scanSboms, isLoading: isSbomsLoading } = useScanSboms(scanId!)
+  const { data: scanResults, isLoading: isResultsLoading } = useScanResults(scanId!, activeTab === 'raw')
+  const { data: scanSboms, isLoading: isSbomsLoading } = useScanSboms(scanId!, activeTab === 'raw')
   const { data: categoryStats } = useScanStats(scanId!)
   const { permissions } = useAuth()
   const { data: currentUser } = useCurrentUser()
@@ -549,156 +524,79 @@ export default function ScanDetails() {
         )}
 
         <TabsContent value="raw" className="space-y-4">
-            {isResultsLoading ? (
-                <div className="grid gap-4 md:grid-cols-1">
-                    <Skeleton className="h-[400px]" />
-                    <Skeleton className="h-[400px]" />
-                </div>
-            ) : (
-                <div className="space-y-8">
-                    {scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
-                        <div className="space-y-4">
-                            <h3 className="text-lg font-medium">Post-Processor Results</h3>
-                            <div className="grid gap-6">
-                                {scanResults
-                                    .filter(r => isPostProcessorResult(r.analyzer_name))
-                                    .map((result) => (
-                                        <Card key={result.id} className="overflow-hidden">
-                                            <CardHeader className="bg-muted/50 pb-4">
-                                                <CardTitle className="text-lg flex items-center justify-between">
-                                                    <span className="capitalize">{result.analyzer_name}</span>
-                                                    <Badge variant="outline">Post-Processor</Badge>
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="p-0">
-                                                <CodeBlock code={JSON.stringify(result.result, null, 2)} />
-                                            </CardContent>
-                                        </Card>
-                                    ))}
-                            </div>
-                        </div>
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-lg">Analyzer Results</CardTitle>
+                </CardHeader>
+                <CardContent className="divide-y">
+                    {isResultsLoading && <Skeleton className="h-24" />}
+                    {!isResultsLoading && !scanResults?.length && (
+                        <p className="text-muted-foreground">No analyzer results for this scan.</p>
                     )}
-
-                    {scanResults?.some(r => !isPostProcessorResult(r.analyzer_name)) && (
-                        <div className="space-y-4">
-                            <h3 className="text-lg font-medium">Scanner Results</h3>
-                            <div className="grid gap-6">
-                                {scanResults
-                                    .filter(r => !isPostProcessorResult(r.analyzer_name))
-                                    .map((result) => (
-                                    <Card key={result.id} className="overflow-hidden">
-                                        <CardHeader className="bg-muted/50 pb-4">
-                                            <CardTitle className="text-lg flex items-center justify-between">
-                                                <span className="capitalize">{result.analyzer_name}</span>
-                                                <Badge variant="outline">Result</Badge>
-                                            </CardTitle>
-                                        </CardHeader>
-                                        <CardContent className="p-0">
-                                            <CodeBlock code={JSON.stringify(result.result, null, 2)} />
-                                        </CardContent>
-                                    </Card>
-                                ))}
+                    {scanResults?.map((result) => {
+                        const label = [result.analyzer_name, result.source].filter(Boolean).join(' ')
+                        return (
+                            <div key={result.id} className="flex items-center justify-between gap-4 py-3">
+                                <div className="flex items-center gap-2">
+                                    <span>{label}</span>
+                                    {isPostProcessorResult(result.analyzer_name) && <Badge variant="outline">Post-Processor</Badge>}
+                                </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    aria-label={`Download ${label}`}
+                                    onClick={() => downloadServerFile(() => scanApi.downloadResult(scanId!, result.id), `${result.analyzer_name}.json`, 'Could not download the result')}
+                                >
+                                    <Download className="h-4 w-4 mr-2" />
+                                    Download
+                                </Button>
                             </div>
-                        </div>
+                        )
+                    })}
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                        <FileJson className="h-5 w-5" />
+                        SBOMs
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="divide-y">
+                    {isSbomsLoading && <Skeleton className="h-24" />}
+                    {!isSbomsLoading && !scanSboms?.length && (
+                        <p className="text-muted-foreground">No SBOM data found for this scan.</p>
                     )}
-
-                    <div className="space-y-4">
-                        <h3 className="text-lg font-medium flex items-center gap-2">
-                            <FileJson className="h-5 w-5" />
-                            Raw SBOMs
-                            {isSbomsLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                        </h3>
-                        {isSbomsLoading && (
-                            <div className="grid gap-6">
-                                <Skeleton className="h-[400px]" />
+                    {scanSboms?.map((sbom) => {
+                        const label = sbom.filename || `SBOM #${sbom.index + 1}`
+                        return (
+                            <div
+                                key={sbom.index}
+                                ref={(el) => { sbomRefs.current[sbom.index] = el }}
+                                className={`flex items-center justify-between gap-4 py-3 transition-all duration-300 ${highlightedSbomIndex === sbom.index ? 'ring-2 ring-primary ring-offset-2' : ''}`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <span>{label}</span>
+                                    {sbom.size === null
+                                        ? <Badge variant="destructive">Missing</Badge>
+                                        : <span className="text-sm text-muted-foreground">{formatBytes(sbom.size)}</span>}
+                                </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    aria-label={`Download ${label}`}
+                                    disabled={sbom.size === null}
+                                    onClick={() => downloadServerFile(() => scanApi.downloadSbom(scanId!, sbom.index), `scan_${scanId}_sbom_${sbom.index + 1}.json`, 'Could not download the SBOM')}
+                                >
+                                    <Download className="h-4 w-4 mr-2" />
+                                    Download
+                                </Button>
                             </div>
-                        )}
-                        {!isSbomsLoading && scanSboms && scanSboms.length > 0 && (
-                            <div className="grid gap-6">
-                                {scanSboms.map((sbomResponse: SbomResponse) => {
-                                    const sbom = sbomResponse.sbom;
-                                    const sbomIndex = sbomResponse.index;
-                                    const sbomName = resolveSbomName(sbomResponse);
-                                    const isHighlighted = highlightedSbomIndex === sbomIndex;
-
-                                    if (sbomResponse.error) {
-                                        return (
-                                            <Card
-                                                key={`sbom-${sbomIndex}`}
-                                                ref={(el) => { sbomRefs.current[sbomIndex] = el }}
-                                                className={`transition-all duration-300 border-destructive ${isHighlighted ? 'ring-2 ring-primary ring-offset-2' : ''}`}
-                                            >
-                                                <CardHeader className="bg-destructive/10 pb-4">
-                                                    <CardTitle className="text-lg flex items-center justify-between">
-                                                        <span>{sbomName}</span>
-                                                        <Badge variant="destructive">Load Error</Badge>
-                                                    </CardTitle>
-                                                </CardHeader>
-                                                <CardContent className="p-4">
-                                                    <p className="text-destructive">{sbomResponse.error}</p>
-                                                </CardContent>
-                                            </Card>
-                                        );
-                                    }
-
-                                    if (!sbom) return null;
-
-                                    const toolName = extractSbomToolName(sbom);
-
-                                    return (
-                                        <Card
-                                            key={`sbom-${sbomIndex}`}
-                                            ref={(el) => { sbomRefs.current[sbomIndex] = el }}
-                                            className={`transition-all duration-300 ${isHighlighted ? 'ring-2 ring-primary ring-offset-2' : ''}`}
-                                        >
-                                            <CardHeader className="bg-muted/50 pb-4">
-                                                <CardTitle className="text-lg flex items-center justify-between">
-                                                    <span>{sbomName}</span>
-                                                    <div className="flex items-center gap-2">
-                                                        <Badge variant="secondary" className="font-mono">SBOM #{sbomIndex + 1}</Badge>
-                                                        {toolName && (
-                                                            <Badge variant="outline">{toolName}</Badge>
-                                                        )}
-                                                        {sbomResponse.storage === 'gridfs' && (
-                                                            <Badge variant="outline" className="text-xs">GridFS</Badge>
-                                                        )}
-                                                    </div>
-                                                </CardTitle>
-                                            </CardHeader>
-                                            <CardContent className="p-0">
-                                                <CodeBlock code={JSON.stringify(sbom, null, 2)} />
-                                            </CardContent>
-                                        </Card>
-                                    )
-                                })}
-                            </div>
-                        )}
-                        {!isSbomsLoading && !scanSboms?.length && scan.sbom_refs && scan.sbom_refs.length > 0 && (
-                            <Card>
-                                <CardHeader className="bg-muted/50">
-                                    <CardTitle className="text-lg">SBOM References</CardTitle>
-                                </CardHeader>
-                                <CardContent className="p-4">
-                                    <p className="text-muted-foreground mb-4">
-                                        {scan.sbom_refs.length} SBOM(s) stored in GridFS. Loading...
-                                    </p>
-                                    <CodeBlock code={JSON.stringify(scan.sbom_refs, null, 2)} />
-                                </CardContent>
-                            </Card>
-                        )}
-                        {!isSbomsLoading && !scanSboms?.length && !(scan.sbom_refs && scan.sbom_refs.length > 0) && (
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle>No SBOMs Available</CardTitle>
-                                </CardHeader>
-                                <CardContent className="p-4">
-                                    <p className="text-muted-foreground">No SBOM data found for this scan.</p>
-                                </CardContent>
-                            </Card>
-                        )}
-                    </div>
-                </div>
-            )}
+                        )
+                    })}
+                </CardContent>
+            </Card>
         </TabsContent>
       </Tabs>
     </div>

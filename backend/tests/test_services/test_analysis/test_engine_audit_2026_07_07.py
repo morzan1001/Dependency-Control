@@ -89,7 +89,9 @@ class TestAggregateExternalSkipsEngineRows:
             ("reachability", build_reachability_summary([], [])),
             *((name, {"findings": []}) for name in sorted(CRYPTO_ANALYZERS)),
         ):
-            asyncio.run(AnalysisResultRepository(db).save_result("scan-1", analyzer_name, result))
+            asyncio.run(
+                db.analysis_results.insert_one({"scan_id": "scan-1", "analyzer_name": analyzer_name, "result": result})
+            )
         results_summary: list = []
 
         asyncio.run(_aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1", results_summary))

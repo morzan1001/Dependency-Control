@@ -1,5 +1,7 @@
 import asyncio
 import gc
+import threading
+import time
 import weakref
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -371,7 +373,6 @@ async def test_cve_sla_reads_only_the_severities_it_has_a_deadline_for(db):
 
     assert [f["severity"] for f in inputs.findings] == [Severity.CRITICAL.value]
     assert inputs.findings[0]["first_seen_at"] is not None
-    assert inputs.coverage.findings.in_scope == 1
 
 
 @pytest.mark.asyncio
@@ -410,11 +411,9 @@ async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
     await _store_project(db, "p1")
     finding_reads, asset_reads = _reads(db.findings), _reads(db.crypto_assets)
 
-    inputs = await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
+    await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
 
     assert finding_reads == asset_reads == []
-    assert inputs.coverage.findings is None
-    assert inputs.coverage.crypto_assets is None
 
 
 @pytest.mark.asyncio
@@ -424,11 +423,9 @@ async def test_a_framework_without_crypto_controls_reads_no_assets(db, key):
     await _store_project(db, "p1")
     asset_reads = _reads(db.crypto_assets)
 
-    inputs = await _gather(db, _project_scope(), key)
+    await _gather(db, _project_scope(), key)
 
     assert asset_reads == []
-    assert inputs.coverage.crypto_assets is None
-    assert inputs.coverage.findings is not None
 
 
 def _rsa(pid, scan_id, key_size_bits):
@@ -459,7 +456,6 @@ async def test_the_inventory_comes_from_one_unsorted_read_across_the_scope(db):
     assert set(projection.values()) == {1}
     assert sorted(a.project_id for a in inputs.crypto_assets) == ["p1", "p2"]
     assert inputs.crypto_assets[0].occurrence_locations == []
-    assert inputs.coverage.crypto_assets.in_scope == 2
 
 
 @pytest.mark.asyncio
@@ -513,6 +509,55 @@ async def test_generate_lets_go_of_the_inputs_before_rendering():
     assert alive_at_render == [False]
     assert update_status.call_args_list[-1].kwargs["policy_version_snapshot"] == 3
     assert update_status.call_args_list[-1].kwargs["iana_catalog_version_snapshot"] == 4
+
+
+@pytest.mark.asyncio
+async def test_reports_render_one_at_a_time_while_the_event_loop_keeps_running(monkeypatch):
+    """A large-scope PDF lays out for tens of seconds at hundreds of MB; a blocked loop fails the liveness probe."""
+    monkeypatch.setattr(engine_module, "_RENDER_SLOT", asyncio.Semaphore(1))
+    engine = ComplianceReportEngine()
+    loop = asyncio.get_running_loop()
+    rendering: list[str] = []
+    overlapped: list[bool] = []
+    loop_ran_during_render: list[bool] = []
+
+    def slow_render(fmt, framework, evaluation, rep):
+        rendering.append(rep.id)
+        overlapped.append(len(rendering) > 1)
+        loop_ran = threading.Event()
+        loop.call_soon_threadsafe(loop_ran.set)
+        loop_ran_during_render.append(loop_ran.wait(timeout=5))
+        time.sleep(0.2)
+        rendering.remove(rep.id)
+        return b"{}", "x.json", "application/json"
+
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=AsyncMock()),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=MagicMock(resolve=AsyncMock(return_value=_project_scope())),
+        ),
+        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=evaluation_input())),
+        patch.object(engine, "_render", side_effect=slow_render),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
+    ):
+        outcomes = await asyncio.gather(
+            *(
+                engine.generate(
+                    report=_report(framework=ReportFramework.CVE_REMEDIATION_SLA),
+                    db=MagicMock(),
+                    user=MagicMock(id="u1", permissions=frozenset()),
+                )
+                for _ in range(2)
+            )
+        )
+
+    assert [status for status, _ in outcomes] == [ReportStatus.COMPLETED] * 2
+    assert loop_ran_during_render == [True, True]
+    assert overlapped == [False, False]
 
 
 @pytest.mark.asyncio

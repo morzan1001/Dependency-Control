@@ -1,13 +1,18 @@
 """The ingest path must record an update-frequency delta, and a rollup failure must not fail the scan."""
 
-import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 
 from app.core.constants import ANALYSIS_MAX_RETRIES, SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.core.init_db import create_indexes
 from app.models.project import Scan
+from app.repositories.update_frequency import ScanUpdateDeltaRepository
 from app.services.analysis.engine import run_analysis
+from tests.helpers.sboms import store_sbom
+
+pytestmark = pytest.mark.live_mongo
 
 _PROJECT_ID = "test-project-id"
 _WORKER = "pod-a/worker-0"
@@ -46,19 +51,11 @@ def _gridfs_ref(file_id: str) -> dict:
     }
 
 
-@pytest.fixture
-def _gridfs_patched(monkeypatch):
-    sboms = {_FILE_ID_OLD: _SBOM_OLD, _FILE_ID_NEW: _SBOM_NEW}
-    fs = MagicMock()
-
-    async def _open(object_id):
-        stream = MagicMock()
-        stream.read = AsyncMock(return_value=json.dumps(sboms[str(object_id)]).encode())
-        return stream
-
-    fs.open_download_stream = AsyncMock(side_effect=_open)
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
-    return fs
+@pytest_asyncio.fixture
+async def _stored_sboms(db):
+    await create_indexes(db)
+    await store_sbom(db, _SBOM_OLD, _FILE_ID_OLD)
+    await store_sbom(db, _SBOM_NEW, _FILE_ID_NEW)
 
 
 async def _ingest(db, file_id: str) -> str:
@@ -71,7 +68,7 @@ async def _ingest(db, file_id: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_ingest_records_delta_for_each_scan(db, _gridfs_patched):
+async def test_ingest_records_delta_for_each_scan(db, _stored_sboms):
     first = await _ingest(db, _FILE_ID_OLD)
     second = await _ingest(db, _FILE_ID_NEW)
 
@@ -93,7 +90,7 @@ async def test_ingest_records_delta_for_each_scan(db, _gridfs_patched):
 
 
 @pytest.mark.asyncio
-async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_delta(db, _gridfs_patched):
+async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_delta(db, _stored_sboms):
     first = await _ingest(db, _FILE_ID_OLD)
     second = await _ingest(db, _FILE_ID_NEW)
 
@@ -111,10 +108,10 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_del
 
 
 @pytest.mark.asyncio
-async def test_scan_still_completes_when_the_delta_write_fails(db, _gridfs_patched):
+async def test_scan_still_completes_when_the_delta_write_fails(db, _stored_sboms, monkeypatch):
     """The rollup's own handler must absorb a Mongo failure, including the error-doc fallback."""
     failing_write = AsyncMock(side_effect=RuntimeError("no space left on device"))
-    db.scan_update_deltas.update_one = failing_write
+    monkeypatch.setattr(ScanUpdateDeltaRepository, "save", failing_write)
 
     scan = Scan(
         project_id=_PROJECT_ID,

@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.constants import ARCHIVE_GRIDFS_FRAME, SCAN_KEYED_COLLECTIONS, SCAN_SCOPED_COLLECTIONS
+from app.core.constants import (
+    ARCHIVE_GRIDFS_CHUNK_FRAME,
+    ARCHIVE_GRIDFS_FRAME,
+    SCAN_KEYED_COLLECTIONS,
+    SCAN_SCOPED_COLLECTIONS,
+)
 from app.services.scan_cascade import delete_scans_and_related_data
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -46,8 +51,7 @@ async def _remaining(db: Any, scan_id: str) -> dict[str, int]:
 
 
 @pytest.mark.asyncio
-async def test_the_cascade_empties_every_collection_a_scan_is_keyed_into(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.scan_cascade.cleanup_gridfs_files", AsyncMock())
+async def test_the_cascade_empties_every_collection_a_scan_is_keyed_into() -> None:
     db = FakeDatabase()
     await _seed_scan(db, _SCAN_ID)
     await _seed_scan(db, _OTHER_SCAN_ID)
@@ -59,8 +63,7 @@ async def test_the_cascade_empties_every_collection_a_scan_is_keyed_into(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_the_cascade_leaves_another_scans_rows_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.scan_cascade.cleanup_gridfs_files", AsyncMock())
+async def test_the_cascade_leaves_another_scans_rows_alone() -> None:
     db = FakeDatabase()
     await _seed_scan(db, _SCAN_ID)
     await _seed_scan(db, _SURVIVOR_SCAN_ID, project_id="p2")
@@ -68,21 +71,6 @@ async def test_the_cascade_leaves_another_scans_rows_alone(monkeypatch: pytest.M
     await delete_scans_and_related_data(db, [_SCAN_ID])
 
     assert set((await _remaining(db, _SURVIVOR_SCAN_ID)).values()) == {1}
-
-
-@pytest.mark.asyncio
-async def test_the_cascade_asks_gridfs_to_spare_files_another_scan_still_references(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The refcount check is what keeps a rescan's copied sbom_refs from being orphaned."""
-    cleanup = AsyncMock()
-    monkeypatch.setattr("app.services.scan_cascade.cleanup_gridfs_files", cleanup)
-    db = FakeDatabase()
-    await _seed_scan(db, _SCAN_ID)
-
-    await delete_scans_and_related_data(db, [_SCAN_ID])
-
-    cleanup.assert_awaited_once_with(db, [_GRIDFS_ID], deleted_scan_ids=[_SCAN_ID])
 
 
 class _RecordingDatabase:
@@ -120,7 +108,6 @@ async def test_project_deletion_and_retention_remove_the_same_scan_scoped_collec
     """One cascade, so a collection added to one path cannot be missing from the other."""
     from app.api.v1.endpoints.projects import delete_project
 
-    monkeypatch.setattr("app.services.scan_cascade.cleanup_gridfs_files", AsyncMock())
     monkeypatch.setattr(
         "app.api.v1.endpoints.projects.check_project_access", AsyncMock(return_value=MagicMock(id=_PROJECT_ID))
     )
@@ -143,9 +130,9 @@ def test_the_archive_bundle_carries_exactly_what_the_cascade_removes() -> None:
     from app.models.archive import ArchiveMetadata
     from app.services.archive import _RESTORABLE_COLLECTIONS
 
-    assert {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME} == _RESTORABLE_COLLECTIONS
+    assert {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME, ARCHIVE_GRIDFS_CHUNK_FRAME} == _RESTORABLE_COLLECTIONS
     assert set(ArchiveMetadata(project_id="p", scan_id="s", s3_key="k", s3_bucket="b").collections_included) == {
         "scans",
         *SCAN_SCOPED_COLLECTIONS,
-        ARCHIVE_GRIDFS_FRAME,
+        ARCHIVE_GRIDFS_CHUNK_FRAME,
     }

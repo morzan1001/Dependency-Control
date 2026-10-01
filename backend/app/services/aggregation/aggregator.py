@@ -28,8 +28,8 @@ from app.services.component_identity import (
 from app.services.aggregation.cross_link import cross_link_pair, record_additional_types
 from app.services.aggregation.merging import (
     absorb_header,
+    dedupe_vulnerability_entries,
     merge_findings_data,
-    merge_vulnerability_into_list,
     to_sast_aggregate,
 )
 from app.services.aggregation.quality import update_quality_description
@@ -147,6 +147,7 @@ def _deps_dev_block(metadata: dict[str, Any]) -> dict[str, Any]:
 class ResultAggregator:
     def __init__(self) -> None:
         self.findings: dict[str, Finding] = {}
+        self._unfolded: set[str] = set()
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
 
     def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
@@ -333,6 +334,12 @@ class ResultAggregator:
 
         return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
 
+    def fold_vulnerability_entries(self) -> None:
+        """Fold the advisory entries of each package that gained some, so the entries held do not grow with the SBOM count."""
+        for agg_key in self._unfolded:
+            dedupe_vulnerability_entries(self.findings[agg_key].details["vulnerabilities"])
+        self._unfolded.clear()
+
     @staticmethod
     def _finding_sort_key(f: Finding) -> tuple[str, str, str, str]:
         return (str(f.type), normalize_component(f.component), f.version or "", f.id)
@@ -343,6 +350,8 @@ class ResultAggregator:
         Analyzers aggregate in completion order, so every step here is kept order-independent:
         identical scanner output must yield an identical finding set between runs.
         """
+        # Each spelling folds before its cluster merges, whether or not the caller folded along the way.
+        self.fold_vulnerability_entries()
         final_findings: list[Finding] = []
         vuln_groups: dict[tuple[str, str], list[Finding]] = {}
         for f in self.findings.values():
@@ -365,7 +374,7 @@ class ResultAggregator:
         for f in final_findings:
             entries = f.details.get("vulnerabilities")
             if entries:
-                entries.sort(key=lambda entry: str(entry.get("id")))
+                dedupe_vulnerability_entries(entries)
                 f.details["fixed_version"] = aggregate_fixed_version(entries, f.version)
 
         self._link_related_findings_by_component(final_findings)
@@ -469,9 +478,7 @@ class ResultAggregator:
         """Merge a vulnerability finding into an existing aggregate."""
         absorb_header(existing, finding, source)
         _adopt_smallest_spelling(existing, finding, "")
-        vuln_list: list[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
-        merge_vulnerability_into_list(vuln_list, vuln_entry)
-        existing.details["vulnerabilities"] = vuln_list
+        existing.details["vulnerabilities"].append(vuln_entry)
         existing.description = ""
 
     def _add_vulnerability_finding(self, finding: Finding, source: str | None = None) -> None:
@@ -482,6 +489,7 @@ class ResultAggregator:
 
         if agg_key in self.findings:
             self._merge_vuln_into_existing(self.findings[agg_key], finding, vuln_entry, source)
+            self._unfolded.add(agg_key)
         else:
             agg_details: VulnerabilityAggregatedDetails = {"vulnerabilities": [vuln_entry]}
 

@@ -239,12 +239,14 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index("pipeline_id")
     await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    await database["scans"].create_index("sbom_refs.gridfs_id")
 
     # Analysis Results
     await database["analysis_results"].create_index("scan_id")
     await database["analysis_results"].create_index(
         [("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)]
     )
+    await database["analysis_results"].create_index("result_gridfs_id", sparse=True)
 
     # Waivers
     await database["waivers"].create_index("project_id")
@@ -459,6 +461,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Callgraphs
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    await database["callgraphs"].create_index("graph_gridfs_id", sparse=True)
     # One callgraph per language per scan. The type filter keeps rows with a null scan_id
     # (pipeline-only uploads) out of the uniqueness scope. Guarded like the teams index so a
     # pre-existing duplicate cannot crash startup.
@@ -593,6 +596,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["compliance_reports"].create_index(
         [("requested_by", pymongo.ASCENDING), ("status", pymongo.ASCENDING)]
     )
+    await database["compliance_reports"].create_index("artifact_gridfs_id", sparse=True)
+
+    await database["adhoc_jobs"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
+    await database["adhoc_jobs"].create_index([("status", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
+    await database["adhoc_jobs"].create_index("input_file_id")
+    await database["adhoc_jobs"].create_index("result_file_id", sparse=True)
 
     # Findings: scan_created_at analytics indexes
     await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])

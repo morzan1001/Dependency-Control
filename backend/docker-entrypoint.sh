@@ -5,7 +5,6 @@ set -e
 HOST="${HOST:-0.0.0.0}"
 HTTP_PORT="${HTTP_PORT:-8000}"
 HTTPS_PORT="${HTTPS_PORT:-8443}"
-WORKERS="${WORKER_COUNT:-1}"
 
 # Vulnerability database setup
 # ─────────────────────────────
@@ -32,6 +31,9 @@ else
 fi
 export GRYPE_DB_AUTO_UPDATE=false
 
+# SBOM copies (cli_base.TEMP_SBOM_PREFIX) a killed run left on /tmp, which survives container restarts.
+rm -f "${TMPDIR:-/tmp}"/dc-sbom-*
+
 # Build uvicorn command based on TLS settings
 if [ "$TLS_ENABLED" = "true" ]; then
     # Verify certificates exist
@@ -44,21 +46,19 @@ if [ "$TLS_ENABLED" = "true" ]; then
         exit 1
     fi
 
-    echo "Starting uvicorn with HTTPS on port $HTTPS_PORT ($WORKERS workers)"
+    echo "Starting uvicorn with HTTPS on port $HTTPS_PORT"
     exec uvicorn app.main:app \
         --host "$HOST" \
         --port "$HTTPS_PORT" \
-        --workers "$WORKERS" \
         --ssl-certfile "$TLS_CERT_PATH" \
         --ssl-keyfile "$TLS_KEY_PATH" \
         --proxy-headers \
         --forwarded-allow-ips "${TRUSTED_PROXY_IPS:-*}"
 else
-    echo "Starting uvicorn with HTTP on port $HTTP_PORT ($WORKERS workers)"
+    echo "Starting uvicorn with HTTP on port $HTTP_PORT"
     exec uvicorn app.main:app \
         --host "$HOST" \
         --port "$HTTP_PORT" \
-        --workers "$WORKERS" \
         --proxy-headers \
         --forwarded-allow-ips "${TRUSTED_PROXY_IPS:-*}"
 fi

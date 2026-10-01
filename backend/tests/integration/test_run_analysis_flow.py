@@ -1,10 +1,14 @@
 """run_analysis on a FakeDatabase: analyzer set, GitHub token, final status and what reaches notifications."""
 
 import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
@@ -14,20 +18,22 @@ from app.core.constants import (
     SCAN_STATUS_PENDING,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
 )
+from app.core.init_db import create_indexes
 from app.models.project import Scan
 from app.models.stats import Stats
-from app.services import gridfs_maintenance
 from app.services.analysis import engine
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.notifications import notification_service
 from app.services.webhooks import webhook_service
 from tests.helpers.analyzers import serve_analyzer
 from tests.helpers.enrichment import Upstreams, serve_enrichment
+from tests.helpers.sboms import store_sbom
 
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _WORKER = "pod-a/worker-0"
 _LAST_ATTEMPT = ANALYSIS_MAX_RETRIES - 1
+_EMPTY_SBOM = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
 
 
 async def _seed_scan(db) -> str:
@@ -39,6 +45,14 @@ async def _seed_scan(db) -> str:
 @pytest.fixture(autouse=True)
 def _no_gridfs(monkeypatch):
     monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: None)
+
+
+@pytest_asyncio.fixture
+async def stored_sbom(db, monkeypatch) -> dict:
+    """A stored SBOM without components, for a run that has to reach its analyzers."""
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", AsyncIOMotorGridFSBucket)
+    await create_indexes(db)
+    return await store_sbom(db, _EMPTY_SBOM)
 
 
 @pytest.fixture
@@ -84,11 +98,15 @@ async def test_a_scan_that_is_not_finalized_is_not_notified(db, notified, monkey
     assert notified == []
 
 
-def _gridfs_outage(monkeypatch) -> dict:
-    async def _outage(fs, file_id, **_kwargs):
-        raise OSError("gridfs outage")
+def _gridfs_outage(monkeypatch, while_listing=lambda: asyncio.sleep(0)) -> dict:
+    """GridFS holds none of the scan's SBOM files."""
 
-    monkeypatch.setattr(gridfs_maintenance, "open_gridfs_download_with_retry", _outage)
+    async def _no_stored_files(_filter):
+        await while_listing()
+        for stored in ():
+            yield stored
+
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: SimpleNamespace(find=_no_stored_files))
     file_id = "69d5332257c8763c8d8c82d7"
     return {"storage": "gridfs", "file_id": file_id, "type": "gridfs_reference", "gridfs_id": file_id}
 
@@ -168,6 +186,7 @@ def enrichment_inputs(monkeypatch) -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_cbom_scan_runs_the_crypto_analyzers_once_beside_the_configured_ones(db, notified, enrichment_inputs):
     await seed_crypto_policies(db)
     scan = Scan(
@@ -228,12 +247,12 @@ class _SettingsProbe:
 
 
 @pytest.mark.asyncio
-async def test_the_instance_token_reaches_the_analyzers_too(db, notified, enrichment_inputs, monkeypatch):
+@pytest.mark.live_mongo
+async def test_the_instance_token_reaches_the_analyzers_too(db, notified, enrichment_inputs, monkeypatch, stored_sbom):
     await db.github_instances.insert_one(_github_instance("gh", _T0, access_token="instance-token"))
     probe = serve_analyzer(monkeypatch, "maintainer_risk", _SettingsProbe())
-    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
 
-    await engine.run_analysis(await _seed_scan(db), [sbom], ["maintainer_risk"], db, worker_id=_WORKER)
+    await engine.run_analysis(await _seed_scan(db), [stored_sbom], ["maintainer_risk"], db, worker_id=_WORKER)
 
     assert probe.settings["github_token"] == "instance-token"
 
@@ -414,15 +433,14 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_on_its_last_attempt_keeps_
 
 @pytest.mark.asyncio
 async def test_a_result_that_arrives_while_the_last_attempt_loads_its_sbom_reschedules_it(db, notified, monkeypatch):
-    ref = _gridfs_outage(monkeypatch)
-    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
+    scan_id = ""
 
-    async def _result_lands_while_the_read_retries(fs, file_id, **_kwargs):
+    async def _result_lands_while_the_files_are_listed():
         await db.scans.update_one({"_id": scan_id}, {"$set": {"last_result_at": datetime.now(timezone.utc)}})
         await asyncio.sleep(0.01)
-        raise OSError("gridfs outage")
 
-    monkeypatch.setattr(gridfs_maintenance, "open_gridfs_download_with_retry", _result_lands_while_the_read_retries)
+    ref = _gridfs_outage(monkeypatch, _result_lands_while_the_files_are_listed)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
 
     assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
 
@@ -568,9 +586,7 @@ _LOG4SHELL = "CVE-2021-44228"
 _TEXT4SHELL_FINDING = "org.apache.commons:commons-text:1.9"
 
 
-class _TrivyReport:
-    name = "trivy"
-
+class _CannedReport:
     def __init__(self, report: dict) -> None:
         self.report = report
 
@@ -579,8 +595,9 @@ class _TrivyReport:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_waived_findings(
-    db, monkeypatch, fake_cache
+    db, monkeypatch, fake_cache, stored_sbom
 ):
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "default_branch": "main"})
     await db.waivers.insert_one(
@@ -608,15 +625,75 @@ async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_wai
             }
         ]
     }
-    serve_analyzer(monkeypatch, "trivy", _TrivyReport(trivy))
+    serve_analyzer(monkeypatch, "trivy", _CannedReport(trivy))
     serve_enrichment(monkeypatch, fake_cache, Upstreams(kev=(_LOG4SHELL,)))
     delivered = AsyncMock()
     monkeypatch.setattr(webhook_service, "trigger_webhooks", delivered)
     monkeypatch.setattr(notification_service, "notify_project_members", AsyncMock())
 
-    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
-    await engine.run_analysis(scan_id, [sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
+    await engine.run_analysis(scan_id, [stored_sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
 
     alerts = {c.kwargs["event_type"]: c.kwargs["payload"] for c in delivered.await_args_list}
     vulnerabilities = alerts[WEBHOOK_EVENT_VULNERABILITY_FOUND]["vulnerabilities"]
     assert (vulnerabilities["kev"], [v["id"] for v in vulnerabilities["top"]]) == (1, [_LOG4SHELL])
+
+
+_BASE_IMAGE_CVES = ("CVE-2024-0727", "CVE-2024-2511", "CVE-2024-4741")
+
+
+def _base_image_reports() -> tuple[dict, dict]:
+    """Trivy and grype on one OS package of a shared base image; grype keys each CVE's GHSA as its alias."""
+    package = {"name": "libssl3", "version": "3.0.11-1~deb12u2"}
+    trivy = {
+        "Results": [
+            {
+                "Target": "debian 12",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": cve,
+                        "PkgName": package["name"],
+                        "InstalledVersion": package["version"],
+                        "FixedVersion": "3.0.14-1~deb12u1",
+                        "Severity": "MEDIUM",
+                    }
+                    for cve in _BASE_IMAGE_CVES
+                ],
+            }
+        ]
+    }
+    grype = {
+        "matches": [
+            {
+                "vulnerability": {"id": f"GHSA-{n:04x}-ssl3-deb1", "severity": "Medium"},
+                "relatedVulnerabilities": [{"id": cve}],
+                "artifact": package,
+            }
+            for n, cve in enumerate(_BASE_IMAGE_CVES)
+        ]
+    }
+    return trivy, grype
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_sboms_sharing_a_base_image_retain_one_entry_per_advisory(
+    db, notified, enrichment_inputs, monkeypatch, stored_sbom
+):
+    trivy, grype = _base_image_reports()
+    serve_analyzer(monkeypatch, "trivy", _CannedReport(trivy))
+    serve_analyzer(monkeypatch, "grype", _CannedReport(grype))
+    retained: list[int] = []
+    process_sbom = engine._process_sbom
+
+    # Counted as each SBOM starts: what the earlier SBOMs left held while this one is loaded.
+    async def _count_retained(*args, **kwargs):
+        aggregator = inspect.signature(process_sbom).bind(*args, **kwargs).arguments["aggregator"]
+        retained.append(sum(len(f.details.get("vulnerabilities", [])) for f in aggregator.findings.values()))
+        return await process_sbom(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_process_sbom", _count_retained)
+    sboms = [stored_sbom, *[await store_sbom(db, _EMPTY_SBOM) for _ in range(2)]]
+
+    await engine.run_analysis(await _seed_scan(db), sboms, ["grype", "trivy"], db, worker_id=_WORKER)
+
+    assert retained == [0, len(_BASE_IMAGE_CVES), len(_BASE_IMAGE_CVES)]

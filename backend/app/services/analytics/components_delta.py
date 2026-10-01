@@ -8,27 +8,19 @@ from __future__ import annotations
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.purl import package_identity
-from app.repositories.base import find_window
 from app.schemas.scan_delta import (
     ComponentDeltaItem,
     DeltaCategory,
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import MAX_FETCH, both_sides, by_side, delta_truncation, pair_versions
+from app.services.analytics._delta_pagination import both_sides, by_side, pair_versions
 
-# Served by the {scan_id, name, version} index, so a capped side is cut at the same point in the
-# component namespace on both sides instead of at two arbitrary points in natural order.
-_SIDE_SORT: list[tuple[str, int]] = [("name", 1), ("version", 1)]
+_PROJECTION = dict.fromkeys(("name", "version", "purl", "type", "group", "license"), 1)
 
 
-async def _fetch_components(
-    db: AsyncIOMotorDatabase,
-    project_id: str,
-    scan_id: str,
-) -> tuple[list[dict], int]:
-    query = {"project_id": project_id, "scan_id": scan_id}
-    return await find_window(db["dependencies"], query, MAX_FETCH, sort=_SIDE_SORT)
+async def _fetch_components(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> list[dict]:
+    return await db["dependencies"].find({"project_id": project_id, "scan_id": scan_id}, _PROJECTION).to_list(None)
 
 
 def _one_per_version(rows: list[dict]) -> list[dict]:
@@ -61,7 +53,7 @@ def _to_changed(from_doc: dict, to_doc: dict, change: str) -> ComponentDeltaItem
 async def compare_components(
     db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
-    (from_docs, from_total), (to_docs, to_total) = await both_sides(
+    from_docs, to_docs = await both_sides(
         lambda scan_id: _fetch_components(db, project_id, scan_id), from_scan, to_scan
     )
 
@@ -102,11 +94,4 @@ async def compare_components(
             unchanged=unchanged,
         ),
         items=items,
-        truncation=delta_truncation(
-            MAX_FETCH,
-            from_compared=len(from_docs),
-            from_total=from_total,
-            to_compared=len(to_docs),
-            to_total=to_total,
-        ),
     )

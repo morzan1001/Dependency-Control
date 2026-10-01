@@ -4,21 +4,20 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.body_limit import refuse_oversized_document
 from app.api.v1.helpers.callgraph import (
     ParsedCallgraph,
-    callgraph_entry_count,
     detect_format,
     parse_generic_format,
     parse_madge_format,
 )
 from app.api.v1.helpers.projects import check_project_access
+from app.api.v1.helpers.request_body import read_json_body
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCANS_TIP_SORT
+from app.core.constants import PROJECT_ROLE_EDITOR, SCANS_TIP_SORT
 from app.models.callgraph import Callgraph
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.scans import ScanRepository
@@ -31,6 +30,7 @@ from app.schemas.callgraph import (
     ModuleUsageResponse,
 )
 from app.services.component_identity import canonical_callgraph_language
+from app.services.gridfs_maintenance import upload_gridfs_json
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
 from app.services.scan_manager import deterministic_scan_id
 
@@ -44,6 +44,9 @@ _FORMAT_PARSERS = {
     "madge": parse_madge_format,
     "generic": parse_generic_format,
 }
+
+_GRAPH_FIELDS = ("module_usage", "analyzed_modules")
+_RESPONSE_PROJECTION = dict.fromkeys((*CallgraphResponse.model_fields, "graph_gridfs_id"), 1)
 
 
 def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
@@ -115,55 +118,48 @@ def _parse_callgraph(format_type: str, data: dict[str, Any], language: str) -> P
 @router.post("/{project_id}/callgraph", responses=RESP_AUTH_400)
 async def upload_callgraph(
     project_id: str,
-    request: CallgraphUploadRequest,
+    request: Request,
     db: DatabaseDep,
     _: ProjectWriteDep,
 ) -> CallgraphUploadResponse:
     """Upload call graph data (madge or generic format) for reachability analysis."""
+    upload = await read_json_body(request, CallgraphUploadRequest)
     callgraph_repo = CallgraphRepository(db)
-
-    entry_count = callgraph_entry_count(request.data)
-    if entry_count > CALLGRAPH_MAX_ENTRIES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Callgraph too large: {entry_count} entries exceeds the limit of {CALLGRAPH_MAX_ENTRIES}",
-        )
-
-    format_type = _resolve_format(request.format, request.data)
-    language = _resolve_language(request.language, format_type)
+    format_type = _resolve_format(upload.format, upload.data)
+    language = _resolve_language(upload.language, format_type)
 
     warnings: list[str] = []
     try:
-        parsed = await asyncio.to_thread(_parse_callgraph, format_type, request.data, language)
+        parsed = await asyncio.to_thread(_parse_callgraph, format_type, upload.data, language)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Failed to parse callgraph: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e
 
-    scan_id, scan_exists = await _resolve_scan_id(db, project_id, request.pipeline_id, request.commit_hash)
+    scan_id, scan_exists = await _resolve_scan_id(db, project_id, upload.pipeline_id, upload.commit_hash)
     if not scan_id:
         warnings.append(
             "No pipeline_id: the callgraph is stored project-level and is not used for reachability verdicts"
         )
     elif not scan_exists:
-        warnings.append(f"No scan of pipeline {request.pipeline_id} exists yet; its analysis applies this callgraph")
+        warnings.append(f"No scan of pipeline {upload.pipeline_id} exists yet; its analysis applies this callgraph")
 
     callgraph = Callgraph(
         project_id=project_id,
-        pipeline_id=request.pipeline_id,
-        branch=request.branch,
-        commit_hash=request.commit_hash,
+        pipeline_id=upload.pipeline_id,
+        branch=upload.branch,
+        commit_hash=upload.commit_hash,
         scan_id=scan_id,
         language=language,
-        tool=request.tool or format_type,
-        tool_version=request.tool_version,
+        tool=upload.tool or format_type,
+        tool_version=upload.tool_version,
         module_usage=parsed.module_usage,
         analyzed_modules=parsed.analyzed_modules,
-        source_files_analyzed=request.source_files_count or parsed.source_files,
+        source_files_analyzed=upload.source_files_count or parsed.source_files,
         total_imports=parsed.total_imports,
         total_calls=parsed.total_calls,
-        analysis_duration_ms=request.analysis_duration_ms,
+        analysis_duration_ms=upload.analysis_duration_ms,
     )
 
     upsert_filter, match_context = _build_upsert_filter(project_id, language, scan_id)
@@ -171,12 +167,17 @@ async def upload_callgraph(
     callgraph_data = callgraph.model_dump(by_alias=True)
     uploaded_at = callgraph_data.pop("created_at")
     insert_only = {"_id": callgraph_data.pop("_id"), "created_at": uploaded_at}
-    with refuse_oversized_document("The callgraph"):
-        await callgraph_repo.collection.update_one(
-            upsert_filter,
-            {"$set": {**callgraph_data, "updated_at": uploaded_at}, "$setOnInsert": insert_only},
-            upsert=True,
-        )
+    graph = {field: callgraph_data.pop(field) for field in _GRAPH_FIELDS}
+    graph_gridfs_id = await upload_gridfs_json(db, f"callgraph-{project_id}-{language}.json", graph)
+    await callgraph_repo.collection.update_one(
+        upsert_filter,
+        {
+            "$set": {**callgraph_data, "graph_gridfs_id": graph_gridfs_id, "updated_at": uploaded_at},
+            "$unset": dict.fromkeys(_GRAPH_FIELDS, ""),
+            "$setOnInsert": insert_only,
+        },
+        upsert=True,
+    )
 
     logger.info(
         f"Uploaded callgraph for project {project_id} ({match_context}): "
@@ -227,12 +228,11 @@ async def get_callgraph(
     query: dict[str, Any] = {"project_id": project_id}
     if language:
         query["language"] = _canonical_language(language)
-    callgraph = await callgraph_repo.find_one(query)
+    callgraph = await callgraph_repo.find_one_raw(query, _RESPONSE_PROJECTION)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found for this project")
 
-    data = callgraph.model_dump(by_alias=False, exclude={"id"})
-    return CallgraphResponse(**data)
+    return CallgraphResponse(**await callgraph_repo.load_graph(callgraph))
 
 
 @router.get("/{project_id}/callgraph/modules", responses=RESP_AUTH_404)
@@ -249,9 +249,10 @@ async def get_module_usage(
     query: dict[str, Any] = {"project_id": project_id}
     if language:
         query["language"] = _canonical_language(language)
-    callgraph = await callgraph_repo.find_one_raw(query, {"module_usage": 1, "language": 1})
+    callgraph = await callgraph_repo.find_one_raw(query, {"module_usage": 1, "language": 1, "graph_gridfs_id": 1})
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")
+    await callgraph_repo.load_graph(callgraph)
 
     sorted_modules = sorted(
         (ModuleUsageItem(name=key, **usage) for key, usage in callgraph["module_usage"].items()),

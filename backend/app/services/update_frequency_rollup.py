@@ -35,8 +35,6 @@ _SCAN_PROJECTION = {
     "status": 1,
     "is_rescan": 1,
 }
-# An outdated_packages document averages 48 KB; only the component names are needed.
-_OUTDATED_PROJECTION = {"result.outdated_dependencies.component": 1}
 
 _ERROR_MESSAGE_CAP = 300
 _STALE_DEPENDENCIES_ERROR = "StaleDelta: the scan's dependencies changed after this delta was written"
@@ -142,7 +140,7 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
     if prev is None:
         diff = _Diff()
     else:
-        prev_outdated = await _load_outdated(db, prev["_id"])
+        prev_outdated = (await ScanOutdatedSetRepository(db).names_by_scan([prev["_id"]])).get(prev["_id"])
         diff = _diff_scans(prev_deps, deps, prev_outdated, outdated)
 
     delta = ScanUpdateDelta(
@@ -274,7 +272,7 @@ def _eco_counts(deps: dict[str, dict[str, str]]) -> dict[str, int]:
 
 async def _load_outdated(db: Any, scan_id: str) -> set[str] | None:
     """Component names the scan flagged outdated, or None when it carries no such analysis."""
-    entries = await load_outdated_entries(AnalysisResultRepository(db), scan_id, _OUTDATED_PROJECTION)
+    entries = await load_outdated_entries(AnalysisResultRepository(db), scan_id)
     if entries is None:
         return None
     return {component for entry in entries if (component := entry.get("component", ""))}

@@ -1,17 +1,18 @@
 """Ingest CycloneDX 1.6 CBOM payloads; creates a scan and persists CryptoAssets."""
 
+import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.request_body import read_json_body
 from app.core.constants import (
-    MAX_CBOM_BODY_BYTES,
-    MAX_CRYPTO_ASSETS_PER_SCAN,
     NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
     WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
 )
@@ -27,25 +28,6 @@ from app.services.webhooks import webhook_service
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
-
-
-def _enforce_body_size_limit(request: Request) -> None:
-    """Reject oversized CBOM uploads before Pydantic parses them."""
-    raw = request.headers.get("content-length")
-    if raw is None:
-        return
-    try:
-        size = int(raw)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
-    if size > MAX_CBOM_BODY_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                f"CBOM payload exceeds {MAX_CBOM_BODY_BYTES} bytes "
-                f"({size} bytes received). Split the upload or raise the limit."
-            ),
-        )
 
 
 class CBOMIngest(BaseIngest):
@@ -102,15 +84,17 @@ class CBOMIngestResponse(BaseModel):
     "/ingest/cbom",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest CBOM",
-    dependencies=[Depends(_enforce_body_size_limit)],
 )
 async def ingest_cbom(
-    payload: CBOMIngest,
+    request: Request,
     db: DatabaseDep,
     project: ProjectIngestDep,
 ) -> CBOMIngestResponse:
     """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response."""
-    parsed = parse_cbom(payload.cbom)
+    payload = await read_json_body(request, CBOMIngest)
+    manager = ScanManager(db, project)
+    scan_id = manager.run_scan_id(payload)
+    parsed = await asyncio.to_thread(parse_cbom, payload.cbom)
 
     if parsed.parsed_components == 0:
         raise HTTPException(
@@ -118,18 +102,6 @@ async def ingest_cbom(
             detail="No cryptographic-asset components found in CBOM payload",
         )
 
-    if len(parsed.assets) > MAX_CRYPTO_ASSETS_PER_SCAN:
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail=(
-                f"CBOM contains {len(parsed.assets)} crypto assets, exceeding the limit of "
-                f"{MAX_CRYPTO_ASSETS_PER_SCAN}. Split the upload."
-            ),
-        )
-
-    # The cbom tag makes the analysis engine run the crypto analyzers even without an SBOM.
-    manager = ScanManager(db, project)
-    scan_id = await manager.find_or_create_scan(payload, scan_type="cbom")
     project_id = str(project.id)
 
     try:
@@ -142,6 +114,8 @@ async def ingest_cbom(
             detail="Failed to persist crypto assets. Please retry the upload.",
         ) from exc
 
+    # The cbom tag makes the analysis engine run the crypto analyzers even without an SBOM.
+    await manager.find_or_create_scan(payload, scan_id, scan_type="cbom")
     await manager.register_result(scan_id, "cbom", trigger_analysis=True)
 
     await webhook_service.safe_trigger_webhooks(
@@ -173,20 +147,20 @@ async def _store_crypto_assets(
     db: AsyncIOMotorDatabase, project_id: str, scan_id: str, parsed: ParsedCBOM
 ) -> dict[str, Any]:
     """Bulk-upsert the scan's CryptoAssets and return the summary of what is stored."""
-    crypto_assets = [
-        CryptoAsset(project_id=project_id, scan_id=scan_id, cbom_upload=True, **a.model_dump()) for a in parsed.assets
-    ]
+    written_at = datetime.now(timezone.utc)
     repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(project_id, scan_id, crypto_assets)
-    # Deleted after the upsert so a failed write keeps the previous upload's assets.
-    await repo.delete_many(
-        {
-            "project_id": project_id,
-            "scan_id": scan_id,
-            "cbom_upload": True,
-            "bom_ref": {"$nin": [a.bom_ref for a in crypto_assets]},
-        }
+    await repo.bulk_upsert(
+        project_id,
+        scan_id,
+        (
+            CryptoAsset(
+                project_id=project_id, scan_id=scan_id, cbom_upload=True, created_at=written_at, **a.model_dump()
+            )
+            for a in parsed.assets
+        ),
     )
+    # Deleted after the upsert so a failed write keeps the previous upload's assets.
+    await repo.delete_older_writes({"project_id": project_id, "scan_id": scan_id, "cbom_upload": True}, written_at)
     # Counts persisted docs, so duplicate bom_refs in one payload are reported honestly
     # (bulk_upsert returns submitted ops, which always equals the input length).
     summary: dict[str, Any] = await repo.summary_for_scan(project_id, scan_id)

@@ -13,10 +13,7 @@ _MINIMUM_PDF_BYTES = 1000
 def _partial_coverage():
     from app.schemas.compliance import EvaluationCoverage, InputCoverage
 
-    return EvaluationCoverage(
-        findings=InputCoverage(evaluated=20000, in_scope=20050, limit=20000),
-        crypto_assets=InputCoverage(evaluated=10, in_scope=10, limit=10000),
-    )
+    return EvaluationCoverage(plan_items=InputCoverage(evaluated=1000, in_scope=4200, limit=1000))
 
 
 def test_pdf_renderer_produces_pdf_bytes():

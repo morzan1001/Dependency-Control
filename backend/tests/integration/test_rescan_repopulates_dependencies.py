@@ -1,14 +1,17 @@
 """Scheduled rescans must repopulate the dependencies collection for the new scan_id."""
 
-import json
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
+import pytest_asyncio
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS, SCAN_STATUS_FAILED
+from app.core.init_db import create_indexes
 from app.models.dependency import Dependency
 from app.models.project import Scan
+from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
+from tests.helpers.sboms import store_sbom
+
+pytestmark = pytest.mark.live_mongo
 
 _PROJECT_ID = "test-project-id"
 _WORKER = "pod-a/worker-0"
@@ -59,16 +62,10 @@ def _gridfs_ref(file_id: str) -> dict:
     }
 
 
-def _fake_gridfs(sboms_by_file_id: dict[str, dict]) -> MagicMock:
-    fs = MagicMock()
-
-    async def _open(object_id):
-        stream = MagicMock()
-        stream.read = AsyncMock(return_value=json.dumps(sboms_by_file_id[str(object_id)]).encode())
-        return stream
-
-    fs.open_download_stream = AsyncMock(side_effect=_open)
-    return fs
+async def _store_sboms(db, sbom_a: dict, sbom_b: dict) -> None:
+    await create_indexes(db)
+    await store_sbom(db, sbom_a, _FILE_ID_A)
+    await store_sbom(db, sbom_b, _FILE_ID_B)
 
 
 async def _seed_rescan(db, sbom_refs: list[dict]) -> str:
@@ -95,15 +92,25 @@ async def _seed_stored_dependency(db, scan_id: str, name: str, version: str, pur
     await db.dependencies.insert_one(dep.model_dump(by_alias=True))
 
 
+@pytest_asyncio.fixture
+async def _stored_sboms(db):
+    await _store_sboms(db, _SBOM_A, _SBOM_B)
+
+
 @pytest.fixture
-def _gridfs_patched(monkeypatch):
-    fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _SBOM_B})
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
-    return fs
+def _second_file_unreadable(monkeypatch):
+    real_open = engine.open_gridfs_download_with_retry
+
+    async def _fail_second_file(fs, file_id, **kwargs):
+        if str(file_id) == _FILE_ID_B:
+            raise OSError("transient gridfs outage")
+        return await real_open(fs, file_id, **kwargs)
+
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_second_file)
 
 
 @pytest.mark.asyncio
-async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _gridfs_patched):
+async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _stored_sboms):
     scan_id = await _seed_rescan(db, [_gridfs_ref(_FILE_ID_A)])
     await _seed_stored_dependency(db, _ORIGINAL_SCAN_ID, "requests", "2.31.0", "pkg:pypi/requests@2.31.0")
 
@@ -123,7 +130,7 @@ async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _gridfs_patch
 
 
 @pytest.mark.asyncio
-async def test_rerunning_the_same_rescan_does_not_duplicate_dependencies(db, _gridfs_patched):
+async def test_rerunning_the_same_rescan_does_not_duplicate_dependencies(db, _stored_sboms):
     scan_id = await _seed_rescan(db, [_gridfs_ref(_FILE_ID_A)])
 
     assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
@@ -135,7 +142,7 @@ async def test_rerunning_the_same_rescan_does_not_duplicate_dependencies(db, _gr
 
 
 @pytest.mark.asyncio
-async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, _gridfs_patched):
+async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, _stored_sboms):
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)
 
@@ -149,16 +156,8 @@ async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, 
 
 
 @pytest.mark.asyncio
-async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_patched, monkeypatch):
-    """If any SBOM of the run fails to resolve, the scan's stored deps must survive untouched."""
-
-    async def _fail_second_file(fs, file_id, **_kwargs):
-        if str(file_id) == _FILE_ID_B:
-            raise OSError("transient gridfs outage")
-        return await fs.open_download_stream(file_id)
-
-    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_second_file)
-
+async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _stored_sboms, _second_file_unreadable):
+    """If any SBOM of the run fails to load, the scan's stored deps must survive untouched."""
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
@@ -175,14 +174,14 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_
 
     docs = await _dependency_docs(db, scan.id)
     assert {(d["name"], d["version"]) for d in docs} == {(n, v) for n, v, _ in ingest_stored}, (
-        "a partially resolved run must not wipe or halve the stored dependency set"
+        "a partially loaded run must not wipe or halve the stored dependency set"
     )
+    assert "1 of 2 SBOMs failed to load" in (await db.scans.find_one({"_id": scan.id}))["error"]
 
 
 @pytest.mark.asyncio
-async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_scan(db, monkeypatch):
-    fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _MALFORMED_SBOM})
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
+async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_scan(db):
+    await _store_sboms(db, _SBOM_A, _MALFORMED_SBOM)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
@@ -195,9 +194,8 @@ async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_sc
 
 
 @pytest.mark.asyncio
-async def test_a_rescan_with_an_unparsable_sbom_fails_and_leaves_the_lineage_on_the_earlier_analysis(db, monkeypatch):
-    fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _MALFORMED_SBOM})
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
+async def test_a_rescan_with_an_unparsable_sbom_fails_and_leaves_the_lineage_on_the_earlier_analysis(db):
+    await _store_sboms(db, _SBOM_A, _MALFORMED_SBOM)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     await db.scans.insert_one(
         {"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed", "latest_rescan_id": "earlier"}
@@ -212,16 +210,9 @@ async def test_a_rescan_with_an_unparsable_sbom_fails_and_leaves_the_lineage_on_
 
 @pytest.mark.asyncio
 async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_the_earlier_analysis(
-    db, _gridfs_patched, monkeypatch
+    db, _stored_sboms, _second_file_unreadable
 ):
     """A rescan has no stored inventory to keep, so a partial load would make it a head without dependencies."""
-
-    async def _fail_second_file(fs, file_id, **_kwargs):
-        if str(file_id) == _FILE_ID_B:
-            raise OSError("transient gridfs outage")
-        return await fs.open_download_stream(file_id)
-
-    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_second_file)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
     scan_id = await _seed_rescan(db, refs)
@@ -232,7 +223,7 @@ async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_
 
 
 @pytest.mark.asyncio
-async def test_ingest_prestored_dependencies_are_not_double_stored(db, _gridfs_patched):
+async def test_ingest_prestored_dependencies_are_not_double_stored(db, _stored_sboms):
     """On the normal ingest path the deps already exist for the scan_id; the run must stay at N docs."""
     scan = Scan(
         project_id=_PROJECT_ID,
@@ -284,19 +275,15 @@ def _shared_component(bom_ref: str, location: str, cpe: str, layer: str | None) 
 
 
 @pytest.mark.asyncio
-async def test_cross_sbom_duplicate_is_merged_by_the_analysis_run(db, monkeypatch):
+async def test_cross_sbom_duplicate_is_merged_by_the_analysis_run(db):
     """The analysis run rewrites the inventory after ingest, so it must merge across SBOMs too."""
-    from app.core.init_db import create_indexes
-
-    await create_indexes(db)
     sbom_app = _shared_component(
         "ref-app", "/usr/lib/libssl.so.3", "cpe:2.3:a:openssl:openssl:3.0.11:*:*:*:*:*:*:*", "sha256:" + "a" * 64
     )
     sbom_base = _shared_component(
         "ref-base", "/usr/share/doc/libssl3/copyright", "cpe:2.3:a:openssl:libssl3:3.0.11:*:*:*:*:*:*:*", None
     )
-    fs = _fake_gridfs({_FILE_ID_A: sbom_app, _FILE_ID_B: sbom_base})
-    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
+    await _store_sboms(db, sbom_app, sbom_base)
 
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)

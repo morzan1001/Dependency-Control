@@ -10,6 +10,7 @@ import itertools
 import json
 
 from app.services.aggregation import ResultAggregator
+from app.services.aggregation import aggregator as aggregator_module
 
 TRIVY = {
     "Results": [
@@ -184,11 +185,11 @@ class TestDetailConflictTieBreak:
         }
 
     def test_same_lowest_scanner_resolves_identically_in_both_directions(self):
-        from app.services.aggregation.merging import merge_vulnerability_into_list
+        from app.services.aggregation.merging import dedupe_vulnerability_entries
 
         def _merge(first: dict, second: dict) -> dict:
-            entries: list = [json.loads(json.dumps(first))]
-            merge_vulnerability_into_list(entries, json.loads(json.dumps(second)))
+            entries: list = [json.loads(json.dumps(first)), json.loads(json.dumps(second))]
+            dedupe_vulnerability_entries(entries)
             assert len(entries) == 1
             return entries[0]
 
@@ -326,3 +327,75 @@ class TestSurvivingSpelling:
 
     def test_the_quality_spelling_does_not_depend_on_sbom_order(self):
         assert self._quality(("left-pad", "Left-Pad")) == self._quality(("Left-Pad", "left-pad"))
+
+
+_GRYPE_WITHOUT_CVE_LINK = {"matches": [{**GRYPE["matches"][0], "relatedVulnerabilities": []}]}
+_OSV_QUALIFIED_GHSA = {
+    "osv_vulnerabilities": [
+        {
+            "component": "org.postgresql:postgresql",
+            "version": "42.7.3",
+            "vulnerabilities": [{"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-2025-0001"], "severity": "HIGH"}],
+        }
+    ]
+}
+# A CVE-less entry matches either CVE sharing its GHSA, so which one absorbs it depends on the fold order.
+_GRYPE_BARE_GHSA = {
+    "matches": [
+        {
+            "vulnerability": {"id": "GHSA-aaaa-bbbb-cccc", "severity": "Medium"},
+            "artifact": {"name": "postgresql", "version": "42.7.3"},
+        },
+        {
+            "vulnerability": {"id": "CVE-2025-0002", "severity": "Low"},
+            "relatedVulnerabilities": [{"id": "GHSA-aaaa-bbbb-cccc"}],
+            "artifact": {"name": "postgresql", "version": "42.7.3"},
+        },
+    ]
+}
+_SBOMS = (
+    ("SBOM #1", (("trivy", TRIVY), ("grype", _GRYPE_WITHOUT_CVE_LINK))),
+    ("SBOM #2", (("osv", OSV), ("grype", GRYPE))),
+    ("SBOM #3", (("grype", GRYPE), ("osv", OSV), ("trivy", TRIVY))),
+    ("SBOM #4", (("osv", _OSV_QUALIFIED_GHSA), ("grype", _GRYPE_BARE_GHSA))),
+)
+
+
+def _scan(sboms: tuple, fold_per_sbom: bool) -> str:
+    aggregator = ResultAggregator()
+    for source, results in sboms:
+        for analyzer, result in results:
+            aggregator.aggregate(analyzer, result, source=source)
+        if fold_per_sbom:
+            aggregator.fold_vulnerability_entries()
+    return json.dumps([f.model_dump() for f in aggregator.get_findings()], sort_keys=True, default=str)
+
+
+class TestPerSbomFold:
+    def test_folding_after_each_sbom_leaves_the_findings_unchanged(self):
+        for order in itertools.permutations(_SBOMS):
+            sources = [source for source, _ in order]
+            assert _scan(order, fold_per_sbom=True) == _scan(order, fold_per_sbom=False), sources
+
+    def test_an_advisory_two_cves_could_absorb_joins_the_same_one_whichever_analyzer_finishes_first(self):
+        osv = {"osv_vulnerabilities": [{**_OSV_QUALIFIED_GHSA["osv_vulnerabilities"][0], "component": "postgresql"}]}
+        results = (("osv", osv), ("grype", _GRYPE_BARE_GHSA))
+        assert _scan((("app", results),), fold_per_sbom=True) == _scan((("app", results[::-1]),), fold_per_sbom=True)
+
+    def test_a_fold_revisits_only_the_packages_that_received_entries(self, monkeypatch):
+        folded: list[int] = []
+        real = aggregator_module.dedupe_vulnerability_entries
+        monkeypatch.setattr(
+            aggregator_module,
+            "dedupe_vulnerability_entries",
+            lambda entries: folded.append(len(entries)) or real(entries),
+        )
+        aggregator = ResultAggregator()
+        for n in range(20):
+            vulns = [
+                {"VulnerabilityID": f"CVE-2026-{n:02}{i}", "PkgName": f"service-{n}", "InstalledVersion": "1.0.0"}
+                for i in range(2)
+            ]
+            aggregator.aggregate("trivy", {"Results": [{"Target": "go.mod", "Vulnerabilities": vulns}]}, f"SBOM #{n}")
+            aggregator.fold_vulnerability_entries()
+        assert sum(folded) == 20 * 2

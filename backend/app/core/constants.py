@@ -6,7 +6,7 @@ from typing import Any, Literal, get_args
 
 from app.models.finding import Severity
 
-# HOSTNAME alone repeats across the uvicorn processes of one pod.
+# HOSTNAME alone repeats across the processes of one host.
 INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
 
 # The two CISA KEV flags enrichment persists on a finding's details and on each of its
@@ -939,11 +939,6 @@ REACHABILITY_CONFIDENCE_SYMBOLS_NOT_USED = 0.35
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
-# Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
-# calls, the symbols each import names, madge dependencies and the analyzed-modules list.
-# It bounds parse cost only; whether the parsed graph fits one document is checked on write.
-CALLGRAPH_MAX_ENTRIES = 200_000
-
 GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20
 GITLAB_ACCESS_DEVELOPER = 30
@@ -1108,8 +1103,9 @@ SCAN_SCOPED_COLLECTIONS: tuple[str, ...] = (
 # does not carry them: the restore recomputes them.
 SCAN_KEYED_COLLECTIONS: tuple[str, ...] = ("scan_update_deltas", "scan_outdated_sets")
 
-# The bundle frame holding the scan's GridFS SBOMs, alongside the scan-scoped collections.
+# Bundle sections of the scan's GridFS files: whole SBOMs (older bundles, still restored) and ordered file chunks.
 ARCHIVE_GRIDFS_FRAME = "gridfs_sboms"
+ARCHIVE_GRIDFS_CHUNK_FRAME = "gridfs_chunks"
 
 # BSON int32 is a different type from bool, so a flag written outside the model as 1 satisfies
 # {"$ne": True} and the scan is deleted for good. The retention guards spell out both spellings.
@@ -1121,31 +1117,9 @@ RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
 # Orphan reaper: only delete S3 objects older than this without metadata
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 
-# CBOM / Crypto
-# Also the budget of every read that wants one scan whole: 50 000 assets validate in 0.95 s and
-# 182 MiB, and a scan cannot be ingested past this in one upload.
-MAX_CRYPTO_ASSETS_PER_SCAN: int = 50_000
-MAX_CBOM_BODY_BYTES: int = 25 * 1024 * 1024
-MAX_ADHOC_BODY_BYTES: int = 25 * 1024 * 1024
-ADHOC_MAX_FINDINGS: int = 5000
-ADHOC_DEADLINE_SECONDS: float = 180.0
-ADHOC_RATE_LIMIT_PER_MINUTE: int = 5
-ADHOC_RATE_LIMIT_PER_HOUR: int = 60
+ADHOC_JOB_TTL_SECONDS: int = 24 * 3600
 
-# Each limit bounds one shape a synchronous stage walks, counted in linear time before it runs:
-# a deadline cannot interrupt those stages, and the 25 MB body ceiling sits far above where
-# they hurt.
-ADHOC_MAX_SBOM_COMPONENTS: int = 10_000
-# ``properties``, ``cpes``, ``locations``, ``evidence.occurrences`` and SPDX ``externalRefs``.
-ADHOC_MAX_SBOM_EVIDENCE_ENTRIES: int = 20_000
-# CycloneDX ``dependencies`` with their ``dependsOn`` refs, SPDX ``relationships`` and Syft
-# ``artifactRelationships``: 25 per component at the component limit, and 240 000 over
-# 10 000 components parse in 0.1 s.
-ADHOC_MAX_SBOM_GRAPH_ENTRIES: int = 250_000
-ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
-# Counted as for CALLGRAPH_MAX_ENTRIES. Each vulnerability the usage index misses scans every
-# import pair: 5 000 such findings over 50 000 pairs take about 20 s.
-ADHOC_MAX_CALLGRAPH_ENTRIES: int = 50_000
+# CBOM / Crypto
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 # Per process; at ~55 MiB per saturated report, 2 slots x 2 workers stay near 220 MiB of the 2 GiB pod limit.
 COMPLIANCE_REPORT_SLOTS: int = 2

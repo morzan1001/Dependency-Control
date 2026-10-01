@@ -103,7 +103,7 @@ class TestHolderScopedRelease:
 
 
 def test_every_acquisition_gets_its_own_holder_carrying_the_process():
-    """Several uvicorn processes share one pod HOSTNAME; a holder built from it alone lets one
+    """Several processes share one host's HOSTNAME; a holder built from it alone lets one
     process release the lock another took over after the TTL."""
     import os
 

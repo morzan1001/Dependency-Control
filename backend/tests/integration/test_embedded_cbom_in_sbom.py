@@ -6,16 +6,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.init_db import create_indexes
 from app.models.crypto_policy import CryptoPolicy
 from app.models.project import Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.analysis import engine
-from app.services.analysis.engine import _process_sbom
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.analyzers import bundled_iana_catalog
+from tests.helpers.analyzers import bundled_iana_catalog, process_sbom_document
+from tests.helpers.sboms import store_sbom
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -46,16 +47,7 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
     scan_id = "scan-embedded-cbom-001"
     aggregator = _MinimalAggregator()
 
-    await _process_sbom(
-        index=0,
-        current_sbom=sbom,
-        scan_id=scan_id,
-        db=db,
-        aggregator=aggregator,
-        active_analyzers=[],
-        system_settings=None,
-        project_id=project_id,
-    )
+    await process_sbom_document(0, sbom, scan_id, db, aggregator, [], None, project_id=project_id)
 
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
     assert count == 1, f"Expected 1 CryptoAsset (SHA-1) from embedded CBOM, got {count}"
@@ -79,16 +71,7 @@ async def test_sbom_without_crypto_components_persists_no_crypto_assets(db):
     project_id = "test-project-id"
     scan_id = "scan-no-crypto-001"
 
-    await _process_sbom(
-        index=0,
-        current_sbom=sbom,
-        scan_id=scan_id,
-        db=db,
-        aggregator=_MinimalAggregator(),
-        active_analyzers=[],
-        system_settings=None,
-        project_id=project_id,
-    )
+    await process_sbom_document(0, sbom, scan_id, db, _MinimalAggregator(), [], None, project_id=project_id)
 
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
     assert count == 0, f"Expected 0 CryptoAssets for a plain SBOM, got {count}"
@@ -105,7 +88,6 @@ def _sbom_embedding(fixture: str, app_name: str) -> dict:
 
 @pytest.fixture
 def catalog_loader(monkeypatch) -> AsyncMock:
-    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: None)
     loader = AsyncMock(return_value=bundled_iana_catalog())
     monkeypatch.setattr(engine, "load_iana_catalog", loader)
     return loader
@@ -115,13 +97,16 @@ async def _analyze(db, sboms: list[dict]) -> tuple[str, str | None]:
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
     )
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[], status="processing", worker_id=_WORKER)
+    refs = [await store_sbom(db, sbom) for sbom in sboms]
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
-    return scan.id, await engine.run_analysis(scan.id, sboms, [], db, worker_id=_WORKER)
+    return scan.id, await engine.run_analysis(scan.id, refs, [], db, worker_id=_WORKER)
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_scan_of_several_sboms_evaluates_its_crypto_assets_once(db, catalog_loader):
+    await create_indexes(db)
     sboms = [_sbom_embedding("legacy_crypto_mixed.json", f"app-{n}") for n in (1, 2, 3)]
 
     scan_id, status = await _analyze(db, sboms)
@@ -142,22 +127,11 @@ async def test_a_scan_of_several_sboms_evaluates_its_crypto_assets_once(db, cata
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_scan_without_protocol_assets_never_loads_the_cipher_catalog(db, catalog_loader):
+    await create_indexes(db)
     scan_id, status = await _analyze(db, [_sbom_embedding("cyclonedx_1_6_with_crypto_assets.json", "app")])
 
     assert status == SCAN_STATUS_COMPLETED
     assert [f["type"] for f in await db.findings.find({"scan_id": scan_id}).to_list(None)] == ["crypto_weak_algorithm"]
     catalog_loader.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_crypto_assets_beyond_the_scan_budget_mark_the_crypto_results_partial(db, catalog_loader, monkeypatch):
-    monkeypatch.setattr(engine, "MAX_CRYPTO_ASSETS_PER_SCAN", 2)
-
-    scan_id, status = await _analyze(db, [_sbom_embedding("legacy_crypto_mixed.json", "app")])
-
-    assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
-    rows = await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
-    assert {row["result"]["partial_components_skipped"] for row in rows} == {1}
-    scan = await db.scans.find_one({"_id": scan_id})
-    assert sorted(scan["failed_analyzers"]) == sorted(CRYPTO_ANALYZERS)

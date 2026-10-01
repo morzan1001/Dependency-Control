@@ -8,6 +8,8 @@ accidental connections to real databases.
 import importlib
 import os
 import sys
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 # Ensure the backend app is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -21,6 +23,7 @@ os.environ["MONGODB_URL"] = "mongodb://localhost:27017"
 os.environ["DATABASE_NAME"] = "test_dependency_control"
 
 import pytest
+from bson import ObjectId
 
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
@@ -126,6 +129,46 @@ def sample_purls():
         "with_qualifiers": "pkg:pypi/requests@2.31.0?repository_url=https://pypi.org",
         "with_subpath": "pkg:npm/lodash@4.17.21#dist/lodash.min.js",
     }
+
+
+class _FakeGridFSBucket:
+    """Motor's bucket refuses FakeDatabase, so each upload's bytes stay in that database's fs.files."""
+
+    def __init__(self, db):
+        self._files = db["fs.files"]
+
+    async def upload_from_stream(self, filename, data, metadata=None):
+        file_id = ObjectId()
+        await self._files.insert_one({"_id": file_id, "filename": filename, "data": data, "metadata": metadata})
+        return file_id
+
+    async def open_download_stream(self, file_id):
+        data = (await self._files.find_one({"_id": file_id}))["data"]
+        return SimpleNamespace(read=AsyncMock(return_value=data))
+
+
+@pytest.fixture
+def fake_gridfs(monkeypatch):
+    for module in (
+        "app.services.gridfs_maintenance",
+        "app.repositories.analysis_results",
+        "app.repositories.callgraphs",
+    ):
+        monkeypatch.setattr(f"{module}.AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
+
+
+@pytest.fixture
+def archive_env(monkeypatch):
+    """Archiving enabled against an in-memory S3, bundles unencrypted."""
+    from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
+
+    fake = FakeS3Client()
+    monkeypatch.setattr("app.core.s3.get_s3_client", lambda: fake_get_s3_client(fake))
+    monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
+    monkeypatch.setattr("app.services.archive.is_archive_enabled", lambda: True)
+    monkeypatch.setattr("app.services.archive.is_encryption_enabled", lambda: False)
+    monkeypatch.setattr("app.core.s3.settings", SimpleNamespace(S3_BUCKET_NAME="test-bucket"))
+    return fake
 
 
 @pytest.fixture

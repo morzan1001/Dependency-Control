@@ -126,14 +126,12 @@ async def _chat_summary(db, framework):
 
 
 @pytest.mark.asyncio
-async def test_the_chat_summary_reads_the_findings_the_report_reads(db, monkeypatch):
-    """Vulnerability findings would fill the findings cap and withhold every absence-backed crypto verdict."""
+async def test_the_chat_summary_reads_the_findings_the_report_reads(db):
     await _project_with_vulnerabilities_and_one_md5_finding(db)
-    monkeypatch.setattr("app.services.compliance.engine._FINDINGS_LIMIT", 2)
 
     out = await _chat_summary(db, "nist-sp-800-131a")
 
-    assert out["coverage"] == "Evaluated all 1 findings in scope. Evaluated all 1 crypto assets in scope."
+    assert out["coverage"] == "The verdicts cover the whole scope."
     assert out["summary"]["failed"] >= 1
     assert out["summary"]["not_evaluated"] == 0
 

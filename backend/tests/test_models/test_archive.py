@@ -62,7 +62,7 @@ class TestArchiveMetadata:
         )
         assert "scans" in metadata.collections_included
         assert "findings" in metadata.collections_included
-        assert "gridfs_sboms" in metadata.collections_included
+        assert "gridfs_chunks" in metadata.collections_included
 
     def test_full_metadata(self):
         metadata = ArchiveMetadata(

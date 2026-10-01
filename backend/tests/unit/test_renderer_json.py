@@ -6,6 +6,7 @@ from app.models.finding import Severity
 from app.schemas.compliance import (
     ControlResult,
     ControlStatus,
+    EvaluationCoverage,
     FrameworkEvaluation,
     ReportFormat,
     ReportFramework,
@@ -13,7 +14,6 @@ from app.schemas.compliance import (
 )
 from app.services.compliance.frameworks.base import build_summary
 from app.services.compliance.renderers.json_renderer import JsonRenderer
-from tests.helpers.compliance import full_coverage
 
 
 def _evaluation():
@@ -41,7 +41,7 @@ def _evaluation():
         summary=build_summary(controls),
         residual_risks=[],
         inputs_fingerprint="sha256:abc",
-        coverage=full_coverage(),
+        coverage=EvaluationCoverage(),
     )
 
 

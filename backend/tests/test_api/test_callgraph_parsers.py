@@ -8,7 +8,6 @@ from fastapi import HTTPException
 
 from app.api.v1.endpoints.callgraph import _parse_callgraph, _resolve_format
 from app.api.v1.helpers.callgraph import (
-    callgraph_entry_count,
     detect_format,
     parse_generic_format,
     parse_madge_format,
@@ -456,29 +455,3 @@ class TestCallEdges:
 
         assert usage.import_locations == ["app/client.py", "app/jobs.py"]
         assert (usage.import_count, usage.call_count) == (1, 2)
-
-
-class TestCallgraphEntryCount:
-    """What the parsers walk, counted off the raw payload before any of it is parsed."""
-
-    def test_generic_counts_imports_symbols_calls_and_universe(self):
-        data = {
-            "imports": [
-                {"module": "lodash", "file": "src/a.js", "symbols": ["map", "get"]},
-                {"module": "express", "file": "src/b.js", "symbols": []},
-            ],
-            "calls": [{"callee_module": "lodash", "callee_function": "map"}],
-            "analyzed_modules": ["lodash", "express", "react"],
-        }
-
-        assert callgraph_entry_count(data) == 2 + 2 + 1 + 3
-
-    def test_madge_counts_every_dependency_and_the_universe(self):
-        data = {"src/a.js": ["lodash", "src/b.js"], "src/b.js": ["express"], "__analyzed_modules__": ["lodash"]}
-
-        assert callgraph_entry_count(data) == 3 + 1
-
-    def test_non_list_values_cost_nothing(self):
-        data = {"format": "generic", "language": "python", "imports": "not-a-list", "src/a.js": {"x": 1}}
-
-        assert callgraph_entry_count(data) == 0

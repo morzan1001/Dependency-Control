@@ -1,5 +1,9 @@
 """Tests for the ResultAggregator."""
 
+import json
+import time
+from pathlib import Path
+
 import pytest
 
 from app.core.constants import MAX_CROSS_LINK_GROUP_SIZE
@@ -10,8 +14,8 @@ from app.services.component_identity import (
     normalize_component,
 )
 from app.services.aggregation.merging import (
+    dedupe_vulnerability_entries,
     merge_findings_data,
-    merge_vulnerability_into_list,
 )
 from app.services.aggregation.versions import (
     aggregate_fixed_version,
@@ -241,16 +245,17 @@ class TestAggregateFixedVersion:
         assert aggregate_fixed_version(_entries(*fixes), None) is not None
 
 
-class TestMergeVulnerabilityIntoList:
-    """Tests for _merge_vulnerability_into_list - deduplicates by ID/aliases."""
+def _deduped(*entries):
+    listed = list(entries)
+    dedupe_vulnerability_entries(listed)
+    return listed
 
-    def setup_method(self):
-        self.agg = ResultAggregator()
 
-    def test_new_entry_appended(self):
-        target = []
-        entry = {"id": "CVE-2023-1234", "severity": "HIGH", "aliases": []}
-        merge_vulnerability_into_list(target, entry)
+class TestDedupeVulnerabilityEntries:
+    """Entries sharing an id or alias fold into the earliest of them."""
+
+    def test_a_lone_entry_is_kept(self):
+        target = _deduped({"id": "CVE-2023-1234", "severity": "HIGH", "aliases": []})
         assert len(target) == 1
         assert target[0]["id"] == "CVE-2023-1234"
 
@@ -271,7 +276,7 @@ class TestMergeVulnerabilityIntoList:
             "aliases": [],
             "scanners": ["grype"],
         }
-        merge_vulnerability_into_list(target, entry)
+        target = _deduped(*target, entry)
         assert len(target) == 1
         # Severity: higher wins
         assert target[0]["severity"] == "HIGH"
@@ -296,17 +301,18 @@ class TestMergeVulnerabilityIntoList:
             "aliases": [],
             "scanners": ["grype"],
         }
-        merge_vulnerability_into_list(target, entry)
+        target = _deduped(*target, entry)
         assert len(target) == 1
         # Should keep the original ID (CVE)
         assert target[0]["id"] == "CVE-2023-1234"
         # GHSA should be in aliases
         assert "GHSA-xxxx" in target[0]["aliases"]
 
-    def test_no_match_creates_new_entry(self):
-        target = [{"id": "CVE-2023-1111", "aliases": [], "scanners": []}]
-        entry = {"id": "CVE-2023-2222", "aliases": [], "scanners": []}
-        merge_vulnerability_into_list(target, entry)
+    def test_entries_sharing_no_id_stay_apart(self):
+        target = _deduped(
+            {"id": "CVE-2023-1111", "aliases": [], "scanners": []},
+            {"id": "CVE-2023-2222", "aliases": [], "scanners": []},
+        )
         assert len(target) == 2
 
     def test_cvss_merge_higher_wins(self):
@@ -326,7 +332,7 @@ class TestMergeVulnerabilityIntoList:
             "cvss_score": 9.8,
             "cvss_vector": "new",
         }
-        merge_vulnerability_into_list(target, entry)
+        target = _deduped(*target, entry)
         assert target[0]["cvss_score"] == 9.8
         assert target[0]["cvss_vector"] == "new"
 
@@ -348,9 +354,10 @@ class TestMergeVulnerabilityIntoList:
         ],
     )
     def test_fixed_versions_of_both_entries_are_merged(self, target_fixed, entry_fixed, expected):
-        target = [{"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": target_fixed}]
-        entry = {"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": entry_fixed}
-        merge_vulnerability_into_list(target, entry)
+        target = _deduped(
+            {"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": target_fixed},
+            {"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": entry_fixed},
+        )
         assert target[0]["fixed_version"] == expected
 
 
@@ -403,12 +410,10 @@ class TestConvergentVulnerabilityMerge:
     """Entries linked by an alias contributed later must collapse into one (C10)."""
 
     def test_late_alias_collapses_previously_split_entries(self):
-        target = []
-        merge_vulnerability_into_list(target, _grype_ghsa_entry())
-        merge_vulnerability_into_list(target, _trivy_cve_entry())
+        target = _deduped(_grype_ghsa_entry(), _trivy_cve_entry())
         assert len(target) == 2
 
-        merge_vulnerability_into_list(target, _osv_ghsa_entry_with_cve_alias())
+        target = _deduped(*target, _osv_ghsa_entry_with_cve_alias())
 
         assert len(target) == 1
         merged = target[0]
@@ -423,9 +428,7 @@ class TestConvergentVulnerabilityMerge:
 
         builders = (_grype_ghsa_entry, _trivy_cve_entry, _osv_ghsa_entry_with_cve_alias)
         for order in itertools.permutations(builders):
-            target = []
-            for build in order:
-                merge_vulnerability_into_list(target, build())
+            target = _deduped(*(build() for build in order))
             names = [b.__name__ for b in order]
             assert len(target) == 1, names
             assert target[0]["id"] == "CVE-2026-59888", names
@@ -453,12 +456,64 @@ class TestConvergentVulnerabilityMerge:
                 )
             )
 
-        assert len(agg.findings) == 1
-        aggregate = next(iter(agg.findings.values()))
+        [aggregate] = agg.get_findings()
         vulns = aggregate.details["vulnerabilities"]
         assert len(vulns) == 1
         assert vulns[0]["id"] == "CVE-2026-59888"
         assert set(vulns[0]["scanners"]) == {"grype", "trivy", "osv"}
+
+
+_GRYPE_OUTPUT = Path(__file__).parents[1] / "fixtures" / "grype" / "grype_0.119_matches.json"
+_SHARED_CVES = 3000
+_AGGREGATION_BUDGET_SECONDS = 5.0
+
+
+def _scanner_outputs_sharing(cve_count: int) -> tuple[dict, dict]:
+    """Trivy and grype reports on grype's brace-expansion match, both naming the same ``cve_count`` CVEs."""
+    grype = json.loads(_GRYPE_OUTPUT.read_text())
+    template = json.dumps(grype["matches"][0])
+    artifact = grype["matches"][0]["artifact"]
+    matches, vulnerabilities = [], []
+    for n in range(cve_count):
+        cve = f"CVE-2025-{100000 + n}"
+        match = json.loads(template)
+        match["vulnerability"]["id"] = f"GHSA-{n:04x}-p8h4-qcjw"
+        match["relatedVulnerabilities"][0]["id"] = cve
+        matches.append(match)
+        vulnerabilities.append(
+            {
+                "VulnerabilityID": cve,
+                "PkgName": artifact["name"],
+                "InstalledVersion": artifact["version"],
+                "FixedVersion": "2.0.2",
+                "Severity": "LOW",
+                "Title": "brace-expansion: ReDoS",
+                "Description": "Regular expression denial of service.",
+                "References": [f"https://nvd.nist.gov/vuln/detail/{cve}"],
+            }
+        )
+    trivy = {"Target": "package-lock.json", "Class": "lang-pkgs", "Type": "npm", "Vulnerabilities": vulnerabilities}
+    return {"Results": [trivy]}, {**grype, "matches": matches}
+
+
+class TestOnePackageWithThousandsOfSharedCves:
+    @pytest.mark.parametrize("first", ["trivy", "grype"])
+    def test_every_cve_becomes_one_entry_listing_both_scanners(self, first):
+        outputs = dict(zip(("trivy", "grype"), _scanner_outputs_sharing(_SHARED_CVES), strict=True))
+        second = "grype" if first == "trivy" else "trivy"
+        agg = ResultAggregator()
+
+        started = time.perf_counter()
+        for scanner in (first, second):
+            agg.aggregate(scanner, outputs[scanner], source="package-lock.json")
+        [finding] = agg.get_findings()
+        elapsed = time.perf_counter() - started
+
+        entries = finding.details["vulnerabilities"]
+        assert len(entries) == _SHARED_CVES
+        assert {entry["id"] for entry in entries} == {f"CVE-2025-{100000 + n}" for n in range(_SHARED_CVES)}
+        assert all(entry["scanners"] == ["grype", "trivy"] for entry in entries)
+        assert elapsed < _AGGREGATION_BUDGET_SECONDS
 
 
 class TestAddVulnerabilityFinding:
