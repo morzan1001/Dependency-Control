@@ -626,3 +626,39 @@ async def test_an_archive_that_outlasts_its_lock_ttl_still_lands(db, retention_a
 
     assert await _remaining(db) == set()
     assert await db.archive_metadata.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("release_fails", [False, True], ids=["clean-stop", "cancel-swallowed-by-a-failed-release"])
+async def test_a_retention_run_whose_lock_an_operator_took_over_stops_archiving(
+    db, retention_archives, monkeypatch, release_fails
+):
+    await db.projects.insert_one(
+        {"_id": _PROJECT_ID, "name": "p", "retention_days": 90, "retention_action": "archive", "default_branch": "main"}
+    )
+    await db.scans.insert_many([_scan("old1", 300), _scan("old2", 200), _scan("head", 1)])
+    operator_lock = {"holder": "operator", "expires_at": (_NOW + timedelta(hours=24)).replace(microsecond=0)}
+    real_upload, real_release = archive.upload_stream, DistributedLocksRepository.release_lock
+    uploads: list[str] = []
+
+    async def slow_upload(*args, **kwargs):
+        uploads.append(args[0])
+        if len(uploads) == 1:
+            await db.distributed_locks.replace_one({"_id": "retention"}, operator_lock)
+        await asyncio.sleep(1)
+        return await real_upload(*args, **kwargs)
+
+    async def release_lock(self, lock_name, holder_id):
+        if release_fails and lock_name == "archive:old1":
+            raise AutoReconnect("connection reset while releasing")
+        return await real_release(self, lock_name, holder_id)
+
+    monkeypatch.setattr(housekeeping, "_RETENTION_LOCK_TTL_SECONDS", 0.3)
+    monkeypatch.setattr(archive, "upload_stream", slow_upload)
+    monkeypatch.setattr(DistributedLocksRepository, "release_lock", release_lock)
+    await _run_retention(db)
+
+    assert await _remaining(db) == {"old1", "old2", "head"}
+    assert await db.archive_metadata.count_documents({}) == 0
+    assert await db.distributed_locks.find_one({"_id": "retention"}, {"_id": 0}) == operator_lock
