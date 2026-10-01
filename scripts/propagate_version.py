@@ -1,13 +1,13 @@
 """Propagate the value in VERSION across the project's version-stamped files.
 
 Targets in this script are tied to the **app version** (backend +
-frontend + helm chart + changelog header). The CI scanner script under
+frontend + helm chart). The CI scanner script under
 ``ci-cd/scripts/scanner.sh`` carries its own independent
 ``SCRIPT_VERSION`` because pipelines pin against it directly — bumping
 the app version must not silently change scanner behaviour. When the
 scanner itself changes, edit the value in ``ci-cd/scripts/scanner.sh``
 and re-run this script to publish a frozen copy under
-``ci-cd/scripts/versions/scanner-X.Y.Z.sh`` (see step 6 below).
+``ci-cd/scripts/versions/scanner-X.Y.Z.sh`` (see step 5 below).
 """
 
 import hashlib
@@ -139,21 +139,7 @@ def main():
         f'"version": "{new_version}"'
     )
 
-    # 5. Update CHANGELOG.md top-of-file release header.
-    # The script only rewrites the first "# Release X.Y.Z" line so writing
-    # actual changelog entries stays a manual step — we just keep the
-    # header in sync with the propagated version.
-    changelog_path = os.path.join(root_dir, 'CHANGELOG.md')
-    if os.path.exists(changelog_path):
-        update_file(
-            changelog_path,
-            r'\A# Release [^\n]+',
-            f'# Release {new_version}',
-        )
-    else:
-        print(f"CHANGELOG.md not found at {changelog_path}; skipping")
-
-    # 6. Freeze the current scanner.sh under versions/ so pinned
+    # 5. Freeze the current scanner.sh under versions/ so pinned
     # pipelines can resolve ?v=<scanner-version> deterministically.
     # The scanner has its own SCRIPT_VERSION and is not bumped by this
     # script — see the module docstring.
