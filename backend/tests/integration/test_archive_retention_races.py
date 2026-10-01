@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -70,15 +71,20 @@ async def _callgraph_upload(client, headers, project) -> None:
     assert resp.status_code == 200, resp.text
 
 
-def _before_the_metadata_save(monkeypatch, write: Callable[[], Awaitable[None]]) -> None:
-    real_save = archive._save_archive_metadata
+def _interleave(monkeypatch, owner, name: str, write: Callable[[], Awaitable[object]], *, after: bool = False) -> None:
+    """Run write once, right before (or after) the next call of owner.name."""
+    real = getattr(owner, name)
 
-    async def write_then_save(*args, **kwargs):
-        monkeypatch.setattr(archive, "_save_archive_metadata", real_save)
-        await write()
-        return await real_save(*args, **kwargs)
+    async def call(*args, **kwargs):
+        monkeypatch.setattr(owner, name, real)
+        if not after:
+            await write()
+        result = await real(*args, **kwargs)
+        if after:
+            await write()
+        return result
 
-    monkeypatch.setattr(archive, "_save_archive_metadata", write_then_save)
+    monkeypatch.setattr(owner, name, call)
 
 
 async def _analyzers(db, scan_id: str) -> set[str]:
@@ -205,7 +211,7 @@ async def test_a_scan_pinned_or_reopened_after_retention_read_it_is_kept(
 async def test_a_scan_released_while_its_batch_was_archived_is_kept(db, retention_archives, monkeypatch):
     await db.scans.insert_many([_scan("x", 200), _scan("y", 200)])
     release = Release(project_id=_PROJECT_ID, environment="prod", scan_id="x", released_at=_NOW)
-    _before_the_metadata_save(monkeypatch, lambda: ReleaseRepository(db).record(release))
+    _interleave(monkeypatch, archive, "_save_archive_metadata", lambda: ReleaseRepository(db).record(release))
     await _archive_scans_and_delete(db, ["x", "y"], "retention")
 
     assert await _remaining(db) == {"x"}
@@ -239,7 +245,9 @@ async def test_a_callgraph_posted_while_its_run_was_archived_is_kept(
     client, db, api_key_headers, _project, retention_archives, monkeypatch
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
-    _before_the_metadata_save(monkeypatch, lambda: _callgraph_upload(client, api_key_headers, _project))
+    _interleave(
+        monkeypatch, archive, "_save_archive_metadata", lambda: _callgraph_upload(client, api_key_headers, _project)
+    )
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert await db.callgraphs.count_documents({"scan_id": scan_id}) == 1
@@ -298,14 +306,32 @@ async def test_a_run_ingested_into_after_its_archive_began_is_not_deleted_for_th
     client, db, api_key_headers, retention_archives, monkeypatch, during_the_archive
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
+    retried_job = partial(_retried_job, client, db, api_key_headers)
     if during_the_archive:
-        _before_the_metadata_save(monkeypatch, lambda: _retried_job(client, db, api_key_headers))
-    await _archive_scans_and_delete(db, [scan_id], "first pass")
-    if not during_the_archive:
-        await _retried_job(client, db, api_key_headers)
+        _interleave(monkeypatch, archive, "_load_scan_for_archive", retried_job, after=True)
+        # The pass that ran this archive died before its delete.
+        await archive.archive_scan(db, scan_id)
+    else:
+        _interleave(monkeypatch, housekeeping, "delete_scans_and_related_data", retried_job, after=True)
+        await _archive_scans_and_delete(db, [scan_id], "first pass")
     await _archive_scans_and_delete(db, [scan_id], "second pass")
 
     assert "opengrep" in await _analyzers(db, scan_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_run_written_to_during_its_batch_is_archived_afresh_by_the_next_pass(
+    client, db, api_key_headers, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    _interleave(monkeypatch, archive, "_save_archive_metadata", lambda: _retried_job(client, db, api_key_headers))
+    await _archive_scans_and_delete(db, [scan_id], "first pass")
+    await _archive_scans_and_delete(db, [scan_id], "second pass")
+
+    assert await _remaining(db) == set()
+    assert await restore_scan(db, scan_id) is not None
+    assert await _analyzers(db, scan_id) == {"trufflehog", "opengrep"}
 
 
 @pytest.mark.asyncio
