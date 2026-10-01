@@ -820,7 +820,7 @@ class TestDownloadStripsPlaintextSecrets:
             db.scans.insert_one = AsyncMock()
             db.findings.insert_many = AsyncMock()
             db.analysis_results.insert_many = AsyncMock()
-            reason, _, _ = await _replay_bundle(db, "scan-1", _aiter([bundle]))
+            reason, _ = await _replay_bundle(db, "scan-1", _aiter([bundle]))
             return bundle, reason, db
 
         with (

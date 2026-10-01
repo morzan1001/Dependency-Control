@@ -1,6 +1,7 @@
 """An archive bundle carries every GridFS file of a scan as chunk frames, restored byte-identical under the same ids."""
 
 import asyncio
+import contextlib
 import json
 import tracemalloc
 import zlib
@@ -12,8 +13,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorGridIn
 from pymongo.common import MAX_MESSAGE_SIZE
+from pymongo.errors import AutoReconnect
 
 from app.api.v1.endpoints.ingest import _upload_recognized_sboms
 from app.core.constants import ARCHIVE_GRIDFS_CHUNK_FRAME
@@ -24,7 +26,7 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.services import archive
 from app.services.archive import archive_scan, restore_scan, stream_bundle_for_download
 from app.services.archive_bundle import BundleFrames, BundleStats, json_line, read_bundle_frames
-from app.services.gridfs_maintenance import make_gridfs_ref, reap_orphan_gridfs_files
+from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.rescan import build_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.scan_manager import deterministic_scan_id
@@ -118,6 +120,25 @@ async def _archive(db) -> ArchiveMetadata:
     return metadata
 
 
+async def _archive_without_chunk_frames(db, archive_env, sbom: dict[str, Any]) -> None:
+    """Store the bundle an archive from before chunk frames wrote: each SBOM as one parsed gridfs_sboms entry."""
+    scan = await db.scans.find_one({"_id": _SCAN_ID})
+    entries = [{"gridfs_id": ref["gridfs_id"], "filename": ref["filename"], "data": sbom} for ref in scan["sbom_refs"]]
+    bundle = b"".join(
+        [
+            line
+            async for line in BundleFrames.write(
+                scan_doc=scan, collections={"gridfs_sboms": _aiter(entries)}, stats=BundleStats()
+            )
+        ]
+    )
+    metadata = ArchiveMetadata(
+        project_id=_PROJECT_ID, scan_id=_SCAN_ID, s3_key="legacy.bundle", s3_bucket="test-bucket"
+    )
+    archive_env.objects[metadata.s3_key] = zlib.compress(bundle, wbits=31)
+    await ArchiveMetadataRepository(db).create(metadata)
+
+
 async def _measured(call) -> tuple[Any, int]:
     tracemalloc.start()
     try:
@@ -188,43 +209,30 @@ async def test_archive_memory_stays_bounded_for_a_64_mib_sbom(db, archive_env):
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_legacy_gridfs_sboms_bundle_still_restores(db, archive_env):
-    file_id = ObjectId()
     sbom = _sbom_fixture()
-    scan = Scan(
-        id=_SCAN_ID,
-        project_id=_PROJECT_ID,
-        branch="main",
-        status="completed",
-        sbom_refs=[make_gridfs_ref(file_id, "sbom-legacy.json")],
-    ).model_dump(by_alias=True)
-    legacy_frame = {"gridfs_id": str(file_id), "filename": "sbom-legacy.json", "data": sbom}
-    bundle = b"".join(
-        [
-            line
-            async for line in BundleFrames.write(
-                scan_doc=scan, collections={"gridfs_sboms": _aiter([legacy_frame])}, stats=BundleStats()
-            )
-        ]
-    )
-    metadata = ArchiveMetadata(
-        project_id=_PROJECT_ID, scan_id=_SCAN_ID, s3_key="legacy.bundle", s3_bucket="test-bucket"
-    )
-    archive_env.objects[metadata.s3_key] = zlib.compress(bundle, wbits=31)
-    await ArchiveMetadataRepository(db).create(metadata)
+    scan = await _seed_scan(db, sbom)
+    before = await _stored_files(db)
+    await _archive_without_chunk_frames(db, archive_env, sbom)
+    await _expire(db)
 
     restored = await restore_scan(db, _SCAN_ID)
 
     assert restored is not None
-    assert await _stored_files(db) == {file_id: ("sbom-legacy.json", json.dumps(sbom).encode())}
-    assert (await db.scans.find_one({"_id": _SCAN_ID}))["sbom_refs"] == scan["sbom_refs"]
+    assert await _stored_files(db) == before
+    assert (await db.scans.find_one({"_id": _SCAN_ID}))["sbom_refs"] == scan.sbom_refs
 
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_rescan_shared_file_present_at_restore_is_left_untouched(db, archive_env):
-    scan = await _seed_scan(db, _sbom_fixture())
+@pytest.mark.parametrize("chunk_frames", [True, False], ids=["chunk-frames", "legacy-gridfs-sboms"])
+async def test_a_rescan_shared_file_present_at_restore_is_left_untouched(db, archive_env, chunk_frames):
+    sbom = _sbom_fixture()
+    scan = await _seed_scan(db, sbom)
     await db.scans.insert_one(build_rescan(scan.model_dump(by_alias=True)).model_dump(by_alias=True))
-    await _archive(db)
+    if chunk_frames:
+        await _archive(db)
+    else:
+        await _archive_without_chunk_frames(db, archive_env, sbom)
     await _expire(db)
     (shared,) = await db["fs.files"].find({}).to_list(None)
     chunk_ids = await db["fs.chunks"].distinct("_id")
@@ -265,7 +273,59 @@ async def test_concurrent_restores_of_scans_sharing_an_absent_file_both_finish_w
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_restore_that_lost_its_file_lock_fails_and_leaves_the_new_holders_chunks(db, archive_env, monkeypatch):
+async def test_a_legacy_restore_racing_a_chunk_frame_restore_of_a_shared_absent_file_leaves_it_intact(
+    db, archive_env, monkeypatch
+):
+    sbom = _sbom_of(_MIB)
+    scan = await _seed_scan(db, sbom)
+    rescan = build_rescan(scan.model_dump(by_alias=True))
+    await db.scans.insert_one(rescan.model_dump(by_alias=True))
+    before = await _stored_files(db)
+    assert await archive_scan(db, rescan.id) is not None
+    await _archive_without_chunk_frames(db, archive_env, sbom)
+    await _expire(db, (_SCAN_ID, rescan.id))
+    monkeypatch.setattr(archive, "_GRIDFS_RESTORE_LOCK_POLL_SECONDS", 0.01)
+    rescan_is_mid_file = asyncio.Event()
+    legacy_restore_done = asyncio.Event()
+
+    async def keep_the_rescan_mid_file_while_the_legacy_restore_runs(event: dict[str, Any]) -> None:
+        if event["type"] == "header" and event["data"]["scan"]["_id"] == _SCAN_ID:
+            await rescan_is_mid_file.wait()
+        elif event.get("collection") == ARCHIVE_GRIDFS_CHUNK_FRAME and event["data"]["n"] == 1:
+            rescan_is_mid_file.set()
+            # The legacy restore cannot finish while the rescan's restore holds the file, so the wait may time out.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(legacy_restore_done.wait(), timeout=1)
+
+    async def restore_legacy() -> Any:
+        try:
+            return await restore_scan(db, _SCAN_ID)
+        finally:
+            legacy_restore_done.set()
+
+    _replay_with(monkeypatch, keep_the_rescan_mid_file_while_the_legacy_restore_runs)
+    restored = await asyncio.gather(restore_scan(db, rescan.id), restore_legacy())
+
+    assert await _stored_files(db) == before
+    assert None not in restored
+
+
+async def _write_again_after_the_renewal_is_due() -> None:
+    await asyncio.sleep(0.2)
+
+
+async def _fail_before_writing_again() -> None:
+    raise ConnectionResetError("S3 connection reset by peer")
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    "resume", [_write_again_after_the_renewal_is_due, _fail_before_writing_again], ids=["writes", "fails"]
+)
+async def test_a_restore_that_lost_its_file_lock_fails_and_leaves_the_new_holders_chunks(
+    db, archive_env, monkeypatch, resume
+):
     await _seed_scan(db, _sbom_of(_MIB))
     await _archive(db)
     await _expire(db)
@@ -277,7 +337,7 @@ async def test_a_restore_that_lost_its_file_lock_fails_and_leaves_the_new_holder
             file_id = event["data"]["_id"]
             await db.distributed_locks.update_one({"_id": f"restore-gridfs:{file_id}"}, {"$set": {"holder": "peer"}})
             await db["fs.chunks"].insert_one({"files_id": file_id, **peer_chunk})
-            await asyncio.sleep(0.2)
+            await resume()
 
     _replay_with(monkeypatch, take_the_file_over_after_its_first_chunk)
 
@@ -287,7 +347,25 @@ async def test_a_restore_that_lost_its_file_lock_fails_and_leaves_the_new_holder
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_files_a_restore_skips_as_present_survive_a_reaper_run_before_the_footer(
+async def test_a_restore_whose_abort_fails_still_releases_its_file_lock(db, archive_env, monkeypatch):
+    await _seed_scan(db, _sbom_of(_MIB))
+    await _archive(db)
+    await _expire(db)
+
+    async def fail_mid_file(event: dict[str, Any]) -> None:
+        if event.get("collection") == ARCHIVE_GRIDFS_CHUNK_FRAME and event["data"]["n"] == 1:
+            await _fail_before_writing_again()
+
+    _replay_with(monkeypatch, fail_mid_file)
+    monkeypatch.setattr(AsyncIOMotorGridIn, "abort", AsyncMock(side_effect=AutoReconnect("primary stepped down")))
+
+    assert await restore_scan(db, _SCAN_ID) is None
+    assert await db.distributed_locks.find({}).to_list(None) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_reaper_run_whenever_a_restore_reaches_a_file_frees_none_of_the_files_it_skips_as_present(
     client, db, archive_env, monkeypatch
 ):
     await _seed_scan_with_result_and_callgraph(client, db, _sbom_fixture())
@@ -295,15 +373,18 @@ async def test_files_a_restore_skips_as_present_survive_a_reaper_run_before_the_
     await _archive(db)
     # Retention deleted the scan, but the reaper has not yet freed the files nothing references now.
     await _delete_and_age(db, (_SCAN_ID,))
+    reaped: list[int] = []
+    write = archive._GridFSRestore.write
 
-    async def reap_at_the_footer(event: dict[str, Any]) -> None:
-        if event["type"] == "footer":
-            await reap_orphan_gridfs_files(db)
+    async def reap_then_write(self, frame: dict[str, Any]) -> None:
+        reaped.append(await reap_orphan_gridfs_files(db))
+        await write(self, frame)
 
-    _replay_with(monkeypatch, reap_at_the_footer)
+    monkeypatch.setattr(archive._GridFSRestore, "write", reap_then_write)
     restored = await restore_scan(db, _SCAN_ID)
 
     assert restored is not None
+    assert reaped and not any(reaped)
     assert await _stored_files(db) == before
 
 
