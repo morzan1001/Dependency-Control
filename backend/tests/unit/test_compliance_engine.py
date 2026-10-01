@@ -1,6 +1,7 @@
 import asyncio
 import gc
 import threading
+import time
 import weakref
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -511,15 +512,23 @@ async def test_generate_lets_go_of_the_inputs_before_rendering():
 
 
 @pytest.mark.asyncio
-async def test_the_event_loop_keeps_running_while_a_report_renders():
-    """A PDF of a large scope lays out for tens of seconds; a blocked loop fails the liveness probe."""
+async def test_reports_render_one_at_a_time_while_the_event_loop_keeps_running(monkeypatch):
+    """A large-scope PDF lays out for tens of seconds at hundreds of MB; a blocked loop fails the liveness probe."""
+    monkeypatch.setattr(engine_module, "_RENDER_SLOT", asyncio.Semaphore(1))
     engine = ComplianceReportEngine()
-    loop, loop_ran = asyncio.get_running_loop(), threading.Event()
+    loop = asyncio.get_running_loop()
+    rendering: list[str] = []
+    overlapped: list[bool] = []
     loop_ran_during_render: list[bool] = []
 
     def slow_render(fmt, framework, evaluation, rep):
+        rendering.append(rep.id)
+        overlapped.append(len(rendering) > 1)
+        loop_ran = threading.Event()
         loop.call_soon_threadsafe(loop_ran.set)
         loop_ran_during_render.append(loop_ran.wait(timeout=5))
+        time.sleep(0.2)
+        rendering.remove(rep.id)
         return b"{}", "x.json", "application/json"
 
     with (
@@ -535,14 +544,20 @@ async def test_the_event_loop_keeps_running_while_a_report_renders():
         patch.object(engine, "_render", side_effect=slow_render),
         patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
     ):
-        outcome = await engine.generate(
-            report=_report(framework=ReportFramework.CVE_REMEDIATION_SLA),
-            db=MagicMock(),
-            user=MagicMock(id="u1", permissions=frozenset()),
+        outcomes = await asyncio.gather(
+            *(
+                engine.generate(
+                    report=_report(framework=ReportFramework.CVE_REMEDIATION_SLA),
+                    db=MagicMock(),
+                    user=MagicMock(id="u1", permissions=frozenset()),
+                )
+                for _ in range(2)
+            )
         )
 
-    assert outcome[0] == ReportStatus.COMPLETED
-    assert loop_ran_during_render == [True]
+    assert [status for status, _ in outcomes] == [ReportStatus.COMPLETED] * 2
+    assert loop_ran_during_render == [True, True]
+    assert overlapped == [False, False]
 
 
 @pytest.mark.asyncio

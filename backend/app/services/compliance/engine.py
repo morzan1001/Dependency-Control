@@ -38,6 +38,8 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 logger = logging.getLogger(__name__)
 
 _REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
+# A large-scope PDF layout peaks at hundreds of MB, and under the GIL parallel renders finish no sooner.
+_RENDER_SLOT = asyncio.Semaphore(1)
 
 _NON_CRYPTO_FRAMEWORKS = frozenset(
     {ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT, ReportFramework.PQC_MIGRATION_PLAN}
@@ -79,13 +81,14 @@ class ComplianceReportEngine:
             policy_version, iana_version = inputs.policy_version, inputs.iana_catalog_version
             # The findings stay alive through render, upload and the status write otherwise.
             del inputs
-            artifact_bytes, filename, mime = await asyncio.to_thread(
-                self._render,
-                report.format,
-                framework,
-                evaluation,
-                report,
-            )
+            async with _RENDER_SLOT:
+                artifact_bytes, filename, mime = await asyncio.to_thread(
+                    self._render,
+                    report.format,
+                    framework,
+                    evaluation,
+                    report,
+                )
             gridfs_id = await self._store_artifact(
                 db,
                 artifact_bytes,
