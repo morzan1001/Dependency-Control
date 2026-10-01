@@ -211,7 +211,7 @@ async def test_a_restore_that_lost_its_lock_before_completing_keeps_the_archive(
     await _archived_scan(db)
     stall = _FirstDependenciesBatchStall(db)
 
-    with patch.object(db.dependencies, "insert_many", stall):
+    with patch.object(db.dependencies, "insert_many", stall), patch(f"{MODULE}._count_failure") as count_failure:
         first = asyncio.create_task(restore_scan(db, SCAN_ID))
         await stall.reached.wait()
         await _take_over_the_restore_lock(db)
@@ -219,6 +219,7 @@ async def test_a_restore_that_lost_its_lock_before_completing_keeps_the_archive(
         result = await first
 
     assert result is None
+    count_failure.assert_called_once_with("restore", "lock_held")
     scan = await db.scans.find_one({"_id": SCAN_ID})
     assert scan["restore_in_progress"] is True
     assert "restored_at" not in scan

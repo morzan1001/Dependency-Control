@@ -547,11 +547,13 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "renewal",
-    [{"return_value": False}, {"side_effect": AutoReconnect("primary stepped down")}],
+    ("renewal", "reason"),
+    [({"return_value": False}, "lock_held"), ({"side_effect": AutoReconnect("primary stepped down")}, "s3_error")],
     ids=["lock-taken-over", "renewal-failed"],
 )
-async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal):
+async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal, reason):
+    count_failure = MagicMock()
+    monkeypatch.setattr(f"{MODULE}._count_failure", count_failure)
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
     # An unguarded rollback stops at the first delete that is not awaitable, so every target must be one.
@@ -575,6 +577,7 @@ async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_en
     assert result is None
     assert [coll for coll in SCAN_SCOPED_COLLECTIONS if getattr(db, coll).delete_many.await_count] == []
     db.scans.delete_one.assert_not_awaited()
+    count_failure.assert_called_once_with("restore", reason)
 
 
 @pytest.mark.asyncio
