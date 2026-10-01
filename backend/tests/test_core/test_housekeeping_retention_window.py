@@ -30,7 +30,7 @@ async def _seed_scans(db: FakeDatabase) -> None:
 
 
 async def _run(db: FakeDatabase, monkeypatch: pytest.MonkeyPatch, archive_enabled: bool = False) -> AsyncMock:
-    archiver = AsyncMock(return_value=0)
+    archiver = AsyncMock()
     monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: archive_enabled)
     monkeypatch.setattr(f"{MODULE}._archive_scans_and_delete", archiver)
     await _run_retention(db)

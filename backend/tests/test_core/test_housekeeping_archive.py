@@ -60,9 +60,8 @@ class TestArchiveScansAndDelete:
         metadata = _make_archive_metadata()
 
         with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive:
-            result = await _archive_scans_and_delete(db, ["scan-1"], "test")
+            await _archive_scans_and_delete(db, ["scan-1"], "test")
 
-        assert result == 1
         mock_archive.assert_called_once()
         assert await _remaining(db) == set()
 
@@ -71,9 +70,8 @@ class TestArchiveScansAndDelete:
         db = await _store_with("scan-1")
 
         with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=None) as mock_archive:
-            result = await _archive_scans_and_delete(db, ["scan-1"], "test")
+            await _archive_scans_and_delete(db, ["scan-1"], "test")
 
-        assert result == 0
         mock_archive.assert_called_once()
         assert await _remaining(db) == {"scan-1"}
 
@@ -87,9 +85,8 @@ class TestArchiveScansAndDelete:
             return None
 
         with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=mock_archive_fn):
-            result = await _archive_scans_and_delete(db, ["scan-1", "scan-2"], "test")
+            await _archive_scans_and_delete(db, ["scan-1", "scan-2"], "test")
 
-        assert result == 1
         assert await _remaining(db) == {"scan-2"}
 
     @pytest.mark.asyncio
@@ -97,9 +94,8 @@ class TestArchiveScansAndDelete:
         db = await _store_with("scan-1")
 
         with patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=Exception("Archive crashed")):
-            result = await _archive_scans_and_delete(db, ["scan-1"], "test")
+            await _archive_scans_and_delete(db, ["scan-1"], "test")
 
-        assert result == 0
         assert await _remaining(db) == {"scan-1"}
 
     @pytest.mark.asyncio

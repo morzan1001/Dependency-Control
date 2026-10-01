@@ -338,7 +338,7 @@ async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
     return await delete_scans_and_related_data(db, doomed, label)
 
 
-async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) -> int:
+async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) -> None:
     """Archive scans to S3, then delete those archived, unchanged since picked and still expirable."""
     from app.services.archive import archive_scan
 
@@ -382,8 +382,6 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
         await db.archive_metadata.delete_one({"scan_id": scan["_id"], "archived_at": stale})
 
     logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
-
-    return archived_count
 
 
 async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, label: str) -> None:
