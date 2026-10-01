@@ -54,7 +54,11 @@ from app.services.archive_bundle import (
     read_bundle_frames,
     rewrite_bundle_frames,
 )
-from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, iter_gridfs_chunks
+from app.services.gridfs_maintenance import (
+    GRIDFS_RESTORE_LOCK_TEMPLATE,
+    extract_gridfs_ids_from_refs,
+    iter_gridfs_chunks,
+)
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -62,7 +66,6 @@ logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
 _RESTORE_LOCK_RENEWALS_PER_TTL = 3
-_GRIDFS_RESTORE_LOCK_TEMPLATE = "restore-gridfs:{file_id}"
 _GRIDFS_RESTORE_LOCK_POLL_SECONDS = 1
 # zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
 _COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
@@ -560,7 +563,7 @@ class _GridFSRestore:
             await self._release()
 
     async def _open(self, file_id: ObjectId, filename: str) -> None:
-        self._lock_name = _GRIDFS_RESTORE_LOCK_TEMPLATE.format(file_id=file_id)
+        self._lock_name = GRIDFS_RESTORE_LOCK_TEMPLATE.format(file_id=file_id)
         # A peer on another pod may hold it, so no in-process event can announce the release.
         while not await self._locks.acquire_lock(self._lock_name, self._holder, _ARCHIVE_LOCK_TTL_SECONDS):  # noqa: ASYNC110
             await asyncio.sleep(_GRIDFS_RESTORE_LOCK_POLL_SECONDS)

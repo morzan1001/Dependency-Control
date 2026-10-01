@@ -15,10 +15,13 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.core import abatched
 from app.core.constants import ARCHIVE_BATCH_SIZE, ARCHIVE_ORPHAN_MIN_AGE_HOURS
 from app.db.mongodb import open_gridfs_download_with_retry
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 
 logger = logging.getLogger(__name__)
 
 _GRIDFS_REFERENCE = "gridfs_reference"
+GRIDFS_RESTORE_LOCK_TEMPLATE = "restore-gridfs:{file_id}"
+_REAP_LOCK_TTL_SECONDS = 60
 # Every field holding str(fs.files _id); a file none of them names is an orphan.
 _GRIDFS_REFERENCES = (
     ("scans", "sbom_refs.gridfs_id"),
@@ -92,6 +95,8 @@ async def reap_orphan_gridfs_files(db: Any) -> int:
     """Delete GridFS files no registry field references, and orphan chunks, once older than the safety window."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
     fs = AsyncIOMotorGridFSBucket(db)
+    locks = DistributedLocksRepository(db)
+    holder = new_lock_holder()
     deleted = 0
     old_files = db["fs.files"].find({"uploadDate": {"$lt": cutoff}}, {"_id": 1})
     async for batch in abatched(old_files, ARCHIVE_BATCH_SIZE):
@@ -99,9 +104,18 @@ async def reap_orphan_gridfs_files(db: Any) -> int:
         for doc in batch:
             if str(doc["_id"]) in referenced:
                 continue
-            with contextlib.suppress(NoFile):
-                await fs.delete(doc["_id"])
-            deleted += 1
+            lock_name = GRIDFS_RESTORE_LOCK_TEMPLATE.format(file_id=doc["_id"])
+            # A restore references a file before it takes this lock to skip it as present, so a re-check under it is final.
+            if not await locks.acquire_lock(lock_name, holder, _REAP_LOCK_TTL_SECONDS):
+                continue
+            try:
+                if await _referenced_ids(db, [str(doc["_id"])]):
+                    continue
+                with contextlib.suppress(NoFile):
+                    await fs.delete(doc["_id"])
+                deleted += 1
+            finally:
+                await locks.release_lock(lock_name, holder)
     await _reap_orphan_chunks(db, cutoff)
     if deleted:
         logger.info(f"GridFS orphan reaper: deleted {deleted} unreferenced file(s)")

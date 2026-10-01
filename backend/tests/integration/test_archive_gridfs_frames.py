@@ -23,7 +23,7 @@ from app.models.archive import ArchiveMetadata
 from app.models.project import Project, Scan
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from app.services import archive
+from app.services import archive, gridfs_maintenance
 from app.services.archive import archive_scan, restore_scan, stream_bundle_for_download
 from app.services.archive_bundle import BundleFrames, BundleStats, json_line, read_bundle_frames
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
@@ -385,6 +385,31 @@ async def test_a_reaper_run_whenever_a_restore_reaches_a_file_frees_none_of_the_
 
     assert restored is not None
     assert reaped and not any(reaped)
+    assert await _stored_files(db) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_restore_between_the_reapers_reference_check_and_its_delete_keeps_the_file(
+    db, archive_env, monkeypatch
+):
+    await _seed_scan(db, _sbom_fixture())
+    before = await _stored_files(db)
+    await _archive(db)
+    await _delete_and_age(db, (_SCAN_ID,))
+    referenced_ids = gridfs_maintenance._referenced_ids
+    restored: list[Any] = []
+
+    async def restore_once_checked(db_, file_ids: list[str]) -> set[str]:
+        referenced = await referenced_ids(db_, file_ids)
+        if not restored:
+            restored.append(await restore_scan(db, _SCAN_ID))
+        return referenced
+
+    monkeypatch.setattr(gridfs_maintenance, "_referenced_ids", restore_once_checked)
+
+    assert await reap_orphan_gridfs_files(db) == 0
+    assert restored[0] is not None
     assert await _stored_files(db) == before
 
 
