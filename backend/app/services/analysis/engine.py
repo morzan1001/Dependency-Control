@@ -1186,6 +1186,7 @@ async def run_analysis(
             if sbom_path:
                 os.remove(sbom_path)
         results_summary.extend(sbom_results)
+        aggregator.fold_vulnerability_entries()
         # The component dicts must not stay alive while the next SBOM loads.
         del components
 

@@ -326,3 +326,28 @@ class TestSurvivingSpelling:
 
     def test_the_quality_spelling_does_not_depend_on_sbom_order(self):
         assert self._quality(("left-pad", "Left-Pad")) == self._quality(("Left-Pad", "left-pad"))
+
+
+_GRYPE_WITHOUT_CVE_LINK = {"matches": [{**GRYPE["matches"][0], "relatedVulnerabilities": []}]}
+_SBOMS = (
+    ("SBOM #1", (("trivy", TRIVY), ("grype", _GRYPE_WITHOUT_CVE_LINK))),
+    ("SBOM #2", (("osv", OSV), ("grype", GRYPE))),
+    ("SBOM #3", (("grype", GRYPE), ("osv", OSV), ("trivy", TRIVY))),
+)
+
+
+def _scan(sboms: tuple, fold_per_sbom: bool) -> str:
+    aggregator = ResultAggregator()
+    for source, results in sboms:
+        for analyzer, result in results:
+            aggregator.aggregate(analyzer, result, source=source)
+        if fold_per_sbom:
+            aggregator.fold_vulnerability_entries()
+    return json.dumps([f.model_dump() for f in aggregator.get_findings()], sort_keys=True, default=str)
+
+
+class TestPerSbomFold:
+    def test_folding_after_each_sbom_leaves_the_findings_unchanged(self):
+        for order in itertools.permutations(_SBOMS):
+            sources = [source for source, _ in order]
+            assert _scan(order, fold_per_sbom=True) == _scan(order, fold_per_sbom=False), sources

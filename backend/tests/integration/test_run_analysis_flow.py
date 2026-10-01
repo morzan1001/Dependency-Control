@@ -32,6 +32,7 @@ _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _WORKER = "pod-a/worker-0"
 _LAST_ATTEMPT = ANALYSIS_MAX_RETRIES - 1
+_EMPTY_SBOM = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
 
 
 async def _seed_scan(db) -> str:
@@ -50,7 +51,7 @@ async def stored_sbom(db, monkeypatch) -> dict:
     """A stored SBOM without components, for a run that has to reach its analyzers."""
     monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", AsyncIOMotorGridFSBucket)
     await create_indexes(db)
-    return await store_sbom(db, {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []})
+    return await store_sbom(db, _EMPTY_SBOM)
 
 
 @pytest.fixture
@@ -584,9 +585,7 @@ _LOG4SHELL = "CVE-2021-44228"
 _TEXT4SHELL_FINDING = "org.apache.commons:commons-text:1.9"
 
 
-class _TrivyReport:
-    name = "trivy"
-
+class _CannedReport:
     def __init__(self, report: dict) -> None:
         self.report = report
 
@@ -625,7 +624,7 @@ async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_wai
             }
         ]
     }
-    serve_analyzer(monkeypatch, "trivy", _TrivyReport(trivy))
+    serve_analyzer(monkeypatch, "trivy", _CannedReport(trivy))
     serve_enrichment(monkeypatch, fake_cache, Upstreams(kev=(_LOG4SHELL,)))
     delivered = AsyncMock()
     monkeypatch.setattr(webhook_service, "trigger_webhooks", delivered)
@@ -636,3 +635,62 @@ async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_wai
     alerts = {c.kwargs["event_type"]: c.kwargs["payload"] for c in delivered.await_args_list}
     vulnerabilities = alerts[WEBHOOK_EVENT_VULNERABILITY_FOUND]["vulnerabilities"]
     assert (vulnerabilities["kev"], [v["id"] for v in vulnerabilities["top"]]) == (1, [_LOG4SHELL])
+
+
+_BASE_IMAGE_CVES = ("CVE-2024-0727", "CVE-2024-2511", "CVE-2024-4741")
+
+
+def _base_image_reports() -> tuple[dict, dict]:
+    """Trivy and grype on one OS package of a shared base image; grype keys each CVE's GHSA as its alias."""
+    package = {"name": "libssl3", "version": "3.0.11-1~deb12u2"}
+    trivy = {
+        "Results": [
+            {
+                "Target": "debian 12",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": cve,
+                        "PkgName": package["name"],
+                        "InstalledVersion": package["version"],
+                        "FixedVersion": "3.0.14-1~deb12u1",
+                        "Severity": "MEDIUM",
+                    }
+                    for cve in _BASE_IMAGE_CVES
+                ],
+            }
+        ]
+    }
+    grype = {
+        "matches": [
+            {
+                "vulnerability": {"id": f"GHSA-{n:04x}-ssl3-deb1", "severity": "Medium"},
+                "relatedVulnerabilities": [{"id": cve}],
+                "artifact": package,
+            }
+            for n, cve in enumerate(_BASE_IMAGE_CVES)
+        ]
+    }
+    return trivy, grype
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_sboms_sharing_a_base_image_retain_one_entry_per_advisory(
+    db, notified, enrichment_inputs, monkeypatch, stored_sbom
+):
+    trivy, grype = _base_image_reports()
+    serve_analyzer(monkeypatch, "trivy", _CannedReport(trivy))
+    serve_analyzer(monkeypatch, "grype", _CannedReport(grype))
+    retained: list[int] = []
+    aggregate_external = engine._aggregate_external_results
+
+    async def _count_retained(aggregator, *args):
+        retained.append(sum(len(f.details.get("vulnerabilities", [])) for f in aggregator.findings.values()))
+        await aggregate_external(aggregator, *args)
+
+    monkeypatch.setattr(engine, "_aggregate_external_results", _count_retained)
+    sboms = [stored_sbom, *[await store_sbom(db, _EMPTY_SBOM) for _ in range(2)]]
+
+    await engine.run_analysis(await _seed_scan(db), sboms, ["grype", "trivy"], db, worker_id=_WORKER)
+
+    assert retained == [len(_BASE_IMAGE_CVES)]

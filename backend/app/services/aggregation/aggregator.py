@@ -333,6 +333,12 @@ class ResultAggregator:
 
         return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
 
+    def fold_vulnerability_entries(self) -> None:
+        """Fold each package's advisory entries now, so the entries held do not grow with the SBOM count."""
+        for f in self.findings.values():
+            if f.type == FindingType.VULNERABILITY:
+                dedupe_vulnerability_entries(f.details["vulnerabilities"])
+
     @staticmethod
     def _finding_sort_key(f: Finding) -> tuple[str, str, str, str]:
         return (str(f.type), normalize_component(f.component), f.version or "", f.id)
