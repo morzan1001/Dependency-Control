@@ -65,7 +65,6 @@ logger = logging.getLogger(__name__)
 
 _RETENTION_LOCK_NAME = "retention"
 _RETENTION_LOCK_TTL_SECONDS = 600
-_RETENTION_INTERVAL_SECONDS = HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
 _EXPIRABLE = {"pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES}, "status": {"$nin": SCAN_ACTIVE_STATUSES}}
 
 
@@ -338,12 +337,7 @@ async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
 
 
 async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "") -> int:
-    """
-    Archive scans to S3, then delete from MongoDB.
-
-    CRITICAL: Archive MUST succeed before deletion.
-    Scans that fail to archive are skipped (not deleted).
-    """
+    """Archive scans to S3, then delete those archived, unchanged since picked and still expirable."""
     if not scan_ids:
         return 0
 
@@ -480,18 +474,16 @@ async def _run_retention(db: Any) -> None:
     holder = new_lock_holder()
     if not await locks.acquire_lock(_RETENTION_LOCK_NAME, holder, ttl_seconds=_RETENTION_LOCK_TTL_SECONDS):
         return
-    renew = partial(locks.renew_lock, _RETENTION_LOCK_NAME, holder)
+    renew = partial(locks.renew_lock, _RETENTION_LOCK_NAME, holder, _RETENTION_LOCK_TTL_SECONDS)
     try:
-        await run_holding_lock(
-            partial(renew, _RETENTION_LOCK_TTL_SECONDS), _RETENTION_LOCK_TTL_SECONDS, _expire_scans(db)
-        )
+        await run_holding_lock(renew, _RETENTION_LOCK_TTL_SECONDS, _expire_scans(db))
     except LockLost:
         logger.error("Retention stopped: another pod took its lock over")
     except BaseException:
         await locks.release_lock(_RETENTION_LOCK_NAME, holder)
         raise
     else:
-        await renew(_RETENTION_INTERVAL_SECONDS)
+        await locks.renew_lock(_RETENTION_LOCK_NAME, holder, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600)
 
 
 async def _expire_scans(db: Any) -> None:

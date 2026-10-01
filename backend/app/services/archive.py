@@ -379,10 +379,7 @@ async def archive_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
 ) -> ArchiveMetadata | None:
-    """Archive one scan and its related data to S3 under a distributed lock on archive:{scan_id}.
-
-    Returns ArchiveMetadata on success; None on lock-held, not-found, protected, or upload failure.
-    """
+    """Archive one scan and its related data to S3 under a distributed lock on archive:{scan_id}."""
     if not is_archive_enabled():
         logger.warning("Archive requested but S3 is not configured.")
         return None
