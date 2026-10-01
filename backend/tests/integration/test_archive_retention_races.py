@@ -4,11 +4,14 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from pymongo.errors import AutoReconnect, NetworkTimeout
 
 from app.core import housekeeping
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
+from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.services import archive
 from app.services.archive import restore_scan
 
@@ -149,3 +152,37 @@ async def test_a_scan_ingested_into_while_it_was_archived_is_kept(
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert await _analyzers(db, scan_id) == {"trufflehog", "opengrep"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_archive_whose_metadata_insert_landed_but_timed_out_stays_restorable(db, retention_archives):
+    await db.scans.insert_one(_scan("x", 200))
+    real_create = ArchiveMetadataRepository.create
+
+    async def create_then_time_out(self, metadata):
+        await real_create(self, metadata)
+        raise NetworkTimeout("no reply to the insert")
+
+    with patch.object(ArchiveMetadataRepository, "create", create_then_time_out):
+        await _archive_scans_and_delete(db, ["x"], "first pass")
+    await _archive_scans_and_delete(db, ["x"], "second pass")
+
+    assert await _remaining(db) == set()
+    assert await restore_scan(db, "x") is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_restore_whose_metadata_delete_failed_leaves_the_archive_restorable(db, retention_archives):
+    await db.scans.insert_one(_scan("x", 200))
+    await _archive_scans_and_delete(db, ["x"], "first pass")
+    with patch.object(
+        ArchiveMetadataRepository, "delete_by_scan_id", AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    ):
+        assert await restore_scan(db, "x") is not None
+    await db.scans.update_one({"_id": "x"}, {"$set": {"pinned": False}})
+    await _archive_scans_and_delete(db, ["x"], "second pass")
+
+    assert await _remaining(db) == set()
+    assert await restore_scan(db, "x") is not None

@@ -280,14 +280,11 @@ async def _save_archive_metadata(
         archive_operations_total.labels(operation="archive", status="failure").inc()
         return None
     except Exception as e:
+        # The insert may still have landed, so the upload stays; the orphan reaper takes it if nothing points at it.
         logger.warning(
-            "Metadata create failed, cleaning up S3 object",
+            "Metadata create failed",
             extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
-        try:
-            await delete_object(s3_key)
-        except Exception:
-            logger.exception("Cleanup delete failed for orphan S3 upload")
         archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.UNKNOWN).inc()
         archive_operations_total.labels(operation="archive", status="failure").inc()
         return None
@@ -745,12 +742,19 @@ async def _finalize_restore_cleanup(
     metadata: ArchiveMetadata,
     scan_id: str,
 ) -> None:
-    """Delete the S3 object and metadata record after a successful restore.
+    """Delete the metadata record, then the S3 object, after a successful restore.
 
-    Either deletion failing is logged but does not roll back — the orphan reaper sweeps
-    remnants. The metadata MUST be removed: the scan is back in MongoDB, so stale metadata
-    would block future re-archival via archive_scan's existing-metadata short-circuit.
+    A failed deletion is logged, not rolled back. The object goes only after its metadata, so no metadata
+    is ever left pointing at a deleted bundle; the stale-metadata and orphan reapers sweep what remains.
     """
+    try:
+        await repo.delete_by_scan_id(scan_id)
+    except Exception as e:
+        logger.warning(
+            "Metadata delete failed after restore; the stale-metadata reaper will retry",
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+        )
+        return
     try:
         await delete_object(metadata.s3_key, bucket=metadata.s3_bucket)
     except Exception as e:
@@ -761,13 +765,6 @@ async def _finalize_restore_cleanup(
                 "s3_key": sanitize_for_log(metadata.s3_key),
                 "error": sanitize_for_log(e),
             },
-        )
-    try:
-        await repo.delete_by_scan_id(scan_id)
-    except Exception as e:
-        logger.warning(
-            "Metadata delete failed after restore; orphan reaper will retry",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
 
 
