@@ -31,6 +31,7 @@ _PROJECT_ID = "test-project-id"
 _RUN = {"pipeline_id": 515151, "commit_hash": "e" * 40, "branch": "main"}
 _CALLGRAPH = {"format": "generic", "language": "python", "data": {"imports": [], "analyzed_modules": []}}
 _SECRET = json.loads((Path(__file__).parents[1] / "fixtures/secrets/trufflehog_v3_line.json").read_text())
+_CBOM = json.loads((Path(__file__).parents[1] / "fixtures/cbom/legacy_crypto_mixed.json").read_text())
 
 
 def _scan(scan_id: str, age_days: int, **fields) -> dict:
@@ -66,6 +67,11 @@ async def _retried_job(client, db, headers) -> None:
     """A retried CI job of the run posts again, and the analysis it triggers finishes."""
     scan_id = await _ingest(client, headers, "opengrep", [])
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "completed"}})
+
+
+async def _cbom_job(client, headers) -> None:
+    resp = await client.post("/api/v1/ingest/cbom", json={**_RUN, "cbom": _CBOM}, headers=headers)
+    assert resp.status_code == 202, resp.text
 
 
 async def _callgraph_upload(client, headers, project) -> None:
@@ -326,6 +332,18 @@ async def test_a_retried_job_whose_ingest_meets_the_batch_delete_keeps_its_resul
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert "opengrep" in await _analyzers(db, scan_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_retried_cbom_job_whose_ingest_meets_the_batch_delete_keeps_its_assets(
+    client, db, api_key_headers, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    _delete_during(monkeypatch, partial(_cbom_job, client, api_key_headers), ScanManager, "find_or_create_scan")
+    await _archive_scans_and_delete(db, [scan_id], "retention")
+
+    assert await db.crypto_assets.count_documents({"scan_id": scan_id}) == 3
 
 
 @pytest.mark.asyncio

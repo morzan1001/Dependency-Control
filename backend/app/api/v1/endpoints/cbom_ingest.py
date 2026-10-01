@@ -19,6 +19,7 @@ from app.core.constants import (
 from app.core.metrics import cbom_ingests_total
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.ingest import BaseIngest
 from app.services.cbom_parser import ParsedCBOM, parse_cbom
 from app.services.notifications.service import safe_notify_project_event
@@ -103,6 +104,7 @@ async def ingest_cbom(
         )
 
     project_id = str(project.id)
+    await ScanRepository(db).update_raw(scan_id, {"$set": {"updated_at": datetime.now(timezone.utc)}})
 
     try:
         summary = await _store_crypto_assets(db, project_id, scan_id, parsed)

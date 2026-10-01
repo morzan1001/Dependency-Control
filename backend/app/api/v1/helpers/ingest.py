@@ -1,8 +1,10 @@
 """Helper functions for ingest endpoints."""
 
+from datetime import datetime, timezone
 from typing import Any
 
 from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.ingest import BaseIngest
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.stats import StatsAccumulator, compute_stats
@@ -20,8 +22,9 @@ async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data
     """
     scan_id = manager.run_scan_id(data)
     result_dict = data.model_dump(exclude=set(BaseIngest.model_fields))
-    await manager.find_or_create_scan(data, scan_id)
+    await ScanRepository(manager.db).update_raw(scan_id, {"$set": {"updated_at": datetime.now(timezone.utc)}})
     await AnalysisResultRepository(manager.db).save_result(scan_id, analyzer_name, result_dict)
+    await manager.find_or_create_scan(data, scan_id)
 
     aggregator = ResultAggregator()
     aggregator.aggregate(analyzer_name, result_dict)

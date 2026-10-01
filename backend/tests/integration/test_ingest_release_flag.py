@@ -8,8 +8,10 @@ from unittest.mock import patch
 
 import pymongo
 import pytest
+from pymongo.errors import AutoReconnect
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.releases import ReleaseRepository
 
 _COMMIT = "b" * 40
@@ -313,3 +315,19 @@ async def test_findings_ingest_creates_a_scan_with_the_release_record(client, db
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["is_release"] is True
     assert (await latest_release(_CANARY))["scan_id"] == scan_id
+
+
+@pytest.mark.asyncio
+async def test_a_findings_ingest_whose_result_was_not_saved_leaves_no_scan_and_no_release(client, db, api_key_headers):
+    failing_save = patch.object(
+        AnalysisResultRepository, "save_result", side_effect=AutoReconnect("primary stepped down")
+    )
+    with failing_save, pytest.raises(AutoReconnect):
+        await client.post(
+            _FINDINGS_ROUTE,
+            json=_findings_payload(is_release=True, release_environment=_CANARY),
+            headers=api_key_headers,
+        )
+
+    assert await db.scans.count_documents({}) == 0
+    assert await db.releases.count_documents({}) == _NO_RECORDS
