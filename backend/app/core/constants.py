@@ -6,7 +6,7 @@ from typing import Any, Literal, get_args
 
 from app.models.finding import Severity
 
-# HOSTNAME alone repeats across the uvicorn processes of one pod.
+# HOSTNAME alone repeats across the processes of one host.
 INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
 
 # The two CISA KEV flags enrichment persists on a finding's details and on each of its
