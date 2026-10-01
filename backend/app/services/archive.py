@@ -234,14 +234,18 @@ def _build_archive_payload(
     return count_through(gzipped), "application/gzip"
 
 
+def _count_failure(operation: str, reason: str) -> None:
+    archive_failures_total.labels(operation=operation, reason=reason).inc()
+    archive_operations_total.labels(operation=operation, status="failure").inc()
+
+
 async def _drop_upload(s3_key: str, reason: str) -> None:
     """Delete an upload whose metadata this archive must not write, and count the failed archive."""
     try:
         await delete_object(s3_key)
     except Exception:
         logger.exception("Cleanup delete failed for orphan S3 upload")
-    archive_failures_total.labels(operation="archive", reason=reason).inc()
-    archive_operations_total.labels(operation="archive", status="failure").inc()
+    _count_failure("archive", reason)
 
 
 async def _save_archive_metadata(
@@ -292,8 +296,7 @@ async def _save_archive_metadata(
             "Metadata create failed",
             extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
-        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.UNKNOWN).inc()
-        archive_operations_total.labels(operation="archive", status="failure").inc()
+        _count_failure("archive", ArchiveFailureReason.UNKNOWN)
         return None
 
 
@@ -319,16 +322,14 @@ async def _load_scan_for_archive(
             "Scan not found for archiving",
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
-        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.NOT_FOUND).inc()
-        archive_operations_total.labels(operation="archive", status="failure").inc()
+        _count_failure("archive", ArchiveFailureReason.NOT_FOUND)
         return None, None
     if scan_doc.get("pinned") in RETENTION_PROTECTED_FLAG_VALUES or scan_doc.get("status") in SCAN_ACTIVE_STATUSES:
         logger.info(
             "Scan pinned or under analysis, not archiving it",
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
-        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.PROTECTED).inc()
-        archive_operations_total.labels(operation="archive", status="failure").inc()
+        _count_failure("archive", ArchiveFailureReason.PROTECTED)
         return None, None
     if existing is None:
         return None, scan_doc
@@ -340,8 +341,7 @@ async def _load_scan_for_archive(
         "Scan written to or restored since it was archived, keeping both",
         extra={"scan_id": sanitize_for_log(scan_id)},
     )
-    archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.WRITTEN_SINCE_ARCHIVE).inc()
-    archive_operations_total.labels(operation="archive", status="failure").inc()
+    _count_failure("archive", ArchiveFailureReason.WRITTEN_SINCE_ARCHIVE)
     return None, None
 
 
@@ -362,16 +362,14 @@ async def _upload_archive_bundle(
             "Aborting archive: source data could not be read intact",
             extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
-        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.INTEGRITY).inc()
-        archive_operations_total.labels(operation="archive", status="failure").inc()
+        _count_failure("archive", ArchiveFailureReason.INTEGRITY)
         return None
     except Exception as e:
         logger.exception(
             "Failed to upload archive",
             extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
-        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.S3_ERROR).inc()
-        archive_operations_total.labels(operation="archive", status="failure").inc()
+        _count_failure("archive", ArchiveFailureReason.S3_ERROR)
         return None
     archive_bundle_compressed_bytes.observe(total)
     return total, stats
@@ -399,8 +397,7 @@ async def archive_scan(
             "Archive of scan skipped, lock held by another worker",
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
-        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.LOCK_HELD).inc()
-        archive_operations_total.labels(operation="archive", status="failure").inc()
+        _count_failure("archive", ArchiveFailureReason.LOCK_HELD)
         return None
 
     try:
@@ -418,8 +415,7 @@ async def archive_scan(
                 "Archive of release scan refused",
                 extra={"scan_id": sanitize_for_log(scan_id)},
             )
-            archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.RELEASE_PROTECTED).inc()
-            archive_operations_total.labels(operation="archive", status="failure").inc()
+            _count_failure("archive", ArchiveFailureReason.RELEASE_PROTECTED)
             return None
 
         project_id = scan_doc["project_id"]
@@ -750,8 +746,7 @@ async def _load_restore_metadata(
             "No archive metadata for scan",
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
-        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.NOT_FOUND).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        _count_failure("restore", ArchiveFailureReason.NOT_FOUND)
         return None
 
     existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
@@ -767,8 +762,7 @@ async def _load_restore_metadata(
             "Scan already exists in MongoDB, aborting restore",
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
-        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.ALREADY_EXISTS).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        _count_failure("restore", ArchiveFailureReason.ALREADY_EXISTS)
         return None
 
     return metadata
@@ -876,8 +870,7 @@ async def _run_restore_pipeline(
         # Before its header insert the restore wrote nothing, and a scan already there belongs to an ingest.
         failure_reason = await _abandon_restore(db, scan_id, renew_lock, failure_reason)
     if failure_reason is not None:
-        archive_failures_total.labels(operation="restore", reason=failure_reason).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        _count_failure("restore", failure_reason)
         return None
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
@@ -926,8 +919,7 @@ async def restore_scan(
             "Restore of scan blocked, lock held",
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
-        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.LOCK_HELD).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        _count_failure("restore", ArchiveFailureReason.LOCK_HELD)
         return None
 
     try:
@@ -941,8 +933,7 @@ async def restore_scan(
             "Restore lost its lock to another restore, aborting",
             extra={"scan_id": sanitize_for_log(scan_id)},
         )
-        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.LOCK_HELD).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        _count_failure("restore", ArchiveFailureReason.LOCK_HELD)
         return None
     finally:
         await lock_repo.release_lock(lock_name, holder)
