@@ -3,6 +3,7 @@ import logging
 from collections import Counter
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import TYPE_CHECKING, Any, Optional
 
 
@@ -42,7 +43,7 @@ from app.core.metrics import (
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project
-from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
 from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.analysis.notifications import notify_analysis_failed
@@ -60,6 +61,9 @@ if TYPE_CHECKING:
     from app.core.worker import WorkerManager
 
 logger = logging.getLogger(__name__)
+
+_RETENTION_LOCK_NAME = "retention"
+_RETENTION_LOCK_TTL_SECONDS = 600
 
 
 async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
@@ -468,6 +472,21 @@ async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, 
 
 
 async def _run_retention(db: Any) -> None:
+    locks = DistributedLocksRepository(db)
+    holder = new_lock_holder()
+    if not await locks.acquire_lock(_RETENTION_LOCK_NAME, holder, ttl_seconds=_RETENTION_LOCK_TTL_SECONDS):
+        logger.info("Retention skipped: another pod is running it")
+        return
+    renew = partial(locks.renew_lock, _RETENTION_LOCK_NAME, holder, _RETENTION_LOCK_TTL_SECONDS)
+    try:
+        await run_holding_lock(renew, _RETENTION_LOCK_TTL_SECONDS, _expire_scans(db))
+    except LockLost:
+        logger.error("Retention stopped: another pod took its lock over")
+    finally:
+        await locks.release_lock(_RETENTION_LOCK_NAME, holder)
+
+
+async def _expire_scans(db: Any) -> None:
     system_settings = await SystemSettingsRepository(db).get()
 
     if system_settings.retention_mode == SETTINGS_MODE_GLOBAL:

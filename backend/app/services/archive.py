@@ -44,7 +44,13 @@ from app.core.s3 import (
 )
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
+from app.repositories.distributed_locks import (
+    LOCK_RENEWALS_PER_TTL,
+    DistributedLocksRepository,
+    LockLost,
+    new_lock_holder,
+    run_holding_lock,
+)
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.archive_bundle import (
@@ -65,7 +71,6 @@ from app.services.update_frequency_rollup import record_scan_update_delta
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
-_RESTORE_LOCK_RENEWALS_PER_TTL = 3
 _GRIDFS_RESTORE_LOCK_POLL_SECONDS = 1
 # zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
 _COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
@@ -583,7 +588,7 @@ class _GridFSRestore:
             # The restore that took the lock over owns the file now, so aborting would delete its chunks.
             self._grid_in = None
             raise FileExists(f"Another restore took over {self._lock_name}")
-        self._renew_at = time.monotonic() + _ARCHIVE_LOCK_TTL_SECONDS / _RESTORE_LOCK_RENEWALS_PER_TTL
+        self._renew_at = time.monotonic() + _ARCHIVE_LOCK_TTL_SECONDS / LOCK_RENEWALS_PER_TTL
 
     async def _release(self) -> None:
         if self._lock_name is not None:
@@ -856,55 +861,6 @@ async def _run_restore_pipeline(
     )
 
 
-async def _renew_restore_lock_until_lost(
-    renew_lock: Callable[[], Awaitable[bool]],
-    pipeline: asyncio.Task[ArchiveRestoreResponse | None],
-    scan_id: str,
-) -> None:
-    """Keep the restore lock alive while the pipeline runs; cancel the pipeline once another restore took it over."""
-    while True:
-        await asyncio.sleep(_ARCHIVE_LOCK_TTL_SECONDS / _RESTORE_LOCK_RENEWALS_PER_TTL)
-        try:
-            still_held = await renew_lock()
-        except PyMongoError as e:
-            logger.warning(
-                "Restore lock renewal failed, retrying",
-                extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
-            )
-            continue
-        if not still_held:
-            logger.error(
-                "Restore lost its lock to another restore, aborting",
-                extra={"scan_id": sanitize_for_log(scan_id)},
-            )
-            pipeline.cancel()
-            return
-
-
-async def _run_restore_pipeline_holding_lock(
-    db: Any,
-    repo: ArchiveMetadataRepository,
-    metadata: ArchiveMetadata,
-    scan_id: str,
-    renew_lock: Callable[[], Awaitable[bool]],
-) -> ArchiveRestoreResponse | None:
-    pipeline = asyncio.create_task(_run_restore_pipeline(db, repo, metadata, scan_id, renew_lock))
-    heartbeat = asyncio.create_task(_renew_restore_lock_until_lost(renew_lock, pipeline, scan_id))
-    try:
-        return await pipeline
-    except asyncio.CancelledError:
-        # Only the heartbeat cancels the pipeline without cancelling us; our own cancellation must propagate.
-        this_task = asyncio.current_task()
-        if this_task is None or this_task.cancelling():
-            raise
-        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.LOCK_HELD).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
-        return None
-    finally:
-        heartbeat.cancel()
-        await asyncio.gather(heartbeat, return_exceptions=True)
-
-
 async def restore_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
@@ -937,6 +893,15 @@ async def restore_scan(
         metadata = await _load_restore_metadata(db, repo, scan_id)
         if metadata is None:
             return None
-        return await _run_restore_pipeline_holding_lock(db, repo, metadata, scan_id, renew_lock)
+        pipeline = _run_restore_pipeline(db, repo, metadata, scan_id, renew_lock)
+        return await run_holding_lock(renew_lock, _ARCHIVE_LOCK_TTL_SECONDS, pipeline)
+    except LockLost:
+        logger.error(
+            "Restore lost its lock to another restore, aborting",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.LOCK_HELD).inc()
+        archive_operations_total.labels(operation="restore", status="failure").inc()
+        return None
     finally:
         await lock_repo.release_lock(lock_name, holder)

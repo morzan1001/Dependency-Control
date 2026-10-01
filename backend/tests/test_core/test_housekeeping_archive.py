@@ -9,6 +9,7 @@ import pytest
 from app.core.constants import RETENTION_PROTECTED_FLAG_VALUES
 from app.core.housekeeping import _archive_scans_and_delete, _handle_retention_action
 from app.models.archive import ArchiveMetadata
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.core.housekeeping"
 # archive_scan is lazy-imported inside _archive_scans_and_delete, so patch it at its source module.
@@ -18,6 +19,13 @@ ARCHIVE_SVC = "app.services.archive"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _mock_db() -> MagicMock:
+    """A mock database with a working lock collection, so retention gets past taking its lock."""
+    db = MagicMock()
+    db.distributed_locks = FakeDatabase().distributed_locks
+    return db
 
 
 def _make_archive_metadata(scan_id="scan-1"):
@@ -215,7 +223,7 @@ class TestRunHousekeepingArchive:
             yield mock_scan_doc
 
         mock_cursor.__aiter__ = lambda self: async_iter()
-        mock_db = MagicMock()
+        mock_db = _mock_db()
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 
         with (
@@ -244,7 +252,7 @@ class TestRunHousekeepingArchive:
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
         with (
-            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=MagicMock()),
+            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=_mock_db()),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
@@ -271,7 +279,7 @@ class TestRunHousekeepingArchive:
             yield mock_scan_doc
 
         mock_cursor.__aiter__ = lambda self: async_iter()
-        mock_db = MagicMock()
+        mock_db = _mock_db()
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 
         with (
@@ -301,7 +309,7 @@ class TestRunHousekeepingArchive:
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
         with (
-            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=MagicMock()),
+            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=_mock_db()),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
@@ -322,7 +330,7 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
 
     captured_queries: list[dict] = []
 
-    db = MagicMock()
+    db = _mock_db()
 
     class _EmptyCursor:
         def __aiter__(self):
@@ -366,7 +374,7 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
 
     captured_queries: list[dict] = []
 
-    db = MagicMock()
+    db = _mock_db()
 
     class _EmptyCursor:
         def __aiter__(self):

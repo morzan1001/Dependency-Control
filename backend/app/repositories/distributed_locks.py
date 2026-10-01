@@ -1,17 +1,59 @@
 """Distributed locks for multi-pod coordination (e.g. Slack token refresh)."""
 
+import asyncio
+import logging
 import uuid
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.core.constants import INSTANCE_ID
+
+logger = logging.getLogger(__name__)
+
+LOCK_RENEWALS_PER_TTL = 3
+
+
+class LockLost(Exception):
+    """Another holder took the lock over while its work was still running."""
 
 
 def new_lock_holder() -> str:
     """A holder unique to one acquisition, so a release never drops a lock someone took over."""
     return f"{INSTANCE_ID}:{uuid.uuid4().hex[:12]}"
+
+
+async def run_holding_lock[T](
+    renew: Callable[[], Awaitable[bool]], ttl_seconds: float, work: Coroutine[Any, Any, T]
+) -> T:
+    """Run ``work`` while renewing its lock; cancel it and raise LockLost once another holder took the lock over."""
+    task = asyncio.create_task(work)
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(ttl_seconds / LOCK_RENEWALS_PER_TTL)
+            try:
+                if not await renew():
+                    task.cancel()
+                    return
+            except PyMongoError as e:
+                logger.warning("Lock renewal failed, retrying: %s", e)
+
+    beat = asyncio.create_task(heartbeat())
+    try:
+        return await task
+    except asyncio.CancelledError:
+        # Only the heartbeat cancels the work without cancelling us; our own cancellation must propagate.
+        this_task = asyncio.current_task()
+        if this_task is None or this_task.cancelling():
+            raise
+        raise LockLost from None
+    finally:
+        beat.cancel()
+        await asyncio.gather(beat, return_exceptions=True)
 
 
 class DistributedLocksRepository:

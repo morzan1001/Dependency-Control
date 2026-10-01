@@ -40,6 +40,7 @@ def _patch_common(monkeypatch, db, settings_obj):
 
 def _capturing_db(captured):
     db = MagicMock()
+    db.distributed_locks = FakeDatabase().distributed_locks
     db.scans.find = lambda query, projection=None: (captured.append(query), _EmptyCursor())[1]
     return db
 
