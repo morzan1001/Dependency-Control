@@ -343,22 +343,17 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
     from app.services.archive import archive_scan
 
     picked_at = datetime.now(timezone.utc)
-    archived_count = 0
     failed_ids: list[str] = []
 
     for scan_id in scan_ids:
         try:
             metadata = await archive_scan(db, scan_id)
-            if metadata:
-                archived_count += 1
-                archive_housekeeping_scans_processed_total.labels(status="archived").inc()
-            else:
-                failed_ids.append(scan_id)
-                archive_housekeeping_scans_processed_total.labels(status="failed").inc()
         except Exception as e:
             logger.exception("Failed to archive scan %s: %s", scan_id, e)
+            metadata = None
+        if not metadata:
             failed_ids.append(scan_id)
-            archive_housekeeping_scans_processed_total.labels(status="failed").inc()
+        archive_housekeeping_scans_processed_total.labels(status="archived" if metadata else "failed").inc()
 
     if failed_ids:
         logger.warning(f"{label}: {len(failed_ids)} scan(s) failed to archive and will NOT be deleted.")
@@ -381,7 +376,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
         stale = {"$gte": picked_at, "$lt": scan["updated_at"]}
         await db.archive_metadata.delete_one({"scan_id": scan["_id"], "archived_at": stale})
 
-    logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
+    logger.info(f"{label}: Archived {len(scan_ids) - len(failed_ids)} scans, deleted {deleted} from MongoDB.")
 
 
 async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, label: str) -> None:
