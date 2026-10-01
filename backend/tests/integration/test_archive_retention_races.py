@@ -15,7 +15,7 @@ from pymongo.errors import AutoReconnect, NetworkTimeout
 
 from app.api.v1.endpoints import callgraph
 from app.core import housekeeping
-from app.core.constants import ARCHIVE_BATCH_SIZE, RESCAN_HISTORY_RUNS
+from app.core.constants import ARCHIVE_BATCH_SIZE, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS, RESCAN_HISTORY_RUNS
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
 from app.models.release import Release
 from app.repositories.archive_metadata import ArchiveMetadataRepository
@@ -171,6 +171,8 @@ async def test_only_a_finished_retention_run_keeps_the_other_pods_out(db, monkey
     await _run_retention(db)
 
     assert runs == 2
+    lock = await db.distributed_locks.find_one({"_id": "retention"})
+    assert lock["expires_at"] - lock["acquired_at"] >= timedelta(hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS)
 
 
 class _StopLoop(Exception):
@@ -190,18 +192,25 @@ async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
         "update_archive_stats",
         "update_cache_stats",
         "run_waiver_recalc",
-        "run_housekeeping",
+        "reconcile_release_flags",
+        "prune_old_audit_entries",
+        "sweep_expired_compliance_reports",
+        "_reap_orphan_s3_objects",
+        "_reap_orphan_callgraphs",
+        "reap_orphan_gridfs_files",
         "sync_branch_status",
         "reconcile_update_frequency_ledger",
     ):
         monkeypatch.setattr(housekeeping, task, noop)
-    bid = AsyncMock()
+    bid = AsyncMock(side_effect=[AutoReconnect("primary stepped down"), None])
+    expire = AsyncMock()
     monkeypatch.setattr(housekeeping, "_run_retention", bid)
+    monkeypatch.setattr(housekeeping, "_expire_scans", expire)
     monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=AsyncMock(side_effect=[None, _StopLoop])))
     with pytest.raises(_StopLoop):
         await housekeeping.housekeeping_loop()
 
-    assert bid.await_count == 2
+    assert (bid.await_count, expire.await_count) == (2, 0)
 
 
 @pytest.mark.asyncio
