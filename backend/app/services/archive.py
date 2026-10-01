@@ -13,7 +13,7 @@ from typing import Any
 
 from bson import Binary, ObjectId, json_util
 from cryptography.exceptions import InvalidTag
-from gridfs.errors import NoFile
+from gridfs.errors import FileExists, NoFile
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket, AsyncIOMotorGridIn
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
@@ -62,6 +62,8 @@ logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
 _RESTORE_LOCK_RENEWALS_PER_TTL = 3
+_GRIDFS_RESTORE_LOCK_TEMPLATE = "restore-gridfs:{file_id}"
+_GRIDFS_RESTORE_LOCK_POLL_SECONDS = 1
 # zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
 _COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
 
@@ -474,18 +476,16 @@ def _parse_error_reason(exc: ValueError) -> str:
     return ArchiveFailureReason.VERSION_MISMATCH if "version" in str(exc).lower() else ArchiveFailureReason.INTEGRITY
 
 
-async def _flush_batch(
+async def _flush_batches(
     db: Any,
-    coll_name: str,
     batch_by_collection: dict[str, list[dict[str, Any]]],
     collections_restored: list[str],
 ) -> None:
-    docs = batch_by_collection.pop(coll_name, None)
-    if not docs:
-        return
-    await getattr(db, coll_name).insert_many(docs, ordered=False)
-    if coll_name not in collections_restored:
-        collections_restored.append(coll_name)
+    for coll_name, docs in batch_by_collection.items():
+        await getattr(db, coll_name).insert_many(docs, ordered=False)
+        if coll_name not in collections_restored:
+            collections_restored.append(coll_name)
+    batch_by_collection.clear()
 
 
 async def _handle_header_event(
@@ -523,27 +523,70 @@ async def _handle_doc_event(
     _hash_plaintext_secrets(coll, doc)
     batch_by_collection.setdefault(coll, []).append(doc)
     if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
-        await _flush_batch(db, coll, batch_by_collection, collections_restored)
+        await _flush_batches(db, batch_by_collection, collections_restored)
 
 
-async def _restore_gridfs_chunk(
-    db: Any, grid_in: AsyncIOMotorGridIn | None, frame: dict[str, Any]
-) -> AsyncIOMotorGridIn | None:
-    """Write one chunk frame; n=0 closes the previous file and opens this one unless it is already stored."""
-    if frame["n"] == 0:
-        if grid_in is not None:
-            await grid_in.close()
-        # Stored files never change, and one still present is live, shared with a rescan.
-        if await db["fs.files"].find_one({"_id": frame["_id"]}, {"_id": 1}):
-            return None
-        fs = AsyncIOMotorGridFSBucket(db)
+class _GridFSRestore:
+    """Writes chunk frames file by file, each under a lock shared by every restore of that file id."""
+
+    def __init__(self, db: Any) -> None:
+        self._db = db
+        self._locks = DistributedLocksRepository(db)
+        self._holder = new_lock_holder()
+        self._lock_name: str | None = None
+        self._grid_in: AsyncIOMotorGridIn | None = None
+        self._renew_at = 0.0
+
+    async def write(self, frame: dict[str, Any]) -> None:
+        """n=0 closes the previous file and opens this one unless it is already stored."""
+        if frame["n"] == 0:
+            await self.close()
+            await self._open(frame["_id"], frame["filename"])
+        if self._grid_in is not None:
+            if time.monotonic() >= self._renew_at:
+                await self._renew()
+            await self._grid_in.write(frame["data"])
+
+    async def close(self) -> None:
+        if self._grid_in is not None:
+            await self._renew()
+            await self._grid_in.close()
+            self._grid_in = None
+        await self._release()
+
+    async def abort(self) -> None:
+        if self._grid_in is not None:
+            await self._grid_in.abort()
+            self._grid_in = None
+        await self._release()
+
+    async def _open(self, file_id: ObjectId, filename: str) -> None:
+        self._lock_name = _GRIDFS_RESTORE_LOCK_TEMPLATE.format(file_id=file_id)
+        # A peer on another pod may hold it, so no in-process event can announce the release.
+        while not await self._locks.acquire_lock(self._lock_name, self._holder, _ARCHIVE_LOCK_TTL_SECONDS):  # noqa: ASYNC110
+            await asyncio.sleep(_GRIDFS_RESTORE_LOCK_POLL_SECONDS)
+        # Stored files never change; one present is live, shared with a rescan or stored by a concurrent restore.
+        if await self._db["fs.files"].find_one({"_id": file_id}, {"_id": 1}):
+            await self._release()
+            return
+        fs = AsyncIOMotorGridFSBucket(self._db)
         # Clears the chunks of a restore that died mid-file, then raises NoFile for the missing files document.
         with contextlib.suppress(NoFile):
-            await fs.delete(frame["_id"])
-        grid_in = fs.open_upload_stream_with_id(frame["_id"], frame["filename"])
-    if grid_in is not None:
-        await grid_in.write(frame["data"])
-    return grid_in
+            await fs.delete(file_id)
+        self._grid_in = fs.open_upload_stream_with_id(file_id, filename)
+
+    async def _renew(self) -> None:
+        assert self._lock_name is not None
+        if not await self._locks.renew_lock(self._lock_name, self._holder, _ARCHIVE_LOCK_TTL_SECONDS):
+            # The restore that took the lock over owns the file now, so aborting would delete its chunks.
+            self._grid_in = None
+            raise FileExists(f"Another restore took over {self._lock_name}")
+        self._renew_at = time.monotonic() + _ARCHIVE_LOCK_TTL_SECONDS / _RESTORE_LOCK_RENEWALS_PER_TTL
+
+    async def _release(self) -> None:
+        if self._lock_name is not None:
+            await self._locks.release_lock(self._lock_name, self._holder)
+            self._lock_name = None
 
 
 async def _replay_bundle(
@@ -558,7 +601,7 @@ async def _replay_bundle(
     collections_restored: list[str] = []
     batch_by_collection: dict[str, list[dict[str, Any]]] = {}
     gridfs_entries: list[dict[str, Any]] = []
-    grid_in: AsyncIOMotorGridIn | None = None
+    gridfs = _GridFSRestore(db)
 
     try:
         async for event in read_bundle_frames(decompressed):
@@ -572,17 +615,16 @@ async def _replay_bundle(
                     # not an HMAC); refuse unknown names so a crafted marker can't write into arbitrary collections.
                     raise ValueError(f"Unexpected collection in bundle: {sanitize_for_log(coll)}")
                 if coll == ARCHIVE_GRIDFS_CHUNK_FRAME:
-                    grid_in = await _restore_gridfs_chunk(db, grid_in, event["data"])
+                    # A file skipped as already stored is unreferenced, and so reapable, until its rows are in.
+                    await _flush_batches(db, batch_by_collection, collections_restored)
+                    await gridfs.write(event["data"])
                     if coll not in collections_restored:
                         collections_restored.append(coll)
                 else:
                     await _handle_doc_event(db, event, batch_by_collection, gridfs_entries, collections_restored)
             elif etype == "footer":
-                if grid_in is not None:
-                    await grid_in.close()
-                    grid_in = None
-                for coll in tuple(batch_by_collection):
-                    await _flush_batch(db, coll, batch_by_collection, collections_restored)
+                await gridfs.close()
+                await _flush_batches(db, batch_by_collection, collections_restored)
                 break
     except ValueError as e:
         logger.exception(
@@ -609,9 +651,8 @@ async def _replay_bundle(
         )
         return ArchiveFailureReason.S3_ERROR, collections_restored, gridfs_entries
     finally:
-        if grid_in is not None:
-            with contextlib.suppress(PyMongoError):
-                await grid_in.abort()
+        with contextlib.suppress(PyMongoError):
+            await gridfs.abort()
 
     return None, collections_restored, gridfs_entries
 

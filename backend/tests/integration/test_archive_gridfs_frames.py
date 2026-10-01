@@ -1,5 +1,6 @@
 """An archive bundle carries every GridFS file of a scan as chunk frames, restored byte-identical under the same ids."""
 
+import asyncio
 import json
 import tracemalloc
 import zlib
@@ -100,10 +101,14 @@ async def _stored_files(db) -> dict[ObjectId, tuple[str, bytes]]:
     return stored
 
 
-async def _expire(db) -> None:
-    """Retention deletes the archived scan; a day later the reaper deletes every file nothing references."""
-    await delete_scans_and_related_data(db, [_SCAN_ID])
+async def _delete_and_age(db, scan_ids: tuple[str, ...]) -> None:
+    await delete_scans_and_related_data(db, list(scan_ids))
     await db["fs.files"].update_many({}, {"$set": {"uploadDate": datetime.now(timezone.utc) - timedelta(days=2)}})
+
+
+async def _expire(db, scan_ids: tuple[str, ...] = (_SCAN_ID,)) -> None:
+    """Retention deletes the archived scans; a day later the reaper deletes every file nothing references."""
+    await _delete_and_age(db, scan_ids)
     await reap_orphan_gridfs_files(db)
 
 
@@ -126,6 +131,18 @@ async def _measured(call) -> tuple[Any, int]:
 async def _aiter(items: list[Any]) -> AsyncIterator[Any]:
     for item in items:
         yield item
+
+
+def _replay_with(monkeypatch, before_event) -> None:
+    """Run ``before_event`` on every bundle event a restore reads, before the restore processes it."""
+    read_bundle_frames = archive.read_bundle_frames
+
+    async def intercepted(source: AsyncIterator[bytes]) -> AsyncIterator[dict[str, Any]]:
+        async for event in read_bundle_frames(source):
+            await before_event(event)
+            yield event
+
+    monkeypatch.setattr(archive, "read_bundle_frames", intercepted)
 
 
 @pytest.mark.asyncio
@@ -217,6 +234,77 @@ async def test_a_rescan_shared_file_present_at_restore_is_left_untouched(db, arc
     assert restored is not None
     assert await db["fs.files"].find({}).to_list(None) == [shared]
     assert await db["fs.chunks"].distinct("_id") == chunk_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("sbom_size", [_MIB, 64 * _MIB], ids=["buffered-until-close", "flushed-mid-file"])
+async def test_concurrent_restores_of_scans_sharing_an_absent_file_both_finish_with_the_file_intact(
+    db, archive_env, monkeypatch, sbom_size
+):
+    scan = await _seed_scan(db, _sbom_of(sbom_size))
+    rescan = build_rescan(scan.model_dump(by_alias=True))
+    await db.scans.insert_one(rescan.model_dump(by_alias=True))
+    before = await _stored_files(db)
+    for scan_id in (_SCAN_ID, rescan.id):
+        assert await archive_scan(db, scan_id) is not None
+    await _expire(db, (_SCAN_ID, rescan.id))
+    assert await db["fs.files"].count_documents({}) == 0
+    both_reached_the_file = asyncio.Barrier(2)
+
+    async def meet_at_the_first_chunk_frame(event: dict[str, Any]) -> None:
+        if event.get("collection") == ARCHIVE_GRIDFS_CHUNK_FRAME and event["data"]["n"] == 0:
+            await both_reached_the_file.wait()
+
+    _replay_with(monkeypatch, meet_at_the_first_chunk_frame)
+    restored = await asyncio.gather(restore_scan(db, _SCAN_ID), restore_scan(db, rescan.id))
+
+    assert await _stored_files(db) == before
+    assert None not in restored
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_restore_that_lost_its_file_lock_fails_and_leaves_the_new_holders_chunks(db, archive_env, monkeypatch):
+    await _seed_scan(db, _sbom_of(_MIB))
+    await _archive(db)
+    await _expire(db)
+    monkeypatch.setattr(archive, "_ARCHIVE_LOCK_TTL_SECONDS", 0.3)
+    peer_chunk = {"n": 999, "data": b"written by the restore that took the file over"}
+
+    async def take_the_file_over_after_its_first_chunk(event: dict[str, Any]) -> None:
+        if event.get("collection") == ARCHIVE_GRIDFS_CHUNK_FRAME and event["data"]["n"] == 1:
+            file_id = event["data"]["_id"]
+            await db.distributed_locks.update_one({"_id": f"restore-gridfs:{file_id}"}, {"$set": {"holder": "peer"}})
+            await db["fs.chunks"].insert_one({"files_id": file_id, **peer_chunk})
+            await asyncio.sleep(0.2)
+
+    _replay_with(monkeypatch, take_the_file_over_after_its_first_chunk)
+
+    assert await restore_scan(db, _SCAN_ID) is None
+    assert await db["fs.chunks"].find({}, {"_id": 0, "files_id": 0}).to_list(None) == [peer_chunk]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_files_a_restore_skips_as_present_survive_a_reaper_run_before_the_footer(
+    client, db, archive_env, monkeypatch
+):
+    await _seed_scan_with_result_and_callgraph(client, db, _sbom_fixture())
+    before = await _stored_files(db)
+    await _archive(db)
+    # Retention deleted the scan, but the reaper has not yet freed the files nothing references now.
+    await _delete_and_age(db, (_SCAN_ID,))
+
+    async def reap_at_the_footer(event: dict[str, Any]) -> None:
+        if event["type"] == "footer":
+            await reap_orphan_gridfs_files(db)
+
+    _replay_with(monkeypatch, reap_at_the_footer)
+    restored = await restore_scan(db, _SCAN_ID)
+
+    assert restored is not None
+    assert await _stored_files(db) == before
 
 
 @pytest.mark.asyncio
