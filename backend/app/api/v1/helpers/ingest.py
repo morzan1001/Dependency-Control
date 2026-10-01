@@ -20,8 +20,8 @@ async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data
     """
     scan_id = manager.run_scan_id(data)
     result_dict = data.model_dump(exclude=set(BaseIngest.model_fields))
-    await AnalysisResultRepository(manager.db).save_result(scan_id, analyzer_name, result_dict)
     await manager.find_or_create_scan(data, scan_id)
+    await AnalysisResultRepository(manager.db).save_result(scan_id, analyzer_name, result_dict)
 
     aggregator = ResultAggregator()
     aggregator.aggregate(analyzer_name, result_dict)

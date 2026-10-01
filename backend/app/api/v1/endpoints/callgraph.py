@@ -169,6 +169,9 @@ async def upload_callgraph(
     uploaded_at = callgraph_data.pop("created_at")
     insert_only = {"_id": callgraph_data.pop("_id"), "created_at": uploaded_at}
     graph = {field: callgraph_data.pop(field) for field in _GRAPH_FIELDS}
+    scan_repo = ScanRepository(db)
+    if scan_exists:
+        await scan_repo.update_raw(scan_id, {"$set": {"updated_at": datetime.now(timezone.utc)}})
     graph_gridfs_id = await upload_gridfs_json(db, f"callgraph-{project_id}-{language}.json", graph)
     await callgraph_repo.collection.update_one(
         upsert_filter,
@@ -187,13 +190,11 @@ async def upload_callgraph(
     )
 
     if scan_exists:
-        scan_repo = ScanRepository(db)
         # Rescans created before this upload read the callgraph through the build they re-analyse.
         pending_rescans = await scan_repo.distinct(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
         )
         for target_scan_id in [scan_id, *pending_rescans]:
-            # Retention and archive tell from updated_at that a scan was written to after they read it.
             written = {"reachability_pending": True, "updated_at": datetime.now(timezone.utc)}
             await scan_repo.update_raw(target_scan_id, {"$set": written})
             try:

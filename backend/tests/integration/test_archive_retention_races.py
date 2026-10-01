@@ -12,14 +12,17 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pymongo.errors import AutoReconnect, NetworkTimeout
 
+from app.api.v1.endpoints import callgraph
 from app.core import housekeeping
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
 from app.models.release import Release
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import ScanRepository
 from app.services import archive
 from app.services.archive import restore_scan
+from app.services.scan_manager import ScanManager
 
 _NOW = datetime.now(timezone.utc)
 _PROJECT_ID = "test-project-id"
@@ -85,6 +88,17 @@ def _interleave(monkeypatch, owner, name: str, write: Callable[[], Awaitable[obj
         return result
 
     monkeypatch.setattr(owner, name, call)
+
+
+def _delete_during(monkeypatch, post: Callable[[], Awaitable[None]], owner, name: str) -> None:
+    """The batch delete runs inside post, right before its call of owner.name."""
+    real_delete = housekeeping._delete_expirable
+
+    async def post_around_the_delete(*args):
+        _interleave(monkeypatch, owner, name, lambda: real_delete(*args))
+        await post()
+
+    monkeypatch.setattr(housekeeping, "_delete_expirable", post_around_the_delete)
 
 
 async def _analyzers(db, scan_id: str) -> set[str]:
@@ -245,8 +259,46 @@ async def test_a_callgraph_posted_while_its_run_was_archived_is_kept(
     client, db, api_key_headers, _project, retention_archives, monkeypatch
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
-    _interleave(
-        monkeypatch, archive, "_save_archive_metadata", lambda: _callgraph_upload(client, api_key_headers, _project)
+    paused, resume = asyncio.Event(), asyncio.Event()
+
+    async def pause() -> None:
+        paused.set()
+        await resume.wait()
+
+    _interleave(monkeypatch, callgraph, "upload_gridfs_json", pause)
+    upload = asyncio.create_task(_callgraph_upload(client, api_key_headers, _project))
+    await paused.wait()
+
+    async def finish_the_upload() -> None:
+        resume.set()
+        await upload
+
+    _interleave(monkeypatch, archive, "_save_archive_metadata", finish_the_upload)
+    await _archive_scans_and_delete(db, [scan_id], "retention")
+
+    assert await db.callgraphs.count_documents({"scan_id": scan_id}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_retried_job_whose_ingest_meets_the_batch_delete_keeps_its_result(
+    client, db, api_key_headers, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    _delete_during(monkeypatch, partial(_retried_job, client, db, api_key_headers), ScanManager, "find_or_create_scan")
+    await _archive_scans_and_delete(db, [scan_id], "retention")
+
+    assert "opengrep" in await _analyzers(db, scan_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_callgraph_whose_upload_meets_the_batch_delete_is_kept(
+    client, db, api_key_headers, _project, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    _delete_during(
+        monkeypatch, partial(_callgraph_upload, client, api_key_headers, _project), ScanRepository, "distinct"
     )
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
