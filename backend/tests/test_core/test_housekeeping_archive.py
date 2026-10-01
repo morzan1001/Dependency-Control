@@ -125,7 +125,7 @@ class TestArchiveScansAndDelete:
 
 class TestHandleRetentionAction:
     def test_delete_action_calls_delete(self):
-        with patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete:
+        with patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete:
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "delete", "test"))
 
         mock_delete.assert_called_once()
@@ -143,7 +143,7 @@ class TestHandleRetentionAction:
         with (
             patch(f"{MODULE}.is_archive_enabled", return_value=False),
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete,
             patch(f"{MODULE}.logger") as mock_logger,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "archive", "test"))
@@ -155,7 +155,7 @@ class TestHandleRetentionAction:
     def test_none_action_does_nothing(self):
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
 
@@ -166,7 +166,7 @@ class TestHandleRetentionAction:
         """ "none" is a deliberate no-op, so it must not be reported as a misconfiguration."""
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock),
-            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock),
+            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock),
             patch(f"{MODULE}.logger") as mock_logger,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
@@ -178,7 +178,7 @@ class TestHandleRetentionAction:
         otherwise skip the scans forever with no log line at all."""
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete,
             patch(f"{MODULE}.logger") as mock_logger,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1", "scan-2"], "Delete", "test"))
@@ -193,7 +193,7 @@ class TestHandleRetentionAction:
     def test_empty_scan_list_returns_early(self):
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_unchanged", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), [], "delete", "test"))
 

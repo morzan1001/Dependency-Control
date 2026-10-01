@@ -904,8 +904,7 @@ async def restore_scan(
     """Restore an archived scan back to MongoDB under a distributed lock on restore:{scan_id}.
 
     An unfinished restore's leftovers (restore_in_progress) are rolled back and replayed; any other
-    existing scan aborts the restore. On success, deletes the S3 archive and metadata; either
-    deletion failing is logged but the orphan reaper sweeps remnants.
+    existing scan aborts the restore.
     """
     if not is_archive_enabled():
         return None

@@ -65,6 +65,7 @@ logger = logging.getLogger(__name__)
 _RETENTION_LOCK_NAME = "retention"
 _RETENTION_LOCK_TTL_SECONDS = 600
 _RETENTION_INTERVAL_SECONDS = HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
+_EXPIRABLE = {"pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES}, "status": {"$nin": SCAN_ACTIVE_STATUSES}}
 
 
 async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
@@ -328,18 +329,9 @@ async def _reap_orphan_s3_objects(db: Any) -> int:
     return deleted
 
 
-async def _delete_unchanged(db: Any, scan_ids: list[str], picked_at: datetime, label: str) -> int:
-    """Delete the scans that are still expirable and that no ingest wrote to since retention picked them."""
-    unchanged = await db.scans.distinct(
-        "_id",
-        {
-            "_id": {"$in": scan_ids},
-            "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-            "status": {"$nin": SCAN_ACTIVE_STATUSES},
-            "$nor": [{"updated_at": {"$gt": picked_at}}],
-        },
-    )
-    return await delete_scans_and_related_data(db, unchanged, label)
+async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
+    """Delete the scans a pin or a new run has not taken out of retention since it picked them."""
+    return await delete_scans_and_related_data(db, await db.scans.distinct("_id", {**scans, **_EXPIRABLE}), label)
 
 
 async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "") -> int:
@@ -379,8 +371,9 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "
         archive_housekeeping_batch_total.labels(status="success").inc()
 
     successfully_archived = [sid for sid in scan_ids if sid not in failed_ids]
-
-    deleted = await _delete_unchanged(db, successfully_archived, picked_at, label)
+    # A scan written to since its archive began holds data its bundle lacks.
+    unchanged = {"_id": {"$in": successfully_archived}, "$nor": [{"updated_at": {"$gt": picked_at}}]}
+    deleted = await _delete_expirable(db, unchanged, label)
 
     if label:
         logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
@@ -396,7 +389,7 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
     if action == RETENTION_ACTION_ARCHIVE and is_archive_enabled():
         await _archive_scans_and_delete(db, scan_ids, label)
     elif action == RETENTION_ACTION_DELETE:
-        await _delete_unchanged(db, scan_ids, datetime.now(timezone.utc), label)
+        await _delete_expirable(db, {"_id": {"$in": scan_ids}}, label)
     elif action == RETENTION_ACTION_ARCHIVE:
         logger.warning(
             f"{label}: Retention action is 'archive' but S3 is not configured. "
@@ -442,8 +435,7 @@ async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[d
     runs = {
         **scope,
         "original_scan_id": {"$ne": None},
-        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-        "status": {"$nin": SCAN_ACTIVE_STATUSES},
+        **_EXPIRABLE,
     }
     crowded = db.scans.aggregate(
         [
@@ -472,15 +464,7 @@ async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, 
     cutoff can be computed for fails only its own group."""
     try:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-        cursor = db.scans.find(
-            {
-                **scope,
-                "created_at": {"$lt": cutoff_date},
-                "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                "status": {"$nin": SCAN_ACTIVE_STATUSES},
-            },
-            {"_id": 1, "project_id": 1},
-        )
+        cursor = db.scans.find({**scope, "created_at": {"$lt": cutoff_date}, **_EXPIRABLE}, {"_id": 1, "project_id": 1})
         await _process_scans_in_batches(db, cursor, action, label)
         await _process_scans_in_batches(db, _superseded_rescans(db, scope), action, f"{label} rescan history")
     except Exception:
