@@ -115,7 +115,7 @@ async def upload_stream(
 
             await s3.complete_multipart_upload(Bucket=b, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts})
             return total
-        except Exception:
+        except BaseException:  # a cancelled upload leaves billed parts that list_objects never shows
             try:
                 await s3.abort_multipart_upload(Bucket=b, Key=key, UploadId=upload_id)
             except Exception:

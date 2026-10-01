@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from unittest.mock import patch
 
@@ -49,6 +50,26 @@ async def test_upload_stream_aborts_on_part_failure(fake_s3):
 
     assert len(fake_s3.aborted_uploads) == 1
     assert "proj/scan.bundle" not in fake_s3.objects
+
+
+@pytest.mark.asyncio
+async def test_upload_stream_aborts_when_cancelled(fake_s3):
+    from app.core.s3 import upload_stream
+
+    first_part_sent = asyncio.Event()
+
+    async def source() -> AsyncIterator[bytes]:
+        yield b"X" * 6_000_000
+        first_part_sent.set()
+        await asyncio.Event().wait()
+
+    upload = asyncio.create_task(upload_stream("proj/scan.bundle", source()))
+    await first_part_sent.wait()
+    upload.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await upload
+
+    assert len(fake_s3.aborted_uploads) == 1
 
 
 @pytest.mark.asyncio
