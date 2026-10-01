@@ -330,8 +330,10 @@ async def _reap_orphan_s3_objects(db: Any) -> int:
 
 
 async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
-    """Delete the scans a pin or a new run has not taken out of retention since it picked them."""
-    return await delete_scans_and_related_data(db, await db.scans.distinct("_id", {**scans, **_EXPIRABLE}), label)
+    """Delete the scans a pin, a release or a new run has not taken out of retention since it picked them."""
+    expirable = await db.scans.distinct("_id", {**scans, **_EXPIRABLE})
+    released = await release_protected_scan_ids(db, expirable)
+    return await delete_scans_and_related_data(db, [sid for sid in expirable if sid not in released], label)
 
 
 async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "") -> int:

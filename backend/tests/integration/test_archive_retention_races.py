@@ -13,8 +13,10 @@ from pymongo.errors import AutoReconnect, NetworkTimeout
 
 from app.core import housekeeping
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
+from app.models.release import Release
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.releases import ReleaseRepository
 from app.services import archive
 from app.services.archive import restore_scan
 
@@ -196,6 +198,17 @@ async def test_a_scan_pinned_or_reopened_after_retention_read_it_is_kept(
 
     assert await _remaining(db) == {"x"}
     assert await db.archive_metadata.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_scan_released_while_its_batch_was_archived_is_kept(db, retention_archives, monkeypatch):
+    await db.scans.insert_many([_scan("x", 200), _scan("y", 200)])
+    release = Release(project_id=_PROJECT_ID, environment="prod", scan_id="x", released_at=_NOW)
+    _before_the_metadata_save(monkeypatch, lambda: ReleaseRepository(db).record(release))
+    await _archive_scans_and_delete(db, ["x", "y"], "retention")
+
+    assert await _remaining(db) == {"x"}
 
 
 @pytest.mark.asyncio
