@@ -427,16 +427,19 @@ async def test_a_run_written_to_during_its_batch_is_archived_afresh_by_the_next_
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+@pytest.mark.parametrize("header_keys_scan", [True, False], ids=["header-with-its-scan", "header-without-a-scan"])
 async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_scan_alone(
-    client, db, api_key_headers, retention_archives, monkeypatch
+    client, db, api_key_headers, retention_archives, monkeypatch, header_keys_scan
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
     await _archive_scans_and_delete(db, [scan_id], "retention")
     real_header = archive._handle_header_event
 
-    async def retry_before_the_header_insert(*args, **kwargs):
+    async def retry_before_the_header_insert(db_, data, collections_restored):
         await _retried_job(client, db, api_key_headers)
-        return await real_header(*args, **kwargs)
+        if not header_keys_scan:
+            data.pop("scan")
+        return await real_header(db_, data, collections_restored)
 
     monkeypatch.setattr(archive, "_handle_header_event", retry_before_the_header_insert)
 
