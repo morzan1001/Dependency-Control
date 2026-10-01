@@ -46,7 +46,7 @@ _VULNERABILITY = {
 _CBOM = json.loads((Path(__file__).parents[1] / "fixtures/cbom/legacy_crypto_mixed.json").read_text())
 
 
-def _scan(scan_id: str, age_days: int, **fields) -> dict:
+def _scan(scan_id: str, age_days: float, **fields) -> dict:
     return {
         "_id": scan_id,
         "project_id": _PROJECT_ID,
@@ -60,6 +60,13 @@ def _scan(scan_id: str, age_days: int, **fields) -> dict:
 
 async def _remaining(db) -> set[str]:
     return {doc["_id"] async for doc in db.scans.find({}, {"_id": 1})}
+
+
+async def _kill_idle_scan_cursors(db) -> None:
+    idle = {"type": "idleCursor", "ns": f"{db.name}.scans"}
+    ops = await db.client.admin.aggregate([{"$currentOp": {"idleCursors": True}}, {"$match": idle}]).to_list(None)
+    if ops:
+        await db.command("killCursors", "scans", cursors=[op["cursor"]["cursorId"] for op in ops])
 
 
 async def _ingest(client, headers, scanner: str, findings: list) -> str:
@@ -261,17 +268,23 @@ async def test_a_rescan_history_cap_whose_build_cursor_died_still_caps_every_bui
         for build in range(builds)
         for age in range(RESCAN_HISTORY_RUNS + 1)
     )
-
-    async def kill_the_idle_build_cursor() -> None:
-        idle = {"type": "idleCursor", "ns": f"{db.name}.scans", "cursor.originatingCommand.aggregate": "scans"}
-        ops = await db.client.admin.aggregate([{"$currentOp": {"idleCursors": True}}, {"$match": idle}]).to_list(None)
-        if ops:
-            await db.command("killCursors", "scans", cursors=[op["cursor"]["cursorId"] for op in ops])
-
-    _interleave(monkeypatch, housekeeping, "_handle_retention_action", kill_the_idle_build_cursor)
+    _interleave(monkeypatch, housekeeping, "_handle_retention_action", partial(_kill_idle_scan_cursors, db))
     await _expire_group(db, 90, {}, "delete", "retention")
 
     assert await db.scans.count_documents({}) == builds * RESCAN_HISTORY_RUNS
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_rescan_history_cap_whose_run_cursor_died_still_caps_the_build(db, monkeypatch):
+    runs = 4 * ARCHIVE_BATCH_SIZE
+    await db.scans.insert_many(
+        _scan(f"rescan-{run}", run / 100, original_scan_id="build", is_rescan=True) for run in range(runs)
+    )
+    _interleave(monkeypatch, housekeeping, "_handle_retention_action", partial(_kill_idle_scan_cursors, db))
+    await _expire_group(db, 90, {}, "delete", "retention")
+
+    assert await db.scans.count_documents({}) == RESCAN_HISTORY_RUNS
 
 
 @pytest.mark.asyncio
