@@ -587,9 +587,7 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
         AsyncMock(return_value=(None, ["scans"])),
     )
     monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
-
-    delete_bundle = AsyncMock(return_value=None)
-    monkeypatch.setattr(f"{MODULE}.delete_object", delete_bundle)
+    archive_env.objects[meta.s3_key] = b"bundle"
 
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
@@ -605,7 +603,7 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
 
     assert result is not None
     assert result.scan_id == "scan-1"
-    delete_bundle.assert_not_awaited()
+    assert meta.s3_key in archive_env.objects
 
 
 async def _aiter(items):
