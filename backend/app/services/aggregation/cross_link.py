@@ -111,13 +111,11 @@ def refresh_vulnerability_info(records: list[dict[str, Any]]) -> None:
         by_id.setdefault(record.get("id"), []).append(record)
     for record in records:
         info = (record.get("details") or {}).get("vulnerability_info")
-        related = record.get("related_findings") or []
-        # A related record the ad-hoc cap cut can no longer be recounted.
-        if not info or any(i not in by_id for i in related):
+        if not info:
             continue
         contexts = [
             _vulnerability_context(vuln["details"]["vulnerabilities"])
-            for i in related
+            for i in record.get("related_findings") or []
             for vuln in by_id[i]
             if vuln.get("type") == FindingType.VULNERABILITY
             and _same_version(record.get("version"), vuln.get("version"))
