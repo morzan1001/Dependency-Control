@@ -336,11 +336,8 @@ async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
     return await delete_scans_and_related_data(db, [sid for sid in expirable if sid not in released], label)
 
 
-async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "") -> int:
+async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) -> int:
     """Archive scans to S3, then delete those archived, unchanged since picked and still expirable."""
-    if not scan_ids:
-        return 0
-
     from app.services.archive import archive_scan
 
     picked_at = datetime.now(timezone.utc)
@@ -376,8 +373,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "
         stale = {"$gte": picked_at, "$lt": scan["updated_at"]}
         await db.archive_metadata.delete_one({"scan_id": scan["_id"], "archived_at": stale})
 
-    if label:
-        logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
+    logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
 
     return archived_count
 

@@ -54,10 +54,6 @@ def _make_archive_metadata(scan_id="scan-1"):
 
 
 class TestArchiveScansAndDelete:
-    def test_returns_zero_for_empty_list(self):
-        result = asyncio.run(_archive_scans_and_delete(MagicMock(), [], "test"))
-        assert result == 0
-
     @pytest.mark.asyncio
     async def test_archives_and_deletes_successfully(self):
         db = await _store_with("scan-1")
