@@ -14,6 +14,7 @@ from app.models.crypto_policy import CryptoPolicy
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.scans import ScanRepository
 from app.services.analysis import engine
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, fixture_component
@@ -255,7 +256,10 @@ async def test_duplicate_bom_refs_report_the_actually_stored_count(client, db, a
 
 
 @pytest.mark.asyncio
-async def test_a_failed_asset_store_leaves_no_scan_and_no_release(client, db, api_key_headers):
+@pytest.mark.parametrize(
+    ("owner", "name"), [(CryptoAssetRepository, "bulk_upsert"), (ScanRepository, "touch")], ids=["assets", "scan"]
+)
+async def test_a_failed_asset_store_leaves_no_scan_and_no_release(client, db, api_key_headers, owner, name):
     payload = {
         "pipeline_id": 12,
         "commit_hash": "abc123",
@@ -264,11 +268,16 @@ async def test_a_failed_asset_store_leaves_no_scan_and_no_release(client, db, ap
         "commit_tag": "v1.0.0",
         "cbom": _load("legacy_crypto_mixed.json"),
     }
+    errors = _ingests("error")
 
-    with patch.object(CryptoAssetRepository, "bulk_upsert", AsyncMock(side_effect=RuntimeError("write failed"))):
+    with patch.object(owner, name, AsyncMock(side_effect=RuntimeError("write failed"))):
         resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
 
-    assert resp.status_code == 500
+    assert (resp.status_code, resp.json()["detail"]) == (
+        500,
+        "Failed to persist crypto assets. Please retry the upload.",
+    )
+    assert _ingests("error") == errors + 1
     assert await db.scans.count_documents({}) == 0
     assert await db.releases.count_documents({}) == 0
 

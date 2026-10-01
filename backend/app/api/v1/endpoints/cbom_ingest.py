@@ -104,9 +104,9 @@ async def ingest_cbom(
         )
 
     project_id = str(project.id)
-    await ScanRepository(db).touch(scan_id)
 
     try:
+        await ScanRepository(db).touch(scan_id)
         summary = await _store_crypto_assets(db, project_id, scan_id, parsed)
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
