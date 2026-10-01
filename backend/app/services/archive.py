@@ -527,14 +527,13 @@ async def _handle_header_event(
     Version validation lives in ``read_bundle_frames``, which raises before yielding a
     header with a mismatched version, so no version check is needed here.
     """
-    scan_data = data.get("scan")
-    if scan_data:
-        scan_data["pinned"] = True
-        # restored_at is the reaper's evidence of a finished restore; a re-archived scan's bundle carries its old one.
-        scan_data.pop("restored_at", None)
-        scan_data["restore_in_progress"] = True
-        await db.scans.insert_one(scan_data)
-        collections_restored.append("scans")
+    scan_data = data["scan"]
+    scan_data["pinned"] = True
+    # restored_at is the reaper's evidence of a finished restore; a re-archived scan's bundle carries its old one.
+    scan_data.pop("restored_at", None)
+    scan_data["restore_in_progress"] = True
+    await db.scans.insert_one(scan_data)
+    collections_restored.append("scans")
 
 
 async def _handle_doc_event(
@@ -814,8 +813,8 @@ async def _abandon_restore(
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
     reason: str,
-) -> None:
-    """Count a failed restore and roll back its writes, but only while it still owns the scan's restore lock."""
+) -> str:
+    """Roll back a failed restore's writes while it still owns the scan's restore lock; return the failure reason."""
     try:
         still_held = await renew_lock()
     except PyMongoError as e:
@@ -833,8 +832,7 @@ async def _abandon_restore(
                 extra={"scan_id": sanitize_for_log(scan_id)},
             )
             reason = ArchiveFailureReason.LOCK_HELD
-    archive_failures_total.labels(operation="restore", reason=reason).inc()
-    archive_operations_total.labels(operation="restore", status="failure").inc()
+    return reason
 
 
 async def _run_restore_pipeline(
@@ -848,12 +846,11 @@ async def _run_restore_pipeline(
     start_time = time.monotonic()
     decompressed = _open_bundle_stream(metadata)
     failure_reason, collections_restored = await _replay_bundle(db, scan_id, decompressed)
-
-    if failure_reason is not None:
-        await _abandon_restore(db, scan_id, renew_lock, failure_reason)
-        return None
-
-    failure_reason = await _mark_restore_complete(db, scan_id, renew_lock)
+    if failure_reason is None:
+        failure_reason = await _mark_restore_complete(db, scan_id, renew_lock)
+    elif "scans" in collections_restored:
+        # Before its header insert the restore wrote nothing, and a scan already there belongs to an ingest.
+        failure_reason = await _abandon_restore(db, scan_id, renew_lock, failure_reason)
     if failure_reason is not None:
         archive_failures_total.labels(operation="restore", reason=failure_reason).inc()
         archive_operations_total.labels(operation="restore", status="failure").inc()

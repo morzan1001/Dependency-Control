@@ -213,3 +213,23 @@ async def test_a_run_ingested_into_after_its_archive_began_is_not_deleted_for_th
     await _archive_scans_and_delete(db, [scan_id], "second pass")
 
     assert "opengrep" in await _analyzers(db, scan_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_scan_alone(
+    client, db, api_key_headers, retention_archives, monkeypatch
+):
+    scan_id = await _analysed_run(client, db, api_key_headers)
+    await _archive_scans_and_delete(db, [scan_id], "retention")
+    real_header = archive._handle_header_event
+
+    async def retry_before_the_header_insert(*args, **kwargs):
+        await _retried_job(client, db, api_key_headers)
+        return await real_header(*args, **kwargs)
+
+    monkeypatch.setattr(archive, "_handle_header_event", retry_before_the_header_insert)
+
+    assert await restore_scan(db, scan_id) is None
+    assert await _remaining(db) == {scan_id}
+    assert await _analyzers(db, scan_id) == {"opengrep"}
