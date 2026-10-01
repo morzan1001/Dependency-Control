@@ -13,11 +13,12 @@ import pytest
 from prometheus_client import REGISTRY
 from pymongo.errors import AutoReconnect, NetworkTimeout
 
-from app.api.v1.endpoints import callgraph
+from app.api.v1.endpoints import callgraph, cbom_ingest
 from app.core import housekeeping
 from app.core.constants import ARCHIVE_BATCH_SIZE, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS, RESCAN_HISTORY_RUNS
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
 from app.models.release import Release
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.findings import FindingRepository
@@ -26,7 +27,6 @@ from app.repositories.scans import ScanRepository
 from app.services import archive, stats
 from app.services.analysis.stats import _STATS_CURSOR_HINT
 from app.services.archive import restore_scan
-from app.services.scan_manager import ScanManager
 
 _NOW = datetime.now(timezone.utc)
 _PROJECT_ID = "test-project-id"
@@ -140,12 +140,12 @@ async def _paused_before(monkeypatch, owner, name: str, post: Awaitable[None]) -
     return finish
 
 
-def _delete_during(monkeypatch, post: Callable[[], Awaitable[None]], owner, name: str) -> None:
-    """The batch delete runs inside post, right before its call of owner.name."""
+def _delete_during(monkeypatch, post: Callable[[], Awaitable[None]], owner, name: str, *, after: bool = False) -> None:
+    """The batch delete runs inside post, right before (or after) its call of owner.name."""
     real_delete = housekeeping._delete_expirable
 
     async def post_around_the_delete(*args):
-        _interleave(monkeypatch, owner, name, lambda: real_delete(*args))
+        _interleave(monkeypatch, owner, name, lambda: real_delete(*args), after=after)
         await post()
 
     monkeypatch.setattr(housekeeping, "_delete_expirable", post_around_the_delete)
@@ -421,7 +421,8 @@ async def test_a_retried_job_whose_ingest_meets_the_batch_delete_keeps_its_resul
     client, db, api_key_headers, retention_archives, monkeypatch
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
-    _delete_during(monkeypatch, partial(_retried_job, client, db, api_key_headers), ScanManager, "find_or_create_scan")
+    retried_job = partial(_retried_job, client, db, api_key_headers)
+    _delete_during(monkeypatch, retried_job, AnalysisResultRepository, "save_result", after=True)
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert "opengrep" in await _analyzers(db, scan_id)
@@ -433,7 +434,8 @@ async def test_a_retried_cbom_job_whose_ingest_meets_the_batch_delete_keeps_its_
     client, db, api_key_headers, retention_archives, monkeypatch
 ):
     scan_id = await _analysed_run(client, db, api_key_headers)
-    _delete_during(monkeypatch, partial(_cbom_job, client, api_key_headers), ScanManager, "find_or_create_scan")
+    cbom_job = partial(_cbom_job, client, api_key_headers)
+    _delete_during(monkeypatch, cbom_job, cbom_ingest, "_store_crypto_assets", after=True)
     await _archive_scans_and_delete(db, [scan_id], "retention")
 
     assert await db.crypto_assets.count_documents({"scan_id": scan_id}) == 3
