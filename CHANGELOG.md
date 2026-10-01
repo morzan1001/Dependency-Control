@@ -1,4 +1,12 @@
-# Release 1.9.42
+# Release 1.9.43
+
+## 📦 Build & CI
+
+- chore(release): 1.9.43 accepts SSO logins without a verified email (#0)
+
+
+
+# Release 1.9.43
 
 ## 🧪 Tests
 
