@@ -461,6 +461,19 @@ async def test_an_archive_whose_lock_another_pod_took_over_during_the_upload_giv
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+async def test_an_archive_that_cannot_confirm_its_lock_after_the_upload_drops_it(db, retention_archives, monkeypatch):
+    await db.scans.insert_one(_scan("x", 200))
+    renew = AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    monkeypatch.setattr(DistributedLocksRepository, "renew_lock", renew)
+    failures = _archive_failures("unknown")
+
+    assert await archive.archive_scan(db, "x") is None
+    assert retention_archives.objects == {}
+    assert _archive_failures("unknown") == failures + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_an_archive_that_outlasts_its_lock_ttl_still_lands(db, retention_archives, monkeypatch):
     await db.scans.insert_one(_scan("x", 200))
     real_upload = archive.upload_stream

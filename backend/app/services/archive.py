@@ -441,6 +441,12 @@ async def archive_scan(
             )
             await _drop_upload(s3_key, ArchiveFailureReason.LOCK_HELD)
             return None
+        except PyMongoError:
+            logger.exception(
+                "Archive could not confirm its lock, dropping its upload", extra={"scan_id": sanitize_for_log(scan_id)}
+            )
+            await _drop_upload(s3_key, ArchiveFailureReason.UNKNOWN)
+            return None
         if upload_result is None:
             return None
         total, stats = upload_result
