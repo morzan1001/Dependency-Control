@@ -808,14 +808,10 @@ async def _mark_restore_complete(
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
 ) -> str | None:
-    """Stamp the scan restored if this restore still owns it; otherwise return the failure reason."""
+    """Stamp the scan restored, raising LockLost if another restore took it over; return why else it failed."""
     # The heartbeat checks the lock only every TTL/3, so a takeover in between must still be caught before finalize.
     if not await renew_lock():
-        logger.error(
-            "Restore lost its lock to another restore, leaving the scan to it",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        return ArchiveFailureReason.LOCK_HELD
+        raise LockLost
     completed = await db.scans.update_one(
         {"_id": scan_id, "restore_in_progress": True},
         {"$set": {"restored_at": datetime.now(timezone.utc)}, "$unset": {"restore_in_progress": ""}},
@@ -834,9 +830,8 @@ async def _abandon_restore(
     db: Any,
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
-    reason: str,
-) -> str:
-    """Roll back a failed restore's writes while it still owns the scan's restore lock; return the failure reason."""
+) -> None:
+    """Roll back a failed restore's writes while it still owns the scan's restore lock."""
     try:
         still_held = await renew_lock()
     except PyMongoError as e:
@@ -845,16 +840,10 @@ async def _abandon_restore(
             "Restore could not confirm it still holds its lock, leaving the rollback to the next restore",
             extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
-    else:
-        if still_held:
-            await _rollback_partial_restore(db, scan_id)
-        else:
-            logger.error(
-                "Restore lost its lock to another restore, leaving the scan to it",
-                extra={"scan_id": sanitize_for_log(scan_id)},
-            )
-            reason = ArchiveFailureReason.LOCK_HELD
-    return reason
+        return
+    if not still_held:
+        raise LockLost
+    await _rollback_partial_restore(db, scan_id)
 
 
 async def _run_restore_pipeline(
@@ -872,7 +861,7 @@ async def _run_restore_pipeline(
         failure_reason = await _mark_restore_complete(db, scan_id, renew_lock)
     elif "scans" in collections_restored:
         # Before its header insert the restore wrote nothing, and a scan already there belongs to an ingest.
-        failure_reason = await _abandon_restore(db, scan_id, renew_lock, failure_reason)
+        await _abandon_restore(db, scan_id, renew_lock)
     if failure_reason is not None:
         _count_failure("restore", failure_reason)
         return None
