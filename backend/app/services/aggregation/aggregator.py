@@ -375,7 +375,6 @@ class ResultAggregator:
             entries = f.details.get("vulnerabilities")
             if entries:
                 dedupe_vulnerability_entries(entries)
-                entries.sort(key=lambda entry: str(entry.get("id")))
                 f.details["fixed_version"] = aggregate_fixed_version(entries, f.version)
 
         self._link_related_findings_by_component(final_findings)

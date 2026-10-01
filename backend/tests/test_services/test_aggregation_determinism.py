@@ -377,6 +377,11 @@ class TestPerSbomFold:
             sources = [source for source, _ in order]
             assert _scan(order, fold_per_sbom=True) == _scan(order, fold_per_sbom=False), sources
 
+    def test_an_advisory_two_cves_could_absorb_joins_the_same_one_whichever_analyzer_finishes_first(self):
+        osv = {"osv_vulnerabilities": [{**_OSV_QUALIFIED_GHSA["osv_vulnerabilities"][0], "component": "postgresql"}]}
+        results = (("osv", osv), ("grype", _GRYPE_BARE_GHSA))
+        assert _scan((("app", results),), fold_per_sbom=True) == _scan((("app", results[::-1]),), fold_per_sbom=True)
+
     def test_a_fold_revisits_only_the_packages_that_received_entries(self, monkeypatch):
         folded: list[int] = []
         real = aggregator_module.dedupe_vulnerability_entries

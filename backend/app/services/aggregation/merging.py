@@ -157,7 +157,8 @@ def dedupe_vulnerability_entries(entries: list[Any]) -> None:
     """Fold each entry into the earliest kept entry of its advisory; an absorber is re-linked until nothing matches."""
     kept: list[Any] = []
     kept_by_id: dict[str, set[int]] = {}
-    for entry in entries:
+    # Advisory matching is not transitive, so a fixed order decides which entry absorbs an ambiguous one.
+    for entry in sorted(entries, key=_detail_precedence):
         position = len(kept)
         kept.append(entry)
         while True:
@@ -174,7 +175,7 @@ def dedupe_vulnerability_entries(entries: list[Any]) -> None:
             _absorb_entry(kept[earlier], kept[later])
             kept[later] = None
             position = earlier
-    entries[:] = [entry for entry in kept if entry is not None]
+    entries[:] = sorted((entry for entry in kept if entry is not None), key=lambda entry: str(entry.get("id")))
 
 
 def absorb_header(target: Finding, other: Finding, source: str | None = None) -> None:
