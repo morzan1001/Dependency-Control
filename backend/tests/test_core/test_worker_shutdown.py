@@ -83,3 +83,22 @@ async def test_a_scan_whose_project_is_gone_does_not_hold_up_shutdown():
     run_analysis.assert_not_awaited()
     scan = await db.scans.find_one({"_id": "scan-1"})
     assert (scan["status"], scan["error"]) == ("failed", "Project not found")
+
+
+@pytest.mark.asyncio
+async def test_stop_returns_once_the_cancelled_housekeeping_cleaned_up():
+    cleaned_up = asyncio.Event()
+
+    async def housekeeping():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0.05)
+            cleaned_up.set()
+
+    manager = AnalysisWorkerManager(num_workers=1)
+    manager.housekeeping_task = asyncio.create_task(housekeeping())
+    await asyncio.sleep(0)
+    await asyncio.wait_for(manager.stop(), timeout=5)
+
+    assert cleaned_up.is_set()

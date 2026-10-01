@@ -172,14 +172,14 @@ class AnalysisWorkerManager:
         except Exception as e:
             logger.exception("Failed to recover pending jobs: %s", e)
 
-    def _cancel_background_tasks(self) -> None:
-        if self.housekeeping_task:
-            self.housekeeping_task.cancel()
-            logger.info("Housekeeping task cancelled.")
-
-        if self.stale_scan_task:
-            self.stale_scan_task.cancel()
-            logger.info("Stale scan loop cancelled.")
+    async def _stop_background_tasks(self) -> None:
+        background = [task for task in (self.housekeeping_task, self.stale_scan_task) if task]
+        for task in background:
+            task.cancel()
+        if background:
+            # Lets their cleanup (lock release, multipart abort) run before shutdown closes the Mongo client.
+            await asyncio.wait(background, timeout=3)
+            logger.info("Background tasks cancelled.")
 
     def _drain_queue(self) -> None:
         """Drop remaining queue items — they stay 'pending' in the DB and will be
@@ -239,7 +239,7 @@ class AnalysisWorkerManager:
 
         self._shutting_down = True
 
-        self._cancel_background_tasks()
+        await self._stop_background_tasks()
 
         self._drain_queue()
 
