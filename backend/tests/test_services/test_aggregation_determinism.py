@@ -10,6 +10,7 @@ import itertools
 import json
 
 from app.services.aggregation import ResultAggregator
+from app.services.aggregation import aggregator as aggregator_module
 
 TRIVY = {
     "Results": [
@@ -329,10 +330,34 @@ class TestSurvivingSpelling:
 
 
 _GRYPE_WITHOUT_CVE_LINK = {"matches": [{**GRYPE["matches"][0], "relatedVulnerabilities": []}]}
+_OSV_QUALIFIED_GHSA = {
+    "osv_vulnerabilities": [
+        {
+            "component": "org.postgresql:postgresql",
+            "version": "42.7.3",
+            "vulnerabilities": [{"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-2025-0001"], "severity": "HIGH"}],
+        }
+    ]
+}
+# A CVE-less entry matches either CVE sharing its GHSA, so which one absorbs it depends on the fold order.
+_GRYPE_BARE_GHSA = {
+    "matches": [
+        {
+            "vulnerability": {"id": "GHSA-aaaa-bbbb-cccc", "severity": "Medium"},
+            "artifact": {"name": "postgresql", "version": "42.7.3"},
+        },
+        {
+            "vulnerability": {"id": "CVE-2025-0002", "severity": "Low"},
+            "relatedVulnerabilities": [{"id": "GHSA-aaaa-bbbb-cccc"}],
+            "artifact": {"name": "postgresql", "version": "42.7.3"},
+        },
+    ]
+}
 _SBOMS = (
     ("SBOM #1", (("trivy", TRIVY), ("grype", _GRYPE_WITHOUT_CVE_LINK))),
     ("SBOM #2", (("osv", OSV), ("grype", GRYPE))),
     ("SBOM #3", (("grype", GRYPE), ("osv", OSV), ("trivy", TRIVY))),
+    ("SBOM #4", (("osv", _OSV_QUALIFIED_GHSA), ("grype", _GRYPE_BARE_GHSA))),
 )
 
 
@@ -351,3 +376,21 @@ class TestPerSbomFold:
         for order in itertools.permutations(_SBOMS):
             sources = [source for source, _ in order]
             assert _scan(order, fold_per_sbom=True) == _scan(order, fold_per_sbom=False), sources
+
+    def test_a_fold_revisits_only_the_packages_that_received_entries(self, monkeypatch):
+        folded: list[int] = []
+        real = aggregator_module.dedupe_vulnerability_entries
+        monkeypatch.setattr(
+            aggregator_module,
+            "dedupe_vulnerability_entries",
+            lambda entries: folded.append(len(entries)) or real(entries),
+        )
+        aggregator = ResultAggregator()
+        for n in range(20):
+            vulns = [
+                {"VulnerabilityID": f"CVE-2026-{n:02}{i}", "PkgName": f"service-{n}", "InstalledVersion": "1.0.0"}
+                for i in range(2)
+            ]
+            aggregator.aggregate("trivy", {"Results": [{"Target": "go.mod", "Vulnerabilities": vulns}]}, f"SBOM #{n}")
+            aggregator.fold_vulnerability_entries()
+        assert sum(folded) == 20 * 2

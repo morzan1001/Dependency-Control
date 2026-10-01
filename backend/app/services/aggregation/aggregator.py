@@ -147,6 +147,7 @@ def _deps_dev_block(metadata: dict[str, Any]) -> dict[str, Any]:
 class ResultAggregator:
     def __init__(self) -> None:
         self.findings: dict[str, Finding] = {}
+        self._unfolded: set[str] = set()
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
 
     def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
@@ -334,10 +335,10 @@ class ResultAggregator:
         return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
 
     def fold_vulnerability_entries(self) -> None:
-        """Fold each package's advisory entries now, so the entries held do not grow with the SBOM count."""
-        for f in self.findings.values():
-            if f.type == FindingType.VULNERABILITY:
-                dedupe_vulnerability_entries(f.details["vulnerabilities"])
+        """Fold the advisory entries of each package that gained some, so the entries held do not grow with the SBOM count."""
+        for agg_key in self._unfolded:
+            dedupe_vulnerability_entries(self.findings[agg_key].details["vulnerabilities"])
+        self._unfolded.clear()
 
     @staticmethod
     def _finding_sort_key(f: Finding) -> tuple[str, str, str, str]:
@@ -349,6 +350,8 @@ class ResultAggregator:
         Analyzers aggregate in completion order, so every step here is kept order-independent:
         identical scanner output must yield an identical finding set between runs.
         """
+        # Each spelling folds before its cluster merges, whether or not the caller folded along the way.
+        self.fold_vulnerability_entries()
         final_findings: list[Finding] = []
         vuln_groups: dict[tuple[str, str], list[Finding]] = {}
         for f in self.findings.values():
@@ -487,6 +490,7 @@ class ResultAggregator:
 
         if agg_key in self.findings:
             self._merge_vuln_into_existing(self.findings[agg_key], finding, vuln_entry, source)
+            self._unfolded.add(agg_key)
         else:
             agg_details: VulnerabilityAggregatedDetails = {"vulnerabilities": [vuln_entry]}
 

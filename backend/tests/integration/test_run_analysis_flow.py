@@ -1,6 +1,7 @@
 """run_analysis on a FakeDatabase: analyzer set, GitHub token, final status and what reaches notifications."""
 
 import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -682,15 +683,17 @@ async def test_sboms_sharing_a_base_image_retain_one_entry_per_advisory(
     serve_analyzer(monkeypatch, "trivy", _CannedReport(trivy))
     serve_analyzer(monkeypatch, "grype", _CannedReport(grype))
     retained: list[int] = []
-    aggregate_external = engine._aggregate_external_results
+    process_sbom = engine._process_sbom
 
-    async def _count_retained(aggregator, *args):
+    # Counted as each SBOM starts: what the earlier SBOMs left held while this one is loaded.
+    async def _count_retained(*args, **kwargs):
+        aggregator = inspect.signature(process_sbom).bind(*args, **kwargs).arguments["aggregator"]
         retained.append(sum(len(f.details.get("vulnerabilities", [])) for f in aggregator.findings.values()))
-        await aggregate_external(aggregator, *args)
+        return await process_sbom(*args, **kwargs)
 
-    monkeypatch.setattr(engine, "_aggregate_external_results", _count_retained)
+    monkeypatch.setattr(engine, "_process_sbom", _count_retained)
     sboms = [stored_sbom, *[await store_sbom(db, _EMPTY_SBOM) for _ in range(2)]]
 
     await engine.run_analysis(await _seed_scan(db), sboms, ["grype", "trivy"], db, worker_id=_WORKER)
 
-    assert retained == [len(_BASE_IMAGE_CVES)]
+    assert retained == [0, len(_BASE_IMAGE_CVES), len(_BASE_IMAGE_CVES)]
