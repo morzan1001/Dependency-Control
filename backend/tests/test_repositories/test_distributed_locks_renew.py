@@ -1,10 +1,13 @@
 """renew_lock extends only the caller's own lock, so a holder learns when another one took its expired lock over."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
+from pymongo.errors import AutoReconnect
 
-from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, run_holding_lock
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -41,3 +44,13 @@ async def test_renew_refuses_a_released_lock():
     assert await DistributedLocksRepository(db).renew_lock("lock-x", "pod-a", ttl_seconds=600) is False
 
     assert await db.distributed_locks.find_one({"_id": "lock-x"}) is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_renewal_is_retried_on_the_next_tick():
+    renew = AsyncMock(side_effect=[AutoReconnect("primary stepped down"), True, True, True, True, True])
+
+    result = await run_holding_lock(renew, 0.3, asyncio.sleep(0.35, result="done"))
+
+    assert result == "done"
+    assert renew.await_count >= 2
