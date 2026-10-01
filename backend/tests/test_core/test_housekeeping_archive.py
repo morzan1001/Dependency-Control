@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.constants import RETENTION_PROTECTED_FLAG_VALUES
-from app.core.housekeeping import _archive_scans_and_delete, _handle_retention_action
+from app.core.housekeeping import _archive_scans_and_delete, _handle_retention_action, _run_retention
 from app.models.archive import ArchiveMetadata
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -202,14 +202,12 @@ class TestHandleRetentionAction:
 
 
 # ---------------------------------------------------------------------------
-# run_housekeeping (global mode with archive)
+# _run_retention (global mode)
 # ---------------------------------------------------------------------------
 
 
-class TestRunHousekeepingArchive:
+class TestRunRetention:
     def test_global_mode_with_archive_action(self):
-        from app.core.housekeeping import run_housekeeping
-
         mock_settings = MagicMock()
         mock_settings.retention_mode = "global"
         mock_settings.global_retention_days = 30
@@ -229,22 +227,19 @@ class TestRunHousekeepingArchive:
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 
         with (
-            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._project_heads", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
-            asyncio.run(run_housekeeping())
+            asyncio.run(_run_retention(mock_db))
 
         mock_handle.assert_called_once()
         call_args = mock_handle.call_args
         assert call_args[0][2] == "archive"  # positional action argument
 
     def test_global_mode_none_action_skips_cleanup(self):
-        from app.core.housekeeping import run_housekeeping
-
         mock_settings = MagicMock()
         mock_settings.retention_mode = "global"
         mock_settings.global_retention_days = 30
@@ -254,18 +249,15 @@ class TestRunHousekeepingArchive:
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
         with (
-            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=_mock_db()),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
-            asyncio.run(run_housekeeping())
+            asyncio.run(_run_retention(_mock_db()))
 
         # retention_days > 0 enters the block, but action "none" short-circuits _handle_retention_action.
         mock_handle.assert_not_called()
 
     def test_global_mode_excludes_pinned_scans(self):
-        from app.core.housekeeping import run_housekeeping
-
         mock_settings = MagicMock()
         mock_settings.retention_mode = "global"
         mock_settings.global_retention_days = 30
@@ -285,14 +277,12 @@ class TestRunHousekeepingArchive:
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 
         with (
-            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock),
-            patch(f"{MODULE}.reap_orphan_gridfs_files", new_callable=AsyncMock),
         ):
-            asyncio.run(run_housekeeping())
+            asyncio.run(_run_retention(mock_db))
 
         find_call = mock_db.scans.find.call_args
         query = find_call[0][0]
@@ -300,8 +290,6 @@ class TestRunHousekeepingArchive:
         assert query["pinned"] == {"$nin": RETENTION_PROTECTED_FLAG_VALUES}
 
     def test_global_mode_zero_retention_days_skips(self):
-        from app.core.housekeeping import run_housekeeping
-
         mock_settings = MagicMock()
         mock_settings.retention_mode = "global"
         mock_settings.global_retention_days = 0
@@ -311,11 +299,10 @@ class TestRunHousekeepingArchive:
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
         with (
-            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=_mock_db()),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
-            asyncio.run(run_housekeeping())
+            asyncio.run(_run_retention(_mock_db()))
 
         mock_handle.assert_not_called()
 
@@ -328,8 +315,6 @@ class TestRunHousekeepingArchive:
 @pytest.mark.asyncio
 async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
     """Global retention cursor must exclude scans with status pending/processing."""
-    from app.core.housekeeping import run_housekeeping
-
     captured_queries: list[dict] = []
 
     db = _mock_db()
@@ -358,10 +343,9 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
     monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.release_protected_scan_ids", AsyncMock(return_value=set()))
-    monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 
-    await run_housekeeping()
+    await _run_retention(db)
 
     retention_cursors = [q for q in captured_queries if "created_at" in q]
     assert retention_cursors, captured_queries
@@ -372,8 +356,6 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
 @pytest.mark.asyncio
 async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch):
     """Project-specific retention cursor must also exclude pending/processing scans."""
-    from app.core.housekeeping import run_housekeeping
-
     captured_queries: list[dict] = []
 
     db = _mock_db()
@@ -411,10 +393,9 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
     monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.release_protected_scan_ids", AsyncMock(return_value=set()))
-    monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 
-    await run_housekeeping()
+    await _run_retention(db)
 
     assert any("status" in q and q["status"] == {"$nin": ["pending", "processing"]} for q in captured_queries), (
         f"Expected status filter in at least one cursor query, got: {captured_queries}"

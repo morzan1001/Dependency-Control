@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 
 _RETENTION_LOCK_NAME = "retention"
 _RETENTION_LOCK_TTL_SECONDS = 600
+_RETENTION_INTERVAL_SECONDS = HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
 
 
 async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
@@ -487,18 +488,23 @@ async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, 
 
 
 async def _run_retention(db: Any) -> None:
+    """Expire scans on one pod per interval; a run cut short frees the lock for the next pod's pass."""
     locks = DistributedLocksRepository(db)
     holder = new_lock_holder()
     if not await locks.acquire_lock(_RETENTION_LOCK_NAME, holder, ttl_seconds=_RETENTION_LOCK_TTL_SECONDS):
-        logger.info("Retention skipped: another pod is running it")
         return
-    renew = partial(locks.renew_lock, _RETENTION_LOCK_NAME, holder, _RETENTION_LOCK_TTL_SECONDS)
+    renew = partial(locks.renew_lock, _RETENTION_LOCK_NAME, holder)
     try:
-        await run_holding_lock(renew, _RETENTION_LOCK_TTL_SECONDS, _expire_scans(db))
+        await run_holding_lock(
+            partial(renew, _RETENTION_LOCK_TTL_SECONDS), _RETENTION_LOCK_TTL_SECONDS, _expire_scans(db)
+        )
     except LockLost:
         logger.error("Retention stopped: another pod took its lock over")
-    finally:
+    except BaseException:
         await locks.release_lock(_RETENTION_LOCK_NAME, holder)
+        raise
+    else:
+        await renew(_RETENTION_INTERVAL_SECONDS)
 
 
 async def _expire_scans(db: Any) -> None:
@@ -542,10 +548,7 @@ async def _expire_scans(db: Any) -> None:
 
 
 async def run_housekeeping() -> None:
-    """
-    Periodically cleans up old scan data based on project retention settings.
-    Supports two actions: 'delete' (permanent removal) and 'archive' (move to S3).
-    """
+    """Each pod's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
     logger.info("Starting housekeeping task...")
 
     try:
@@ -555,11 +558,6 @@ async def run_housekeeping() -> None:
             await reconcile_release_flags(db)
         except Exception as e:
             logger.exception("Housekeeping: release flag reconcile failed: %s", e)
-
-        try:
-            await _run_retention(db)
-        except Exception as e:
-            logger.exception("Housekeeping: retention failed: %s", e)
 
         try:
             await prune_old_audit_entries(db)
@@ -785,7 +783,7 @@ async def housekeeping_loop(
     """Runs the housekeeping tasks on a loop; stale pending scan aggregation runs in its own,
     faster loop.
     """
-    last_retention_run = datetime.min.replace(tzinfo=timezone.utc)
+    last_housekeeping_run = datetime.min.replace(tzinfo=timezone.utc)
     last_branch_sync = datetime.min.replace(tzinfo=timezone.utc)
     last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -815,11 +813,16 @@ async def housekeeping_loop(
         except Exception as e:
             logger.exception("Waiver recalculation failed: %s", e)
 
-        if (datetime.now(timezone.utc) - last_retention_run) > timedelta(
+        if (datetime.now(timezone.utc) - last_housekeeping_run) > timedelta(
             hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS
         ):
             await run_housekeeping()
-            last_retention_run = datetime.now(timezone.utc)
+            last_housekeeping_run = datetime.now(timezone.utc)
+
+        try:
+            await _run_retention(await get_database())
+        except Exception as e:
+            logger.exception("Housekeeping: retention failed: %s", e)
 
         if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS):
             await sync_branch_status()

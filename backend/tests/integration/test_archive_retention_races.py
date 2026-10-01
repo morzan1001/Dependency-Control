@@ -5,6 +5,7 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -115,6 +116,62 @@ async def test_a_second_pod_skips_retention_while_the_first_still_runs_it(db, re
 
     assert archived == ["old"]
     assert await _remaining(db) == {"head"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_only_a_finished_retention_run_keeps_the_other_pods_out(db, monkeypatch):
+    runs = 0
+    first_run_started = asyncio.Event()
+
+    async def expire_scans(_db):
+        nonlocal runs
+        runs += 1
+        first_run_started.set()
+        if runs == 1:
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(housekeeping, "_expire_scans", expire_scans)
+    rolled_out_pod = asyncio.create_task(_run_retention(db))
+    await first_run_started.wait()
+    rolled_out_pod.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await rolled_out_pod
+    await _run_retention(db)
+    await _run_retention(db)
+
+    assert runs == 2
+
+
+class _StopLoop(Exception):
+    """Ends the endless housekeeping loop."""
+
+
+@pytest.mark.asyncio
+async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
+    async def noop(*_args, **_kwargs):
+        return None
+
+    for task in (
+        "recover_stuck_scans",
+        "check_scheduled_rescans",
+        "get_database",
+        "update_db_stats",
+        "update_archive_stats",
+        "update_cache_stats",
+        "run_waiver_recalc",
+        "run_housekeeping",
+        "sync_branch_status",
+        "reconcile_update_frequency_ledger",
+    ):
+        monkeypatch.setattr(housekeeping, task, noop)
+    bid = AsyncMock()
+    monkeypatch.setattr(housekeeping, "_run_retention", bid)
+    monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=AsyncMock(side_effect=[None, _StopLoop])))
+    with pytest.raises(_StopLoop):
+        await housekeeping.housekeeping_loop()
+
+    assert bid.await_count == 2
 
 
 @pytest.mark.asyncio

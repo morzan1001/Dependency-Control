@@ -88,6 +88,7 @@ class TestLoopWiring:
             "update_cache_stats",
             "get_database",
             "run_housekeeping",
+            "_run_retention",
             "sync_branch_status",
             "run_waiver_recalc",
         ):

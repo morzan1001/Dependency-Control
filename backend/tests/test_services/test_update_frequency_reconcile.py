@@ -728,6 +728,7 @@ class TestHousekeepingWiring:
             "update_cache_stats",
             "get_database",
             "run_housekeeping",
+            "_run_retention",
             "sync_branch_status",
         ):
             monkeypatch.setattr(housekeeping, name, _noop)

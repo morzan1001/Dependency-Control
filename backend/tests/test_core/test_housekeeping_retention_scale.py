@@ -3,12 +3,11 @@ outside the model."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.constants import ARCHIVE_BATCH_SIZE
-from app.core.housekeeping import run_housekeeping
+from app.core.housekeeping import _run_retention
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.core.housekeeping"
@@ -63,9 +62,8 @@ async def _seed(db: FakeDatabase) -> None:
 
 
 async def _run(db: FakeDatabase, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(f"{MODULE}.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: False)
-    await run_housekeeping()
+    await _run_retention(db)
 
 
 async def _surviving_ids(db: FakeDatabase) -> list[str]:

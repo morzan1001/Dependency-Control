@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.housekeeping import _run_retention
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.core.housekeeping"
@@ -30,7 +31,6 @@ class _EmptyCursor:
 
 
 def _patch_common(monkeypatch, db, settings_obj):
-    monkeypatch.setattr(f"{MODULE}.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr(
         f"{MODULE}.SystemSettingsRepository", lambda _db: MagicMock(get=AsyncMock(return_value=settings_obj))
     )
@@ -54,8 +54,6 @@ def _retention_cursors(captured):
 async def test_global_retention_cursor_does_not_key_on_the_release_flag(monkeypatch):
     """A term in the candidate cursor decides ahead of _unreferenced, so a drifted flag would be an
     exemption no release row can lift and no pass can clear."""
-    from app.core.housekeeping import run_housekeeping
-
     captured: list[dict] = []
     db = _capturing_db(captured)
 
@@ -66,7 +64,7 @@ async def test_global_retention_cursor_does_not_key_on_the_release_flag(monkeypa
 
     _patch_common(monkeypatch, db, _Settings())
 
-    await run_housekeeping()
+    await _run_retention(db)
 
     cursors = _retention_cursors(captured)
     assert cursors, captured
@@ -75,8 +73,6 @@ async def test_global_retention_cursor_does_not_key_on_the_release_flag(monkeypa
 
 @pytest.mark.asyncio
 async def test_project_retention_cursor_does_not_key_on_the_release_flag(monkeypatch):
-    from app.core.housekeeping import run_housekeeping
-
     captured: list[dict] = []
     db = _capturing_db(captured)
 
@@ -90,7 +86,7 @@ async def test_project_retention_cursor_does_not_key_on_the_release_flag(monkeyp
 
     _patch_common(monkeypatch, db, _Settings())
 
-    await run_housekeeping()
+    await _run_retention(db)
 
     cursors = _retention_cursors(captured)
     assert cursors, captured
@@ -133,12 +129,9 @@ async def _retention_store(scans: list[dict], release_scan_ids: list[str]) -> Fa
     return db
 
 
-async def _run_retention(db: FakeDatabase, monkeypatch) -> list[str]:
-    from app.core.housekeeping import run_housekeeping
-
-    monkeypatch.setattr(f"{MODULE}.get_database", AsyncMock(return_value=db))
+async def _surviving_retention(db: FakeDatabase, monkeypatch) -> list[str]:
     monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: False)
-    await run_housekeeping()
+    await _run_retention(db)
     return sorted(doc["_id"] for doc in await db.scans.find({}).to_list(None))
 
 
@@ -150,7 +143,7 @@ async def test_a_release_row_without_the_flag_survives_retention(monkeypatch):
         [_RELEASE_SCAN_ID],
     )
 
-    assert await _run_retention(db, monkeypatch) == [_RELEASE_SCAN_ID]
+    assert await _surviving_retention(db, monkeypatch) == [_RELEASE_SCAN_ID]
 
 
 @pytest.mark.asyncio
@@ -165,7 +158,7 @@ async def test_the_rescan_a_release_resolves_to_survives_retention(monkeypatch):
         [_RELEASE_SCAN_ID],
     )
 
-    assert await _run_retention(db, monkeypatch) == sorted([_RELEASE_SCAN_ID, _RESCAN_ID])
+    assert await _surviving_retention(db, monkeypatch) == sorted([_RELEASE_SCAN_ID, _RESCAN_ID])
 
 
 @pytest.mark.asyncio
@@ -181,7 +174,7 @@ async def test_a_superseded_rescan_is_not_protected_by_the_release(monkeypatch):
         [_RELEASE_SCAN_ID],
     )
 
-    assert await _run_retention(db, monkeypatch) == sorted([_RELEASE_SCAN_ID, _RESCAN_ID])
+    assert await _surviving_retention(db, monkeypatch) == sorted([_RELEASE_SCAN_ID, _RESCAN_ID])
 
 
 def _patch_archive_deps(monkeypatch, archive_module):

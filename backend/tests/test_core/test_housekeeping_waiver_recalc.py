@@ -16,6 +16,7 @@ _OTHER_TASKS = (
     "update_archive_stats",
     "update_cache_stats",
     "run_housekeeping",
+    "_run_retention",
     "sync_branch_status",
     "reconcile_update_frequency_ledger",
 )

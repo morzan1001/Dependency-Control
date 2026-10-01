@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.housekeeping import run_housekeeping
+from app.core.housekeeping import _run_retention
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.core.housekeeping"
@@ -31,10 +31,9 @@ async def _seed_scans(db: FakeDatabase) -> None:
 
 async def _run(db: FakeDatabase, monkeypatch: pytest.MonkeyPatch, archive_enabled: bool = False) -> AsyncMock:
     archiver = AsyncMock(return_value=0)
-    monkeypatch.setattr(f"{MODULE}.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: archive_enabled)
     monkeypatch.setattr(f"{MODULE}._archive_scans_and_delete", archiver)
-    await run_housekeeping()
+    await _run_retention(db)
     return archiver
 
 
@@ -75,39 +74,30 @@ async def test_a_project_that_names_no_action_is_cleaned_by_deleting(monkeypatch
     archiver.assert_not_awaited()
 
 
-async def _run_counting_reaper(db: FakeDatabase, monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
-    reaper = AsyncMock()
-    monkeypatch.setattr(f"{MODULE}._reap_orphan_callgraphs", reaper)
-    await _run(db, monkeypatch)
-    return reaper
-
-
 @pytest.mark.asyncio
 async def test_a_stored_retention_no_cutoff_can_be_computed_for_stops_nothing_else(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """timedelta overflows near 740 000 days; one such project used to abort every later group and reaper."""
+    """timedelta overflows near 740 000 days; one such project used to abort every later group."""
     db = FakeDatabase()
     await db.system_settings.insert_one({"_id": "current", "retention_mode": "project"})
     await db.projects.insert_one({"_id": "forever", "name": "f", "retention_days": 999999})
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": "p", "retention_days": _RETENTION_DAYS})
     await _seed_scans(db)
 
-    reaper = await _run_counting_reaper(db, monkeypatch)
+    await _run(db, monkeypatch)
 
     assert await _surviving_ids(db) == [_FRESH_ID]
-    reaper.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_a_global_retention_no_cutoff_can_be_computed_for_leaves_the_reapers_running(
+async def test_a_global_retention_no_cutoff_can_be_computed_for_expires_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = FakeDatabase()
     await db.system_settings.insert_one({"_id": "current", "retention_mode": "global", "global_retention_days": 999999})
     await _seed_scans(db)
 
-    reaper = await _run_counting_reaper(db, monkeypatch)
+    await _run(db, monkeypatch)
 
     assert await _surviving_ids(db) == [_EXPIRED_ID, _FRESH_ID]
-    reaper.assert_awaited_once()
