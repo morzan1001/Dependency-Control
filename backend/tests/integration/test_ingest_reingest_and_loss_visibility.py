@@ -5,14 +5,17 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from pymongo.errors import AutoReconnect
 
 from app.core.init_db import create_indexes
 from app.core.worker import AnalysisWorkerManager
 from app.repositories.dependencies import DependencyRepository
 from app.services import scan_manager
+from app.services.analysis import engine
 from app.services.analysis.engine import _parse_and_track_sbom
 from app.services.dependency_store import store_scan_dependencies
 from app.services.gridfs_maintenance import gridfs_ref_id, load_gridfs_json, reap_orphan_gridfs_files
@@ -208,6 +211,45 @@ async def test_a_reingest_during_the_analysis_marks_the_sbom_replaced_and_keeps_
     scan = await db.scans.find_one({"_id": scan_id})
     assert (scan["status"], scan["sbom_generation"]) == ("processing", 2)
     assert await db["fs.files"].count_documents({}) == 2, "the running analysis still reads the old upload"
+
+
+async def _fail_through_the_worker(client, db, api_key_headers, worker: AnalysisWorkerManager) -> str:
+    resp = await client.post("/api/v1/ingest", json=_run([_GOOD_SBOM]), headers=api_key_headers)
+    assert resp.status_code == 202, resp.text
+    scan_id = resp.json()["scan_id"]
+    with patch.object(engine, "store_scan_dependencies", side_effect=AutoReconnect("primary stepped down")):
+        scan = await _analyse(db, worker, scan_id)
+    assert (scan["status"], scan["error"]) == ("failed", "primary stepped down")
+    return scan_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_sbom_re_upload_re_analyses_a_failed_scan(client, db, api_key_headers, worker_after_ingest):
+    scan_id = await _fail_through_the_worker(client, db, api_key_headers, worker_after_ingest)
+
+    resp = await client.post("/api/v1/ingest", json=_run([_GOOD_SBOM]), headers=api_key_headers)
+
+    assert (resp.status_code, resp.json()["scan_id"]) == (202, scan_id), resp.text
+    scan = await _analyse(db, worker_after_ingest, scan_id)
+    assert scan["status"] == "completed", scan.get("error")
+    assert "error" not in scan
+    await worker_after_ingest.queue.join()
+    assert (await db.projects.find_one({"_id": _PROJECT_ID}))["latest_scan_id"] == scan_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_scanner_and_cbom_uploads_leave_a_failed_scan_failed(client, db, api_key_headers, worker_after_ingest):
+    scan_id = await _fail_through_the_worker(client, db, api_key_headers, worker_after_ingest)
+
+    secrets = await client.post("/api/v1/ingest/trufflehog", json=_run([], findings=[]), headers=api_key_headers)
+    cbom = _fixture("cbom/legacy_crypto_mixed.json")
+    crypto = await client.post("/api/v1/ingest/cbom", json=_run([], cbom=cbom), headers=api_key_headers)
+
+    assert (secrets.status_code, crypto.status_code) == (200, 202), (secrets.text, crypto.text)
+    assert secrets.json()["scan_id"] == crypto.json()["scan_id"] == scan_id
+    assert (await db.scans.find_one({"_id": scan_id}))["status"] == "failed"
 
 
 @pytest.mark.asyncio

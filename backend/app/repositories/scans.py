@@ -264,10 +264,10 @@ class ScanRepository:
         )
         return bool(result.matched_count)
 
-    async def reopen_finished(self, scan_id: str) -> bool:
-        """Send a finished scan back to pending because new input arrived for it."""
+    async def reopen_finished(self, scan_id: str, *, statuses: Sequence[ScanStatus] = SCAN_USABLE_STATUSES) -> bool:
+        """Send a scan finished in one of ``statuses`` back to pending because new input arrived for it."""
         result = await self.collection.update_one(
-            {"_id": scan_id, "status": {"$in": SCAN_USABLE_STATUSES}},
+            {"_id": scan_id, "status": {"$in": statuses}},
             {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0, "stuck_retry_count": 0}},
         )
         return bool(result.modified_count)

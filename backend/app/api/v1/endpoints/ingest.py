@@ -14,6 +14,8 @@ from app.api.v1.helpers.request_body import read_json_body
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
+    SCAN_STATUS_FAILED,
+    SCAN_USABLE_STATUSES,
     WEBHOOK_EVENT_SBOM_INGESTED,
 )
 from app.repositories.scans import ScanRepository
@@ -172,7 +174,7 @@ async def ingest_sbom(
     scan_update["$set"]["sbom_refs"] = sbom_refs
     scan_update["$inc"] = {"sbom_generation": 1}
     await db.scans.update_one({"_id": scan_id}, scan_update, upsert=True)
-    await ScanRepository(db).reopen_finished(scan_id)
+    await ScanRepository(db).reopen_finished(scan_id, statuses=[*SCAN_USABLE_STATUSES, SCAN_STATUS_FAILED])
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
     # Fire ingest webhook (best-effort).

@@ -14,6 +14,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
+    SCAN_USABLE_STATUSES,
 )
 from app.core.housekeeping import recover_stuck_scans
 from app.core.worker import AnalysisWorkerManager
@@ -154,6 +155,17 @@ async def test_new_input_reopens_only_a_finished_scan():
     reopened = await _stored(finished)
     assert (reopened["status"], reopened["retry_count"], reopened["stuck_retry_count"]) == (SCAN_STATUS_PENDING, 0, 0)
     assert (await _stored(running))["status"] == SCAN_STATUS_PROCESSING
+
+
+@pytest.mark.asyncio
+async def test_a_failed_scan_reopens_only_for_a_caller_that_allows_it():
+    failed = await _seeded(status=SCAN_STATUS_FAILED, retry_count=5, stuck_retry_count=3)
+
+    assert await ScanRepository(failed).reopen_finished(_SCAN) is False
+    assert (await _stored(failed))["status"] == SCAN_STATUS_FAILED
+    assert await ScanRepository(failed).reopen_finished(_SCAN, statuses=[*SCAN_USABLE_STATUSES, SCAN_STATUS_FAILED])
+    reopened = await _stored(failed)
+    assert (reopened["status"], reopened["retry_count"], reopened["stuck_retry_count"]) == (SCAN_STATUS_PENDING, 0, 0)
 
 
 def test_the_retry_ceiling_does_not_fail_or_announce_a_scan_another_worker_holds():
