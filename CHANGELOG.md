@@ -1,3 +1,15 @@
+# Release 1.9.44
+
+## 🧪 Tests
+
+- test(retention): drop the history clause from a test docstring (#0)
+
+## 📦 Build & CI
+
+- chore(release): 1.9.44 accepts SBOMs of any size and runs archive retention on one pod at a time (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.43. Run mongosh commands in-pod against the application database.
