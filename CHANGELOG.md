@@ -1,3 +1,11 @@
+# Release 1.9.45
+
+## 📦 Build & CI
+
+- chore(release): 1.9.45 lets an SBOM re-upload re-analyse a failed scan and clears a stale scan error (#0)
+
+
+
 # Release 1.9.44
 
 ## 🧪 Tests
