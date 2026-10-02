@@ -14,9 +14,19 @@
 
 These notes cover the upgrade from 1.9.43. Run mongosh commands in-pod against the application database.
 
+## Before the rollout: build the index on analysis_results
+
+Every new pod creates a sparse index on `analysis_results.result_gridfs_id` at startup. On a large collection that build outlasts the 150-second startup probe, and the rollout stalls at the first new pod. Build it first, with the options startup uses:
+
+```javascript
+db.analysis_results.createIndex({result_gridfs_id: 1}, {sparse: true});
+```
+
+On 1.2 million documents (132 GiB) it took 8 minutes and raised each member's memory by about 0.8 GiB.
+
 ## After the rollout: retention runs once a day, on one pod
 
-Retention runs under the `retention` lock on one pod at a time, and a finished run holds that lock for 24 hours. A restart or rollout starts no run, and a retention settings change takes effect with the next run, up to 24 hours later. To start a run within about 5 minutes after a settings change, clear the hold a finished run leaves:
+Retention runs under the `retention` lock on one pod at a time, and a finished run holds that lock for 24 hours. The first new pod starts a run, because no lock exists yet. After that, a restart or rollout starts no run, and a retention settings change takes effect with the next run, up to 24 hours later. To start a run within about 5 minutes after a settings change, clear the hold a finished run leaves:
 
 ```javascript
 db.distributed_locks.deleteOne({_id: "retention", expires_at: {$gt: new Date(Date.now() + 600000)}});
