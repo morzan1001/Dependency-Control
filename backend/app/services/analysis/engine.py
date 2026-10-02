@@ -909,12 +909,11 @@ async def _finalize_scan_and_project(
         "failed_analyzers": failed_analyzers or None,
         "enrichment_failures": enrichment_failures or None,
     }
+    unset_fields = {"received_results": "", "last_result_at": ""}
     if error:
         set_fields["error"] = error
-    unset_fields = {
-        "received_results": "",
-        "last_result_at": "",
-    }
+    else:
+        unset_fields["error"] = ""
     if status in SCAN_USABLE_STATUSES and not scan_doc.is_rescan:
         # This analysis post-dates every rescan of the build, which may still hold a replaced SBOM.
         unset_fields["latest_rescan_id"] = ""

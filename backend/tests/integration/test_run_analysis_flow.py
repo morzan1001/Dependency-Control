@@ -86,6 +86,17 @@ async def test_an_analysis_stamps_only_its_own_scan_and_notifies_its_own_stats(d
     assert notified == [Stats()]
 
 
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_clean_re_analysis_clears_the_error_of_the_earlier_run(db, notified):
+    scan_id = await _seed_scan(db)
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"error": "Analyzer failed: bearer", "completed_at": _T0}})
+
+    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+
+    assert "error" not in await db.scans.find_one({"_id": scan_id})
+
+
 @pytest.mark.asyncio
 async def test_a_scan_that_is_not_finalized_is_not_notified(db, notified, monkeypatch):
     async def _rescheduled(*args, **kwargs):
