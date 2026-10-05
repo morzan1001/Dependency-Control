@@ -251,7 +251,7 @@ async def fetch_callgraphs(
 def store_reachability(finding: dict[str, Any], verdict: ReachabilityInfo) -> None:
     """Persist a verdict under ``details.reachability`` and mirror it to the top level.
 
-    The stats fold and the recommendation readers read the top-level fields; writing only
+    The stats fold and the chat tools read the top-level fields; writing only
     the nested block leaves every reachability counter at zero.
     """
     reachability = verdict.model_dump(exclude_unset=True)
