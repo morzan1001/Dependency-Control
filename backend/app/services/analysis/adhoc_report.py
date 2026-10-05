@@ -7,6 +7,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.core.constants import sort_by_severity
+from app.core.cve import canonical_cves
 from app.schemas.adhoc import AdhocAnalyzeResponse
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -36,7 +37,8 @@ def _row(finding: dict[str, Any]) -> dict[str, str | bool]:
         "severity": str(finding.get("severity") or _UNKNOWN_SEVERITY),
         "component": str(finding.get("component", "")),
         "version": str(finding.get("version") or ""),
-        "description": str(finding.get("description") or "")[:_DESCRIPTION_CHARS],
+        "description": str(finding.get("description") or "")[:_DESCRIPTION_CHARS]
+        or ", ".join(canonical_cves([finding.get("details")])),
         "scanners": ", ".join(str(scanner) for scanner in (finding.get("scanners") or [])),
         "waived": bool(finding.get("waived")),
     }

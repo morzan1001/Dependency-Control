@@ -7,6 +7,7 @@ from markupsafe import escape
 from app.schemas.adhoc import AdhocAnalyzeResponse, AnalyzerReport
 from app.services.analysis.adhoc import _STAGE_NOTES
 from app.services.analysis.adhoc_report import (
+    _DESCRIPTION_CHARS,
     _DERIVED_FIELDS,
     _ENV,
     _FINDING_ROW_CAP,
@@ -14,6 +15,7 @@ from app.services.analysis.adhoc_report import (
     render_adhoc_html,
     report_context,
 )
+from tests.helpers.findings import grype_findings
 
 _HOSTILE_COMPONENT = "<script>alert('xss')</script>"
 _HOSTILE_DESCRIPTION = "<img src=x onerror=alert(1)>"
@@ -179,6 +181,18 @@ def test_a_waived_finding_is_marked_as_waived_in_its_row():
 
     assert '<tr class="sev-CRITICAL waived">' in html
     assert '<tr class="sev-CRITICAL">' in html
+
+
+def test_a_vulnerability_row_lists_every_cve_of_the_finding():
+    """The aggregate's own description is empty; its advisories are what the reader triages."""
+    cves = [f"CVE-2021-{10000 + i}" for i in range(25)]
+    [finding] = grype_findings([("lodash", "4.17.20", cve) for cve in cves])
+    listed = ", ".join(cves)
+    assert len(listed) > _DESCRIPTION_CHARS
+
+    html = render_adhoc_html(_result(findings=[finding.model_dump()]))
+
+    assert f"<td>{listed}</td>" in html
 
 
 def test_a_finding_without_a_severity_is_labelled_unknown():

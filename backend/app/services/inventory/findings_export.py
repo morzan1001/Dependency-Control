@@ -7,6 +7,7 @@ from typing import Any, NamedTuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import DETAILS_KEY_IN_KEV
+from app.core.cve import canonical_cves, display_vulnerability_id
 from app.models.finding import FindingType, Severity
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -45,7 +46,7 @@ FINDINGS_COLUMNS = [
     "scanners",
     "waived",
     "waiver_reason",
-    "cve_aliases",
+    "cves",
 ]
 
 # Findings carry no top-level purl/direct; those come from the dependencies join below.
@@ -59,7 +60,6 @@ _PROJECTION = {
     "version": 1,
     "found_in": 1,
     "scanners": 1,
-    "aliases": 1,
     "waived": 1,
     "waiver_reason": 1,
     "details.epss_score": 1,
@@ -72,6 +72,9 @@ _PROJECTION = {
     "details.license": 1,
     "details.category": 1,
     "details.purl": 1,
+    "details.vulnerabilities.id": 1,
+    "details.vulnerabilities.aliases": 1,
+    "details.vulnerabilities.resolved_cve": 1,
 }
 
 _DEP_PROJECTION = {"name": 1, "version": 1, "purl": 1, "direct": 1}
@@ -93,7 +96,7 @@ def _row(scan: ExportedScan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dic
         "finding_id": doc.get("finding_id"),
         "type": doc.get("type"),
         "severity": doc.get("severity"),
-        "title": doc.get("description"),
+        "title": doc.get("description") or display_vulnerability_id(details),
         "component": doc.get("component"),
         "version": doc.get("version"),
         "purl": dep_purl or details.get("purl"),
@@ -111,7 +114,7 @@ def _row(scan: ExportedScan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dic
         "scanners": doc.get("scanners") or [],
         "waived": doc.get("waived", False),
         "waiver_reason": doc.get("waiver_reason"),
-        "cve_aliases": doc.get("aliases") or [],
+        "cves": canonical_cves([details]),
     }
 
 
