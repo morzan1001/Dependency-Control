@@ -54,7 +54,7 @@ const scan = (id: string): ScanWithReleases => ({
 })
 
 const noReleases: ReleaseListResponse = {
-  items: [], total: NO_RELEASES, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT,
+  items: [], total: NO_RELEASES, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT, pages: 1,
 }
 
 const oneRelease: ReleaseListResponse = {
@@ -63,7 +63,7 @@ const oneRelease: ReleaseListResponse = {
     commit_hash: `c-${RELEASE_SCAN_ID}`, branch: 'main', released_at: '2026-01-01T00:00:00Z',
     scan_status: COMPLETED, analysis_scan_id: RELEASE_SCAN_ID, analysis_chain_bounded: false,
   }],
-  total: 1, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT,
+  total: 1, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT, pages: 1,
 }
 
 function renderPage(url = `/projects/${PROJECT_ID}/delta?from=${FROM_SCAN_ID}&to=${TO_SCAN_ID}`) {

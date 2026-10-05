@@ -1,3 +1,5 @@
+import type { PaginatedResponse } from './common';
+
 export interface GitLabInstance {
   id: string;
   name: string;
@@ -41,13 +43,7 @@ export interface GitLabInstanceUpdate {
   allowed_namespaces?: string[];
 }
 
-export interface GitLabInstanceList {
-  items: GitLabInstance[];
-  total: number;
-  page: number;
-  size: number;
-  pages: number;
-}
+export type GitLabInstanceList = PaginatedResponse<GitLabInstance>;
 
 export interface GitLabGroupOption {
   id: number;

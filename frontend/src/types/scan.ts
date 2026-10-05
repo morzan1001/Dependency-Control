@@ -1,4 +1,4 @@
-import type { Severity } from './common';
+import type { PaginatedResponse, Severity } from './common';
 
 export type { Severity } from './common';
 
@@ -424,13 +424,7 @@ export interface ScanFindingsParams {
   hide_historical_secrets?: boolean;
 }
 
-export interface ScanFindingsResponse {
-  items: Finding[];
-  total: number;
-  page: number;
-  size: number;
-  pages: number;
-}
+export type ScanFindingsResponse = PaginatedResponse<Finding>;
 
 export interface ScanStats {
   total?: number;

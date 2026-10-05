@@ -55,6 +55,7 @@ describe("useProjectReleases", () => {
       total: 0,
       page: FIRST_PAGE,
       size: SMALL_PAGE_SIZE,
+      pages: 1,
     });
   });
 
@@ -113,6 +114,7 @@ describe("useProjectReleases", () => {
       total: SINGLE_ITEM_TOTAL,
       page: FIRST_PAGE,
       size: SMALL_PAGE_SIZE,
+      pages: 1,
     });
 
     const { result } = renderHook(() => useProjectReleases(PROJECT_ID), {
@@ -146,12 +148,14 @@ describe("useLatestProjectRelease", () => {
     total: SINGLE_ITEM_TOTAL,
     page: FIRST_PAGE,
     size: LATEST_ONLY_LIMIT,
+    pages: 1,
   };
   const noReleases: ReleaseListResponse = {
     items: [],
     total: NO_ITEMS,
     page: FIRST_PAGE,
     size: LATEST_ONLY_LIMIT,
+    pages: 1,
   };
 
   beforeEach(() => vi.clearAllMocks());

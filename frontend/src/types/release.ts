@@ -1,3 +1,5 @@
+import type { PaginatedResponse } from './common';
+
 export interface ReleaseItem {
   scan_id: string;
   project_id: string;
@@ -16,12 +18,7 @@ export interface ReleaseItem {
   analysis_chain_bounded: boolean;
 }
 
-export interface ReleaseListResponse {
-  items: ReleaseItem[];
-  total: number;
-  page: number;
-  size: number;
-}
+export type ReleaseListResponse = PaginatedResponse<ReleaseItem>;
 
 export interface MarkReleasePayload {
   commit_hash: string;
