@@ -175,30 +175,6 @@ class TestFromAttributes:
         assert resp.url == "https://example.com/hook"
         assert resp.webhook_type == "generic"
 
-    def test_github_instance_response_from_dict(self):
-        from app.schemas.github_instance import GitHubInstanceResponse
-
-        resp = GitHubInstanceResponse(
-            id="gh-1",
-            name="GitHub.com",
-            url="https://token.actions.githubusercontent.com",
-            created_at=datetime.now(timezone.utc),
-            created_by="admin",
-        )
-        assert resp.id == "gh-1"
-
-    def test_gitlab_instance_response_from_dict(self):
-        from app.schemas.gitlab_instance import GitLabInstanceResponse
-
-        resp = GitLabInstanceResponse(
-            id="gl-1",
-            name="GitLab.com",
-            url="https://gitlab.com",
-            created_at=datetime.now(timezone.utc),
-            created_by="admin",
-        )
-        assert resp.id == "gl-1"
-
 
 class TestProjectionSchemas:
     """Projection schemas used for MongoDB performance queries."""

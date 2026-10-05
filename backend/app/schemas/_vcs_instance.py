@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas._not_null import reject_null
 
@@ -78,10 +78,8 @@ class VcsInstanceResponse(VcsInstanceBase):
 
     id: str = Field(..., description="Unique identifier")
     token_configured: bool = Field(
-        False, description="Whether an access token is configured (without exposing the token)"
+        ..., description="Whether an access token is configured (without exposing the token)"
     )
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="User ID who created this instance")
     last_modified_at: datetime | None = Field(None, description="Last modification timestamp")
-
-    model_config = ConfigDict(from_attributes=True)
