@@ -139,7 +139,11 @@ async def test_a_paged_result_is_followed_to_its_last_page(monkeypatch, _cache):
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    assert [query.get("page_token") for query in batch_queries(seen)[3:]] == ["page-2", "page-3"]
+    pkg_0 = {"purl": "pkg:pypi/pkg-0@1.0.0"}
+    assert batch_queries(seen)[3:] == [
+        {"package": pkg_0, "page_token": "page-2"},
+        {"package": pkg_0, "page_token": "page-3"},
+    ]
     ids = {entry["component"]: [v["id"] for v in entry["vulnerabilities"]] for entry in result["osv_vulnerabilities"]}
     assert ids == {"pkg-0": ["OSV-1", "OSV-3", "OSV-4"], "pkg-1": ["OSV-2"]}
     assert [stub["id"] for stub in _cache[CacheKeys.osv("pkg:pypi/pkg-0@1.0.0")]] == ["OSV-1", "OSV-3", "OSV-4"]
