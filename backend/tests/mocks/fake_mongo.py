@@ -417,13 +417,13 @@ def _is_operator_condition(condition: dict) -> bool:
     ``{"$gt": 4, "u": 1}`` is an error rather than a conjunction.
     """
     operators = [key for key in condition if key.startswith("$")]
-    if not operators:
+    # A logical operator combines whole query documents, so it stays on the document branch.
+    if not operators or any(op in _MATCH_TOP_LEVEL_OPERATORS for op in operators):
         return False
     if len(operators) != len(condition):
         plain = next(key for key in condition if not key.startswith("$"))
         raise OperationFailure(f"unknown operator: {plain}", 2)
-    # A logical operator combines whole query documents, so it stays on the document branch.
-    return not any(op in _MATCH_TOP_LEVEL_OPERATORS for op in operators)
+    return True
 
 
 def _elem_matches(element: Any, condition: Any) -> bool:

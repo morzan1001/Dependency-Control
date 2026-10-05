@@ -322,6 +322,12 @@ ELEM_MATCH_CASES = [
         {"n": {"$elemMatch": {"$gt": 4, "v": 5}}},
         error_code=_BAD_VALUE,
     ),
+    FindCase(
+        "a logical operator and a field hold for one element",
+        [{"n": [{"v": 5, "w": 1}]}, {"n": [{"v": 5}, {"w": 1}]}, {"n": [{"v": 7, "w": 1}]}],
+        {"n": {"$elemMatch": {"$or": [{"v": 5}, {"v": 6}], "w": 1}}},
+        [0],
+    ),
 ]
 
 _UNWIND_DOCS = [{"t": ["A", "B"]}, {"t": []}, {"t": None}, {"x": 1}, {"t": "s"}]

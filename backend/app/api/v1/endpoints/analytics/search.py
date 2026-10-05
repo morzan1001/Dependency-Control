@@ -19,9 +19,10 @@ from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.cve import canonical_cve
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, SEVERITY_RANK_EXPR
 from app.core.permissions import Permissions
 from app.models.dependency import Dependency
+from app.models.finding import FindingType
 from app.models.finding_record import FindingRecord
 from app.models.user import User
 from app.repositories.dependencies import DependencyRepository
@@ -53,15 +54,47 @@ async def _resolve_search_scope(
     return project_name_map, scan_ids, {"resolved_projects": resolved, "projects_without_release": without_release}
 
 
-def _passes_vuln_filter(
-    dep: Dependency, has_vulnerabilities: bool | None, vuln_versions: dict[str, dict[str, set[str]]]
-) -> bool:
-    if has_vulnerabilities is None:
-        return True
-    versions = lookup_component(vuln_versions.get(dep.project_id, {}), dep.name) or set()
-    # A finding without a version cannot tell the package's versions apart, so it covers them all.
-    has_vulns = "unknown" in versions or normalize_version(dep.version) in versions
-    return has_vulnerabilities == has_vulns
+async def _dependency_ids_by_vulnerability(
+    db: AsyncIOMotorDatabase,
+    query: dict[str, Any],
+    scan_ids: list[str],
+    has_vulnerabilities: bool,
+    sort: dict[str, int],
+) -> list[str]:
+    """Ids, in ``sort`` order, of the dependencies matching ``query`` whose vulnerability status is ``has_vulnerabilities``."""
+    candidates = await DependencyRepository(db).aggregate(
+        [{"$match": query}, {"$sort": sort}, {"$project": {"project_id": 1, "name": 1, "version": 1}}]
+    )
+    # No component filter: a finding's component can be a qualified form of the
+    # dependency name, which no $in list over inventory names can express.
+    vuln_pipeline: list[dict[str, Any]] = [
+        {
+            "$match": {
+                "scan_id": {"$in": scan_ids},
+                "project_id": {"$in": list({dep["project_id"] for dep in candidates})},
+                "type": "vulnerability",
+                "waived": {"$ne": True},
+            }
+        },
+        {
+            "$group": {
+                "_id": {"project_id": "$project_id", "component": "$component"},
+                "versions": {"$addToSet": {"$ifNull": ["$version", ""]}},
+            }
+        },
+    ]
+    by_project: dict[str, dict[str, set[str]]] = {}
+    for r in await FindingRepository(db).aggregate(vuln_pipeline):
+        versions = {normalize_version(v) for v in r["versions"]}
+        by_project.setdefault(r["_id"]["project_id"], {})[r["_id"]["component"]] = versions
+    vuln_versions = {pid: build_component_index(components) for pid, components in by_project.items()}
+
+    def is_vulnerable(dep: dict[str, Any]) -> bool:
+        versions = lookup_component(vuln_versions.get(dep["project_id"], {}), dep["name"]) or set()
+        # A finding without a version cannot tell the package's versions apart, so it covers them all.
+        return "unknown" in versions or normalize_version(dep["version"]) in versions
+
+    return [dep["_id"] for dep in candidates if is_vulnerable(dep) == has_vulnerabilities]
 
 
 def _dep_to_search_result(dep: Dependency, project_name_map: dict[str, str]) -> DependencySearchResult:
@@ -93,19 +126,6 @@ def _dep_to_search_result(dep: Dependency, project_name_map: dict[str, str]) -> 
     )
 
 
-def _build_search_results(
-    dependencies: list[Dependency],
-    has_vulnerabilities: bool | None,
-    vuln_versions: dict[str, dict[str, set[str]]],
-    project_name_map: dict[str, str],
-) -> list[DependencySearchResult]:
-    return [
-        _dep_to_search_result(dep, project_name_map)
-        for dep in dependencies
-        if _passes_vuln_filter(dep, has_vulnerabilities, vuln_versions)
-    ]
-
-
 @router.get("/search", responses=RESP_AUTH)
 async def search_dependencies_advanced(
     current_user: CurrentUserDep,
@@ -134,7 +154,6 @@ async def search_dependencies_advanced(
         return DependencySearchResponse(items=[], **page_meta(0, skip, limit), **counts)
 
     dep_repo = DependencyRepository(db)
-    finding_repo = FindingRepository(db)
 
     query = {"scan_id": {"$in": scan_ids}, "name": {"$regex": re.escape(q), "$options": "i"}}
     if version:
@@ -143,8 +162,6 @@ async def search_dependencies_advanced(
         query["type"] = type
     if source_type:
         query["source_type"] = source_type
-
-    total_count = await dep_repo.count(query)
 
     sort_field_map = {
         "name": "name",
@@ -157,45 +174,23 @@ async def search_dependencies_advanced(
     mongo_sort_field = sort_field_map.get(sort_by, "name")
     sort_direction = parse_sort_direction(sort_order)
 
-    dependencies = await dep_repo.find_many(
-        query,
-        skip=skip,
-        limit=limit,
-        sort_by=mongo_sort_field,
-        sort_order=sort_direction,
-    )
+    if has_vulnerabilities is None:
+        total_count = await dep_repo.count(query)
+        dependencies = await dep_repo.find_many(
+            query, skip=skip, limit=limit, sort_by=mongo_sort_field, sort_order=sort_direction
+        )
+    else:
+        sort = {mongo_sort_field: sort_direction, "_id": 1}
+        matching = await _dependency_ids_by_vulnerability(db, query, scan_ids, has_vulnerabilities, sort)
+        total_count = len(matching)
+        dependencies = await dep_repo.find_many(
+            {"_id": {"$in": matching[skip : skip + limit]}},
+            limit=limit,
+            sort_by=mongo_sort_field,
+            sort_order=sort_direction,
+        )
 
-    vuln_versions: dict[str, dict[str, set[str]]] = {}
-    if has_vulnerabilities is not None and dependencies:
-        dep_keys = list({(dep.project_id, dep.name) for dep in dependencies})
-
-        # No component filter: a finding's component can be a qualified form of the
-        # dependency name, which no $in list over inventory names can express.
-        vuln_pipeline: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "scan_id": {"$in": scan_ids},
-                    "project_id": {"$in": [k[0] for k in dep_keys]},
-                    "type": "vulnerability",
-                    "waived": {"$ne": True},
-                }
-            },
-            {
-                "$group": {
-                    "_id": {"project_id": "$project_id", "component": "$component"},
-                    "versions": {"$addToSet": {"$ifNull": ["$version", ""]}},
-                }
-            },
-        ]
-        vuln_results = await finding_repo.aggregate(vuln_pipeline)
-        by_project: dict[str, dict[str, set[str]]] = {}
-        for r in vuln_results:
-            versions = {normalize_version(v) for v in r["versions"]}
-            by_project.setdefault(r["_id"]["project_id"], {})[r["_id"]["component"]] = versions
-        vuln_versions = {pid: build_component_index(components) for pid, components in by_project.items()}
-
-    results = _build_search_results(dependencies, has_vulnerabilities, vuln_versions, project_name_map)
-
+    results = [_dep_to_search_result(dep, project_name_map) for dep in dependencies]
     return DependencySearchResponse(items=results, **page_meta(total_count, skip, limit), **counts)
 
 
@@ -261,26 +256,41 @@ def _build_vuln_query(
     scan_ids: list[str],
     q: str,
     severity: str | None,
+    in_kev: bool | None,
+    has_fix: bool | None,
     finding_type: str | None,
     include_waived: bool,
 ) -> dict[str, Any]:
+    """Findings with a row that passes the filters: an advisory the query names, else the finding itself."""
     search_regex = {"$regex": re.escape(q), "$options": "i"}
-    clauses: list[dict[str, Any]] = [
-        {
-            "$or": [
-                {"id": search_regex},
-                {"aliases": search_regex},
-                {"description": search_regex},
-                {"details.vulnerabilities.id": search_regex},
-                {"details.vulnerabilities.resolved_cve": search_regex},
-            ]
-        }
-    ]
+    names_advisory = {"$or": [{"id": search_regex}, {"resolved_cve": search_regex}]}
+    advisory_row: dict[str, Any] = {}
+    finding_row: dict[str, Any] = {}
     if severity:
-        # A document carries its worst advisory's severity, so a HIGH CVE can sit in a CRITICAL one.
-        sev = severity.upper()
-        clauses.append({"$or": [{"severity": sev}, {"details.vulnerabilities.severity": sev}]})
-    query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "$and": clauses}
+        advisory_row["severity"] = finding_row["severity"] = severity.upper()
+    if in_kev is not None:
+        kev = True if in_kev else {"$ne": True}
+        advisory_row[DETAILS_KEY_IN_KEV] = finding_row[f"details.{DETAILS_KEY_IN_KEV}"] = kev
+    if has_fix is not None:
+        fix = {"$nin": [None, ""]} if has_fix else {"$in": [None, ""]}
+        advisory_row["fixed_version"] = finding_row["details.fixed_version"] = fix
+    if not include_waived:
+        advisory_row["waived"] = {"$ne": True}
+    query: dict[str, Any] = {
+        "scan_id": {"$in": scan_ids},
+        "$or": [
+            {"details.vulnerabilities": {"$elemMatch": {**names_advisory, **advisory_row}}},
+            {
+                **finding_row,
+                "$nor": [{"details.vulnerabilities": {"$elemMatch": names_advisory}}],
+                "$or": [
+                    {"id": search_regex},
+                    {"aliases": search_regex},
+                    {"type": {"$ne": FindingType.VULNERABILITY.value}, "description": search_regex},
+                ],
+            },
+        ],
+    }
     if finding_type:
         query["type"] = finding_type
     if not include_waived:
@@ -289,7 +299,7 @@ def _build_vuln_query(
 
 
 _VULN_SORT_FIELD_MAP = {
-    "severity": "severity",
+    "severity": "severity_rank",
     # CVSS only exists per CVE; Mongo sorts array paths by max (desc) / min (asc).
     "cvss": "details.vulnerabilities.cvss_score",
     "epss": "details.epss_score",
@@ -360,34 +370,27 @@ async def search_vulnerabilities(
 
     finding_repo = FindingRepository(db)
 
-    query = _build_vuln_query(scan_ids, q, severity, finding_type, include_waived)
+    query = _build_vuln_query(scan_ids, q, severity, in_kev, has_fix, finding_type, include_waived)
 
     total_count = await finding_repo.count(query)
 
-    mongo_sort_field = _VULN_SORT_FIELD_MAP.get(sort_by, "severity")
-    sort_direction = parse_sort_direction(sort_order)
-
-    findings = await finding_repo.find_many(
-        query,
-        skip=skip,
-        limit=limit,
-        sort_by=mongo_sort_field,
-        sort_order=sort_direction,
+    sort_field = _VULN_SORT_FIELD_MAP.get(sort_by, "severity_rank")
+    findings = await finding_repo.aggregate(
+        [
+            {"$match": query},
+            {"$addFields": {"severity_rank": SEVERITY_RANK_EXPR}},
+            {"$sort": {sort_field: parse_sort_direction(sort_order), "_id": 1}},
+            {"$skip": skip},
+            {"$limit": limit},
+        ]
     )
 
     query_lower = q.lower()
     results = [
         row
         for finding in findings
-        for row in _vuln_results_for_finding(finding, query_lower, project_name_map)
+        for row in _vuln_results_for_finding(FindingRecord(**finding), query_lower, project_name_map)
         if _row_matches(row, severity, in_kev, has_fix, include_waived)
     ]
-
-    # MongoDB can't sort by severity order, so resort in Python with the rank map.
-    if sort_by == "severity":
-        results.sort(
-            key=lambda x: get_severity_value(x.severity),
-            reverse=sort_direction == -1,
-        )
 
     return VulnerabilitySearchResponse(items=results, **page_meta(total_count, skip, limit), **counts)

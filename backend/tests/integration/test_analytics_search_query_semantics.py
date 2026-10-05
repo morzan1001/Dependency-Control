@@ -192,3 +192,117 @@ async def test_vulnerability_search_finds_a_high_cve_inside_a_critical_component
 
     assert resp.status_code == 200, resp.text
     assert [row["vulnerability_id"] for row in resp.json()["items"]] == [_CVE]
+
+
+async def _pages(client, path: str, headers: dict, params: dict, count: int) -> list[dict]:
+    pages = []
+    for skip in range(count):
+        resp = await client.get(path, params={**params, "limit": 1, "skip": skip}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        pages.append(resp.json())
+    return pages
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("param", "field", "value"), [("in_kev", "in_kev", True), ("has_fix", "fixed_version", "1.0.1")]
+)
+async def test_an_advisory_filter_fills_every_page_and_counts_only_matching_findings(
+    client, db, scanned, param, field, value
+):
+    for component, matches in (("a-pkg", True), ("b-pkg", False), ("c-pkg", True), ("d-pkg", False)):
+        finding = _vulnerability(component)
+        if matches:
+            finding["details"]["vulnerabilities"][0][field] = value
+        await db.findings.insert_one(finding)
+
+    params = {"q": _CVE, param: "true", "sort_by": "component", "sort_order": "asc"}
+    pages = await _pages(client, _VULN_SEARCH_PATH, scanned, params, 2)
+
+    assert [row["component"] for page in pages for row in page["items"]] == ["a-pkg", "c-pkg"]
+    assert pages[0]["total"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_kev_filter_skips_a_finding_whose_kev_advisory_the_query_does_not_name(client, db, scanned):
+    finding = _vulnerability("log4j-core")
+    finding["details"] = {
+        "in_kev": True,
+        "vulnerabilities": [
+            {"id": "CVE-2021-44228", "severity": "HIGH", "in_kev": True},
+            {"id": _CVE, "severity": "HIGH", "aliases": []},
+        ],
+    }
+    await db.findings.insert_one(finding)
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": _CVE, "in_kev": "true"}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["items"], resp.json()["total"]) == ([], 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_severity_sort_pages_from_the_most_severe_finding(client, db, scanned):
+    for component, severity in (("a-pkg", "LOW"), ("b-pkg", "CRITICAL"), ("c-pkg", "MEDIUM"), ("d-pkg", "HIGH")):
+        finding = _vulnerability(component)
+        finding["severity"] = severity
+        finding["details"]["vulnerabilities"][0]["severity"] = severity
+        await db.findings.insert_one(finding)
+
+    params = {"q": _CVE, "sort_by": "severity", "sort_order": "desc"}
+    pages = await _pages(client, _VULN_SEARCH_PATH, scanned, params, 4)
+
+    assert [row["severity"] for page in pages for row in page["items"]] == ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_description_match_reaches_only_non_vulnerability_findings(client, db, scanned):
+    vulnerability = _vulnerability("left-pad")
+    vulnerability["description"] = "frobnicator overflow"
+    license_finding = {
+        **_vulnerability("gpl-pkg"),
+        "_id": "finding-license",
+        "type": "license",
+        "description": "frobnicator ships under GPL-3.0",
+        "details": {},
+    }
+    await db.findings.insert_many([vulnerability, license_finding])
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": "frobnicator"}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert [row["finding_type"] for row in resp.json()["items"]] == ["license"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_vulnerability_filter_fills_the_page_and_counts_only_vulnerable_dependencies(client, db, scanned):
+    for name in ("alpha-lib", "beta-lib", "zeta-lib"):
+        await db.dependencies.insert_one(_dependency(name))
+    await db.findings.insert_one(_vulnerability("zeta-lib"))
+
+    resp = await client.get(
+        _SEARCH_PATH, params={"q": "lib", "has_vulnerabilities": "true", "limit": 1}, headers=scanned
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [row["package"] for row in body["items"]] == ["zeta-lib"]
+    assert body["total"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("finding", [{"scan_id": "scan-older"}, {"waived": True}], ids=["older scan", "waived"])
+async def test_the_vulnerability_filter_ignores_an_older_scan_s_and_a_waived_finding(client, db, scanned, finding):
+    await db.dependencies.insert_one(_dependency("lodash"))
+    await db.findings.insert_one({**_vulnerability("lodash"), **finding})
+
+    resp = await client.get(_SEARCH_PATH, params={"q": "lodash", "has_vulnerabilities": "false"}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert [row["package"] for row in resp.json()["items"]] == ["lodash"]
