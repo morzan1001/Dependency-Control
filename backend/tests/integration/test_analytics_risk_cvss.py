@@ -86,3 +86,20 @@ async def test_impact_risk_follows_each_advisory_s_cvss(client, seeded):
 
     assert resp.status_code == 200, resp.text
     assert sorted((r["component"], r["max_risk_score"]) for r in resp.json()) == sorted(_EXPECTED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/analytics/hotspots?sort_by=risk", "/api/v1/analytics/impact"])
+async def test_a_waived_advisory_does_not_rank_the_risk(client, db, seeded, path):
+    mixed = _finding("mixed", {"id": "CVE-2026-0010", "severity": "LOW", "cvss_score": 3.1})
+    mixed["details"]["vulnerabilities"].insert(
+        0, {"aliases": [], "id": "CVE-2026-0009", "severity": "CRITICAL", "cvss_score": 9.8, "waived": True}
+    )
+    await db.findings.insert_one(mixed)
+
+    resp = await client.get(path, headers=seeded)
+
+    assert resp.status_code == 200, resp.text
+    assert [r["max_risk_score"] for r in resp.json() if r["component"] == "mixed"] == [
+        calculate_risk_score(3.1, _EPSS, False, False)
+    ]
