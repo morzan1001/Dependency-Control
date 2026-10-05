@@ -79,25 +79,16 @@ _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 _DELIBERATE_SKIP_REASONS = frozenset({"cryptographic-asset", "file", "non-dependency", "root-component"})
 _UNRECOGNISED_PAYLOAD = "unrecognised payload shape: expected {keys}"
 
-# The top-level key each normalizer reads. A payload carrying none of them is a shape the
-# pipeline cannot read, which must not be reported as coverage over zero findings.
 _BEARER = "bearer"
 
-_SCANNER_RESULT_KEYS: dict[str, tuple[str, ...]] = {
-    "trufflehog": ("findings",),
-    "opengrep": ("findings", "results"),
-    _BEARER: ("findings",),
-    "kics": ("queries",),
-}
-
-# The typed entry each scanner's list is validated against. An entry the normalizer cannot
-# read contributes no finding, or a placeholder one naming no rule and no file, and neither may
-# be reported as coverage.
-_SCANNER_ENTRY_MODELS: dict[str, type[BaseModel]] = {
-    "trufflehog": TruffleHogFinding,
-    "opengrep": OpenGrepFinding,
-    _BEARER: BearerFinding,
-    "kics": KicsQuery,
+# The top-level keys each normalizer reads and the typed entry it reads under them. A payload
+# missing every key, or carrying entries the model rejects, normalises to no finding or a
+# placeholder one, and neither may be reported as coverage.
+_POSTED_SCANNERS: dict[str, tuple[tuple[str, ...], type[BaseModel]]] = {
+    "trufflehog": (("findings",), TruffleHogFinding),
+    "opengrep": (("findings", "results"), OpenGrepFinding),
+    _BEARER: (("findings",), BearerFinding),
+    "kics": (("queries",), KicsQuery),
 }
 _UNREADABLE_ENTRIES = "{unreadable} of {total} '{key}' entries could not be read ({reason})"
 _WHOLE_ENTRY = "entry"
@@ -309,10 +300,8 @@ def _entry_shortfall(name: str, payload: dict[str, Any]) -> str | None:
     The container being the right shape says nothing about the entries in it: 200 kics queries
     carrying no ``files`` normalise to zero findings, which is an all-clear the run never earned.
     """
-    model = _SCANNER_ENTRY_MODELS.get(name)
-    if model is None:
-        return None
-    for key in _SCANNER_RESULT_KEYS[name]:
+    keys, model = _POSTED_SCANNERS[name]
+    for key in keys:
         entries = _posted_entries(name, payload, key)
         if not entries:
             continue
@@ -350,7 +339,7 @@ def _aggregate_posted_scanners(
         if is_error_result(payload):
             _record_errored(report, name, str(payload["error"]))
             continue
-        expected_keys = _SCANNER_RESULT_KEYS[name]
+        expected_keys = _POSTED_SCANNERS[name][0]
         if not any(key in payload for key in expected_keys):
             quoted = " or ".join(f"'{key}'" for key in expected_keys)
             _record_errored(report, name, _UNRECOGNISED_PAYLOAD.format(keys=quoted))

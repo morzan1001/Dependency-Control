@@ -570,6 +570,36 @@ async def test_a_scanner_payload_shape_the_normalizer_cannot_read_is_not_reporte
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scanner", "keys"),
+    [
+        ("trufflehog", "'findings'"),
+        ("opengrep", "'findings' or 'results'"),
+        ("bearer", "'findings'"),
+        ("kics", "'queries'"),
+    ],
+)
+async def test_an_unrecognised_payload_names_every_key_its_normalizer_reads(scanner, keys):
+    request = AdhocAnalyzeRequest(scanners={scanner: {"total_counter": 7}}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored[scanner] == [f"{_UNRECOGNISED_PAYLOAD}: expected {keys}"]
+
+
+@pytest.mark.asyncio
+async def test_opengrep_entries_under_results_are_validated_like_those_under_findings():
+    payload = {"results": [{"check_id": "python.rule.0", "path": _SECRET_FILE, "start": {"line": 1}}]}
+    request = AdhocAnalyzeRequest(scanners={"opengrep": payload}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored["opengrep"] == [
+        "1 of 1 'results' entries could not be read (end: Field required)"
+    ]
+
+
 class _FakeOsv:
     name = _OSV_NAME
 
