@@ -93,7 +93,7 @@ class BaseRepository[T: BaseModel]:
         limit: int = 100,
         sort_by: str | None = None,
         sort_order: int = 1,
-        projection: dict[str, int] | None = None,
+        projection: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import bson
 import pytest
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
@@ -20,6 +21,7 @@ from app.api.v1.endpoints import projects
 from app.core.permissions import Permissions
 from app.models.project import Project, Scan
 from app.models.user import User
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.rescan import build_rescan
@@ -187,16 +189,17 @@ async def test_an_export_with_a_deleted_sbom_file_is_404_before_any_byte(client,
 async def test_the_sbom_list_carries_index_filename_and_size_and_none_for_a_deleted_file(
     client, db, member_auth_headers
 ):
-    kept = _fixture("npmpeer.syft.cdx.json")
-    scan = await _scan_with_sboms(db, kept, _fixture("mono.syft.cdx.json"))
+    first, last = _fixture("npmpeer.syft.cdx.json"), _fixture("uvdev.syft.cdx.json")
+    scan = await _scan_with_sboms(db, first, _fixture("mono.syft.cdx.json"), last)
     await _delete_file(db, scan.sbom_refs[1])
 
     served = await client.get(f"/api/v1/projects/scans/{scan.id}/sboms", headers=member_auth_headers)
 
     assert served.status_code == 200, served.text[:500]
     assert served.json() == [
-        {"index": 0, "filename": "sbom-0.json", "size": len(kept)},
+        {"index": 0, "filename": "sbom-0.json", "size": len(first)},
         {"index": 1, "filename": "sbom-1.json", "size": None},
+        {"index": 2, "filename": "sbom-2.json", "size": len(last)},
     ]
 
 
@@ -266,3 +269,67 @@ async def test_a_result_of_another_scan_is_404(client, db, member_auth_headers):
     )
 
     assert served.status_code == 404, served.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_result_list_carries_each_rows_stored_size_and_none_for_a_deleted_file(
+    client, db, member_auth_headers
+):
+    scan = await _scan_with_sboms(db)
+    repo = AnalysisResultRepository(db)
+    await repo.save_result(scan.id, "trivy", {"Results": []}, source="SBOM #1")
+    await repo.save_result(scan.id, "grype", {"matches": []}, source="SBOM #1")
+    await repo.save_result(scan.id, "osv", {"results": [{"packages": []}]}, source="SBOM #1")
+    stored = {row["analyzer_name"]: {"gridfs_id": row["result_gridfs_id"]} async for row in db.analysis_results.find()}
+    await _delete_file(db, stored["grype"])
+    legacy = {"findings": [_SECRET_FINDING]}
+    await db.analysis_results.insert_one(
+        {
+            "_id": "legacy-row",
+            "scan_id": scan.id,
+            "analyzer_name": "trufflehog",
+            "result": legacy,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        }
+    )
+
+    served = await client.get(f"/api/v1/projects/scans/{scan.id}/results", headers=member_auth_headers)
+
+    assert served.status_code == 200, served.text[:500]
+    rows = {row["analyzer_name"]: row for row in served.json()}
+    assert {name: (row["source"], row["size"]) for name, row in rows.items()} == {
+        "trivy": ("SBOM #1", len(await _gridfs_bytes(db, stored["trivy"]))),
+        "osv": ("SBOM #1", len(await _gridfs_bytes(db, stored["osv"]))),
+        "grype": ("SBOM #1", None),
+        "trufflehog": (None, len(bson.encode(legacy))),
+    }
+    assert rows["trufflehog"]["created_at"].startswith("2026-01-01T00:00:00")
+    assert all(set(row) == {"id", "scan_id", "analyzer_name", "source", "created_at", "size"} for row in rows.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("in_gridfs", [False, True], ids=["legacy-inline", "gridfs"])
+async def test_the_result_list_sizes_a_result_without_reading_it(db, in_gridfs):
+    await db.projects.insert_one(Project(id=_PROJECT_ID, name="shop").model_dump(by_alias=True))
+    scan = await _scan_with_sboms(db)
+    large = {"findings": [{**_SECRET_FINDING, "RawHash": f"{i:08x}"} for i in range(80_000)]}
+    if in_gridfs:
+        await AnalysisResultRepository(db).save_result(scan.id, "trufflehog", large)
+        stored_size = len(json.dumps(large).encode())
+    else:
+        await db.analysis_results.insert_one(
+            {"_id": "legacy-row", "scan_id": scan.id, "analyzer_name": "trufflehog", "result": large}
+        )
+        stored_size = len(bson.encode(large))
+
+    tracemalloc.start()
+    try:
+        [listed] = await projects.read_analysis_results(scan.id, current_user=_AUDITOR, db=db)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert listed.size == stored_size > 4 * _MIB
+    assert peak < _MIB

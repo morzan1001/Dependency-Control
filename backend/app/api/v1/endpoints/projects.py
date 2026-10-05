@@ -113,7 +113,12 @@ from app.schemas.project import (
 from app.services.branch_sync import sync_project_branches
 from app.services.component_identity import component_match_expr
 from app.services.gitlab import GitLabService
-from app.services.gridfs_maintenance import gridfs_ref_id, iter_gridfs_chunks
+from app.services.gridfs_maintenance import (
+    extract_gridfs_ids_from_refs,
+    gridfs_lengths,
+    gridfs_ref_id,
+    iter_gridfs_chunks,
+)
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, ExportedScan, iter_findings_rows
 from app.services.rescan import create_rescan
@@ -986,9 +991,7 @@ async def read_scan_sboms(
     if not sbom_refs:
         raise HTTPException(status_code=404, detail="No SBOM data available for this scan")
 
-    file_ids = [ObjectId(gid) for ref in sbom_refs if (gid := gridfs_ref_id(ref))]
-    files = db["fs.files"].find({"_id": {"$in": file_ids}}, {"length": 1})
-    sizes = {str(doc["_id"]): doc["length"] async for doc in files}
+    sizes = await gridfs_lengths(db, extract_gridfs_ids_from_refs(sbom_refs))
     return [
         {"index": index, "filename": ref.get("filename"), "size": sizes.get(gridfs_ref_id(ref) or "")}
         for index, ref in enumerate(sbom_refs)

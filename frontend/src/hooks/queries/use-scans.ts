@@ -30,6 +30,7 @@ export const scanKeys = {
     result: (scanId: string, resultId: string) => [...scanKeys.results(scanId), resultId] as const,
     stats: (scanId: string) => [...scanKeys.detail(scanId), 'stats'] as const,
     sboms: (scanId: string) => [...scanKeys.detail(scanId), 'sboms'] as const,
+    sbom: (scanId: string, index: number) => [...scanKeys.sboms(scanId), index] as const,
     window: (projectId: string, pages: number) => [...scanKeys.project(projectId), 'window', pages] as const,
 }
 
@@ -148,6 +149,13 @@ export const useScanSboms = (scanId: string, enabled: boolean) => {
         queryKey: scanKeys.sboms(scanId),
         queryFn: () => scanApi.getSboms(scanId),
         enabled: !!scanId && enabled
+    })
+}
+
+export const useScanSbom = (scanId: string, index: number) => {
+    return useQuery({
+        queryKey: scanKeys.sbom(scanId, index),
+        queryFn: () => scanApi.getSbom(scanId, index)
     })
 }
 

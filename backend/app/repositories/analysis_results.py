@@ -8,9 +8,18 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.models.project import AnalysisResult
 from app.repositories.base import BaseRepository
-from app.services.gridfs_maintenance import load_gridfs_json, upload_gridfs_json
+from app.services.gridfs_maintenance import gridfs_lengths, load_gridfs_json, upload_gridfs_json
 
 RESULT_PROJECTION = {"analyzer_name": 1, "source": 1, "result": 1, "result_gridfs_id": 1}
+# $bsonSize sizes a legacy inline result on the server, so listing never reads a result body.
+_LIST_PROJECTION = {
+    "scan_id": 1,
+    "analyzer_name": 1,
+    "source": 1,
+    "created_at": 1,
+    "result_gridfs_id": 1,
+    "size": {"$bsonSize": "$result"},
+}
 
 
 class AnalysisResultRepository(BaseRepository[AnalysisResult]):
@@ -18,9 +27,11 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
     model_class = AnalysisResult
 
     async def find_by_scan(self, scan_id: str, limit: int) -> list[AnalysisResult]:
-        rows = await self.find_many_raw(
-            {"scan_id": scan_id}, limit=limit, projection={"result": 0, "result_gridfs_id": 0}
-        )
+        rows = await self.find_many_raw({"scan_id": scan_id}, limit=limit, projection=_LIST_PROJECTION)
+        lengths = await gridfs_lengths(self.db, [fid for row in rows if (fid := row.get("result_gridfs_id"))])
+        for row in rows:
+            if file_id := row.get("result_gridfs_id"):
+                row["size"] = lengths.get(file_id)
         return self._to_model_list(rows)
 
     async def save_result(
