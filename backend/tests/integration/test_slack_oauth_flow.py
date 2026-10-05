@@ -26,8 +26,9 @@ _ADMIN = "admin"
 _SLACK_APP = {"slack_client_id": "client-1", "slack_client_secret": "secret-1", "slack_bot_token": "xoxb-current"}
 _SCOPES = "chat:write,im:write"
 _STATE_TTL = timedelta(minutes=10)
+_TOKEN_LIFETIME = 43200
 _SLACK_ANSWERS = {
-    _OAUTH_ACCESS: {"ok": True, "access_token": "xoxb-new", "refresh_token": "xoxe-new", "expires_in": 43200},
+    _OAUTH_ACCESS: {"ok": True, "access_token": "xoxb-new", "refresh_token": "xoxe-new", "expires_in": _TOKEN_LIFETIME},
     _POST_MESSAGE: {"ok": True},
 }
 _OK = 200
@@ -91,6 +92,7 @@ async def test_the_settings_page_install_replaces_the_bot_token(client, db, slac
     await SystemSettingsRepository(db).update({**_SLACK_APP, "slack_oauth_scopes": _SCOPES})
 
     netloc, query = await _install_url(client)
+    before = time.time()
     callback = await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
 
     assert (netloc, query["client_id"], query["scope"]) == ("slack.com", "client-1", _SCOPES)
@@ -101,6 +103,7 @@ async def test_the_settings_page_install_replaces_the_bot_token(client, db, slac
     assert (exchange["code"], exchange["redirect_uri"]) == ("admin-code", query["redirect_uri"])
     stored = await SystemSettingsRepository(db).get()
     assert (stored.slack_bot_token, stored.slack_refresh_token) == ("xoxb-new", "xoxe-new")
+    assert before + _TOKEN_LIFETIME <= stored.slack_token_expires_at <= time.time() + _TOKEN_LIFETIME
 
 
 @pytest.mark.live_mongo
@@ -108,10 +111,12 @@ async def test_the_settings_page_install_replaces_the_bot_token(client, db, slac
 async def test_the_install_state_expires_ten_minutes_after_it_is_minted(client, db):
     await SystemSettingsRepository(db).update(_SLACK_APP)
 
+    minted = datetime.now(timezone.utc)
     _, query = await _install_url(client)
 
     expires = datetime.fromtimestamp(jwt.get_unverified_claims(query["state"])["exp"], timezone.utc)
-    assert expires <= datetime.now(timezone.utc) + _STATE_TTL
+    # The JWT exp claim is truncated to whole seconds.
+    assert minted + _STATE_TTL - timedelta(seconds=1) <= expires <= datetime.now(timezone.utc) + _STATE_TTL
 
 
 @pytest.mark.live_mongo
@@ -134,6 +139,7 @@ async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack, monk
         return db
 
     monkeypatch.setattr(slack_provider, "get_database", _get_database)
+    before = time.time()
 
     assert await SlackProvider().send("#alerts", "Subject", "Body", system_settings=system_settings)
 
@@ -142,3 +148,4 @@ async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack, monk
     assert (post["url"], post["authorization"]) == (_POST_MESSAGE, "Bearer xoxb-new")
     stored = await SystemSettingsRepository(db).get()
     assert (stored.slack_bot_token, stored.slack_refresh_token) == ("xoxb-new", "xoxe-new")
+    assert before + _TOKEN_LIFETIME <= stored.slack_token_expires_at <= time.time() + _TOKEN_LIFETIME
