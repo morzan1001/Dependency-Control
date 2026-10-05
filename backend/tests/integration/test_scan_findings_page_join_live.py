@@ -104,6 +104,18 @@ async def test_a_source_type_sort_orders_by_the_joined_dependency(seeded):
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_the_severity_sort_lists_the_most_severe_finding_first(db):
+    severities = ["LOW", "CRITICAL", "INFO", "MEDIUM", "HIGH"]
+    await db.findings.insert_many([{**_finding(i, f"lib{i}"), "severity": s} for i, s in enumerate(severities)])
+
+    pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by="severity", sort_dir=-1, skip=0, limit=50)
+    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+
+    assert [row["severity"] for row in bucket["data"]] == ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("variants", "taken"),
     [
