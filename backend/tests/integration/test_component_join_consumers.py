@@ -590,23 +590,32 @@ async def test_a_go_module_shows_none_of_the_findings_of_another_major_version_m
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_the_tree_marks_only_the_version_a_finding_affects(client, db, seeded):
-    for version in ("4.17.15", "4.17.21"):
+@pytest.mark.parametrize(
+    ("purl_type", "name", "affected", "patched", "finding_version"),
+    [
+        ("npm", "lodash", "4.17.15", "4.17.21", "v4.17.15"),
+        ("golang", "github.com/foo/bar", "v1.2.3", "v1.2.9", "1.2.3"),
+    ],
+)
+async def test_the_tree_marks_only_the_version_a_finding_affects(
+    client, db, seeded, purl_type, name, affected, patched, finding_version
+):
+    for version in (affected, patched):
         await db.dependencies.insert_one(
             {
-                **_dependency(f"lodash-{version}", name="lodash"),
+                **_dependency(f"{name}-{version}", name=name),
                 "version": version,
                 "group": None,
-                "type": "npm",
-                "purl": f"pkg:npm/lodash@{version}",
+                "type": purl_type,
+                "purl": f"pkg:{purl_type}/{name}@{version}",
             }
         )
-    await db.findings.insert_one({**_finding("f-lodash", "lodash", "CRITICAL"), "version": "v4.17.15"})
+    await db.findings.insert_one({**_finding("f-1", name, "CRITICAL"), "version": finding_version})
 
     tree = await _analytics(client, "projects/p/dependency-tree", seeded)
 
     counts = {(node["name"], node["version"]): node["findings_count"] for node in tree["nodes"]}
-    assert counts == {(BARE, VERSION): 1, ("lodash", "4.17.15"): 1, ("lodash", "4.17.21"): 0}
+    assert counts == {(BARE, VERSION): 1, (name, affected): 1, (name, patched): 0}
 
 
 @pytest.mark.live_mongo
