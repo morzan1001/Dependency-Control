@@ -291,10 +291,10 @@ async def test_the_result_list_carries_each_rows_stored_size_and_none_for_a_dele
 
     assert served.status_code == 200, served.text[:500]
     rows = served.json()
-    assert {row["analyzer_name"]: row["size"] for row in rows} == {
-        "trivy": len(await _gridfs_bytes(db, {"gridfs_id": kept["result_gridfs_id"]})),
-        "grype": None,
-        "trufflehog": len(bson.encode(legacy)),
+    assert {row["analyzer_name"]: (row["source"], row["size"]) for row in rows} == {
+        "trivy": ("SBOM #1", len(await _gridfs_bytes(db, {"gridfs_id": kept["result_gridfs_id"]}))),
+        "grype": ("SBOM #1", None),
+        "trufflehog": (None, len(bson.encode(legacy))),
     }
     assert all(set(row) == {"id", "scan_id", "analyzer_name", "source", "created_at", "size"} for row in rows)
 

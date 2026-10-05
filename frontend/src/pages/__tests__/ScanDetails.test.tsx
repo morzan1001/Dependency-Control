@@ -23,10 +23,10 @@ const SCANNER_ROW_ID = 's1:trivy:SBOM #1'
 const TRIVY_RESULT = { Results: [{ Target: 'app.cdx.json', Vulnerabilities: [] }] }
 const SBOM = { bomFormat: 'CycloneDX', specVersion: '1.6', components: [] }
 
-// The rows GET /scans/{id}/results and /sboms answer: rows within the preview limit, one over it, and lost files.
+// The rows GET /scans/{id}/results and /sboms answer: rows within and exactly at the preview limit, one byte over it, and lost files.
 const RESULT_ROWS: ScanAnalysisResult[] = [
-  { id: SCANNER_ROW_ID, scan_id: 's1', analyzer_name: 'trivy', source: 'SBOM #1', created_at: '2026-09-01T00:05:00Z', size: 4096 },
-  { id: 's1:epss_kev', scan_id: 's1', analyzer_name: 'epss_kev', source: null, created_at: '2026-09-01T00:06:00Z', size: 3 * 1024 * 1024 },
+  { id: SCANNER_ROW_ID, scan_id: 's1', analyzer_name: 'trivy', source: 'SBOM #1', created_at: '2026-09-01T00:05:00Z', size: 2 * 1024 * 1024 },
+  { id: 's1:epss_kev', scan_id: 's1', analyzer_name: 'epss_kev', source: null, created_at: '2026-09-01T00:06:00Z', size: 2 * 1024 * 1024 + 1 },
   { id: 's1:grype:SBOM #1', scan_id: 's1', analyzer_name: 'grype', source: 'SBOM #1', created_at: '2026-09-01T00:07:00Z', size: null },
 ]
 const SBOM_ROWS: SbomResponse[] = [
@@ -187,6 +187,16 @@ describe('ScanDetails raw tab', () => {
     expect(await screen.findByText('app.cdx.json')).toBeInTheDocument()
     expect(scanApi.getResults).toHaveBeenCalledTimes(1)
     expect(scanApi.getSboms).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the stored size of a result row and an SBOM', async () => {
+    renderPage(RAW_TAB)
+
+    const result = await screen.findByRole('button', { name: 'Download trivy SBOM #1' })
+    const sbom = await screen.findByRole('button', { name: 'Download app.cdx.json' })
+
+    expect(within(result.parentElement!).getByText('2.0 MB')).toBeInTheDocument()
+    expect(within(sbom.parentElement!).getByText('2.0 KB')).toBeInTheDocument()
   })
 
   it('downloads a result row and an SBOM through their own routes', async () => {
