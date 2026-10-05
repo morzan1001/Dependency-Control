@@ -64,8 +64,8 @@ async def test_pods_starting_within_an_interval_sweep_and_sync_branches_once(db,
             await housekeeping.housekeeping_loop()
 
     assert (len(sweeps), synced) == (1, ["p1"])
-    held_for = sorted([lock["expires_at"] - lock["acquired_at"] async for lock in db.distributed_locks.find()])
-    assert held_for == [
-        timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS),
-        timedelta(hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS),
-    ]
+    held_for = {lock["_id"]: lock["expires_at"] - lock["acquired_at"] async for lock in db.distributed_locks.find()}
+    assert held_for == {
+        "housekeeping": timedelta(hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS),
+        "branch_sync": timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS),
+    }
