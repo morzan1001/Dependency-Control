@@ -231,6 +231,49 @@ describe('ScanDetails raw tab', () => {
     expect(scanApi.getSbom).toHaveBeenCalledWith('s1', 0)
   })
 
+  it('shows a skeleton until the preview has loaded', async () => {
+    let resolve!: (data: unknown) => void
+    vi.mocked(scanApi.getResult).mockReturnValue(new Promise((r) => { resolve = r }))
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View trivy SBOM #1' }))
+    const row = screen.getByRole('button', { name: 'Hide trivy SBOM #1' }).closest('.flex-wrap')!
+    expect(row.querySelector('.animate-pulse')).not.toBeNull()
+    expect(row.querySelector('pre')).toBeNull()
+    resolve(TRIVY_RESULT)
+
+    await screen.findByText(/"Target"/)
+    expect(row.querySelector('.animate-pulse')).toBeNull()
+  })
+
+  it('previews each SBOM by its own index', async () => {
+    vi.mocked(scanApi.getSboms).mockResolvedValue([
+      { index: 0, filename: 'app.cdx.json', size: 2048 },
+      { index: 1, filename: 'lib.cdx.json', size: 1024 },
+    ])
+    vi.mocked(scanApi.getSbom).mockImplementation(async (_scanId, index) => ({ serialNumber: `urn:uuid:${index}` }))
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View app.cdx.json' }))
+    await screen.findByText(/urn:uuid:0/)
+    fireEvent.click(screen.getByRole('button', { name: 'View lib.cdx.json' }))
+
+    expect(await screen.findByText(/urn:uuid:1/)).toBeInTheDocument()
+    expect(scanApi.getSbom).toHaveBeenCalledWith('s1', 1)
+  })
+
+  it('copies the pretty-printed file', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View app.cdx.json' }))
+    const code = await screen.findByText(/"bomFormat"/)
+    fireEvent.click(within(code.parentElement!).getByRole('button'))
+
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(SBOM, null, 2))
+  })
+
   it('offers no preview of a row over the limit and fetches nothing for it', async () => {
     renderPage(RAW_TAB)
 

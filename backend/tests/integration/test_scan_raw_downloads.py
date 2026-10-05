@@ -189,16 +189,17 @@ async def test_an_export_with_a_deleted_sbom_file_is_404_before_any_byte(client,
 async def test_the_sbom_list_carries_index_filename_and_size_and_none_for_a_deleted_file(
     client, db, member_auth_headers
 ):
-    kept = _fixture("npmpeer.syft.cdx.json")
-    scan = await _scan_with_sboms(db, kept, _fixture("mono.syft.cdx.json"))
+    first, last = _fixture("npmpeer.syft.cdx.json"), _fixture("uvdev.syft.cdx.json")
+    scan = await _scan_with_sboms(db, first, _fixture("mono.syft.cdx.json"), last)
     await _delete_file(db, scan.sbom_refs[1])
 
     served = await client.get(f"/api/v1/projects/scans/{scan.id}/sboms", headers=member_auth_headers)
 
     assert served.status_code == 200, served.text[:500]
     assert served.json() == [
-        {"index": 0, "filename": "sbom-0.json", "size": len(kept)},
+        {"index": 0, "filename": "sbom-0.json", "size": len(first)},
         {"index": 1, "filename": "sbom-1.json", "size": None},
+        {"index": 2, "filename": "sbom-2.json", "size": len(last)},
     ]
 
 
@@ -279,24 +280,32 @@ async def test_the_result_list_carries_each_rows_stored_size_and_none_for_a_dele
     repo = AnalysisResultRepository(db)
     await repo.save_result(scan.id, "trivy", {"Results": []}, source="SBOM #1")
     await repo.save_result(scan.id, "grype", {"matches": []}, source="SBOM #1")
-    kept = await db.analysis_results.find_one({"analyzer_name": "trivy"})
-    lost = await db.analysis_results.find_one({"analyzer_name": "grype"})
-    await _delete_file(db, {"gridfs_id": lost["result_gridfs_id"]})
+    await repo.save_result(scan.id, "osv", {"results": [{"packages": []}]}, source="SBOM #1")
+    stored = {row["analyzer_name"]: {"gridfs_id": row["result_gridfs_id"]} async for row in db.analysis_results.find()}
+    await _delete_file(db, stored["grype"])
     legacy = {"findings": [_SECRET_FINDING]}
     await db.analysis_results.insert_one(
-        {"_id": "legacy-row", "scan_id": scan.id, "analyzer_name": "trufflehog", "result": legacy}
+        {
+            "_id": "legacy-row",
+            "scan_id": scan.id,
+            "analyzer_name": "trufflehog",
+            "result": legacy,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        }
     )
 
     served = await client.get(f"/api/v1/projects/scans/{scan.id}/results", headers=member_auth_headers)
 
     assert served.status_code == 200, served.text[:500]
-    rows = served.json()
-    assert {row["analyzer_name"]: (row["source"], row["size"]) for row in rows} == {
-        "trivy": ("SBOM #1", len(await _gridfs_bytes(db, {"gridfs_id": kept["result_gridfs_id"]}))),
+    rows = {row["analyzer_name"]: row for row in served.json()}
+    assert {name: (row["source"], row["size"]) for name, row in rows.items()} == {
+        "trivy": ("SBOM #1", len(await _gridfs_bytes(db, stored["trivy"]))),
+        "osv": ("SBOM #1", len(await _gridfs_bytes(db, stored["osv"]))),
         "grype": ("SBOM #1", None),
         "trufflehog": (None, len(bson.encode(legacy))),
     }
-    assert all(set(row) == {"id", "scan_id", "analyzer_name", "source", "created_at", "size"} for row in rows)
+    assert rows["trufflehog"]["created_at"].startswith("2026-01-01T00:00:00")
+    assert all(set(row) == {"id", "scan_id", "analyzer_name", "source", "created_at", "size"} for row in rows.values())
 
 
 @pytest.mark.asyncio
