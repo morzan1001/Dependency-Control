@@ -66,4 +66,16 @@ describe("SummaryCard headline", () => {
 
     expect(screen.getByText(/^10 findings/)).toBeInTheDocument();
   });
+
+  it("reports no issues when a scan has neither findings nor insights", () => {
+    render(<SummaryCard data={makeResponse({})} />);
+
+    expect(screen.getByText("No significant issues found")).toBeInTheDocument();
+  });
+
+  it("leads with the insights when a scan has no findings", () => {
+    render(<SummaryCard data={makeResponse({ summary: { ...EMPTY_SUMMARY, fragmentation_issues: 2 } })} />);
+
+    expect(screen.getByText("2 dependency insights found")).toBeInTheDocument();
+  });
 });
