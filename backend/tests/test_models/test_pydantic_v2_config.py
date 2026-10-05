@@ -5,6 +5,8 @@ from typing import ClassVar
 
 import pytest
 
+from tests.helpers.oidc import ci_token
+
 
 class TestModelIdAlias:
     """All MongoDB-backed models must accept _id and serialize it back as _id."""
@@ -494,27 +496,24 @@ class TestAutoCreateUsesSystemAnalyzers:
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
-        with patch("app.api.deps.jwt.decode") as mock_claims:
-            mock_claims.return_value = {"iss": "https://gitlab.example.com"}
-
-            with patch("app.api.deps.GitLabService") as MockService:
-                mock_svc = MagicMock()
-                mock_svc.validate_oidc_token = AsyncMock(
-                    return_value=make_oidc_payload(
-                        project_id="42",
-                        project_path="group/project",
-                        user_email="dev@test.com",
-                    )
+        with patch("app.api.deps.GitLabService") as MockService:
+            mock_svc = MagicMock()
+            mock_svc.validate_oidc_token = AsyncMock(
+                return_value=make_oidc_payload(
+                    project_id="42",
+                    project_path="group/project",
+                    user_email="dev@test.com",
                 )
-                MockService.return_value = mock_svc
+            )
+            MockService.return_value = mock_svc
 
-                result = asyncio.run(
-                    get_project_for_ingest(
-                        x_api_key=None,
-                        oidc_token="a.b.c",
-                        db=db,
-                    )
+            result = asyncio.run(
+                get_project_for_ingest(
+                    x_api_key=None,
+                    oidc_token=ci_token({"iss": "https://gitlab.example.com"}),
+                    db=db,
                 )
+            )
 
         assert result.active_analyzers == custom_analyzers
 
@@ -561,29 +560,26 @@ class TestAutoCreateUsesSystemAnalyzers:
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
-        with patch("app.api.deps.jwt.decode") as mock_claims:
-            mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
-
-            with patch("app.api.deps.GitHubService") as MockService:
-                mock_svc = MagicMock()
-                mock_svc.validate_oidc_token = AsyncMock(
-                    return_value=make_github_oidc_payload(
-                        repository_id="789",
-                        repository="org/repo",
-                        repository_owner_id="111",
-                        actor="dev",
-                    )
+        with patch("app.api.deps.GitHubService") as MockService:
+            mock_svc = MagicMock()
+            mock_svc.validate_oidc_token = AsyncMock(
+                return_value=make_github_oidc_payload(
+                    repository_id="789",
+                    repository="org/repo",
+                    repository_owner_id="111",
+                    actor="dev",
                 )
-                mock_svc.resolve_login = AsyncMock(return_value=None)
-                MockService.return_value = mock_svc
+            )
+            mock_svc.resolve_login = AsyncMock(return_value=None)
+            MockService.return_value = mock_svc
 
-                result = asyncio.run(
-                    get_project_for_ingest(
-                        x_api_key=None,
-                        oidc_token="a.b.c",
-                        db=db,
-                    )
+            result = asyncio.run(
+                get_project_for_ingest(
+                    x_api_key=None,
+                    oidc_token=ci_token({"iss": "https://token.actions.githubusercontent.com"}),
+                    db=db,
                 )
+            )
 
         assert result.active_analyzers == custom_analyzers
 
