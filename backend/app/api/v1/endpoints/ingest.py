@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import HTTPException, Request
+from fastapi import BackgroundTasks, HTTPException, Request
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
@@ -148,6 +148,7 @@ async def _upload_recognized_sboms(sboms: list[Any], db: Any, scan_id: str) -> l
 )
 async def ingest_sbom(
     request: Request,
+    background_tasks: BackgroundTasks,
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> SBOMIngestResponse:
@@ -177,8 +178,8 @@ async def ingest_sbom(
     await ScanRepository(db).reopen_finished(scan_id, statuses=[*SCAN_USABLE_STATUSES, SCAN_STATUS_FAILED])
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
-    # Fire ingest webhook (best-effort).
-    await webhook_service.safe_trigger_webhooks(
+    background_tasks.add_task(
+        webhook_service.safe_trigger_webhooks,
         db,
         WEBHOOK_EVENT_SBOM_INGESTED,
         {
@@ -194,7 +195,8 @@ async def ingest_sbom(
         context="sbom_ingest",
     )
 
-    await safe_notify_project_event(
+    background_tasks.add_task(
+        safe_notify_project_event,
         db,
         project_id=str(project.id),
         event_type=NOTIFICATION_EVENT_SBOM_INGESTED,
