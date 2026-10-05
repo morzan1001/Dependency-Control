@@ -1121,6 +1121,8 @@ ADHOC_JOB_TTL_SECONDS: int = 24 * 3600
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 # Per process; at ~55 MiB per saturated report, 2 slots x 2 workers stay near 220 MiB of the 2 GiB pod limit.
 COMPLIANCE_REPORT_SLOTS: int = 2
+# Generation runs as an in-process background task, so a report this old lost its pod mid-run.
+COMPLIANCE_REPORT_STUCK_AFTER_HOURS: int = 6
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
 
