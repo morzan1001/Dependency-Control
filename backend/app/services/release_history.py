@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -27,21 +28,23 @@ logger = logging.getLogger(__name__)
 # all packages, low enough that a cold cache doesn't blast deps.dev.
 _FETCH_CONCURRENCY = 16
 
+# Matched by token, not by any "-" suffix, because Maven qualifiers like Guava's 33.0.0-jre are releases.
+_PRERELEASE_TAG = re.compile(
+    r"[-.](alpha|beta|rc|pre|preview|dev|canary|next|nightly|experimental|snapshot|m\d+)(?![a-z])", re.IGNORECASE
+)
 
-def _is_stable_release(version: str) -> bool:
-    """True for X.Y.Z; False for alpha/beta/rc/dev pre-releases.
+# Strict-semver ecosystems mark every prerelease (Go pseudo-versions, npm "4.0.0-0") with "-" before any "+build".
+_SEMVER_SYSTEMS = frozenset({"npm", "go", "cargo", "nuget"})
 
-    Non-PEP-440 versions (calver, hashes) are treated as stable since
-    there's no portable way to tell otherwise.
-    """
+
+def _is_stable_release(version: str, system: str | None) -> bool:
+    """True for X.Y.Z; False for pre-releases under the ecosystem's version scheme."""
+    if system in _SEMVER_SYSTEMS:
+        return "-" not in version.split("+", 1)[0]
     try:
         return not Version(version).is_prerelease
     except InvalidVersion:
-        return True
-
-
-def _stable_only(releases: Sequence[ReleaseInfo]) -> list[ReleaseInfo]:
-    return [r for r in releases if _is_stable_release(r.version)]
+        return _PRERELEASE_TAG.search(version) is None
 
 
 @dataclass(frozen=True)
@@ -99,17 +102,16 @@ def releases_in_last_n_days(
     window_days: int,
     ref: datetime,
 ) -> int:
-    """Count stable releases within ``window_days`` of ``ref``."""
+    """Count releases within ``window_days`` of ``ref``."""
     cutoff = ref - timedelta(days=window_days)
-    return sum(1 for r in _stable_only(releases) if r.published_at >= cutoff)
+    return sum(1 for r in releases if r.published_at >= cutoff)
 
 
 def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> float | None:
-    """Median gap (in days) between consecutive stable releases, or None if <2."""
-    stable = _stable_only(releases)
-    if len(stable) < 2:
+    """Median gap (in days) between consecutive releases, or None if <2."""
+    if len(releases) < 2:
         return None
-    sorted_dates = sorted(r.published_at for r in stable)
+    sorted_dates = sorted(r.published_at for r in releases)
     gaps = [(sorted_dates[i] - sorted_dates[i - 1]).total_seconds() / 86400.0 for i in range(1, len(sorted_dates))]
     return float(median(gaps))
 
@@ -117,12 +119,9 @@ def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> float | Non
 def days_since_latest_release(
     releases: Sequence[ReleaseInfo],
     ref: datetime,
-) -> int | None:
-    """Days between ``ref`` and the most recent stable release, or None if empty."""
-    stable = _stable_only(releases)
-    if not stable:
-        return None
-    return (ref - max(r.published_at for r in stable)).days
+) -> int:
+    """Days between ``ref`` and the most recent of a non-empty ``releases``."""
+    return (ref - max(r.published_at for r in releases)).days
 
 
 def compute_adoption_latencies(
@@ -173,14 +172,16 @@ def aggregate_upstream_metrics(
     gap_medians: list[float] = []
     days_since: list[int] = []
 
-    for releases in history.values():
-        releases_counts.append(releases_in_last_n_days(releases, window_days=365, ref=ref))
-        gap = median_days_between_releases(releases)
+    for key, releases in history.items():
+        system, _ = _split_history_key(key)
+        stable = [r for r in releases if _is_stable_release(r.version, system)]
+        if not stable:
+            continue
+        releases_counts.append(releases_in_last_n_days(stable, window_days=365, ref=ref))
+        gap = median_days_between_releases(stable)
         if gap is not None:
             gap_medians.append(gap)
-        latest = days_since_latest_release(releases, ref=ref)
-        if latest is not None:
-            days_since.append(latest)
+        days_since.append(days_since_latest_release(stable, ref=ref))
 
     latencies = compute_adoption_latencies(history, observations)
 
@@ -247,7 +248,7 @@ class DepsDevReleaseHistoryFetcher:
                 return (system, name), await self._load_one(system, name)
 
         pairs = await asyncio.gather(*(_bounded(s, n) for s, n in packages))
-        return {key: releases for key, releases in pairs if releases is not None}
+        return {key: releases for key, releases in pairs if releases}
 
     async def _load_one(self, system: str, name: str) -> list[ReleaseInfo] | None:
         key = self._cache_key_builder(system, name)

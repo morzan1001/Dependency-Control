@@ -142,6 +142,7 @@ async def test_the_payload_says_how_many_projects_the_comparison_reached(db):
     """total_projects counts what the user can see; a CVE count reported out of it claims a
     comparison that never ran."""
     from app.api.v1.helpers.analytics import gather_cross_project_data
+    from app.services.analytics.scopes import read_scope_projects
 
     project_ids = [f"p{index:02d}" for index in range(_ACCESSIBLE_PROJECTS)]
     for project_id in project_ids:
@@ -159,7 +160,7 @@ async def test_the_payload_says_how_many_projects_the_comparison_reached(db):
             }
         )
 
-    data = await gather_cross_project_data(project_ids, project_ids[0], db)
+    data = await gather_cross_project_data(await read_scope_projects(db, {}), project_ids[0], db)
 
     assert data is not None
     assert data["total_projects"] == _ACCESSIBLE_PROJECTS

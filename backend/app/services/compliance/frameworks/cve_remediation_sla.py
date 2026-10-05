@@ -11,6 +11,7 @@ from app.services.compliance.frameworks.base import (
     _waiver_reasons,
     build_evaluation,
 )
+from app.services.recommendation.common import live_advisories
 
 SLA_DAYS: dict[Severity, int] = {
     Severity.CRITICAL: 7,
@@ -70,8 +71,10 @@ def _is_overdue(
 ) -> bool:
     if finding.get("type") != FindingType.VULNERABILITY.value:
         return False
-    fsev = finding.get("severity")
-    if fsev != severity.value and fsev != severity:
+    details = finding.get("details") or {}
+    # A waived finding stays waived evidence under each of its advisories' severities.
+    advisories = (details.get("vulnerabilities") or []) if finding.get("waived") else live_advisories(details)
+    if not any(advisory.get("severity") == severity.value for advisory in advisories):
         return False
     # A copy stored before first detection was recorded carries only its scan's time.
     first_seen = finding.get("first_seen_at") or finding.get("scan_created_at")

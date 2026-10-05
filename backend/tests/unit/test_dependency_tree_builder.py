@@ -1,7 +1,6 @@
 """Unit tests for _build_dependency_graph, the flat-nodes + adjacency dependency graph."""
 
-from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
-from app.api.v1.helpers.analytics import severity_counts_from_details
+from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph, _tree_findings_map
 from app.models.dependency import Dependency
 
 
@@ -25,8 +24,10 @@ def _dep(name, version="1.0.0", direct=False, parents=None, direct_inferred=Fals
 
 
 def _findings(critical=0, high=0, medium=0, low=0):
-    """A component's distinct CVEs per worst severity, as the tree overlay reads them."""
-    return {"critical": critical, "high": high, "medium": medium, "low": low}
+    """A component's live advisories at version 1.0.0, one distinct CVE per counted severity."""
+    severities = ["CRITICAL"] * critical + ["HIGH"] * high + ["MEDIUM"] * medium + ["LOW"] * low
+    advisories = [{"id": f"CVE-2026-{index:04d}", "severity": sev} for index, sev in enumerate(severities)]
+    return {"1.0.0": [{"vulnerabilities": advisories}]}
 
 
 def _by_id(graph):
@@ -220,7 +221,7 @@ class TestDependencyGraphBuilder:
         advisories = [
             {"id": f"CVE-2024-100{i}", "severity": sev} for i, sev in enumerate(("HIGH", "NEGLIGIBLE", "UNKNOWN"))
         ]
-        findings_map = {"a": severity_counts_from_details([{"vulnerabilities": advisories}])}
+        findings_map = _tree_findings_map({("a", "1.0.0"): [{"vulnerabilities": advisories}]})
 
         node = _by_name(_graph([_dep("a", direct=True)], findings_map))["a"]
 

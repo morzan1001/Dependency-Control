@@ -23,7 +23,6 @@ from app.core.constants import (
 )
 from app.services.analyzers import typosquatting
 from app.services.analyzers.typosquatting import (
-    _STATIC_NPM_PACKAGES,
     _STATIC_PYPI_FALLBACK,
     TyposquattingAnalyzer,
     _severity_for_ratio,
@@ -118,11 +117,6 @@ def test_the_built_in_pypi_names_cover_the_most_imitated_packages(name):
     assert name in _STATIC_PYPI_FALLBACK
 
 
-@pytest.mark.parametrize("name", ["react", "lodash", "express", "typescript", "webpack", "vue"])
-def test_the_npm_corpus_covers_the_most_imitated_packages(name):
-    assert name in _STATIC_NPM_PACKAGES
-
-
 class TestSeverityThresholds:
     """Severity calculation based on similarity ratio in analyze()."""
 
@@ -194,28 +188,28 @@ def _serve_corpus(client_cls, status_code: int, payload) -> None:
 
 
 class TestCorpusDepthIsDeclaredAndReported:
-    """One declared depth drives the fetch, and the result says what the comparison covered."""
+    """The fetch keeps the whole ranking, and the result reports the depth the comparison covered."""
 
     @pytest.mark.asyncio
-    async def test_the_fetch_cuts_at_the_declared_rank_depth(self):
-        served_ranks = TYPOSQUATTING_POPULAR_PACKAGE_RANKS * 3
-        payload = {"rows": [{"project": f"pkg-{index}"} for index in range(served_ranks)]}
+    async def test_the_fetch_keeps_every_served_rank_in_rank_order(self):
+        served = [f"pkg-{index}" for index in reversed(range(TYPOSQUATTING_POPULAR_PACKAGE_RANKS * 3))]
 
         with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
-            _serve_corpus(ClientCls, 200, payload)
+            _serve_corpus(ClientCls, 200, {"rows": [{"project": name} for name in served]})
             packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
 
-        assert len(packages) == TYPOSQUATTING_POPULAR_PACKAGE_RANKS
+        assert packages == served
 
     @pytest.mark.asyncio
-    async def test_the_result_names_the_corpus_each_ecosystem_was_compared_against(self):
+    async def test_the_result_names_the_depth_each_ecosystem_was_compared_against(self):
         analyzer = TyposquattingAnalyzer()
-        corpus = {"pypi": ["flask", "requests"], "npm": ["react"]}
+        deep_ranking = [f"pkg-{index}" for index in range(TYPOSQUATTING_POPULAR_PACKAGE_RANKS + 10)]
+        corpus = {"pypi": deep_ranking, "npm": ["react"]}
 
         with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
             result = await analyzer.analyze({"components": []})
 
-        assert result["popular_packages_compared"] == {"npm": 1, "pypi": 2}
+        assert result["popular_packages_compared"] == {"npm": 1, "pypi": TYPOSQUATTING_POPULAR_PACKAGE_RANKS}
 
     @pytest.mark.asyncio
     async def test_the_fetch_follows_the_corpus_when_it_moves_host(self):
@@ -273,7 +267,7 @@ class TestOnlyThePypiCorpusIsCached:
 
         corpus, _ = await self._corpus(monkeypatch, cache, payload={"rows": [{"project": "Requests"}]})
 
-        assert corpus == {"pypi": ["requests"], "npm": sorted(_STATIC_NPM_PACKAGES)}
+        assert corpus["pypi"] == ["requests"]
         assert cache.writes == [(_PYPI_KEY, ["requests"], CacheTTL.POPULAR_PACKAGES)]
 
     @pytest.mark.asyncio
@@ -318,6 +312,87 @@ class TestOnlyThePypiCorpusIsCached:
         assert cache.writes == []
 
 
+def _pypi(name: str) -> dict[str, str]:
+    return {"type": "library", "name": name, "version": "1.0", "purl": f"pkg:pypi/{name}@1.0"}
+
+
+def _npm(name: str) -> dict[str, str]:
+    return {"type": "library", "name": name, "version": "1.0.0", "purl": f"pkg:npm/{name}@1.0.0"}
+
+
+async def _issues_against_the_real_corpus(monkeypatch, cache: _CorpusCache, components, payload=None):
+    monkeypatch.setattr(typosquatting, "cache_service", cache)
+    with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
+        _serve_corpus(ClientCls, 200, payload)
+        result = await analyze_cyclonedx(TyposquattingAnalyzer(), components)
+    return {issue["component"]: issue["imitated_package"] for issue in result["typosquatting_issues"]}
+
+
+class TestTheWholePypiRankingIsKnownAndOnlyItsTopIsImitated:
+    """Every served rank is a real package; only the top ranks are names worth imitating."""
+
+    @pytest.mark.asyncio
+    async def test_a_package_ranked_past_the_depth_is_known_and_a_typo_of_the_top_is_flagged(self, monkeypatch):
+        top = ["elasticsearch"] + [f"pkg-{index}" for index in range(TYPOSQUATTING_POPULAR_PACKAGE_RANKS - 1)]
+        payload = {"rows": [{"project": name} for name in [*top, "elasticsearch8", "zxcvbnmasdf"]]}
+        components = [_pypi("elasticsearch8"), _pypi("elasticsaerch"), _pypi("zxcvbnmasdfg")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache(), components, payload)
+
+        assert issues == {"elasticsaerch": "elasticsearch"}
+
+
+class TestTheShippedNpmRanking:
+    """npm components are compared against the shipped download ranking of npm packages."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["react", "lodash", "express", "typescript", "webpack", "vue"])
+    async def test_the_most_imitated_packages_are_in_the_compared_top(self, monkeypatch, name):
+        monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache({_PYPI_KEY: {}}))
+
+        corpus = await TyposquattingAnalyzer()._ensure_popular_packages()
+
+        assert name in corpus["npm"][:TYPOSQUATTING_POPULAR_PACKAGE_RANKS]
+
+    @pytest.mark.asyncio
+    async def test_a_squat_of_a_popular_package_is_flagged_and_popular_lookalikes_are_not(self, monkeypatch):
+        """crossenv is the 2017 squat of cross-env; gaxios and @npmcli/redact are popular packages close to axios and react."""
+        components = [_npm("crossenv"), _npm("gaxios"), _npm("@npmcli/redact")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {"crossenv": "cross-env"}
+
+    @pytest.mark.asyncio
+    async def test_the_compared_top_counts_unscoped_names_only(self, monkeypatch):
+        ranking = [f"@scope/pkg-{index}" for index in range(10)]
+        ranking += [f"pkg-{index}" for index in range(TYPOSQUATTING_POPULAR_PACKAGE_RANKS - 1)]
+        monkeypatch.setattr(typosquatting, "_NPM_RANKING", [*ranking, "elasticsearch", "zxcvbnmasdf"])
+        components = [_npm("elasticsaerch"), _npm("zxcvbnmasdfg")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {"elasticsaerch": "elasticsearch"}
+
+    @pytest.mark.asyncio
+    async def test_a_squat_of_a_rank_behind_scoped_names_is_flagged_and_ranked_lookalikes_are_not(self, monkeypatch):
+        """react-intl makes the top only once scoped names are skipped; coffee-script and rambda are ranked packages."""
+        components = [_npm("react-intll"), _npm("coffee-script"), _npm("rambda")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {"react-intll": "react-intl"}
+
+    @pytest.mark.asyncio
+    async def test_only_the_full_ranked_name_or_a_ranked_unscoped_name_is_known(self, monkeypatch):
+        """Only scoped packages like @sentry/browser are ranked, so an unscoped browser is still compared."""
+        components = [_npm("browser"), _npm("@sentry/browser"), _npm("@myorg/axios")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {"browser": "bowser"}
+
+
 class TestTheEcosystemComesFromThePurl:
     """The purl's registry is the ecosystem rule every analyzer shares, so a generic purl names none."""
 
@@ -348,7 +423,7 @@ class TestTheEcosystemComesFromThePurl:
 
 
 class TestSeveralPassingPopularNames:
-    """Several popular names can pass; the closest is reported, and a tie goes to the name that sorts first."""
+    """Several popular names can pass; the closest is reported, and a tie goes to the higher-ranked name."""
 
     _RANKING: ClassVar[list[str]] = [
         "tomlkit",
@@ -364,7 +439,7 @@ class TestSeveralPassingPopularNames:
     ]
 
     @pytest.mark.asyncio
-    async def test_the_closest_popular_name_is_reported_and_a_tie_goes_to_the_first_in_sorted_order(self, monkeypatch):
+    async def test_the_closest_popular_name_is_reported_and_a_tie_goes_to_the_higher_ranked_name(self, monkeypatch):
         monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache({_PYPI_KEY: self._RANKING}))
         components = [
             {"type": "library", "name": name, "version": "1.0", "purl": f"pkg:pypi/{name}@1.0"}
@@ -381,8 +456,8 @@ class TestSeveralPassingPopularNames:
             ("tomlki", "tomlkit", 0.92, "HIGH"),
             ("typin-extensions", "typing-extensions", 0.97, "CRITICAL"),
             ("mypyi-extensions", "mypy-extensions", 0.97, "CRITICAL"),
-            ("pmyssql", "pymssql", 0.86, "MEDIUM"),
-            ("flake3", "blake3", 0.83, "MEDIUM"),
+            ("pmyssql", "pymysql", 0.86, "MEDIUM"),
+            ("flake3", "flake8", 0.83, "MEDIUM"),
         ]
 
 
@@ -440,7 +515,8 @@ class TestALargeSbomDoesNotStallTheLoop:
         clean = _names(rng, "nopqrstuvwxyz", _SCANNED_COMPONENTS - _PLANTED)
         parsed = [dep.to_dict() for dep in parse_sbom(_cyclonedx_of(clean + planted)).dependencies]
         analyzer = TyposquattingAnalyzer()
-        payload = {"rows": [{"project": name} for name in reversed(popular)]}
+        ranking = popular[::-1]
+        payload = {"rows": [{"project": name} for name in ranking]}
         monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache())
 
         with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
@@ -452,14 +528,14 @@ class TestALargeSbomDoesNotStallTheLoop:
         assert {
             issue["component"]: (issue["imitated_package"], issue["similarity"], issue["severity"])
             for issue in result["typosquatting_issues"]
-        } == {name: _ungated_verdict(analyzer, name, popular) for name in planted}
+        } == {name: _ungated_verdict(analyzer, name, ranking) for name in planted}
 
 
-def _ungated_verdict(analyzer: TyposquattingAnalyzer, name: str, popular: list[str]) -> tuple[str, float, str]:
-    """The passing popular name with the highest plain ratio (first of sorted ``popular`` on a tie), ungated."""
+def _ungated_verdict(analyzer: TyposquattingAnalyzer, name: str, ranking: list[str]) -> tuple[str, float, str]:
+    """The passing popular name with the highest plain ratio (the higher-ranked on a tie), ungated."""
     passing = [
         (ratio, candidate)
-        for candidate in popular
+        for candidate in ranking
         if abs(len(name) - len(candidate)) <= 2 and analyzer._is_suspicious(name, candidate)
         for ratio in [difflib.SequenceMatcher(None, name, candidate).ratio()]
         if ratio > TYPOSQUATTING_SIMILARITY_THRESHOLD

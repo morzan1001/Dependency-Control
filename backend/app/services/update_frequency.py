@@ -25,10 +25,11 @@ from app.core.constants import (
 from app.core.purl import package_identity, parse_purl
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
-from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
+    usable_scan_match,
     window_scans_by_branch,
 )
 from app.schemas.analytics import (
@@ -765,14 +766,10 @@ async def _load_completed_scans(
     ``hard_limit``) and ``max_scans`` is ignored.
     """
     fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _BAR_FETCH_HEADROOM)
-    # Filter status in the query so the limit counts only completed scans; filtering after
-    # the limit would empty the window when the newest scans are failed/processing.
+    # Filter status and window in the query so the limit counts only scans the walk can use;
+    # filtering after the limit would empty the window when the newest scans are failed/processing.
     docs = await scan_repo.find_many_raw(
-        {
-            **USABLE_BUILD_MATCH,
-            "project_id": project_id,
-            "branch": branch,
-        },
+        {**usable_scan_match(since), "project_id": project_id, "branch": branch},
         sort=[("created_at", -1), ("_id", -1)],
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "commit_hash": 1},
@@ -785,14 +782,12 @@ async def _load_completed_scans(
         # here would put scans on the timeline that nothing else in the pipeline accounts for.
         if isinstance(d.get("created_at"), datetime)
     ]
-    if since is not None:
-        scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
     if since is None:
         # Cap whole runs, so a retry storm cannot thin the window below max_scans bars.
         runs = same_commit_runs(scans_raw, commit_of=lambda scan: scan["commit_hash"])
-        scans_raw = [scan for run in runs[-max_scans:] for scan in run]
-    # A full fetch means older scans of this branch went unread, so the window the caller
+        return [scan for run in runs[-max_scans:] for scan in run], False
+    # A full fetch means older scans of the window went unread, so the window the caller
     # asked for is wider than the stretch it is about to fold.
     return scans_raw, len(docs) >= fetch_limit
 

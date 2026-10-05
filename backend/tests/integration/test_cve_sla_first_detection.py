@@ -11,8 +11,11 @@ import pytest
 from app.core import ensure_utc
 from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType, Severity
+from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
-from app.schemas.compliance import ControlStatus
+from app.repositories.waivers import WaiverRepository
+from app.schemas.compliance import ControlResult, ControlStatus
+from app.services.aggregation.aggregator import ResultAggregator
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
@@ -36,16 +39,31 @@ def _days_ago(days: int) -> datetime:
     return _NOW - timedelta(days=days)
 
 
+def _log4j_advisories(*advisories: tuple[str, Severity]) -> Finding:
+    """The aggregator's one log4j-core finding holding each (CVE, severity) as its own advisory."""
+    aggregator = ResultAggregator()
+    for cve, severity in advisories:
+        aggregator.add_finding(
+            Finding(
+                id=cve,
+                type=FindingType.VULNERABILITY,
+                severity=severity,
+                component="log4j-core",
+                version="2.14.1",
+                description="",
+                scanners=["trivy"],
+            )
+        )
+    [finding] = aggregator.get_findings()
+    return finding
+
+
 def _critical_cve() -> Finding:
-    return Finding(
-        id="log4j-core:2.14.1",
-        type=FindingType.VULNERABILITY,
-        severity=Severity.CRITICAL,
-        component="log4j-core",
-        version="2.14.1",
-        description="remote code execution",
-        scanners=["trivy"],
-    )
+    return _log4j_advisories(("CVE-2021-44228", Severity.CRITICAL))
+
+
+def _critical_and_high_cves() -> Finding:
+    return _log4j_advisories(("CVE-2021-44228", Severity.CRITICAL), ("CVE-2021-45046", Severity.HIGH))
 
 
 def _versionless_sast() -> Finding:
@@ -70,8 +88,8 @@ async def _store_legacy_copy(db, scan_created_at: datetime) -> None:
     await db.findings.insert_many(legacy)
 
 
-async def _critical_control(db, scan_id: str):
-    """The CVE-SLA-CRITICAL verdict over the findings the engine reads for ``scan_id``."""
+async def _sla_controls(db, scan_id: str) -> dict[str, ControlResult]:
+    """The CVE-SLA verdicts by control id over the findings the engine reads for ``scan_id``."""
     engine = ComplianceReportEngine()
     framework = CveRemediationSlaFramework()
     resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
@@ -80,7 +98,7 @@ async def _critical_control(db, scan_id: str):
     evaluation = await framework.evaluate(
         evaluation_input(resolved=resolved, findings=findings, scan_ids=[scan_id], db=db)
     )
-    return next(c for c in evaluation.controls if c.control_id == "CVE-SLA-CRITICAL")
+    return {c.control_id: c for c in evaluation.controls}
 
 
 def _first_seen(docs: list[dict]) -> list[datetime | None]:
@@ -189,7 +207,7 @@ async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database
     await _persist(db, "scan-1", _days_ago(200), _critical_cve())
     current = await _persist(db, "scan-2", _NOW, _critical_cve())
 
-    critical = await _critical_control(db, "scan-2")
+    critical = (await _sla_controls(db, "scan-2"))["CVE-SLA-CRITICAL"]
 
     assert critical.status == ControlStatus.FAILED.value
     assert critical.evidence_finding_ids == [current[0]["_id"]]
@@ -200,9 +218,62 @@ async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database
 async def test_a_critical_cve_in_a_copy_predating_first_seen_at_fails_its_sla_from_its_scan_date(db, database):
     await _store_legacy_copy(db, _days_ago(400))
 
-    critical = await _critical_control(db, "legacy-scan")
+    critical = (await _sla_controls(db, "legacy-scan"))["CVE-SLA-CRITICAL"]
 
     assert critical.status == ControlStatus.FAILED.value
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_each_cve_of_a_finding_is_held_to_its_own_severitys_sla(db, database):
+    [doc] = await _persist(
+        db,
+        "scan-1",
+        _days_ago(40),
+        _critical_and_high_cves(),
+    )
+
+    controls = await _sla_controls(db, "scan-1")
+
+    assert controls["CVE-SLA-CRITICAL"].status == ControlStatus.FAILED.value
+    assert controls["CVE-SLA-HIGH"].status == ControlStatus.FAILED.value
+    assert controls["CVE-SLA-HIGH"].evidence_finding_ids == [doc["_id"]]
+    assert controls["CVE-SLA-MEDIUM"].status == ControlStatus.PASSED.value
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_a_waived_cve_leaves_its_severitys_sla_to_the_findings_live_cves(db, database):
+    await WaiverRepository(db).create(
+        Waiver(project_id=_PROJECT, vulnerability_id="CVE-2021-45046", reason="not reachable", created_by="u")
+    )
+    await _persist(
+        db,
+        "scan-1",
+        _days_ago(40),
+        _critical_and_high_cves(),
+    )
+
+    controls = await _sla_controls(db, "scan-1")
+
+    assert controls["CVE-SLA-CRITICAL"].status == ControlStatus.FAILED.value
+    assert controls["CVE-SLA-HIGH"].status == ControlStatus.PASSED.value
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_a_finding_waived_cve_by_cve_is_waived_evidence_under_each_cves_severity(db, database):
+    for cve in ("CVE-2021-44228", "CVE-2021-45046"):
+        await WaiverRepository(db).create(
+            Waiver(project_id=_PROJECT, vulnerability_id=cve, reason="not reachable", created_by="u")
+        )
+    await _persist(db, "scan-1", _days_ago(40), _critical_and_high_cves())
+
+    controls = await _sla_controls(db, "scan-1")
+
+    assert controls["CVE-SLA-CRITICAL"].status == ControlStatus.WAIVED.value
+    assert controls["CVE-SLA-HIGH"].status == ControlStatus.WAIVED.value
+    assert controls["CVE-SLA-HIGH"].waiver_reasons == ["not reachable"]
 
 
 @pytest.mark.live_mongo

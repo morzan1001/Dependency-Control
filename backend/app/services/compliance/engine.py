@@ -235,7 +235,13 @@ class ComplianceReportEngine:
             return None
         if framework.key == ReportFramework.CVE_REMEDIATION_SLA:
             clause = {"type": "vulnerability", "severity": {"$in": [severity.value for severity in SLA_DAYS]}}
-            return clause, ("first_seen_at", "scan_created_at"), frozenset(VULNERABILITY_ANALYZERS)
+            fields = (
+                "first_seen_at",
+                "scan_created_at",
+                "details.vulnerabilities.severity",
+                "details.vulnerabilities.waived",
+            )
+            return clause, fields, frozenset(VULNERABILITY_ANALYZERS)
         if framework.key == ReportFramework.LICENSE_AUDIT:
             clause = {"type": "license", "details.category": {"$in": list(LICENSE_AUDIT_CATEGORIES)}}
             return clause, ("details.category",), frozenset({"license_compliance"})

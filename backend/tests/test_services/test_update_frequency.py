@@ -314,6 +314,9 @@ def _matches_scan_query(scan: dict[str, Any], query: dict[str, Any]) -> bool:
                 return False
             if "$in" in cond and value not in cond["$in"]:
                 return False
+            # Mongo compares only within one BSON type, so a string date never passes a datetime bound.
+            if "$gte" in cond and not (isinstance(value, type(cond["$gte"])) and value >= cond["$gte"]):
+                return False
         elif value != cond:
             return False
     return True

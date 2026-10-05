@@ -203,7 +203,8 @@ def calculate_best_fix_version(versions: list[str]) -> str:
 
 def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
     """A vulnerability finding in the shape every per-package roll-up counts, marked by its worst live advisory."""
-    advisories = live_advisories(get_attr(f, "details", {}))
+    details = get_attr(f, "details", {})
+    advisories = live_advisories(details)
     epss = [a["epss_score"] for a in advisories if a.get("epss_score") is not None]
     risk = [a["risk_score"] for a in advisories if a.get("risk_score") is not None]
 
@@ -216,7 +217,7 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
         epss_score=max(epss, default=None),
         is_kev=any(a.get(DETAILS_KEY_IN_KEV) for a in advisories),
         kev_ransomware=any(a.get(DETAILS_KEY_KEV_RANSOMWARE) for a in advisories),
-        is_reachable=get_attr(f, "reachable"),
+        is_reachable=(details.get("reachability") or {}).get("is_reachable"),
         risk_score=max(risk, default=None),
     )
 

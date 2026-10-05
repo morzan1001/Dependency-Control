@@ -149,20 +149,34 @@ def build_component_index(by_component: dict[str, _T]) -> dict[str, _T]:
 
     aliased = dict(by_component)
     for artifact, components in owners.items():
-        if len(components) == 1 and artifact not in aliased:
-            aliased[artifact] = by_component[components[0]]
+        if len(components) == 1:
+            key = _qualified_alias(artifact) if _is_qualified(components[0]) else artifact
+            aliased.setdefault(key, by_component[components[0]])
     return aliased
+
+
+def _is_qualified(component: str) -> bool:
+    return artifact_segment(component) != component.strip()
+
+
+def _qualified_alias(artifact: str) -> str:
+    # Outside the keys a qualified name's artifact lookup tries, so x/foo/v2 never resolves to y/bar/v2.
+    return f":{artifact}"
 
 
 def lookup_component(index: Mapping[str, _T], component: str, default: _T | None = None) -> _T | None:
     """Resolve ``component`` against an index built by :func:`build_component_index`.
 
     The alias keys are lowercased by ``extract_artifact_name`` while real component names are
-    not, so the exact spelling is tried first and the artifact name second.
+    not, so the exact spelling is tried first and the artifact name second; only an unqualified
+    name falls back to the alias of a qualified entry.
     """
     found = index.get(component)
     if found is None:
-        found = index.get(extract_artifact_name(component))
+        artifact = extract_artifact_name(component)
+        found = index.get(artifact)
+        if found is None and not _is_qualified(component):
+            found = index.get(_qualified_alias(artifact))
     return default if found is None else found
 
 

@@ -570,3 +570,70 @@ async def test_top_dependencies_name_a_package_the_same_whatever_the_row_order(c
     rows = await _analytics(client, "dependencies/top", seeded)
 
     assert [row["name"] for row in rows if row["name"].lower() == "django"] == ["Django"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_go_module_shows_none_of_the_findings_of_another_major_version_module(client, db, seeded):
+    for _id, module in (("xxhash", "github.com/cespare/xxhash/v2"), ("bar", "github.com/foo/bar/v2")):
+        await db.dependencies.insert_one(
+            {**_dependency(_id, name=module), "group": None, "type": "golang", "purl": f"pkg:golang/{module}@{VERSION}"}
+        )
+    await db.findings.insert_one(_finding("f-xxhash", "github.com/cespare/xxhash/v2", "CRITICAL"))
+
+    tree = await _analytics(client, "projects/p/dependency-tree", seeded)
+
+    counts = {node["name"]: node["findings_count"] for node in tree["nodes"]}
+    assert counts["github.com/cespare/xxhash/v2"] == 1
+    assert counts["github.com/foo/bar/v2"] == 0
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("purl_type", "name", "affected", "patched", "finding_version"),
+    [
+        ("npm", "lodash", "4.17.15", "4.17.21", "v4.17.15"),
+        ("golang", "github.com/foo/bar", "v1.2.3", "v1.2.9", "1.2.3"),
+    ],
+)
+async def test_the_tree_marks_only_the_version_a_finding_affects(
+    client, db, seeded, purl_type, name, affected, patched, finding_version
+):
+    for version in (affected, patched):
+        await db.dependencies.insert_one(
+            {
+                **_dependency(f"{name}-{version}", name=name),
+                "version": version,
+                "group": None,
+                "type": purl_type,
+                "purl": f"pkg:{purl_type}/{name}@{version}",
+            }
+        )
+    await db.findings.insert_one({**_finding("f-1", name, "CRITICAL"), "version": finding_version})
+
+    tree = await _analytics(client, "projects/p/dependency-tree", seeded)
+
+    counts = {(node["name"], node["version"]): node["findings_count"] for node in tree["nodes"]}
+    assert counts == {(BARE, VERSION): 1, (name, affected): 1, (name, patched): 0}
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_tree_marks_every_version_with_a_finding_that_names_none(client, db, seeded):
+    for version in ("1.2.5", "1.2.8"):
+        await db.dependencies.insert_one(
+            {
+                **_dependency(f"minimist-{version}", name="minimist"),
+                "version": version,
+                "group": None,
+                "type": "npm",
+                "purl": f"pkg:npm/minimist@{version}",
+            }
+        )
+    await db.findings.insert_one({**_finding("f-minimist", "minimist"), "version": None})
+
+    tree = await _analytics(client, "projects/p/dependency-tree", seeded)
+
+    counts = {node["version"]: node["findings_count"] for node in tree["nodes"] if node["name"] == "minimist"}
+    assert counts == {"1.2.5": 1, "1.2.8": 1}

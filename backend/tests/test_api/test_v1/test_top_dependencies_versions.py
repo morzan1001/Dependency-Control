@@ -121,7 +121,7 @@ async def test_only_the_listed_packages_advisories_are_read():
 
     async def recording(self, pipeline, **kwargs):
         rows = await original(self, pipeline, **kwargs)
-        grouped.extend(row["_id"] for row in rows)
+        grouped.extend(row["_id"]["component"] for row in rows)
         return rows
 
     with patch.object(FindingRepository, "aggregate", recording):

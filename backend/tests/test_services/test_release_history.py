@@ -3,6 +3,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.core.cache import CacheKeys, CacheTTL
 from app.services.release_history import (
     DepsDevReleaseHistoryFetcher,
@@ -85,9 +87,6 @@ class TestMedianDaysBetweenReleases:
 
 
 class TestDaysSinceLatestRelease:
-    def test_empty_returns_none(self):
-        assert days_since_latest_release([], ref=_REF) is None
-
     def test_returns_days_since_latest(self):
         releases = [_ri(days_ago=200), _ri(days_ago=42), _ri(days_ago=500)]
         assert days_since_latest_release(releases, ref=_REF) == 42
@@ -170,6 +169,70 @@ class TestAggregateUpstreamMetrics:
         result = aggregate_upstream_metrics(history, observations=[], ref=_REF)
         # Median across one package = 2 stable releases.
         assert result.upstream_releases_last_12m_median == 2.0
+
+    @staticmethod
+    def _yearly_releases(system: str, version: str) -> float | None:
+        history = {(system, "pkg"): [_ri(days_ago=30, version=version)]}
+        return aggregate_upstream_metrics(history, observations=[], ref=_REF).upstream_releases_last_12m_median
+
+    @pytest.mark.parametrize(
+        ("system", "version"),
+        [
+            ("npm", "19.0.0-canary-abc123-20240101"),
+            ("npm", "14.2.0-canary.52"),
+            ("npm", "1.0.0-next.3"),
+            ("npm", "0.0.0-experimental-7f3a1b2-20240501"),
+            ("npm", "2.0.0-beta-26f2496093-20240514"),
+            ("npm", "1.0.0-alpha1.2"),
+            ("npm", "1.0.0-nightly.20240101"),
+            ("npm", "0.0.0-insiders.4a3b1c2"),
+            ("npm", "5.6.0-insiders.20240601"),
+            ("npm", "4.0.0-0"),
+            ("npm", "3.0.0-oxide.5"),
+            ("npm", "4.0.0-pr.12"),
+            ("npm", "1.0.0-unstable.1"),
+            ("go", "v0.0.0-20240101123456-abcdef123456"),
+            ("go", "v1.2.4-0.20240101123456-abcdef123456"),
+            ("cargo", "0.5.0-dev.3"),
+            ("cargo", "0.3.0-unstable.2"),
+            ("nuget", "9.0.0-preview.1.24080.9"),
+            ("nuget", "2.0.0-ci.20240101"),
+            ("maven", "5.0.0-M1"),
+            ("maven", "5.0.0.M1"),
+            ("maven", "1.0.0-SNAPSHOT"),
+        ],
+    )
+    def test_prerelease_versions_are_not_releases(self, system, version):
+        assert self._yearly_releases(system, version) is None
+
+    @pytest.mark.parametrize(
+        ("system", "version"),
+        [
+            ("maven", "33.0.0-jre"),
+            ("maven", "33.0.0-android"),
+            ("maven", "5.4.0.Final"),
+            ("maven", "2.7.18.RELEASE"),
+            ("npm", "4.17.21"),
+            ("npm", "1.0.0+build-5"),
+            ("go", "v2.0.0+incompatible"),
+        ],
+    )
+    def test_release_versions_stay_releases(self, system, version):
+        assert self._yearly_releases(system, version) == 1
+
+    def test_a_package_with_only_prereleases_leaves_every_cadence_median_alone(self):
+        tagged = [_ri(days_ago=5 + 30 * month, version=f"v1.{month}.0") for month in range(6)]
+        pseudo = [_ri(days_ago=10 * day, version=f"v0.0.0-2026050{day}000000-abcdef123456") for day in range(9)]
+        history = {("go", "tagged-a"): tagged, ("go", "tagged-b"): tagged}
+        history |= {("go", f"golang.org/x/exp{index}"): pseudo for index in range(3)}
+
+        result = aggregate_upstream_metrics(history, observations=[], ref=_REF)
+
+        assert (
+            result.upstream_releases_last_12m_median,
+            result.upstream_days_between_releases_median,
+            result.upstream_days_since_latest_release_median,
+        ) == (6.0, 30.0, 5.0)
 
     def test_days_between_excludes_prereleases(self):
         # Stable releases 100 days apart; betas would shrink the gap if counted.
@@ -326,6 +389,25 @@ class TestDepsDevFetcherIntegration:
         # No history surfaces for the failed package; the orchestrator will
         # treat it as "no upstream data" rather than crash.
         assert ("pypi", "pkg-broken") not in result
+
+    def test_a_package_without_dated_releases_leaves_the_release_median_alone(self):
+        async def cache_get(_key):
+            return None
+
+        async def http_fetch(url):
+            if "undated" in url:
+                return {"versions": [{"versionKey": {"version": "1.0.0"}}]}
+            return {
+                "versions": [
+                    {"versionKey": {"version": f"1.{minor}.0"}, "publishedAt": f"2026-0{minor + 1}-01T00:00:00Z"}
+                    for minor in range(3)
+                ]
+            }
+
+        fetcher = _fetcher(cache_get, _async_noop, http_fetch)
+        history = asyncio.run(fetcher.fetch([("npm", "dated"), ("npm", "undated")]))
+
+        assert aggregate_upstream_metrics(history, observations=[], ref=_REF).upstream_releases_last_12m_median == 3.0
 
     def test_multi_package_fetch_keys_results_by_system_and_name(self):
         cache: dict = {}

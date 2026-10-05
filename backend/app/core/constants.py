@@ -563,29 +563,8 @@ EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
 TOP_PYPI_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages-30-days.json"
 
-# Mapping from package/component names to endoflife.date product IDs
-# See https://endoflife.date/api for all available products
-NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
-    # Programming Languages & Runtimes
-    "python": "python",
-    "python3": "python",
-    "cpython": "python",
-    "node": "nodejs",
-    "node.js": "nodejs",
-    "nodejs": "nodejs",
-    "go": "go",
-    "golang": "go",
-    "ruby": "ruby",
-    "php": "php",
-    "dotnet": "dotnet",
-    "dotnet-runtime": "dotnet",
-    "dotnet-sdk": "dotnet",
-    ".net": "dotnet",
-    "rust": "rust",
-    "perl": "perl",
-    "kotlin": "kotlin",
-    "elixir": "elixir",
-    "erlang": "erlang",
+# Databases and servers; a client-registry package with one of these names is a client library, not a release.
+SERVER_NAME_TO_EOL_MAPPING: dict[str, str] = {
     # Databases
     "postgresql": "postgresql",
     "postgres": "postgresql",
@@ -615,6 +594,47 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "docker": "docker-engine",
     "containerd": "containerd",
     "podman": "podman",
+    # Message Queues
+    "rabbitmq": "rabbitmq",
+    "kafka": "apache-kafka",
+    "activemq": "apache-activemq",
+    # Other Tools
+    "vault": "hashicorp-vault",
+    "consul": "consul",
+    "grafana": "grafana",
+    "prometheus": "prometheus",
+    "kibana": "kibana",
+    "logstash": "logstash",
+    "jenkins": "jenkins",
+    "gitlab": "gitlab",
+    "kong": "kong-gateway",
+    "istio": "istio",
+}
+
+# Mapping from package/component names to endoflife.date product IDs
+# See https://endoflife.date/api for all available products
+NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
+    **SERVER_NAME_TO_EOL_MAPPING,
+    # Programming Languages & Runtimes
+    "python": "python",
+    "python3": "python",
+    "cpython": "python",
+    "node": "nodejs",
+    "node.js": "nodejs",
+    "nodejs": "nodejs",
+    "go": "go",
+    "golang": "go",
+    "ruby": "ruby",
+    "php": "php",
+    "dotnet": "dotnet",
+    "dotnet-runtime": "dotnet",
+    "dotnet-sdk": "dotnet",
+    ".net": "dotnet",
+    "rust": "rust",
+    "perl": "perl",
+    "kotlin": "kotlin",
+    "elixir": "elixir",
+    "erlang": "erlang",
     # Operating Systems
     "ubuntu": "ubuntu",
     "debian": "debian",
@@ -656,7 +676,6 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "http-server": "apache-http-server",
     "laravel": "laravel",
     "symfony": "symfony",
-    "express": "nodejs",
     # Build Tools & Package Managers
     "yarn": "yarn",
     "pnpm": "pnpm",
@@ -667,22 +686,7 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "terraform": "terraform",
     "ansible": "ansible",
     "packer": "hashicorp-packer",
-    "vault": "hashicorp-vault",
-    "consul": "consul",
-    # Message Queues
-    "rabbitmq": "rabbitmq",
-    "kafka": "apache-kafka",
-    "activemq": "apache-activemq",
     "numpy": "numpy",
-    # Other Tools
-    "grafana": "grafana",
-    "prometheus": "prometheus",
-    "kibana": "kibana",
-    "logstash": "logstash",
-    "jenkins": "jenkins",
-    "gitlab": "gitlab",
-    "kong": "kong-gateway",
-    "istio": "istio",
 }
 
 # Severity aliases for normalizing different scanner output formats
@@ -762,7 +766,6 @@ SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
             "styled-components",
             "emotion",
             "@emotion/react",
-            "@emotion/styled",
             "glamor",
         ],
         "suggestion": "Standardize on one CSS-in-JS solution",

@@ -166,7 +166,7 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: list[Mo
         for f in findings:
             bits = get_attr(f, "details", {}).get("key_size_bits")
             if isinstance(bits, int) and bits > 0:
-                if "RSA" in asset_name.upper() or "DSA" in asset_name.upper():
+                if asset_name.upper().startswith(("RSA", "DSA")):
                     return f"≥3072-bit (currently {bits})"
                 return f"increase from {bits} bits per policy"
         return None

@@ -242,6 +242,20 @@ async def test_a_cbom_is_persisted_before_the_response_returns(client, db, api_k
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_crypto_assets_nested_under_a_component_are_stored(client, db, api_key_headers):
+    library = {"type": "library", "name": "app-crypto", "bom-ref": "lib", "components": filler_components(range(2))}
+
+    resp = await client.post(
+        "/api/v1/ingest/cbom", json={"cbom": cbom_of([*filler_components([2]), library])}, headers=api_key_headers
+    )
+
+    assert resp.status_code == 202, resp.text
+    stored = await db.crypto_assets.find({"scan_id": resp.json()["scan_id"]}).to_list(None)
+    assert sorted(asset["bom_ref"] for asset in stored) == ["hash-000000", "hash-000001", "hash-000002"]
+
+
+@pytest.mark.asyncio
 async def test_duplicate_bom_refs_report_the_actually_stored_count(client, db, api_key_headers):
     """Upserts keyed on bom_ref collapse in-payload duplicates; assets_stored must say so."""
     cbom = cbom_of(filler_components(range(3)))

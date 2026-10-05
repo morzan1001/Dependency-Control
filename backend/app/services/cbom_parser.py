@@ -15,9 +15,44 @@ from app.schemas.cbom import (
 
 logger = logging.getLogger(__name__)
 
+# Uploaded documents are untrusted; without a cap, hostile nesting raises RecursionError.
+MAX_COMPONENT_NESTING_DEPTH = 100
+
+
+def flatten_cyclonedx_components(components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int, int]:
+    """Flatten nested components; returns (flat, depth_skipped, malformed) counting dropped entries."""
+    flat: list[dict[str, Any]] = []
+    depth_skipped = 0
+    malformed = 0
+    for comp in components if isinstance(components, list) else []:
+        if not isinstance(comp, dict):
+            malformed += 1
+            continue
+        if depth >= MAX_COMPONENT_NESTING_DEPTH:
+            depth_skipped += _count_component_subtree(comp)
+            continue
+        flat.append(comp)
+        nested, nested_skipped, nested_malformed = flatten_cyclonedx_components(comp.get("components"), depth + 1)
+        flat.extend(nested)
+        depth_skipped += nested_skipped
+        malformed += nested_malformed
+    return flat, depth_skipped, malformed
+
+
+def _count_component_subtree(comp: dict[str, Any]) -> int:
+    count = 0
+    stack = [comp]
+    while stack:
+        node = stack.pop()
+        count += 1
+        children = node.get("components")
+        if isinstance(children, list):
+            stack.extend(child for child in children if isinstance(child, dict))
+    return count
+
 
 def parse_cbom(raw: dict[str, Any]) -> ParsedCBOM:
-    components = raw.get("components") or []
+    components, _, _ = flatten_cyclonedx_components(raw.get("components"))
     tool_meta = (raw.get("metadata") or {}).get("tools") or []
     tool_name, tool_version = _tool_from_metadata(tool_meta)
 

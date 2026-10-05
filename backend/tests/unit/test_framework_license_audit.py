@@ -139,10 +139,11 @@ async def test_analyzer_output_reaches_the_identified_control():
     assert len(ctrl.evidence_finding_ids) == 1
 
 
-_NON_COMMERCIAL_AND_CONFLICTING = [
+_RESTRICTED_LICENSES = [
     {"type": "library", "name": "nc-lib", "version": "1.0.0", "licenses": [{"license": {"id": "CC-BY-NC-4.0"}}]},
     {"type": "library", "name": "gpl2-lib", "version": "1.0.0", "licenses": [{"license": {"id": "GPL-2.0-only"}}]},
     {"type": "library", "name": "gpl3-lib", "version": "1.0.0", "licenses": [{"license": {"id": "GPL-3.0-only"}}]},
+    {"type": "library", "name": "agpl-lib", "version": "1.0.0", "licenses": [{"license": {"id": "AGPL-3.0-only"}}]},
 ]
 
 
@@ -151,7 +152,7 @@ async def _analyzer_statuses(policy: dict) -> dict[str, str]:
     from app.services.analyzers.license_compliance import LicenseAnalyzer
     from app.services.normalizers.license import normalize_license
 
-    result = await analyze_cyclonedx(LicenseAnalyzer(), _NON_COMMERCIAL_AND_CONFLICTING, policy)
+    result = await analyze_cyclonedx(LicenseAnalyzer(), _RESTRICTED_LICENSES, policy)
     aggregator = ResultAggregator()
     normalize_license(aggregator, result, source="sbom.json")
     findings = [f.model_dump() | {"_id": f.id} for f in aggregator.get_findings()]
@@ -181,3 +182,20 @@ async def test_internal_only_distribution_skips_the_compatibility_control_but_no
 
     assert statuses["LICENSE-AUDIT-LICENSE-COMPATIBILITY"] == "not_applicable"
     assert statuses["LICENSE-AUDIT-NO-PROPRIETARY"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_an_open_source_project_passes_the_strong_copyleft_control():
+    """The analyzer downgrades GPL to INFO for an open-source project; the audit must not fail it."""
+    statuses = await _analyzer_statuses({"distribution_model": "open_source"})
+
+    assert statuses["LICENSE-AUDIT-STRONG-COPYLEFT"] == "passed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("distribution_model", "status"), [("internal_only", "failed"), ("open_source", "passed")])
+async def test_network_copyleft_counts_at_medium_and_not_at_info(distribution_model, status):
+    """The analyzer rates AGPL MEDIUM in an internal service and INFO in an open-source project."""
+    statuses = await _analyzer_statuses({"distribution_model": distribution_model})
+
+    assert statuses["LICENSE-AUDIT-NETWORK-COPYLEFT"] == status

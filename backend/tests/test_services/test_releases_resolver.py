@@ -693,7 +693,7 @@ async def test_cross_project_data_falls_back_when_the_pointer_names_a_deleted_sc
     await _seed_a_dangling_pointer(db)
     await db.projects.insert_one({"_id": _CURRENT_PROJECT, "name": _CURRENT_PROJECT})
 
-    data = await gather_cross_project_data([_PROJECT_A, _CURRENT_PROJECT], _CURRENT_PROJECT, db)
+    data = await gather_cross_project_data(await _scope(db, [_PROJECT_A, _CURRENT_PROJECT]), _CURRENT_PROJECT, db)
 
     assert data is not None
     assert [(row["project_id"], row["total_critical"]) for row in data["projects"]] == [

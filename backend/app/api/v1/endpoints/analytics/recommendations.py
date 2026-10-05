@@ -10,7 +10,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     gather_cross_project_data,
-    get_user_project_ids,
+    get_user_projects,
     require_analytics_permission,
 )
 from app.api.v1.helpers.projects import check_project_access
@@ -118,7 +118,7 @@ async def get_project_recommendations(
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
-    user_project_ids = await get_user_project_ids(current_user, db)
+    user_projects = await get_user_projects(current_user, db)
 
     stamped = await scan_repo.find_many_raw(
         {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1}
@@ -129,7 +129,7 @@ async def get_project_recommendations(
         project_id,
         scan_id,
         f"{stamp.get('completed_at')}|{stamp.get('waiver_fingerprint')}",
-        scope_digest(user_project_ids),
+        scope_digest(p.id for p in user_projects),
     )
 
     async def _compute() -> dict[str, Any]:
@@ -169,7 +169,7 @@ async def get_project_recommendations(
         ]
         cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
 
-        cross_project_data = await gather_cross_project_data(user_project_ids, project_id, db)
+        cross_project_data = await gather_cross_project_data(user_projects, project_id, db)
 
         recommendations = await asyncio.to_thread(
             recommendation_engine.generate_recommendations,

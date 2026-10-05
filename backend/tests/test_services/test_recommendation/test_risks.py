@@ -27,10 +27,10 @@ def _vuln(
     advisory = {"id": finding_id, "severity": severity, "in_kev": is_kev, "epss_score": epss_score}
     if risk_score is not None:
         advisory["risk_score"] = risk_score
-    details = {"vulnerabilities": [advisory]}
+    details = {"vulnerabilities": [advisory], "reachability": {"is_reachable": reachable}}
     if fixed_version is not None:
         details["fixed_version"] = advisory["fixed_version"] = fixed_version
-    result = {
+    return {
         "type": "vulnerability",
         "severity": severity,
         "component": component,
@@ -38,9 +38,6 @@ def _vuln(
         "details": details,
         "id": finding_id,
     }
-    if reachable is not None:
-        result["reachable"] = reachable
-    return result
 
 
 def _malware(component):

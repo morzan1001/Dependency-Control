@@ -144,4 +144,9 @@ class LicenseAuditFramework:
 
 def _is_license_violation(f: dict[str, Any], category: str) -> bool:
     # The license normalizer passes the scanner's category through as details.category.
-    return f.get("type") == FindingType.LICENSE.value and (f.get("details") or {}).get("category") == category
+    return (
+        f.get("type") == FindingType.LICENSE.value
+        and (f.get("details") or {}).get("category") == category
+        # The scan records a license its project's policy accepts as INFO; an unidentified one is INFO by design.
+        and (category == LicenseCategory.UNKNOWN.value or f.get("severity") != Severity.INFO.value)
+    )

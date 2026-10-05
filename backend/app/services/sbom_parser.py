@@ -24,15 +24,29 @@ from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type
 from app.services.analyzers.hash_verification import normalize_hash_algorithm
 from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import extract_license_from_url, normalize_license
-from app.services.cbom_parser import occurrence_locations, parse_crypto_components
+from app.services.cbom_parser import (
+    MAX_COMPONENT_NESTING_DEPTH,
+    flatten_cyclonedx_components,
+    occurrence_locations,
+    parse_crypto_components,
+)
 
 logger = logging.getLogger(__name__)
 
-# SBOMs are untrusted input; without a cap, hostile nesting raises RecursionError
-# and the format handler degrades the whole SBOM to zero components.
-MAX_COMPONENT_NESTING_DEPTH = 100
-
 _MERGED_LIST_FIELDS = ("locations", "parent_components", "cpes")
+_MERGED_SCALAR_FIELDS = (
+    "license",
+    "license_url",
+    "description",
+    "author",
+    "publisher",
+    "group",
+    "homepage",
+    "repository_url",
+    "download_url",
+    "layer_digest",
+    "found_by",
+)
 
 _SPDX_OPERATORS = frozenset({"AND", "OR", "WITH"})
 # Maven's POM model and npm's legacy licenses array list licences a consumer may choose between.
@@ -76,8 +90,9 @@ def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[
                     kept_values.append(value)
         for alg, digest in dep.hashes.items():
             kept.hashes.setdefault(alg, digest)
-        kept.layer_digest = kept.layer_digest or dep.layer_digest
-        kept.found_by = kept.found_by or dep.found_by
+        for attr in _MERGED_SCALAR_FIELDS:
+            if not getattr(kept, attr):
+                setattr(kept, attr, getattr(dep, attr))
         # Graph-confirmed directness beats guesses; direct anywhere in the SBOM wins.
         if kept.direct_inferred and not dep.direct_inferred:
             kept.direct, kept.direct_inferred = dep.direct, False
@@ -389,40 +404,6 @@ class SBOMParser:
             forward.setdefault(ref, []).extend(depends_on)
         return forward
 
-    @classmethod
-    def _flatten_cyclonedx_components(cls, components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int, int]:
-        """Flatten nested components; returns (flat, depth_skipped, malformed) counting dropped entries."""
-        flat: list[dict[str, Any]] = []
-        depth_skipped = 0
-        malformed = 0
-        for comp in components if isinstance(components, list) else []:
-            if not isinstance(comp, dict):
-                malformed += 1
-                continue
-            if depth >= MAX_COMPONENT_NESTING_DEPTH:
-                depth_skipped += cls._count_component_subtree(comp)
-                continue
-            flat.append(comp)
-            nested, nested_skipped, nested_malformed = cls._flatten_cyclonedx_components(
-                comp.get("components"), depth + 1
-            )
-            flat.extend(nested)
-            depth_skipped += nested_skipped
-            malformed += nested_malformed
-        return flat, depth_skipped, malformed
-
-    @staticmethod
-    def _count_component_subtree(comp: dict[str, Any]) -> int:
-        count = 0
-        stack = [comp]
-        while stack:
-            node = stack.pop()
-            count += 1
-            children = node.get("components")
-            if isinstance(children, list):
-                stack.extend(child for child in children if isinstance(child, dict))
-        return count
-
     # CycloneDX component types that are never software dependencies.
     _NON_DEPENDENCY_COMPONENT_TYPES = frozenset({"device", "device-driver", "data", "firmware"})
     _NON_PACKAGE_COMPONENT_TYPES = _NON_DEPENDENCY_COMPONENT_TYPES | {"file", "cryptographic-asset", "operating-system"}
@@ -473,7 +454,7 @@ class SBOMParser:
         )
 
         # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
-        components, depth_skipped, malformed = self._flatten_cyclonedx_components(sbom.get("components", []))
+        components, depth_skipped, malformed = flatten_cyclonedx_components(sbom.get("components", []))
         self._count_skipped(result, "nesting-depth", depth_skipped)
         self._count_skipped(result, "malformed", malformed)
         if depth_skipped:

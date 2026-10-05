@@ -444,6 +444,15 @@ class TestDuplicatePackagesMatchTheQualifiedName:
 
         assert rec.action["duplicates"][0]["found"] == ["styled-components", "@emotion/react"]
 
+    def test_emotions_own_packages_are_one_css_in_js_solution(self):
+        deps = [
+            {"name": "react", "version": "11.0.0", "purl": "pkg:npm/%40emotion/react@11.0.0"},
+            {"name": "styled", "version": "11.0.0", "purl": "pkg:npm/%40emotion/styled@11.0.0"},
+            {"name": "material", "version": "5.0.0", "purl": "pkg:npm/%40mui/material@5.0.0"},
+        ]
+
+        assert analyze_duplicate_packages(deps) == []
+
     def test_a_maven_artifact_is_not_an_npm_package_of_the_same_name(self):
         deps = [
             {"name": "request", "version": "1.0", "purl": "pkg:maven/com.example/request@1.0"},

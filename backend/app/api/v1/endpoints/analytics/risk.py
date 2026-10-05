@@ -151,7 +151,7 @@ async def _impact(
         fix_versions = extract_fix_versions(r["details_list"], r.get("version"))
         has_fix = len(fix_versions) > 0
 
-        enrichment_data = process_cve_enrichments(live_cves(r["details_list"]), enrichments)
+        enrichment_data = process_cve_enrichments(r["details_list"], enrichments)
 
         days_known = calculate_days_known(r["first_seen"])
         days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
@@ -240,7 +240,7 @@ def _build_hotspot(
     cves = live_cves(details_list)
     top_cves = cves[:_CVES_SHOWN]
 
-    enrichment_data = process_cve_enrichments(cves, enrichments)
+    enrichment_data = process_cve_enrichments(details_list, enrichments)
     days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
     priority_reasons = build_hotspot_priority_reasons(enrichment_data, severity_counts, has_fix, days_until_due)
 
