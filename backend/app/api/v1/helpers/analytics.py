@@ -45,6 +45,7 @@ from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.projections import ProjectWithScanId
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.enrichment.scoring import fold_enrichments
+from app.services.enrichment.service import advisory_enrichment
 from app.services.recommendation.common import live_advisories, live_cves
 
 MONGO_MATCH = "$match"
@@ -170,13 +171,14 @@ def extract_fix_versions(details_list: list[Any], installed_version: str | None)
 
 
 def process_cve_enrichments(
-    cve_ids: list[str], enrichments: Mapping[str, VulnerabilityEnrichment]
+    details_list: list[Any], enrichments: Mapping[str, VulnerabilityEnrichment]
 ) -> CVEEnrichmentResult:
-    """The worst case across a group's CVEs, by the fold scan-time enrichment stores."""
-    matched = [enrichments[cve] for cve in cve_ids if cve in enrichments]
-    worst = fold_enrichments(matched)
+    """The worst case across a group's live advisories, each scored on its own CVSS as at scan time."""
+    advisories = [vuln for details in details_list for vuln in live_advisories(details)]
+    worst = fold_enrichments(advisory_enrichment(vuln, enrichments) for vuln in advisories)
     if worst is None:
         return CVEEnrichmentResult()
+    matched = [enrichments[cve] for cve in live_cves(details_list) if cve in enrichments]
     return CVEEnrichmentResult(
         max_epss=worst.epss_score,
         max_percentile=worst.epss_percentile,
@@ -317,6 +319,7 @@ SLIM_DETAILS_EXPR: dict[str, Any] = {
                 "resolved_cve": "$$v.resolved_cve",
                 "aliases": "$$v.aliases",
                 "severity": "$$v.severity",
+                "cvss_score": "$$v.cvss_score",
                 "fixed_version": "$$v.fixed_version",
                 "waived": "$$v.waived",
             },

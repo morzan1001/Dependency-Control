@@ -115,7 +115,7 @@ def _enrichment_fields(enrichment: VulnerabilityEnrichment) -> dict[str, Any]:
     return fields
 
 
-def _advisory_enrichment(
+def advisory_enrichment(
     vuln: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]
 ) -> VulnerabilityEnrichment:
     """The advisory's CVEs folded, each scored on the advisory's own CVSS."""
@@ -137,7 +137,7 @@ def apply_enrichments(details: dict[str, Any], enrichments: Mapping[str, Vulnera
     """Mark each advisory with its own CVEs' enrichment, then roll the document up from its advisories."""
     folded = []
     for vuln in details.get("vulnerabilities") or []:
-        advisory = _advisory_enrichment(vuln, enrichments)
+        advisory = advisory_enrichment(vuln, enrichments)
         vuln.update({k: v for k, v in _enrichment_fields(advisory).items() if k not in _ROLLUP_ONLY_KEYS})
         folded.append(advisory)
     rollup = fold_enrichments(folded)

@@ -49,6 +49,21 @@ class TestBuildComponentIndexAndLookup:
     def test_default_is_returned_when_nothing_matches(self):
         assert lookup_component(build_component_index({"a": 1}), "b", 0) == 0
 
+    @pytest.mark.parametrize(
+        ("stored", "other"),
+        [("github.com/cespare/xxhash/v2", "github.com/foo/bar/v2"), ("org.foo:core", "com.bar:core")],
+    )
+    def test_a_qualified_name_never_reaches_another_qualified_package(self, stored, other):
+        index = build_component_index({stored: 1})
+
+        assert lookup_component(index, other) is None
+        assert lookup_component(index, extract_artifact_name(stored)) == 1
+
+    def test_a_qualified_name_resolves_a_mixed_case_bare_entry(self):
+        index = build_component_index({"HikariCP": 4})
+
+        assert lookup_component(index, "com.zaxxer:HikariCP") == 4
+
 
 class TestMongoFragmentsMirrorThePythonRule:
     def test_query_matches_exact_and_qualified_forms_but_not_another_scope(self):

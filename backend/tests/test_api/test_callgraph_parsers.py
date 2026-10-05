@@ -16,6 +16,7 @@ from app.services.component_identity import build_component_index, canonical_mod
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
     _find_usage,
+    _lists_package,
     _normalize_component,
     _prepare_callgraph,
 )
@@ -305,8 +306,8 @@ class TestWriteReadMeetingPoint:
 
     def test_analyzed_modules_resolve_under_the_component_name(self):
         analyzed = _parse(JDEPS_OUTPUT, "java").analyzed_modules
-        index = build_component_index(dict.fromkeys(analyzed, True))
-        assert lookup_component(index, "HdrHistogram:HdrHistogram")
+        prepared = _prepare_callgraph(CallgraphMinimal(_id=ObjectId(), language="java", analyzed_modules=analyzed))
+        assert _lists_package(prepared, "HdrHistogram:HdrHistogram")
 
 
 NODE_EDGE_PAYLOAD = {"nodes": [{"id": "app.main"}], "edges": [{"from": "app.main", "to": "requests.get"}]}

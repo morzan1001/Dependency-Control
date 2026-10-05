@@ -570,3 +570,19 @@ async def test_top_dependencies_name_a_package_the_same_whatever_the_row_order(c
     rows = await _analytics(client, "dependencies/top", seeded)
 
     assert [row["name"] for row in rows if row["name"].lower() == "django"] == ["Django"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_go_module_shows_none_of_the_findings_of_another_major_version_module(client, db, seeded):
+    for _id, module in (("xxhash", "github.com/cespare/xxhash/v2"), ("bar", "github.com/foo/bar/v2")):
+        await db.dependencies.insert_one(
+            {**_dependency(_id, name=module), "group": None, "type": "golang", "purl": f"pkg:golang/{module}@{VERSION}"}
+        )
+    await db.findings.insert_one(_finding("f-xxhash", "github.com/cespare/xxhash/v2", "CRITICAL"))
+
+    tree = await _analytics(client, "projects/p/dependency-tree", seeded)
+
+    counts = {node["name"]: node["findings_count"] for node in tree["nodes"]}
+    assert counts["github.com/cespare/xxhash/v2"] == 1
+    assert counts["github.com/foo/bar/v2"] == 0
