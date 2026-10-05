@@ -531,12 +531,17 @@ class TestFailuresFallBackToTheDefault:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("operation", _OPERATIONS)
-    async def test_a_cancelled_call_propagates_the_cancellation(self, fake_cache, monkeypatch, operation):
+    async def test_a_cancelled_call_propagates_the_cancellation_and_still_times_the_call(
+        self, fake_cache, monkeypatch, operation
+    ):
         call, _default = _OPERATIONS[operation]
         monkeypatch.setattr(fake_cache, "get_client", AsyncMock(side_effect=asyncio.CancelledError))
+        timing = ("cache_operation_duration_seconds_count", {"operation": operation})
+        timed = REGISTRY.get_sample_value(*timing) or 0.0
 
         with pytest.raises(asyncio.CancelledError):
             await call(fake_cache)
+        assert REGISTRY.get_sample_value(*timing) == timed + 1
 
     @pytest.mark.asyncio
     async def test_a_corrupt_entry_reads_as_absent(self, fake_cache):

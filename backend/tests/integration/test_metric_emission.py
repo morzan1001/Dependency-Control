@@ -32,12 +32,14 @@ def _deltas(series: list[tuple[str, dict[str, str]]]):
 
 
 @pytest.mark.asyncio
-async def test_cache_get_counts_a_hit_and_a_miss(fake_cache):
+async def test_cache_get_counts_a_stored_key_as_a_hit_and_an_absent_key_as_a_miss(fake_cache):
     await fake_cache.set("present", 1)
+    await fake_cache._client.set(fake_cache._make_key("corrupt"), "{not json")
     moved = _deltas([("cache_hits_total", {}), ("cache_misses_total", {})])
     await fake_cache.get("present")
+    await fake_cache.get("corrupt")
     await fake_cache.get("absent")
-    assert moved() == [1, 1]
+    assert moved() == [2, 1]
 
 
 @pytest.mark.asyncio
