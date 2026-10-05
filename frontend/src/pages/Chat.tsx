@@ -110,16 +110,7 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversationDetail?.messages, streamingContent, streamingToolCalls.length]);
 
-  const handleNewConversation = async () => {
-    try {
-      const conv = await createConversation.mutateAsync(undefined);
-      setActiveConversationId(conv.id);
-    } catch (err) {
-      toast.error('Failed to start a new conversation', {
-        description: getErrorMessage(err),
-      });
-    }
-  };
+  const handleNewConversation = () => setActiveConversationId(null);
 
   const handleDeleteConversation = async (id: string) => {
     try {

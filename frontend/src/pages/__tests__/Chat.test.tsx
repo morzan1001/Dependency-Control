@@ -43,7 +43,10 @@ const createMutateAsync = vi.fn();
 const deleteMutateAsync = vi.fn();
 vi.mock('@/hooks/queries/use-chat', () => ({
   useConversations: () => ({ data: { conversations: [] } }),
-  useConversation: () => ({ data: undefined, refetch: vi.fn() }),
+  useConversation: (id: string | null) => ({
+    data: id ? { conversation: { title: 'Risk talk' }, messages: [] } : undefined,
+    refetch: vi.fn(),
+  }),
   useCreateConversation: () => ({ mutateAsync: createMutateAsync }),
   useDeleteConversation: () => ({ mutateAsync: deleteMutateAsync }),
 }));
@@ -81,20 +84,18 @@ describe('Chat error handling', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('surfaces a toast when starting a new conversation fails', async () => {
-    const { toast } = await import('sonner');
-    createMutateAsync.mockRejectedValueOnce(new Error('nope'));
+  it('New chat clears the active conversation without creating an empty one', async () => {
+    createMutateAsync.mockResolvedValueOnce({ id: 'conv-1' });
 
     renderChat();
 
+    fireEvent.click(screen.getByText('Risk overview'));
+    await screen.findByRole('heading', { name: 'Risk talk' });
+
     fireEvent.click(screen.getByRole('button', { name: /New chat/i }));
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to start a new conversation',
-        expect.objectContaining({ description: 'nope' }),
-      );
-    });
+    await screen.findByRole('heading', { name: 'Chat' });
+    expect(createMutateAsync).toHaveBeenCalledTimes(1);
   });
 
   it('sends the message and does not toast when create succeeds', async () => {
