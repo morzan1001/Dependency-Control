@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -27,17 +28,18 @@ logger = logging.getLogger(__name__)
 # all packages, low enough that a cold cache doesn't blast deps.dev.
 _FETCH_CONCURRENCY = 16
 
+# Matched by token, not by any "-" suffix, because Maven qualifiers like Guava's 33.0.0-jre are releases.
+_PRERELEASE_TAG = re.compile(
+    r"[-.](alpha|beta|rc|pre|preview|dev|canary|next|nightly|experimental|snapshot|m\d+)(?![a-z])", re.IGNORECASE
+)
+
 
 def _is_stable_release(version: str) -> bool:
-    """True for X.Y.Z; False for alpha/beta/rc/dev pre-releases.
-
-    Non-PEP-440 versions (calver, hashes) are treated as stable since
-    there's no portable way to tell otherwise.
-    """
+    """True for X.Y.Z; False for alpha/beta/rc/dev pre-releases and npm/Maven prerelease tags."""
     try:
         return not Version(version).is_prerelease
     except InvalidVersion:
-        return True
+        return _PRERELEASE_TAG.search(version) is None
 
 
 def _stable_only(releases: Sequence[ReleaseInfo]) -> list[ReleaseInfo]:
@@ -247,7 +249,7 @@ class DepsDevReleaseHistoryFetcher:
                 return (system, name), await self._load_one(system, name)
 
         pairs = await asyncio.gather(*(_bounded(s, n) for s, n in packages))
-        return {key: releases for key, releases in pairs if releases is not None}
+        return {key: releases for key, releases in pairs if releases}
 
     async def _load_one(self, system: str, name: str) -> list[ReleaseInfo] | None:
         key = self._cache_key_builder(system, name)

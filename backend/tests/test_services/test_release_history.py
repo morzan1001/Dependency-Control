@@ -3,6 +3,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.core.cache import CacheKeys, CacheTTL
 from app.services.release_history import (
     DepsDevReleaseHistoryFetcher,
@@ -171,6 +173,28 @@ class TestAggregateUpstreamMetrics:
         # Median across one package = 2 stable releases.
         assert result.upstream_releases_last_12m_median == 2.0
 
+    @pytest.mark.parametrize(
+        "version",
+        [
+            "19.0.0-canary-abc123-20240101",
+            "14.2.0-canary.52",
+            "1.0.0-next.3",
+            "0.0.0-experimental-7f3a1b2-20240501",
+            "2.0.0-beta-26f2496093-20240514",
+            "1.0.0-alpha1.2",
+            "1.0.0-nightly.20240101",
+            "5.0.0-M1",
+            "5.0.0.M1",
+            "1.0.0-SNAPSHOT",
+        ],
+    )
+    def test_npm_and_maven_prerelease_tags_are_not_releases(self, version):
+        assert releases_in_last_n_days([_ri(days_ago=30, version=version)], window_days=365, ref=_REF) == 0
+
+    @pytest.mark.parametrize("version", ["33.0.0-jre", "33.0.0-android", "5.4.0.Final", "2.7.18.RELEASE"])
+    def test_maven_qualifier_releases_stay_releases(self, version):
+        assert releases_in_last_n_days([_ri(days_ago=30, version=version)], window_days=365, ref=_REF) == 1
+
     def test_days_between_excludes_prereleases(self):
         # Stable releases 100 days apart; betas would shrink the gap if counted.
         history = {
@@ -326,6 +350,25 @@ class TestDepsDevFetcherIntegration:
         # No history surfaces for the failed package; the orchestrator will
         # treat it as "no upstream data" rather than crash.
         assert ("pypi", "pkg-broken") not in result
+
+    def test_a_package_without_dated_releases_leaves_the_release_median_alone(self):
+        async def cache_get(_key):
+            return None
+
+        async def http_fetch(url):
+            if "undated" in url:
+                return {"versions": [{"versionKey": {"version": "1.0.0"}}]}
+            return {
+                "versions": [
+                    {"versionKey": {"version": f"1.{minor}.0"}, "publishedAt": f"2026-0{minor + 1}-01T00:00:00Z"}
+                    for minor in range(3)
+                ]
+            }
+
+        fetcher = _fetcher(cache_get, _async_noop, http_fetch)
+        history = asyncio.run(fetcher.fetch([("npm", "dated"), ("npm", "undated")]))
+
+        assert aggregate_upstream_metrics(history, observations=[], ref=_REF).upstream_releases_last_12m_median == 3.0
 
     def test_multi_package_fetch_keys_results_by_system_and_name(self):
         cache: dict = {}

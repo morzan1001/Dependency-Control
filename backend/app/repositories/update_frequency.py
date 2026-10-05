@@ -98,7 +98,7 @@ WINDOW_HARD_LIMIT = 1000
 _COMMIT_TOKEN = {"$cond": [{"$eq": [{"$ifNull": ["$commit_hash", ""]}, ""]}, "$_id", "$commit_hash"]}
 
 
-def _usable_scan_match(since: datetime | None) -> dict[str, Any]:
+def usable_scan_match(since: datetime | None) -> dict[str, Any]:
     """The usable builds both read paths fold, from ``since`` on."""
     scoped: dict[str, Any] = dict(USABLE_BUILD_MATCH)
     if since is not None:
@@ -129,7 +129,7 @@ async def window_scans_by_branch(
     branch the other would not, and both can tell how much of the window their numbers
     actually cover.
     """
-    scoped = _usable_scan_match(since)
+    scoped = usable_scan_match(since)
 
     activity: dict[tuple[str, str], BranchWindowActivity] = {}
     for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
@@ -181,7 +181,7 @@ async def window_scan_ids_by_branch(
     scans: dict[tuple[str, str], list[tuple[str, datetime]]] = {}
     for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
-            {"$match": {"project_id": {"$in": list(batch)}, **_usable_scan_match(since)}},
+            {"$match": {"project_id": {"$in": list(batch)}, **usable_scan_match(since)}},
             {
                 "$group": {
                     "_id": {"p": "$project_id", "b": "$branch"},
