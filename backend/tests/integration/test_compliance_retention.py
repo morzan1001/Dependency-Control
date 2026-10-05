@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.config import settings
 from app.core.constants import COMPLIANCE_REPORT_STUCK_AFTER_HOURS
 from app.models.compliance_report import ComplianceReport
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -70,10 +71,12 @@ async def test_sweep_fails_reports_left_unfinished_and_frees_their_quota_slot(db
 
     assert await sweep_expired_compliance_reports(db) == 0
 
+    retained_until = datetime.now(timezone.utc) + timedelta(days=settings.COMPLIANCE_REPORT_RETENTION_DAYS)
     for report in (stuck_pending, stuck_generating):
         failed = await repo.get_by_id(report.id)
         assert failed is not None
         assert failed.status == ReportStatus.FAILED
-        assert failed.error_message and failed.completed_at and failed.expires_at
+        assert failed.error_message and failed.completed_at
+        assert abs(failed.expires_at - retained_until) < timedelta(minutes=5)
     assert (await repo.get_by_id(running.id)).status == ReportStatus.GENERATING
     assert await repo.count_pending_for_user("ownerp") == 1
