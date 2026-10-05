@@ -1024,9 +1024,6 @@ HOUSEKEEPING_MAX_SCAN_RETRIES: int = 3
 # Rescheduled analysis attempts before the worker stops re-queueing a scan
 ANALYSIS_MAX_RETRIES: int = 5
 
-# Pending scans a starting process queues, so a backlog cannot flood the queue
-HOUSEKEEPING_STARTUP_RECOVERY_LIMIT: int = 1000
-
 # Interval (seconds) for checking stale pending scans (fast loop for responsiveness)
 HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS: int = 10
 

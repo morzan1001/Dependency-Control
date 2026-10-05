@@ -13,8 +13,6 @@ from app.core.config import settings
 from app.core.constants import (
     ADHOC_JOB_TTL_SECONDS,
     ANALYSIS_MAX_RETRIES,
-    HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
-    HOUSEKEEPING_STARTUP_RECOVERY_LIMIT,
     INSTANCE_ID,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_FAILED,
@@ -126,7 +124,7 @@ class AnalysisWorkerManager:
         return self.queue.qsize() >= self.num_workers
 
     async def start(self) -> None:
-        """Start workers and recover pending jobs from the DB."""
+        """Start the workers and the background loops; the stale loop picks up the scans left pending in the DB."""
         logger.info(f"Starting {self.num_workers} analysis workers...")
 
         for i in range(self.num_workers):
@@ -142,36 +140,6 @@ class AnalysisWorkerManager:
         self.stale_scan_task = asyncio.create_task(stale_scan_loop(self))
         logger.info("Stale scan loop started.")
 
-        try:
-            db = await get_database()
-            ready_before = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
-            # The stale loop owns scans holding results; a newer scan may still be registering its first one.
-            without_results: dict[str, Any] = {
-                "status": SCAN_STATUS_PENDING,
-                "received_results": {"$in": [None, []]},
-                "created_at": {"$lt": ready_before},
-            }
-            cursor = (
-                db.scans.find(without_results, {"_id": 1})
-                .sort("created_at", 1)
-                .limit(HOUSEKEEPING_STARTUP_RECOVERY_LIMIT)
-            )
-
-            count = 0
-            async for scan in cursor:
-                await self.add_job(str(scan["_id"]))
-                count += 1
-
-            if count > 0:
-                logger.info(f"Recovered {count} pending scans without results from database.")
-            if count >= HOUSEKEEPING_STARTUP_RECOVERY_LIMIT:
-                logger.warning(
-                    f"Recovery limit ({HOUSEKEEPING_STARTUP_RECOVERY_LIMIT}) reached; "
-                    f"pending scans without results beyond it wait for the next process start."
-                )
-        except Exception as e:
-            logger.exception("Failed to recover pending jobs: %s", e)
-
     async def _stop_background_tasks(self) -> None:
         background = [task for task in (self.housekeeping_task, self.stale_scan_task) if task]
         for task in background:
@@ -182,16 +150,11 @@ class AnalysisWorkerManager:
             logger.info("Background tasks cancelled.")
 
     def _drain_queue(self) -> None:
-        """Drop remaining queue items — they stay 'pending' in the DB and will be
-        recovered by other pods."""
         queue_size = self.queue.qsize()
         if queue_size == 0:
             return
 
-        logger.info(
-            f"Leaving {queue_size} items in queue - they remain 'pending' in DB "
-            f"and will be recovered by other pods or on restart."
-        )
+        logger.info(f"Dropping {queue_size} queued items; they stay pending in the DB for the stale loop of any pod.")
         while not self.queue.empty():
             try:
                 self.queue.get_nowait()

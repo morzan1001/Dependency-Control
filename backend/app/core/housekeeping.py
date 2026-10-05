@@ -566,50 +566,29 @@ async def run_housekeeping() -> None:
         logger.exception("Housekeeping task failed: %s", e)
 
 
-async def trigger_stale_pending_scans(
-    worker_manager: Optional["WorkerManager"] = None,
-) -> None:
-    """Trigger aggregation for 'pending' scans that have results but have gone stale.
-
-    Covers the case where only findings-based scanners (TruffleHog, OpenGrep, etc.) ran
-    without an SBOM scan, or where the SBOM scanner failed to trigger.
-    """
-    if not worker_manager:
+async def trigger_stale_pending_scans(worker_manager: Optional["WorkerManager"] = None) -> None:
+    """Queue the oldest pending scans no scanner result has reached for a while: findings-only runs
+    no SBOM triggered, and scans whose queue entry died with its pod."""
+    if not worker_manager or worker_manager.is_saturated():
         return
-
-    logger.debug("Checking for stale pending scans...")
-    try:
-        db = await get_database()
-
-        stale_threshold = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
-
-        cursor = db.scans.find(
+    db = await get_database()
+    quiet_since = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
+    cursor = (
+        db.scans.find(
             {
                 "status": SCAN_STATUS_PENDING,
-                "last_result_at": {"$lt": stale_threshold, "$exists": True},
-                "received_results": {"$exists": True, "$ne": []},
-            }
+                "$or": [
+                    {"last_result_at": {"$lt": quiet_since}},
+                    {"last_result_at": None, "created_at": {"$lt": quiet_since}},
+                ],
+            },
+            {"_id": 1},
         )
-
-        count = 0
-        async for scan in cursor:
-            scan_id = scan["_id"]
-            received = scan.get("received_results", [])
-            last_result = scan.get("last_result_at")
-
-            logger.info(
-                f"Triggering aggregation for stale pending scan {scan_id}. "
-                f"Received results from: {received}. Last result at: {last_result}"
-            )
-
-            await worker_manager.add_job(str(scan_id))
-            count += 1
-
-        if count > 0:
-            logger.info(f"Triggered aggregation for {count} stale pending scans.")
-
-    except Exception as e:
-        logger.exception("Stale pending scan check failed: %s", e)
+        .sort("created_at", 1)
+        .limit(worker_manager.num_workers)
+    )
+    async for scan in cursor:
+        await worker_manager.add_job(str(scan["_id"]))
 
 
 async def requeue_waiting_adhoc_jobs(worker_manager: Optional["WorkerManager"] = None) -> None:
