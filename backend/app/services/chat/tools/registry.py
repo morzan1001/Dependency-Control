@@ -79,7 +79,7 @@ from app.services.recommendation.common import live_advisories, max_advisory_cvs
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
-    LLM_FINDING_PROJECTION,
+    RANKED_FINDING_PROJECTION,
     _breaking_risk,
     _clip_value,
     _ensure_list,
@@ -167,7 +167,6 @@ _SCAN_DETAIL_PROJECTION = _BUILD_PROJECTION | dict.fromkeys(
 # `severity` being a string cannot express in a server-side sort. Bounding a tier rather than the
 # whole match is what keeps the highest severities in the sample.
 _FINDING_RANK_FETCH_CAP = 1000
-_RANKED_FINDING_PROJECTION = {**LLM_FINDING_PROJECTION, "first_seen_at": 1}
 
 # Highest severity first; the trailing clause catches values outside the known set so no finding
 # is unreachable to the walk.
@@ -379,7 +378,7 @@ async def _ranked_findings(
         if len(out) >= limit:
             break
         tier_query = {**query, "severity": tier}
-        cursor = db["findings"].find(tier_query, _RANKED_FINDING_PROJECTION, limit=_FINDING_RANK_FETCH_CAP)
+        cursor = db["findings"].find(tier_query, RANKED_FINDING_PROJECTION, limit=_FINDING_RANK_FETCH_CAP)
         candidates = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
         if not candidates:
             continue

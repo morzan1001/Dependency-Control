@@ -65,9 +65,10 @@ _LLM_ADVISORY_FIELDS = (
     "cvss_score",
     "references",
 )
-LLM_FINDING_PROJECTION = dict.fromkeys(
+RANKED_FINDING_PROJECTION = dict.fromkeys(
     (
         *_FINDING_TOPLEVEL_FIELDS,
+        "first_seen_at",
         *(f"details.{f}" for f in _FINDING_DETAILS_FIELDS),
         *(f"details.vulnerabilities.{f}" for f in _LLM_ADVISORY_FIELDS),
     ),
