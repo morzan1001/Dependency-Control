@@ -16,7 +16,7 @@ vi.mock("@/context/useAuth", () => ({
 }));
 
 describe("WebhookManager", () => {
-  it("exposes all 7 webhook event types in the create dialog", () => {
+  it("exposes every webhook event type in the create dialog", () => {
     render(
       <WebhookManager
         webhooks={[]}
@@ -31,14 +31,14 @@ describe("WebhookManager", () => {
     expect(screen.getByLabelText(/Scan completed/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Vulnerability found/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Analysis failed/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/SBOM ingested/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Crypto asset ingested/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Crypto policy changed/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/License policy changed/i)).toBeInTheDocument();
     expect(
       screen.getByLabelText(/Compliance report generated/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByLabelText(/PQC migration plan generated/i),
-    ).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(8);
   });
 
   it.each([

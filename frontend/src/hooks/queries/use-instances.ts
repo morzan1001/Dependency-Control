@@ -22,10 +22,11 @@ function createInstanceHooks<TList>(
   api: InstanceApi<TList>,
   keys: ReturnType<typeof createInstanceKeys>,
 ) {
-  const useInstances = (params?: { active_only?: boolean }) =>
+  const useInstances = (params?: { active_only?: boolean }, enabled = true) =>
     useQuery({
       queryKey: keys.list(params),
       queryFn: () => api.list(params),
+      enabled,
     });
 
   return { useInstances };

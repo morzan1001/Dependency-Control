@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import HTTPException, Request, status
+from fastapi import BackgroundTasks, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -88,6 +88,7 @@ class CBOMIngestResponse(BaseModel):
 )
 async def ingest_cbom(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: DatabaseDep,
     project: ProjectIngestDep,
 ) -> CBOMIngestResponse:
@@ -120,14 +121,16 @@ async def ingest_cbom(
     await manager.find_or_create_scan(payload, scan_id, scan_type="cbom")
     await manager.register_result(scan_id, "cbom", trigger_analysis=True)
 
-    await webhook_service.safe_trigger_webhooks(
+    background_tasks.add_task(
+        webhook_service.safe_trigger_webhooks,
         db,
         WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
         {"scan_id": scan_id, "project_id": project_id, "total": summary["total"], "by_type": summary["by_type"]},
         project_id,
         context="cbom_ingest",
     )
-    await safe_notify_project_event(
+    background_tasks.add_task(
+        safe_notify_project_event,
         db,
         project_id=project_id,
         event_type=NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,

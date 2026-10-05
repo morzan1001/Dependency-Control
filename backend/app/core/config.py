@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     CACHE_PREFIX: str = "dc:"
     CACHE_DEFAULT_TTL_HOURS: int = 24
 
-    SECRET_KEY: str = "changeme"
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7

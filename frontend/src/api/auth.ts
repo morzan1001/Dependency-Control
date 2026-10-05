@@ -14,6 +14,10 @@ export const authApi = {
     return response.data;
   },
 
+  logout: async (): Promise<void> => {
+    await api.post('/logout');
+  },
+
   exchangeOidcLogin: async (): Promise<Token> => {
     const response = await api.post<Token>('/login/oidc/exchange');
     return response.data;

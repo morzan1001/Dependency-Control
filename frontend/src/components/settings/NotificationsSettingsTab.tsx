@@ -4,7 +4,10 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { CheckCircle2 } from "lucide-react"
+import { toast } from "sonner"
 import { Slack, Mattermost } from "@/components/icons"
+import { systemApi } from "@/api/system"
+import { getErrorMessage } from "@/lib/utils"
 import { WebhookManager } from "@/components/WebhookManager"
 import { SecretInput } from "@/components/settings/SecretInput"
 import {
@@ -213,7 +216,7 @@ export function NotificationsSettingsTab({
                       </>
                     )}
                     
-                    {(formData.slack_client_id !== settings?.slack_client_id || formData.slack_client_secret !== settings?.slack_client_secret) ? (
+                    {(formData.slack_client_id !== settings?.slack_client_id || formData.slack_client_secret !== settings?.slack_client_secret || formData.slack_oauth_scopes !== settings?.slack_oauth_scopes) ? (
                       <div className="p-3 mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-900">
                         Please save your changes before connecting to Slack.
                       </div>
@@ -224,10 +227,9 @@ export function NotificationsSettingsTab({
                           variant={formData.slack_bot_token || formData.slack_bot_token_configured ? "outline" : "default"}
                           className="w-full sm:w-auto"
                           onClick={() => {
-                            const redirectUri = `${window.location.origin}/api/v1/integrations/slack/callback`;
-                            const scopes = formData.slack_oauth_scopes || 'chat:write';
-                            const targetUrl = `https://slack.com/oauth/v2/authorize?client_id=${formData.slack_client_id}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-                            window.location.href = targetUrl;
+                            systemApi.getSlackAuthorizeUrl()
+                              .then((url) => { window.location.href = url })
+                              .catch((error) => toast.error("Could not start the Slack install", { description: getErrorMessage(error) }))
                           }}
                         >
                           <Slack className="mr-2 h-4 w-4" />

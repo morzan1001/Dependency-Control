@@ -104,8 +104,6 @@ async def get_app_config(
         global_rescan_enabled=settings.global_rescan_enabled,
         global_rescan_interval=settings.global_rescan_interval,
         notifications=notifications,
-        slack_client_id=settings.slack_client_id,
-        slack_oauth_scopes=settings.slack_oauth_scopes,
         chat_enabled=app_settings.CHAT_ENABLED,
     )
 

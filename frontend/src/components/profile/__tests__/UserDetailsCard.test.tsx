@@ -30,7 +30,7 @@ function renderCard(user: User) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <UserDetailsCard user={user} notificationChannels={['slack']} appConfig={undefined} />
+      <UserDetailsCard user={user} notificationChannels={['slack']} />
     </QueryClientProvider>,
   )
 }

@@ -125,11 +125,6 @@ export const NOTIFICATION_EVENTS = [
     label: 'Compliance Report Generated',
     description: 'When a new compliance report is rendered for the project.',
   },
-  {
-    id: 'pqc_migration_plan_generated',
-    label: 'PQC Migration Plan Generated',
-    description: 'When a new post-quantum migration plan is generated for the project.',
-  },
 ] as const;
 
 export const NOTIFICATION_CHANNELS = [

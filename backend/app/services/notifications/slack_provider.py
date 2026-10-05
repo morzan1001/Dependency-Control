@@ -3,6 +3,8 @@ import logging
 import time
 from typing import Any
 
+import httpx
+
 from app.core.config import settings
 from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
 from app.core.http_utils import InstrumentedAsyncClient
@@ -13,6 +15,35 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
+
+SLACK_OAUTH_URL = "https://slack.com/api/oauth.v2.access"
+
+
+class SlackOAuthError(Exception):
+    """Slack refused or did not answer a token request; the message is the reason."""
+
+
+async def request_slack_tokens(client_id: str, client_secret: str, **grant: str) -> dict[str, Any]:
+    """The system-settings fields of a token that oauth.v2.access grants for ``grant``."""
+    try:
+        async with InstrumentedAsyncClient("Slack OAuth", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                SLACK_OAUTH_URL, data={"client_id": client_id, "client_secret": client_secret, **grant}
+            )
+    except httpx.RequestError as e:
+        raise SlackOAuthError(f"Request to Slack failed ({type(e).__name__})") from e
+    if response.status_code != 200:
+        raise SlackOAuthError(f"HTTP error from Slack: {response.status_code}")
+    result = response.json()
+    if not result.get("ok"):
+        raise SlackOAuthError(f"Slack API error: {result.get('error', 'unknown_error')}")
+
+    tokens: dict[str, Any] = {"slack_bot_token": result.get("access_token")}
+    if result.get("refresh_token"):
+        tokens["slack_refresh_token"] = result["refresh_token"]
+    if result.get("expires_in"):
+        tokens["slack_token_expires_at"] = time.time() + result["expires_in"]
+    return tokens
 
 
 class SlackProvider(NotificationProvider):
@@ -48,54 +79,20 @@ class SlackProvider(NotificationProvider):
             return None
 
         try:
-            async with InstrumentedAsyncClient(
-                "Slack API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
-            ) as client:
-                response = await client.post(
-                    "https://slack.com/api/oauth.v2.access",
-                    data={
-                        "client_id": system_settings.slack_client_id,
-                        "client_secret": system_settings.slack_client_secret,
-                        "grant_type": "refresh_token",
-                        "refresh_token": system_settings.slack_refresh_token,
-                    },
-                )
-
-                if response.status_code != 200:
-                    logger.error(
-                        f"Failed to refresh Slack token. Status: {response.status_code}, Body: {response.text}"
-                    )
-                    return None
-
-                result = response.json()
-                if not result.get("ok"):
-                    logger.error(f"Slack API Error during refresh: {result.get('error')}")
-                    return None
-
-                new_access_token = result.get("access_token")
-                new_refresh_token = result.get("refresh_token")
-                expires_in = result.get("expires_in")
-
-                db = await get_database()
-                repo = SystemSettingsRepository(db)
-
-                update_data = {
-                    "slack_bot_token": new_access_token,
-                }
-                if new_refresh_token:
-                    update_data["slack_refresh_token"] = new_refresh_token
-                if expires_in:
-                    update_data["slack_token_expires_at"] = time.time() + expires_in
-
-                await repo.update(update_data)
-
-                logger.info("Successfully refreshed Slack token")
-                access_token: str | None = new_access_token
-                return access_token
-
-        except Exception as e:
-            logger.exception("Error refreshing Slack token: %s", e)
+            tokens = await request_slack_tokens(
+                system_settings.slack_client_id,
+                system_settings.slack_client_secret,
+                grant_type="refresh_token",
+                refresh_token=system_settings.slack_refresh_token,
+            )
+        except SlackOAuthError as e:
+            logger.error("Slack token refresh failed: %s", e)
             return None
+
+        await SystemSettingsRepository(await get_database()).update(tokens)
+        logger.info("Successfully refreshed Slack token")
+        access_token: str | None = tokens["slack_bot_token"]
+        return access_token
 
     async def send(
         self,

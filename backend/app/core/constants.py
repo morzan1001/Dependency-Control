@@ -718,7 +718,6 @@ NotificationEvent = Literal[
     "crypto_policy_changed",
     "license_policy_changed",
     "compliance_report_generated",
-    "pqc_migration_plan_generated",
 ]
 NOTIFICATION_EVENT_ANALYSIS_COMPLETED: NotificationEvent = "analysis_completed"
 NOTIFICATION_EVENT_VULNERABILITY_FOUND: NotificationEvent = "vulnerability_found"
@@ -728,7 +727,6 @@ NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED: NotificationEvent = "crypto_asset_inge
 NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED: NotificationEvent = "crypto_policy_changed"
 NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED: NotificationEvent = "license_policy_changed"
 NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED: NotificationEvent = "compliance_report_generated"
-NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED: NotificationEvent = "pqc_migration_plan_generated"
 
 NOTIFICATION_EVENTS: frozenset[str] = frozenset(get_args(NotificationEvent))
 
@@ -737,6 +735,7 @@ SMTP_TIMEOUT_SECONDS: int = 60
 
 # Slack token expiry buffer in seconds (refresh 5 minutes before expiry)
 SLACK_TOKEN_EXPIRY_BUFFER_SECONDS: int = 300
+SLACK_OAUTH_STATE_TTL_SECONDS: int = 600
 
 # Groups of packages that often provide similar/duplicate functionality
 SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
@@ -813,7 +812,6 @@ WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED = "crypto_asset.ingested"
 WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED = "crypto_policy.changed"
 WEBHOOK_EVENT_LICENSE_POLICY_CHANGED = "license_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
-WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
 
 # snake_case event names clients may still send; validation stores their canonical form.
 WEBHOOK_EVENT_ALIASES: dict[str, str] = {
@@ -831,7 +829,6 @@ WEBHOOK_VALID_EVENTS = [
     WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED,
     WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
-    WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
 ]
 
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]

@@ -25,5 +25,10 @@ export const systemApi = {
   getNotificationChannels: async (): Promise<string[]> => {
     const response = await api.get<string[]>('/system/notifications/channels');
     return response.data;
+  },
+
+  getSlackAuthorizeUrl: async (): Promise<string> => {
+    const response = await api.get<{ url: string }>('/integrations/slack/authorize');
+    return response.data.url;
   }
 };

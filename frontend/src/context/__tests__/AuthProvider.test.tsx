@@ -1,6 +1,10 @@
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import { MemoryRouter, Navigate, Routes, Route, useNavigate } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+import { api } from '@/api/client'
 
 import { AuthProvider } from '../AuthProvider'
 import { useAuth } from '../useAuth'
@@ -9,10 +13,6 @@ vi.mock('@/api/users', () => ({
   userApi: {
     getMe: vi.fn(),
   },
-}))
-
-vi.mock('@/api/client', () => ({
-  setLogoutCallback: vi.fn(),
 }))
 
 import { userApi } from '@/api/users'
@@ -40,7 +40,7 @@ if (typeof globalThis.localStorage === 'undefined' || globalThis.localStorage ==
 }
 
 // Minimal valid JWT for jwt-decode; the signature is never verified client-side.
-function makeToken(permissions: string[]): string {
+function makeToken(permissions: string[], sub = 'user-1'): string {
   const now = Math.floor(Date.now() / 1000)
   const encode = (obj: unknown) =>
     btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -48,7 +48,7 @@ function makeToken(permissions: string[]): string {
   const payload = encode({
     exp: now + 3600,
     iat: now,
-    sub: 'user-1',
+    sub,
     permissions,
     type: 'access',
   })
@@ -68,19 +68,92 @@ function AuthProbe() {
   )
 }
 
-function renderApp() {
+function renderApp(routes: React.ReactNode, queryClient = new QueryClient()) {
   return render(
-    <MemoryRouter initialEntries={['/dashboard']}>
-      <AuthProvider>
-        <Routes>
-          <Route path="/dashboard" element={<AuthProbe />} />
-          <Route path="/projects" element={<AuthProbe />} />
-          <Route path="/login" element={<div data-testid="login-page">login</div>} />
-        </Routes>
-      </AuthProvider>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <AuthProvider>
+          <Routes>{routes}</Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
+
+const probeRoutes = (
+  <>
+    <Route path="/dashboard" element={<AuthProbe />} />
+    <Route path="/projects" element={<AuthProbe />} />
+    <Route path="/login" element={<div data-testid="login-page">login</div>} />
+  </>
+)
+
+let sentRequests: { method?: string; url?: string; authorization: unknown }[] = []
+
+// Answers every request with the bearer it carried, so cached data reveals whose session fetched it.
+function stubBackend(failLogout?: (config: InternalAxiosRequestConfig) => Error) {
+  sentRequests = []
+  api.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+    const authorization = config.headers.Authorization
+    sentRequests.push({ method: config.method, url: config.url, authorization })
+    // Ends a 401 -> logout -> 401 loop, so it fails an assertion instead of starving the event loop.
+    if (sentRequests.length > 20) throw networkError()
+    if (!authorization) throw httpError(config, 401, 'Unauthorized')
+    if (failLogout && config.url === '/logout') throw failLogout(config)
+    return { data: { owner: authorization }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+}
+
+const httpError = (config: InternalAxiosRequestConfig, status: number, statusText: string) =>
+  new AxiosError(`Request failed with status code ${status}`, AxiosError.ERR_BAD_RESPONSE, config, null, {
+    data: {},
+    status,
+    statusText,
+    headers: {},
+    config,
+  })
+const serverError = (config: InternalAxiosRequestConfig) => httpError(config, 500, 'Internal Server Error')
+const networkError = () => new Error('Network Error')
+
+function Projects() {
+  const { logout } = useAuth()
+  const { data } = useQuery({
+    queryKey: ['projects'],
+    queryFn: async () => (await api.get<{ owner: string }>('/projects')).data,
+  })
+  return (
+    <div>
+      <span data-testid="owner">{data?.owner ?? ''}</span>
+      <button onClick={logout}>logout</button>
+    </div>
+  )
+}
+
+function ProtectedProjects() {
+  const { isAuthenticated, isLoading } = useAuth()
+  if (isLoading) return null
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  return <Projects />
+}
+
+function LoginAs({ token }: Readonly<{ token: string }>) {
+  const { login } = useAuth()
+  return <button onClick={() => login(token, 'refresh-2')}>login</button>
+}
+
+function renderSession(nextUserToken: string, queryClient: QueryClient) {
+  return renderApp(
+    <>
+      <Route path="/dashboard" element={<ProtectedProjects />} />
+      <Route path="/login" element={<LoginAs token={nextUserToken} />} />
+    </>,
+    queryClient,
+  )
+}
+
+// Mirrors the 5-minute staleTime of the app's user and project queries.
+const sessionQueryClient = () =>
+  new QueryClient({ defaultOptions: { queries: { staleTime: 5 * 60 * 1000, retry: false } } })
 
 describe('AuthProvider init effect', () => {
   beforeEach(() => {
@@ -96,7 +169,7 @@ describe('AuthProvider init effect', () => {
     getMe.mockResolvedValueOnce({ id: 'user-1' })
     getMe.mockRejectedValue(new Error('transient 500'))
 
-    renderApp()
+    renderApp(probeRoutes)
 
     await waitFor(() => {
       expect(screen.getByTestId('authed').textContent).toBe('true')
@@ -116,11 +189,94 @@ describe('AuthProvider init effect', () => {
   })
 
   it('sets unauthenticated when no token is present', async () => {
-    renderApp()
+    renderApp(probeRoutes)
     await waitFor(() => {
       expect(screen.getByTestId('loading').textContent).toBe('false')
     })
     expect(screen.getByTestId('authed').textContent).toBe('false')
     expect(getMe).not.toHaveBeenCalled()
+  })
+})
+
+describe('AuthProvider logout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    stubBackend()
+    getMe.mockResolvedValue({ id: 'user-1' })
+  })
+
+  it('revokes the server session with the session token', async () => {
+    const token = makeToken(['read'])
+    localStorage.setItem('token', token)
+    localStorage.setItem('refresh_token', 'refresh')
+
+    renderSession(makeToken(['read'], 'user-2'), sessionQueryClient())
+    await screen.findByText(`Bearer ${token}`)
+
+    fireEvent.click(screen.getByText('logout'))
+    await screen.findByText('login')
+
+    expect(sentRequests).toContainEqual({ method: 'post', url: '/logout', authorization: `Bearer ${token}` })
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+  })
+
+  it.each([
+    ['a server error', serverError],
+    ['a network failure', networkError],
+  ])('signs out locally when the revoke fails with %s', async (_, failure) => {
+    stubBackend(failure)
+    localStorage.setItem('token', makeToken(['read']))
+    localStorage.setItem('refresh_token', 'refresh')
+    const queryClient = sessionQueryClient()
+
+    renderSession(makeToken(['read'], 'user-2'), queryClient)
+    await screen.findByText(/^Bearer /)
+
+    fireEvent.click(screen.getByText('logout'))
+    await screen.findByText('login')
+
+    expect(sentRequests.map((r) => r.url)).toContain('/logout')
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+    expect(queryClient.getQueryData(['projects'])).toBeUndefined()
+  })
+
+  it('sends no revoke once a rejected refresh has removed the tokens', async () => {
+    localStorage.setItem('token', makeToken(['read']))
+    localStorage.setItem('refresh_token', 'refresh')
+
+    renderSession(makeToken(['read'], 'user-2'), sessionQueryClient())
+    await screen.findByText(/^Bearer /)
+
+    localStorage.clear()
+    fireEvent.click(screen.getByText('logout'))
+    await screen.findByText('login')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(sentRequests.filter((r) => r.url === '/logout')).toHaveLength(0)
+  })
+
+  it("empties the query cache so the next login fetches its own data", async () => {
+    const firstUser = makeToken(['read'])
+    const secondUser = makeToken(['read'], 'user-2')
+    localStorage.setItem('token', firstUser)
+    localStorage.setItem('refresh_token', 'refresh')
+    const queryClient = sessionQueryClient()
+
+    renderSession(secondUser, queryClient)
+    await screen.findByText(`Bearer ${firstUser}`)
+
+    fireEvent.click(screen.getByText('logout'))
+    await screen.findByText('login')
+    expect(queryClient.getQueryData(['projects'])).toBeUndefined()
+
+    fireEvent.click(screen.getByText('login'))
+    expect(await screen.findByText(`Bearer ${secondUser}`)).toBeInTheDocument()
+    expect(sentRequests.filter((r) => r.url === '/projects').map((r) => r.authorization)).toEqual([
+      `Bearer ${firstUser}`,
+      `Bearer ${secondUser}`,
+    ])
   })
 })

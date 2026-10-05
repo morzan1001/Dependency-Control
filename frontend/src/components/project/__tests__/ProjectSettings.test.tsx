@@ -8,8 +8,8 @@ import type { AppConfig } from '@/types/system'
 import type { User } from '@/types/user'
 
 const mockUpdate = vi.fn().mockResolvedValue({})
-const mockUseGitHubInstances = vi.fn()
-const mockUseGitLabInstances = vi.fn()
+const mockGitHubList = vi.fn()
+const mockGitLabList = vi.fn()
 const mockUseTeams = vi.fn()
 const mockUseAuth = vi.fn()
 const mockUseAppConfig = vi.fn()
@@ -33,9 +33,11 @@ vi.mock('@/hooks/queries/use-webhooks', () => ({
   useCreateProjectWebhook: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteWebhook: () => ({ mutateAsync: vi.fn() }),
 }))
-vi.mock('@/hooks/queries/use-instances', () => ({
-  useGitLabInstances: () => mockUseGitLabInstances(),
-  useGitHubInstances: () => mockUseGitHubInstances(),
+vi.mock('@/api/gitlab-instances', () => ({
+  gitlabInstancesApi: { list: (...args: unknown[]) => mockGitLabList(...args) },
+}))
+vi.mock('@/api/github-instances', () => ({
+  githubInstancesApi: { list: (...args: unknown[]) => mockGitHubList(...args) },
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => mockUseAuth() }))
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
@@ -55,28 +57,11 @@ const USER: User = {
 
 beforeEach(() => {
   mockUseAuth.mockReturnValue({ permissions: [] })
-  mockUseGitLabInstances.mockReturnValue({ data: { items: [] } })
+  // The instance lists answer only system:manage.
+  mockGitLabList.mockReset().mockRejectedValue(new Error('Request failed with status code 403'))
+  mockGitHubList.mockReset().mockRejectedValue(new Error('Request failed with status code 403'))
   mockUseAppConfig.mockReturnValue({ data: undefined })
 })
-
-function githubInstances(hasToken: boolean) {
-  return {
-    data: {
-      items: [
-        {
-          id: 'gh-1',
-          name: 'GitHub.com',
-          url: 'https://github.com',
-          is_active: true,
-          auto_create_projects: true,
-          token_configured: hasToken,
-          created_at: '',
-          created_by: 'a',
-        },
-      ],
-    },
-  }
-}
 
 function githubProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -104,10 +89,9 @@ describe('ProjectSettings GitHub PR decoration', () => {
   beforeEach(() => {
     mockUpdate.mockClear()
     mockUseTeams.mockReturnValue({ data: [] })
-    mockUseGitHubInstances.mockReturnValue(githubInstances(true))
   })
 
-  it('sends the toggle state with the settings form', async () => {
+  it('lets a project admin without system:manage switch decoration on', async () => {
     renderSettings(githubProject())
 
     fireEvent.click(screen.getByLabelText('Pull Request Decoration'))
@@ -115,6 +99,7 @@ describe('ProjectSettings GitHub PR decoration', () => {
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
     expect(mockUpdate.mock.calls[0][1]).toMatchObject({ github_pr_comments_enabled: true })
+    expect(mockGitHubList).not.toHaveBeenCalled()
   })
 
   it('round-trips an already-enabled project', async () => {
@@ -126,43 +111,14 @@ describe('ProjectSettings GitHub PR decoration', () => {
     expect(mockUpdate.mock.calls[0][1]).toMatchObject({ github_pr_comments_enabled: true })
   })
 
-  it('disables the toggle when the linked instance has no token', () => {
-    mockUseGitHubInstances.mockReturnValue(githubInstances(false))
-
-    renderSettings(githubProject())
-
-    expect(screen.getByLabelText('Pull Request Decoration')).toBeDisabled()
-    expect(screen.getByText('Requires an access token on the GitHub instance.')).toBeInTheDocument()
-  })
-
-  it('lets an already-enabled project turn decoration off after the instance loses its token', async () => {
-    mockUseGitHubInstances.mockReturnValue(githubInstances(false))
-
+  it('turns decoration off', async () => {
     renderSettings(githubProject({ github_pr_comments_enabled: true }))
 
-    const toggle = screen.getByLabelText('Pull Request Decoration')
-    expect(toggle).toBeEnabled()
-    expect(toggle).toBeChecked()
-
-    fireEvent.click(toggle)
+    fireEvent.click(screen.getByLabelText('Pull Request Decoration'))
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
     expect(mockUpdate.mock.calls[0][1]).toMatchObject({ github_pr_comments_enabled: false })
-  })
-
-  // active_only filtering hides a deactivated instance, which must not silently mask the stored value.
-  it('shows the stored value when the linked instance is missing from the active list', async () => {
-    mockUseGitHubInstances.mockReturnValue({ data: { items: [] } })
-
-    renderSettings(githubProject({ github_pr_comments_enabled: true }))
-
-    expect(screen.getByLabelText('Pull Request Decoration')).toBeChecked()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-
-    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
-    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ github_pr_comments_enabled: true })
   })
 
   it('shows nothing for a GitLab-sourced project', () => {
@@ -181,7 +137,6 @@ describe('ProjectSettings team ownership', () => {
         { id: 't2', name: 'Platform', members: [] },
       ],
     })
-    mockUseGitHubInstances.mockReturnValue(githubInstances(true))
   })
 
   it('saves the picked teams with the rest of the form', async () => {
@@ -233,8 +188,8 @@ describe('ProjectSettings team ownership', () => {
   })
 })
 
-const GITLAB_INSTANCES = {
-  data: {
+function gitlabInstances(tokenConfigured = true) {
+  return {
     items: [
       {
         id: 'gl-1',
@@ -246,10 +201,10 @@ const GITLAB_INSTANCES = {
         team_sync_depth: 1,
         created_at: '',
         created_by: 'a',
-        token_configured: true,
+        token_configured: tokenConfigured,
       },
     ],
-  },
+  }
 }
 
 function gitlabProject(overrides: Partial<Project> = {}): Project {
@@ -269,9 +224,6 @@ describe('ProjectSettings GitLab binding', () => {
   beforeEach(() => {
     mockUpdate.mockClear()
     mockUseTeams.mockReturnValue({ data: [] })
-    mockUseGitHubInstances.mockReturnValue({ data: { items: [] } })
-    // The instance list answers only system:manage.
-    mockUseGitLabInstances.mockReturnValue({ data: undefined })
   })
 
   it('shows a project admin the binding without a way to edit it', () => {
@@ -297,6 +249,17 @@ describe('ProjectSettings GitLab binding', () => {
     })
   })
 
+  it('lets a project admin without system:manage switch MR decoration on', async () => {
+    renderSettings(gitlabProject())
+
+    fireEvent.click(screen.getByLabelText('Merge Request Decoration'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ gitlab_mr_comments_enabled: true })
+    expect(mockGitLabList).not.toHaveBeenCalled()
+  })
+
   it('lets a project admin remove the binding', async () => {
     renderSettings(gitlabProject())
 
@@ -313,7 +276,7 @@ describe('ProjectSettings GitLab binding', () => {
   })
 
   it('offers a project admin no way to bind an unbound project', () => {
-    mockUseGitLabInstances.mockReturnValue(GITLAB_INSTANCES)
+    mockGitLabList.mockResolvedValue(gitlabInstances())
 
     renderSettings(
       gitlabProject({ gitlab_instance_id: undefined, gitlab_project_id: undefined, gitlab_project_path: undefined }),
@@ -324,11 +287,11 @@ describe('ProjectSettings GitLab binding', () => {
 
   it('lets a system manager change the bound project id', async () => {
     mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
-    mockUseGitLabInstances.mockReturnValue(GITLAB_INSTANCES)
+    mockGitLabList.mockResolvedValue(gitlabInstances())
 
     renderSettings(gitlabProject())
 
-    const projectIdInput = screen.getByLabelText('GitLab Project ID')
+    const projectIdInput = await screen.findByLabelText('GitLab Project ID')
     expect(projectIdInput).toHaveValue(4242)
     fireEvent.change(projectIdInput, { target: { value: '5151' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
@@ -339,11 +302,11 @@ describe('ProjectSettings GitLab binding', () => {
 
   it('clears the whole binding when a system manager picks no instance', async () => {
     mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
-    mockUseGitLabInstances.mockReturnValue(GITLAB_INSTANCES)
+    mockGitLabList.mockResolvedValue(gitlabInstances())
 
     renderSettings(gitlabProject())
 
-    fireEvent.click(screen.getByLabelText('GitLab Instance'))
+    fireEvent.click(await screen.findByLabelText('GitLab Instance'))
     fireEvent.click(screen.getByRole('option', { name: 'None (Auto-detect from OIDC)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
@@ -353,6 +316,23 @@ describe('ProjectSettings GitLab binding', () => {
       gitlab_project_id: null,
       gitlab_project_path: null,
     })
+  })
+
+  // A stored true on a tokenless instance makes every save a 400 until it is switched off.
+  it('lets a system manager turn MR decoration off after the instance loses its token', async () => {
+    mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
+    mockGitLabList.mockResolvedValue(gitlabInstances(false))
+
+    renderSettings(gitlabProject({ gitlab_mr_comments_enabled: true }))
+
+    await screen.findByLabelText('GitLab Project ID')
+    const toggle = screen.getByLabelText('Merge Request Decoration')
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ gitlab_mr_comments_enabled: false })
   })
 })
 
@@ -374,7 +354,6 @@ describe('ProjectSettings periodic re-scanning', () => {
   beforeEach(() => {
     mockUpdate.mockClear()
     mockUseTeams.mockReturnValue({ data: [] })
-    mockUseGitHubInstances.mockReturnValue(githubInstances(true))
   })
 
   it('shows the global schedule a project without its own inherits, and saves it still inheriting', async () => {

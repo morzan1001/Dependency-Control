@@ -1,18 +1,18 @@
-"""A failed Slack code exchange raises SlackOAuthError whose text is the reason the callback shows."""
+"""A failed Slack token request raises SlackOAuthError whose text is the reason the callback shows."""
 
 import httpx
 import pytest
 
-from app.api.v1.helpers import integrations
-from app.api.v1.helpers.integrations import SlackOAuthError, exchange_slack_code_for_token
 from app.core.http_utils import InstrumentedAsyncClient
+from app.services.notifications import slack_provider
+from app.services.notifications.slack_provider import SlackOAuthError, request_slack_tokens
 
 
 def _slack_answering(monkeypatch, handler) -> None:
     def client(service_name: str, timeout: float) -> InstrumentedAsyncClient:
         return InstrumentedAsyncClient(service_name, timeout=timeout, transport=httpx.MockTransport(handler))
 
-    monkeypatch.setattr(integrations, "InstrumentedAsyncClient", client)
+    monkeypatch.setattr(slack_provider, "InstrumentedAsyncClient", client)
 
 
 @pytest.mark.asyncio
@@ -23,11 +23,11 @@ def _slack_answering(monkeypatch, handler) -> None:
         (httpx.Response(200, json={"ok": False, "error": "invalid_code"}), "Slack API error: invalid_code"),
     ],
 )
-async def test_a_refused_exchange_names_the_reason(monkeypatch, response, reason):
+async def test_a_refused_request_names_the_reason(monkeypatch, response, reason):
     _slack_answering(monkeypatch, lambda _request: response)
 
     with pytest.raises(SlackOAuthError) as raised:
-        await exchange_slack_code_for_token("code", "client", "secret")
+        await request_slack_tokens("client", "secret", grant_type="authorization_code", code="code")
 
     assert str(raised.value) == reason
 
@@ -40,6 +40,6 @@ async def test_a_timeout_names_the_reason(monkeypatch):
     _slack_answering(monkeypatch, timeout)
 
     with pytest.raises(SlackOAuthError) as raised:
-        await exchange_slack_code_for_token("code", "client", "secret")
+        await request_slack_tokens("client", "secret", grant_type="authorization_code", code="code")
 
-    assert str(raised.value) == "Request to Slack timed out"
+    assert str(raised.value) == "Request to Slack failed (ReadTimeout)"

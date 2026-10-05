@@ -1,9 +1,6 @@
 """PQC migration plan REST endpoint."""
 
-import logging
-from datetime import datetime, timezone
-
-from fastapi import BackgroundTasks, Depends, Query
+from fastapi import Depends, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_active_user, get_database
@@ -12,27 +9,20 @@ from app.api.v1.helpers.responses import RESP_403
 from app.core.constants import (
     DEFAULT_PQC_PLAN_ITEMS,
     MAX_PQC_PLAN_ITEMS,
-    NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
-    WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
     ScopeName,
 )
 from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
-from app.services.analytics.scopes import ResolvedScope, ScopeResolver
-from app.services.notifications.service import safe_notify_project_event
+from app.services.analytics.scopes import ScopeResolver
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from app.services.pqc_migration.mappings_loader import CURRENT_MAPPINGS_VERSION
-from app.services.webhooks import webhook_service
-
-logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
 
 @router.get("/pqc-migration", responses=RESP_403)
 async def get_pqc_migration_plan(
-    background_tasks: BackgroundTasks,
     scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     limit: int = Query(DEFAULT_PQC_PLAN_ITEMS, ge=1, le=MAX_PQC_PLAN_ITEMS),
@@ -62,42 +52,4 @@ async def get_pqc_migration_plan(
         limit=limit,
     )
     cache.set(cache_key, resp)
-
-    # Fire webhook out-of-band so a slow endpoint cannot block the API response.
-    background_tasks.add_task(_fire_pqc_webhook, db, resp, resolved)
-
     return resp
-
-
-async def _fire_pqc_webhook(
-    db: AsyncIOMotorDatabase,
-    resp: MigrationPlanResponse,
-    resolved: ResolvedScope,
-) -> None:
-    """Best-effort webhook dispatch for the PQC migration plan; exceptions are logged, never raised."""
-    payload = {
-        "event": WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "scope": resolved.scope,
-        "scope_id": resolved.scope_id,
-        "total_items": resp.summary.total_items,
-        "status_counts": resp.summary.status_counts,
-        "mappings_version": resp.mappings_version,
-    }
-    await webhook_service.safe_trigger_webhooks(
-        db,
-        event_type=WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
-        payload=payload,
-        project_id=resolved.scope_id if resolved.scope == "project" else None,
-        context="pqc_migration",
-    )
-
-    if resolved.scope == "project":
-        await safe_notify_project_event(
-            db,
-            project_id=resolved.scope_id,
-            event_type=NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
-            subject="PQC migration plan ready",
-            message=f"A new post-quantum migration plan with {resp.summary.total_items} item(s) is available for this project.",
-            context="pqc_migration",
-        )

@@ -25,11 +25,6 @@ from app.api.v1.helpers.findings import (
     get_category_type_filter,
 )
 from app.api.v1.helpers.ingest import process_findings_ingest
-from app.api.v1.helpers.integrations import (
-    SlackOAuthError,
-    exchange_slack_code_for_token,
-    extract_slack_tokens,
-)
 from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import (
     apply_system_settings_enforcement,
@@ -95,8 +90,6 @@ __all__ = [
     "RESP_AUTH_404",
     # Sorting helpers
     "SORT_FIELDS",
-    # Integration helpers
-    "SlackOAuthError",
     # Project helpers
     "aggregate_stats_by_category",
     "apply_system_settings_enforcement",
@@ -121,9 +114,7 @@ __all__ = [
     "detect_format",
     "enrich_team_with_usernames",
     "ensure_can_manage_target",
-    "exchange_slack_code_for_token",
     "extract_fix_versions",
-    "extract_slack_tokens",
     "fetch_and_enrich_team",
     "fetch_updated_user",
     "gather_cross_project_data",

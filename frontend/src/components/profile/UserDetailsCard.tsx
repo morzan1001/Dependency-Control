@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
 import { User } from '@/types/user';
-import { AppConfig } from '@/types/system';
 import { ApiError } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,13 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
-import { Slack } from "@/components/icons"
-import { ExternalLink } from "lucide-react"
 
 interface UserDetailsCardProps {
   user: User | undefined;
   notificationChannels: string[] | undefined;
-  appConfig: AppConfig | undefined;
 }
 
 function EmailChangeForm({ pendingEmail }: Readonly<{ pendingEmail: string | null | undefined }>) {
@@ -69,7 +65,7 @@ function EmailChangeForm({ pendingEmail }: Readonly<{ pendingEmail: string | nul
   );
 }
 
-export function UserDetailsCard({ user, notificationChannels, appConfig }: Readonly<UserDetailsCardProps>) {
+export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDetailsCardProps>) {
   const queryClient = useQueryClient();
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
@@ -149,25 +145,6 @@ export function UserDetailsCard({ user, notificationChannels, appConfig }: Reado
               <p className="text-xs text-muted-foreground">
                 Your Slack Member ID (not username) for direct messages.
               </p>
-              {appConfig?.slack_client_id && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-fit"
-                  asChild
-                >
-                  <a
-                    href={`https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(appConfig.slack_client_id)}&scope=${encodeURIComponent(appConfig.slack_oauth_scopes || 'chat:write')}&user_scope=`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Slack className="mr-2 h-4 w-4" />
-                    Add to Slack
-                    <ExternalLink className="ml-2 h-3 w-3" />
-                  </a>
-                </Button>
-              )}
             </div>
           )}
 

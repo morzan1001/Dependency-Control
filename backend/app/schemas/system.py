@@ -145,9 +145,6 @@ class AppConfig(BaseModel):
     global_rescan_enabled: bool
     global_rescan_interval: int
     notifications: NotificationChannels
-    # Slack OAuth (non-sensitive, needed for "Add to Slack" button)
-    slack_client_id: str | None
-    slack_oauth_scopes: str | None
     chat_enabled: bool
     # What a project created without an explicit choice runs; the create dialog starts from it.
     default_project_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))

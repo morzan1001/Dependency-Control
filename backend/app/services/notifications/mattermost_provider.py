@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any
 
@@ -12,50 +11,24 @@ logger = logging.getLogger(__name__)
 
 
 class MattermostProvider(NotificationProvider):
-    def __init__(self) -> None:
-        self._bot_user_id: str | None = None
-        # Prevents concurrent bot ID fetches within the same pod.
-        self._bot_id_lock = asyncio.Lock()
-
-    async def _get_bot_user_id(self, client: InstrumentedAsyncClient, base_url: str, headers: dict) -> str | None:
-        if self._bot_user_id:
-            return self._bot_user_id
-
-        async with self._bot_id_lock:
-            if self._bot_user_id:
-                return self._bot_user_id
-
-            try:
-                response = await client.get(f"{base_url}/api/v4/users/me", headers=headers)
-                if response.status_code == 200:
-                    bot_id: str | None = response.json()["id"]
-                    self._bot_user_id = bot_id
-                    return self._bot_user_id
-                logger.error(f"Failed to get Mattermost bot ID: {response.text}")
-                return None
-            except Exception as e:
-                logger.exception("Error getting Mattermost bot ID: %s", e)
-                return None
-
-    async def _get_user_id_by_username(
-        self, client: InstrumentedAsyncClient, username: str, base_url: str, headers: dict
+    async def _get_user_id(
+        self, client: InstrumentedAsyncClient, user_path: str, base_url: str, headers: dict
     ) -> str | None:
-        username = username.lstrip("@")
         try:
-            response = await client.get(f"{base_url}/api/v4/users/username/{username}", headers=headers)
+            response = await client.get(f"{base_url}/api/v4/users/{user_path}", headers=headers)
             if response.status_code == 200:
                 user_id: str | None = response.json()["id"]
                 return user_id
-            logger.warning(f"Mattermost user '{username}' not found: {response.text}")
+            logger.warning(f"Mattermost user lookup '{user_path}' failed: {response.text}")
             return None
         except Exception as e:
-            logger.exception("Error getting Mattermost user ID for %s: %s", username, e)
+            logger.exception("Error looking up Mattermost user %s: %s", user_path, e)
             return None
 
     async def _create_dm_channel(
         self, client: InstrumentedAsyncClient, user_id: str, base_url: str, headers: dict
     ) -> str | None:
-        bot_id = await self._get_bot_user_id(client, base_url, headers)
+        bot_id = await self._get_user_id(client, "me", base_url, headers)
         if not bot_id:
             return None
 
@@ -128,7 +101,7 @@ class MattermostProvider(NotificationProvider):
                 channel_id = destination
 
                 if destination.startswith("@"):
-                    user_id = await self._get_user_id_by_username(client, destination, base_url, headers)
+                    user_id = await self._get_user_id(client, f"username/{destination.lstrip('@')}", base_url, headers)
                     if not user_id:
                         logger.error(f"Cannot send Mattermost DM: User {destination} not found")
                         notifications_failed_total.labels(type="mattermost").inc()

@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 
+import { authApi } from '@/api/auth'
 import { setLogoutCallback } from '@/api/client'
 import { userApi } from '@/api/users'
 import { logger } from '@/lib/logger'
@@ -22,14 +24,20 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   const [isLoading, setIsLoading] = useState(true)
   const [permissions, setPermissions] = useState<string[]>([])
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    // Revoked while the tokens are still stored, so the interceptor can refresh an expired access token first.
+    if (localStorage.getItem('token')) {
+      await authApi.logout().catch((error: unknown) => logger.warn('Server logout failed', error))
+    }
     localStorage.removeItem('token')
     localStorage.removeItem('refresh_token')
+    queryClient.clear()
     setIsAuthenticated(false)
     setPermissions([])
     navigate('/login')
-  }, [navigate])
+  }, [navigate, queryClient])
 
   const hasPermission = useCallback((permission: string) => {
     return checkPermission(permissions, permission)
