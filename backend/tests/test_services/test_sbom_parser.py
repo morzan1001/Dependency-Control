@@ -1014,6 +1014,40 @@ class TestDuplicateComponentMerge:
         assert dep.hashes == {"sha1": "aaa", "sha256": "bbb"}
         assert set(dep.parent_components) == {"pkg:generic/parent-x@1.0", "pkg:generic/parent-y@1.0"}
 
+    def test_merge_fills_metadata_the_first_copy_lacks(self):
+        bare = {"type": "library", "name": "lib-c", "version": "1.0", "purl": "pkg:pypi/lib-c@1.0", "bom-ref": "c-1"}
+        described = {
+            **bare,
+            "bom-ref": "c-2",
+            "group": "acme",
+            "licenses": [{"license": {"id": "MIT", "url": "https://opensource.org/licenses/MIT"}}],
+            "description": "Parses C",
+            "author": "Jane Doe",
+            "publisher": "Acme",
+            "externalReferences": [
+                {"type": "website", "url": "https://lib-c.example"},
+                {"type": "vcs", "url": "https://github.com/acme/lib-c"},
+                {"type": "distribution", "url": "https://files.example/lib-c-1.0.tar.gz"},
+            ],
+        }
+        fields = (
+            "license",
+            "license_url",
+            "description",
+            "author",
+            "publisher",
+            "group",
+            "homepage",
+            "repository_url",
+            "download_url",
+        )
+
+        [merged] = self.parser.parse(_cyclonedx_with([bare, described])).dependencies
+        [alone] = self.parser.parse(_cyclonedx_with([described])).dependencies
+
+        assert all(getattr(alone, field) for field in fields)
+        assert {f: getattr(merged, f) for f in fields} == {f: getattr(alone, f) for f in fields}
+
     @pytest.mark.parametrize("scopes", [("optional", "required"), ("required", "optional"), ("excluded", None)])
     def test_merge_lets_a_runtime_scope_win(self, scopes):
         component = {"type": "library", "name": "x", "version": "1.0.0", "purl": "pkg:npm/x@1.0.0"}

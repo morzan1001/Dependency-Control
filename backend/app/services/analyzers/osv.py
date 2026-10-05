@@ -89,6 +89,8 @@ _TRIVY = "aquasecurity:trivy:"
 _Target = tuple[dict[str, Any], str, dict[str, Any]]
 # Each target with the querybatch ``{id, modified}`` stubs naming its vulnerabilities.
 _Pending = list[tuple[_Target, list[dict[str, Any]]]]
+# A target to ask querybatch about, with the stubs of its earlier pages and the token of its next one.
+_Query = tuple[_Target, list[dict[str, Any]], str | None]
 
 
 def _versioned_purl(component: dict[str, Any]) -> str | None:
@@ -290,7 +292,7 @@ class OSVAnalyzer(Analyzer):
         skipped = 0
         fetched: _Pending = []
         for chunk_start in range(0, len(uncached), batch_size):
-            chunk = uncached[chunk_start : chunk_start + batch_size]
+            chunk: list[_Query] = [(target, [], None) for target in uncached[chunk_start : chunk_start + batch_size]]
             skipped += await self._send_chunk(client, chunk, fetched, chunk_start, _MAX_REJECTION_RESENDS)
             if chunk_start + batch_size < len(uncached):
                 await asyncio.sleep(0.2)
@@ -411,25 +413,29 @@ class OSVAnalyzer(Analyzer):
     async def _send_chunk(
         self,
         client: InstrumentedAsyncClient,
-        chunk: list[_Target],
+        chunk: list[_Query],
         pending: _Pending,
         chunk_start: int,
         resends: int,
     ) -> int:
         """POST one chunk and collect its stubs in ``pending``; returns how many of its components were lost."""
+        queries = [{**query, "page_token": token} if token else query for (_, _, query), _, token in chunk]
         try:
             response = await client.send_with_backoff(
                 "POST",
                 self.api_url,
                 attempts=1 + self.max_retries,
                 base_delay=self.retry_base_delay,
-                json={"queries": [query for _, _, query in chunk]},
+                json={"queries": queries},
             )
         except httpx.HTTPError as exc:
             logger.warning(f"OSV batch starting at {chunk_start} failed: {type(exc).__name__}: {exc}")
             return len(chunk)
         if response.status_code == 200:
-            return self._handle_success(response, chunk, pending)
+            lost, next_pages = self._handle_success(response, chunk, pending)
+            if next_pages:
+                lost += await self._send_chunk(client, next_pages, pending, chunk_start, resends)
+            return lost
         if response.status_code == 400 and resends:
             return await self._resend_accepted(client, chunk, pending, chunk_start, response.text, resends - 1)
         logger.warning(
@@ -440,7 +446,7 @@ class OSVAnalyzer(Analyzer):
     async def _resend_accepted(
         self,
         client: InstrumentedAsyncClient,
-        chunk: list[_Target],
+        chunk: list[_Query],
         pending: _Pending,
         chunk_start: int,
         rejection: str,
@@ -454,26 +460,26 @@ class OSVAnalyzer(Analyzer):
             lost = await self._send_chunk(client, chunk[:middle], pending, chunk_start, resends)
             return lost + await self._send_chunk(client, chunk[middle:], pending, chunk_start + middle, resends)
         index = index or 0
-        logger.warning(f"OSV rejected {chunk[index][1]}: {rejection[:200]}")
+        logger.warning(f"OSV rejected {chunk[index][0][1]}: {rejection[:200]}")
         rest = chunk[:index] + chunk[index + 1 :]
         return 1 + (await self._send_chunk(client, rest, pending, chunk_start, resends) if rest else 0)
 
     def _handle_success(
         self,
         response: Any,
-        chunk: list[_Target],
+        chunk: list[_Query],
         pending: _Pending,
-    ) -> int:
+    ) -> tuple[int, list[_Query]]:
         """Parse a 200 response and align its ``{id, modified}`` stubs with their components.
 
-        Returns the number of components whose result was missing from the response.
+        Returns how many components the response left out, and the queries OSV has a further page for.
         """
         try:
             data = response.json()
         except ValueError as exc:
             # A proxy or CDN error page answering 200 must not abort the analyzer.
             logger.warning(f"OSV Batch API returned an unparseable body: {exc}")
-            return len(chunk)
+            return len(chunk), []
         batch_results = data.get("results", [])
         skipped = 0
         if len(batch_results) != len(chunk):
@@ -481,9 +487,14 @@ class OSVAnalyzer(Analyzer):
             skipped = max(0, len(chunk) - len(batch_results))
             batch_results = batch_results[: len(chunk)]
 
-        for target, res in zip(chunk, batch_results, strict=False):
-            pending.append((target, res.get("vulns") or []))
-        return skipped
+        next_pages: list[_Query] = []
+        for (target, earlier, _), res in zip(chunk, batch_results, strict=False):
+            stubs = earlier + (res.get("vulns") or [])
+            if res.get("next_page_token"):
+                next_pages.append((target, stubs, res["next_page_token"]))
+            else:
+                pending.append((target, stubs))
+        return skipped, next_pages
 
     def _result_entry(self, component: dict[str, Any], vulnerabilities: list[dict[str, Any]]) -> dict[str, Any]:
         """The analyzer result for one component from its normalized vulnerabilities."""
