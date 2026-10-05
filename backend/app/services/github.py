@@ -314,10 +314,7 @@ class GitHubService:
                         headers=self._get_auth_headers(),
                         params={**(params or {}), "page": page, "per_page": 100},
                     )
-                    if response.status_code != 200:
-                        logger.error(
-                            f"GitHub API GET {sanitize_for_log(endpoint)} page {page} failed: {response.status_code}"
-                        )
+                    if not response_ok("GitHub", endpoint, response):
                         failed = True
                         break
 
@@ -333,7 +330,9 @@ class GitHubService:
                         break
                     page += 1
         except Exception as e:
-            logger.exception("GitHub API paginated GET %s failed: %s", sanitize_for_log(endpoint), e)
+            logger.warning(
+                "GitHub API paginated GET %s failed: %s: %s", sanitize_for_log(endpoint), type(e).__name__, e
+            )
             failed = True
         if failed:
             yield None

@@ -202,8 +202,7 @@ class GitLabService:
                         headers=self._get_auth_headers(),
                         params={**(params or {}), "page": page, "per_page": per_page},
                     )
-                    if response.status_code != 200:
-                        logger.error(f"GitLab API GET {endpoint} page {page} failed: {response.status_code}")
+                    if not response_ok("GitLab", endpoint, response):
                         return None
 
                     items = response.json()
@@ -218,7 +217,7 @@ class GitLabService:
                     page += 1
 
         except Exception as e:
-            logger.exception("GitLab API paginated GET %s failed: %s: %s", endpoint, type(e).__name__, e)
+            logger.warning("GitLab API paginated GET %s failed: %s: %s", endpoint, type(e).__name__, e)
             return None
 
         return all_items
