@@ -1,4 +1,7 @@
 import asyncio
+import contextlib
+import ctypes
+import gc
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -79,6 +82,13 @@ async def _run_adhoc_job(db: AsyncIOMotorDatabase, job: dict[str, Any]) -> dict[
         logger.exception("Ad-hoc analysis %s failed", job["_id"])
         return {"status": SCAN_STATUS_FAILED, "error": str(exc)}
     return {"status": SCAN_STATUS_COMPLETED, "result_file_id": str(result_file_id)}
+
+
+def _release_memory_to_os() -> None:
+    """Force gc and release glibc heap pages back to OS (Linux-only)."""
+    gc.collect()
+    with contextlib.suppress(OSError, AttributeError):
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
 
 
 def _record_job(status: str, started: float) -> None:
@@ -300,6 +310,7 @@ class AnalysisWorkerManager:
         finally:
             claim_keeper.cancel()
             self._untrack_scan(scan_id)
+            _release_memory_to_os()
         logger.info(f"Worker {worker_id} finished scan {scan_id}")
 
     async def _process_adhoc(self, job_id: str, worker_id: str) -> None:
@@ -334,6 +345,7 @@ class AnalysisWorkerManager:
         finally:
             claim_keeper.cancel()
             self._untrack_scan(job_id)
+            _release_memory_to_os()
 
     async def worker(self, name: str) -> None:
         worker_id = f"{INSTANCE_ID}/{name}"

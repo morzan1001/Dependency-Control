@@ -990,19 +990,6 @@ async def _send_integrations_and_notifications(
     )
 
 
-def _release_memory_to_os() -> None:
-    """Force gc and release glibc heap pages back to OS (Linux-only)."""
-    import gc
-
-    gc.collect()
-    try:
-        import ctypes
-
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):
-        pass
-
-
 def _partial_run_reasons(
     failed_analyzers: list[str],
     sbom_load_failures: int,
@@ -1307,8 +1294,6 @@ async def run_analysis(
         sbom_generation=sbom_generation,
     )
     if outcome != final_status:
-        del findings_to_insert, vulnerability_findings
-        _release_memory_to_os()
         return outcome
 
     await _announce_outcome(
@@ -1327,7 +1312,5 @@ async def run_analysis(
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
     await record_scan_update_delta(db, scan_id)
-
-    _release_memory_to_os()
 
     return outcome
