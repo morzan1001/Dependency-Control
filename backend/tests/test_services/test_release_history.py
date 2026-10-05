@@ -87,9 +87,6 @@ class TestMedianDaysBetweenReleases:
 
 
 class TestDaysSinceLatestRelease:
-    def test_empty_returns_none(self):
-        assert days_since_latest_release([], ref=_REF) is None
-
     def test_returns_days_since_latest(self):
         releases = [_ri(days_ago=200), _ri(days_ago=42), _ri(days_ago=500)]
         assert days_since_latest_release(releases, ref=_REF) == 42
@@ -204,7 +201,7 @@ class TestAggregateUpstreamMetrics:
         ],
     )
     def test_prerelease_versions_are_not_releases(self, system, version):
-        assert self._yearly_releases(system, version) == 0
+        assert self._yearly_releases(system, version) is None
 
     @pytest.mark.parametrize(
         ("system", "version"),
@@ -220,6 +217,20 @@ class TestAggregateUpstreamMetrics:
     )
     def test_release_versions_stay_releases(self, system, version):
         assert self._yearly_releases(system, version) == 1
+
+    def test_a_package_with_only_prereleases_leaves_every_cadence_median_alone(self):
+        tagged = [_ri(days_ago=5 + 30 * month, version=f"v1.{month}.0") for month in range(6)]
+        pseudo = [_ri(days_ago=10 * day, version=f"v0.0.0-2026050{day}000000-abcdef123456") for day in range(9)]
+        history = {("go", "tagged-a"): tagged, ("go", "tagged-b"): tagged}
+        history |= {("go", f"golang.org/x/exp{index}"): pseudo for index in range(3)}
+
+        result = aggregate_upstream_metrics(history, observations=[], ref=_REF)
+
+        assert (
+            result.upstream_releases_last_12m_median,
+            result.upstream_days_between_releases_median,
+            result.upstream_days_since_latest_release_median,
+        ) == (6.0, 30.0, 5.0)
 
     def test_days_between_excludes_prereleases(self):
         # Stable releases 100 days apart; betas would shrink the gap if counted.

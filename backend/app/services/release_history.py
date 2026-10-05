@@ -119,10 +119,8 @@ def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> float | Non
 def days_since_latest_release(
     releases: Sequence[ReleaseInfo],
     ref: datetime,
-) -> int | None:
-    """Days between ``ref`` and the most recent release, or None if empty."""
-    if not releases:
-        return None
+) -> int:
+    """Days between ``ref`` and the most recent of a non-empty ``releases``."""
     return (ref - max(r.published_at for r in releases)).days
 
 
@@ -177,13 +175,13 @@ def aggregate_upstream_metrics(
     for key, releases in history.items():
         system, _ = _split_history_key(key)
         stable = [r for r in releases if _is_stable_release(r.version, system)]
+        if not stable:
+            continue
         releases_counts.append(releases_in_last_n_days(stable, window_days=365, ref=ref))
         gap = median_days_between_releases(stable)
         if gap is not None:
             gap_medians.append(gap)
-        latest = days_since_latest_release(stable, ref=ref)
-        if latest is not None:
-            days_since.append(latest)
+        days_since.append(days_since_latest_release(stable, ref=ref))
 
     latencies = compute_adoption_latencies(history, observations)
 
