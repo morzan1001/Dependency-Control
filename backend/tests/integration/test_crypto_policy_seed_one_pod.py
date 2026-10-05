@@ -4,6 +4,7 @@ or a rollout that bumps the seed version leaves one identical history row per re
 import asyncio
 
 import pytest
+from pymongo.errors import AutoReconnect
 
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.crypto_policy.seeder import seed_crypto_policies
@@ -28,6 +29,20 @@ async def test_a_pod_that_read_the_policy_before_the_seed_landed_writes_no_secon
         return None
 
     monkeypatch.setattr(CryptoPolicyRepository, "get_system_policy", _read_before_the_seed)
+    await seed_crypto_policies(db)
+
+    assert await _history(db) == [("seed", 1)]
+
+
+async def test_a_seed_whose_write_failed_is_applied_by_the_next_start(db, monkeypatch):
+    async def _primary_stepped_down(_repo, _policy):
+        raise AutoReconnect("primary stepped down")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(CryptoPolicyRepository, "upsert_system_policy", _primary_stepped_down)
+        with pytest.raises(AutoReconnect):
+            await seed_crypto_policies(db)
+
     await seed_crypto_policies(db)
 
     assert await _history(db) == [("seed", 1)]

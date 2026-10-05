@@ -105,22 +105,29 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
     if existing is not None and (existing.seed_version or 0) >= CURRENT_SEED_VERSION:
         logger.info("crypto_policy_seed: skipping, seed version %s is current", existing.seed_version)
         return
-    # Never released: a pod starting after expiry already reads the current seed_version.
-    if not await DistributedLocksRepository(db).acquire_lock("crypto_policy_seed", new_lock_holder(), ttl_seconds=600):
+    locks = DistributedLocksRepository(db)
+    holder = new_lock_holder()
+    # Released only on failure: after a seed, a pod starting past expiry already reads the current seed_version.
+    if not await locks.acquire_lock("crypto_policy_seed", holder, ttl_seconds=600):
+        logger.info("crypto_policy_seed: skipping, another pod holds the seed lock")
         return
-    rules = list(load_seed_rules())
-    editor = existing.updated_by if existing else None
-    if existing is not None and existing.seed_version is None and editor is None:
-        # A policy without seed_version can lack updated_by after a person reverted it; the audit history names them.
-        newest = await PolicyAuditRepository(db).list(policy_scope="system", policy_type="crypto", limit=1)
-        editor = newest[0].actor_user_id if newest else None
-    if existing is not None and editor is not None:
-        # A person edited this policy, so their rules stand and only seed rule_ids it lacks are added.
-        held = {r.rule_id for r in existing.rules}
-        rules = existing.rules + [r for r in rules if r.rule_id not in held]
-    await write_policy(
-        db, scope="system", project_id=None, rules=rules, action=PolicyAuditAction.SEED, actor=None, editor=editor
-    )
+    try:
+        rules = list(load_seed_rules())
+        editor = existing.updated_by if existing else None
+        if existing is not None and existing.seed_version is None and editor is None:
+            # A policy without seed_version can lack updated_by after a person reverted it; the audit log names them.
+            newest = await PolicyAuditRepository(db).list(policy_scope="system", policy_type="crypto", limit=1)
+            editor = newest[0].actor_user_id if newest else None
+        if existing is not None and editor is not None:
+            # A person edited this policy, so their rules stand and only seed rule_ids it lacks are added.
+            held = {r.rule_id for r in existing.rules}
+            rules = existing.rules + [r for r in rules if r.rule_id not in held]
+        await write_policy(
+            db, scope="system", project_id=None, rules=rules, action=PolicyAuditAction.SEED, actor=None, editor=editor
+        )
+    except BaseException:
+        await locks.release_lock("crypto_policy_seed", holder)
+        raise
     logger.info(
         "crypto_policy_seed: applied seed version %d, system policy holds %d rules",
         CURRENT_SEED_VERSION,
