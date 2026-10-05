@@ -83,8 +83,7 @@ async def connect_to_mongo() -> None:
     try:
         await db.client.admin.command("ping")
         logger.info("Connected to MongoDB")
-        if db_connections_active:
-            db_connections_active.set(1)
+        db_connections_active.set(1)
     except Exception as e:
         logger.exception("Failed to connect to MongoDB: %s", e)
         db.client = None
@@ -97,5 +96,4 @@ async def close_mongo_connection() -> None:
         db.client.close()
         db.client = None
         logger.info("Closed MongoDB connection")
-        if db_connections_active:
-            db_connections_active.set(0)
+        db_connections_active.set(0)

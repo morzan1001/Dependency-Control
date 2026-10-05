@@ -3,10 +3,12 @@
 import asyncio
 import contextlib
 import hashlib
+from unittest.mock import AsyncMock
 
 import pytest
 import redis.asyncio as redis
 import fakeredis
+from prometheus_client import REGISTRY
 
 from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, suppress_cache_writes
 
@@ -483,16 +485,80 @@ class TestAtomicPrimitives:
         assert await fake_cache.incr("rate_limit:k", 60) == 3
 
     @pytest.mark.asyncio
-    async def test_incr_reports_no_count_while_redis_is_unreachable(self, fake_cache):
-        server = fakeredis.FakeServer()
-        server.connected = False
-        fake_cache._client = fakeredis.aioredis.FakeRedis(server=server)
-
-        assert await fake_cache.incr("rate_limit:k", 60) is None
-
-    @pytest.mark.asyncio
     async def test_pop_hands_a_value_out_once(self, fake_cache):
         await fake_cache.set("oidc_state:s", True, ttl_seconds=60)
 
         assert await fake_cache.pop("oidc_state:s") is True
         assert await fake_cache.pop("oidc_state:s") is None
+
+
+_OPERATIONS = {
+    "get": (lambda c: c.get("k"), None),
+    "set": (lambda c: c.set("k", 1), False),
+    "delete": (lambda c: c.delete("k"), False),
+    "mget": (lambda c: c.mget(["k", "j"]), {"k": None, "j": None}),
+    "mset": (lambda c: c.mset({"k": 1}), False),
+    "incr": (lambda c: c.incr("n", 60), None),
+    "pop": (lambda c: c.pop("k"), None),
+}
+
+
+def _disconnect(cache, _monkeypatch):
+    server = fakeredis.FakeServer()
+    server.connected = False
+    cache._client = fakeredis.aioredis.FakeRedis(server=server)
+
+
+def _time_out(cache, monkeypatch):
+    monkeypatch.setattr(cache, "get_client", AsyncMock(side_effect=asyncio.TimeoutError))
+
+
+class TestFailuresFallBackToTheDefault:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", _OPERATIONS)
+    @pytest.mark.parametrize("lose_redis", [_disconnect, _time_out], ids=["unreachable", "timeout"])
+    async def test_a_lost_redis_answers_the_default_pauses_the_cache_and_still_times_the_call(
+        self, fake_cache, monkeypatch, lose_redis, operation
+    ):
+        call, default = _OPERATIONS[operation]
+        lose_redis(fake_cache, monkeypatch)
+        timing = ("cache_operation_duration_seconds_count", {"operation": operation})
+        timed = REGISTRY.get_sample_value(*timing) or 0.0
+
+        assert await call(fake_cache) == default
+        assert fake_cache._available is False
+        assert REGISTRY.get_sample_value(*timing) == timed + 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", _OPERATIONS)
+    async def test_a_cancelled_call_propagates_the_cancellation_and_still_times_the_call(
+        self, fake_cache, monkeypatch, operation
+    ):
+        call, _default = _OPERATIONS[operation]
+        monkeypatch.setattr(fake_cache, "get_client", AsyncMock(side_effect=asyncio.CancelledError))
+        timing = ("cache_operation_duration_seconds_count", {"operation": operation})
+        timed = REGISTRY.get_sample_value(*timing) or 0.0
+
+        with pytest.raises(asyncio.CancelledError):
+            await call(fake_cache)
+        assert REGISTRY.get_sample_value(*timing) == timed + 1
+
+    @pytest.mark.asyncio
+    async def test_a_corrupt_entry_reads_as_absent(self, fake_cache):
+        await fake_cache._client.set(fake_cache._make_key("bad"), "{not json")
+        await fake_cache.set("good", 1)
+
+        assert await fake_cache.get("bad") is None
+        assert await fake_cache.mget(["bad", "good"]) == {"bad": None, "good": 1}
+        assert await fake_cache.pop("bad") is None
+        assert fake_cache._available is True
+
+    @pytest.mark.asyncio
+    async def test_an_unserializable_value_is_not_stored_and_keeps_the_cache_up(self, fake_cache):
+        circular: list = []
+        circular.append(circular)
+
+        assert await fake_cache.set("k", circular) is False
+        assert await fake_cache.mset({"k": circular}) is False
+        assert await fake_cache._client.exists(fake_cache._make_key("k")) == 0
+        assert fake_cache._available is True

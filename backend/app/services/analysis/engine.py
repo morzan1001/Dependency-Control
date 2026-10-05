@@ -48,6 +48,7 @@ from app.core.metrics import (
 )
 from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.crypto_asset import CryptoAsset
+from app.models.finding import Finding
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
@@ -179,8 +180,7 @@ async def _record_result(
 
     # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
     if is_error_result(result):
-        if analysis_errors_total:
-            analysis_errors_total.labels(analyzer=analyzer_name).inc()
+        analysis_errors_total.labels(analyzer=analyzer_name).inc()
         logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
         return f"{analyzer_name}: Failed"
 
@@ -197,8 +197,7 @@ async def _record_result(
 
 def _analyzer_failed(analyzer_name: str, error: Exception, aggregator: ResultAggregator) -> str:
     logger.error("Analysis %s failed: %s", analyzer_name, error, exc_info=error)
-    if analysis_errors_total:
-        analysis_errors_total.labels(analyzer=analyzer_name).inc()
+    analysis_errors_total.labels(analyzer=analyzer_name).inc()
     # Surface the failure as a finding.
     aggregator.add_scan_error(analyzer_name, str(error), source=f"System: {analyzer_name}")
     return f"{analyzer_name}: Failed"
@@ -220,8 +219,7 @@ async def process_analyzer(
 ) -> str:
     analyzer_start_time = time.time()
     try:
-        if analysis_scans_total:
-            analysis_scans_total.labels(analyzer=analyzer_name).inc()
+        analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
         if isinstance(analyzer, CLIAnalyzer):
             assert sbom_path is not None
@@ -229,9 +227,7 @@ async def process_analyzer(
         else:
             result = await analyzer.analyze({}, settings=settings, parsed_components=parsed_components)
 
-        if analysis_duration_seconds:
-            duration = time.time() - analyzer_start_time
-            analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
+        analysis_duration_seconds.labels(analyzer=analyzer_name).observe(time.time() - analyzer_start_time)
 
         return await _record_result(analyzer_name, result, scan_id, db, aggregator, source, row_source=row_source)
     except Exception as e:
@@ -245,15 +241,13 @@ def _evaluate_crypto(
     results: dict[str, dict[str, Any]] = {}
     for name, evaluate in crypto_evaluators(catalog).items():
         started = time.time()
-        if analysis_scans_total:
-            analysis_scans_total.labels(analyzer=name).inc()
+        analysis_scans_total.labels(analyzer=name).inc()
         try:
             results[name] = evaluate(assets, policy)
         except Exception as e:
             logger.exception("Analysis %s failed: %s", name, e)
             results[name] = {"error": str(e), "findings": []}
-        if analysis_duration_seconds:
-            analysis_duration_seconds.labels(analyzer=name).observe(time.time() - started)
+        analysis_duration_seconds.labels(analyzer=name).observe(time.time() - started)
     return results
 
 
@@ -305,8 +299,7 @@ def _failed_analyzer_names(outcomes: dict[str, str]) -> tuple[list[str], list[st
 
 
 def _sbom_load_failed(aggregator: ResultAggregator, reason: object) -> None:
-    if analysis_gridfs_operations_total:
-        analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
+    analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
     aggregator.add_scan_error("system", f"{_SBOM_GRIDFS_LOAD_ERROR}: {reason}")
 
 
@@ -331,8 +324,7 @@ async def _load_sbom(
     fs: AsyncIOMotorGridFSBucket, gridfs_id: str, write_file: bool
 ) -> tuple[str | None, _ParsedDocument]:
     """Download one stored SBOM, write its bytes for the CLI scanners when asked, and parse it."""
-    if analysis_gridfs_operations_total:
-        analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
+    analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
     data = await (await open_gridfs_download_with_retry(fs, bson.ObjectId(gridfs_id))).read()
     path = None
     try:
@@ -342,8 +334,7 @@ async def _load_sbom(
             await asyncio.to_thread(Path(path).write_bytes, data)
         document = await asyncio.to_thread(json.loads, data)
         del data
-        if analysis_gridfs_operations_total:
-            analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
+        analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
         return path, await asyncio.to_thread(_parse_and_track_sbom, document)
     except BaseException:
         if path:
@@ -377,14 +368,11 @@ def _parse_and_track_sbom(document: Any) -> _ParsedDocument:
             f"skipped={parsed_sbom.skipped_components}, merged={parsed_sbom.merged_components}, "
             f"skipped_reasons={parsed_sbom.skipped_reasons}"
         )
-        if analysis_sbom_processed_total:
-            analysis_sbom_processed_total.labels(format=parsed_sbom.format.value).inc()
-        if analysis_components_parsed_total:
-            analysis_components_parsed_total.inc(len(parsed_components))
+        analysis_sbom_processed_total.labels(format=parsed_sbom.format.value).inc()
+        analysis_components_parsed_total.inc(len(parsed_components))
     except Exception as parse_err:
         logger.warning(f"Failed to pre-parse SBOM: {parse_err} - only the raw-document scanners will run")
-        if analysis_sbom_parse_errors_total:
-            analysis_sbom_parse_errors_total.inc()
+        analysis_sbom_parse_errors_total.inc()
     return parsed_sbom, parsed_components, source, sbom_format
 
 
@@ -488,17 +476,12 @@ async def _process_sbom(
     return list(await asyncio.gather(*tasks))
 
 
-def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
+def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
     """Track Prometheus metrics for aggregated findings."""
     for finding in aggregated_findings:
-        finding_type = finding.type if hasattr(finding, "type") else "unknown"
-        severity = finding.severity if hasattr(finding, "severity") else "unknown"
-        if analysis_findings_by_type_total:
-            analysis_findings_by_type_total.labels(type=finding_type, severity=severity).inc()
-        if analysis_findings_total:
-            scanners = finding.scanners if hasattr(finding, "scanners") else []
-            for scanner_name in scanners:
-                analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
+        analysis_findings_by_type_total.labels(type=finding.type, severity=finding.severity).inc()
+        for scanner_name in finding.scanners:
+            analysis_findings_total.labels(analyzer=scanner_name, severity=finding.severity).inc()
 
 
 _DEP_ENRICHMENT_COPY_KEYS = ("license", "license_expression", "license_category", "license_risks")
@@ -593,16 +576,15 @@ async def _run_epss_kev_enrichment(
         results_summary.append(f"epss_kev: {outcome} ({len(vulnerability_findings)} enriched)")
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
-        if analysis_enrichment_total:
-            analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
+        analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
 
         for vf in vulnerability_findings:
             details = vf.get("details", {})
             epss_score = details.get("epss_score")
-            if epss_score is not None and analysis_epss_scores:
+            if epss_score is not None:
                 with contextlib.suppress(ValueError, TypeError):
                     analysis_epss_scores.observe(float(epss_score))
-            if details.get(DETAILS_KEY_IN_KEV) and analysis_kev_vulnerabilities_total:
+            if details.get(DETAILS_KEY_IN_KEV):
                 analysis_kev_vulnerabilities_total.inc()
 
     except Exception as e:
@@ -834,8 +816,7 @@ async def _write_final_state(
         logger.warning("Scan %s: the claim moved to another run; leaving the scan to it.", scan_id)
         return None
     logger.warning("Scan %s: new input arrived during analysis; rescheduled instead of finalizing.", scan_id)
-    if analysis_race_conditions_total:
-        analysis_race_conditions_total.inc()
+    analysis_race_conditions_total.inc()
     return SCAN_STATUS_PENDING
 
 
@@ -1079,7 +1060,7 @@ async def run_analysis(
 
     await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}})
 
-    if scan_doc.is_rescan and analysis_rescan_operations_total:
+    if scan_doc.is_rescan:
         analysis_rescan_operations_total.inc()
 
     # Before the SBOM loop: an embedded CBOM re-persists over the carried copy of the same asset.
@@ -1230,8 +1211,7 @@ async def run_analysis(
         "completed_at": datetime.now(timezone.utc),
     }
 
-    if analysis_aggregation_duration_seconds:
-        analysis_aggregation_duration_seconds.observe(time.time() - aggregation_start_time)
+    analysis_aggregation_duration_seconds.observe(time.time() - aggregation_start_time)
 
     outcome = await _finalize_scan_and_project(
         scan_id,
