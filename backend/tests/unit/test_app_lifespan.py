@@ -20,6 +20,8 @@ def deps(monkeypatch):
     deps.sleep = AsyncMock()
     monkeypatch.setattr("app.main.asyncio.sleep", deps.sleep)
     monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: False)
+    deps.ensure_bucket_exists = AsyncMock()
+    monkeypatch.setattr("app.core.s3.ensure_bucket_exists", deps.ensure_bucket_exists)
     # A real WeasyPrint import inside a running loop can segfault (see tests/conftest.py).
     monkeypatch.setitem(sys.modules, "weasyprint", ModuleType("weasyprint"))
     return deps
@@ -36,8 +38,7 @@ async def test_lifespan_starts_before_serving_and_stops_after(deps):
 @pytest.mark.parametrize("bucket_error", [None, Exception("bucket unreachable")])
 async def test_lifespan_prepares_the_archive_bucket_before_the_workers(deps, monkeypatch, bucket_error):
     monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
-    deps.ensure_bucket_exists = AsyncMock(side_effect=bucket_error)
-    monkeypatch.setattr("app.core.s3.ensure_bucket_exists", deps.ensure_bucket_exists)
+    deps.ensure_bucket_exists.side_effect = bucket_error
     async with app.router.lifespan_context(app):
         assert deps.mock_calls == [
             call.connect_to_mongo(),
@@ -69,6 +70,20 @@ async def test_lifespan_gives_up_after_30_attempts(deps):
             pytest.fail("served without a database")
     assert deps.connect_to_mongo.await_count == 30
     assert deps.sleep.await_count == 29
+    deps.worker_manager.start.assert_not_awaited()
+    deps.worker_manager.stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("bad config"), OSError("disk full")])
+async def test_lifespan_fails_fast_on_a_non_connection_error(deps, error):
+    deps.init_db.side_effect = error
+    with pytest.raises(type(error)):
+        async with app.router.lifespan_context(app):
+            pytest.fail("served after a failed startup")
+    assert deps.connect_to_mongo.await_count == 1
+    deps.sleep.assert_not_awaited()
+    deps.close_mongo_connection.assert_not_awaited()
     deps.worker_manager.start.assert_not_awaited()
     deps.worker_manager.stop.assert_not_awaited()
 
