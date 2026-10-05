@@ -754,7 +754,6 @@ SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
             "styled-components",
             "emotion",
             "@emotion/react",
-            "@emotion/styled",
             "glamor",
         ],
         "suggestion": "Standardize on one CSS-in-JS solution",

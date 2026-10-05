@@ -20,7 +20,6 @@ def _make_finding(
     is_kev=False,
     epss_score=None,
     reachable=None,
-    reachability_level=None,
     aliases=None,
     finding_type="vulnerability",
     kev_ransomware=False,
@@ -46,9 +45,8 @@ def _make_finding(
                     "kev_ransomware_use": kev_ransomware,
                 }
             ],
+            "reachability": {"is_reachable": reachable},
         },
-        "reachable": reachable,
-        "reachability_level": reachability_level,
         "aliases": [],
     }
 

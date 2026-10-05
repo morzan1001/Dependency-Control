@@ -15,8 +15,10 @@ from app.core.init_db import create_indexes
 from app.models.finding import Finding
 from app.models.waiver import Waiver
 from app.repositories.waivers import WaiverRepository
+from app.schemas.finding_details import ReachabilityInfo
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.analysis.engine import _prepare_finding_records
+from app.services.reachability_enrichment import store_reachability
 from app.services.sbom_parser import parse_sbom
 from app.services.stats import recalculate_project_stats
 from tests.helpers.findings import stored_vulnerability
@@ -506,6 +508,27 @@ async def test_an_advisory_the_previous_build_reported_is_no_regression(
 
     assert resp.status_code == 200, resp.text
     assert "regression_detected" not in _card_types(resp)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_finding_its_callgraph_proves_unreachable_counts_as_unreachable_on_its_card(
+    client, db, owner_auth_headers_proj, no_live_intel
+):
+    await _insert_scan(db, "s")
+    await db.dependencies.insert_one(
+        {"_id": "d1", "project_id": "p", "scan_id": "s", "name": "lib", "version": "1.0", "direct": True}
+    )
+    advisory = {"id": "CVE-2024-0001", "severity": "CRITICAL", "fixed_version": "1.1"}
+    [record] = _vulnerability_records("s", "lib", "1.0", [advisory])
+    store_reachability(record, ReachabilityInfo(is_reachable=False, analysis_level="import"))
+    await db.findings.insert_one(record)
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    [card] = [r for r in resp.json()["recommendations"] if r["type"] == "direct_dependency_update"]
+    assert (card["impact"]["unreachable_count"], card["priority"]) == (1, "high")
 
 
 @pytest.mark.asyncio

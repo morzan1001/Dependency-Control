@@ -42,9 +42,8 @@ def _make_vuln_finding(
                     "epss_score": epss_score,
                 }
             ],
+            "reachability": {"is_reachable": reachable},
         },
-        "reachable": reachable,
-        "reachability_level": None,
         "aliases": [],
     }
 

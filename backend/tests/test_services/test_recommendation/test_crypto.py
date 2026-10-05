@@ -1,3 +1,5 @@
+import pytest
+
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
@@ -48,3 +50,27 @@ def test_the_action_names_every_rule_that_matched_the_asset_not_only_the_lead():
 
     assert len(matched) > 1
     assert rec.action["rule_ids"] == matched
+
+
+@pytest.mark.parametrize(
+    ("name", "primitive", "bits", "suggested"),
+    [
+        ("ECDSA", CryptoPrimitive.SIGNATURE, 160, "increase from 160 bits per policy"),
+        ("RSA-2048", CryptoPrimitive.PKE, 1024, "≥3072-bit (currently 1024)"),
+    ],
+)
+def test_only_rsa_and_dsa_keys_are_told_to_reach_3072_bits(name, primitive, bits, suggested):
+    asset = CryptoAsset(
+        project_id="p",
+        scan_id="s",
+        bom_ref=f"crypto/algorithm/{name}",
+        name=name,
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=primitive,
+        key_size_bits=bits,
+    )
+    findings = crypto_findings_for_assets([asset], load_seed_rules(), scanner="crypto_weak_key")
+
+    [rec] = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_KEY])
+
+    assert rec.action["suggested_replacement"] == suggested
