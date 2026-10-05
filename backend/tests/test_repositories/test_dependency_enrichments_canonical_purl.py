@@ -60,26 +60,3 @@ class TestGetByPurl:
         db = _db_with_enrichment(CANONICAL)
         doc = asyncio.run(DependencyEnrichmentRepository(db).get_by_purl(CANONICAL))
         assert doc is not None
-
-
-class TestGetManyByPurls:
-    def test_result_is_keyed_by_requested_purl(self):
-        db = _db_with_enrichment(CANONICAL)
-        result = asyncio.run(DependencyEnrichmentRepository(db).get_many_by_purls([QUALIFIED]))
-        assert QUALIFIED in result
-        assert result[QUALIFIED]["license"] == "Apache-2.0"
-
-    def test_mixed_variants_of_same_artifact_resolve_to_one_doc(self):
-        db = _db_with_enrichment(CANONICAL)
-        result = asyncio.run(DependencyEnrichmentRepository(db).get_many_by_purls([QUALIFIED, CANONICAL]))
-        assert result[QUALIFIED] == result[CANONICAL]
-
-    def test_unknown_purl_is_absent(self):
-        db = _db_with_enrichment(CANONICAL)
-        result = asyncio.run(DependencyEnrichmentRepository(db).get_many_by_purls([GO_QUALIFIED]))
-        assert result == {}
-
-    def test_empty_input(self):
-        db = FakeDatabase()
-        result = asyncio.run(DependencyEnrichmentRepository(db).get_many_by_purls([]))
-        assert result == {}

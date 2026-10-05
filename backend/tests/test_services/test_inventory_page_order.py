@@ -1,13 +1,11 @@
 """Inventory pages cut from a sort that repeats keys overlap; each sort ends on a key unique within the scan."""
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
 
 import pytest
 
 from app.models.project import Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.services.inventory.components import get_components_page
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
@@ -66,15 +64,3 @@ async def test_the_crypto_page_breaks_name_ties_on_the_bom_ref():
     await repo.list_by_scan("p1", "s1", limit=25, skip=25)
 
     assert assets.find.return_value.sort.call_args.args == ([("name", 1), ("bom_ref", 1)],)
-
-
-@pytest.mark.asyncio
-async def test_an_enrichment_lookup_is_cut_into_bounded_in_lists():
-    enrichments = create_mock_collection()
-    enrichments.find.return_value.to_list = AsyncMock(return_value=[])
-    repo = DependencyEnrichmentRepository(create_mock_db({"dependency_enrichments": enrichments}))
-
-    await repo.get_many_by_purls([f"pkg:npm/p{i}@1.0.0" for i in range(1200)])
-
-    widths = [len(call.args[0]["purl"]["$in"]) for call in enrichments.find.call_args_list]
-    assert widths == [500, 500, 200]

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.services.analyzers.license_compliance import LicenseAnalyzer
+
 _PID = "test-project-id"
 _NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
 
@@ -303,16 +305,8 @@ async def test_licenses_grouped_with_category_and_unknown_bucket(client, db, mem
     await _seed_scan(db)
     await _seed_dep(db, "s1", "a", license_id="MIT")
     await _seed_dep(db, "s1", "b", license_id="MIT")
-    await _seed_dep(db, "s1", "c", license_id="GPL-3.0-only", purl="pkg:npm/c@1.0.0")
+    await _seed_dep(db, "s1", "c", license_id="GPL-3.0-only")
     await _seed_dep(db, "s1", "d")
-    await db.dependency_enrichments.insert_one(
-        {
-            "purl": "pkg:npm/c@1.0.0",
-            "license": "GPL-3.0-only",
-            "license_category": "strong_copyleft",
-            "license_risks": ["copyleft obligations"],
-        }
-    )
 
     resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
 
@@ -321,21 +315,7 @@ async def test_licenses_grouped_with_category_and_unknown_bucket(client, db, mem
     assert items["MIT"]["component_count"] == 2
     assert sorted(items["MIT"]["components"]) == ["a@1.0.0", "b@1.0.0"]
     assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
-    assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
     assert items["unknown"]["component_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_the_unknown_row_takes_no_category_from_another_scans_enrichment(client, db, member_auth_headers):
-    await _seed_scan(db)
-    await _seed_dep(db, "s1", "d", purl="pkg:npm/d@1.0.0")
-    await db.dependency_enrichments.insert_one(
-        {"purl": "pkg:npm/d@1.0.0", "license": "MIT", "license_category": "permissive"}
-    )
-
-    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
-
-    assert {i["license"]: i["category"] for i in resp.json()["items"]} == {"unknown": None}
 
 
 @pytest.mark.asyncio
@@ -351,51 +331,6 @@ async def test_the_tiles_count_what_the_tables_show(client, db, member_auth_head
 
     assert stats["license_count"] == len(licenses["items"]) == 3
     assert stats["ecosystem_count"] == len({i["ecosystem"] for i in components["items"]}) == 2
-
-
-@pytest.mark.asyncio
-async def test_licenses_reads_category_and_risks_from_dependency_doc(client, db, member_auth_headers):
-    await _seed_scan(db)
-    await _seed_dep(
-        db,
-        "s1",
-        "c",
-        license_id="GPL-3.0-only",
-        purl="pkg:npm/c@1.0.0",
-        license_category="strong_copyleft",
-        license_risks=["copyleft obligations"],
-    )
-
-    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
-
-    assert resp.status_code == 200
-    items = {i["license"]: i for i in resp.json()["items"]}
-    assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
-    assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
-
-
-@pytest.mark.asyncio
-async def test_licenses_dependency_doc_fields_win_over_enrichment(client, db, member_auth_headers):
-    await _seed_scan(db)
-    await _seed_dep(
-        db,
-        "s1",
-        "c",
-        license_id="GPL-3.0-only",
-        purl="pkg:npm/c@1.0.0",
-        license_category="strong_copyleft",
-        license_risks=["copyleft obligations"],
-    )
-    await db.dependency_enrichments.insert_one(
-        {"purl": "pkg:npm/c@1.0.0", "license_category": "permissive", "license_risks": ["should not be used"]}
-    )
-
-    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
-
-    assert resp.status_code == 200
-    items = {i["license"]: i for i in resp.json()["items"]}
-    assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
-    assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
 
 
 @pytest.mark.asyncio
@@ -429,20 +364,45 @@ async def test_licenses_tokenizes_composite_spdx_expressions(client, db, member_
 
 
 @pytest.mark.asyncio
-async def test_licenses_composite_doc_does_not_stamp_enrichment_onto_constituent_groups(
-    client, db, member_auth_headers
-):
+@pytest.mark.live_mongo
+async def test_each_license_row_classifies_its_id_as_the_license_analyzer_does(client, db, member_auth_headers):
     await _seed_scan(db)
-    await _seed_dep(db, "s1", "c", license_id="Apache-2.0 AND GPL-3.0-only", purl="pkg:npm/c@1.0.0")
-    await db.dependency_enrichments.insert_one(
-        {"purl": "pkg:npm/c@1.0.0", "license_category": "strong_copyleft", "license_risks": ["copyleft"]}
+    # The analysis stamps a composite's most restrictive or chosen member, and a URL-resolved license, onto the row.
+    await _seed_dep(
+        db,
+        "s1",
+        "a",
+        license_id="MIT AND GPL-3.0-only",
+        license_category="strong_copyleft",
+        license_risks=["Cannot be combined with proprietary code"],
     )
+    await _seed_dep(
+        db,
+        "s1",
+        "b",
+        license_id="Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
+        license_category="permissive",
+    )
+    await _seed_dep(db, "s1", "c", license_id="LicenseRef-acme", license_category="permissive")
+    await _seed_dep(db, "s1", "d")
 
     resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
 
-    assert resp.status_code == 200
-    items = {i["license"]: i for i in resp.json()["items"]}
-    assert items["Apache-2.0"]["category"] is None
+    rows = {item["license"]: (item["category"], item["risks"]) for item in resp.json()["items"]}
+    expected = {}
+    for license_id in rows:
+        result = await LicenseAnalyzer().analyze({}, parsed_components=[{"name": "x", "license": license_id}])
+        recorded = result["component_licenses"]
+        expected[license_id] = (recorded[0]["category"], recorded[0]["risks"]) if recorded else (None, [])
+    assert {license_id: category for license_id, (category, _) in expected.items()} == {
+        "MIT": "permissive",
+        "GPL-3.0-only": "strong_copyleft",
+        "Apache-2.0": "permissive",
+        "GPL-2.0-only WITH Classpath-exception-2.0": "weak_copyleft",
+        "LicenseRef-acme": None,
+        "unknown": None,
+    }
+    assert rows == expected
 
 
 @pytest.mark.asyncio
