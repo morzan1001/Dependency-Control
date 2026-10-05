@@ -121,6 +121,38 @@ class TestNormalizeScorecard:
         f = next(iter(self.agg.findings.values()))
         assert "3.5" in f.description
 
+    def _recommendation(self, failed_checks: list[dict[str, Any]]) -> str | None:
+        issue = {
+            "component": "pkg",
+            "version": "1.0",
+            "scorecard": {"overallScore": 6.0, "checks": []},
+            "failed_checks": failed_checks,
+            "critical_issues": [],
+        }
+        self.agg.aggregate("deps_dev", {"scorecard_issues": [issue]})
+        [quality_issue] = next(iter(self.agg.findings.values())).details["quality_issues"]
+        return quality_issue["details"].get("recommendation")
+
+    def test_recommendation_joins_the_advice_of_known_failed_checks_in_check_order(self):
+        names = ["SAST", "Pinned-Dependencies", "Maintained", "Fuzzing", "Code-Review", None]
+        names += ["CII-Best-Practices", "Vulnerabilities", "SAST"]
+        checks: list[dict[str, Any]] = [{"name": n, "score": 0} for n in names] + [{"score": 1}]
+
+        assert self._recommendation(checks) == " • ".join(
+            [
+                "No static analysis - potential code quality issues",
+                "Consider finding an actively maintained alternative",
+                "No fuzzing - potential undiscovered bugs",
+                "Limited code review process - higher risk of unreviewed changes",
+                "Package doesn't follow OpenSSF best practices",
+                "Check for and apply security patches",
+                "No static analysis - potential code quality issues",
+            ]
+        )
+
+    def test_recommendation_is_absent_without_known_failed_checks(self):
+        assert self._recommendation([{"name": "Pinned-Dependencies", "score": 2}]) is None
+
     def test_empty_scorecard_issues(self):
         self.agg.aggregate("deps_dev", {"scorecard_issues": []})
         assert len(self.agg.findings) == 0

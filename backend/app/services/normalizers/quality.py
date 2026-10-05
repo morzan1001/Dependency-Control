@@ -8,6 +8,15 @@ from app.services.normalizers.utils import FindingIdPrefix, build_finding_id, sa
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
 
+_FAILED_CHECK_ADVICE = {
+    "Maintained": "Consider finding an actively maintained alternative",
+    "Vulnerabilities": "Check for and apply security patches",
+    "CII-Best-Practices": "Package doesn't follow OpenSSF best practices",
+    "Code-Review": "Limited code review process - higher risk of unreviewed changes",
+    "Fuzzing": "No fuzzing - potential undiscovered bugs",
+    "SAST": "No static analysis - potential code quality issues",
+}
+
 
 def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     """Turn deps_dev OpenSSF Scorecard results into findings and enrichment data."""
@@ -47,21 +56,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
 
         description = ". ".join(description_parts)
 
-        recommendations: list[str] = []
-        for check in failed_checks:
-            check_name = check.get("name", "")
-            if check_name == "Maintained":
-                recommendations.append("Consider finding an actively maintained alternative")
-            elif check_name == "Vulnerabilities":
-                recommendations.append("Check for and apply security patches")
-            elif check_name == "CII-Best-Practices":
-                recommendations.append("Package doesn't follow OpenSSF best practices")
-            elif check_name == "Code-Review":
-                recommendations.append("Limited code review process - higher risk of unreviewed changes")
-            elif check_name == "Fuzzing":
-                recommendations.append("No fuzzing - potential undiscovered bugs")
-            elif check_name == "SAST":
-                recommendations.append("No static analysis - potential code quality issues")
+        advice = [_FAILED_CHECK_ADVICE[c["name"]] for c in failed_checks if c.get("name") in _FAILED_CHECK_ADVICE]
 
         aggregator.add_finding(
             Finding(
@@ -80,7 +75,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
                     project_url=project_url,
                     repository=scorecard.get("repository"),
                     scorecard_date=scorecard.get("date"),
-                    recommendation=(" • ".join(recommendations) if recommendations else None),
+                    recommendation=" • ".join(advice) or None,
                     checks_summary={
                         check.get("name"): check.get("score")
                         for check in (scorecard.get("checks") or [])
