@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import type { InternalAxiosRequestConfig } from 'axios'
+import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { MemoryRouter, Navigate, Routes, Route, useNavigate } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -91,14 +91,25 @@ const probeRoutes = (
 let sentRequests: { method?: string; url?: string; authorization: unknown }[] = []
 
 // Answers every request with the bearer it carried, so cached data reveals whose session fetched it.
-function stubBackend() {
+function stubBackend(failLogout?: (config: InternalAxiosRequestConfig) => Error) {
   sentRequests = []
   api.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
     const authorization = config.headers.Authorization
     sentRequests.push({ method: config.method, url: config.url, authorization })
+    if (failLogout && config.url === '/logout') throw failLogout(config)
     return { data: { owner: authorization }, status: 200, statusText: 'OK', headers: {}, config }
   }
 }
+
+const serverError = (config: InternalAxiosRequestConfig) =>
+  new AxiosError('Request failed with status code 500', AxiosError.ERR_BAD_RESPONSE, config, null, {
+    data: {},
+    status: 500,
+    statusText: 'Internal Server Error',
+    headers: {},
+    config,
+  })
+const networkError = () => new Error('Network Error')
 
 function Projects() {
   const { logout } = useAuth()
@@ -205,6 +216,27 @@ describe('AuthProvider logout', () => {
     expect(sentRequests).toContainEqual({ method: 'post', url: '/logout', authorization: `Bearer ${token}` })
     expect(localStorage.getItem('token')).toBeNull()
     expect(localStorage.getItem('refresh_token')).toBeNull()
+  })
+
+  it.each([
+    ['a server error', serverError],
+    ['a network failure', networkError],
+  ])('signs out locally when the revoke fails with %s', async (_, failure) => {
+    stubBackend(failure)
+    localStorage.setItem('token', makeToken(['read']))
+    localStorage.setItem('refresh_token', 'refresh')
+    const queryClient = sessionQueryClient()
+
+    renderSession(makeToken(['read'], 'user-2'), queryClient)
+    await screen.findByText(/^Bearer /)
+
+    fireEvent.click(screen.getByText('logout'))
+    await screen.findByText('login')
+
+    expect(sentRequests.map((r) => r.url)).toContain('/logout')
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+    expect(queryClient.getQueryData(['projects'])).toBeUndefined()
   })
 
   it("empties the query cache so the next login fetches its own data", async () => {
