@@ -63,6 +63,13 @@ _ORACLE_LINUX = [_cycle("9", _days_ahead(2000), "9.4"), _cycle("7", _days_ago(60
 _OPENSUSE = [_cycle("15.6", _days_ahead(300), "15.6"), _cycle("15.3", _days_ago(900), "15.3")]
 _ANGULARJS = [_cycle("1.8", _days_ago(1000), "1.8.3"), _cycle("1.7", _days_ago(1500), "1.7.9")]
 _PYTHON = [_cycle("3.13", _days_ahead(1500), "3.13.0"), _cycle("2.7", True, "2.7.18")]
+_EXPRESS = [_cycle("5", False, "5.2.1"), _cycle("4", False, "4.22.3"), _cycle("3", _days_ago(4000), "3.21.2")]
+_NODEJS_OLD = [_cycle("22", _days_ahead(600), "22.9.0", lts=True), _cycle("4", _days_ago(3000), "4.9.1", lts=True)]
+_REDIS = [_cycle("8.2", False, "8.2.1"), _cycle("5.0", _days_ago(1200), "5.0.14")]
+_MONGODB = [_cycle("8.0", _days_ahead(900), "8.0.4"), _cycle("6.0", _days_ago(400), "6.0.20")]
+_POSTGRESQL = [_cycle("17", _days_ahead(1500), "17.2"), _cycle("8.4", _days_ago(4000), "8.4.22")]
+_ELASTICSEARCH = [_cycle("8", False, "8.19.3"), _cycle("7", _days_ago(260), "7.17.29")]
+_TRAEFIK = [_cycle("3.5", False, "3.5.2"), _cycle("2.10", _days_ago(600), "2.10.7")]
 
 
 class _EndOfLifeDate:
@@ -345,6 +352,73 @@ class TestProductResolution:
     @pytest.mark.asyncio
     async def test_nvd_cpe_spellings_reach_the_product(self, serve, component, product):
         serve({"spring-boot": _SPRING_BOOT, "apache-http-server": _HTTPD, "nodejs": _NODEJS})
+
+        [issue] = await _issues([component])
+
+        assert issue["product"] == product
+
+    @pytest.mark.asyncio
+    async def test_express_is_checked_against_its_own_release_cycles(self, serve):
+        serve({"express": _EXPRESS, "nodejs": _NODEJS_OLD})
+        components = [
+            _component("express", "4.18.2", "pkg:npm/express@4.18.2"),
+            _component("express", "3.21.2", "pkg:npm/express@3.21.2"),
+        ]
+
+        issues = await _issues(components)
+
+        assert [(issue["product"], issue["version"]) for issue in issues] == [("express", "3.21.2")]
+
+    @pytest.mark.parametrize(
+        "component",
+        [
+            pytest.param(
+                _component("redis", "5.0.1", "pkg:pypi/redis@5.0.1", "cpe:2.3:a:python:redis:5.0.1:*:*:*:*:*:*:*"),
+                id="pypi-redis-with-syft-cpe",
+            ),
+            pytest.param(_component("mongodb", "6.0.0", "pkg:npm/mongodb@6.0.0"), id="npm-mongodb"),
+            pytest.param(_component("pg", "8.4.2", "pkg:npm/pg@8.4.2"), id="npm-pg"),
+            pytest.param(_component("elasticsearch", "7.17.9", "pkg:pypi/elasticsearch@7.17.9"), id="pypi-es"),
+            pytest.param(_component("redis", "5.0.8", "pkg:gem/redis@5.0.8"), id="gem-redis"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_client_library_named_after_its_server_is_not_that_server(self, serve, component):
+        upstream, _ = serve(
+            {"redis": _REDIS, "mongodb": _MONGODB, "postgresql": _POSTGRESQL, "elasticsearch": _ELASTICSEARCH}
+        )
+
+        assert await _issues([component]) == []
+        assert upstream.requested == []
+
+    @pytest.mark.parametrize(
+        ("component", "product"),
+        [
+            pytest.param(
+                _component(
+                    "github.com/traefik/traefik/v2",
+                    "v2.10.4",
+                    "pkg:golang/github.com/traefik/traefik/v2@v2.10.4",
+                    "cpe:2.3:a:traefik:traefik:v2.10.4:*:*:*:*:*:*:*",
+                ),
+                "traefik",
+                id="go-binary-main-module",
+            ),
+            pytest.param(
+                _component(
+                    "elasticsearch",
+                    "7.17.9",
+                    "pkg:maven/org.elasticsearch/elasticsearch@7.17.9",
+                    "cpe:2.3:a:elastic:elasticsearch:7.17.9:*:*:*:*:*:*:*",
+                ),
+                "elasticsearch",
+                id="server-jar",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_server_shipped_as_a_go_module_or_jar_keeps_its_product(self, serve, component, product):
+        serve({"traefik": _TRAEFIK, "elasticsearch": _ELASTICSEARCH})
 
         [issue] = await _issues([component])
 

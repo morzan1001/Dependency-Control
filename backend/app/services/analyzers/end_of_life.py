@@ -11,6 +11,7 @@ from app.core.constants import (
     EOL_HIGH_AFTER_DAYS,
     EOL_MEDIUM_AFTER_DAYS,
     NAME_TO_EOL_MAPPING,
+    SERVER_NAME_TO_EOL_MAPPING,
 )
 from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
 from app.core.purl import get_purl_type, is_os_package_type
@@ -35,6 +36,10 @@ _OS_ALIASES = {
     "alma": "almalinux",
 }
 
+# Syft guesses CPEs from the package name (pypi redis -> python:redis); Java and Go servers ship as jars and modules.
+_CLIENT_REGISTRIES = frozenset({"npm", "pypi", "gem", "cargo", "nuget", "composer"})
+_SERVER_PRODUCTS = frozenset(SERVER_NAME_TO_EOL_MAPPING.values())
+
 _CPE_APPLICATION_PRODUCT = re.compile(r"cpe:(?:/?2\.3:|/)a:[^:]+:([^:]+)")
 _VERSION_DECORATION = re.compile(r"^(?:\d+:|go(?=\d)|v(?=\d))")
 # Debian, Ubuntu, RHEL/Fedora and Amazon rebuilds: the distribution backports fixes until its own end of life.
@@ -49,6 +54,7 @@ def _mapped_products(key: str) -> set[str]:
 def _resolve_eol_products(component: dict[str, Any]) -> set[str]:
     """A component's candidate endoflife.date products: its CPE products and mapped name, else the bare name."""
     name = (component.get("name") or "").lower()
+    purl_type = get_purl_type(component.get("purl"))
     products: set[str] = set()
     for cpe in component.get("cpes") or []:
         if match := _CPE_APPLICATION_PRODUCT.match(cpe):
@@ -57,9 +63,10 @@ def _resolve_eol_products(component: dict[str, Any]) -> set[str]:
         products |= _mapped_products(name)
     if component.get("type") == "operating-system" and name in _OS_ALIASES:
         products.add(_OS_ALIASES[name])
-    if name == "stdlib" and get_purl_type(component.get("purl")) == "golang":
+    if name == "stdlib" and purl_type == "golang":
         products.add("go")
-    return products or {name}
+    products = products or {name}
+    return products - _SERVER_PRODUCTS if purl_type in _CLIENT_REGISTRIES else products
 
 
 def collect_products_to_check(components: list[dict[str, Any]]) -> dict[str, list[tuple[str, str, bool]]]:
