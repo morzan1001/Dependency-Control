@@ -610,8 +610,9 @@ class ChatToolRegistry:
     async def _tool_search_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         search_query = ctx.args["query"]
         pattern = {"$regex": re.escape(search_query), "$options": "i"}
+        head, names = await self._heads_in_scope(ctx)
         query = {
-            **await self._in_scope(ctx),
+            "scan_id": {"$in": list(head.values())},
             "$or": [{"finding_id": pattern}, {"description": pattern}, {"component": pattern}, advisory_match(pattern)],
         }
         if ctx.args.get("severity"):
@@ -621,7 +622,6 @@ class ChatToolRegistry:
         findings, findings_total = await bounded_read(
             ctx.db["findings"], query, subject="matching findings", limit=ctx.args["limit"]
         )
-        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in findings)
         return {
             "findings": _slim_with_project(findings, names),
             "count": len(findings),
@@ -1262,7 +1262,8 @@ class ChatToolRegistry:
 
     async def _tool_get_cve_details(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""
-        finding = await ctx.db["findings"].find_one({**await self._in_scope(ctx), **advisory_match(cve)})
+        head, _ = await self._heads_in_scope(ctx)
+        finding = await ctx.db["findings"].find_one({"scan_id": {"$in": list(head.values())}, **advisory_match(cve)})
         if not finding:
             return {"error": f"{cve} not found in any of your projects' scan data"}
         advisory = next(v for v in finding["details"]["vulnerabilities"] if cve in advisory_ids(v))

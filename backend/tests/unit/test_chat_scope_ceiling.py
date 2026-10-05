@@ -76,12 +76,12 @@ async def test_the_refusal_names_the_ceiling_instead_of_a_generic_failure(small_
 
 
 @pytest.mark.asyncio
-async def test_a_legacy_project_document_does_not_fail_the_search():
+async def test_a_legacy_project_document_does_not_fail_the_waiver_listing():
     """Narrowing to the caller's projects needs their ids alone, so a document missing another field answers."""
     db = FakeDatabase()
     _seed_projects(db, _CEILING)
     del db.projects._docs["p0"]["name"]
 
-    result = await ChatToolRegistry().execute_tool(_ESTATE_TOOL, {"query": _SEARCH_TERM}, _caller(), db)
+    result = await ChatToolRegistry().execute_tool("get_expiring_waivers", {}, _caller(), db)
 
     assert "error" not in result

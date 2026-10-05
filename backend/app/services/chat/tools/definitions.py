@@ -195,8 +195,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "search_findings",
             "description": (
-                "Search across all findings the user has access to. Use for cross-project queries like "
-                "'find all log4j vulnerabilities'. findings_total says how many findings match."
+                "Search the head-build findings of every project the user has access to. Use for cross-project "
+                "queries like 'find all log4j vulnerabilities'. findings_total says how many findings match."
             ),
             "parameters": {
                 "type": "object",
