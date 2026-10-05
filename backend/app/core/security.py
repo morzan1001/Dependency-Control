@@ -5,8 +5,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import jwt
 import pyotp
-from jose import ExpiredSignatureError, JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import ValidationError
 
@@ -33,7 +33,7 @@ def _create_token(
     """Create a JWT with a jti claim (for blacklisting on logout) and optional extra claims."""
     to_encode = {
         "exp": expire,
-        # A float, because jose truncates a datetime to the second and last_logout_at is finer.
+        # A float, because a datetime claim is encoded truncated to the second and last_logout_at is finer.
         "iat": time.time(),
         "sub": str(subject),
         "type": token_type,
@@ -49,10 +49,10 @@ def _decode_typed_token(token: str, expected_type: str) -> dict[str, Any] | None
     """The claims of a valid JWT of the expected type, or None if invalid."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-    except ExpiredSignatureError:
+    except jwt.ExpiredSignatureError:
         logger.debug(f"{expected_type} token expired")
         return None
-    except JWTError as e:
+    except jwt.PyJWTError as e:
         logger.debug(f"{expected_type} token invalid: {e}")
         return None
     if payload.get("type") != expected_type:

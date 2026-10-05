@@ -11,6 +11,7 @@ import pytest
 from app.models.gitlab_api import OIDCPayload
 from app.models.gitlab_instance import GitLabInstance
 from app.services.gitlab import GitLabGroupLookup, GitLabService
+from tests.helpers.oidc import rsa_public_jwk
 from tests.mocks.gitlab import make_gitlab_instance
 
 
@@ -89,7 +90,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("test-key-id")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -113,7 +114,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("test-key-id")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -136,7 +137,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("other-key")]}
             with patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=None):
                 with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "missing-key"}
@@ -147,7 +148,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("k1")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -171,7 +172,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("k1")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -186,8 +187,8 @@ class TestGitLabServiceOIDC:
     def test_key_rotation_refreshes_jwks(self, gitlab_instance_a):
         """A kid missing from the cached set is looked up in a refetched one."""
         service = GitLabService(gitlab_instance_a)
-        jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-        jwks_new = {"keys": [*jwks_old["keys"], {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
+        jwks_old = {"keys": [rsa_public_jwk("old-key")]}
+        jwks_new = {"keys": [*jwks_old["keys"], rsa_public_jwk("new-key")]}
 
         with (
             patch.object(service, "get_jwks", new_callable=AsyncMock, return_value=jwks_old),

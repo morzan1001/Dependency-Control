@@ -1,6 +1,10 @@
 """Tests for shared OIDC token validation, exercising the real RS256 decode/claim-verification path (no jwt.decode mocking)."""
 
 import asyncio
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -10,11 +14,11 @@ from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import jwk, jwt
-from jose.constants import ALGORITHMS
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 from pydantic import ValidationError
 
 from app.core.constants import JWKS_CACHE_TTL, JWKS_URI_CACHE_TTL
@@ -35,48 +39,63 @@ from app.services.oidc_utils import discover_jwks_uri, fetch_jwks, find_jwks_key
 
 ISSUER = "https://gitlab.example.com"
 KID = "test-signing-key"
+AUDIENCE = "dependency-control"
+# GitLab backdates nbf by 5 seconds against the issuing clock.
+_GITLAB_NBF_BACKDATE = 5
+
+
+def _rsa_key() -> rsa.RSAPrivateKey:
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 @pytest.fixture(scope="module")
-def rsa_keypair():
-    """A real RSA keypair shared across the module's crypto tests."""
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = private_key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    ).decode()
-    public_pem = (
-        private_key.public_key()
-        .public_bytes(
-            serialization.Encoding.PEM,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        .decode()
-    )
-    return private_pem, public_pem
+def signing_key():
+    return _rsa_key()
 
 
 @pytest.fixture(scope="module")
-def jwks(rsa_keypair):
-    """A real JWKS document derived from the public key."""
-    _, public_pem = rsa_keypair
-    public_jwk = jwk.construct(public_pem, algorithm=ALGORITHMS.RS256).to_dict()
-    public_jwk["kid"] = KID
-    return {"keys": [public_jwk]}
+def jwks(signing_key):
+    return {"keys": [{**RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True), "kid": KID}]}
 
 
-def _make_token(private_pem: str, aud, **claims) -> str:
-    """Sign a real RS256 OIDC token with the given audience."""
+def _make_token(private_key, aud, headers=None, **claims) -> str:
+    """Sign a real RS256 OIDC token shaped like a GitLab CI id_token."""
+    now = int(time.time())
     claims = {
         "iss": ISSUER,
+        "sub": "project_path:group/project:ref_type:branch:ref:main",
+        "iat": now,
+        "nbf": now - _GITLAB_NBF_BACKDATE,
+        "exp": now + 300,
+        "jti": "8d3b1c1e-2f6a-4f0e-9d55-3f2a1a0b9c11",
         "project_id": "123",
         "project_path": "group/project",
         **claims,
     }
     if aud is not None:
         claims["aud"] = aud
-    return jwt.encode(claims, private_pem, algorithm="RS256", headers={"kid": KID})
+    return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": KID, **(headers or {})})
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _hs256_signed_with_public_key(signing_key) -> str:
+    public_pem = signing_key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    header, payload, _ = _make_token(signing_key, aud=AUDIENCE).split(".")
+    header = _b64(json.dumps({"alg": "HS256", "typ": "JWT", "kid": KID}).encode())
+    signature = hmac.new(public_pem, f"{header}.{payload}".encode(), hashlib.sha256).digest()
+    return f"{header}.{payload}.{_b64(signature)}"
+
+
+def _retargeted(token: str) -> str:
+    header, payload, signature = token.split(".")
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    claims["project_path"] = "victim/project"
+    return f"{header}.{_b64(json.dumps(claims).encode())}.{signature}"
 
 
 def _validate(token: str, audience, jwks, get_jwks=None):
@@ -97,10 +116,9 @@ def _validate(token: str, audience, jwks, get_jwks=None):
 class TestOIDCAudienceFailClosed:
     """Audience is hard-required and verification fails closed."""
 
-    def test_no_audience_configured_is_rejected(self, rsa_keypair, jwks):
+    def test_no_audience_configured_is_rejected(self, signing_key, jwks):
         """A validly-signed token must be rejected when the instance has no configured audience (fail closed)."""
-        private_pem, _ = rsa_keypair
-        token = _make_token(private_pem, aud="some-audience")
+        token = _make_token(signing_key, aud="some-audience")
 
         # No decode should even be attempted: the guard rejects up front.
         with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -109,10 +127,9 @@ class TestOIDCAudienceFailClosed:
         assert result is None
         mock_decode.assert_not_called()
 
-    def test_empty_string_audience_is_rejected(self, rsa_keypair, jwks):
+    def test_empty_string_audience_is_rejected(self, signing_key, jwks):
         """An empty-string audience is treated as 'not configured' -> rejected."""
-        private_pem, _ = rsa_keypair
-        token = _make_token(private_pem, aud="some-audience")
+        token = _make_token(signing_key, aud="some-audience")
 
         with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
             result = _validate(token, audience="", jwks=jwks)
@@ -120,73 +137,138 @@ class TestOIDCAudienceFailClosed:
         assert result is None
         mock_decode.assert_not_called()
 
-    def test_audience_mismatch_is_rejected(self, rsa_keypair, jwks):
+    def test_audience_mismatch_is_rejected(self, signing_key, jwks):
         """A real token whose 'aud' does not match the configured audience must be rejected."""
-        private_pem, _ = rsa_keypair
-        token = _make_token(private_pem, aud="attacker-audience")
+        token = _make_token(signing_key, aud="attacker-audience")
 
-        result = _validate(token, audience="dependency-control", jwks=jwks)
+        result = _validate(token, audience=AUDIENCE, jwks=jwks)
 
         assert result is None
 
-    def test_matching_audience_is_accepted(self, rsa_keypair, jwks):
-        """A real token with a matching 'aud' is accepted."""
-        private_pem, _ = rsa_keypair
-        token = _make_token(private_pem, aud="dependency-control")
+    @pytest.mark.parametrize(
+        "aud", [pytest.param(AUDIENCE, id="string"), pytest.param(["other-service", AUDIENCE], id="list")]
+    )
+    def test_matching_audience_is_accepted(self, signing_key, jwks, aud):
+        """A real token whose 'aud' names the configured audience is accepted."""
+        token = _make_token(signing_key, aud=aud)
 
-        result = _validate(token, audience="dependency-control", jwks=jwks)
+        result = _validate(token, audience=AUDIENCE, jwks=jwks)
 
         assert isinstance(result, OIDCPayload)
         assert result.project_id == "123"
         assert result.project_path == "group/project"
 
-    def test_token_without_aud_claim_is_rejected_when_audience_required(self, rsa_keypair, jwks):
+    def test_token_without_aud_claim_is_rejected_when_audience_required(self, signing_key, jwks):
         """A token missing the 'aud' claim entirely is rejected when an audience is configured."""
-        private_pem, _ = rsa_keypair
-        token = _make_token(private_pem, aud=None)
+        token = _make_token(signing_key, aud=None)
 
-        result = _validate(token, audience="dependency-control", jwks=jwks)
+        result = _validate(token, audience=AUDIENCE, jwks=jwks)
 
         assert result is None
+
+
+class TestOIDCSignatureAndClaims:
+    def test_a_token_from_another_issuer_is_rejected(self, signing_key, jwks):
+        assert _validate(_make_token(signing_key, aud=AUDIENCE, iss="https://evil.example.com"), AUDIENCE, jwks) is None
+
+    def test_a_token_without_a_kid_is_rejected(self, signing_key, jwks):
+        token = jwt.encode({"iss": ISSUER, "aud": AUDIENCE}, signing_key, algorithm="RS256")
+
+        assert _validate(token, AUDIENCE, jwks) is None
+
+    def test_a_token_whose_kid_the_issuer_does_not_publish_is_rejected(self, signing_key, jwks, oidc_cache):
+        token = _make_token(signing_key, aud=AUDIENCE, headers={"kid": "rotated-away"})
+
+        assert _validate(token, AUDIENCE, jwks) is None
+
+    def test_the_signing_key_is_chosen_by_kid(self, signing_key):
+        other_key = _rsa_key()
+        jwks = {
+            "keys": [
+                {**RSAAlgorithm.to_jwk(other_key.public_key(), as_dict=True), "kid": "other"},
+                {**RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True), "kid": KID},
+            ]
+        }
+
+        assert isinstance(_validate(_make_token(signing_key, aud=AUDIENCE), AUDIENCE, jwks), OIDCPayload)
+
+    @pytest.mark.parametrize(
+        "forge",
+        [
+            pytest.param(lambda key: _make_token(_rsa_key(), aud=AUDIENCE), id="foreign-key-same-kid"),
+            pytest.param(lambda key: _retargeted(_make_token(key, aud=AUDIENCE)), id="tampered-payload"),
+            pytest.param(_hs256_signed_with_public_key, id="hs256-with-public-key"),
+            pytest.param(
+                lambda key: jwt.encode({"iss": ISSUER, "aud": AUDIENCE}, None, algorithm="none", headers={"kid": KID}),
+                id="alg-none",
+            ),
+            pytest.param(lambda key: "a.b.c", id="malformed"),
+        ],
+    )
+    def test_a_token_the_published_key_did_not_sign_is_rejected(self, signing_key, jwks, forge):
+        assert _validate(forge(signing_key), AUDIENCE, jwks) is None
+
+    def test_a_token_that_is_not_yet_valid_is_rejected(self, signing_key, jwks):
+        token = _make_token(signing_key, aud=AUDIENCE, nbf=int(time.time()) + 600)
+
+        assert _validate(token, AUDIENCE, jwks) is None
+
+    def test_a_token_from_an_issuer_clock_ahead_within_its_nbf_allowance_is_accepted(self, signing_key, jwks):
+        now = int(time.time())
+        token = _make_token(signing_key, aud=AUDIENCE, iat=now + 3, nbf=now + 3 - _GITLAB_NBF_BACKDATE)
+
+        assert isinstance(_validate(token, AUDIENCE, jwks), OIDCPayload)
+
+    @pytest.mark.parametrize(
+        "published",
+        [
+            pytest.param(
+                lambda: ECAlgorithm.to_jwk(ec.generate_private_key(ec.SECP256R1()).public_key(), as_dict=True),
+                id="ec-key",
+            ),
+            pytest.param(lambda: {"kty": "RSA", "n": "n", "e": "AQAB"}, id="unparseable-rsa-key"),
+        ],
+    )
+    def test_a_published_key_that_cannot_verify_rs256_rejects_the_token(self, signing_key, published):
+        jwks = {"keys": [{**published(), "kid": KID}]}
+
+        assert _validate(_make_token(signing_key, aud=AUDIENCE), AUDIENCE, jwks) is None
 
 
 class TestOIDCRejectionLogging:
     """An expected rejection is one warning line; a defect is not dressed up as a bad token."""
 
-    def test_an_expired_token_is_one_warning_without_a_traceback(self, rsa_keypair, jwks, caplog):
-        private_pem, _ = rsa_keypair
-        token = _make_token(private_pem, aud="dependency-control", exp=int(time.time()) - 60)
+    def test_an_expired_token_is_one_warning_without_a_traceback(self, signing_key, jwks, caplog):
+        token = _make_token(signing_key, aud=AUDIENCE, exp=int(time.time()) - 60)
 
         with caplog.at_level(logging.WARNING, logger="app.services.oidc_utils"):
-            result = _validate(token, audience="dependency-control", jwks=jwks)
+            result = _validate(token, audience=AUDIENCE, jwks=jwks)
 
         assert result is None
         assert [(r.levelno, r.exc_info) for r in caplog.records] == [(logging.WARNING, None)]
         assert "expired" in caplog.records[0].getMessage().lower()
 
-    def test_claims_the_payload_model_rejects_are_one_warning_without_a_traceback(self, rsa_keypair, jwks, caplog):
-        private_pem, _ = rsa_keypair
+    def test_claims_the_payload_model_rejects_are_one_warning_without_a_traceback(self, signing_key, jwks, caplog):
         token = jwt.encode(
-            {"iss": ISSUER, "aud": "dependency-control", "project_path": "group/project"},
-            private_pem,
+            {"iss": ISSUER, "aud": AUDIENCE, "project_path": "group/project"},
+            signing_key,
             algorithm="RS256",
             headers={"kid": KID},
         )
 
         with caplog.at_level(logging.WARNING, logger="app.services.oidc_utils"):
-            result = _validate(token, audience="dependency-control", jwks=jwks)
+            result = _validate(token, audience=AUDIENCE, jwks=jwks)
 
         assert result is None
         assert [(r.levelno, r.exc_info) for r in caplog.records] == [(logging.WARNING, None)]
 
-    def test_an_unexpected_error_propagates(self, rsa_keypair, jwks):
-        private_pem, _ = rsa_keypair
-        token = _make_token(private_pem, aud="dependency-control")
+    def test_an_unexpected_error_propagates(self, signing_key, jwks):
+        token = _make_token(signing_key, aud=AUDIENCE)
 
         with pytest.raises(RuntimeError, match="broken key source"):
             _validate(
                 token,
-                audience="dependency-control",
+                audience=AUDIENCE,
                 jwks=jwks,
                 get_jwks=AsyncMock(side_effect=RuntimeError("broken key source")),
             )

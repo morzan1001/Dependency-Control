@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+import jwt
 import pyotp
 import pytest
 
@@ -12,13 +13,17 @@ from app.core.security import (
     create_email_verification_token,
     create_password_reset_token,
     create_refresh_token,
+    decode_session_token,
     get_password_hash,
     password_fingerprint,
+    verify_email_change_token,
     verify_email_verification_token,
     verify_password,
     verify_password_reset_token,
+    verify_slack_oauth_state,
     verify_totp,
 )
+from tests.helpers.auth import JOSE_RESET_PASSWORD_HASH, JOSE_SUBJECT_EMAIL, JOSE_SUBJECT_ID, JOSE_TOKENS
 
 # JWT exp is a whole-second timestamp, and the token is minted a moment after the test reads the clock.
 _EXPIRY_TOLERANCE = timedelta(seconds=5)
@@ -51,8 +56,6 @@ class TestPasswordHashing:
 
 class TestAccessToken:
     def test_an_access_token_lives_the_configured_minutes(self):
-        from jose import jwt
-
         from app.core.config import settings
 
         delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -73,8 +76,6 @@ class TestAccessToken:
         ],
     )
     def test_the_decoded_payload_carries_the_claim(self, token_kwargs, claim, expected):
-        from jose import jwt
-
         from app.core.config import settings
 
         token = create_access_token("user123", **token_kwargs)
@@ -82,8 +83,6 @@ class TestAccessToken:
         assert payload[claim] == expected
 
     def test_decode_contains_jti(self):
-        from jose import jwt
-
         from app.core.config import settings
 
         token = create_access_token("user123")
@@ -93,8 +92,6 @@ class TestAccessToken:
 
 class TestRefreshToken:
     def test_decode_type_is_refresh(self):
-        from jose import jwt
-
         from app.core.config import settings
 
         token = create_refresh_token("user123")
@@ -147,6 +144,45 @@ class TestPasswordResetToken:
     def test_a_token_that_is_not_an_intact_reset_token_is_rejected(self, make_token):
         result = verify_password_reset_token(make_token("test@example.com"))
         assert result is None
+
+
+class TestTokensMintedByPythonJose:
+    def test_an_access_token_keeps_its_claims(self):
+        payload = decode_session_token(JOSE_TOKENS["access"], "access")
+        assert payload is not None
+        assert payload.sub == JOSE_SUBJECT_ID
+        assert payload.permissions == ["project:read", "system:manage"]
+        assert payload.iat == 1791218420.0519009
+        assert payload.exp == 4070907620
+        assert payload.jti == "ad0b505e-d206-4fd7-8ec5-e10b9067ae36"
+
+    def test_a_setup_2fa_access_token_keeps_its_scope(self):
+        payload = decode_session_token(JOSE_TOKENS["access_setup_2fa"], "access")
+        assert payload is not None
+        assert payload.permissions == ["auth:setup_2fa"]
+
+    def test_a_refresh_token_keeps_its_claims(self):
+        payload = decode_session_token(JOSE_TOKENS["refresh"], "refresh")
+        assert payload is not None
+        assert (payload.sub, payload.type, payload.exp) == (JOSE_SUBJECT_ID, "refresh", 4070882420)
+
+    def test_a_verification_link_still_verifies(self):
+        assert verify_email_verification_token(JOSE_TOKENS["email_verification"]) == JOSE_SUBJECT_EMAIL
+
+    def test_a_reset_link_still_matches_the_password_it_was_issued_for(self):
+        assert verify_password_reset_token(JOSE_TOKENS["password_reset"]) == (
+            JOSE_SUBJECT_EMAIL,
+            password_fingerprint(JOSE_RESET_PASSWORD_HASH),
+        )
+
+    def test_an_email_change_link_still_names_the_new_address(self):
+        assert verify_email_change_token(JOSE_TOKENS["email_change"]) == (JOSE_SUBJECT_ID, "new.address@example.com")
+
+    def test_a_slack_oauth_state_still_names_the_user(self):
+        assert verify_slack_oauth_state(JOSE_TOKENS["slack_oauth"]) == JOSE_SUBJECT_ID
+
+    def test_a_legacy_token_is_still_refused_as_another_type(self):
+        assert decode_session_token(JOSE_TOKENS["refresh"], "access") is None
 
 
 class TestTotp:

@@ -2,18 +2,19 @@
 
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
+import jwt
 import pyotp
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from jose import jwt
 
 from app.core import security
 from app.core.config import settings
 from app.core.permissions import Permissions
+from tests.helpers.auth import JOSE_SUBJECT_ID, JOSE_TOKENS
 
 _API = settings.API_V1_STR
 _BOB_ID = "u-bob"
@@ -26,6 +27,7 @@ _CREATED = 201
 _BAD_REQUEST = 400
 _UNAUTHORIZED = 401
 _FORBIDDEN = 403
+_MSG_CREDENTIALS = "Could not validate credentials"
 _MAIL_SETTINGS = {"smtp_host": "smtp.example.com", "emails_from_email": "dc@example.com"}
 _TOTP_SECRET = pyotp.random_base32()
 
@@ -91,6 +93,14 @@ async def _refresh(api, token):
     return await api.post(f"{_API}/login/refresh-token", json={"refresh_token": token})
 
 
+def _unverified_claims(token):
+    return jwt.decode(token, options={"verify_signature": False})
+
+
+def _expired(token_type):
+    return security._create_token(_BOB_ID, token_type, datetime.now(timezone.utc) - timedelta(seconds=1))
+
+
 async def _request_reset_link(api, mailbox) -> str:
     response = await api.post(f"{_API}/forgot-password", json={"email": _BOB_EMAIL})
     assert response.status_code == _OK
@@ -121,10 +131,59 @@ async def test_an_exchanged_refresh_token_is_refused_and_its_successor_works(api
     assert first.status_code == _OK
     assert replay.status_code == _FORBIDDEN
     assert successor.status_code == _OK
-    claims = jwt.get_unverified_claims(presented)
+    claims = _unverified_claims(presented)
     entry = await db.token_blacklist.find_one({"_id": claims["jti"]})
     assert entry["reason"] == "refresh_rotated"
     assert entry["expires_at"] == datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_a_session_issued_by_python_jose_keeps_working(api, db):
+    await _add_bob(db, _id=JOSE_SUBJECT_ID, username="legacy")
+
+    me = await api.get(f"{_API}/users/me", headers={"Authorization": f"Bearer {JOSE_TOKENS['access']}"})
+    refreshed = await _refresh(api, JOSE_TOKENS["refresh"])
+    me_after_refresh = await api.get(
+        f"{_API}/users/me", headers={"Authorization": f"Bearer {refreshed.json()['access_token']}"}
+    )
+
+    assert me.status_code == _OK
+    assert me.json()["username"] == "legacy"
+    assert refreshed.status_code == _OK
+    assert me_after_refresh.status_code == _OK
+
+
+def _forged_refresh():
+    return jwt.encode(
+        _unverified_claims(security.create_refresh_token(_BOB_ID)),
+        "another-secret-key-long-enough-for-hs256",
+        algorithm=settings.ALGORITHM,
+    )
+
+
+@pytest.mark.parametrize(
+    "mint",
+    [pytest.param(lambda: _expired("refresh"), id="expired"), pytest.param(_forged_refresh, id="forged")],
+)
+@pytest.mark.asyncio
+async def test_an_unverifiable_refresh_token_is_refused(api, db, mint):
+    await _add_bob(db)
+
+    response = await _refresh(api, mint())
+
+    assert response.status_code == _FORBIDDEN
+    assert response.json()["detail"] == _MSG_CREDENTIALS
+
+
+@pytest.mark.asyncio
+async def test_an_expired_access_token_is_refused_with_a_bearer_challenge(api, db):
+    await _add_bob(db)
+
+    response = await api.get(f"{_API}/users/me", headers={"Authorization": f"Bearer {_expired('access')}"})
+
+    assert response.status_code == _UNAUTHORIZED
+    assert response.json()["detail"] == _MSG_CREDENTIALS
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 @pytest.mark.live_mongo
@@ -245,7 +304,7 @@ async def test_logout_with_a_lowercase_scheme_revokes_the_token_itself(api, db):
     response = await api.post(f"{_API}/logout", headers={"Authorization": f"bearer {token}"})
 
     assert response.status_code == _OK
-    entry = await db.token_blacklist.find_one({"_id": jwt.get_unverified_claims(token)["jti"]})
+    entry = await db.token_blacklist.find_one({"_id": _unverified_claims(token)["jti"]})
     assert entry["reason"] == "logout"
 
 

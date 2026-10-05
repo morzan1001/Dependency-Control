@@ -2,11 +2,14 @@
 user too, but none carries the enforced-2FA scope an access token is minted with."""
 
 import asyncio
+import base64
+import json
+import time
 from datetime import datetime, timedelta, timezone
 
+import jwt
 import pytest
 from fastapi import HTTPException
-from jose import jwt
 from prometheus_client import REGISTRY
 
 from app.api.deps import get_current_user
@@ -29,6 +32,24 @@ _MID_SECOND = (0.01, 0.9)
 
 def _untyped_token(subject: str) -> str:
     return jwt.encode({"sub": subject, "permissions": []}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _signed_access(key: str | None = settings.SECRET_KEY, algorithm: str = settings.ALGORITHM, **claims) -> str:
+    now = time.time()
+    base = {"sub": _USER_ID, "type": "access", "jti": "j-1", "iat": now, "exp": int(now) + 600, "permissions": []}
+    return jwt.encode({**base, **claims}, key, algorithm=algorithm)
+
+
+def _expired_access() -> str:
+    return security._create_token(_USER_ID, "access", datetime.now(timezone.utc) - timedelta(seconds=1))
+
+
+def _redated_expired_access() -> str:
+    header, payload, signature = _expired_access().split(".")
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    claims["exp"] += 3600
+    forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    return f"{header}.{forged}.{signature}"
 
 
 def _validations(result: str) -> float:
@@ -70,6 +91,37 @@ async def test_a_token_of_another_type_is_refused_as_bearer_and_counted_invalid(
 
     assert exc_info.value.status_code == _UNAUTHORIZED
     assert exc_info.value.detail == _MSG_CREDENTIALS
+    assert _validations("invalid") == invalid_before + 1
+
+
+@pytest.mark.parametrize(
+    "mint",
+    [
+        pytest.param(_expired_access, id="expired"),
+        pytest.param(_redated_expired_access, id="tampered-payload"),
+        pytest.param(lambda: _signed_access(key="another-secret-key-of-sufficient-length"), id="foreign-secret"),
+        pytest.param(lambda: _signed_access(key=None, algorithm="none"), id="alg-none"),
+        pytest.param(lambda: _signed_access(algorithm="HS512"), id="unpinned-algorithm"),
+        pytest.param(lambda: "not-a-jwt", id="malformed"),
+        pytest.param(lambda: _signed_access(sub=1), id="sub-not-a-string"),
+        pytest.param(lambda: _signed_access(iat="yesterday"), id="iat-not-numeric"),
+        pytest.param(lambda: _signed_access(nbf="later"), id="nbf-not-numeric"),
+        pytest.param(lambda: _signed_access(nbf=int(time.time()) + 600), id="not-yet-valid"),
+        pytest.param(lambda: _signed_access(jti=1), id="jti-not-a-string"),
+        pytest.param(lambda: _signed_access(aud="someone-else"), id="audience-claim"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_unverifiable_access_token_is_refused_as_bearer_and_counted_invalid(mint):
+    db = await _db_with_user()
+    invalid_before = _validations("invalid")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(db=db, token=mint())
+
+    assert exc_info.value.status_code == _UNAUTHORIZED
+    assert exc_info.value.detail == _MSG_CREDENTIALS
+    assert exc_info.value.headers == {"WWW-Authenticate": "Bearer"}
     assert _validations("invalid") == invalid_before + 1
 
 
@@ -119,7 +171,7 @@ async def test_an_access_token_minted_later_in_the_same_second_as_the_logout_is_
 async def test_a_blacklisted_access_token_is_refused_and_counted_blacklisted():
     db = await _db_with_user()
     token = security.create_access_token(_USER_ID)
-    await db.token_blacklist.insert_one({"_id": jwt.get_unverified_claims(token)["jti"]})
+    await db.token_blacklist.insert_one({"_id": jwt.decode(token, options={"verify_signature": False})["jti"]})
     blacklisted_before = _validations("blacklisted")
 
     with pytest.raises(HTTPException) as exc_info:

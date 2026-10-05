@@ -5,11 +5,12 @@ from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import jwt
 import pytest
-from jose import JWTError
 
 from app.models.github_api import GitHubOIDCPayload
 from app.services.github import GitHubService
+from tests.helpers.oidc import rsa_public_jwk
 from tests.mocks.github import github_instance_a, github_instance_b, make_github_instance
 
 
@@ -93,7 +94,7 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("test-key-id")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -116,7 +117,7 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("test-key-id")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -146,7 +147,7 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("other-key")]}
             with patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=None):
                 with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "missing-key"}
@@ -158,7 +159,7 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("k1")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -181,7 +182,7 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("k1")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -200,8 +201,8 @@ class TestGitHubServiceOIDC:
     def test_key_rotation_refreshes_jwks(self):
         """A kid missing from the cached set is looked up in a refetched one."""
         service = GitHubService(github_instance_a())
-        jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-        jwks_new = {"keys": [*jwks_old["keys"], {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
+        jwks_old = {"keys": [rsa_public_jwk("old-key")]}
+        jwks_new = {"keys": [*jwks_old["keys"], rsa_public_jwk("new-key")]}
         claims = {"repository_id": "42", "repository": "o/p", "repository_owner": "o", "actor": "u"}
 
         with (
@@ -222,7 +223,7 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("k1")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -244,7 +245,7 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("k1")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -269,11 +270,11 @@ class TestGitHubServiceOIDC:
         service = GitHubService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+            mock_jwks.return_value = {"keys": [rsa_public_jwk("k1")]}
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
-                    mock_decode.side_effect = JWTError("Signature verification failed")
+                    mock_decode.side_effect = jwt.InvalidSignatureError("Signature verification failed")
 
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
                     assert result is None

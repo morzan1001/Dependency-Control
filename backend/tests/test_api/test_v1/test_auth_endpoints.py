@@ -5,9 +5,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 from fastapi import HTTPException
-from jose import jwt
 from prometheus_client import REGISTRY
 
 from app.core import security
@@ -59,7 +59,7 @@ def _refresh(token: str, *users: dict, system_config: SystemSettings | None = No
         for user in users:
             await db.users.insert_one(dict(user))
         if blacklisted:
-            await db.token_blacklist.insert_one({"_id": jwt.get_unverified_claims(token)["jti"]})
+            await db.token_blacklist.insert_one({"_id": jwt.decode(token, options={"verify_signature": False})["jti"]})
         with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = system_config or _make_settings()
             return await refresh_token(refresh_token=token, db=db)

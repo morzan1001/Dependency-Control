@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import httpx
+import jwt
 import pytest
-from jose import jwt
 
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
@@ -114,7 +114,9 @@ async def test_the_install_state_expires_ten_minutes_after_it_is_minted(client, 
     minted = datetime.now(timezone.utc)
     _, query = await _install_url(client)
 
-    expires = datetime.fromtimestamp(jwt.get_unverified_claims(query["state"])["exp"], timezone.utc)
+    expires = datetime.fromtimestamp(
+        jwt.decode(query["state"], options={"verify_signature": False})["exp"], timezone.utc
+    )
     # The JWT exp claim is truncated to whole seconds.
     assert minted + _STATE_TTL - timedelta(seconds=1) <= expires <= datetime.now(timezone.utc) + _STATE_TTL
 

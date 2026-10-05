@@ -115,8 +115,8 @@ async def client(db, _project):
         return db
 
     async def _fake_get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+        import jwt
         from fastapi import HTTPException
-        from jose import jwt
 
         from app.core.config import settings
 

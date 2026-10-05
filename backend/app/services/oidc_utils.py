@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 import httpx
-from jose import JWTError, jwt
+import jwt
 from pydantic import BaseModel, ValidationError
 
 from app.core.cache import cache_service
@@ -139,16 +139,16 @@ async def validate_oidc_token(
         if not key:
             return None
 
-        # python-jose only verifies an 'aud' claim that is present; require_aud rejects a token without one.
         payload = jwt.decode(
             token,
-            key,
+            jwt.PyJWK(key, algorithm="RS256"),
             algorithms=["RS256"],
             issuer=issuer,
             audience=audience,
-            options={"verify_aud": True, "require_aud": True},
+            # IdPs backdate nbf to absorb clock skew; a zero-leeway check on iat would undo that.
+            options={"verify_iat": False},
         )
         return payload_model(**payload)
-    except (JWTError, ValidationError) as e:
+    except (jwt.PyJWTError, ValidationError) as e:
         logger.warning("%s OIDC token rejected: %s", provider_name, e)
         return None

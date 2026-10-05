@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from jose import JWTError
 
 from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.system import SystemSettings
@@ -123,7 +122,7 @@ class TestIngestOidcInstanceRouting:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://unknown-provider.com"}
 
             with pytest.raises(HTTPException) as exc_info:
@@ -150,7 +149,7 @@ class TestIngestOidcInstanceRouting:
         gitlab_instances_coll = create_mock_collection(find_one=instance_doc)
         db = create_mock_db({"gitlab_instances": gitlab_instances_coll})
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab.com"}
 
             with pytest.raises(HTTPException) as exc_info:
@@ -169,7 +168,7 @@ class TestIngestOidcInstanceRouting:
 
         db = MagicMock()
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {}
 
             with pytest.raises(HTTPException) as exc_info:
@@ -188,18 +187,16 @@ class TestIngestOidcInstanceRouting:
 
         db = MagicMock()
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
-            mock_claims.side_effect = JWTError("Cannot decode")
-
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    get_project_for_ingest(
-                        x_api_key=None,
-                        oidc_token="a.b.c",
-                        db=db,
-                    )
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                get_project_for_ingest(
+                    x_api_key=None,
+                    oidc_token="a.b.c",
+                    db=db,
                 )
-            assert exc_info.value.status_code == 403
+            )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Invalid OIDC token format"
 
     def test_raises_403_when_oidc_validation_fails(self):
         from app.api.deps import get_project_for_ingest
@@ -222,7 +219,7 @@ class TestIngestOidcInstanceRouting:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab.com"}
 
             with patch("app.api.deps.GitLabService") as MockService:
@@ -280,7 +277,7 @@ class TestIngestOidcProjectLookup:
 
         db = self._setup_oidc_mocks(instance_doc, project_doc, None)
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab-a.com"}
 
             with patch("app.api.deps.GitLabService") as MockService:
@@ -339,7 +336,7 @@ class TestIngestOidcProjectLookup:
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab-a.com"}
 
             with patch("app.api.deps.GitLabService") as MockService:
@@ -391,7 +388,7 @@ class TestIngestOidcProjectLookup:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab-b.com"}
 
             with patch("app.api.deps.GitLabService") as MockService:
@@ -468,7 +465,7 @@ class TestIngestOidcProjectLookup:
                 }
             )
 
-            with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            with patch("app.api.deps.jwt.decode") as mock_claims:
                 mock_claims.return_value = {"iss": issuer}
 
                 with patch("app.api.deps.GitLabService") as MockService:
@@ -518,7 +515,7 @@ class TestIngestGitHubOidcInstanceRouting:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
 
             with pytest.raises(HTTPException) as exc_info:
@@ -554,7 +551,7 @@ class TestIngestGitHubOidcInstanceRouting:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
 
             with patch("app.api.deps.GitHubService") as MockService:
@@ -615,7 +612,7 @@ class TestIngestGitHubOidcProjectLookup:
 
         db, _ = self._setup_github_mocks(github_instance_doc, project_doc)
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
 
             with patch("app.api.deps.GitHubService") as MockService:
@@ -674,7 +671,7 @@ class TestIngestGitHubOidcProjectLookup:
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
 
             with patch("app.api.deps.GitHubService") as MockService:
@@ -719,7 +716,7 @@ class TestIngestGitHubOidcProjectLookup:
 
         db, _ = self._setup_github_mocks(github_instance_doc, None)
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://github.corp.example.com/_services/token"}
 
             with patch("app.api.deps.GitHubService") as MockService:
@@ -775,7 +772,7 @@ class TestIngestGitHubOidcProjectLookup:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab.com"}
 
             with patch("app.api.deps.GitLabService") as MockGitLabService:
@@ -834,7 +831,7 @@ class TestIngestGitHubTeamSync:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
             with patch("app.api.deps.GitHubService") as MockService:
                 mock_svc = MagicMock()
@@ -943,7 +940,7 @@ class TestIngestGitLabTeamSync:
             }
         )
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab.com"}
             with patch("app.api.deps.GitLabService") as MockService:
                 mock_svc = MagicMock()
@@ -1026,7 +1023,7 @@ def _ingest_via_github(
         "repository_owner_id": "111",
         **payload_overrides,
     }
-    with patch("jose.jwt.get_unverified_claims", return_value={"iss": issuer}):
+    with patch("app.api.deps.jwt.decode", return_value={"iss": issuer}):
         with patch("app.api.deps.GitHubService") as MockService:
             mock_svc = MagicMock()
             mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
@@ -1213,7 +1210,7 @@ def _ingest_via_gitlab(instance_doc, project_doc=None, project_path="acme/widget
             "users": create_mock_collection(find_one=None),
         }
     )
-    with patch("jose.jwt.get_unverified_claims", return_value={"iss": instance_doc["url"]}):
+    with patch("app.api.deps.jwt.decode", return_value={"iss": instance_doc["url"]}):
         with patch("app.api.deps.GitLabService") as MockService:
             mock_svc = MagicMock()
             mock_svc.validate_oidc_token = AsyncMock(
@@ -1321,7 +1318,7 @@ def _authorize_write_via_gitlab(project_doc, target_project_id):
         }
     )
     with (
-        patch("jose.jwt.get_unverified_claims", return_value={"iss": _WRITE_GITLAB_INSTANCE["url"]}),
+        patch("app.api.deps.jwt.decode", return_value={"iss": _WRITE_GITLAB_INSTANCE["url"]}),
         patch("app.api.deps.GitLabService") as MockService,
     ):
         mock_svc = MockService.return_value
@@ -1393,7 +1390,7 @@ class TestCiWriteAuthorizationProvisionsNothing:
             }
         )
         with (
-            patch("jose.jwt.get_unverified_claims", return_value={"iss": _GITHUB_COM_ISSUER}),
+            patch("app.api.deps.jwt.decode", return_value={"iss": _GITHUB_COM_ISSUER}),
             patch("app.api.deps.GitHubService") as MockService,
         ):
             mock_svc = MockService.return_value

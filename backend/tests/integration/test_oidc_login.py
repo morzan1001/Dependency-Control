@@ -5,10 +5,10 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import jwt
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from jose import jwt
 
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient

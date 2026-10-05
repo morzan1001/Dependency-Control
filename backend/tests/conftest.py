@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Override settings before any app code imports the settings singleton
-os.environ["SECRET_KEY"] = "test-secret-key-for-unit-tests"
+os.environ["SECRET_KEY"] = "test-secret-key-for-unit-tests-long-enough-for-hs512-hmac-checks"
 os.environ["ALGORITHM"] = "HS256"
 os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "15"
 os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "1"

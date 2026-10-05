@@ -494,7 +494,7 @@ class TestAutoCreateUsesSystemAnalyzers:
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab.example.com"}
 
             with patch("app.api.deps.GitLabService") as MockService:
@@ -561,7 +561,7 @@ class TestAutoCreateUsesSystemAnalyzers:
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
-        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+        with patch("app.api.deps.jwt.decode") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
 
             with patch("app.api.deps.GitHubService") as MockService:

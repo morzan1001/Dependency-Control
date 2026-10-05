@@ -7,9 +7,9 @@ from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 from fastapi import HTTPException
-from jose import jwt
 
 from app.core import security
 from app.core.config import settings

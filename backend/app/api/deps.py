@@ -4,9 +4,9 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+import jwt
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import security
@@ -472,8 +472,8 @@ def _extract_oidc_issuer(oidc_token: str) -> str:
         raise HTTPException(status_code=403, detail="Invalid Token format. Expected a JWT (OIDC) token.")
 
     try:
-        issuer = jwt.get_unverified_claims(oidc_token).get("iss")
-    except JWTError as e:
+        issuer = jwt.decode(oidc_token, options={"verify_signature": False}).get("iss")
+    except jwt.PyJWTError as e:
         logger.warning("Undecodable OIDC token: %s", e)
         raise HTTPException(status_code=403, detail="Invalid OIDC token format") from e
 
