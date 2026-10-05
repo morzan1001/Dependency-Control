@@ -108,11 +108,6 @@ export function WebhookManager({
       label: "Compliance report generated",
       description: "Fires when a compliance report completes successfully.",
     },
-    {
-      id: "pqc_migration_plan.generated",
-      label: "PQC migration plan generated",
-      description: "Fires when a post-quantum migration plan is produced.",
-    },
   ]
 
   const handleCreate = async () => {

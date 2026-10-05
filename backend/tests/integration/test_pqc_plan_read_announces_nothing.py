@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.constants import WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED
+from app.core.constants import NOTIFICATION_EVENTS, WEBHOOK_VALID_EVENTS
 from app.services.analytics.cache import get_analytics_cache
 from app.services.notifications.service import notification_service
 from app.services.webhooks import webhook_service
@@ -28,7 +28,7 @@ async def test_reading_a_project_plan_delivers_no_webhook_and_no_notification(
             "url": "https://example.com/hook",
             "project_id": "p",
             "team_id": None,
-            "events": [WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED],
+            "events": WEBHOOK_VALID_EVENTS,
             "is_active": True,
         }
     )
@@ -39,7 +39,7 @@ async def test_reading_a_project_plan_delivers_no_webhook_and_no_notification(
             "email": "ownerp@example.com",
             "is_active": True,
             "hashed_password": "x",
-            "notification_preferences": {"pqc_migration_plan_generated": ["email"]},
+            "notification_preferences": {event: ["email"] for event in NOTIFICATION_EVENTS},
         }
     )
     post = AsyncMock(return_value=(200, None, None))
