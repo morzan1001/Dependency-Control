@@ -1,6 +1,7 @@
 """Analytics search endpoints: /search and /vulnerability-search."""
 
 import re
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import Query
@@ -19,7 +20,12 @@ from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.cve import canonical_cve
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, SEVERITY_RANK_EXPR
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
+    get_severity_value,
+    severity_rank_expr,
+)
 from app.core.permissions import Permissions
 from app.models.dependency import Dependency
 from app.models.finding import FindingType
@@ -260,22 +266,34 @@ def _build_vuln_query(
     has_fix: bool | None,
     finding_type: str | None,
     include_waived: bool,
-) -> dict[str, Any]:
-    """Findings with a row that passes the filters: an advisory the query names, else the finding itself."""
-    search_regex = {"$regex": re.escape(q), "$options": "i"}
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(query, rows): findings with a row that passes the filters; a row is a named advisory, else the finding."""
+    pattern = re.escape(q)
+    search_regex = {"$regex": pattern, "$options": "i"}
     names_advisory = {"$or": [{"id": search_regex}, {"resolved_cve": search_regex}]}
     advisory_row: dict[str, Any] = {}
     finding_row: dict[str, Any] = {}
+    names_row = [
+        {"$regexMatch": {"input": {"$ifNull": [f"$$v.{field}", ""]}, "regex": pattern, "options": "i"}}
+        for field in ("id", "resolved_cve")
+    ]
+    row_conds: list[dict[str, Any]] = [{"$or": names_row}]
     if severity:
         advisory_row["severity"] = finding_row["severity"] = severity.upper()
+        row_conds.append({"$eq": ["$$v.severity", severity.upper()]})
     if in_kev is not None:
         kev = True if in_kev else {"$ne": True}
         advisory_row[DETAILS_KEY_IN_KEV] = finding_row[f"details.{DETAILS_KEY_IN_KEV}"] = kev
+        listed = {"$eq": [f"$$v.{DETAILS_KEY_IN_KEV}", True]}
+        row_conds.append(listed if in_kev else {"$not": [listed]})
     if has_fix is not None:
         fix = {"$nin": [None, ""]} if has_fix else {"$in": [None, ""]}
         advisory_row["fixed_version"] = finding_row["details.fixed_version"] = fix
+        unfixed = {"$in": [{"$ifNull": ["$$v.fixed_version", None]}, [None, ""]]}
+        row_conds.append({"$not": [unfixed]} if has_fix else unfixed)
     if not include_waived:
         advisory_row["waived"] = {"$ne": True}
+        row_conds.append({"$ne": ["$$v.waived", True]})
     query: dict[str, Any] = {
         "scan_id": {"$in": scan_ids},
         "$or": [
@@ -295,47 +313,32 @@ def _build_vuln_query(
         query["type"] = finding_type
     if not include_waived:
         query["waived"] = {"$ne": True}
-    return query
+    rows = {"$filter": {"input": {"$ifNull": ["$details.vulnerabilities", []]}, "as": "v", "cond": {"$and": row_conds}}}
+    return query, rows
 
 
-_VULN_SORT_FIELD_MAP = {
-    "severity": "severity_rank",
-    # CVSS only exists per CVE; Mongo sorts array paths by max (desc) / min (asc).
-    "cvss": "details.vulnerabilities.cvss_score",
-    "epss": "details.epss_score",
-    "component": "component",
-    "project_name": "project_id",
+_RowKey = Callable[[VulnerabilitySearchResult], float]
+
+# sort_by -> (value over a finding's advisory rows, value of a finding that is its own row, order of its rows)
+_VULN_SORTS: dict[str, tuple[Any, Any, _RowKey | None]] = {
+    "severity": (
+        {"$map": {"input": "$rows", "as": "v", "in": severity_rank_expr({"$ifNull": ["$$v.severity", "$severity"]})}},
+        severity_rank_expr("$severity"),
+        lambda row: get_severity_value(row.severity),
+    ),
+    "cvss": ("$rows.cvss_score", {"$max": "$details.vulnerabilities.cvss_score"}, lambda row: row.cvss_score or 0.0),
+    "epss": ("$rows.epss_score", "$details.epss_score", lambda row: row.epss_score or 0.0),
+    "component": ("$component", "$component", None),
+    "project_name": ("$project_id", "$project_id", None),
 }
 
 
 def _vuln_results_for_finding(
-    finding: FindingRecord, query_lower: str, project_name_map: dict[str, str]
+    finding: FindingRecord, rows: list[dict[str, Any]], project_name_map: dict[str, str]
 ) -> list[VulnerabilitySearchResult]:
-    """One row per advisory the query names, else one row for the whole finding."""
-    details = finding.details
-    matched_vulns = [
-        vuln
-        for vuln in details.get("vulnerabilities", [])
-        if query_lower in vuln.get("id", "").lower() or query_lower in vuln.get("resolved_cve", "").lower()
-    ]
-    if not matched_vulns:
-        return [_build_direct_vuln_result(finding, details, project_name_map)]
-    return [_build_nested_vuln_result(vuln, finding, project_name_map) for vuln in matched_vulns]
-
-
-def _row_matches(
-    row: VulnerabilitySearchResult,
-    severity: str | None,
-    in_kev: bool | None,
-    has_fix: bool | None,
-    include_waived: bool,
-) -> bool:
-    return (
-        (include_waived or not row.waived)
-        and (severity is None or row.severity == severity.upper())
-        and (in_kev is None or row.in_kev == in_kev)
-        and (has_fix is None or bool(row.fixed_version) == has_fix)
-    )
+    if not rows:
+        return [_build_direct_vuln_result(finding, finding.details, project_name_map)]
+    return [_build_nested_vuln_result(vuln, finding, project_name_map) for vuln in rows]
 
 
 @router.get("/vulnerability-search", responses=RESP_AUTH)
@@ -370,27 +373,30 @@ async def search_vulnerabilities(
 
     finding_repo = FindingRepository(db)
 
-    query = _build_vuln_query(scan_ids, q, severity, in_kev, has_fix, finding_type, include_waived)
+    query, rows = _build_vuln_query(scan_ids, q, severity, in_kev, has_fix, finding_type, include_waived)
 
     total_count = await finding_repo.count(query)
 
-    sort_field = _VULN_SORT_FIELD_MAP.get(sort_by, "severity_rank")
+    direction = parse_sort_direction(sort_order)
+    rows_value, finding_value, row_key = _VULN_SORTS.get(sort_by, _VULN_SORTS["severity"])
+    # A finding pages by its first row in sort order.
+    sort_key = {"$cond": [{"$eq": ["$rows", []]}, finding_value, {"$max" if direction < 0 else "$min": rows_value}]}
     findings = await finding_repo.aggregate(
         [
             {"$match": query},
-            {"$addFields": {"severity_rank": SEVERITY_RANK_EXPR}},
-            {"$sort": {sort_field: parse_sort_direction(sort_order), "_id": 1}},
+            {"$addFields": {"rows": rows}},
+            {"$addFields": {"sort_key": sort_key}},
+            {"$sort": {"sort_key": direction, "_id": 1}},
             {"$skip": skip},
             {"$limit": limit},
         ]
     )
 
-    query_lower = q.lower()
-    results = [
-        row
-        for finding in findings
-        for row in _vuln_results_for_finding(FindingRecord(**finding), query_lower, project_name_map)
-        if _row_matches(row, severity, in_kev, has_fix, include_waived)
-    ]
+    results = []
+    for finding in findings:
+        finding_rows = _vuln_results_for_finding(FindingRecord(**finding), finding["rows"], project_name_map)
+        if row_key:
+            finding_rows.sort(key=row_key, reverse=direction < 0)
+        results.extend(finding_rows)
 
     return VulnerabilitySearchResponse(items=results, **page_meta(total_count, skip, limit), **counts)

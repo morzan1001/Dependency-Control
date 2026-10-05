@@ -58,8 +58,8 @@ from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
     SCAN_ACTIVE_STATUSES,
-    SEVERITY_RANK_EXPR,
     TEAM_SOURCE_MANUAL,
+    severity_rank_expr,
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
@@ -1136,7 +1136,7 @@ def _scan_findings_dependency_join() -> list[dict[str, Any]]:
 def _scan_findings_add_fields_stage() -> dict[str, Any]:
     return {
         "$addFields": {
-            "severity_rank": SEVERITY_RANK_EXPR,
+            "severity_rank": severity_rank_expr("$severity"),
             # Map finding_id to id for frontend compatibility.
             "id": "$finding_id",
             # Deterministic scalar for sorting by scanner (scanners is a list).

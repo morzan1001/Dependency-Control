@@ -115,6 +115,7 @@ async def test_dependency_search_pages_descending_from_the_last_name(client, db,
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_vulnerability_search_returns_the_unwaived_finding(client, db, scanned):
     await db.findings.insert_one(_vulnerability("left-pad"))
     await db.findings.insert_one(_vulnerability("waived-pkg", waived=True))
@@ -128,6 +129,7 @@ async def test_vulnerability_search_returns_the_unwaived_finding(client, db, sca
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_vulnerability_search_with_include_waived_returns_both(client, db, scanned):
     await db.findings.insert_one(_vulnerability("left-pad"))
     await db.findings.insert_one(_vulnerability("waived-pkg", waived=True))
@@ -139,6 +141,7 @@ async def test_vulnerability_search_with_include_waived_returns_both(client, db,
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_vulnerability_search_pages_descending_from_the_last_component(client, db, scanned):
     for component in ("mid-pkg", "alpha-pkg", "zeta-pkg"):
         await db.findings.insert_one(_vulnerability(component))
@@ -154,6 +157,7 @@ async def test_vulnerability_search_pages_descending_from_the_last_component(cli
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_vulnerability_search_pages_ascending_from_the_first_component(client, db, scanned):
     for component in ("mid-pkg", "alpha-pkg", "zeta-pkg"):
         await db.findings.insert_one(_vulnerability(component))
@@ -306,3 +310,80 @@ async def test_the_vulnerability_filter_ignores_an_older_scan_s_and_a_waived_fin
 
     assert resp.status_code == 200, resp.text
     assert [row["package"] for row in resp.json()["items"]] == ["lodash"]
+
+
+def _named(component: str, severity: str, *advisories: dict) -> dict:
+    finding = _vulnerability(component)
+    finding["severity"] = severity
+    finding["details"]["vulnerabilities"] = [{"aliases": [], **advisory} for advisory in advisories]
+    return finding
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("dropped", "params"),
+    [
+        ({"id": "CVE-2025-0009"}, {}),
+        ({"id": "CVE-2026-0009", "waived": True}, {}),
+        ({"id": "CVE-2026-0009"}, {"in_kev": "true"}),
+    ],
+    ids=["not named", "waived", "outside the KEV filter"],
+)
+async def test_the_severity_sort_ranks_a_finding_by_the_rows_it_shows(client, db, scanned, dropped, params):
+    kev = {"in_kev": True}
+    await db.findings.insert_many(
+        [
+            _named(
+                "a-pkg",
+                "CRITICAL",
+                {**dropped, "severity": "CRITICAL"},
+                {"id": "CVE-2026-0001", "severity": "LOW", **kev},
+            ),
+            _named("b-pkg", "MEDIUM", {"id": "CVE-2026-0002", "severity": "MEDIUM", **kev}),
+        ]
+    )
+
+    pages = await _pages(client, _VULN_SEARCH_PATH, scanned, {"q": "CVE-2026", "sort_by": "severity", **params}, 2)
+
+    assert [row["severity"] for page in pages for row in page["items"]] == ["MEDIUM", "LOW"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("sort_order", "expected"),
+    [("desc", ["HIGH", "LOW", "MEDIUM"]), ("asc", ["LOW", "HIGH", "MEDIUM"])],
+)
+async def test_a_finding_pages_by_its_first_row_and_lists_its_rows_in_sort_order(
+    client, db, scanned, sort_order, expected
+):
+    await db.findings.insert_many(
+        [
+            _named(
+                "a-pkg", "HIGH", {"id": "CVE-2026-0001", "severity": "LOW"}, {"id": "CVE-2026-0003", "severity": "HIGH"}
+            ),
+            _named("b-pkg", "MEDIUM", {"id": "CVE-2026-0002", "severity": "MEDIUM"}),
+        ]
+    )
+
+    params = {"q": "CVE-2026", "sort_by": "severity", "sort_order": sort_order}
+    pages = await _pages(client, _VULN_SEARCH_PATH, scanned, params, 2)
+
+    assert [row["severity"] for page in pages for row in page["items"]] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(("sort_by", "field"), [("cvss", "cvss_score"), ("epss", "epss_score")])
+async def test_a_score_sort_ranks_a_finding_by_the_rows_it_shows(client, db, scanned, sort_by, field):
+    high = _named("a-pkg", "CRITICAL", {"id": "CVE-2025-0009", field: 0.9}, {"id": "CVE-2026-0001", field: 0.2})
+    high["details"][field] = 0.9
+    middle = _named("b-pkg", "MEDIUM", {"id": "CVE-2026-0002", field: 0.5})
+    middle["details"][field] = 0.5
+    await db.findings.insert_many([high, middle])
+
+    params = {"q": "CVE-2026", "sort_by": sort_by, "sort_order": "desc"}
+    pages = await _pages(client, _VULN_SEARCH_PATH, scanned, params, 2)
+
+    assert [row[field] for page in pages for row in page["items"]] == [0.5, 0.2]

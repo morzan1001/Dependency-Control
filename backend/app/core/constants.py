@@ -17,16 +17,17 @@ DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 # Higher = more severe, in Severity's declaration order; UNKNOWN (0) also ranks any unrecognised label.
 SEVERITY_ORDER: dict[str, int] = {level.value: rank for rank, level in enumerate(reversed(Severity))}
 
-SEVERITY_RANK_EXPR: dict[str, Any] = {
-    "$switch": {
-        "branches": [
-            {"case": {"$eq": ["$severity", severity]}, "then": rank}
-            for severity, rank in SEVERITY_ORDER.items()
-            if rank
-        ],
-        "default": 0,
+
+def severity_rank_expr(severity: Any) -> dict[str, Any]:
+    """Aggregation expression ranking the severity label ``severity`` resolves to, as SEVERITY_ORDER does."""
+    return {
+        "$switch": {
+            "branches": [
+                {"case": {"$eq": [severity, label]}, "then": rank} for label, rank in SEVERITY_ORDER.items() if rank
+            ],
+            "default": 0,
+        }
     }
-}
 
 
 def get_severity_value(severity: str | None) -> int:
