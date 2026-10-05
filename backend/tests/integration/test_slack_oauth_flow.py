@@ -1,14 +1,17 @@
 """The Slack install: only a state the settings page minted may replace the system-wide bot token."""
 
 import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import httpx
 import pytest
+from jose import jwt
 
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
+from app.core import security
 from app.core.security import create_access_token
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.notifications import slack_provider
@@ -21,6 +24,8 @@ _OAUTH_ACCESS = "https://slack.com/api/oauth.v2.access"
 _POST_MESSAGE = "https://slack.com/api/chat.postMessage"
 _ADMIN = "admin"
 _SLACK_APP = {"slack_client_id": "client-1", "slack_client_secret": "secret-1", "slack_bot_token": "xoxb-current"}
+_SCOPES = "chat:write,im:write"
+_STATE_TTL = timedelta(minutes=10)
 _SLACK_ANSWERS = {
     _OAUTH_ACCESS: {"ok": True, "access_token": "xoxb-new", "refresh_token": "xoxe-new", "expires_in": 43200},
     _POST_MESSAGE: {"ok": True},
@@ -50,13 +55,26 @@ def slack(monkeypatch) -> list[dict[str, str]]:
 
 
 def _state(kind: str) -> dict[str, str]:
-    forged = {"forged": "not-a-token", "session token": create_access_token(_ADMIN, [Permissions.SYSTEM_MANAGE])}
+    forged = {
+        "forged": "not-a-token",
+        "session token": create_access_token(_ADMIN, [Permissions.SYSTEM_MANAGE]),
+        "expired": security._create_token(
+            subject=_ADMIN, token_type="slack_oauth", expire=datetime.now(timezone.utc) - timedelta(seconds=1)
+        ),
+    }
     return {"state": forged[kind]} if kind in forged else {}
+
+
+async def _install_url(client) -> tuple[str, dict[str, str]]:
+    authorize = await client.get(_AUTHORIZE, headers=bearer_headers(_ADMIN, [Permissions.SYSTEM_MANAGE]))
+    assert authorize.status_code == _OK, authorize.text
+    url = urlsplit(authorize.json()["url"])
+    return url.netloc, {key: values[0] for key, values in parse_qs(url.query).items()}
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["missing", "forged", "session token"])
+@pytest.mark.parametrize("kind", ["missing", "forged", "session token", "expired"])
 async def test_a_callback_without_a_minted_state_keeps_the_bot_token(client, db, slack, kind):
     await SystemSettingsRepository(db).update(_SLACK_APP)
 
@@ -70,15 +88,12 @@ async def test_a_callback_without_a_minted_state_keeps_the_bot_token(client, db,
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_the_settings_page_install_replaces_the_bot_token(client, db, slack):
-    await SystemSettingsRepository(db).update(_SLACK_APP)
+    await SystemSettingsRepository(db).update({**_SLACK_APP, "slack_oauth_scopes": _SCOPES})
 
-    authorize = await client.get(_AUTHORIZE, headers=bearer_headers(_ADMIN, [Permissions.SYSTEM_MANAGE]))
-    assert authorize.status_code == _OK, authorize.text
-    url = urlsplit(authorize.json()["url"])
-    query = {key: values[0] for key, values in parse_qs(url.query).items()}
+    netloc, query = await _install_url(client)
     callback = await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
 
-    assert (url.netloc, query["client_id"]) == ("slack.com", "client-1")
+    assert (netloc, query["client_id"], query["scope"]) == ("slack.com", "client-1", _SCOPES)
     assert query["redirect_uri"] == f"{settings.FRONTEND_BASE_URL}{_CALLBACK}"
     assert callback.status_code == _REDIRECT
     assert callback.headers["location"] == f"{settings.FRONTEND_BASE_URL}/settings?slack_connected=true"
@@ -86,6 +101,17 @@ async def test_the_settings_page_install_replaces_the_bot_token(client, db, slac
     assert (exchange["code"], exchange["redirect_uri"]) == ("admin-code", query["redirect_uri"])
     stored = await SystemSettingsRepository(db).get()
     assert (stored.slack_bot_token, stored.slack_refresh_token) == ("xoxb-new", "xoxe-new")
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_install_state_expires_ten_minutes_after_it_is_minted(client, db):
+    await SystemSettingsRepository(db).update(_SLACK_APP)
+
+    _, query = await _install_url(client)
+
+    expires = datetime.fromtimestamp(jwt.get_unverified_claims(query["state"])["exp"], timezone.utc)
+    assert expires <= datetime.now(timezone.utc) + _STATE_TTL
 
 
 @pytest.mark.live_mongo
