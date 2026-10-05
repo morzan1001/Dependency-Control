@@ -7,7 +7,7 @@ import pytest
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry, _serialize_finding_for_llm
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 
 _DATABASES = [
     pytest.param("attrappe", id="attrappe"),
@@ -132,6 +132,28 @@ async def test_neglected_projects_list_the_longest_unscanned_first_with_their_to
 
     assert [p["project_id"] for p in result["projects"]] == ["never", "stale-200d"]
     assert (result.get("projects_total"), result.get("_bounded_read")) == (4, True)
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+async def test_neglected_projects_list_only_the_callers_projects(db, database):
+    member = "member-1"
+    await db.projects.insert_many(
+        [
+            {
+                "_id": "own-stale",
+                "name": "own-stale",
+                "last_scan_at": _NOW - timedelta(days=60),
+                "members": [{"user_id": member, "role": "viewer"}],
+            },
+            {"_id": "foreign-never", "name": "foreign-never", "members": []},
+        ]
+    )
+    caller = User(id=member, username="member", email="member@test.com", permissions=list(PRESET_USER))
+
+    result = await ChatToolRegistry().execute_tool("get_projects_without_recent_scan", {"days": 14}, caller, db)
+
+    assert [p["project_id"] for p in result["projects"]] == ["own-stale"]
+    assert result["projects_total"] == 1
 
 
 @pytest.mark.live_mongo
