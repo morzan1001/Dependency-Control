@@ -29,3 +29,31 @@ async def test_a_vulnerability_row_carries_its_cves_and_a_title(db):
         "CVE-2021-23337",
         "CVE-2021-23337; CVE-2025-5889",
     )
+
+
+async def test_a_ghsa_finding_is_titled_and_listed_by_the_cves_its_advisories_name(db):
+    await db.findings.insert_one(
+        {
+            "_id": "f-ghsa",
+            "finding_id": "minimist:1.2.5",
+            "scan_id": _SCAN.id,
+            "project_id": "p-export",
+            "type": "vulnerability",
+            "severity": "HIGH",
+            "component": "minimist",
+            "version": "1.2.5",
+            "description": "",
+            "details": {
+                "vulnerabilities": [
+                    {"id": "GHSA-zzzz-zzzz-zzzz", "aliases": []},
+                    {"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-2024-0001"]},
+                    {"id": "GHSA-dddd-eeee-ffff", "aliases": [], "resolved_cve": "CVE-2024-0002"},
+                ]
+            },
+        }
+    )
+
+    text = "".join([chunk async for chunk in iter_csv(FINDINGS_COLUMNS, iter_findings_rows(db, [_SCAN]))])
+    [row] = csv.DictReader(io.StringIO(text.lstrip("﻿")))
+
+    assert (row["title"], row["cves"]) == ("CVE-2024-0001", "GHSA-zzzz-zzzz-zzzz; CVE-2024-0001; CVE-2024-0002")
