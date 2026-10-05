@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
 import { User } from '@/types/user';
 import { ApiError } from '@/api/client';
+import { useAuth } from '@/context/useAuth';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,6 +20,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const queryClient = useQueryClient();
+  const { logout } = useAuth();
 
   const isLocalUser = user?.auth_provider === 'local';
 
@@ -35,11 +37,9 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
     mutationFn: () => userApi.updatePassword(currentPassword, newPassword),
     onSuccess: () => {
       toast.success("Password updated", {
-        description: "Your password has been updated successfully.",
+        description: "Sign in with your new password.",
       });
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
+      logout();
     },
     onError: (error: ApiError) => {
       toast.error("Error", {
