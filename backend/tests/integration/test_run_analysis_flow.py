@@ -104,11 +104,13 @@ async def test_a_re_analysis_purges_the_row_of_an_analyzer_the_project_no_longer
     stale = ["typosquatting", "epss_kev", "reachability", *engine.CRYPTO_ANALYZERS, "trufflehog"]
     await db.analysis_results.insert_many(
         [{"scan_id": scan_id, "analyzer_name": name, "result": {"marker": "stale"}} for name in stale]
+        + [{"scan_id": "other-scan", "analyzer_name": "typosquatting", "result": {"marker": "keep"}}]
     )
 
     await engine.run_analysis(scan_id, [], ["trivy"], db, worker_id=_WORKER)
 
     assert set(await db.analysis_results.distinct("analyzer_name", {"scan_id": scan_id})) == {"trufflehog"}
+    assert await db.analysis_results.count_documents({"scan_id": "other-scan"}) == 1
 
 
 @pytest.mark.asyncio
