@@ -387,3 +387,111 @@ async def test_a_score_sort_ranks_a_finding_by_the_rows_it_shows(client, db, sca
     pages = await _pages(client, _VULN_SEARCH_PATH, scanned, params, 2)
 
     assert [row[field] for page in pages for row in page["items"]] == [0.5, 0.2]
+
+
+def _waived_advisory() -> dict:
+    finding = _vulnerability("left-pad")
+    finding["details"]["vulnerabilities"][0]["waived"] = True
+    return finding
+
+
+def _date_versioned() -> dict:
+    finding = _named(
+        "certifi",
+        "HIGH",
+        {"id": "CVE-2023-37920", "severity": "HIGH"},
+        {"id": "CVE-2022-23491", "severity": "MEDIUM"},
+    )
+    return {**finding, "id": "certifi:2022.12.7", "finding_id": "certifi:2022.12.7", "version": "2022.12.7"}
+
+
+def _low_license() -> dict:
+    return {
+        **_vulnerability("gpl-pkg"),
+        "type": "license",
+        "severity": "LOW",
+        "description": "frobnicator ships under GPL-3.0",
+        "details": {},
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("finding", "params"),
+    [
+        (_waived_advisory(), {"q": _CVE}),
+        (_date_versioned(), {"q": "2022", "severity": "HIGH"}),
+        (_low_license(), {"q": "frobnicator", "severity": "HIGH"}),
+        (_vulnerability("left-pad"), {"q": "left-pad", "in_kev": "true"}),
+        (_vulnerability("left-pad"), {"q": "left-pad", "has_fix": "true"}),
+    ],
+    ids=[
+        "only named advisory waived",
+        "named advisory outside the filter, finding id matches",
+        "finding row outside the severity filter",
+        "finding row outside the KEV filter",
+        "finding row outside the fix filter",
+    ],
+)
+async def test_a_finding_without_a_row_that_passes_the_filters_is_neither_listed_nor_counted(
+    client, db, scanned, finding, params
+):
+    await db.findings.insert_one(finding)
+
+    resp = await client.get(_VULN_SEARCH_PATH, params=params, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["items"], resp.json()["total"]) == ([], 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("param", "listed", "unlisted"),
+    [("in_kev", {"in_kev": True}, {}), ("has_fix", {"fixed_version": "1.0.1"}, {"fixed_version": None})],
+)
+async def test_a_false_advisory_filter_keeps_an_advisory_without_the_value(
+    client, db, scanned, param, listed, unlisted
+):
+    for component, fields in (("a-pkg", listed), ("b-pkg", unlisted)):
+        finding = _vulnerability(component)
+        finding["details"]["vulnerabilities"][0].update(fields)
+        await db.findings.insert_one(finding)
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": _CVE, param: "false"}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert ([row["component"] for row in body["items"]], body["total"]) == (["b-pkg"], 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_equally_severe_findings_page_without_overlap(client, db, scanned):
+    names = [f"pkg-{i:02d}" for i in range(60)]
+    await db.findings.insert_many([_vulnerability(name) for name in names])
+
+    seen = []
+    for skip in range(0, 60, 7):
+        params = {"q": _CVE, "sort_by": "severity", "limit": 7, "skip": skip}
+        resp = await client.get(_VULN_SEARCH_PATH, params=params, headers=scanned)
+        assert resp.status_code == 200, resp.text
+        seen += [row["component"] for row in resp.json()["items"]]
+
+    assert sorted(seen) == names
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_vulnerability_filter_pages_the_matching_dependencies_in_sort_order(client, db, scanned):
+    for name in ("zeta-lib", "gamma-lib", "beta-lib", "alpha-lib"):
+        await db.dependencies.insert_one(_dependency(name))
+    for name in ("zeta-lib", "beta-lib", "alpha-lib"):
+        await db.findings.insert_one(_vulnerability(name))
+
+    params = {"q": "lib", "has_vulnerabilities": "true", "sort_by": "name", "sort_order": "asc"}
+    pages = await _pages(client, _SEARCH_PATH, scanned, params, 3)
+
+    assert [row["package"] for page in pages for row in page["items"]] == ["alpha-lib", "beta-lib", "zeta-lib"]
+    assert pages[0]["total"] == 3
