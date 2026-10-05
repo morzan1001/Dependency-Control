@@ -1,3 +1,11 @@
+# Release 1.9.46
+
+## 📦 Build & CI
+
+- chore(release): 1.9.46 with wave 1 fixes, the scoped backend selector and the raw result preview (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.45.
