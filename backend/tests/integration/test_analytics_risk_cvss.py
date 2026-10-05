@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
-from app.schemas.enrichment import EPSSData
+from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.enrichment.scoring import calculate_risk_score
 from app.services.enrichment.service import vulnerability_enrichment_service
 
@@ -103,3 +103,29 @@ async def test_a_waived_advisory_does_not_rank_the_risk(client, db, seeded, path
     assert [r["max_risk_score"] for r in resp.json() if r["component"] == "mixed"] == [
         calculate_risk_score(3.1, _EPSS, False, False)
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/analytics/hotspots?sort_by=risk", "/api/v1/analytics/impact"])
+async def test_the_kev_count_counts_each_live_kev_advisory(client, db, seeded, monkeypatch, path):
+    async def _kev():
+        return {
+            cve: KEVEntry(cve=cve, date_added="2026-01-01", required_action="Patch", due_date="2026-12-01")
+            for cve in ("CVE-2026-0020", "CVE-2026-0021", "CVE-2026-0022")
+        }
+
+    monkeypatch.setattr(vulnerability_enrichment_service._kev_provider, "load_kev_catalog", _kev)
+    exploited = _finding("exploited", {"id": "CVE-2026-0020", "severity": "HIGH", "cvss_score": 7.5})
+    exploited["details"]["vulnerabilities"] += [
+        {"aliases": [], "id": "CVE-2026-0021", "severity": "HIGH", "cvss_score": 7.5},
+        {"aliases": [], "id": "CVE-2026-0022", "severity": "HIGH", "cvss_score": 7.5, "waived": True},
+    ]
+    # Live in another component, the waived CVE is enriched like the others.
+    elsewhere = _finding("elsewhere", {"id": "CVE-2026-0022", "severity": "HIGH", "cvss_score": 7.5})
+    await db.findings.insert_many([exploited, elsewhere])
+
+    resp = await client.get(path, headers=seeded)
+
+    assert resp.status_code == 200, resp.text
+    kev_counts = {r["component"]: r["kev_count"] for r in resp.json()}
+    assert (kev_counts["exploited"], kev_counts["elsewhere"]) == (2, 1)
