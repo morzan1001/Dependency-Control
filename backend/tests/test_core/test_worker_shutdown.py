@@ -27,6 +27,7 @@ async def running_scan():
     with (
         patch("app.core.worker.get_database", AsyncMock(return_value=db)),
         patch("app.core.worker.run_analysis", run_analysis),
+        patch("app.core.worker._release_memory_to_os"),
     ):
         manager = AnalysisWorkerManager(num_workers=1)
         manager.queue = asyncio.Queue()
