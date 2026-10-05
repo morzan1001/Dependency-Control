@@ -32,14 +32,16 @@ def _report(*, expires_at=None, status=ReportStatus.COMPLETED, requested_ago=tim
 async def test_sweep_deletes_only_expired_reports(db):
     repo = ComplianceReportRepository(db)
     expired = _report(expires_at=datetime.now(timezone.utc) - timedelta(days=1))
+    expired_failed = _report(status=ReportStatus.FAILED, expires_at=datetime.now(timezone.utc) - timedelta(days=1))
     still_live = _report(expires_at=datetime.now(timezone.utc) + timedelta(days=10))
     no_expiry = _report(expires_at=None)
-    for report in (expired, still_live, no_expiry):
+    for report in (expired, expired_failed, still_live, no_expiry):
         await repo.create(report)
 
-    assert await sweep_expired_compliance_reports(db) == 1
+    assert await sweep_expired_compliance_reports(db) == 2
 
     assert await repo.get_by_id(expired.id) is None
+    assert await repo.get_by_id(expired_failed.id) is None
     assert await repo.get_by_id(still_live.id) is not None
     assert await repo.get_by_id(no_expiry.id) is not None
 
