@@ -1,3 +1,19 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.46.
+
+## Before the rollout: run outstanding backfills from 1.9.46
+
+The image ships without operator scripts. An installation that skipped a release with a backfill runs it from the 1.9.46 image first; its runbook is in `backend/scripts` at the `v1.9.46` tag.
+
+## After the rollout
+
+- The `invitations` collection holds the project invitations, with invitee emails and tokens, that the invite endpoint wrote until February 2026. The backend no longer reads or cleans it, so deleting a project leaves its rows in place. Drop it in-pod with mongosh against the application database: `db.invitations.drop()`. System invitations live in `system_invitations` and stay.
+- Cache operation counts come from `cache_operation_duration_seconds_count`, with the same `operation` label that `cache_operations_total` carried. Dashboards and alerts on `cache_operations_total` or `archive_bundle_original_bytes` move to that series or drop the panel; the bundled Grafana dashboard already does.
+- Callgraphs are uploaded with `POST /projects/{id}/callgraph` and read by the chat and MCP `get_callgraph` tool. `GET /projects/{id}/callgraph` answers 405 and `GET /projects/{id}/callgraph/modules` 404.
+
+
+
 # Release 1.9.46
 
 ## 📦 Build & CI
@@ -29,7 +45,6 @@ The pods keep serving in between, and the HPA reports its target missing until t
 - Housekeeping and the branch sync run on one pod per interval, under the `housekeeping` and `branch_sync` locks. The first new pod runs both, because no lock exists yet.
 - Typosquatting compares npm components against the 5,000 most downloaded npm packages, so npm projects can show new typosquatting findings with their next analysis. PyPI keeps its cached ranking until the 24-hour TTL in Redis ends.
 - A Slack install starts from the system settings page, which signs the OAuth state. The Slack app's redirect URL stays `<frontendBaseUrl>/api/v1/integrations/slack/callback`.
-- The `invitations` collection holds the project invitations, with invitee emails and tokens, that the invite endpoint wrote until February 2026. The backend no longer reads or cleans it, so deleting a project leaves its rows in place. Drop it in-pod with mongosh against the application database: `db.invitations.drop()`. System invitations live in `system_invitations` and stay.
 
 
 
