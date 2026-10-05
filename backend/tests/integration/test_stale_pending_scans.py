@@ -4,6 +4,7 @@ picks up a scan whose queue entry died with its pod; a scan it never picks up bl
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pymongo.errors import AutoReconnect
 
 from app.core.constants import (
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
@@ -11,7 +12,7 @@ from app.core.constants import (
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
 )
-from app.core.housekeeping import trigger_stale_pending_scans
+from app.core.housekeeping import stale_scan_loop, trigger_stale_pending_scans
 from app.core.worker import AnalysisWorkerManager
 from app.models.project import Project, Scan
 from app.services.rescan import create_rescan
@@ -108,3 +109,29 @@ async def test_a_scan_still_registering_or_receiving_results_or_not_pending_is_l
     await trigger_stale_pending_scans(manager)
 
     assert _queued(manager) == []
+
+
+class _LoopStopped(BaseException):
+    pass
+
+
+async def test_a_failing_scans_query_still_lets_the_ad_hoc_requeue_run(db, monkeypatch):
+    await db.adhoc_jobs.insert_one(
+        {"_id": "job", "status": SCAN_STATUS_PENDING, "created_at": datetime.now(timezone.utc) - _STALE}
+    )
+    manager = AnalysisWorkerManager(num_workers=1)
+    _housekeeping_on(db, monkeypatch)
+    ticks = 0
+
+    async def _scans_query_fails(_manager):
+        nonlocal ticks
+        ticks += 1
+        raise _LoopStopped if ticks > 1 else AutoReconnect("primary stepped down")
+
+    monkeypatch.setattr("app.core.housekeeping.trigger_stale_pending_scans", _scans_query_fails)
+    monkeypatch.setattr("app.core.housekeeping.HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS", 0)
+
+    with pytest.raises(_LoopStopped):
+        await stale_scan_loop(manager)
+
+    assert _queued(manager) == ["adhoc:job"]

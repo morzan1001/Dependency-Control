@@ -712,11 +712,11 @@ async def stale_scan_loop(
     Runs frequently to quickly catch scans without SBOM trigger.
     """
     while True:
-        try:
-            await trigger_stale_pending_scans(worker_manager)
-            await requeue_waiting_adhoc_jobs(worker_manager)
-        except Exception as e:
-            logger.exception("Stale scan loop failed: %s", e)
+        for requeue in (trigger_stale_pending_scans, requeue_waiting_adhoc_jobs):
+            try:
+                await requeue(worker_manager)
+            except Exception as e:
+                logger.exception("Stale scan loop: %s failed: %s", requeue.__name__, e)
 
         await asyncio.sleep(HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS)
 
