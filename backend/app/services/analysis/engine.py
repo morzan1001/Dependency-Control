@@ -48,6 +48,7 @@ from app.core.metrics import (
 )
 from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.crypto_asset import CryptoAsset
+from app.models.finding import Finding
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
@@ -475,15 +476,12 @@ async def _process_sbom(
     return list(await asyncio.gather(*tasks))
 
 
-def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
+def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
     """Track Prometheus metrics for aggregated findings."""
     for finding in aggregated_findings:
-        finding_type = finding.type if hasattr(finding, "type") else "unknown"
-        severity = finding.severity if hasattr(finding, "severity") else "unknown"
-        analysis_findings_by_type_total.labels(type=finding_type, severity=severity).inc()
-        scanners = finding.scanners if hasattr(finding, "scanners") else []
-        for scanner_name in scanners:
-            analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
+        analysis_findings_by_type_total.labels(type=finding.type, severity=finding.severity).inc()
+        for scanner_name in finding.scanners:
+            analysis_findings_total.labels(analyzer=scanner_name, severity=finding.severity).inc()
 
 
 _DEP_ENRICHMENT_COPY_KEYS = ("license", "license_expression", "license_category", "license_risks")

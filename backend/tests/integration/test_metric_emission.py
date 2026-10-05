@@ -12,6 +12,7 @@ from app.core import cache
 from app.core.constants import DETAILS_KEY_IN_KEV, SCAN_STATUS_COMPLETED, SCAN_STATUS_PENDING
 from app.core.worker import AnalysisWorkerManager
 from app.db import mongodb
+from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Scan
 from app.repositories.scans import ScanRepository
 from app.services.aggregation import ResultAggregator
@@ -185,7 +186,14 @@ async def test_sbom_downloads_count_their_attempt_success_and_failure(monkeypatc
 
 
 def test_findings_are_counted_by_type_and_by_scanner():
-    finding = SimpleNamespace(type="vulnerability", severity="HIGH", scanners=["trivy", "grype"])
+    finding = Finding(
+        id="CVE-1",
+        type=FindingType.VULNERABILITY,
+        severity=Severity.HIGH,
+        component="c",
+        description="d",
+        scanners=["trivy", "grype"],
+    )
     moved = _deltas(
         [
             ("analysis_findings_by_type_total", {"type": "vulnerability", "severity": "HIGH"}),
