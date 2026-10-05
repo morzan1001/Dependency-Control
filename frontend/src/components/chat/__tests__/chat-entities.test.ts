@@ -122,6 +122,15 @@ describe('linkifyAssistantMarkdown', () => {
     );
   });
 
+  it('leaves a name followed by .word unlinked', () => {
+    const entities = collectEntitiesFromToolCalls([
+      toolCall({ project_id: 'p9', project_name: 'acme-api' }),
+    ]);
+    expect(linkifyAssistantMarkdown('See acme-api.example.com and acme-api.v2 today.', entities)).toBe(
+      'See acme-api.example.com and acme-api.v2 today.',
+    );
+  });
+
   it('links project entity mentions', () => {
     const entities = collectEntitiesFromToolCalls([
       toolCall({ project_id: 'p9', project_name: 'acme-api' }),
