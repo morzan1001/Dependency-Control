@@ -96,19 +96,23 @@ function stubBackend(failLogout?: (config: InternalAxiosRequestConfig) => Error)
   api.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
     const authorization = config.headers.Authorization
     sentRequests.push({ method: config.method, url: config.url, authorization })
+    // Ends a 401 -> logout -> 401 loop, so it fails an assertion instead of starving the event loop.
+    if (sentRequests.length > 20) throw networkError()
+    if (!authorization) throw httpError(config, 401, 'Unauthorized')
     if (failLogout && config.url === '/logout') throw failLogout(config)
     return { data: { owner: authorization }, status: 200, statusText: 'OK', headers: {}, config }
   }
 }
 
-const serverError = (config: InternalAxiosRequestConfig) =>
-  new AxiosError('Request failed with status code 500', AxiosError.ERR_BAD_RESPONSE, config, null, {
+const httpError = (config: InternalAxiosRequestConfig, status: number, statusText: string) =>
+  new AxiosError(`Request failed with status code ${status}`, AxiosError.ERR_BAD_RESPONSE, config, null, {
     data: {},
-    status: 500,
-    statusText: 'Internal Server Error',
+    status,
+    statusText,
     headers: {},
     config,
   })
+const serverError = (config: InternalAxiosRequestConfig) => httpError(config, 500, 'Internal Server Error')
 const networkError = () => new Error('Network Error')
 
 function Projects() {
@@ -237,6 +241,21 @@ describe('AuthProvider logout', () => {
     expect(localStorage.getItem('token')).toBeNull()
     expect(localStorage.getItem('refresh_token')).toBeNull()
     expect(queryClient.getQueryData(['projects'])).toBeUndefined()
+  })
+
+  it('sends no revoke once a rejected refresh has removed the tokens', async () => {
+    localStorage.setItem('token', makeToken(['read']))
+    localStorage.setItem('refresh_token', 'refresh')
+
+    renderSession(makeToken(['read'], 'user-2'), sessionQueryClient())
+    await screen.findByText(/^Bearer /)
+
+    localStorage.clear()
+    fireEvent.click(screen.getByText('logout'))
+    await screen.findByText('login')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(sentRequests.filter((r) => r.url === '/logout')).toHaveLength(0)
   })
 
   it("empties the query cache so the next login fetches its own data", async () => {
