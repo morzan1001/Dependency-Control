@@ -8,7 +8,6 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import (
     _aggregate_external_results,
     _carry_over_external_results,
-    _cleanup_analyzer_names,
     _filter_out_waived_findings,
 )
 from app.services.analysis.registry import CRYPTO_ANALYZERS
@@ -60,14 +59,6 @@ class TestFilterOutWaivedFindings:
         db = {"findings": _FakeFindings([])}
         asyncio.run(_filter_out_waived_findings([{"_id": "R1"}], "scan-9", db))
         assert db["findings"].last_query == {"scan_id": "scan-9", "waived": True}
-
-
-class TestCleanupAnalyzerNames:
-    def test_includes_post_processors_and_crypto(self):
-        names = set(_cleanup_analyzer_names([]))
-        assert "epss_kev" in names
-        assert "reachability" in names
-        assert CRYPTO_ANALYZERS.issubset(names)
 
 
 class TestAggregateExternalSkipsEngineRows:

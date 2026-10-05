@@ -677,15 +677,6 @@ async def _aggregate_external_results(
             results_summary.append(f"{analyzer_name}: Failed")
 
 
-def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
-    """Analyzer result-row names to purge before a (re)run: internal, post-processor, and crypto.
-
-    Crypto/post-processor rows are regenerated per run whatever active_analyzers says, so they are purged explicitly.
-    """
-    internal_analyzers = [name for name in active_analyzers if name in analyzer_factories]
-    return sorted(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
-
-
 def _prepare_finding_records(
     aggregated_findings: list[Any],
     scan_id: str,
@@ -1117,9 +1108,7 @@ async def run_analysis(
             await _apply_handed_over_callgraphs(scan_id, project_id, db)
         return outcome
 
-    await result_repo.delete_many(
-        {"scan_id": scan_id, "analyzer_name": {"$in": _cleanup_analyzer_names(active_analyzers)}}
-    )
+    await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}})
 
     if scan_doc.is_rescan and analysis_rescan_operations_total:
         analysis_rescan_operations_total.inc()
