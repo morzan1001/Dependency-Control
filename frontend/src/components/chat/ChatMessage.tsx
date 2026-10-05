@@ -33,8 +33,8 @@ function AvatarChip({ role }: Readonly<{ role: 'user' | 'assistant' }>) {
 
 function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
   const { href, children, ...rest } = props;
-  // Internal SPA links stay inside the app (no full reload).
-  if (typeof href === 'string' && href.startsWith('/')) {
+  // Single-slash paths stay in the SPA; `//host` is protocol-relative and therefore external.
+  if (typeof href === 'string' && href.startsWith('/') && !href.startsWith('//')) {
     return (
       <RouterLink to={href} className="text-primary hover:underline">
         {children}
@@ -88,7 +88,11 @@ function MessageBody({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={{ a: AssistantLink }}
+        components={{
+          a: AssistantLink,
+          // A rendered <img> would fetch a model-chosen URL without a click.
+          img: ({ src, alt }) => <AssistantLink href={src}>{alt || src}</AssistantLink>,
+        }}
       >
         {linkified}
       </ReactMarkdown>

@@ -214,13 +214,10 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         let cancelled = false
         ;(async () => {
             try {
-                // Try the internal UUID first (what the backend emits as .id),
-                // fall back to the stable finding_id string (e.g. "CVE-X").
                 const res = await scanApi.getFindings(scanId, {
                     search: deepLinkFindingId, skip: 0, limit: RELATED_FINDING_SEARCH_LIMIT,
                 })
                 let found = res.items.find(f => f.id === deepLinkFindingId)
-                    || res.items.find(f => (f as { finding_id?: string }).finding_id === deepLinkFindingId)
                 if (!found && res.items.length === 1) found = res.items[0]
                 if (cancelled) return
                 if (found) {

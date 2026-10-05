@@ -16,7 +16,7 @@ from app.models.types import PyObjectId
 
 class ProjectWithScanId(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
-    name: str
+    name: str = ""
     latest_scan_id: str | None = None
     deleted_branches: list[str] = Field(default_factory=list)
     default_branch: str | None = None

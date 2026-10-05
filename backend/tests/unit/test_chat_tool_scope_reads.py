@@ -109,6 +109,7 @@ async def _call(tool_name: str, args: dict, user: User, db: FakeDatabase) -> dic
         ("get_auto_fixable_findings", {}),
         ("get_license_violations", {}),
         ("get_findings_by_cve", {"cve_id": _CVE}),
+        ("search_findings", {"query": _CVE}),
     ],
 )
 @pytest.mark.asyncio
@@ -123,23 +124,13 @@ async def test_an_estate_wide_tool_reads_the_callers_projects_once(tool_name: st
     assert len(project_reads) == 1
 
 
-@pytest.mark.parametrize(
-    ("tool_name", "args", "collection"),
-    [
-        ("search_findings", {"query": _CVE}, "findings"),
-        ("get_cve_details", {"cve_id": _CVE}, "findings"),
-        ("get_expiring_waivers", {}, "waivers"),
-    ],
-)
 @pytest.mark.asyncio
-async def test_a_caller_reading_every_project_sends_no_project_id_list(
-    tool_name: str, args: dict, collection: str
-) -> None:
+async def test_a_caller_reading_every_project_sends_no_project_id_list() -> None:
     db = _seeded()
-    queries = _record(db[collection])
+    queries = _record(db.waivers)
     project_reads = _record(db.projects)
 
-    result = await _call(tool_name, args, _user(PRESET_ADMIN), db)
+    result = await _call("get_expiring_waivers", {}, _user(PRESET_ADMIN), db)
 
     assert "error" not in result
     assert all("$in" not in json.dumps(q.get("project_id", {}), default=str) for q in queries if q)

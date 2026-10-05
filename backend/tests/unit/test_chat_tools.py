@@ -4,10 +4,11 @@ import re
 
 import pytest
 
+from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.archive import ArchiveMetadata
 from app.models.user import User
-from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools import ChatToolRegistry, _inject_urls
 from app.services.chat.tools.definitions import TOOL_DEFINITIONS
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
@@ -28,6 +29,14 @@ def test_tool_definitions_valid_json_schema():
         assert "name" in fn
         assert "description" in fn
         assert "parameters" in fn
+
+
+def test_a_row_without_a_finding_id_links_its_scan_not_a_finding():
+    row = {"id": "cg-1", "project_id": "p", "scan_id": "s"}
+
+    _inject_urls(row)
+
+    assert row["url"] == f"{settings.FRONTEND_BASE_URL}/projects/p/scans/s"
 
 
 def test_admin_tools_require_admin_permission():

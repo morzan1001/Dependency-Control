@@ -3,6 +3,7 @@
 from contextvars import ContextVar
 from operator import itemgetter
 from typing import Any
+from urllib.parse import quote
 
 from app.core.config import settings
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
@@ -52,6 +53,27 @@ _FINDING_DETAILS_FIELDS = (
 # A row's compact view of each advisory, and how many it lists, its primary first.
 _ROW_ADVISORY_FIELDS = ("id", "severity", DETAILS_KEY_IN_KEV, "epss_score", "fixed_version", "waived")
 _ROW_ADVISORIES = 3
+
+# Every field _serialize_finding_for_llm reads; a row projected to less loses part of its answer.
+_LLM_ADVISORY_FIELDS = (
+    *_ROW_ADVISORY_FIELDS,
+    "aliases",
+    "resolved_cve",
+    DETAILS_KEY_KEV_RANSOMWARE,
+    "epss_percentile",
+    "risk_score",
+    "cvss_score",
+    "references",
+)
+RANKED_FINDING_PROJECTION = dict.fromkeys(
+    (
+        *_FINDING_TOPLEVEL_FIELDS,
+        "first_seen_at",
+        *(f"details.{f}" for f in _FINDING_DETAILS_FIELDS),
+        *(f"details.vulnerabilities.{f}" for f in _LLM_ADVISORY_FIELDS),
+    ),
+    1,
+)
 
 
 # Clamps applied while one tool call runs, so the answer can say it was not the one asked for.
@@ -276,9 +298,9 @@ def _inject_urls(node: Any) -> None:
         return
     pid = node.get("project_id")
     sid = node.get("scan_id")
-    fid = node.get("id")
+    fid = node.get("finding_id")
     if isinstance(pid, str) and isinstance(sid, str) and isinstance(fid, str):
-        node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}?finding={fid}")
+        node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}?finding={quote(fid, safe='')}")
     elif isinstance(pid, str) and isinstance(sid, str):
         node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}")
     elif isinstance(pid, str):

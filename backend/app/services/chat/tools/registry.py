@@ -79,6 +79,7 @@ from app.services.recommendation.common import live_advisories, max_advisory_cvs
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
+    RANKED_FINDING_PROJECTION,
     _breaking_risk,
     _clip_value,
     _ensure_list,
@@ -158,6 +159,9 @@ _ARCHIVE_FIELDS = _rendered_fields(AdminArchiveListItem)
 
 # Everything an answer needs to name the build it describes.
 _BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
+_SCAN_DETAIL_PROJECTION = _BUILD_PROJECTION | dict.fromkeys(
+    ("project_id", "completed_at", "error", "failed_analyzers", "enrichment_failures", "findings_count", "stats"), 1
+)
 
 # Candidate set pulled per severity tier and ranked in-process on the numeric tiebreakers, which
 # `severity` being a string cannot express in a server-side sort. Bounding a tier rather than the
@@ -181,7 +185,6 @@ _TOP_RISKY = 3
 _PROJECT_ROW_PROJECTION = dict.fromkeys(
     ("name", "team_ids", "last_scan_at", "created_at", "latest_scan_id", "default_branch", "deleted_branches"), 1
 )
-# Without _id, project_id and scan_id, _inject_urls adds no finding link to a dependency row.
 _DEPENDENCY_ROW_PROJECTION = {
     "_id": 0,
     **dict.fromkeys(("name", "version", "purl", "direct", "direct_inferred", "scope", "parent_components"), 1),
@@ -375,7 +378,7 @@ async def _ranked_findings(
         if len(out) >= limit:
             break
         tier_query = {**query, "severity": tier}
-        cursor = db["findings"].find(tier_query, limit=_FINDING_RANK_FETCH_CAP)
+        cursor = db["findings"].find(tier_query, RANKED_FINDING_PROJECTION, limit=_FINDING_RANK_FETCH_CAP)
         candidates = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
         if not candidates:
             continue
@@ -570,7 +573,7 @@ class ChatToolRegistry:
     async def _tool_get_scan_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
         scan_id, build = await self._scan_under_answer(ctx, project)
-        scan = await ctx.db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]})
+        scan = await ctx.db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]}, _SCAN_DETAIL_PROJECTION)
         return {"scan": {**_serialize_doc(scan), "is_head": build["is_head"]}}
 
     async def _tool_get_scan_findings(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -610,8 +613,9 @@ class ChatToolRegistry:
     async def _tool_search_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         search_query = ctx.args["query"]
         pattern = {"$regex": re.escape(search_query), "$options": "i"}
+        head, names = await self._heads_in_scope(ctx)
         query = {
-            **await self._in_scope(ctx),
+            "scan_id": {"$in": list(head.values())},
             "$or": [{"finding_id": pattern}, {"description": pattern}, {"component": pattern}, advisory_match(pattern)],
         }
         if ctx.args.get("severity"):
@@ -621,7 +625,6 @@ class ChatToolRegistry:
         findings, findings_total = await bounded_read(
             ctx.db["findings"], query, subject="matching findings", limit=ctx.args["limit"]
         )
-        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in findings)
         return {
             "findings": _slim_with_project(findings, names),
             "count": len(findings),
@@ -1262,7 +1265,8 @@ class ChatToolRegistry:
 
     async def _tool_get_cve_details(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""
-        finding = await ctx.db["findings"].find_one({**await self._in_scope(ctx), **advisory_match(cve)})
+        head, _ = await self._heads_in_scope(ctx)
+        finding = await ctx.db["findings"].find_one({"scan_id": {"$in": list(head.values())}, **advisory_match(cve)})
         if not finding:
             return {"error": f"{cve} not found in any of your projects' scan data"}
         advisory = next(v for v in finding["details"]["vulnerabilities"] if cve in advisory_ids(v))
@@ -1382,23 +1386,18 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_projects_without_recent_scan(self, ctx: _ToolContext) -> dict[str, Any]:
-        from datetime import datetime as _dt
-        from datetime import timedelta as _td
-        from datetime import timezone as _tz
-
         days = ctx.args["days"]
         limit = ctx.args["limit"]
-        cutoff = _dt.now(_tz.utc) - _td(days=days)
-        query = {
-            "$or": [
-                {"last_scan_at": {"$lt": cutoff}},
-                {"last_scan_at": None},
-                {"last_scan_at": {"$exists": False}},
-            ],
-        }
-        query = and_filters(query, ctx.user_project_query)
-        cursor = ctx.db["projects"].find(query, {"_id": 1, "name": 1, "last_scan_at": 1}, limit=limit)
-        rows = await cursor.to_list(length=limit)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        query = {"$or": [{"last_scan_at": {"$lt": cutoff}}, {"last_scan_at": None}]}
+        rows, rows_total = await bounded_read(
+            ctx.db["projects"],
+            and_filters(query, ctx.user_project_query),
+            subject="projects without a recent scan",
+            limit=limit,
+            projection={"_id": 1, "name": 1, "last_scan_at": 1},
+            sort=[("last_scan_at", 1)],
+        )
         out = []
         for p in rows:
             last = p.get("last_scan_at")
@@ -1410,7 +1409,7 @@ class ChatToolRegistry:
                     "never_scanned": last is None,
                 }
             )
-        return {"projects": out, "count": len(out), "threshold_days": days}
+        return {"projects": out, "projects_total": rows_total, "threshold_days": days}
 
     async def _tool_get_callgraph(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
