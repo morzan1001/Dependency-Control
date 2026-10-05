@@ -136,8 +136,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_scan_details",
             "description": (
-                "Get details of a scan: findings summary, stats, branch, commit, status. Describes the "
-                f"project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD}"
+                "Get details of a scan: status, branch, commit, timing, finding counts and failed analyzers. "
+                f"Describes the project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD}"
             ),
             "parameters": {
                 "type": "object",

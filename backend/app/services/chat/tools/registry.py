@@ -158,6 +158,9 @@ _ARCHIVE_FIELDS = _rendered_fields(AdminArchiveListItem)
 
 # Everything an answer needs to name the build it describes.
 _BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
+_SCAN_DETAIL_PROJECTION = _BUILD_PROJECTION | dict.fromkeys(
+    ("project_id", "completed_at", "error", "failed_analyzers", "enrichment_failures", "findings_count", "stats"), 1
+)
 
 # Candidate set pulled per severity tier and ranked in-process on the numeric tiebreakers, which
 # `severity` being a string cannot express in a server-side sort. Bounding a tier rather than the
@@ -569,7 +572,7 @@ class ChatToolRegistry:
     async def _tool_get_scan_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
         scan_id, build = await self._scan_under_answer(ctx, project)
-        scan = await ctx.db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]})
+        scan = await ctx.db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]}, _SCAN_DETAIL_PROJECTION)
         return {"scan": {**_serialize_doc(scan), "is_head": build["is_head"]}}
 
     async def _tool_get_scan_findings(self, ctx: _ToolContext) -> dict[str, Any]:
