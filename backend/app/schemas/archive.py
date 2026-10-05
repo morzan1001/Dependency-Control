@@ -27,26 +27,6 @@ class AdminArchiveListItem(ArchiveListItem):
     project_name: str | None = None
 
 
-class ArchiveListResponse(BaseModel):
-    """Paginated list of archives for a project."""
-
-    items: list[ArchiveListItem]
-    total: int
-    page: int
-    size: int
-    pages: int
-
-
-class AdminArchiveListResponse(BaseModel):
-    """Paginated list of archives across all projects (admin)."""
-
-    items: list[AdminArchiveListItem]
-    total: int
-    page: int
-    size: int
-    pages: int
-
-
 class ArchiveRestoreResponse(BaseModel):
     """Response after restoring an archive."""
 

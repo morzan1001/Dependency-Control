@@ -1,12 +1,10 @@
 import re
-from datetime import datetime
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.github_instance import is_shared_github_issuer
-from app.schemas._instance_url import strip_trailing_slash
-from app.schemas._not_null import reject_null
-from app.schemas._oidc_audience import validate_audience_not_blank
+from app.schemas._vcs_instance import VcsInstanceBase, VcsInstanceCreate, VcsInstanceResponse, VcsInstanceUpdate
 
 AUTO_CREATE_NEEDS_OWNERS = (
     "Auto-creating projects on the shared github.com issuer needs at least one allowed owner id, "
@@ -29,103 +27,39 @@ def _validate_owner_ids(value: list[str] | None) -> list[str]:
     return value
 
 
-class GitHubInstanceBase(BaseModel):
-    """Base schema for GitHub instance.
-
-    The oidc_audience field and its blank-check live on the Create/Update
-    schemas, not here, so the Response schema can serialize instances whose
-    audience is null.
-    """
-
-    name: str = Field(..., description="Human-readable name (e.g. 'GitHub.com', 'GitHub Enterprise')")
-    url: str = Field(..., description="OIDC issuer URL (e.g. 'https://token.actions.githubusercontent.com')")
+class GitHubInstanceBase(VcsInstanceBase):
     github_url: str | None = Field(None, description="GitHub web URL (e.g. 'https://github.com')")
-    description: str | None = Field(None, description="Optional description of this instance")
-    is_active: bool = Field(True, description="Whether this instance is currently active")
-    auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
-    sync_teams: bool = Field(False, description="Sync GitHub team members to local teams")
     allowed_owner_ids: list[str] = Field(
         default_factory=list,
         description="Numeric repository_owner_id claims whose tokens are accepted; empty accepts every owner",
     )
 
 
-class GitHubInstanceCreate(GitHubInstanceBase):
+class GitHubInstanceCreate(GitHubInstanceBase, VcsInstanceCreate):
     """Schema for creating a new GitHub instance."""
 
-    oidc_audience: str = Field(
-        ...,
-        min_length=1,
-        description="REQUIRED expected 'aud' claim for OIDC tokens. "
-        "Must match the GitHub Actions token request 'audience'.",
-    )
-    access_token: str | None = Field(None, description="Personal Access Token for GitHub API operations")
-
-    _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
-    _url_normalised = field_validator("url")(strip_trailing_slash)
 
     @model_validator(mode="after")
-    def validate_token_dependent_features(self) -> "GitHubInstanceCreate":
-        if self.sync_teams and not self.access_token:
-            raise ValueError("An access token is required to enable team syncing")
+    def validate_owner_scope(self) -> Self:
         if lacks_required_owners(self.url, self.auto_create_projects, self.allowed_owner_ids):
             raise ValueError(AUTO_CREATE_NEEDS_OWNERS)
         return self
 
 
-class GitHubInstanceUpdate(BaseModel):
+class GitHubInstanceUpdate(VcsInstanceUpdate):
     """Schema for updating a GitHub instance. All fields optional."""
 
-    name: str | None = Field(None, description="Human-readable name")
-    url: str | None = Field(None, description="OIDC issuer URL")
     github_url: str | None = Field(None, description="GitHub web URL")
-    description: str | None = Field(None, description="Optional description")
-    is_active: bool | None = Field(None, description="Whether this instance is active")
-    oidc_audience: str | None = Field(
-        None, description="Expected 'aud' claim for OIDC tokens. If provided, must not be empty."
-    )
-    auto_create_projects: bool | None = Field(None, description="Automatically create projects from OIDC tokens")
-    sync_teams: bool | None = Field(None, description="Sync GitHub team members to local teams")
-    access_token: str | None = Field(None, description="Personal Access Token for GitHub API operations")
     allowed_owner_ids: list[str] | None = Field(
         None, description="Numeric repository_owner_id claims whose tokens are accepted; [] accepts every owner"
     )
 
-    _not_null = field_validator("name", "url", "is_active", "auto_create_projects", "sync_teams")(reject_null)
-    _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
-    _url_normalised = field_validator("url")(strip_trailing_slash)
 
 
-class GitHubInstanceResponse(GitHubInstanceBase):
+class GitHubInstanceResponse(GitHubInstanceBase, VcsInstanceResponse):
     """Schema for GitHub instance response."""
-
-    # No blank-check here: the response reflects stored state verbatim so
-    # admins can see and fix instances whose audience is null.
-    oidc_audience: str | None = Field(
-        None, description="Expected 'aud' claim for OIDC tokens. Null means not yet configured (will 403 on ingest)."
-    )
-
-    id: str = Field(..., description="Unique identifier")
-    token_configured: bool = Field(
-        False, description="Whether an access token is configured (without exposing the token)"
-    )
-    created_at: datetime = Field(..., description="Creation timestamp")
-    created_by: str = Field(..., description="User ID who created this instance")
-    last_modified_at: datetime | None = Field(None, description="Last modification timestamp")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class GitHubInstanceList(BaseModel):
-    """Paginated list of GitHub instances."""
-
-    items: list[GitHubInstanceResponse]
-    total: int
-    page: int
-    size: int
-    pages: int
 
 
 class GitHubOrgTeam(BaseModel):

@@ -133,16 +133,6 @@ class ProjectWithTeam(Project):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ProjectListEnriched(BaseModel):
-    """Project list with team names enriched."""
-
-    items: list[ProjectWithTeam]
-    total: int
-    page: int
-    size: int
-    pages: int
-
-
 ProjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
@@ -364,13 +354,3 @@ class ScanFindingItem(BaseModel):
     severity_rank: int = Field(default=0, description="Numeric severity rank for sorting")
 
     model_config = ConfigDict(use_enum_values=True)
-
-
-class ScanFindingsResponse(BaseModel):
-    """Paginated response for scan findings."""
-
-    items: list[ScanFindingItem] = Field(..., description="List of findings")
-    total: int = Field(..., description="Total number of findings")
-    page: int = Field(..., description="Current page number")
-    size: int = Field(..., description="Number of items per page")
-    pages: int = Field(..., description="Total number of pages")

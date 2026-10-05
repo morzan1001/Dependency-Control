@@ -57,6 +57,8 @@ _TWO_RECORDS = 2
 _THREE_RECORDS = 3
 _FIRST_PAGE = 1
 _SECOND_PAGE = 2
+_ONE_PAGE = 1
+_THREE_PAGES = 3
 _DEFAULT_PAGE_SIZE = 20
 _MAX_PAGE_SIZE = 100
 
@@ -582,6 +584,7 @@ async def test_list_pages_through_the_records(client, db, member_auth_headers, a
     assert len(body["items"]) == _ONE_RECORD
     assert body["page"] == _SECOND_PAGE
     assert body["size"] == _ONE_RECORD
+    assert body["pages"] == _THREE_PAGES
     # skip lands on the second-newest, which is the staging mark.
     assert body["items"][0]["environment"] == _STAGING
 
@@ -609,6 +612,7 @@ async def test_list_of_a_project_without_releases_is_empty(client, db, member_au
         "total": _NO_RECORDS,
         "page": _FIRST_PAGE,
         "size": _DEFAULT_PAGE_SIZE,
+        "pages": _ONE_PAGE,
     }
 
 

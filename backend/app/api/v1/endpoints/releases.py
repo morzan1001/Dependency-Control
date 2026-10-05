@@ -10,7 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.pagination import build_pagination_response
+from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
@@ -23,7 +23,8 @@ from app.core.constants import (
 from app.models.release import Release, release_identity
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
-from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
+from app.schemas.pagination import Page
+from app.schemas.release import ReleaseItem, ReleaseMarkRequest, ReleaseUnmarkResponse
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ async def list_releases(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
     environment: _OptionalEnvironmentQuery = None,
-) -> ReleaseListResponse:
+) -> Page[ReleaseItem]:
     """Every release of a project, newest first — one entry per environment a scan was deployed to,
     so an environment's current release is its first entry."""
     await check_project_access(project_id, current_user, db)
@@ -188,4 +189,4 @@ async def list_releases(
     rows = await release_repo.find_many_raw(
         query, skip=skip, limit=limit, sort_by="released_at", sort_order=pymongo.DESCENDING
     )
-    return ReleaseListResponse(**build_pagination_response(await _to_items(db, rows), total, skip, limit))
+    return Page[ReleaseItem](items=await _to_items(db, rows), **page_meta(total, skip, limit))

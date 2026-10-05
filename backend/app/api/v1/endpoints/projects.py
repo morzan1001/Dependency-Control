@@ -89,6 +89,7 @@ from app.repositories.projects import (
     ownership_fields,
     set_owners_pipeline,
 )
+from app.schemas.pagination import Page
 from app.schemas.project import (
     BranchInfo,
     BranchTip,
@@ -96,7 +97,6 @@ from app.schemas.project import (
     ProjectApiKeyResponse,
     ProjectBranchTips,
     ProjectCreate,
-    ProjectListEnriched,
     ProjectMemberInvite,
     ProjectMemberUpdate,
     ProjectNotificationSettings,
@@ -104,7 +104,7 @@ from app.schemas.project import (
     ProjectWithTeam,
     RecentScan,
     RiskyProject,
-    ScanFindingsResponse,
+    ScanFindingItem,
     ScanHistoryResponse,
     ScanReleaseRef,
     ScanWithReleases,
@@ -332,7 +332,7 @@ async def rotate_api_key(
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
 
-@router.get("/", response_model=ProjectListEnriched, summary="List all projects", responses=RESP_AUTH)
+@router.get("/", response_model=Page[ProjectWithTeam], summary="List all projects", responses=RESP_AUTH)
 async def read_projects(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -1233,7 +1233,7 @@ async def _load_scan_with_access(scan_id: str, current_user: User, db: Any) -> S
 
 @router.get(
     "/scans/{scan_id}/findings",
-    response_model=ScanFindingsResponse,
+    response_model=Page[ScanFindingItem],
     summary="Get scan findings with pagination",
     responses=RESP_AUTH_404,
 )

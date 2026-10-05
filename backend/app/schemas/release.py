@@ -43,13 +43,6 @@ class ReleaseItem(BaseModel):
     )
 
 
-class ReleaseListResponse(BaseModel):
-    items: list[ReleaseItem]
-    total: int
-    page: int
-    size: int
-
-
 class ReleaseUnmarkResponse(BaseModel):
     scan_id: str
     environment: str = Field(..., description="The environment the scan was withdrawn from")

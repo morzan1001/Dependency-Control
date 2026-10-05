@@ -24,12 +24,12 @@ from app.schemas.gitlab_instance import (
     AUTO_CREATE_NEEDS_NAMESPACES,
     GitLabGroupOption,
     GitLabInstanceCreate,
-    GitLabInstanceList,
     GitLabInstanceResponse,
     GitLabInstanceTestConnectionResponse,
     GitLabInstanceUpdate,
     lacks_required_namespaces,
 )
+from app.schemas.pagination import Page
 from app.services.gitlab import GitLabService, build_group_options
 
 router = CustomAPIRouter()
@@ -56,7 +56,7 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
     )
 
 
-@router.get("/", response_model=GitLabInstanceList, responses=RESP_AUTH)
+@router.get("/", response_model=Page[GitLabInstanceResponse], responses=RESP_AUTH)
 async def list_instances(
     db: DatabaseDep,
     current_user: deps.SystemManagerDep,
