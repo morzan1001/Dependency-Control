@@ -129,7 +129,9 @@ Add the following to your `/etc/hosts` file to route traffic correctly via Traef
 ```
 
 ### 2. Start the Stack
+The backend signs sessions with `SECRET_KEY` and refuses to start without one.
 ```bash
+export SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d --build
 ```
 

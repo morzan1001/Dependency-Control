@@ -17,7 +17,7 @@ from app.models.invitation import SystemInvitation
 from app.models.user import User
 from app.repositories.invitations import InvitationRepository
 from app.repositories.users import IdentityTakenError, UserRepository
-from app.schemas.user import LowercaseEmail, Username, UserResponse
+from app.schemas.user import LowercaseEmail, StrongPassword, Username, UserResponse
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ async def accept_system_invitation(
     db: DatabaseDep,
     token: Annotated[str, Body(...)],
     username: Annotated[Username, Body(...)],
-    password: Annotated[str, Body(...)],
+    password: Annotated[StrongPassword, Body(...)],
 ) -> User:
     """Accept a system invitation and create a user account."""
     invitation_repo = InvitationRepository(db)

@@ -182,7 +182,7 @@ async def read_user_by_id(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get user by ID. Requires admin permission or self."""
-    check_admin_or_self(current_user, user_id, [Permissions.USER_READ])
+    check_admin_or_self(current_user, user_id, [Permissions.USER_READ_ALL])
     return await get_user_or_404(user_id, db)
 
 
@@ -318,7 +318,9 @@ async def update_password_me(
     hashed_password = security.get_password_hash(password_in.new_password)
 
     user_repo = UserRepository(db)
-    await user_repo.update(current_user.id, {"hashed_password": hashed_password})
+    await user_repo.update(
+        current_user.id, {"hashed_password": hashed_password, "last_logout_at": datetime.now(timezone.utc)}
+    )
 
     send_password_changed_email(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)

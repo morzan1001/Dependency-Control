@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -461,7 +462,7 @@ async def _authenticate_via_api_key(x_api_key: str, project_repo: ProjectReposit
     project_data = await project_repo.get_raw_by_id(project_id)
     if not project_data or not project_data.get("api_key_hash"):
         raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
-    if not security.verify_password(secret, project_data["api_key_hash"]):
+    if not await asyncio.to_thread(security.verify_password, secret, project_data["api_key_hash"]):
         raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
     return Project(**project_data)
 

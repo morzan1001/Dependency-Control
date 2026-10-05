@@ -33,6 +33,7 @@ def _not_email_shaped(username: str) -> str:
 
 LowercaseEmail = Annotated[EmailStr, AfterValidator(str.lower)]
 Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1), AfterValidator(_not_email_shaped)]
+StrongPassword = Annotated[str, AfterValidator(validate_password_strength)]
 
 
 class UserCreate(BaseModel):
@@ -42,31 +43,21 @@ class UserCreate(BaseModel):
 
     email: LowercaseEmail
     username: Username
-    password: str
+    password: StrongPassword
     is_active: bool = True
     permissions: list[str] = []
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: StrictNotificationPreferences = None
 
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, v: str) -> str:
-        return validate_password_strength(v)
-
 
 class UserSignup(BaseModel):
     email: LowercaseEmail
     username: Username
-    password: str
+    password: StrongPassword
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: StrictNotificationPreferences = None
-
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, v: str) -> str:
-        return validate_password_strength(v)
 
 
 class UserUpdate(BaseModel):
@@ -99,21 +90,11 @@ class UserEmailChange(BaseModel):
 
 class UserPasswordUpdate(BaseModel):
     current_password: str
-    new_password: str
-
-    @field_validator("new_password")
-    @classmethod
-    def validate_new_password(cls, v: str) -> str:
-        return validate_password_strength(v)
+    new_password: StrongPassword
 
 
 class UserMigrateToLocal(BaseModel):
-    new_password: str
-
-    @field_validator("new_password")
-    @classmethod
-    def validate_new_password(cls, v: str) -> str:
-        return validate_password_strength(v)
+    new_password: StrongPassword
 
 
 class UserResponse(BaseModel):
@@ -149,9 +130,4 @@ class User2FADisable(BaseModel):
 
 class UserPasswordReset(BaseModel):
     token: str
-    new_password: str
-
-    @field_validator("new_password")
-    @classmethod
-    def validate_new_password(cls, v: str) -> str:
-        return validate_password_strength(v)
+    new_password: StrongPassword
