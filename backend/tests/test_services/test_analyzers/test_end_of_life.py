@@ -380,6 +380,12 @@ class TestProductResolution:
             pytest.param(_component("pg", "8.4.2", "pkg:npm/pg@8.4.2"), id="npm-pg"),
             pytest.param(_component("elasticsearch", "7.17.9", "pkg:pypi/elasticsearch@7.17.9"), id="pypi-es"),
             pytest.param(_component("redis", "5.0.8", "pkg:gem/redis@5.0.8"), id="gem-redis"),
+            pytest.param(_component("redis", "0.25.0", "pkg:cargo/redis@0.25.0"), id="cargo-redis"),
+            pytest.param(_component("Consul", "1.7.14.3", "pkg:nuget/Consul@1.7.14.3"), id="nuget-consul"),
+            pytest.param(
+                _component("elasticsearch", "8.10.0", "pkg:composer/elasticsearch/elasticsearch@8.10.0"),
+                id="composer-es",
+            ),
         ],
     )
     @pytest.mark.asyncio
