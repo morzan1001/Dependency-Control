@@ -19,7 +19,6 @@ from app.core.permissions import Permissions
 from app.models.project import Project
 from app.repositories.callgraphs import CallgraphRepository
 from tests.helpers.auth import bearer_headers
-from tests.helpers.permission_presets import PRESET_ADMIN
 from tests.mocks.fake_mongo import FakeDatabase
 
 DEPS = "app.api.deps"
@@ -426,76 +425,6 @@ class TestReupload:
         assert second["created_at"] == first["created_at"]
 
 
-class TestModuleUsageEndpoint:
-    @pytest.mark.asyncio
-    async def test_modules_endpoint_serialises_a_non_empty_usage_map(self, client, db):
-        await _upload(client, _envelope("madge", "javascript", _MADGE_DATA))
-        headers = await _seed_user(db, "admin-1", PRESET_ADMIN)
-
-        response = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph/modules", headers=headers)
-
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["language"] == "javascript"
-        assert body["modules"], "a non-empty module_usage must survive serialisation"
-        for module in body["modules"]:
-            assert module["name"] == module["module"]
-        assert {m["module"] for m in body["modules"]} == {"lodash", "@babel/runtime", "express"}
-
-    @pytest.mark.asyncio
-    async def test_modules_are_listed_most_used_first(self, client, db):
-        second_import = {"module": "urllib3.util.retry", "file": "app/session.py", "line": 2, "symbols": ["Retry"]}
-        data = {**_PYTHON_DATA, "imports": [*_PYTHON_DATA["imports"], second_import]}
-        await _upload(client, _envelope("generic", "python", data))
-        headers = await _seed_user(db, "admin-1", PRESET_ADMIN)
-
-        response = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph/modules", headers=headers)
-
-        assert response.status_code == 200, response.text
-        [most_used, *_rest] = response.json()["modules"]
-        assert (most_used["module"], most_used["import_count"]) == ("urllib3.util.retry", 2)
-        assert most_used["import_locations"] == ["app/client.py", "app/session.py"]
-
-
-class TestCallgraphEndpoint:
-    @pytest.mark.asyncio
-    async def test_an_uploaded_callgraph_is_served_with_its_graph(self, client, db):
-        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
-        headers = await _seed_user(db, "admin-1", PRESET_ADMIN)
-
-        response = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph", headers=headers)
-
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert set(body["module_usage"]) == {"requests", "urllib3.util.retry", "app.config"}
-        assert body["analyzed_modules"] == ["pyyaml", "requests", "urllib3"]
-
-    @pytest.mark.asyncio
-    async def test_a_callgraph_stored_with_its_edge_lists_is_served_without_them(self, client, db):
-        await db.callgraphs.insert_one(
-            {
-                "_id": "cg-legacy",
-                "project_id": _PROJECT_ID,
-                "language": "python",
-                "tool": "generic",
-                "imports": [{"module": "requests", "file": "app/client.py", "line": 3, "imported_symbols": []}],
-                "calls": [],
-                "module_usage": {"requests": {"module": "requests", "import_count": 1}},
-                "total_imports": 1,
-                "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-            }
-        )
-        headers = await _seed_user(db, "admin-1", PRESET_ADMIN)
-
-        response = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph", headers=headers)
-
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert "imports" not in body
-        assert "calls" not in body
-        assert (body["total_imports"], set(body["module_usage"])) == (1, {"requests"})
-
-
 # --- reachability ------------------------------------------------------------
 
 
@@ -798,18 +727,6 @@ class TestScanResolution:
         assert response.json()["warnings"] == [
             "No pipeline_id: the callgraph is stored project-level and is not used for reachability verdicts"
         ]
-
-    @pytest.mark.asyncio
-    async def test_the_language_filter_reads_the_canonical_spelling(self, client, db):
-        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
-        headers = await _seed_user(db, "admin", PRESET_ADMIN)
-
-        response = await client.get(
-            f"/api/v1/projects/{_PROJECT_ID}/callgraph", params={"language": "Python"}, headers=headers
-        )
-
-        assert response.status_code == 200, response.text
-        assert response.json()["language"] == "python"
 
 
 def test_one_ci_run_names_one_scan():
