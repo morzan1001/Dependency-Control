@@ -319,6 +319,19 @@ async def test_licenses_grouped_with_category_and_unknown_bucket(client, db, mem
 
 
 @pytest.mark.asyncio
+async def test_a_license_counts_a_component_once_across_its_purl_qualifier_variants(client, db, member_auth_headers):
+    await _seed_scan(db)
+    for qualifier in ("jar", "pom"):
+        await _seed_dep(db, "s1", "lib", license_id="MIT", purl=f"pkg:maven/org.example/lib@1.0.0?type={qualifier}")
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    [mit] = resp.json()["items"]
+    assert (mit["component_count"], mit["components"]) == (1, ["lib@1.0.0"])
+
+
+@pytest.mark.asyncio
 async def test_the_tiles_count_what_the_tables_show(client, db, member_auth_headers):
     await _seed_scan(db)
     await _seed_dep(db, "s1", "a", license_id="MIT")
