@@ -228,7 +228,7 @@ class CacheService:
                     max_connections=20,
                 )
                 self._client = redis.Redis(connection_pool=self._pool)
-                await self._client.ping()  # type: ignore[misc]
+                await self._client.ping()
                 self._available = True
                 self._unavailable_since = 0
                 logger.info("Redis cache connection established")

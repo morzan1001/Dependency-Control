@@ -84,15 +84,14 @@ return {1, max_reqs - count - 1}
         member = f"{user_id}:{now}"
 
         minute_key = f"{self.prefix}{user_id}:minute"
-        # eval() stubs type the result as Awaitable | str; at runtime it is the script result.
-        result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)  # type: ignore[misc]
+        result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
             chat_rate_limited_total.inc()
             return False, retry_or_remaining
 
         hour_key = f"{self.prefix}{user_id}:hour"
-        result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)  # type: ignore[misc]
+        result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
             chat_rate_limited_total.inc()

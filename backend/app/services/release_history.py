@@ -77,9 +77,9 @@ def _split_observation(obs: Observation) -> tuple[str | None, str, str, datetime
     ``system`` is None for the 3-tuple ``(name, version, scan_date)`` form.
     """
     if len(obs) == 4:
-        system, name, version, scan_date = obs  # type: ignore[misc]
+        system, name, version, scan_date = obs
         return system, name, version, scan_date
-    name, version, scan_date = obs  # type: ignore[misc]
+    name, version, scan_date = obs
     return None, name, version, scan_date
 
 

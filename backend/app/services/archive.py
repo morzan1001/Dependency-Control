@@ -382,7 +382,7 @@ async def _upload_archive_bundle(
 
 
 async def archive_scan(
-    db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
+    db: AsyncIOMotorDatabase,
     scan_id: str,
 ) -> ArchiveMetadata | None:
     """Archive one scan and its related data to S3 under a distributed lock on archive:{scan_id}."""
@@ -886,7 +886,7 @@ async def _run_restore_pipeline(
 
 
 async def restore_scan(
-    db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
+    db: AsyncIOMotorDatabase,
     scan_id: str,
 ) -> ArchiveRestoreResponse | None:
     """Restore an archived scan back to MongoDB under a distributed lock on restore:{scan_id}.
