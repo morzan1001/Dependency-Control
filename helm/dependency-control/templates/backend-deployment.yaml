@@ -16,6 +16,7 @@ spec:
   selector:
     matchLabels:
       {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
   template:
     metadata:
       labels:
@@ -24,6 +25,8 @@ spec:
       {{- if .Values.grypeDbUpdater.enabled }}
       annotations:
         gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/ephemeral-storage-request: "100Mi"
+        gke-gcsfuse/ephemeral-storage-limit: "0"
       {{- end }}
     spec:
       {{- with .Values.global.imagePullSecrets }}
@@ -236,6 +239,10 @@ spec:
               value: "{{ .Values.backend.env.refreshTokenExpireDays }}"
             - name: FRONTEND_BASE_URL
               value: "{{ .Values.backend.env.frontendBaseUrl }}"
+            {{- with .Values.backend.env.trustedProxyIps }}
+            - name: TRUSTED_PROXY_IPS
+              value: {{ . | quote }}
+            {{- end }}
             # Pod lifecycle: max uptime before automatic restart (helps manage memory)
             - name: MAX_POD_UPTIME_SECONDS
               value: "{{ .Values.backend.env.maxPodUptimeSeconds | default 86400 }}"

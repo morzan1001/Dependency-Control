@@ -281,6 +281,8 @@ backend:
     accessTokenExpireMinutes: 30
     refreshTokenExpireDays: 7
     frontendBaseUrl: ""
+    # CIDRs whose X-Forwarded-For uvicorn trusts; empty trusts every peer, so set it to the ingress pod range.
+    trustedProxyIps: ""
     # Maximum pod uptime in seconds before automatic restart (helps manage memory)
     # Set to 0 to disable. Default: 43200 (12 hours)
     # The PodDisruptionBudget ensures pods restart one at a time

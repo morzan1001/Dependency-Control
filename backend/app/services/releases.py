@@ -49,9 +49,11 @@ async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
     """
     release_repo = ReleaseRepository(db)
     cleared = 0
-    # Exactly true, so the scans_released_list partial index serves the sweep; another spelling
-    # costs a listing row, not a scan, because retention keys its exemption on db.releases.
-    flagged = (str(doc["_id"]) async for doc in db.scans.find({"is_release": True}, {"_id": 1}))
+    # The filter equals the partial filter, so the hinted index holds every match; without the hint
+    # the planner never picks it (project_id is its prefix) and falls back to a COLLSCAN.
+    flagged = (
+        str(doc["_id"]) async for doc in db.scans.find({"is_release": True}, {"_id": 1}).hint("scans_released_list")
+    )
     async for scan_ids in abatched(flagged, RELEASE_FLAG_RECONCILE_BATCH_SIZE):
         released = await release_repo.released_among(scan_ids)
         stale = [scan_id for scan_id in scan_ids if scan_id not in released]
