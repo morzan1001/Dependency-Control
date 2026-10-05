@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,10 +20,14 @@ const SCAN_PATH = '/projects/p1/scans/s1'
 const RAW_TAB = `${SCAN_PATH}?tab=raw`
 const SCANNER_ROW_ID = 's1:trivy:SBOM #1'
 
-// The rows GET /scans/{id}/results and /sboms answer: one scanner row per SBOM, a post-processor row, and a lost file.
+const TRIVY_RESULT = { Results: [{ Target: 'app.cdx.json', Vulnerabilities: [] }] }
+const SBOM = { bomFormat: 'CycloneDX', specVersion: '1.6', components: [] }
+
+// The rows GET /scans/{id}/results and /sboms answer: rows within the preview limit, one over it, and lost files.
 const RESULT_ROWS: ScanAnalysisResult[] = [
-  { id: SCANNER_ROW_ID, scan_id: 's1', analyzer_name: 'trivy', source: 'SBOM #1', created_at: '2026-09-01T00:05:00Z' },
-  { id: 's1:epss_kev', scan_id: 's1', analyzer_name: 'epss_kev', source: null, created_at: '2026-09-01T00:06:00Z' },
+  { id: SCANNER_ROW_ID, scan_id: 's1', analyzer_name: 'trivy', source: 'SBOM #1', created_at: '2026-09-01T00:05:00Z', size: 4096 },
+  { id: 's1:epss_kev', scan_id: 's1', analyzer_name: 'epss_kev', source: null, created_at: '2026-09-01T00:06:00Z', size: 3 * 1024 * 1024 },
+  { id: 's1:grype:SBOM #1', scan_id: 's1', analyzer_name: 'grype', source: 'SBOM #1', created_at: '2026-09-01T00:07:00Z', size: null },
 ]
 const SBOM_ROWS: SbomResponse[] = [
   { index: 0, filename: 'app.cdx.json', size: 2048 },
@@ -165,6 +169,8 @@ describe('ScanDetails raw tab', () => {
     vi.mocked(scanApi.getSboms).mockResolvedValue(SBOM_ROWS)
     vi.mocked(scanApi.downloadResult).mockResolvedValue({ blob: new Blob(['{}']), filename: null })
     vi.mocked(scanApi.downloadSbom).mockResolvedValue({ blob: new Blob(['{}']), filename: null })
+    vi.mocked(scanApi.getResult).mockResolvedValue(TRIVY_RESULT)
+    vi.mocked(scanApi.getSbom).mockResolvedValue(SBOM)
   })
 
   it('fetches neither list while another tab is open', () => {
@@ -193,11 +199,58 @@ describe('ScanDetails raw tab', () => {
     expect(scanApi.downloadSbom).toHaveBeenCalledWith('s1', 0)
   })
 
-  it('marks an SBOM whose stored file is gone and offers no download for it', async () => {
+  it.each(['SBOM #2', 'grype SBOM #1'])('marks %s, whose stored file is gone, and offers neither preview nor download', async (label) => {
     renderPage(RAW_TAB)
 
-    expect(await screen.findByRole('button', { name: 'Download SBOM #2' })).toBeDisabled()
-    expect(screen.getByText('Missing')).toBeInTheDocument()
+    const download = await screen.findByRole('button', { name: `Download ${label}` })
+    expect(download).toBeDisabled()
+    expect(screen.getByRole('button', { name: `View ${label}` })).toBeDisabled()
+    expect(within(download.parentElement!).getByText('Missing')).toBeInTheDocument()
+  })
+
+  it('fetches a result and an SBOM only when viewed and shows them pretty-printed', async () => {
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View trivy SBOM #1' }))
+    expect(scanApi.getSbom).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'View app.cdx.json' }))
+
+    expect((await screen.findByText(/"Target"/)).textContent).toBe(JSON.stringify(TRIVY_RESULT, null, 2))
+    expect((await screen.findByText(/"bomFormat"/)).textContent).toBe(JSON.stringify(SBOM, null, 2))
+    expect(scanApi.getResult).toHaveBeenCalledWith('s1', SCANNER_ROW_ID)
+    expect(scanApi.getSbom).toHaveBeenCalledWith('s1', 0)
+  })
+
+  it('offers no preview of a row over the limit and fetches nothing for it', async () => {
+    renderPage(RAW_TAB)
+
+    const view = await screen.findByRole('button', { name: 'View epss_kev' })
+    fireEvent.click(view)
+
+    expect(view).toBeDisabled()
+    expect(view.parentElement).toHaveAttribute('title', 'Too large to preview, use Download')
+    expect(screen.getByRole('button', { name: 'Download epss_kev' })).toBeEnabled()
+    expect(scanApi.getResult).not.toHaveBeenCalled()
+  })
+
+  it('collapses a preview on Hide', async () => {
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View app.cdx.json' }))
+    await screen.findByText(/"bomFormat"/)
+    fireEvent.click(screen.getByRole('button', { name: 'Hide app.cdx.json' }))
+
+    expect(screen.queryByText(/"bomFormat"/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'View app.cdx.json' })).toBeEnabled()
+  })
+
+  it('says so when a preview cannot be loaded', async () => {
+    vi.mocked(scanApi.getResult).mockRejectedValue(new Error('Request failed with status code 500'))
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View trivy SBOM #1' }))
+
+    expect(await screen.findByText('The file could not be loaded.')).toBeInTheDocument()
   })
 
   it('highlights the SBOM a deep link names', async () => {

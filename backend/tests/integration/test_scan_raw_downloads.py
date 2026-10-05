@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import bson
 import pytest
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
@@ -20,6 +21,7 @@ from app.api.v1.endpoints import projects
 from app.core.permissions import Permissions
 from app.models.project import Project, Scan
 from app.models.user import User
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.rescan import build_rescan
@@ -266,3 +268,53 @@ async def test_a_result_of_another_scan_is_404(client, db, member_auth_headers):
     )
 
     assert served.status_code == 404, served.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_result_list_carries_each_rows_stored_size_and_none_for_a_deleted_file(
+    client, db, member_auth_headers
+):
+    scan = await _scan_with_sboms(db)
+    repo = AnalysisResultRepository(db)
+    await repo.save_result(scan.id, "trivy", {"Results": []}, source="SBOM #1")
+    await repo.save_result(scan.id, "grype", {"matches": []}, source="SBOM #1")
+    kept = await db.analysis_results.find_one({"analyzer_name": "trivy"})
+    lost = await db.analysis_results.find_one({"analyzer_name": "grype"})
+    await _delete_file(db, {"gridfs_id": lost["result_gridfs_id"]})
+    legacy = {"findings": [_SECRET_FINDING]}
+    await db.analysis_results.insert_one(
+        {"_id": "legacy-row", "scan_id": scan.id, "analyzer_name": "trufflehog", "result": legacy}
+    )
+
+    served = await client.get(f"/api/v1/projects/scans/{scan.id}/results", headers=member_auth_headers)
+
+    assert served.status_code == 200, served.text[:500]
+    rows = served.json()
+    assert {row["analyzer_name"]: row["size"] for row in rows} == {
+        "trivy": len(await _gridfs_bytes(db, {"gridfs_id": kept["result_gridfs_id"]})),
+        "grype": None,
+        "trufflehog": len(bson.encode(legacy)),
+    }
+    assert all(set(row) == {"id", "scan_id", "analyzer_name", "source", "created_at", "size"} for row in rows)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_result_list_sizes_a_legacy_inline_result_without_reading_it(db):
+    await db.projects.insert_one(Project(id=_PROJECT_ID, name="shop").model_dump(by_alias=True))
+    scan = await _scan_with_sboms(db)
+    legacy = {"findings": [{**_SECRET_FINDING, "RawHash": f"{i:08x}"} for i in range(80_000)]}
+    await db.analysis_results.insert_one(
+        {"_id": "legacy-row", "scan_id": scan.id, "analyzer_name": "trufflehog", "result": legacy}
+    )
+
+    tracemalloc.start()
+    try:
+        [listed] = await projects.read_analysis_results(scan.id, current_user=_AUDITOR, db=db)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert listed.size == len(bson.encode(legacy)) > 4 * _MIB
+    assert peak < _MIB

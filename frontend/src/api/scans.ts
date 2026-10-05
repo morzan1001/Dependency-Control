@@ -59,6 +59,11 @@ export const scanApi = {
         return response.data;
     },
 
+    getSbom: async (scanId: string, index: number): Promise<unknown> => {
+        const response = await api.get(`/projects/scans/${scanId}/sboms/${index}`);
+        return response.data;
+    },
+
     downloadSbom: (scanId: string, index: number) => getServerFile(`/projects/scans/${scanId}/sboms/${index}`),
 
     getFindings: async (scanId: string, params: ScanFindingsParams = {}): Promise<ScanFindingsResponse> => {

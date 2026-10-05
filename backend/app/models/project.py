@@ -181,3 +181,5 @@ class AnalysisResult(MongoDocument, CreatedAtModel):
     scan_id: str
     analyzer_name: str
     source: str | None = None
+    # Stored bytes of the result; None when its file is gone.
+    size: int | None = None

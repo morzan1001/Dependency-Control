@@ -66,6 +66,12 @@ def extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
     return [gid for ref in sbom_refs if (gid := gridfs_ref_id(ref))]
 
 
+async def gridfs_lengths(db: Any, file_ids: list[str]) -> dict[str, int]:
+    """The stored byte length of each file; a file that is gone has no entry."""
+    files = db["fs.files"].find({"_id": {"$in": [ObjectId(i) for i in file_ids]}}, {"length": 1})
+    return {str(doc["_id"]): doc["length"] async for doc in files}
+
+
 async def upload_gridfs_json(db: Any, filename: str, obj: Any, metadata: dict[str, Any] | None = None) -> str:
     data = await asyncio.to_thread(lambda: json.dumps(obj).encode())
     return str(await AsyncIOMotorGridFSBucket(db).upload_from_stream(filename, data, metadata=metadata))

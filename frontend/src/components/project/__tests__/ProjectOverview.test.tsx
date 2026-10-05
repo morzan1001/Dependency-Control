@@ -132,7 +132,7 @@ beforeEach(() => {
 
 describe('ProjectOverview - enrichment cards', () => {
   const EPSS_ROW: ScanAnalysisResult = {
-    id: 'scan-1:epss_kev', scan_id: 'scan-1', analyzer_name: 'epss_kev', source: null, created_at: '2026-07-01T00:05:00Z',
+    id: 'scan-1:epss_kev', scan_id: 'scan-1', analyzer_name: 'epss_kev', source: null, created_at: '2026-07-01T00:05:00Z', size: 512,
   }
   // The epss_kev post-processor's summary as the engine stores it.
   const EPSS_SUMMARY: EPSSKEVSummary = {

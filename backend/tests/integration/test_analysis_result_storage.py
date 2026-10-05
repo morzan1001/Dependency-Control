@@ -355,8 +355,8 @@ async def test_results_endpoint_returns_metadata_for_file_and_inline_rows(
 
     assert served.status_code == 200, served.text
     assert sorted((set(row), row["analyzer_name"], row["source"]) for row in served.json()) == [
-        ({"id", "scan_id", "analyzer_name", "source", "created_at"}, "kics", None),
-        ({"id", "scan_id", "analyzer_name", "source", "created_at"}, "trufflehog", None),
+        ({"id", "scan_id", "analyzer_name", "source", "created_at", "size"}, "kics", None),
+        ({"id", "scan_id", "analyzer_name", "source", "created_at", "size"}, "trufflehog", None),
     ]
 
 

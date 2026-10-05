@@ -1,7 +1,8 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useEffect, useRef, useCallback, useState } from 'react'
+import type { UseQueryResult } from '@tanstack/react-query'
 import { scanApi } from '@/api/scans'
-import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
+import { useScan, useScanHistory, useTriggerRescan, useScanResult, useScanResults, useScanSbom, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
 import { useAuth } from '@/context/useAuth'
@@ -11,11 +12,12 @@ import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSecti
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Download, X } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Download, Eye, EyeOff, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
+import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
@@ -45,6 +47,67 @@ function ScmLink({ href, children }: Readonly<{ href: string | undefined | null;
     )
   }
   return <>{children}</>
+}
+
+// Pretty-printing a larger file into the DOM stalls the tab, so those stay download-only.
+const PREVIEW_MAX_BYTES = 2 * 1024 * 1024
+
+function JsonPreview({ query }: Readonly<{ query: UseQueryResult<unknown> }>) {
+  if (query.isPending) return <Skeleton className="h-40" />
+  if (query.isError) return <p className="text-sm text-muted-foreground">The file could not be loaded.</p>
+  return <CodeBlock code={JSON.stringify(query.data, null, 2)} />
+}
+
+function ResultPreview({ scanId, resultId }: Readonly<{ scanId: string; resultId: string }>) {
+  return <JsonPreview query={useScanResult(scanId, resultId)} />
+}
+
+function SbomPreview({ scanId, index }: Readonly<{ scanId: string; index: number }>) {
+  return <JsonPreview query={useScanSbom(scanId, index)} />
+}
+
+interface RawFileRowProps {
+  readonly label: string
+  readonly size: number | null
+  readonly badge?: React.ReactNode
+  readonly preview: React.ReactNode
+  readonly onDownload: () => void
+  readonly highlighted?: boolean
+  readonly ref?: React.Ref<HTMLDivElement>
+}
+
+function RawFileRow({ label, size, badge, preview, onDownload, highlighted = false, ref }: RawFileRowProps) {
+  const [open, setOpen] = useState(false)
+  const tooLarge = size !== null && size > PREVIEW_MAX_BYTES
+  return (
+    <div ref={ref} className={`flex flex-wrap items-center gap-2 py-3 transition-all duration-300 ${highlighted ? 'ring-2 ring-primary ring-offset-2' : ''}`}>
+      <div className="flex flex-1 items-center gap-2">
+        <span>{label}</span>
+        {badge}
+        {size === null
+          ? <Badge variant="destructive">Missing</Badge>
+          : <span className="text-sm text-muted-foreground">{formatBytes(size)}</span>}
+      </div>
+      {/* A disabled button takes no pointer events, so its tooltip sits on the wrapper. */}
+      <span title={tooLarge ? 'Too large to preview, use Download' : undefined}>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={`${open ? 'Hide' : 'View'} ${label}`}
+          disabled={size === null || tooLarge}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+          {open ? 'Hide' : 'View'}
+        </Button>
+      </span>
+      <Button variant="outline" size="sm" aria-label={`Download ${label}`} disabled={size === null} onClick={onDownload}>
+        <Download className="h-4 w-4 mr-2" />
+        Download
+      </Button>
+      {open && <div className="basis-full">{preview}</div>}
+    </div>
+  )
 }
 
 export default function ScanDetails() {
@@ -533,26 +596,16 @@ export default function ScanDetails() {
                     {!isResultsLoading && !scanResults?.length && (
                         <p className="text-muted-foreground">No analyzer results for this scan.</p>
                     )}
-                    {scanResults?.map((result) => {
-                        const label = [result.analyzer_name, result.source].filter(Boolean).join(' ')
-                        return (
-                            <div key={result.id} className="flex items-center justify-between gap-4 py-3">
-                                <div className="flex items-center gap-2">
-                                    <span>{label}</span>
-                                    {isPostProcessorResult(result.analyzer_name) && <Badge variant="outline">Post-Processor</Badge>}
-                                </div>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    aria-label={`Download ${label}`}
-                                    onClick={() => downloadServerFile(() => scanApi.downloadResult(scanId!, result.id), `${result.analyzer_name}.json`, 'Could not download the result')}
-                                >
-                                    <Download className="h-4 w-4 mr-2" />
-                                    Download
-                                </Button>
-                            </div>
-                        )
-                    })}
+                    {scanResults?.map((result) => (
+                        <RawFileRow
+                            key={result.id}
+                            label={[result.analyzer_name, result.source].filter(Boolean).join(' ')}
+                            size={result.size}
+                            badge={isPostProcessorResult(result.analyzer_name) && <Badge variant="outline">Post-Processor</Badge>}
+                            preview={<ResultPreview scanId={scanId!} resultId={result.id} />}
+                            onDownload={() => downloadServerFile(() => scanApi.downloadResult(scanId!, result.id), `${result.analyzer_name}.json`, 'Could not download the result')}
+                        />
+                    ))}
                 </CardContent>
             </Card>
 
@@ -568,33 +621,17 @@ export default function ScanDetails() {
                     {!isSbomsLoading && !scanSboms?.length && (
                         <p className="text-muted-foreground">No SBOM data found for this scan.</p>
                     )}
-                    {scanSboms?.map((sbom) => {
-                        const label = sbom.filename || `SBOM #${sbom.index + 1}`
-                        return (
-                            <div
-                                key={sbom.index}
-                                ref={(el) => { sbomRefs.current[sbom.index] = el }}
-                                className={`flex items-center justify-between gap-4 py-3 transition-all duration-300 ${highlightedSbomIndex === sbom.index ? 'ring-2 ring-primary ring-offset-2' : ''}`}
-                            >
-                                <div className="flex items-center gap-2">
-                                    <span>{label}</span>
-                                    {sbom.size === null
-                                        ? <Badge variant="destructive">Missing</Badge>
-                                        : <span className="text-sm text-muted-foreground">{formatBytes(sbom.size)}</span>}
-                                </div>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    aria-label={`Download ${label}`}
-                                    disabled={sbom.size === null}
-                                    onClick={() => downloadServerFile(() => scanApi.downloadSbom(scanId!, sbom.index), `scan_${scanId}_sbom_${sbom.index + 1}.json`, 'Could not download the SBOM')}
-                                >
-                                    <Download className="h-4 w-4 mr-2" />
-                                    Download
-                                </Button>
-                            </div>
-                        )
-                    })}
+                    {scanSboms?.map((sbom) => (
+                        <RawFileRow
+                            key={sbom.index}
+                            ref={(el) => { sbomRefs.current[sbom.index] = el }}
+                            label={sbom.filename || `SBOM #${sbom.index + 1}`}
+                            size={sbom.size}
+                            highlighted={highlightedSbomIndex === sbom.index}
+                            preview={<SbomPreview scanId={scanId!} index={sbom.index} />}
+                            onDownload={() => downloadServerFile(() => scanApi.downloadSbom(scanId!, sbom.index), `scan_${scanId}_sbom_${sbom.index + 1}.json`, 'Could not download the SBOM')}
+                        />
+                    ))}
                 </CardContent>
             </Card>
         </TabsContent>

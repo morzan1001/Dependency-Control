@@ -21,6 +21,8 @@ export interface ScanAnalysisResult {
   analyzer_name: string;
   source: string | null;
   created_at: string;
+  // Null when the stored file is gone.
+  size: number | null;
 }
 
 export interface ReachabilityInfo {
