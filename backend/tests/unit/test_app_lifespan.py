@@ -33,6 +33,21 @@ async def test_lifespan_starts_before_serving_and_stops_after(deps):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("bucket_error", [None, Exception("bucket unreachable")])
+async def test_lifespan_prepares_the_archive_bucket_before_the_workers(deps, monkeypatch, bucket_error):
+    monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
+    deps.ensure_bucket_exists = AsyncMock(side_effect=bucket_error)
+    monkeypatch.setattr("app.core.s3.ensure_bucket_exists", deps.ensure_bucket_exists)
+    async with app.router.lifespan_context(app):
+        assert deps.mock_calls == [
+            call.connect_to_mongo(),
+            call.init_db(),
+            call.ensure_bucket_exists(),
+            call.worker_manager.start(),
+        ]
+
+
+@pytest.mark.asyncio
 async def test_lifespan_retries_an_unreachable_database(deps):
     deps.connect_to_mongo.side_effect = [ServerSelectionTimeoutError("down"), None]
     async with app.router.lifespan_context(app):
