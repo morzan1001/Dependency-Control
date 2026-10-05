@@ -143,6 +143,7 @@ class TestDeleteProjectRoutesThroughGate:
             "CallgraphRepository": MagicMock(),
             "WebhookRepository": MagicMock(),
             "CryptoPolicyRepository": MagicMock(),
+            "ArchiveMetadataRepository": MagicMock(),
         }
         scan_repo = repos["ScanRepository"]
 
@@ -158,6 +159,7 @@ class TestDeleteProjectRoutesThroughGate:
         repos["ProjectRepository"].delete = AsyncMock(return_value=None)
         repos["WebhookRepository"].delete_many = AsyncMock(return_value=0)
         repos["CryptoPolicyRepository"].delete_project_policy = AsyncMock(return_value=None)
+        repos["ArchiveMetadataRepository"].delete_many = AsyncMock(return_value=0)
 
         patches = [patch(f"{ENDPOINTS}.{name}", return_value=repo) for name, repo in repos.items()]
         gate = patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project)
