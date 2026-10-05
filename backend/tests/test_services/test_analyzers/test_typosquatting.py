@@ -364,11 +364,24 @@ class TestTheShippedNpmRanking:
         assert issues == {"crossenv": "cross-env"}
 
     @pytest.mark.asyncio
-    async def test_the_unscoped_part_of_a_popular_scoped_package_is_not_imitated(self, monkeypatch):
-        """A component is compared with its scope stripped, so @discoveryjs/json-ext does not make json-e a squat."""
-        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), [_npm("json-e")])
+    async def test_the_compared_top_counts_unscoped_names_only(self, monkeypatch):
+        ranking = [f"@scope/pkg-{index}" for index in range(10)]
+        ranking += [f"pkg-{index}" for index in range(TYPOSQUATTING_POPULAR_PACKAGE_RANKS - 1)]
+        monkeypatch.setattr(typosquatting, "_NPM_RANKING", [*ranking, "elasticsearch", "zxcvbnmasdf"])
+        components = [_npm("elasticsaerch"), _npm("zxcvbnmasdfg")]
 
-        assert issues == {}
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {"elasticsaerch": "elasticsearch"}
+
+    @pytest.mark.asyncio
+    async def test_a_squat_of_a_rank_behind_scoped_names_is_flagged_and_ranked_lookalikes_are_not(self, monkeypatch):
+        """react-intl makes the top only once scoped names are skipped; coffee-script and rambda are ranked packages."""
+        components = [_npm("react-intll"), _npm("coffee-script"), _npm("rambda")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {"react-intll": "react-intl"}
 
     @pytest.mark.asyncio
     async def test_only_the_full_ranked_name_or_a_ranked_unscoped_name_is_known(self, monkeypatch):
