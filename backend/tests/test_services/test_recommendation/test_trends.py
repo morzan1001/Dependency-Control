@@ -296,8 +296,6 @@ class TestAnalyzeRegressionsIdentity:
 
 
 _WINDOW_SCANS = 10
-# More vulnerability findings than one scan document's findings_summary can carry.
-_SUMMARY_LIMIT = 500
 _OVERFLOW_FINDINGS = 600
 
 
@@ -444,8 +442,7 @@ class TestAnalyzeRecurringIssuesReporting:
 
 class TestBuildCveRecurrence:
     @pytest.mark.asyncio
-    async def test_a_cve_past_the_summary_limit_still_counts(self):
-        """The scan document keeps 500 findings; the recurrence read must not stop there."""
+    async def test_a_cve_past_the_500th_finding_of_a_scan_still_counts(self):
         findings = []
         for scan_index in range(3):
             scan_id = f"scan{scan_index}"
@@ -459,7 +456,6 @@ class TestBuildCveRecurrence:
 
         assert len(recurrence["CVE-2020-99999"].scans) == 3
         rec = analyze_recurring_issues(recurrence, _WINDOW_SCANS)[0]
-        # The headline counts every recurring CVE, not the summary's first 500 of them.
         assert rec.impact["total"] == _OVERFLOW_FINDINGS
 
     @pytest.mark.asyncio
@@ -486,60 +482,3 @@ class TestBuildCveRecurrence:
         ]
 
         assert list(await _recurrence(findings)) == ["pkg:1.0.0"]
-
-
-class TestPersistedFindingsSummary:
-    """The scan document's summary is bounded to keep the scan under Mongo's document limit."""
-
-    @staticmethod
-    def _aggregated_vuln(cve_id, severity=_SEV_CRITICAL, component=_COMPONENT):
-        from app.models.finding import Finding
-
-        return Finding(
-            id=cve_id,
-            type="vulnerability",
-            severity=severity,
-            component=component,
-            version=_VERSION,
-            description=f"Description for {cve_id}",
-            scanners=["osv"],
-            details={"vulnerabilities": [{"id": cve_id, "severity": severity}], "bulky": "x" * 5000},
-        )
-
-    def test_summary_is_bounded_and_compact(self):
-        from app.services.analysis.engine import (
-            _build_findings_summary,
-            _prepare_finding_records,
-        )
-
-        findings = [self._aggregated_vuln(f"CVE-2024-{i:04d}") for i in range(_OVERFLOW_FINDINGS)]
-        _, vulnerability_findings = _prepare_finding_records(findings, "scanX", "proj-1", None)
-        summary = _build_findings_summary(vulnerability_findings)
-
-        assert len(summary) == _SUMMARY_LIMIT
-        # Compact: bulky detail keys are dropped, only cve_id retained.
-        assert summary[0]["details"] == {"cve_id": summary[0]["id"]}
-
-    def test_summary_only_contains_vulnerabilities(self):
-        from app.models.finding import Finding
-        from app.services.analysis.engine import (
-            _build_findings_summary,
-            _prepare_finding_records,
-        )
-
-        license_finding = Finding(
-            id="lic-1",
-            type="license",
-            severity=_SEV_MEDIUM,
-            component=_COMPONENT,
-            description="GPL",
-            scanners=["licensecheck"],
-        )
-        vuln = self._aggregated_vuln(_CVE_DEFAULT)
-        _findings_to_insert, vulnerability_findings = _prepare_finding_records(
-            [license_finding, vuln], "scanY", "proj-1", None
-        )
-        summary = _build_findings_summary(vulnerability_findings)
-
-        assert len(summary) == 1
-        assert summary[0]["type"] == "vulnerability"

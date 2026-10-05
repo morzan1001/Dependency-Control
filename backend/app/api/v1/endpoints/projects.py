@@ -417,7 +417,7 @@ async def read_all_scans(
         },
         {"$unwind": "$project_info"},
         {"$addFields": {"project_name": "$project_info.name"}},
-        {"$project": {"project_info": 0, "sboms": 0, "findings_summary": 0}},
+        {"$project": {"project_info": 0, "sboms": 0}},
     ]
 
     return await ScanRepository(db).aggregate(pipeline, limit)

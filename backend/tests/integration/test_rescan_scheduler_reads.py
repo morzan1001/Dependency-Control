@@ -26,7 +26,7 @@ def _scan(scan_id: str, age: timedelta, **fields) -> dict:
         "status": "completed",
         "created_at": _NOW - age,
         "sbom_refs": [{"gridfs_id": f"gridfs-{scan_id}"}],
-        "findings_summary": [{"id": "CVE-2026-0001", "severity": "HIGH"}],
+        "stats": {"high": 1},
         **fields,
     }
 
