@@ -41,11 +41,12 @@ async def test_cache_get_counts_a_hit_and_a_miss(fake_cache):
 
 
 @pytest.mark.asyncio
-async def test_cache_mget_counts_each_key_as_a_hit_or_a_miss(fake_cache):
+async def test_cache_mget_counts_each_requested_key_as_a_hit_or_a_miss(fake_cache):
     await fake_cache.set("present", 1)
+    await fake_cache._client.set(fake_cache._make_key("corrupt"), "{not json")
     moved = _deltas([("cache_hits_total", {}), ("cache_misses_total", {})])
-    await fake_cache.mget(["present", "absent", "absent-too"])
-    assert moved() == [1, 2]
+    await fake_cache.mget(["present", "present", "corrupt", "absent"])
+    assert moved() == [3, 1]
 
 
 @pytest.mark.asyncio

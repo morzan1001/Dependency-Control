@@ -3,10 +3,12 @@
 import asyncio
 import contextlib
 import hashlib
+from unittest.mock import AsyncMock
 
 import pytest
 import redis.asyncio as redis
 import fakeredis
+from prometheus_client import REGISTRY
 
 from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, suppress_cache_writes
 
@@ -490,29 +492,51 @@ class TestAtomicPrimitives:
         assert await fake_cache.pop("oidc_state:s") is None
 
 
+_OPERATIONS = {
+    "get": (lambda c: c.get("k"), None),
+    "set": (lambda c: c.set("k", 1), False),
+    "delete": (lambda c: c.delete("k"), False),
+    "mget": (lambda c: c.mget(["k", "j"]), {"k": None, "j": None}),
+    "mset": (lambda c: c.mset({"k": 1}), False),
+    "incr": (lambda c: c.incr("n", 60), None),
+    "pop": (lambda c: c.pop("k"), None),
+}
+
+
+def _disconnect(cache, _monkeypatch):
+    server = fakeredis.FakeServer()
+    server.connected = False
+    cache._client = fakeredis.aioredis.FakeRedis(server=server)
+
+
+def _time_out(cache, monkeypatch):
+    monkeypatch.setattr(cache, "get_client", AsyncMock(side_effect=asyncio.TimeoutError))
+
+
 class TestFailuresFallBackToTheDefault:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "operation, call, default",
-        [
-            ("get", lambda c: c.get("k"), None),
-            ("set", lambda c: c.set("k", 1), False),
-            ("delete", lambda c: c.delete("k"), False),
-            ("mget", lambda c: c.mget(["k", "j"]), {"k": None, "j": None}),
-            ("mset", lambda c: c.mset({"k": 1}), False),
-            ("incr", lambda c: c.incr("n", 60), None),
-            ("pop", lambda c: c.pop("k"), None),
-        ],
-    )
-    async def test_an_unreachable_redis_answers_the_default_and_pauses_the_cache(
-        self, fake_cache, operation, call, default
+    @pytest.mark.parametrize("operation", _OPERATIONS)
+    @pytest.mark.parametrize("lose_redis", [_disconnect, _time_out], ids=["unreachable", "timeout"])
+    async def test_a_lost_redis_answers_the_default_pauses_the_cache_and_still_times_the_call(
+        self, fake_cache, monkeypatch, lose_redis, operation
     ):
-        server = fakeredis.FakeServer()
-        server.connected = False
-        fake_cache._client = fakeredis.aioredis.FakeRedis(server=server)
+        call, default = _OPERATIONS[operation]
+        lose_redis(fake_cache, monkeypatch)
+        timing = ("cache_operation_duration_seconds_count", {"operation": operation})
+        timed = REGISTRY.get_sample_value(*timing) or 0.0
 
         assert await call(fake_cache) == default
         assert fake_cache._available is False
+        assert REGISTRY.get_sample_value(*timing) == timed + 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", _OPERATIONS)
+    async def test_a_cancelled_call_propagates_the_cancellation(self, fake_cache, monkeypatch, operation):
+        call, _default = _OPERATIONS[operation]
+        monkeypatch.setattr(fake_cache, "get_client", AsyncMock(side_effect=asyncio.CancelledError))
+
+        with pytest.raises(asyncio.CancelledError):
+            await call(fake_cache)
 
     @pytest.mark.asyncio
     async def test_a_corrupt_entry_reads_as_absent(self, fake_cache):
