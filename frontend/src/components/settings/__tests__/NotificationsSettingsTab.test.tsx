@@ -17,10 +17,10 @@ const SLACK_APP: Partial<SystemSettings> = {
   slack_oauth_scopes: 'chat:write',
 }
 
-function renderTab() {
+function renderTab(formData: Partial<SystemSettings> = SLACK_APP) {
   render(
     <NotificationsSettingsTab
-      formData={SLACK_APP}
+      formData={formData}
       handleInputChange={vi.fn()}
       handleSave={vi.fn()}
       hasPermission={() => true}
@@ -50,5 +50,13 @@ describe('NotificationsSettingsTab - Slack install', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Connect to Slack Workspace' }))
 
     await waitFor(() => expect(location.href).toBe(INSTALL_URL))
+  })
+
+  it('asks to save edited scopes before connecting, since the backend installs the saved ones', () => {
+    renderTab({ ...SLACK_APP, slack_oauth_scopes: 'chat:write,im:write' })
+
+    expect(screen.getByText('Please save your changes before connecting to Slack.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Connect to Slack Workspace' })).not.toBeInTheDocument()
+    expect(getSlackAuthorizeUrl).not.toHaveBeenCalled()
   })
 })
