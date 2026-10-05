@@ -83,6 +83,22 @@ _RICH_FINDING = {
 }
 
 
+_WAIVED_OUTDATED = {
+    "_id": f"{_HEAD}:spring-core",
+    "finding_id": "spring-core:5.2.0",
+    "scan_id": _HEAD,
+    "project_id": _PROJECT,
+    "type": "outdated",
+    "severity": "LOW",
+    "component": "spring-core",
+    "version": "5.2.0",
+    "description": "Newer version available",
+    "waived": True,
+    "waiver_reason": "Pinned until the Boot 3 migration",
+    "details": {"fixed_version": "6.1.14"},
+}
+
+
 def _heavy_finding(n: int) -> dict:
     return {
         "_id": f"{_HEAD}:lib-{n}",
@@ -190,3 +206,14 @@ async def test_ranked_tools_answer_from_the_slim_read_as_from_the_full_finding(d
     # Live Mongo hands datetimes back naive, the attrappe keeps the offset.
     assert stale_rows[0]["first_seen_at"].startswith(_RICH_FINDING["first_seen_at"].strftime("%Y-%m-%dT%H:%M:%S"))
     assert fixable_rows[0]["quick_fix_version"] == "2.9.10.8"
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+async def test_a_waived_finding_without_advisories_keeps_its_waiver_reason_and_fix_in_the_slim_read(db, database):
+    await _seed_head(db, [_WAIVED_OUTDATED])
+
+    rows = (await _call(db, "get_scan_findings", project_id=_PROJECT))["findings"]
+
+    expected = _serialize_finding_for_llm(_WAIVED_OUTDATED)
+    assert {"waiver_reason", "fixed_version"} <= expected.keys()
+    assert [row.items() >= expected.items() for row in rows] == [True]
