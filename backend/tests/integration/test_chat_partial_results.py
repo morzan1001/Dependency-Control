@@ -45,7 +45,6 @@ _RICH_FINDING = {
         "vulnerabilities": [
             {
                 "id": "GHSA-57j2-w4cx-62h2",
-                "aliases": ["CVE-2020-36518"],
                 "resolved_cve": "CVE-2020-36518",
                 "severity": "CRITICAL",
                 "cvss_score": 9.8,
@@ -62,7 +61,8 @@ _RICH_FINDING = {
                 "scanners": ["grype"],
             },
             {
-                "id": "CVE-2019-12384",
+                "id": "GHSA-cjjf-94ff-43w7",
+                "aliases": ["CVE-2019-12384"],
                 "severity": "HIGH",
                 "cvss_score": 7.5,
                 "epss_score": 0.2,
@@ -70,6 +70,13 @@ _RICH_FINDING = {
                 "fixed_version": "2.9.9.1",
                 "references": ["https://nvd.nist.gov/vuln/detail/CVE-2019-12384"],
                 "description": "Polymorphic typing allows remote code execution.",
+            },
+            {
+                "id": "CVE-2020-99999",
+                "severity": "CRITICAL",
+                "epss_score": 0.97,
+                "fixed_version": "2.9.10.8",
+                "waived": True,
             },
         ],
     },
