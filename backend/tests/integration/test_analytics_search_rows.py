@@ -117,3 +117,11 @@ async def test_a_ghsa_row_is_labelled_with_its_resolved_cve_and_keeps_the_ghsa_a
 
     assert list(rows) == ["CVE-2026-41852"]
     assert rows["CVE-2026-41852"]["aliases"] == ["GHSA-9f52-rjqv-25qv"]
+
+
+async def test_the_kev_filter_reads_the_persisted_roll_up_of_a_finding_that_is_its_own_row(search):
+    rolled_up = {"in_kev": True, "vulnerabilities": [{"id": "CVE-2021-44228"}]}
+
+    assert set(await search(rolled_up, "libssl", in_kev="true")) == {"libssl3:3.0.9-1"}
+    assert set(await search(rolled_up, "libssl", in_kev="false")) == set()
+    assert set(await search({"vulnerabilities": []}, "libssl", in_kev="true")) == set()

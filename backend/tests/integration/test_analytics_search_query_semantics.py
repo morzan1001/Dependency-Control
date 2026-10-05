@@ -495,3 +495,27 @@ async def test_the_vulnerability_filter_pages_the_matching_dependencies_in_sort_
 
     assert [row["package"] for page in pages for row in page["items"]] == ["alpha-lib", "beta-lib", "zeta-lib"]
     assert pages[0]["total"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("sort_by", "field", "expected"),
+    [
+        ("severity", "severity", ["CRITICAL", "LOW"]),
+        ("cvss", "cvss_score", [9.0, 3.0]),
+        ("epss", "epss_score", [0.9, 0.1]),
+    ],
+)
+async def test_a_finding_that_is_its_own_row_sorts_by_its_own_values(client, db, scanned, sort_by, field, expected):
+    low = _named(
+        "a-pkg", "LOW", {"id": _CVE, "severity": "LOW", "cvss_score": 2.0}, {"id": "CVE-2026-0002", "cvss_score": 3.0}
+    )
+    low["details"]["epss_score"] = 0.1
+    critical = _named("b-pkg", "CRITICAL", {"id": _CVE, "severity": "CRITICAL", "cvss_score": 9.0})
+    critical["details"]["epss_score"] = 0.9
+    await db.findings.insert_many([low, critical])
+
+    pages = await _pages(client, _VULN_SEARCH_PATH, scanned, {"q": "pkg", "sort_by": sort_by, "sort_order": "desc"}, 2)
+
+    assert [row[field] for page in pages for row in page["items"]] == expected
