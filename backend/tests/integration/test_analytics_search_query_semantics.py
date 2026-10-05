@@ -170,6 +170,7 @@ async def test_vulnerability_search_pages_ascending_from_the_first_component(cli
 
     assert resp.status_code == 200, resp.text
     assert [row["component"] for row in resp.json()["items"]] == ["alpha-pkg"]
+    assert resp.json()["pages"] == 3
 
 
 @pytest.mark.asyncio
@@ -520,6 +521,7 @@ async def test_the_vulnerability_filter_pages_the_matching_dependencies_in_sort_
 
     assert [row["package"] for page in pages for row in page["items"]] == expected
     assert pages[0]["total"] == 3
+    assert pages[0]["pages"] == 3
 
 
 @pytest.mark.asyncio

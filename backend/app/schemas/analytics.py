@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app.core.constants import ExploitMaturity, ScopeName
+from app.schemas.pagination import Page
 from app.schemas.team import TeamRef
 
 
@@ -245,13 +246,9 @@ class VulnerabilitySearchResult(BaseModel):
     waiver_reason: str | None = None
 
 
-class VulnerabilitySearchResponse(BaseModel):
+class VulnerabilitySearchResponse(Page[VulnerabilitySearchResult]):
     """Paginated response for vulnerability search."""
 
-    items: list[VulnerabilitySearchResult]
-    total: int
-    page: int
-    size: int
     resolved_projects: int
     projects_without_release: int
 
@@ -285,13 +282,9 @@ class DependencySearchResult(BaseModel):
     properties: dict[str, Any] = {}
 
 
-class DependencySearchResponse(BaseModel):
+class DependencySearchResponse(Page[DependencySearchResult]):
     """Paginated response for dependency search."""
 
-    items: list[DependencySearchResult]
-    total: int
-    page: int
-    size: int
     resolved_projects: int
     projects_without_release: int
 

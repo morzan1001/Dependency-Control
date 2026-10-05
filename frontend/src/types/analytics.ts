@@ -1,5 +1,5 @@
 import { Finding } from './scan';
-import type { Severity, SeverityBreakdown } from './common';
+import type { PaginatedResponse, Severity, SeverityBreakdown } from './common';
 import type { TeamRef } from './team';
 
 export type { Severity, SeverityBreakdown } from './common';
@@ -217,12 +217,7 @@ export interface HotspotsQueryParams {
   release_environment?: string;
 }
 
-export interface AdvancedSearchResponse {
-  items: AdvancedSearchResult[];
-  total: number;
-  page: number;
-  size: number;
-}
+export type AdvancedSearchResponse = PaginatedResponse<AdvancedSearchResult>;
 
 export interface VulnerabilitySearchResult {
   vulnerability_id: string;
@@ -247,12 +242,7 @@ export interface VulnerabilitySearchResult {
   waiver_reason?: string;
 }
 
-export interface VulnerabilitySearchResponse {
-  items: VulnerabilitySearchResult[];
-  total: number;
-  page: number;
-  size: number;
-}
+export type VulnerabilitySearchResponse = PaginatedResponse<VulnerabilitySearchResult>;
 
 export interface VulnerabilitySearchOptions {
   severity?: string;
