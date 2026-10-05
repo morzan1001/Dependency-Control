@@ -181,3 +181,11 @@ async def test_internal_only_distribution_skips_the_compatibility_control_but_no
 
     assert statuses["LICENSE-AUDIT-LICENSE-COMPATIBILITY"] == "not_applicable"
     assert statuses["LICENSE-AUDIT-NO-PROPRIETARY"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_an_open_source_project_passes_the_strong_copyleft_control():
+    """The analyzer downgrades GPL to INFO for an open-source project; the audit must not fail it."""
+    statuses = await _analyzer_statuses({"distribution_model": "open_source"})
+
+    assert statuses["LICENSE-AUDIT-STRONG-COPYLEFT"] == "passed"
