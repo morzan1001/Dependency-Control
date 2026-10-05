@@ -101,18 +101,14 @@ async def test_a_clean_re_analysis_clears_the_error_of_the_earlier_run(db, notif
 @pytest.mark.asyncio
 async def test_a_re_analysis_purges_the_row_of_an_analyzer_the_project_no_longer_runs(db, notified):
     scan_id = await _seed_scan(db)
+    stale = ["typosquatting", "epss_kev", "reachability", *engine.CRYPTO_ANALYZERS, "trufflehog"]
     await db.analysis_results.insert_many(
-        [
-            {"scan_id": scan_id, "analyzer_name": "typosquatting", "result": {"typosquatting_issues": []}},
-            {"scan_id": scan_id, "analyzer_name": "trufflehog", "result": {"findings": []}},
-        ]
+        [{"scan_id": scan_id, "analyzer_name": name, "result": {"marker": "stale"}} for name in stale]
     )
 
     await engine.run_analysis(scan_id, [], ["trivy"], db, worker_id=_WORKER)
 
-    names = set(await db.analysis_results.distinct("analyzer_name", {"scan_id": scan_id}))
-    assert "typosquatting" not in names
-    assert "trufflehog" in names
+    assert set(await db.analysis_results.distinct("analyzer_name", {"scan_id": scan_id})) == {"trufflehog"}
 
 
 @pytest.mark.asyncio
