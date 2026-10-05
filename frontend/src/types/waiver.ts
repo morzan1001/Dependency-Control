@@ -1,3 +1,4 @@
+import type { PaginatedResponse } from './common';
 import { FindingType } from './scan';
 
 export type WaiverScope = 'finding' | 'file' | 'rule';
@@ -45,13 +46,7 @@ export interface Waiver {
   last_match_count?: number;
 }
 
-export interface WaiversPaginatedResponse {
-  items: Waiver[];
-  total: number;
-  page: number;
-  size: number;
-  pages: number;
-}
+export type WaiversPaginatedResponse = PaginatedResponse<Waiver>;
 
 export interface WaiversQueryParams {
   project_id?: string;
