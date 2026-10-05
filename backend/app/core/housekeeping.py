@@ -525,11 +525,15 @@ async def _expire_scans(db: Any) -> None:
 
 
 async def run_housekeeping() -> None:
-    """Each pod's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
-    logger.info("Starting housekeeping task...")
-
+    """The cluster's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
     try:
         db = await get_database()
+        # Held to expiry, never released: its TTL is the cadence across pods.
+        if not await DistributedLocksRepository(db).acquire_lock(
+            "housekeeping", new_lock_holder(), ttl_seconds=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
+        ):
+            return
+        logger.info("Starting housekeeping task...")
 
         try:
             await reconcile_release_flags(db)
@@ -657,10 +661,15 @@ async def recover_stuck_scans(
 
 
 async def sync_branch_status() -> None:
-    """Sync branch status for all projects with VCS connections."""
-    logger.info("Starting branch status sync...")
+    """Sync branch status for all projects with VCS connections, on one pod per interval."""
     try:
         db = await get_database()
+        # Held to expiry, never released: its TTL is the cadence across pods.
+        if not await DistributedLocksRepository(db).acquire_lock(
+            "branch_sync", new_lock_holder(), ttl_seconds=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS * 3600
+        ):
+            return
+        logger.info("Starting branch status sync...")
 
         branch_sync_projection = {
             "_id": 1,
@@ -739,8 +748,6 @@ async def housekeeping_loop(
     """Runs the housekeeping tasks on a loop; stale pending scan aggregation runs in its own,
     faster loop.
     """
-    last_housekeeping_run = datetime.min.replace(tzinfo=timezone.utc)
-    last_branch_sync = datetime.min.replace(tzinfo=timezone.utc)
     last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
@@ -769,20 +776,14 @@ async def housekeeping_loop(
         except Exception as e:
             logger.exception("Waiver recalculation failed: %s", e)
 
-        if (datetime.now(timezone.utc) - last_housekeeping_run) > timedelta(
-            hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS
-        ):
-            await run_housekeeping()
-            last_housekeeping_run = datetime.now(timezone.utc)
+        await run_housekeeping()
 
         try:
             await _run_retention(await get_database())
         except Exception as e:
             logger.exception("Housekeeping: retention failed: %s", e)
 
-        if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS):
-            await sync_branch_status()
-            last_branch_sync = datetime.now(timezone.utc)
+        await sync_branch_status()
 
         # Stamped whatever the reconcile did: only one pod gets the lock, and the others
         # must not come back for it every five minutes.
