@@ -66,11 +66,11 @@ def _normalize_pkg_name(name: str | None) -> str:
 
 
 def _corpus(ranking: list[str]) -> tuple[set[str], list[str]]:
-    """All ranked names, each a known-legitimate package, and the top ones a component is compared against."""
+    """Every ranked name, scope kept, as known-legitimate, and the top ones a component is compared against."""
     # A component is compared with its scope stripped, so a scoped package's bare name is no imitation target.
     unscoped = (name for name in ranking if not name.startswith("@"))
     top = itertools.islice(unscoped, TYPOSQUATTING_POPULAR_PACKAGE_RANKS)
-    return {_normalize_pkg_name(name) for name in ranking}, [_normalize_pkg_name(name) for name in top]
+    return {pep503_normalize(name) for name in ranking}, [pep503_normalize(name) for name in top]
 
 
 def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
@@ -211,7 +211,8 @@ class TyposquattingAnalyzer(Analyzer):
         if ecosystem not in popular_packages:
             return None
 
-        name = _normalize_pkg_name(component.get("name", ""))
+        full_name = pep503_normalize(component.get("name") or "")
+        name = _normalize_pkg_name(full_name)
         if not name:
             return None
 
@@ -219,7 +220,8 @@ class TyposquattingAnalyzer(Analyzer):
             corpora[ecosystem] = _corpus(popular_packages[ecosystem])
         known, top = corpora[ecosystem]
 
-        if name in known:
+        # The bare name of @myorg/axios would otherwise match axios itself.
+        if full_name in known or name in known:
             return None
 
         matcher = difflib.SequenceMatcher(None, b=name)

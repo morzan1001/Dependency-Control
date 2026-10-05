@@ -370,6 +370,15 @@ class TestTheShippedNpmRanking:
 
         assert issues == {}
 
+    @pytest.mark.asyncio
+    async def test_only_the_full_ranked_name_or_a_ranked_unscoped_name_is_known(self, monkeypatch):
+        """Only scoped packages like @sentry/browser are ranked, so an unscoped browser is still compared."""
+        components = [_npm("browser"), _npm("@sentry/browser"), _npm("@myorg/axios")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {"browser": "bowser"}
+
 
 class TestTheEcosystemComesFromThePurl:
     """The purl's registry is the ecosystem rule every analyzer shares, so a generic purl names none."""
