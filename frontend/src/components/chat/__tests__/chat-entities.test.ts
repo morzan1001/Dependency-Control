@@ -131,6 +131,15 @@ describe('linkifyAssistantMarkdown', () => {
     );
   });
 
+  it('links a mention whose case differs from the entity', () => {
+    const entities = collectEntitiesFromToolCalls([
+      toolCall({ project_id: 'p9', project_name: 'acme-api' }),
+    ]);
+    expect(linkifyAssistantMarkdown('Check ACME-API now.', entities)).toBe(
+      'Check [acme-api](/projects/p9) now.',
+    );
+  });
+
   it('links project entity mentions', () => {
     const entities = collectEntitiesFromToolCalls([
       toolCall({ project_id: 'p9', project_name: 'acme-api' }),
