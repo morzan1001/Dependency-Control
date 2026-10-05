@@ -19,7 +19,6 @@ import { useAuth } from '@/context/useAuth'
 import {
   isProjectAdmin,
   canUpdateProject,
-  canBindGitLabProject,
   canDeleteProject,
   canRotateApiKey,
   canEnforceNotifications,
@@ -142,7 +141,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
   const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
   const canEditCryptoPolicy = isProjectAdmin(project, userId, permissions)
-  const canBindGitLab = canBindGitLabProject(permissions)
+  const isSystemManager = permissions.includes('system:manage')
   const isMember = !!project.members?.some(m => m.user_id === userId)
   
   const [name, setName] = useState(project.name)
@@ -199,19 +198,18 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const effectiveRescanEnabled = (rescanEnabled ?? appConfig?.global_rescan_enabled) === true
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
 
-  const { data: gitlabInstances } = useGitLabInstances({ active_only: true });
-  const { data: githubInstances } = useGitHubInstances({ active_only: true });
+  const { data: gitlabInstances } = useGitLabInstances({ active_only: true }, isSystemManager);
+  const { data: githubInstances } = useGitHubInstances({ active_only: true }, isSystemManager);
 
   // Show only the config for the platform the project was sourced from (by *_instance_id).
   const gitlabSource: "gitlab" | "none" = project.gitlab_instance_id ? "gitlab" : "none";
-  const gitlabBindingEditable = canBindGitLab && (gitlabInstances?.items?.length ?? 0) > 0;
+  const gitlabBindingEditable = (gitlabInstances?.items?.length ?? 0) > 0;
   const projectSource: "gitlab" | "github" | "none" = project.github_instance_id
     ? "github"
     : gitlabSource;
   const linkedGithubInstance = project.github_instance_id
     ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
     : undefined;
-  const githubHasToken = linkedGithubInstance?.token_configured ?? false;
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -310,6 +308,16 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
     setGitlabProjectId(undefined)
     setGitlabProjectPath(undefined)
   }
+
+  const gitlabMrSwitch = (
+    <div className="flex items-center justify-between">
+      <div className="space-y-0.5">
+        <Label htmlFor="gitlab-mr-comments" className="text-base">Merge Request Decoration</Label>
+        <p className="text-sm text-muted-foreground">Post scan results as comments on GitLab Merge Requests.</p>
+      </div>
+      <Switch id="gitlab-mr-comments" checked={gitlabMrCommentsEnabled} onCheckedChange={setGitlabMrCommentsEnabled} />
+    </div>
+  )
 
   const toggleAnalyzer = (analyzerId: string) => {
     setAnalyzers(prev => 
@@ -497,20 +505,14 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
 
                             <div className="flex items-center justify-between pt-2 border-t">
                                 <div className="space-y-0.5">
-                                    <Label htmlFor="github-pr-comments" className={`text-base ${!githubHasToken ? "text-muted-foreground" : ""}`}>
-                                        Pull Request Decoration
-                                    </Label>
+                                    <Label htmlFor="github-pr-comments" className="text-base">Pull Request Decoration</Label>
                                     <p className="text-sm text-muted-foreground">
-                                        {githubHasToken
-                                            ? "Post scan results as comments on GitHub Pull Requests."
-                                            : "Requires an access token on the GitHub instance."}
+                                        Post scan results as comments on GitHub Pull Requests.
                                     </p>
                                 </div>
-                                {/* Show the value that will actually be sent, and keep turning it back off reachable. */}
                                 <Switch
                                     id="github-pr-comments"
                                     checked={githubPrCommentsEnabled}
-                                    disabled={!githubHasToken && !githubPrCommentsEnabled}
                                     onCheckedChange={setGithubPrCommentsEnabled}
                                 />
                             </div>
@@ -544,6 +546,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                             Remove GitLab link
                                         </Button>
                                     )}
+                                    <div className="pt-2 border-t">{gitlabMrSwitch}</div>
                                 </>
                             ) : (
                                 <p className="text-muted-foreground">The GitLab link is removed when you save.</p>
@@ -608,29 +611,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                         </p>
                                     </div>
 
-                                    {(() => {
-                                        const selectedInstance = gitlabInstances?.items.find(i => i.id === gitlabInstanceId);
-                                        const hasToken = selectedInstance?.token_configured ?? false;
-                                        return (
-                                            <div className="flex items-center justify-between">
-                                                <div className="space-y-0.5">
-                                                    <Label className={`text-base ${!hasToken ? "text-muted-foreground" : ""}`}>
-                                                        Merge Request Decoration
-                                                    </Label>
-                                                    <p className="text-sm text-muted-foreground">
-                                                        {hasToken
-                                                            ? "Post scan results as comments on GitLab Merge Requests."
-                                                            : "Requires an access token on the GitLab instance."}
-                                                    </p>
-                                                </div>
-                                                <Switch
-                                                    checked={gitlabMrCommentsEnabled && hasToken}
-                                                    disabled={!hasToken}
-                                                    onCheckedChange={setGitlabMrCommentsEnabled}
-                                                />
-                                            </div>
-                                        );
-                                    })()}
+                                    {gitlabMrSwitch}
                                 </>
                             )}
                         </div>

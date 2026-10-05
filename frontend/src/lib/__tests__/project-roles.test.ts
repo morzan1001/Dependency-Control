@@ -6,7 +6,6 @@ import {
   isProjectAdmin,
   isProjectEditor,
   canUpdateProject,
-  canBindGitLabProject,
   canDeleteProject,
   canRotateApiKey,
   canManageProjectMembers,
@@ -85,7 +84,6 @@ describe('hasProjectRole — WRITE superuser (project:update); project:delete de
     expect(isProjectAdmin(project, STRANGER, perms)).toBe(false)
     expect(canManageProjectMembers(project, STRANGER, perms)).toBe(false)
     expect(canRotateApiKey(project, STRANGER, perms)).toBe(false)
-    expect(canBindGitLabProject(perms)).toBe(false)
   })
 })
 
@@ -167,17 +165,5 @@ describe('project webhook writes need membership or the global write grant', () 
   it('the global write grant writes without membership', () => {
     expect(canCreateProjectWebhook(project, STRANGER, ['project:update'])).toBe(true)
     expect(canDeleteProjectWebhook(project, STRANGER, ['project:update'])).toBe(true)
-  })
-})
-
-describe('the GitLab binding follows the API: system:manage or the global write grant', () => {
-  it('opens for each of those grants', () => {
-    for (const grant of ['system:manage', 'project:update']) {
-      expect(canBindGitLabProject([grant])).toBe(true)
-    }
-  })
-
-  it('stays closed to a project creator, who administers only their own projects', () => {
-    expect(canBindGitLabProject(['project:create', 'project:read'])).toBe(false)
   })
 })

@@ -66,11 +66,6 @@ export function canUpdateProject(
   return isProjectAdmin(project, userId, globalPermissions);
 }
 
-/** Set or change the GitLab binding: system:manage OR global project:update */
-export function canBindGitLabProject(globalPermissions: string[]): boolean {
-  return ['system:manage', 'project:update'].some(p => globalPermissions.includes(p));
-}
-
 /** Rotate API key: project admin OR global project:update */
 export function canRotateApiKey(
   project: Project,
