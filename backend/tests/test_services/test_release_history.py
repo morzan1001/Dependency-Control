@@ -173,27 +173,53 @@ class TestAggregateUpstreamMetrics:
         # Median across one package = 2 stable releases.
         assert result.upstream_releases_last_12m_median == 2.0
 
+    @staticmethod
+    def _yearly_releases(system: str, version: str) -> float | None:
+        history = {(system, "pkg"): [_ri(days_ago=30, version=version)]}
+        return aggregate_upstream_metrics(history, observations=[], ref=_REF).upstream_releases_last_12m_median
+
     @pytest.mark.parametrize(
-        "version",
+        ("system", "version"),
         [
-            "19.0.0-canary-abc123-20240101",
-            "14.2.0-canary.52",
-            "1.0.0-next.3",
-            "0.0.0-experimental-7f3a1b2-20240501",
-            "2.0.0-beta-26f2496093-20240514",
-            "1.0.0-alpha1.2",
-            "1.0.0-nightly.20240101",
-            "5.0.0-M1",
-            "5.0.0.M1",
-            "1.0.0-SNAPSHOT",
+            ("npm", "19.0.0-canary-abc123-20240101"),
+            ("npm", "14.2.0-canary.52"),
+            ("npm", "1.0.0-next.3"),
+            ("npm", "0.0.0-experimental-7f3a1b2-20240501"),
+            ("npm", "2.0.0-beta-26f2496093-20240514"),
+            ("npm", "1.0.0-alpha1.2"),
+            ("npm", "1.0.0-nightly.20240101"),
+            ("npm", "0.0.0-insiders.4a3b1c2"),
+            ("npm", "5.6.0-insiders.20240601"),
+            ("npm", "4.0.0-0"),
+            ("npm", "3.0.0-oxide.5"),
+            ("npm", "4.0.0-pr.12"),
+            ("npm", "1.0.0-unstable.1"),
+            ("go", "v0.0.0-20240101123456-abcdef123456"),
+            ("go", "v1.2.4-0.20240101123456-abcdef123456"),
+            ("cargo", "0.5.0-dev.3"),
+            ("nuget", "9.0.0-preview.1.24080.9"),
+            ("maven", "5.0.0-M1"),
+            ("maven", "5.0.0.M1"),
+            ("maven", "1.0.0-SNAPSHOT"),
         ],
     )
-    def test_npm_and_maven_prerelease_tags_are_not_releases(self, version):
-        assert releases_in_last_n_days([_ri(days_ago=30, version=version)], window_days=365, ref=_REF) == 0
+    def test_prerelease_versions_are_not_releases(self, system, version):
+        assert self._yearly_releases(system, version) == 0
 
-    @pytest.mark.parametrize("version", ["33.0.0-jre", "33.0.0-android", "5.4.0.Final", "2.7.18.RELEASE"])
-    def test_maven_qualifier_releases_stay_releases(self, version):
-        assert releases_in_last_n_days([_ri(days_ago=30, version=version)], window_days=365, ref=_REF) == 1
+    @pytest.mark.parametrize(
+        ("system", "version"),
+        [
+            ("maven", "33.0.0-jre"),
+            ("maven", "33.0.0-android"),
+            ("maven", "5.4.0.Final"),
+            ("maven", "2.7.18.RELEASE"),
+            ("npm", "4.17.21"),
+            ("npm", "1.0.0+build-5"),
+            ("go", "v2.0.0+incompatible"),
+        ],
+    )
+    def test_release_versions_stay_releases(self, system, version):
+        assert self._yearly_releases(system, version) == 1
 
     def test_days_between_excludes_prereleases(self):
         # Stable releases 100 days apart; betas would shrink the gap if counted.

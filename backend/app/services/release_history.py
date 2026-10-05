@@ -33,17 +33,18 @@ _PRERELEASE_TAG = re.compile(
     r"[-.](alpha|beta|rc|pre|preview|dev|canary|next|nightly|experimental|snapshot|m\d+)(?![a-z])", re.IGNORECASE
 )
 
+# Strict-semver ecosystems mark every prerelease (Go pseudo-versions, npm "4.0.0-0") with "-" before any "+build".
+_SEMVER_SYSTEMS = frozenset({"npm", "go", "cargo", "nuget"})
 
-def _is_stable_release(version: str) -> bool:
-    """True for X.Y.Z; False for alpha/beta/rc/dev pre-releases and npm/Maven prerelease tags."""
+
+def _is_stable_release(version: str, system: str | None) -> bool:
+    """True for X.Y.Z; False for pre-releases under the ecosystem's version scheme."""
+    if system in _SEMVER_SYSTEMS:
+        return "-" not in version.split("+", 1)[0]
     try:
         return not Version(version).is_prerelease
     except InvalidVersion:
         return _PRERELEASE_TAG.search(version) is None
-
-
-def _stable_only(releases: Sequence[ReleaseInfo]) -> list[ReleaseInfo]:
-    return [r for r in releases if _is_stable_release(r.version)]
 
 
 @dataclass(frozen=True)
@@ -101,17 +102,16 @@ def releases_in_last_n_days(
     window_days: int,
     ref: datetime,
 ) -> int:
-    """Count stable releases within ``window_days`` of ``ref``."""
+    """Count releases within ``window_days`` of ``ref``."""
     cutoff = ref - timedelta(days=window_days)
-    return sum(1 for r in _stable_only(releases) if r.published_at >= cutoff)
+    return sum(1 for r in releases if r.published_at >= cutoff)
 
 
 def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> float | None:
-    """Median gap (in days) between consecutive stable releases, or None if <2."""
-    stable = _stable_only(releases)
-    if len(stable) < 2:
+    """Median gap (in days) between consecutive releases, or None if <2."""
+    if len(releases) < 2:
         return None
-    sorted_dates = sorted(r.published_at for r in stable)
+    sorted_dates = sorted(r.published_at for r in releases)
     gaps = [(sorted_dates[i] - sorted_dates[i - 1]).total_seconds() / 86400.0 for i in range(1, len(sorted_dates))]
     return float(median(gaps))
 
@@ -120,11 +120,10 @@ def days_since_latest_release(
     releases: Sequence[ReleaseInfo],
     ref: datetime,
 ) -> int | None:
-    """Days between ``ref`` and the most recent stable release, or None if empty."""
-    stable = _stable_only(releases)
-    if not stable:
+    """Days between ``ref`` and the most recent release, or None if empty."""
+    if not releases:
         return None
-    return (ref - max(r.published_at for r in stable)).days
+    return (ref - max(r.published_at for r in releases)).days
 
 
 def compute_adoption_latencies(
@@ -175,12 +174,14 @@ def aggregate_upstream_metrics(
     gap_medians: list[float] = []
     days_since: list[int] = []
 
-    for releases in history.values():
-        releases_counts.append(releases_in_last_n_days(releases, window_days=365, ref=ref))
-        gap = median_days_between_releases(releases)
+    for key, releases in history.items():
+        system, _ = _split_history_key(key)
+        stable = [r for r in releases if _is_stable_release(r.version, system)]
+        releases_counts.append(releases_in_last_n_days(stable, window_days=365, ref=ref))
+        gap = median_days_between_releases(stable)
         if gap is not None:
             gap_medians.append(gap)
-        latest = days_since_latest_release(releases, ref=ref)
+        latest = days_since_latest_release(stable, ref=ref)
         if latest is not None:
             days_since.append(latest)
 
