@@ -9,7 +9,6 @@ vi.mock('@/hooks/queries/use-users', () => ({
 
 vi.mock('@/hooks/queries/use-system', () => ({
   useNotificationChannels: () => ({ data: [] }),
-  useAppConfig: () => ({ data: {} }),
 }))
 
 // Keep the page test about which key cards appear; stub every card body.

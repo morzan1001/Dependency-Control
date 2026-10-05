@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.constants import (
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS,
     PASSWORD_RESET_TOKEN_EXPIRE_HOURS,
+    SLACK_OAUTH_STATE_TTL_SECONDS,
     TOTP_VALID_WINDOW,
 )
 from app.schemas.token import TokenPayload
@@ -123,6 +124,16 @@ def create_email_verification_token(email: str) -> str:
 def verify_email_verification_token(token: str) -> str | None:
     """Verify an email verification token and return the email if valid."""
     return _verify_token(token, "email_verification")
+
+
+def create_slack_oauth_state(user_id: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(seconds=SLACK_OAUTH_STATE_TTL_SECONDS)
+    return _create_token(subject=user_id, token_type="slack_oauth", expire=expire)
+
+
+def verify_slack_oauth_state(state: str) -> str | None:
+    """The id of the user who started a Slack install, if ``state`` is a valid install state."""
+    return _verify_token(state, "slack_oauth")
 
 
 def create_email_change_token(user_id: str, new_email: str) -> str:

@@ -721,6 +721,7 @@ SMTP_TIMEOUT_SECONDS: int = 60
 
 # Slack token expiry buffer in seconds (refresh 5 minutes before expiry)
 SLACK_TOKEN_EXPIRY_BUFFER_SECONDS: int = 300
+SLACK_OAUTH_STATE_TTL_SECONDS: int = 600
 
 # Groups of packages that often provide similar/duplicate functionality
 SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [

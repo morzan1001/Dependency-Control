@@ -79,8 +79,6 @@ export interface AppConfig {
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
   notifications: NotificationChannels;
-  slack_client_id?: string;
-  slack_oauth_scopes?: string;
   chat_enabled?: boolean;
   default_project_analyzers: string[];
 }
