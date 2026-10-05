@@ -73,3 +73,12 @@ async def test_waived_advisories_and_other_findings_are_not_shared(db):
     )
 
     assert await _cves_by_project(db) == {"current": [], "p1": [_LODASH_CVE], "p2": []}
+
+
+async def test_the_viewed_project_is_compared_even_when_20_scanned_projects_are_read_first(db):
+    await _projects(db, *[f"p{i:02d}" for i in range(20)], "current")
+
+    data = await gather_cross_project_data(await read_scope_projects(db, {}), "current", db)
+
+    assert data is not None
+    assert [p["project_id"] for p in data["projects"]] == ["current"] + [f"p{i:02d}" for i in range(19)]
