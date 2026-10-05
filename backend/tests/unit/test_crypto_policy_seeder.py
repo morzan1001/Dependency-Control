@@ -135,6 +135,8 @@ async def test_an_edited_policy_keeps_its_rules_and_editor_through_consecutive_s
     )
 
     await seed_crypto_policies(db)
+    # The next rollout starts after the seed lock expired.
+    await db.distributed_locks.delete_one({"_id": "crypto_policy_seed"})
     with patch("app.services.crypto_policy.seeder.CURRENT_SEED_VERSION", CURRENT_SEED_VERSION + 1):
         await seed_crypto_policies(db)
 
@@ -153,6 +155,8 @@ async def test_a_legacy_policy_whose_last_change_was_a_seed_takes_the_new_seed(d
             {"scope": "system"},
             {"$set": {"rules": [_custom_rule().model_dump(mode="json")]}, "$unset": {"seed_version": ""}},
         )
+        # The next rollout starts after the seed lock expired.
+        await db.distributed_locks.delete_one({"_id": "crypto_policy_seed"})
         await seed_crypto_policies(db)
 
     got = await CryptoPolicyRepository(db).get_system_policy()

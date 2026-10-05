@@ -198,6 +198,8 @@ async def test_a_legacy_policy_last_changed_by_a_revert_keeps_its_rules_through_
     )
 
     await seed_crypto_policies(db)
+    # The next rollout starts after the seed lock expired.
+    await db.distributed_locks.delete_one({"_id": "crypto_policy_seed"})
     with patch("app.services.crypto_policy.seeder.CURRENT_SEED_VERSION", CURRENT_SEED_VERSION + 1):
         await seed_crypto_policies(db)
 

@@ -12,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.policy_audit import PolicyAuditAction
@@ -103,6 +104,9 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
     existing = await CryptoPolicyRepository(db).get_system_policy()
     if existing is not None and (existing.seed_version or 0) >= CURRENT_SEED_VERSION:
         logger.info("crypto_policy_seed: skipping, seed version %s is current", existing.seed_version)
+        return
+    # Never released: a pod starting after expiry already reads the current seed_version.
+    if not await DistributedLocksRepository(db).acquire_lock("crypto_policy_seed", new_lock_holder(), ttl_seconds=600):
         return
     rules = list(load_seed_rules())
     editor = existing.updated_by if existing else None
