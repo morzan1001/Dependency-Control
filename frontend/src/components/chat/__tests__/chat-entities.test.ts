@@ -140,6 +140,23 @@ describe('linkifyAssistantMarkdown', () => {
     );
   });
 
+  it('links an entity whose text holds regex metacharacters', () => {
+    const entities = collectEntitiesFromToolCalls([
+      toolCall({
+        project_id: 'p1',
+        scan_id: 's1',
+        finding_id: 'github.com/docker/docker:v20.10.7+incompatible',
+        component: 'github.com/docker/docker',
+        version: 'v20.10.7+incompatible',
+      }),
+    ]);
+    expect(
+      linkifyAssistantMarkdown('Bump github.com/docker/docker@v20.10.7+incompatible now', entities),
+    ).toBe(
+      'Bump [github.com/docker/docker@v20.10.7+incompatible](/projects/p1/scans/s1?finding=github.com%2Fdocker%2Fdocker%3Av20.10.7%2Bincompatible) now',
+    );
+  });
+
   it('links project entity mentions', () => {
     const entities = collectEntitiesFromToolCalls([
       toolCall({ project_id: 'p9', project_name: 'acme-api' }),
