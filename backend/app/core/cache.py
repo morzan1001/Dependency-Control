@@ -293,11 +293,9 @@ class CacheService:
                 timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
             if data:
-                if cache_hits_total:
-                    cache_hits_total.inc()
+                cache_hits_total.inc()
                 return json.loads(data)
-            if cache_misses_total:
-                cache_misses_total.inc()
+            cache_misses_total.inc()
             return None
         except (redis.ConnectionError, asyncio.TimeoutError):
             logger.warning(REDIS_CONNECTION_LOST_MSG)
@@ -310,10 +308,8 @@ class CacheService:
             logger.warning(f"Cache get error for {key}: {e}")
             return None
         finally:
-            if cache_operations_total:
-                cache_operations_total.labels(operation="get").inc()
-            if cache_operation_duration_seconds:
-                cache_operation_duration_seconds.labels(operation="get").observe(time.time() - _start)
+            cache_operations_total.labels(operation="get").inc()
+            cache_operation_duration_seconds.labels(operation="get").observe(time.time() - _start)
 
     async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
         """Set a JSON-serializable value with TTL (defaults to CACHE_DEFAULT_TTL_HOURS)."""
@@ -343,10 +339,8 @@ class CacheService:
             logger.warning(f"Cache set error for {key}: {e}")
             return False
         finally:
-            if cache_operations_total:
-                cache_operations_total.labels(operation="set").inc()
-            if cache_operation_duration_seconds:
-                cache_operation_duration_seconds.labels(operation="set").observe(time.time() - _start)
+            cache_operations_total.labels(operation="set").inc()
+            cache_operation_duration_seconds.labels(operation="set").observe(time.time() - _start)
 
     async def delete(self, key: str) -> bool:
         if _writes_suppressed.get() or not await self._ensure_available():
@@ -368,10 +362,8 @@ class CacheService:
             logger.warning(f"Cache delete error for {key}: {e}")
             return False
         finally:
-            if cache_operations_total:
-                cache_operations_total.labels(operation="delete").inc()
-            if cache_operation_duration_seconds:
-                cache_operation_duration_seconds.labels(operation="delete").observe(time.time() - _start)
+            cache_operations_total.labels(operation="delete").inc()
+            cache_operation_duration_seconds.labels(operation="delete").observe(time.time() - _start)
 
     async def mget(self, keys: list[str]) -> dict[str, Any]:
         """Batch get; returns {key: value-or-None}."""
@@ -406,10 +398,8 @@ class CacheService:
             logger.warning(f"Cache mget error: {e}")
             return dict.fromkeys(keys)
         finally:
-            if cache_operations_total:
-                cache_operations_total.labels(operation="mget").inc()
-            if cache_operation_duration_seconds:
-                cache_operation_duration_seconds.labels(operation="mget").observe(time.time() - _start)
+            cache_operations_total.labels(operation="mget").inc()
+            cache_operation_duration_seconds.labels(operation="mget").observe(time.time() - _start)
 
     async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
         """Batch set with shared TTL."""
@@ -436,10 +426,8 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache mset error: {e}")
         finally:
-            if cache_operations_total:
-                cache_operations_total.labels(operation="mset").inc()
-            if cache_operation_duration_seconds:
-                cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
+            cache_operations_total.labels(operation="mset").inc()
+            cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
         return success
 
     async def incr(self, key: str, ttl_seconds: int) -> int | None:
@@ -464,10 +452,8 @@ class CacheService:
             logger.warning(f"Cache incr error: {e}")
             return None
         finally:
-            if cache_operations_total:
-                cache_operations_total.labels(operation="incr").inc()
-            if cache_operation_duration_seconds:
-                cache_operation_duration_seconds.labels(operation="incr").observe(time.time() - _start)
+            cache_operations_total.labels(operation="incr").inc()
+            cache_operation_duration_seconds.labels(operation="incr").observe(time.time() - _start)
 
     async def pop(self, key: str) -> Any | None:
         """Read and delete in one step, so only one caller receives the value; None if absent or unreachable."""
@@ -490,10 +476,8 @@ class CacheService:
             logger.warning(f"Cache pop error: {e}")
             return None
         finally:
-            if cache_operations_total:
-                cache_operations_total.labels(operation="pop").inc()
-            if cache_operation_duration_seconds:
-                cache_operation_duration_seconds.labels(operation="pop").observe(time.time() - _start)
+            cache_operations_total.labels(operation="pop").inc()
+            cache_operation_duration_seconds.labels(operation="pop").observe(time.time() - _start)
 
     async def get_or_fetch_with_lock(
         self,
@@ -614,10 +598,8 @@ class CacheService:
             total_keys = await client.dbsize()
             connected_clients_count = stats.get("connected_clients", 0)
 
-            if cache_keys_total:
-                cache_keys_total.set(total_keys)
-            if cache_connected_clients:
-                cache_connected_clients.set(connected_clients_count)
+            cache_keys_total.set(total_keys)
+            cache_connected_clients.set(connected_clients_count)
 
             return {
                 "status": "healthy",
@@ -665,12 +647,9 @@ async def update_cache_stats() -> None:
         connected_clients_count = clients_info.get("connected_clients", stats.get("connected_clients", 0))
         used_memory = memory_info.get("used_memory", 0)
 
-        if cache_keys_total:
-            cache_keys_total.set(total_keys)
-        if cache_connected_clients:
-            cache_connected_clients.set(connected_clients_count)
-        if cache_size_bytes:
-            cache_size_bytes.set(used_memory)
+        cache_keys_total.set(total_keys)
+        cache_connected_clients.set(connected_clients_count)
+        cache_size_bytes.set(used_memory)
 
         logger.debug(
             f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, memory={used_memory} bytes"

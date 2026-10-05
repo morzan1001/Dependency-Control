@@ -92,10 +92,8 @@ def _release_memory_to_os() -> None:
 
 
 def _record_job(status: str, started: float) -> None:
-    if worker_jobs_processed_total:
-        worker_jobs_processed_total.labels(status=status).inc()
-    if worker_job_duration_seconds:
-        worker_job_duration_seconds.observe(time.time() - started)
+    worker_jobs_processed_total.labels(status=status).inc()
+    worker_job_duration_seconds.observe(time.time() - started)
 
 
 async def _fail_scan(
@@ -141,8 +139,7 @@ class AnalysisWorkerManager:
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
 
-        if worker_active_count:
-            worker_active_count.set(self.num_workers)
+        worker_active_count.set(self.num_workers)
 
         self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
         logger.info("Housekeeping task started.")
@@ -225,10 +222,8 @@ class AnalysisWorkerManager:
         if self.workers:
             await asyncio.gather(*self.workers, return_exceptions=True)
 
-        if worker_active_count:
-            worker_active_count.set(0)
-        if worker_queue_size:
-            worker_queue_size.set(0)
+        worker_active_count.set(0)
+        worker_queue_size.set(0)
 
         logger.info("Graceful shutdown complete.")
 
@@ -245,8 +240,7 @@ class AnalysisWorkerManager:
         queue_size = self.queue.qsize()
         logger.info(f"Job {scan_id} added to queue. Queue size: {queue_size}")
 
-        if worker_queue_size:
-            worker_queue_size.set(queue_size)
+        worker_queue_size.set(queue_size)
 
         return True
 
@@ -270,8 +264,7 @@ class AnalysisWorkerManager:
 
     async def _process(self, scan_id: str, worker_id: str) -> None:
         logger.info(f"Worker {worker_id} picked up scan {scan_id}")
-        if worker_queue_size:
-            worker_queue_size.set(self.queue.qsize())
+        worker_queue_size.set(self.queue.qsize())
         started = time.time()
 
         db = await get_database()
