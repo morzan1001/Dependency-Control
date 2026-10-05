@@ -319,12 +319,6 @@ archive_operation_duration_seconds = Histogram(
     buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 300),
 )
 
-archive_bundle_original_bytes = Histogram(
-    "archive_bundle_original_bytes",
-    "Archive bundle size before compression in bytes",
-    buckets=(10000, 100000, 1000000, 10000000, 50000000, 100000000, 500000000),
-)
-
 archive_bundle_compressed_bytes = Histogram(
     "archive_bundle_compressed_bytes",
     "Archive bundle size after compression in bytes",
