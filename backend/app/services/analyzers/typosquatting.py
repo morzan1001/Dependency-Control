@@ -1,6 +1,8 @@
 import asyncio
 import difflib
+import itertools
 import logging
+from pathlib import Path
 from typing import Any
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
@@ -50,49 +52,8 @@ _STATIC_PYPI_FALLBACK = frozenset(
     }
 )
 
-_STATIC_NPM_PACKAGES = frozenset(
-    {
-        "react",
-        "react-dom",
-        "lodash",
-        "express",
-        "axios",
-        "moment",
-        "tslib",
-        "commander",
-        "chalk",
-        "debug",
-        "inquirer",
-        "async",
-        "bluebird",
-        "uuid",
-        "classnames",
-        "prop-types",
-        "vue",
-        "angular",
-        "next",
-        "webpack",
-        "eslint",
-        "prettier",
-        "babel",
-        "jest",
-        "rxjs",
-        "yargs",
-        "body-parser",
-        "cors",
-        "dotenv",
-        "jsonwebtoken",
-        "mongoose",
-        "socket.io",
-        "redis",
-        "aws-sdk",
-        "typescript",
-        "fs-extra",
-        "mkdirp",
-        "glob",
-        "minimist",
-    }
-)
+# npmHighImpact of wooorm/npm-high-impact, most downloaded first.
+_NPM_RANKING = (Path(__file__).parent / "npm_high_impact.txt").read_text().split()
 
 
 def _normalize_pkg_name(name: str | None) -> str:
@@ -102,6 +63,14 @@ def _normalize_pkg_name(name: str | None) -> str:
     if name.startswith("@") and "/" in name:
         name = name.split("/", 1)[1]
     return pep503_normalize(name)
+
+
+def _corpus(ranking: list[str]) -> tuple[set[str], list[str]]:
+    """All ranked names, each a known-legitimate package, and the top ones a component is compared against."""
+    # A component is compared with its scope stripped, so a scoped package's bare name is no imitation target.
+    unscoped = (name for name in ranking if not name.startswith("@"))
+    top = itertools.islice(unscoped, TYPOSQUATTING_POPULAR_PACKAGE_RANKS)
+    return {_normalize_pkg_name(name) for name in ranking}, [_normalize_pkg_name(name) for name in top]
 
 
 def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
@@ -144,7 +113,7 @@ class TyposquattingAnalyzer(Analyzer):
     name = "typosquatting"
 
     async def _ensure_popular_packages(self) -> dict[str, list[str]]:
-        """PyPI's cached top-package ranking (built-in names while it is unavailable) and the npm constant, sorted."""
+        """PyPI's cached ranking (built-in names while it is unavailable) and npm's shipped one, most downloaded first."""
         # Lock and wait outlast the 30 s fetch, so peers wait for the holder instead of re-downloading.
         pypi = await cache_service.get_or_fetch_with_lock(
             CacheKeys.popular_packages("pypi"),
@@ -153,10 +122,10 @@ class TyposquattingAnalyzer(Analyzer):
             lock_ttl_seconds=60,
             max_wait_seconds=35,
         )
-        return {"pypi": sorted(pypi or _STATIC_PYPI_FALLBACK), "npm": sorted(_STATIC_NPM_PACKAGES)}
+        return {"pypi": pypi or sorted(_STATIC_PYPI_FALLBACK), "npm": _NPM_RANKING}
 
     async def _fetch_pypi_packages(self) -> list[str] | None:
-        """The top PyPI package names, or None when the ranking cannot be read."""
+        """PyPI's package names, most downloaded first, or None when the ranking cannot be read."""
         timeout = ANALYZER_TIMEOUTS["typosquatting"]
         try:
             # The corpus has moved host before, and a 301 that is not followed leaves the
@@ -165,8 +134,7 @@ class TyposquattingAnalyzer(Analyzer):
                 resp = await client.get(TOP_PYPI_PACKAGES_URL)
             reason = f"HTTP {resp.status_code}"
             if resp.status_code == 200:
-                rows = resp.json().get("rows", [])[:TYPOSQUATTING_POPULAR_PACKAGE_RANKS]
-                packages = sorted({row["project"].lower() for row in rows})
+                packages = [row["project"].lower() for row in resp.json().get("rows", [])]
                 if packages:
                     logger.info(f"Loaded {len(packages)} popular PyPI packages")
                     return packages
@@ -205,7 +173,8 @@ class TyposquattingAnalyzer(Analyzer):
         return {
             "typosquatting_issues": issues,
             "popular_packages_compared": {
-                ecosystem: len(names) for ecosystem, names in sorted(popular_packages.items())
+                ecosystem: min(len(names), TYPOSQUATTING_POPULAR_PACKAGE_RANKS)
+                for ecosystem, names in sorted(popular_packages.items())
             },
         }
 
@@ -217,11 +186,11 @@ class TyposquattingAnalyzer(Analyzer):
         critical_at: float,
         high_at: float,
     ) -> list[dict[str, Any]]:
-        normalized_popular: dict[str, dict[str, None]] = {}  # lazy per-ecosystem cache, in sorted order
+        corpora: dict[str, tuple[set[str], list[str]]] = {}  # lazy per ecosystem
         issues = []
         for component in components:
             issue = self._scan_component(
-                component, popular_packages, normalized_popular, similarity_threshold, critical_at, high_at
+                component, popular_packages, corpora, similarity_threshold, critical_at, high_at
             )
             if issue is not None:
                 issues.append(issue)
@@ -231,7 +200,7 @@ class TyposquattingAnalyzer(Analyzer):
         self,
         component: dict[str, Any],
         popular_packages: dict[str, list[str]],
-        normalized_popular: dict[str, dict[str, None]],
+        corpora: dict[str, tuple[set[str], list[str]]],
         similarity_threshold: float,
         critical_at: float,
         high_at: float,
@@ -246,16 +215,16 @@ class TyposquattingAnalyzer(Analyzer):
         if not name:
             return None
 
-        if ecosystem not in normalized_popular:
-            normalized_popular[ecosystem] = dict.fromkeys(_normalize_pkg_name(p) for p in popular_packages[ecosystem])
-        popular_names = normalized_popular[ecosystem]
+        if ecosystem not in corpora:
+            corpora[ecosystem] = _corpus(popular_packages[ecosystem])
+        known, top = corpora[ecosystem]
 
-        if name in popular_names:
+        if name in known:
             return None
 
         matcher = difflib.SequenceMatcher(None, b=name)
         best_ratio, best_popular = similarity_threshold, None
-        for popular in popular_names:
+        for popular in top:
             if abs(len(name) - len(popular)) > 2:
                 continue
             # Both quick ratios bound ratio() from above in either orientation; ratio() itself is not symmetric.
