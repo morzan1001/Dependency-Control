@@ -79,6 +79,7 @@ from app.services.recommendation.common import live_advisories, max_advisory_cvs
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
+    LLM_FINDING_PROJECTION,
     _breaking_risk,
     _clip_value,
     _ensure_list,
@@ -166,6 +167,7 @@ _SCAN_DETAIL_PROJECTION = _BUILD_PROJECTION | dict.fromkeys(
 # `severity` being a string cannot express in a server-side sort. Bounding a tier rather than the
 # whole match is what keeps the highest severities in the sample.
 _FINDING_RANK_FETCH_CAP = 1000
+_RANKED_FINDING_PROJECTION = {**LLM_FINDING_PROJECTION, "first_seen_at": 1}
 
 # Highest severity first; the trailing clause catches values outside the known set so no finding
 # is unreachable to the walk.
@@ -377,7 +379,7 @@ async def _ranked_findings(
         if len(out) >= limit:
             break
         tier_query = {**query, "severity": tier}
-        cursor = db["findings"].find(tier_query, limit=_FINDING_RANK_FETCH_CAP)
+        cursor = db["findings"].find(tier_query, _RANKED_FINDING_PROJECTION, limit=_FINDING_RANK_FETCH_CAP)
         candidates = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
         if not candidates:
             continue
@@ -1385,23 +1387,18 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_projects_without_recent_scan(self, ctx: _ToolContext) -> dict[str, Any]:
-        from datetime import datetime as _dt
-        from datetime import timedelta as _td
-        from datetime import timezone as _tz
-
         days = ctx.args["days"]
         limit = ctx.args["limit"]
-        cutoff = _dt.now(_tz.utc) - _td(days=days)
-        query = {
-            "$or": [
-                {"last_scan_at": {"$lt": cutoff}},
-                {"last_scan_at": None},
-                {"last_scan_at": {"$exists": False}},
-            ],
-        }
-        query = and_filters(query, ctx.user_project_query)
-        cursor = ctx.db["projects"].find(query, {"_id": 1, "name": 1, "last_scan_at": 1}, limit=limit)
-        rows = await cursor.to_list(length=limit)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        query = {"$or": [{"last_scan_at": {"$lt": cutoff}}, {"last_scan_at": None}]}
+        rows, rows_total = await bounded_read(
+            ctx.db["projects"],
+            and_filters(query, ctx.user_project_query),
+            subject="projects without a recent scan",
+            limit=limit,
+            projection={"_id": 1, "name": 1, "last_scan_at": 1},
+            sort=[("last_scan_at", 1)],
+        )
         out = []
         for p in rows:
             last = p.get("last_scan_at")
@@ -1413,7 +1410,7 @@ class ChatToolRegistry:
                     "never_scanned": last is None,
                 }
             )
-        return {"projects": out, "count": len(out), "threshold_days": days}
+        return {"projects": out, "projects_total": rows_total, "threshold_days": days}
 
     async def _tool_get_callgraph(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
