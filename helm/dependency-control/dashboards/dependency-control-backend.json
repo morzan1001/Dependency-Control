@@ -2075,17 +2075,17 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(cache_keys_total{job=~\".*dependency-control-backend.*\"})",
+          "expr": "max(cache_keys_total{job=~\".*dependency-control-backend.*\"})",
           "legendFormat": "Total Keys",
           "refId": "A"
         },
         {
-          "expr": "sum(cache_connected_clients{job=~\".*dependency-control-backend.*\"})",
+          "expr": "max(cache_connected_clients{job=~\".*dependency-control-backend.*\"})",
           "legendFormat": "Connected Clients",
           "refId": "B"
         },
         {
-          "expr": "sum(cache_size_bytes{job=~\".*dependency-control-backend.*\"})",
+          "expr": "max(cache_size_bytes{job=~\".*dependency-control-backend.*\"})",
           "legendFormat": "Memory Usage (bytes)",
           "refId": "C"
         }
@@ -4407,7 +4407,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(archive_count_total{job=~\".*dependency-control-backend.*\"})",
+          "expr": "max(archive_count_total{job=~\".*dependency-control-backend.*\"})",
           "refId": "A"
         }
       ],
@@ -4461,7 +4461,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(archive_stored_bytes_total{job=~\".*dependency-control-backend.*\"})",
+          "expr": "max(archive_stored_bytes_total{job=~\".*dependency-control-backend.*\"})",
           "refId": "A"
         }
       ],
