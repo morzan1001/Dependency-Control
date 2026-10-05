@@ -24,6 +24,9 @@ _CREATED = datetime(2026, 9, 30, 8, 0, tzinfo=timezone.utc)
 _COMPLETED = _CREATED + timedelta(minutes=4)
 _STATS = {"critical": 3, "high": 41, "medium": 220, "low": 236, "risk_score": 512.5}
 _FAILED_ANALYZERS = ["trivy"]
+_ENRICHMENT_FAILURES = ["epss_kev"]
+_ERROR = "trivy: analyzer timed out after 600s"
+_FINDINGS_COUNT = 500
 # The engine persists up to this many vulnerability summaries on the scan document.
 _FINDINGS_SUMMARY_ENTRIES = 500
 
@@ -54,8 +57,10 @@ async def _seed(db) -> None:
             "status": SCAN_STATUS_COMPLETED,
             "created_at": _CREATED,
             "completed_at": _COMPLETED,
+            "error": _ERROR,
             "failed_analyzers": _FAILED_ANALYZERS,
-            "findings_count": sum(v for k, v in _STATS.items() if k != "risk_score"),
+            "enrichment_failures": _ENRICHMENT_FAILURES,
+            "findings_count": _FINDINGS_COUNT,
             "stats": _STATS,
             "findings_summary": [_summary_entry(i) for i in range(_FINDINGS_SUMMARY_ENTRIES)],
             "sbom_refs": [{"storage": "gridfs", "gridfs_id": f"sbom-{i}"} for i in range(40)],
@@ -73,7 +78,26 @@ async def test_scan_details_fit_the_result_cap_and_carry_the_scan_summary(db, da
     scan = result["scan"]
 
     assert len(json.dumps(result, default=str).encode()) <= MAX_TOOL_RESULT_BYTES
-    assert (scan["id"], scan["status"], scan["is_head"]) == (_SCAN, SCAN_STATUS_COMPLETED, True)
-    assert (scan["stats"], scan["failed_analyzers"]) == (_STATS, _FAILED_ANALYZERS)
+    assert set(scan) == {
+        "id",
+        "project_id",
+        "branch",
+        "commit_hash",
+        "created_at",
+        "status",
+        "completed_at",
+        "error",
+        "failed_analyzers",
+        "enrichment_failures",
+        "findings_count",
+        "stats",
+        "is_head",
+        "url",
+    }
+    assert (scan["id"], scan["project_id"], scan["branch"], scan["commit_hash"]) == (_SCAN, _PROJECT, "main", "4f2a9c1")
+    assert (scan["status"], scan["error"], scan["is_head"]) == (SCAN_STATUS_COMPLETED, _ERROR, True)
+    assert (scan["findings_count"], scan["stats"]) == (_FINDINGS_COUNT, _STATS)
+    assert (scan["failed_analyzers"], scan["enrichment_failures"]) == (_FAILED_ANALYZERS, _ENRICHMENT_FAILURES)
     # Live Mongo hands datetimes back naive, the attrappe keeps the offset.
+    assert scan["created_at"].startswith(_CREATED.strftime("%Y-%m-%dT%H:%M:%S"))
     assert scan["completed_at"].startswith(_COMPLETED.strftime("%Y-%m-%dT%H:%M:%S"))
