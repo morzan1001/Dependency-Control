@@ -5,22 +5,15 @@ import { advisoryUrl } from '@/lib/finding-utils';
 export interface LinkableEntity {
   readonly text: string;
   readonly markdown: string;
-  // Longer text wins, so "acme-api-v2" is preferred over "acme-api".
-  readonly priority: number;
 }
 
 const CVE_PATTERN = /\bCVE-\d{4}-\d{4,}\b/gi;
 
-type AddEntity = (key: string, text: string, markdown: string, priority: number) => void;
+type AddEntity = (text: string, markdown: string) => void;
 
 function collectProjectEntity(obj: Record<string, unknown>, add: AddEntity): void {
   if (typeof obj.project_name === 'string' && typeof obj.project_id === 'string') {
-    add(
-      `project:${obj.project_id}`,
-      obj.project_name,
-      `[${obj.project_name}](/projects/${obj.project_id})`,
-      obj.project_name.length,
-    );
+    add(obj.project_name, `[${obj.project_name}](/projects/${obj.project_id})`);
   }
 }
 
@@ -29,66 +22,58 @@ function collectTeamEntities(obj: Record<string, unknown>, add: AddEntity): void
   for (const owner of obj.teams) {
     const ref = owner as Record<string, unknown>;
     if (typeof ref?.id === 'string' && typeof ref.name === 'string') {
-      add(`team:${ref.id}`, ref.name, `[${ref.name}](/teams/${ref.id})`, ref.name.length);
+      add(ref.name, `[${ref.name}](/teams/${ref.id})`);
     }
   }
 }
 
 function collectFindingEntities(obj: Record<string, unknown>, add: AddEntity): void {
-  // Finding deep-link: prefer the UUID `id`, fall back to `finding_id`.
   if (
     typeof obj.project_id !== 'string' ||
     typeof obj.scan_id !== 'string' ||
-    (typeof obj.id !== 'string' && typeof obj.finding_id !== 'string')
+    typeof obj.finding_id !== 'string'
   ) {
     return;
   }
-  const fid = typeof obj.id === 'string' ? obj.id : (obj.finding_id as string);
-  const href = `/projects/${obj.project_id}/scans/${obj.scan_id}?finding=${encodeURIComponent(fid)}`;
-  // Prefer a CVE anchor, else component@version.
+  const href = `/projects/${obj.project_id}/scans/${obj.scan_id}?finding=${encodeURIComponent(obj.finding_id)}`;
   if (typeof obj.cve === 'string' && obj.cve) {
-    add(`finding:${fid}:cve`, obj.cve, `[${obj.cve}](${href})`, obj.cve.length + 2);
+    add(obj.cve, `[${obj.cve}](${href})`);
   }
   if (typeof obj.component === 'string' && obj.component) {
     const version = typeof obj.version === 'string' ? obj.version : '';
     const label = version ? `${obj.component}@${version}` : obj.component;
-    add(`finding:${fid}:comp`, label, `[${label}](${href})`, label.length);
+    add(label, `[${label}](${href})`);
   }
 }
 
-function collectFromToolResult(result: unknown, out: Map<string, LinkableEntity>): void {
+function collectFromToolResult(result: unknown, add: AddEntity): void {
   if (!result || typeof result !== 'object') return;
   if (Array.isArray(result)) {
-    for (const item of result) collectFromToolResult(item, out);
+    for (const item of result) collectFromToolResult(item, add);
     return;
   }
   const obj = result as Record<string, unknown>;
-
-  const add: AddEntity = (key, text, markdown, priority) => {
-    if (!text || !markdown) return;
-    const existing = out.get(key);
-    if (!existing || existing.priority < priority) {
-      out.set(key, { text, markdown, priority });
-    }
-  };
-
   collectProjectEntity(obj, add);
   collectTeamEntities(obj, add);
   collectFindingEntities(obj, add);
   for (const value of Object.values(obj)) {
-    collectFromToolResult(value, out);
+    collectFromToolResult(value, add);
   }
 }
 
-/** Extract linkable entities from a set of tool calls (both stored + streaming). */
+/** Extract linkable entities from a set of tool calls (both stored + streaming), one per text. */
 export function collectEntitiesFromToolCalls(
   toolCalls: ReadonlyArray<ToolCall>,
 ): LinkableEntity[] {
-  const map = new Map<string, LinkableEntity>();
+  const byText = new Map<string, LinkableEntity>();
+  const add: AddEntity = (text, markdown) => {
+    const key = text.toLowerCase();
+    if (text && !byText.has(key)) byText.set(key, { text, markdown });
+  };
   for (const tc of toolCalls) {
-    collectFromToolResult(tc.result, map);
+    collectFromToolResult(tc.result, add);
   }
-  return Array.from(map.values());
+  return Array.from(byText.values());
 }
 
 function escapeRegExp(value: string): string {
@@ -108,8 +93,16 @@ export function linkifyAssistantMarkdown(
   const skipPattern = /(\[[^\]]*\]\([^)]*\)|```[\s\S]*?```|`[^`]*`)/g;
   const segments = content.split(skipPattern);
 
-  // Longest first so "acme-api-v2" wins over "acme-api".
-  const sorted = [...entities].sort((a, b) => b.priority - a.priority);
+  const markdownByText = new Map(entities.map((e) => [e.text.toLowerCase(), e.markdown]));
+  // One pass, longest first: "acme-api-v2" wins over "acme-api" and no entity lands inside another's link.
+  const alternation = [...markdownByText.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join('|');
+  // Whole-token match; boundaries exclude `/` and `.` to skip URLs and versions, a sentence-ending `.` still counts.
+  const entityPattern = alternation
+    ? new RegExp(String.raw`(^|[^A-Za-z0-9_\-./])(${alternation})(?=\.?(?:[^A-Za-z0-9_\-./]|$))`, 'gi')
+    : null;
 
   const linkifyCves = (text: string): string =>
     text.replace(CVE_PATTERN, (cve) => {
@@ -118,18 +111,12 @@ export function linkifyAssistantMarkdown(
     });
 
   const linkifyText = (segment: string): string => {
-    let result = segment;
-    for (const entity of sorted) {
-      const escaped = escapeRegExp(entity.text);
-      // Whole-token match; boundaries exclude `/` and `.` to skip URLs and versions.
-      const regex = new RegExp(
-        String.raw`(^|[^A-Za-z0-9_\-./])(${escaped})(?=[^A-Za-z0-9_\-./]|$)`,
-        'gi',
-      );
-      result = result.replace(regex, (_match, lead: string) => {
-        return `${lead}${entity.markdown}`;
-      });
-    }
+    const result = entityPattern
+      ? segment.replace(
+          entityPattern,
+          (_match, lead: string, text: string) => `${lead}${markdownByText.get(text.toLowerCase())}`,
+        )
+      : segment;
     // Re-split before the CVE pass so it skips links the entity pass just inserted.
     return result
       .split(skipPattern)

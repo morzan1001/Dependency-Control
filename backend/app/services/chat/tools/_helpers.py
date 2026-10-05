@@ -3,6 +3,7 @@
 from contextvars import ContextVar
 from operator import itemgetter
 from typing import Any
+from urllib.parse import quote
 
 from app.core.config import settings
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
@@ -276,9 +277,9 @@ def _inject_urls(node: Any) -> None:
         return
     pid = node.get("project_id")
     sid = node.get("scan_id")
-    fid = node.get("id")
+    fid = node.get("finding_id")
     if isinstance(pid, str) and isinstance(sid, str) and isinstance(fid, str):
-        node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}?finding={fid}")
+        node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}?finding={quote(fid, safe='')}")
     elif isinstance(pid, str) and isinstance(sid, str):
         node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}")
     elif isinstance(pid, str):

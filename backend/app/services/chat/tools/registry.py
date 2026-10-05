@@ -181,7 +181,6 @@ _TOP_RISKY = 3
 _PROJECT_ROW_PROJECTION = dict.fromkeys(
     ("name", "team_ids", "last_scan_at", "created_at", "latest_scan_id", "default_branch", "deleted_branches"), 1
 )
-# Without _id, project_id and scan_id, _inject_urls adds no finding link to a dependency row.
 _DEPENDENCY_ROW_PROJECTION = {
     "_id": 0,
     **dict.fromkeys(("name", "version", "purl", "direct", "direct_inferred", "scope", "parent_components"), 1),
