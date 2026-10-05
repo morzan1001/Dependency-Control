@@ -67,21 +67,26 @@ async def test_every_cache_operation_is_timed(fake_cache, operation, call):
 
 
 @pytest.mark.asyncio
-async def test_health_check_and_stats_refresh_set_the_cache_gauges(fake_cache, monkeypatch):
-    sections = {"memory": {"used_memory": 2048}, "stats": {"connected_clients": 3}, "clients": {"connected_clients": 4}}
+async def test_the_stats_refresh_sets_the_cache_gauges_and_a_health_check_leaves_them(fake_cache, monkeypatch):
+    # INFO lists connected_clients under "clients" only, on Redis and Dragonfly alike.
+    sections = {
+        "memory": {"used_memory": 2048, "used_memory_human": "2.00K"},
+        "stats": {"keyspace_hits": 3, "keyspace_misses": 1},
+        "clients": {"connected_clients": 4},
+    }
     fake_cache._client = MagicMock(info=AsyncMock(side_effect=lambda section: sections[section]))
-    fake_cache._client.dbsize = AsyncMock(side_effect=[7, 9])
-
-    await fake_cache.health_check()
-    assert (_sample("cache_keys_total"), _sample("cache_connected_clients")) == (7, 3)
-
+    fake_cache._client.dbsize = AsyncMock(side_effect=[9, 7])
     monkeypatch.setattr(cache, "cache_service", fake_cache)
+
     await cache.update_cache_stats()
+    health = await fake_cache.health_check()
+
     assert [_sample(name) for name in ("cache_keys_total", "cache_connected_clients", "cache_size_bytes")] == [
         9,
         4,
         2048,
     ]
+    assert (health["connected_clients"], health["total_keys"]) == (4, 7)
 
 
 @pytest.mark.asyncio

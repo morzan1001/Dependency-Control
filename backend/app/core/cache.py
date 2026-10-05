@@ -526,20 +526,15 @@ class CacheService:
             client = await self.get_client()
             info = await client.info(section="memory")
             stats = await client.info(section="stats")
-
-            total_keys = await client.dbsize()
-            connected_clients_count = stats.get("connected_clients", 0)
-
-            cache_keys_total.set(total_keys)
-            cache_connected_clients.set(connected_clients_count)
+            clients_info = await client.info(section="clients")
 
             return {
                 "status": "healthy",
                 "available": self._available,
                 "used_memory": info.get("used_memory_human", "unknown"),
                 "used_memory_peak": info.get("used_memory_peak_human", "unknown"),
-                "connected_clients": connected_clients_count,
-                "total_keys": total_keys,
+                "connected_clients": clients_info.get("connected_clients", 0),
+                "total_keys": await client.dbsize(),
                 "keyspace_hits": stats.get("keyspace_hits", 0),
                 "keyspace_misses": stats.get("keyspace_misses", 0),
                 "hit_rate": self._calculate_hit_rate(stats.get("keyspace_hits", 0), stats.get("keyspace_misses", 0)),
@@ -569,14 +564,12 @@ async def update_cache_stats() -> None:
 
         client = await cache_service.get_client()
 
-        stats = await client.info(section="stats")
         memory_info = await client.info(section="memory")
         clients_info = await client.info(section="clients")
 
         total_keys = await client.dbsize()
 
-        # DragonflyDB exposes connected_clients in the clients section, not stats.
-        connected_clients_count = clients_info.get("connected_clients", stats.get("connected_clients", 0))
+        connected_clients_count = clients_info.get("connected_clients", 0)
         used_memory = memory_info.get("used_memory", 0)
 
         cache_keys_total.set(total_keys)
