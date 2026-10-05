@@ -38,7 +38,6 @@ from app.core.purl import package_identity_expr
 from app.models.user import User
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
-from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.schemas.enrichment import VulnerabilityEnrichment
@@ -51,7 +50,7 @@ from app.services.recommendation.common import live_advisories, live_cves
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
 
-# Other projects a project's recommendations are compared against. Each one costs a scan
+# Projects a project's recommendations are compared across, itself first. Each one costs a scan
 # resolution plus its share of two aggregations; the response reports how many were reached.
 _CROSS_PROJECT_COMPARISON_LIMIT = 20
 
@@ -437,7 +436,7 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
 
 
 async def gather_cross_project_data(
-    user_project_ids: list[str],
+    user_projects: list[ProjectWithScanId],
     current_project_id: str,
     db: AsyncIOMotorDatabase,
 ) -> dict[str, Any] | None:
@@ -445,10 +444,9 @@ async def gather_cross_project_data(
 
     Returns None if the user has one project or fewer.
     """
-    if len(user_project_ids) <= 1:
+    if len(user_projects) <= 1:
         return None
 
-    project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
@@ -456,46 +454,36 @@ async def gather_cross_project_data(
     cross_project_data: dict[str, Any] = {
         "projects": [],
         "shared_packages": [],
-        "total_projects": len(user_project_ids),
+        "total_projects": len(user_projects),
     }
 
-    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][:_CROSS_PROJECT_COMPARISON_LIMIT]
+    scanned = [p for p in user_projects if p.latest_scan_id]
+    compared = sorted(scanned, key=lambda p: p.id != current_project_id)[:_CROSS_PROJECT_COMPARISON_LIMIT]
+    head_scan_ids = await scan_repo.get_latest_active_scan_ids(compared)
+    scan_ids = list(head_scan_ids.values())
 
-    other_projects = await project_repo.find_many_with_scan_id(
-        {"_id": {"$in": other_project_ids}},
-        limit=len(other_project_ids),
-    )
-    project_info_map = {p.id: p for p in other_projects}
-
-    resolved_scans = await scan_repo.get_latest_active_scan_ids(other_projects)
-
-    scan_id_to_project = {scan_id: proj_id for proj_id, scan_id in resolved_scans.items()}
-
-    other_scan_ids = list(scan_id_to_project.keys())
-
-    if not other_scan_ids:
+    if not scan_ids:
         return cross_project_data
 
-    other_scans = await scan_repo.find_many_with_stats(
-        {"_id": {"$in": other_scan_ids}},
-        limit=len(other_scan_ids),
-    )
-    scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
+    scans = await scan_repo.find_many_with_stats({"_id": {"$in": scan_ids}}, limit=len(scan_ids))
+    scan_stats_map = {s.id: s.stats for s in scans if s.stats}
 
-    details_by_scan = await vuln_details_by(finding_repo, {"scan_id": {"$in": other_scan_ids}}, "scan_id")
+    details_by_scan = await vuln_details_by(finding_repo, {"scan_id": {"$in": scan_ids}}, "scan_id")
     scan_cves_map = {scan_id: live_cves(details) for (scan_id,), details in details_by_scan.items()}
 
     cross_project_data["shared_packages"] = await dep_repo.aggregate(
-        cross_project_package_pipeline(other_scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)
+        cross_project_package_pipeline(scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)
     )
 
-    for scan_id, proj_id in scan_id_to_project.items():
+    for project in compared:
+        if not (scan_id := head_scan_ids.get(project.id)):
+            continue
         stats = scan_stats_map.get(scan_id)
 
         cross_project_data["projects"].append(
             {
-                "project_id": proj_id,
-                "project_name": project_info_map[proj_id].name,
+                "project_id": project.id,
+                "project_name": project.name,
                 "cves": scan_cves_map.get(scan_id, []),
                 "total_critical": stats.critical if stats else 0,
                 "total_high": stats.high if stats else 0,

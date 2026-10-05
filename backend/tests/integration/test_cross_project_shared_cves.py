@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.api.v1.helpers.analytics import gather_cross_project_data
+from app.services.analytics.scopes import read_scope_projects
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -42,7 +43,7 @@ async def _projects(db, *project_ids: str) -> None:
 
 
 async def _cves_by_project(db) -> dict[str, list[str]]:
-    data = await gather_cross_project_data(["current", "p1", "p2"], "current", db)
+    data = await gather_cross_project_data(await read_scope_projects(db, {}), "current", db)
     assert data is not None
     return {p["project_id"]: p["cves"] for p in data["projects"]}
 
@@ -57,7 +58,7 @@ async def test_a_ghsa_and_its_cve_are_one_shared_vulnerability(db):
         ]
     )
 
-    assert await _cves_by_project(db) == {"p1": [_LODASH_CVE], "p2": [_LODASH_CVE]}
+    assert await _cves_by_project(db) == {"current": [], "p1": [_LODASH_CVE], "p2": [_LODASH_CVE]}
 
 
 async def test_waived_advisories_and_other_findings_are_not_shared(db):
@@ -71,4 +72,4 @@ async def test_waived_advisories_and_other_findings_are_not_shared(db):
         ]
     )
 
-    assert await _cves_by_project(db) == {"p1": [_LODASH_CVE], "p2": []}
+    assert await _cves_by_project(db) == {"current": [], "p1": [_LODASH_CVE], "p2": []}

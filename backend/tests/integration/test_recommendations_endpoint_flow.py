@@ -425,6 +425,36 @@ async def test_waived_findings_do_not_reach_the_engine(client, db, owner_auth_he
     assert resp.json()["findings_total"] == 1
 
 
+_CROSS_PROJECT_COMPARISON_LIMIT = 20
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_cross_project_cards_compare_the_viewed_project_first_among_projects_with_a_scan(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    """Unscanned projects ahead of the scanned ones used to fill every comparison slot, and the viewed
+    project was never compared, so its own cards described only other projects."""
+    member = [{"user_id": "ownerp", "role": "viewer"}]
+    await db.projects.insert_many(
+        [
+            {"_id": f"unscanned-{index:02d}", "name": f"unscanned-{index:02d}", "members": member}
+            for index in range(_CROSS_PROJECT_COMPARISON_LIMIT)
+        ]
+    )
+    await db.projects.insert_one({"_id": "scanned", "name": "scanned", "members": member, "latest_scan_id": "s2"})
+    await _insert_scan(db, "s2", project_id="scanned")
+    await _insert_scan(db, "s")
+    await db.projects.update_one({"_id": "p"}, {"$set": {"latest_scan_id": "s"}})
+    seen: dict = {}
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert [row["project_id"] for row in seen["cross_project_data"]["projects"]] == ["p", "scanned"]
+
+
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_an_os_package_outside_the_inventory_window_still_joins_its_row(
