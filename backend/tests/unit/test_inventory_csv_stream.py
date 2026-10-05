@@ -60,6 +60,20 @@ def test_format_cell_guards_formula_prefixes():
     assert format_cell(["=x", "ok"]) == "'=x; ok"
 
 
+@pytest.mark.asyncio
+async def test_formula_starting_with_a_negative_number_is_escaped():
+    payload = "-1+cmd|' /C calc'!A0"
+    out = await _collect(["a", "b"], [{"a": payload, "b": "-2.5"}])
+    reader = csv.reader(io.StringIO(out.lstrip("﻿")))
+    next(reader)
+    assert next(reader) == [f"'{payload}", "-2.5"]
+
+
+def test_format_cell_guards_only_the_start_of_a_multi_value_cell():
+    assert format_cell(["foo@1", "@angular/core@2"]) == "foo@1; @angular/core@2"
+    assert format_cell(["-1+cmd|x", "ok"]) == "'-1+cmd|x; ok"
+
+
 def test_format_cell_renders_none_in_list_as_empty_string():
     assert format_cell(["x", None, "y"]) == "x; ; y"
 

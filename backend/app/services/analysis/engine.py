@@ -28,7 +28,6 @@ from app.core.constants import (
     ScanStatus,
     SCAN_USABLE_STATUSES,
 )
-from app.core.cve import display_vulnerability_id
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -61,7 +60,6 @@ from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.cbom import CryptoAssetType
-from app.schemas.finding_details import VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedSBOM, SBOMFormat
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
@@ -709,33 +707,6 @@ def _prepare_finding_records(
     return findings_to_insert, vulnerability_findings
 
 
-# Bounds persisted findings_summary so the scan doc stays under Mongo's 16MB limit.
-_FINDINGS_SUMMARY_LIMIT = 500
-
-
-def _build_findings_summary(
-    vulnerability_findings: list[dict[str, Any]],
-    limit: int = _FINDINGS_SUMMARY_LIMIT,
-) -> list[dict[str, Any]]:
-    """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
-    summary: list[dict[str, Any]] = []
-    for record in vulnerability_findings[:limit]:
-        cve_id = display_vulnerability_id(record.get("details"))
-        summary.append(
-            {
-                "id": record.get("id"),
-                "type": "vulnerability",
-                "severity": record.get("severity"),
-                "component": record.get("component"),
-                "version": record.get("version"),
-                "description": (record.get("description") or "")[:200],
-                "scanners": record.get("scanners") or [],
-                "details": VulnerabilitySummaryDetails(cve_id=cve_id).model_dump(exclude_none=True),
-            }
-        )
-    return summary
-
-
 async def _run_vuln_enrichments(
     active_analyzers: list[str],
     vulnerability_findings: list[dict[str, Any]],
@@ -882,7 +853,6 @@ async def _finalize_scan_and_project(
     external_load_start: datetime,
     status: ScanStatus = SCAN_STATUS_COMPLETED,
     error: str | None = None,
-    findings_summary: list[dict[str, Any]] | None = None,
     failed_analyzers: list[str] | None = None,
     enrichment_failures: list[str] | None = None,
     sbom_generation: int | None = None,
@@ -896,7 +866,6 @@ async def _finalize_scan_and_project(
         "stats": stats.model_dump(),
         "completed_at": datetime.now(timezone.utc),
         "latest_run": latest_run_summary,
-        "findings_summary": findings_summary or [],
         "failed_analyzers": failed_analyzers or None,
         "enrichment_failures": enrichment_failures or None,
     }
@@ -1277,7 +1246,6 @@ async def run_analysis(
         external_load_start=external_load_start,
         status=final_status,
         error=final_error,
-        findings_summary=_build_findings_summary(vulnerability_findings),
         failed_analyzers=failed_analyzers,
         enrichment_failures=enrichment_failures,
         sbom_generation=sbom_generation,

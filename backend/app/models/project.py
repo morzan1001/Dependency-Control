@@ -13,7 +13,6 @@ from app.core.constants import (
 )
 from app.core.notification_prefs import NotificationPreferences
 from app.models.base import CreatedAtModel
-from app.models.finding import Finding
 from app.models.stats import Stats
 from app.models.types import MongoDocument
 
@@ -143,8 +142,8 @@ class Scan(MongoDocument, CreatedAtModel):
     # Post-processor enrichments (EPSS/KEV, reachability) that failed; these do not
     # affect the scan status, so this is the only queryable trace of an outage.
     enrichment_failures: list[str] | None = None
-    findings_summary: list[Finding] | None = None
     findings_count: int | None = None
+    ignored_count: int = 0
     stats: Stats | None = None
     completed_at: datetime | None = None
 

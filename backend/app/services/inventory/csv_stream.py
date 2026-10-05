@@ -12,14 +12,13 @@ from fastapi.responses import StreamingResponse
 MULTI_VALUE_SEPARATOR = "; "
 # Excel only detects UTF-8 (umlauts!) when the payload starts with a BOM.
 _UTF8_BOM = "﻿"
-_FORMULA_TRIGGER_PREFIXES = ("=", "+", "@", "\t", "\r")
+_FORMULA_TRIGGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+_NEGATIVE_NUMBER = re.compile(r"-\d+(\.\d+)?")
 
 
 def _guard_formula(text: str) -> str:
     # Excel/Sheets execute cells starting with these as formulas; escape without breaking negative numbers.
-    if text.startswith(_FORMULA_TRIGGER_PREFIXES) or (
-        text.startswith("-") and (len(text) == 1 or not text[1].isdigit())
-    ):
+    if text.startswith(_FORMULA_TRIGGER_PREFIXES) and not _NEGATIVE_NUMBER.fullmatch(text):
         return f"'{text}"
     return text
 
@@ -30,7 +29,7 @@ def format_cell(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (list, tuple)):
-        return MULTI_VALUE_SEPARATOR.join(_guard_formula(str(v)) if v is not None else "" for v in value)
+        return _guard_formula(MULTI_VALUE_SEPARATOR.join("" if v is None else str(v) for v in value))
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, str):

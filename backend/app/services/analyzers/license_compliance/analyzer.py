@@ -19,6 +19,21 @@ from .constants import (
 )
 
 
+def classify_license(member: str, license_id: str | None = None) -> LicenseInfo | None:
+    """The catalogue entry for an expression member, its linking exception applied; license_id overrides its id."""
+    license_info = LICENSE_DATABASE.get(license_id or member.partition(" WITH ")[0])
+    if license_info and " WITH " in member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
+        return replace(
+            license_info,
+            category=LicenseCategory.WEAK_COPYLEFT,
+            description="The exception lets code that only links to this library keep its own license; "
+            "changes to the library itself stay under its copyleft.",
+            obligations=[SHARE_SOURCE_OF_MODIFICATIONS, INCLUDE_LICENSE_TEXT],
+            risks=[],
+        )
+    return license_info
+
+
 class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
 
@@ -109,17 +124,7 @@ class LicenseAnalyzer(Analyzer):
             if normalized not in LICENSE_DATABASE and len(members) == 1:
                 # A lone licence's URL is its own; with several, the one stored URL may belong to another.
                 normalized = normalizer.extract_license_from_url(lic_url) or normalized
-            license_info = LICENSE_DATABASE.get(normalized)
-            if license_info and " WITH " in member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
-                license_info = replace(
-                    license_info,
-                    category=LicenseCategory.WEAK_COPYLEFT,
-                    description="The exception lets code that only links to this library keep its own license; "
-                    "changes to the library itself stay under its copyleft.",
-                    obligations=[SHARE_SOURCE_OF_MODIFICATIONS, INCLUDE_LICENSE_TEXT],
-                    risks=[],
-                )
-
+            license_info = classify_license(member, normalized)
             if not license_info:
                 stats["unknown"] += 1
                 unrecognized.append(normalized)

@@ -89,7 +89,7 @@ _SCAN_ERROR = "analyzer crashed"
 _FAILED_ANALYZER = "trivy"
 _ENRICHMENT_FAILURE = "epss"
 _FINDINGS_COUNT = 12
-_FINDINGS_SUMMARY = [{"severity": "high"}]
+_IGNORED_COUNT = 2
 _STATS = {"total": _FINDINGS_COUNT}
 _LATEST_RUN = {"scan_id": _PREVIOUS_RESCAN_ID}
 _RECEIVED_RESULTS = ["sbom"]
@@ -122,8 +122,8 @@ _SCAN_MODEL_FIELDS = frozenset(
         "error",
         "failed_analyzers",
         "enrichment_failures",
-        "findings_summary",
         "findings_count",
+        "ignored_count",
         "stats",
         "completed_at",
         "reachability_pending",
@@ -250,8 +250,8 @@ def _saturated_scan_doc() -> dict[str, Any]:
         error=_SCAN_ERROR,
         failed_analyzers=[_FAILED_ANALYZER],
         enrichment_failures=[_ENRICHMENT_FAILURE],
-        findings_summary=_FINDINGS_SUMMARY,
         findings_count=_FINDINGS_COUNT,
+        ignored_count=_IGNORED_COUNT,
         stats=_STATS,
         completed_at=_NOW - _RECENT,
         reachability_pending=True,

@@ -59,8 +59,6 @@ async def _seed_scan(
             "commit_hash": f"commit-{scan_id}",
             "status": status,
             "is_rescan": is_rescan,
-            # Bulk the rollup must not pull into memory.
-            "findings_summary": [{"id": f"CVE-{i}", "description": "x" * 200} for i in range(50)],
             "sbom_refs": [{"file_id": "gridfs-1", "filename": "sbom.json"}],
         }
     )

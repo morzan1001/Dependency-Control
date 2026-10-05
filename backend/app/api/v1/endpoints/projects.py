@@ -58,8 +58,8 @@ from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
     SCAN_ACTIVE_STATUSES,
-    SEVERITY_ORDER,
     TEAM_SOURCE_MANUAL,
+    severity_rank_expr,
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
@@ -423,7 +423,7 @@ async def read_all_scans(
         },
         {"$unwind": "$project_info"},
         {"$addFields": {"project_name": "$project_info.name"}},
-        {"$project": {"project_info": 0, "sboms": 0, "findings_summary": 0}},
+        {"$project": {"project_info": 0, "sboms": 0}},
     ]
 
     return await ScanRepository(db).aggregate(pipeline, limit)
@@ -1124,9 +1124,9 @@ def _scan_findings_dependency_join() -> list[dict[str, Any]]:
                     }
                 },
                 # Exact spelling first so a qualified finding never takes a same-artifact
-                # sibling's row when both are present.
+                # sibling's row; then direct wins, as in the findings CSV.
                 {"$addFields": {"_exact": {"$eq": ["$name", "$$component"]}}},
-                {"$sort": {"_exact": -1}},
+                {"$sort": {"_exact": -1, "direct": -1, "_id": 1}},
                 {"$limit": 1},
                 {"$project": dict.fromkeys(fields, 1)},
             ],
@@ -1140,16 +1140,7 @@ def _scan_findings_dependency_join() -> list[dict[str, Any]]:
 def _scan_findings_add_fields_stage() -> dict[str, Any]:
     return {
         "$addFields": {
-            "severity_rank": {
-                "$switch": {
-                    "branches": [
-                        {"case": {"$eq": ["$severity", severity]}, "then": rank}
-                        for severity, rank in SEVERITY_ORDER.items()
-                        if rank
-                    ],
-                    "default": 0,
-                }
-            },
+            "severity_rank": severity_rank_expr("$severity"),
             # Map finding_id to id for frontend compatibility.
             "id": "$finding_id",
             # Deterministic scalar for sorting by scanner (scanners is a list).

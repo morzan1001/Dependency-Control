@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card'
@@ -11,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download } from 'lucide-react'
 import { useInventoryComponents } from '@/hooks/queries/use-inventory'
+import { usePaginationState } from '@/hooks/use-pagination-state'
 import { inventoryApi } from '@/api/inventory'
 import { downloadFile } from '@/lib/download'
 import { ComponentItem } from '@/types/inventory'
@@ -35,13 +35,11 @@ function LifecycleBadge({ item }: { readonly item: ComponentItem }) {
 }
 
 export function ComponentsTable({ projectId, projectName, branch }: Readonly<ComponentsTableProps>) {
-  const [page, setPage] = useState(1)
-  const [search, setSearch] = useState('')
-  const [sortBy, setSortBy] = useState('name')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
+    usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' })
 
   const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryComponents(projectId, branch, {
-    page, pageSize: DEFAULT_PAGE_SIZE, search: search || undefined, sortBy, sortOrder,
+    page, pageSize: DEFAULT_PAGE_SIZE, search: debouncedSearch || undefined, sortBy, sortOrder,
   })
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1
@@ -79,7 +77,7 @@ export function ComponentsTable({ projectId, projectName, branch }: Readonly<Com
             <Input
               placeholder="Search components…"
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+              onChange={(e) => setSearch(e.target.value)}
               className="w-[220px]"
             />
             <Button variant="outline" size="sm" onClick={handleDownload}>

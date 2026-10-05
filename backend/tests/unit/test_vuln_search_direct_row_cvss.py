@@ -1,28 +1,8 @@
-"""Vulnerability-search CVSS sort and read must target the aggregated stored shape,
-where CVSS lives per CVE in details.vulnerabilities[].cvss_score."""
+"""A finding's own vulnerability-search row reads CVSS where it is stored: per CVE in details.vulnerabilities[]."""
 
 from types import SimpleNamespace
 
-from app.api.v1.endpoints.analytics.search import (
-    _VULN_SORT_FIELD_MAP,
-    _build_direct_vuln_result,
-)
-
-
-def _resolve_sort_values(doc, path: str) -> list:
-    """Resolve a dotted Mongo sort path with array fan-out, as the server's sort key extraction does."""
-    values = [doc]
-    for part in path.split("."):
-        values = [
-            item[part]
-            for value in values
-            for item in (value if isinstance(value, list) else [value])
-            if isinstance(item, dict) and part in item
-        ]
-    flat = []
-    for value in values:
-        flat.extend(value if isinstance(value, list) else [value])
-    return flat
+from app.api.v1.endpoints.analytics.search import _build_direct_vuln_result
 
 
 def _stored_details() -> dict:
@@ -33,13 +13,6 @@ def _stored_details() -> dict:
             {"id": "CVE-2021-2", "severity": "CRITICAL", "cvss_score": 9.8},
         ],
     }
-
-
-def test_cvss_sort_field_resolves_on_stored_shape():
-    doc = {"type": "vulnerability", "component": "lodash", "details": _stored_details()}
-    values = _resolve_sort_values(doc, _VULN_SORT_FIELD_MAP["cvss"])
-    assert values, "the cvss sort key must exist on the aggregated stored document"
-    assert 9.8 in values
 
 
 def test_direct_result_carries_max_nested_cvss():

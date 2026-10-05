@@ -175,12 +175,6 @@ class VulnerabilityDetails(_DetailsModel):
     scorecard_context: ScorecardContext | None = None
 
 
-class VulnerabilitySummaryDetails(_DetailsModel):
-    """Details of a ``scan.findings_summary`` record (engine._build_findings_summary)."""
-
-    cve_id: str | None = None
-
-
 class LicenseDetails(_DetailsModel):
     license: str | None = None
     license_url: str | None = None

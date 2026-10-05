@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 
 from app.api.v1.endpoints.projects import _build_scan_findings_pipeline
+from app.services.inventory.findings_export import ExportedScan, iter_findings_rows
 
 _SCAN = "scan-1"
 _SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
@@ -99,3 +100,45 @@ async def test_a_source_type_sort_orders_by_the_joined_dependency(seeded):
     source_types = [dict(row).get("source_type", "") for row in rows]
     assert source_types == sorted(source_types, reverse=True)
     assert source_types[0] == "image"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_severity_sort_lists_the_most_severe_finding_first(db):
+    severities = ["LOW", "CRITICAL", "INFO", "MEDIUM", "HIGH"]
+    await db.findings.insert_many([{**_finding(i, f"lib{i}"), "severity": s} for i, s in enumerate(severities)])
+
+    pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by="severity", sort_dir=-1, skip=0, limit=50)
+    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+
+    assert [row["severity"] for row in bucket["data"]] == ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("variants", "taken"),
+    [
+        ([("d2", False, "?type=jar"), ("d3", None, "?type=pom"), ("d1", True, "")], ""),
+        ([("d2", None, "?type=pom"), ("d1", False, "?type=jar")], "?type=jar"),
+        ([("d2", True, "?type=pom"), ("d1", True, "?type=jar")], "?type=jar"),
+    ],
+    ids=["one direct row inserted last", "transitive before unknown", "two direct rows"],
+)
+async def test_the_join_takes_the_dependency_row_the_findings_csv_takes(db, variants, taken):
+    # Purl-qualifier variants of one name@version; direct, then transitive, then unknown, then the lowest _id wins.
+    await db.dependencies.insert_many(
+        [
+            {**_dependency(0), "_id": _id, "direct": direct, "purl": f"pkg:maven/org.example/lib0@1.0{q}"}
+            for _id, direct, q in variants
+        ]
+    )
+    await db.findings.insert_one(_finding(1, "lib0"))
+
+    pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by="severity", sort_dir=-1, skip=0, limit=5)
+    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+    [exported] = [row async for row in iter_findings_rows(db, [ExportedScan(_SCAN, "main", None, None)])]
+
+    [expected] = [(direct, f"pkg:maven/org.example/lib0@1.0{q}") for _, direct, q in variants if q == taken]
+    assert (exported["direct"], exported["purl"]) == expected
+    assert [(row.get("direct"), row.get("purl")) for row in bucket["data"]] == [expected]
