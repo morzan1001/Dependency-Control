@@ -95,7 +95,7 @@ jobs:
           cd frontend
           pnpm install --frozen-lockfile
 
-      # The build compiles the app project, which excludes the tests; this covers both projects.
+      # The build compiles only the app project; this also covers the tests and vite.config.ts.
       - name: TypeScript type check
         run: |
           cd frontend
