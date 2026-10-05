@@ -7,9 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.schemas._not_null import reject_null
 
-_URL_DESCRIPTION = "OIDC issuer URL; for GitLab the instance base URL"
-_SYNC_TEAMS_DESCRIPTION = "Sync GitHub team or GitLab group members to local teams"
-_ACCESS_TOKEN_DESCRIPTION = "GitHub Personal Access Token, or GitLab personal or group token with 'api' scope"
+_URL_DESCRIPTION = "OIDC issuer URL"
+_SYNC_TEAMS_DESCRIPTION = "Sync team or group members to local teams"
+_ACCESS_TOKEN_DESCRIPTION = "Access token for the provider's API"
 
 
 def _strip_trailing_slash(value: str) -> str:
@@ -28,11 +28,8 @@ def _validate_audience_not_blank(value: str | None) -> str:
 class VcsInstanceBase(BaseModel):
     """oidc_audience is declared per schema so the Response can serialize an instance whose audience is null."""
 
-    name: str = Field(..., description="Human-readable name (e.g. 'GitHub.com', 'Internal GitLab')")
-    url: str = Field(
-        ...,
-        description=f"{_URL_DESCRIPTION} (e.g. 'https://token.actions.githubusercontent.com', 'https://gitlab.com')",
-    )
+    name: str = Field(..., description="Human-readable name")
+    url: str = Field(..., description=_URL_DESCRIPTION)
     description: str | None = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
     auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
@@ -43,8 +40,7 @@ class VcsInstanceCreate(VcsInstanceBase):
     oidc_audience: str = Field(
         ...,
         min_length=1,
-        description="REQUIRED expected 'aud' claim for OIDC tokens. Must match the audience the CI job requests "
-        "(GitHub Actions 'audience', GitLab id_tokens[].aud).",
+        description="REQUIRED expected 'aud' claim for OIDC tokens. Must match the audience the CI job requests.",
     )
     access_token: str | None = Field(None, description=_ACCESS_TOKEN_DESCRIPTION)
 
