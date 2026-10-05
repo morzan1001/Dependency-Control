@@ -483,16 +483,53 @@ class TestAtomicPrimitives:
         assert await fake_cache.incr("rate_limit:k", 60) == 3
 
     @pytest.mark.asyncio
-    async def test_incr_reports_no_count_while_redis_is_unreachable(self, fake_cache):
-        server = fakeredis.FakeServer()
-        server.connected = False
-        fake_cache._client = fakeredis.aioredis.FakeRedis(server=server)
-
-        assert await fake_cache.incr("rate_limit:k", 60) is None
-
-    @pytest.mark.asyncio
     async def test_pop_hands_a_value_out_once(self, fake_cache):
         await fake_cache.set("oidc_state:s", True, ttl_seconds=60)
 
         assert await fake_cache.pop("oidc_state:s") is True
         assert await fake_cache.pop("oidc_state:s") is None
+
+
+class TestFailuresFallBackToTheDefault:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "operation, call, default",
+        [
+            ("get", lambda c: c.get("k"), None),
+            ("set", lambda c: c.set("k", 1), False),
+            ("delete", lambda c: c.delete("k"), False),
+            ("mget", lambda c: c.mget(["k", "j"]), {"k": None, "j": None}),
+            ("mset", lambda c: c.mset({"k": 1}), False),
+            ("incr", lambda c: c.incr("n", 60), None),
+            ("pop", lambda c: c.pop("k"), None),
+        ],
+    )
+    async def test_an_unreachable_redis_answers_the_default_and_pauses_the_cache(
+        self, fake_cache, operation, call, default
+    ):
+        server = fakeredis.FakeServer()
+        server.connected = False
+        fake_cache._client = fakeredis.aioredis.FakeRedis(server=server)
+
+        assert await call(fake_cache) == default
+        assert fake_cache._available is False
+
+    @pytest.mark.asyncio
+    async def test_a_corrupt_entry_reads_as_absent(self, fake_cache):
+        await fake_cache._client.set(fake_cache._make_key("bad"), "{not json")
+        await fake_cache.set("good", 1)
+
+        assert await fake_cache.get("bad") is None
+        assert await fake_cache.mget(["bad", "good"]) == {"bad": None, "good": 1}
+        assert await fake_cache.pop("bad") is None
+        assert fake_cache._available is True
+
+    @pytest.mark.asyncio
+    async def test_an_unserializable_value_is_not_stored_and_keeps_the_cache_up(self, fake_cache):
+        circular: list = []
+        circular.append(circular)
+
+        assert await fake_cache.set("k", circular) is False
+        assert await fake_cache.mset({"k": circular}) is False
+        assert await fake_cache._client.exists(fake_cache._make_key("k")) == 0
+        assert fake_cache._available is True

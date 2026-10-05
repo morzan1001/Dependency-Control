@@ -143,12 +143,6 @@ cache_misses_total = Counter(
     "Total cache misses",
 )
 
-cache_operations_total = Counter(
-    "cache_operations_total",
-    "Total cache operations by type",
-    ["operation"],
-)
-
 cache_operation_duration_seconds = Histogram(
     "cache_operation_duration_seconds",
     "Cache operation duration in seconds",

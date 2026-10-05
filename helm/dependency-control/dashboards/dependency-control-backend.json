@@ -2170,7 +2170,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(cache_operations_total{job=~\".*dependency-control-backend.*\"}[5m])) by (operation)",
+          "expr": "sum(rate(cache_operation_duration_seconds_count{job=~\".*dependency-control-backend.*\"}[5m])) by (operation)",
           "legendFormat": "{{operation}}",
           "refId": "A"
         }

@@ -11,8 +11,9 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
+from types import TracebackType
 from typing import Any, TypeVar, cast
 
 import redis.asyncio as redis
@@ -25,7 +26,6 @@ from app.core.metrics import (
     cache_keys_total,
     cache_misses_total,
     cache_operation_duration_seconds,
-    cache_operations_total,
     cache_size_bytes,
 )
 
@@ -198,6 +198,29 @@ class CacheKeys:
         return f"recommendations:{project_id}:{scan_id}:{analysis_stamp}:{scope_hash}"
 
 
+class _CacheOp:
+    """Times one Redis call and swallows its failure, so the caller falls through to its default."""
+
+    def __init__(self, cache: "CacheService", operation: str) -> None:
+        self._cache = cache
+        self._operation = operation
+
+    def __enter__(self) -> None:
+        self._start = time.perf_counter()
+
+    # Typed bool, unlike @contextmanager's exit, so mypy sees the callers' default returns as reachable.
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+    ) -> bool:
+        cache_operation_duration_seconds.labels(operation=self._operation).observe(time.perf_counter() - self._start)
+        if isinstance(exc, (redis.ConnectionError, asyncio.TimeoutError)):
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
+            self._cache._mark_unavailable()
+        elif isinstance(exc, Exception):
+            logger.warning(f"Cache {self._operation} error: {exc}")
+        return isinstance(exc, Exception)
+
+
 class CacheService:
     """Distributed Redis cache shared across pods for horizontal dedup of external API calls."""
 
@@ -285,31 +308,14 @@ class CacheService:
         if not await self._ensure_available():
             return None
 
-        _start = time.time()
-        try:
+        with _CacheOp(self, "get"):
             client = await self.get_client()
-            data = await asyncio.wait_for(
-                client.get(self._make_key(key)),
-                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            )
+            data = await asyncio.wait_for(client.get(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             if data:
                 cache_hits_total.inc()
                 return json.loads(data)
             cache_misses_total.inc()
-            return None
-        except (redis.ConnectionError, asyncio.TimeoutError):
-            logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._mark_unavailable()
-            return None
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to decode cached value for {key}: {e}")
-            return None
-        except Exception as e:
-            logger.warning(f"Cache get error for {key}: {e}")
-            return None
-        finally:
-            cache_operations_total.labels(operation="get").inc()
-            cache_operation_duration_seconds.labels(operation="get").observe(time.time() - _start)
+        return None
 
     async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
         """Set a JSON-serializable value with TTL (defaults to CACHE_DEFAULT_TTL_HOURS)."""
@@ -319,51 +325,24 @@ class CacheService:
         if ttl_seconds is None:
             ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
-        _start = time.time()
-        try:
+        with _CacheOp(self, "set"):
             client = await self.get_client()
-            serialized = json.dumps(value, default=str)
             await asyncio.wait_for(
-                client.set(self._make_key(key), serialized, ex=ttl_seconds),
+                client.set(self._make_key(key), json.dumps(value, default=str), ex=ttl_seconds),
                 timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
             return True
-        except (redis.ConnectionError, asyncio.TimeoutError):
-            logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._mark_unavailable()
-            return False
-        except (TypeError, ValueError) as e:
-            logger.warning(f"Failed to serialize value for {key}: {e}")
-            return False
-        except Exception as e:
-            logger.warning(f"Cache set error for {key}: {e}")
-            return False
-        finally:
-            cache_operations_total.labels(operation="set").inc()
-            cache_operation_duration_seconds.labels(operation="set").observe(time.time() - _start)
+        return False
 
     async def delete(self, key: str) -> bool:
         if _writes_suppressed.get() or not await self._ensure_available():
             return False
 
-        _start = time.time()
-        try:
+        with _CacheOp(self, "delete"):
             client = await self.get_client()
-            await asyncio.wait_for(
-                client.delete(self._make_key(key)),
-                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            )
+            await asyncio.wait_for(client.delete(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             return True
-        except (redis.ConnectionError, asyncio.TimeoutError):
-            logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._mark_unavailable()
-            return False
-        except Exception as e:
-            logger.warning(f"Cache delete error for {key}: {e}")
-            return False
-        finally:
-            cache_operations_total.labels(operation="delete").inc()
-            cache_operation_duration_seconds.labels(operation="delete").observe(time.time() - _start)
+        return False
 
     async def mget(self, keys: list[str]) -> dict[str, Any]:
         """Batch get; returns {key: value-or-None}."""
@@ -372,34 +351,22 @@ class CacheService:
         if not await self._ensure_available():
             return dict.fromkeys(keys)
 
-        _start = time.time()
-        try:
+        with _CacheOp(self, "mget"):
             client = await self.get_client()
-            prefixed_keys = [self._make_key(k) for k in keys]
             values = await asyncio.wait_for(
-                client.mget(prefixed_keys),
+                client.mget([self._make_key(k) for k in keys]),
                 timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
-
-            result = {}
+            result: dict[str, Any] = dict.fromkeys(keys)
             for key, value in zip(keys, values, strict=True):
                 if value:
-                    try:
+                    with suppress(json.JSONDecodeError):
                         result[key] = json.loads(value)
-                    except json.JSONDecodeError:
-                        result[key] = None
-                else:
-                    result[key] = None
+            hits = sum(1 for value in values if value)
+            cache_hits_total.inc(hits)
+            cache_misses_total.inc(len(values) - hits)
             return result
-        except (redis.ConnectionError, asyncio.TimeoutError):
-            self._mark_unavailable()
-            return dict.fromkeys(keys)
-        except Exception as e:
-            logger.warning(f"Cache mget error: {e}")
-            return dict.fromkeys(keys)
-        finally:
-            cache_operations_total.labels(operation="mget").inc()
-            cache_operation_duration_seconds.labels(operation="mget").observe(time.time() - _start)
+        return dict.fromkeys(keys)
 
     async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
         """Batch set with shared TTL."""
@@ -409,34 +376,21 @@ class CacheService:
         if ttl_seconds is None:
             ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
-        _start = time.time()
-        success = False
-        try:
+        with _CacheOp(self, "mset"):
             client = await self.get_client()
             pipe = client.pipeline()
-
             for key, value in mapping.items():
-                serialized = json.dumps(value, default=str)
-                pipe.set(self._make_key(key), serialized, ex=ttl_seconds)
-
+                pipe.set(self._make_key(key), json.dumps(value, default=str), ex=ttl_seconds)
             await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
-            success = True
-        except (redis.ConnectionError, asyncio.TimeoutError):
-            self._mark_unavailable()
-        except Exception as e:
-            logger.warning(f"Cache mset error: {e}")
-        finally:
-            cache_operations_total.labels(operation="mset").inc()
-            cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
-        return success
+            return True
+        return False
 
     async def incr(self, key: str, ttl_seconds: int) -> int | None:
         """Count one hit atomically in a window the first hit opens; None while Redis is unreachable."""
         if not await self._ensure_available():
             return None
 
-        _start = time.time()
-        try:
+        with _CacheOp(self, "incr"):
             client = await self.get_client()
             full_key = self._make_key(key)
             pipe = client.pipeline(transaction=True)
@@ -444,40 +398,18 @@ class CacheService:
             pipe.expire(full_key, ttl_seconds, nx=True)
             count, _ = await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             return int(count)
-        except (redis.ConnectionError, asyncio.TimeoutError):
-            logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._mark_unavailable()
-            return None
-        except Exception as e:
-            logger.warning(f"Cache incr error: {e}")
-            return None
-        finally:
-            cache_operations_total.labels(operation="incr").inc()
-            cache_operation_duration_seconds.labels(operation="incr").observe(time.time() - _start)
+        return None
 
     async def pop(self, key: str) -> Any | None:
         """Read and delete in one step, so only one caller receives the value; None if absent or unreachable."""
         if not await self._ensure_available():
             return None
 
-        _start = time.time()
-        try:
+        with _CacheOp(self, "pop"):
             client = await self.get_client()
-            data = await asyncio.wait_for(
-                client.getdel(self._make_key(key)),
-                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            )
+            data = await asyncio.wait_for(client.getdel(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             return json.loads(data) if data else None
-        except (redis.ConnectionError, asyncio.TimeoutError):
-            logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._mark_unavailable()
-            return None
-        except Exception as e:
-            logger.warning(f"Cache pop error: {e}")
-            return None
-        finally:
-            cache_operations_total.labels(operation="pop").inc()
-            cache_operation_duration_seconds.labels(operation="pop").observe(time.time() - _start)
+        return None
 
     async def get_or_fetch_with_lock(
         self,

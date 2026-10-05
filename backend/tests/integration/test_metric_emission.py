@@ -40,6 +40,14 @@ async def test_cache_get_counts_a_hit_and_a_miss(fake_cache):
 
 
 @pytest.mark.asyncio
+async def test_cache_mget_counts_each_key_as_a_hit_or_a_miss(fake_cache):
+    await fake_cache.set("present", 1)
+    moved = _deltas([("cache_hits_total", {}), ("cache_misses_total", {})])
+    await fake_cache.mget(["present", "absent", "absent-too"])
+    assert moved() == [1, 2]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "operation, call",
     [
@@ -52,11 +60,10 @@ async def test_cache_get_counts_a_hit_and_a_miss(fake_cache):
         ("pop", lambda c: c.pop("k")),
     ],
 )
-async def test_every_cache_operation_is_counted_and_timed(fake_cache, operation, call):
-    labels = {"operation": operation}
-    moved = _deltas([("cache_operations_total", labels), ("cache_operation_duration_seconds_count", labels)])
+async def test_every_cache_operation_is_timed(fake_cache, operation, call):
+    moved = _deltas([("cache_operation_duration_seconds_count", {"operation": operation})])
     await call(fake_cache)
-    assert moved() == [1, 1]
+    assert moved() == [1]
 
 
 @pytest.mark.asyncio
