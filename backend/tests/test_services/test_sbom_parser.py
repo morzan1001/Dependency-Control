@@ -1048,6 +1048,27 @@ class TestDuplicateComponentMerge:
         assert all(getattr(alone, field) for field in fields)
         assert {f: getattr(merged, f) for f in fields} == {f: getattr(alone, f) for f in fields}
 
+    def test_merge_keeps_the_first_copy_s_populated_metadata(self):
+        first = {
+            "type": "library",
+            "name": "lib-d",
+            "version": "1.0",
+            "purl": "pkg:npm/lib-d@1.0",
+            "bom-ref": "pkg:npm/lib-d@1.0?uuid=1",
+            "description": "first copy",
+            "properties": [{"name": "aquasecurity:trivy:LayerDigest", "value": "sha256:first"}],
+        }
+        second = {
+            **first,
+            "bom-ref": "pkg:npm/lib-d@1.0?uuid=2",
+            "description": "second copy",
+            "properties": [{"name": "aquasecurity:trivy:LayerDigest", "value": "sha256:second"}],
+        }
+
+        [dep] = self.parser.parse(_cyclonedx_with([first, second])).dependencies
+
+        assert (dep.layer_digest, dep.description) == ("sha256:first", "first copy")
+
     @pytest.mark.parametrize("scopes", [("optional", "required"), ("required", "optional"), ("excluded", None)])
     def test_merge_lets_a_runtime_scope_win(self, scopes):
         component = {"type": "library", "name": "x", "version": "1.0.0", "purl": "pkg:npm/x@1.0.0"}
