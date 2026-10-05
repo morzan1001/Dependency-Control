@@ -284,7 +284,7 @@ async def test_sbom_ingest_can_promote_an_existing_scan(client, db, api_key_head
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("route", "payload"), [(_SBOM_ROUTE, _sbom_payload), (_FINDINGS_ROUTE, _findings_payload)])
 async def test_a_failed_release_write_leaves_the_scan_unflagged(client, db, api_key_headers, route, payload):
-    """The backfill repairs a row whose flag is missing; a flag whose row is missing it never sees."""
+    """A flag whose release row is missing would show a release that is not there."""
     created = await client.post(_SBOM_ROUTE, json=_sbom_payload(), headers=api_key_headers)
     assert created.status_code == 202, created.text
     scan_id = created.json()["scan_id"]

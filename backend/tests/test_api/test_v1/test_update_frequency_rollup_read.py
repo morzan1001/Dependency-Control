@@ -290,8 +290,8 @@ class TestDifferentialNormalHistory:
     @pytest.mark.asyncio
     async def test_a_restored_scan_dated_in_text_is_invisible_to_both_paths(self):
         # An archive restore inserts bundle JSON verbatim and JSON has no date type.
-        # No ingest hook ever runs for such a scan, and the backfill cannot collect it
-        # either, because a range query is bracketed to its bound's BSON type.
+        # No ingest hook ever runs for such a scan, and a range query is bracketed to
+        # its bound's BSON type.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
         await _seed_scan(db, "s3", _days_ago(40), {"requests": "2.1.0"}, ())

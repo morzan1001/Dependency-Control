@@ -2,8 +2,7 @@
 
 A same-commit run merges its scans into one timeline bar; it never removes a pair
 from a sum. These tests run one seeded history through the live walk and through
-the real writer plus fold, and compare them on the very field list the parity gate
-uses, with the gate's own exceptions.
+the real writer plus fold, and require every field of both to agree.
 """
 
 import random
@@ -22,6 +21,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _fold_branch,
     _rollup_project_metrics,
 )
+from app.core.constants import RECENT_UPDATES_LIMIT
 from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -37,7 +37,6 @@ from app.services.update_frequency import (
 )
 from app.services.update_frequency_fold import commit_coverage, fold_window, select_window, window_bars
 from app.services.update_frequency_rollup import record_scan_update_delta
-from scripts.verify_update_frequency_parity import KnownCauses, compare_comparisons, compare_metrics
 from tests.mocks.fake_mongo import FakeDatabase
 
 PROJECT = "proj-1"
@@ -46,9 +45,6 @@ WINDOW_DAYS = 90
 # BSON dates are int64 milliseconds, so an instant with microseconds reads back as a different
 # value than the one an assertion recomputes.
 NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
-
-# The gate excuses one field by name; nothing here may hide behind it.
-_NO_KNOWN_CAUSES = KnownCauses()
 
 
 def _days_ago(days: float) -> datetime:
@@ -140,11 +136,6 @@ async def _both(db: FakeDatabase) -> tuple[UpdateFrequencyMetrics, UpdateFrequen
     return live, rolled
 
 
-def _differences(live: UpdateFrequencyMetrics, rolled: UpdateFrequencyMetrics) -> dict[str, tuple[Any, Any]]:
-    """Every gate field the two paths disagree on, minus the deviations the gate names."""
-    return {d.field: (d.live, d.rollup) for d in compare_metrics(live, rolled, _NO_KNOWN_CAUSES) if d.reason is None}
-
-
 def _timeline_ids(metrics: UpdateFrequencyMetrics) -> list[str]:
     return [entry.scan_id for entry in metrics.scan_timeline]
 
@@ -157,9 +148,8 @@ def _assert_bars_tile_the_pairs(metrics: UpdateFrequencyMetrics) -> None:
 
 async def _assert_identical(db: FakeDatabase) -> UpdateFrequencyMetrics:
     live, rolled = await _both(db)
-    assert _differences(live, rolled) == {}
+    assert live == rolled
     _assert_bars_tile_the_pairs(live)
-    _assert_bars_tile_the_pairs(rolled)
     return live
 
 
@@ -175,7 +165,7 @@ async def _comparisons(db: FakeDatabase) -> tuple[dict[str, Any], dict[str, Any]
 
 
 async def _assert_both_paths_agree(db: FakeDatabase) -> dict[str, Any]:
-    """Every field of both gate checks, and the row the paths agree on.
+    """Both paths agree on the metrics and the comparison payload; returns the agreed row.
 
     ``UpdateFrequencyMetrics`` carries no ``data_status``, so the verdict is only
     visible on the comparison row; the metrics check is what pins the numbers
@@ -183,7 +173,7 @@ async def _assert_both_paths_agree(db: FakeDatabase) -> dict[str, Any]:
     """
     await _assert_identical(db)
     live, rolled = await _comparisons(db)
-    assert compare_comparisons(live, rolled) == []
+    assert live == rolled
     return rolled["projects"][0]
 
 
@@ -422,9 +412,7 @@ class TestDataStatusIsUnmoved:
 class TestScansThatMeasuredNothing:
     """Both paths drop a scan that produced no SBOM, so it is no gap between them.
 
-    The ledger records such a scan as a delta counting no dependencies. Holding
-    its commit against the ledger read the two paths' agreement as ledger drift
-    and sent the operator into a backfill that had nothing left to write.
+    The ledger records such a scan as a delta counting no dependencies.
     """
 
     @pytest.mark.asyncio
@@ -582,6 +570,21 @@ class TestAGapInTheLedgerIsStillPartial:
 
         assert live["projects"][0]["data_status"] == "ready"
         assert rolled["projects"][0]["data_status"] == "partial"
+
+
+class TestRecentUpdatesLimit:
+    @pytest.mark.asyncio
+    async def test_a_scan_with_more_changes_than_the_limit_is_cut_alike(self):
+        """Writer and readers share one limit and one order."""
+        changed = RECENT_UPDATES_LIMIT + 10
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {f"pkg{i:02d}": "1.0.0" for i in range(changed)})
+        await _seed_scan(db, "s2", _days_ago(50), {f"pkg{i:02d}": "1.0.1" for i in range(changed)})
+        await _build_ledger(db)
+
+        live = await _assert_identical(db)
+
+        assert len(live.recent_updates) == RECENT_UPDATES_LIMIT
 
 
 class TestCappedRate:
@@ -846,7 +849,7 @@ async def _seed_generated(db: FakeDatabase, scans: list[_GeneratedScan]) -> None
 class TestGeneratedHistories:
     @pytest.mark.parametrize("seed", _GENERATED_SEEDS)
     @pytest.mark.asyncio
-    async def test_the_two_paths_agree_on_every_gate_field(self, seed):
+    async def test_the_two_paths_agree_on_every_field(self, seed):
         db = FakeDatabase()
         scans = _generate_history(seed)
         await _seed_generated(db, scans)
@@ -855,9 +858,8 @@ class TestGeneratedHistories:
         rolled = await _rollup(db)
 
         assert rolled is not None, f"seed {seed}: the ledger declined a complete history"
-        assert _differences(live, rolled) == {}, f"seed {seed}"
+        assert live == rolled, f"seed {seed}"
         _assert_bars_tile_the_pairs(live)
-        _assert_bars_tile_the_pairs(rolled)
         assert live.branch == BRANCH
 
     def test_the_generated_histories_really_contain_runs(self):

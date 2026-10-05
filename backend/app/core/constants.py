@@ -204,8 +204,7 @@ TEAM_SOURCE_MANUAL = "manual"
 
 TEAM_SOURCE_GITLAB = "gitlab"
 TEAM_SOURCE_GITHUB = "github"
-# The providers a bare, un-instanced provenance value can name. Such a value predates
-# ``backfill_team_source_instances`` / ``backfill_team_member_sources`` and belongs to no instance,
+# The providers a bare, un-instanced provenance value can name. Such a value belongs to no instance,
 # so no sync retires its owner or replaces its member.
 TEAM_SOURCE_PROVIDERS: tuple[str, ...] = (TEAM_SOURCE_GITLAB, TEAM_SOURCE_GITHUB)
 

@@ -37,8 +37,8 @@ _LOCK_NAME = "update_frequency_reconcile"
 # hold the next night's slot.
 _LOCK_TTL_SECONDS = 1800
 
-# The comparison endpoint's default window. A caller may ask for a wider one; history
-# older than this is the backfill script's job, not a nightly sweep's.
+# The comparison endpoint's default window. A caller may ask for a wider one; the nightly
+# sweep repairs nothing older.
 _RECONCILE_WINDOW_DAYS = 90
 
 # Recomputing a delta re-reads two dependency sets (~1.6 MB), so the cap is what keeps
@@ -172,7 +172,7 @@ async def _repair_chain(db: Any, chain: tuple[str, str], drift: _ChainDrift, rep
             continue
         await record_scan_update_delta(db, repair.scan_id)
         report.resolved[repair.kind] += 1
-        # Same courtesy rate the backfill runs at; the scans this competes with are live.
+        # The scans this competes with are live.
         await asyncio.sleep(_REPAIR_PAUSE_SECONDS)
 
 

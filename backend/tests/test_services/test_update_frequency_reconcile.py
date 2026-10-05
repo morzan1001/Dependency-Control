@@ -233,7 +233,7 @@ class TestStaleSchema:
 
     @pytest.mark.asyncio
     async def test_a_recorded_failure_is_left_alone(self, spy: list[str]):
-        """The writer stored that outcome on purpose; retrying it nightly is the backfill's job."""
+        """The writer stored that outcome on purpose."""
         db = FakeDatabase()
         await _seed_project(db)
         await _seed_chain(db, {"s1": "1.0.0"})

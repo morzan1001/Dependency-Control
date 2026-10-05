@@ -79,8 +79,7 @@ class ScanManager:
         }
         release = data.release_fields(now)
         if release:
-            # The row before the flag: the backfill sweeps the release rows and repairs a missing
-            # flag, while a flag whose row is missing shows a release that is not there.
+            # The row before the flag: a flag whose row is missing shows a release that is not there.
             await ReleaseRepository(self.db).record(
                 Release(project_id=str(self.project.id), scan_id=scan_id, **release)
             )

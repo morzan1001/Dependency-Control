@@ -316,8 +316,8 @@ class TestWindowScansByBranch:
     @pytest.mark.asyncio
     async def test_a_scan_dated_in_text_falls_outside_every_calendar_window(self):
         # Measured against the server: a range query is bracketed to its bound's BSON
-        # type, so a date cutoff never matches a document holding a string there. The
-        # backfill cannot collect such a scan and neither read path may count it.
+        # type, so a date cutoff never matches a document holding a string there, and
+        # neither read path may count such a scan.
         db = FakeDatabase()
         await _seed_scan(db, "restored", "p1", "main", 0, created_at="2026-06-01T12:00:00+00:00")
         await _seed_scan(db, "s1", "p1", "main", 10)

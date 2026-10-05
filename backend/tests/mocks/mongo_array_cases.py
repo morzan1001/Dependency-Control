@@ -12,9 +12,6 @@ from typing import Any
 
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.repositories.projects import remove_team_pipeline, replace_team_subset_pipeline, set_owners_pipeline
-from scripts.backfill_project_team_ids import drift_filter, provenance_gap_filter
-from scripts.backfill_team_member_sources import bare_member_filter
-from scripts.backfill_team_source_instances import bare_source_filter
 
 _CONFLICT = 40
 _BAD_VALUE = 2
@@ -654,87 +651,6 @@ TEAM_OWNERSHIP_CASES = [
             "team_id": "gl-x",
             "team_source": _GITLAB_A,
         },
-    ),
-]
-
-DRIFT_DOCS = [
-    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1"], "team_sources": {"T1": "manual"}},
-    {"team_ids": [], "team_sources": {}},
-    {"team_id": None, "team_source": None, "team_ids": [], "team_sources": {}},
-    {"team_id": "", "team_source": None, "team_ids": [], "team_sources": {}},
-    {"team_id": "T1", "team_ids": ["T1"], "team_sources": {}},
-    # A transfer wrote the scalar only: the stored owner and its provenance are both a run behind.
-    {
-        "team_id": "T_new",
-        "team_source": "github",
-        "team_ids": ["T_old"],
-        "team_sources": {"T_old": "github", "M1": "manual"},
-    },
-    {"team_id": "T1", "team_source": "manual"},
-    {"name": "never-backfilled"},
-    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1", "T2"], "team_sources": {"T1": "manual"}},
-    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1"], "team_sources": {"T1": "gitlab"}},
-    {"team_id": None, "team_source": None, "team_ids": ["T1"], "team_sources": {"T1": "manual"}},
-    {"team_id": None, "team_ids": None, "team_sources": {}},
-    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1"]},
-    # Only the provenance map is missing, and the scalar has no team: the list alone cannot tell
-    # this apart from a finished backfill, so the gate has to compare the map raw.
-    {"team_ids": [], "team_source": None},
-]
-
-# The release gate for dropping the derivation: every document whose stored fields say something
-# other than the scalar does, and nothing else. Document 4 is the one an owner-with-no-provenance
-# backfill used to leave behind and the gate used to call clean.
-TEAM_DRIFT_CASES = [
-    FindCase("projects disagreeing with their scalar", DRIFT_DOCS, drift_filter(), [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
-    FindCase("projects holding an owner no provenance names", DRIFT_DOCS, provenance_gap_filter(), [4, 8, 12]),
-]
-
-# Provenance values before and after the instance ids. A bare provider in the map or in the scalar
-# is unmigrated; manual and an instance-qualified value are not.
-BARE_SOURCE_DOCS = [
-    {"team_ids": ["T1"], "team_sources": {"T1": "manual"}, "team_source": "manual"},
-    {"team_ids": ["T1"], "team_sources": {"T1": _GITLAB_A}, "team_source": _GITLAB_A},
-    {"team_ids": [], "team_sources": {}},
-    {"name": "no-ownership-fields-at-all"},
-    {"team_ids": ["T1"], "team_sources": {"T1": "gitlab"}, "team_source": "gitlab"},
-    {"team_ids": ["T1"], "team_sources": {"T1": "github"}},
-    # Half migrated: the map names an instance, the scalar mirroring it still does not.
-    {"team_ids": ["T1"], "team_sources": {"T1": _GITLAB_A}, "team_source": "gitlab"},
-    # One entry of several is bare.
-    {"team_ids": ["T1", "T2"], "team_sources": {"T1": _GITHUB_A, "T2": "gitlab"}, "team_source": _GITHUB_A},
-    # An owner no entry names reads as hand-assigned and needs no instance.
-    {"team_ids": ["legacy"], "team_sources": {}},
-]
-
-TEAM_SOURCE_INSTANCE_CASES = [
-    FindCase(
-        "projects carrying a provenance value with no instance", BARE_SOURCE_DOCS, bare_source_filter(), [4, 5, 6, 7]
-    )
-]
-
-# The same before and after, for a member's provenance. A member carrying no ``source`` at all
-# predates the field: it reads as manual and no sync may replace it, so it needs no instance.
-BARE_MEMBER_TEAMS = [
-    {"members": [{"user_id": "u1", "source": "manual"}]},
-    {"members": [{"user_id": "u1", "source": _GITLAB_A}]},
-    {"members": []},
-    {"name": "a team with no members field at all"},
-    {"members": [{"user_id": "u1", "source": "gitlab"}, {"user_id": "u2", "source": "gitlab"}]},
-    {"members": [{"user_id": "u1", "source": "github"}, {"user_id": "u2", "source": "gitlab"}]},
-    # One subset of several is bare.
-    {"members": [{"user_id": "u1", "source": _GITHUB_A}, {"user_id": "u2", "source": "gitlab"}]},
-    # Bare on one provider only, so a gate that checks a single provider is not enough.
-    {"members": [{"user_id": "u1", "source": "github"}]},
-    {"members": [{"user_id": "u1", "role": "admin"}]},
-]
-
-TEAM_MEMBER_SOURCE_CASES = [
-    FindCase(
-        "teams holding a member whose provenance names no instance",
-        BARE_MEMBER_TEAMS,
-        bare_member_filter(),
-        [4, 5, 6, 7],
     ),
 ]
 

@@ -750,8 +750,8 @@ class TestBranchScopedScanSelection:
     async def test_a_textual_created_at_drops_the_scan(self):
         # Archive restore inserts bundle JSON verbatim and JSON has no date type, so a
         # restored scan can carry created_at as text. A range query brackets to its
-        # bound's BSON type, so the window aggregation and the backfill both skip such
-        # a scan; parsing it here would put it on a timeline nothing else accounts for.
+        # bound's BSON type, so the window aggregation skips such a scan; parsing it
+        # here would put it on a timeline nothing else accounts for.
         scans = [
             {**_make_scan("s1", 0), "created_at": "2026-01-01T00:00:00Z"},
             {**_make_scan("s2", 30), "created_at": "whenever"},
