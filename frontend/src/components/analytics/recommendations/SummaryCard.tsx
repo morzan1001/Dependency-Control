@@ -12,21 +12,15 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
     (data.summary.iac_issues || 0) > 0 ||
     (data.summary.license_issues || 0) > 0;
 
-  const totalSecurityFindings = (data.total_findings || data.total_vulnerabilities || 0) +
-    (data.summary.secrets_to_rotate || 0) +
-    (data.summary.sast_issues || 0) +
-    (data.summary.iac_issues || 0);
-
-  const totalInsights = (data.summary.outdated_deps || 0) +
-    (data.summary.fragmentation_issues || 0) +
+  const totalInsights = (data.summary.fragmentation_issues || 0) +
     (data.summary.trend_alerts || 0) +
     (data.summary.cross_project_issues || 0);
 
   const insightsDescription =
     totalInsights > 0 ? `${totalInsights} dependency insights found` : 'No significant issues found';
   const summaryDescription =
-    totalSecurityFindings > 0
-      ? `${totalSecurityFindings} security findings • ${totalInsights} dependency insights`
+    data.total_findings > 0
+      ? `${data.total_findings} findings • ${totalInsights} dependency insights`
       : insightsDescription;
 
   return (
@@ -41,8 +35,8 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
         {data.dependencies_read < data.dependencies_total && (
           <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
             Reasoned over {data.dependencies_read.toLocaleString()} of {data.dependencies_total.toLocaleString()}{" "}
-            dependency rows in this scan. Advice that counts components — fragmentation, outdated packages,
-            license drift — is scoped to those rows and under-reports the rest.
+            dependency rows in this scan. Advice that counts components — fragmentation, license drift — is
+            scoped to those rows and under-reports the rest.
           </div>
         )}
         {(data.total_vulnerabilities || 0) > 0 && (
@@ -121,8 +115,7 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
             </div>
           </div>
         )}
-        {((data.summary.outdated_deps || 0) > 0 ||
-          (data.summary.fragmentation_issues || 0) > 0 ||
+        {((data.summary.fragmentation_issues || 0) > 0 ||
           (data.summary.trend_alerts || 0) > 0 ||
           (data.summary.cross_project_issues || 0) > 0) && (
           <div>
@@ -131,14 +124,6 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
               Health & Insights
             </h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {(data.summary.outdated_deps || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-amber-600">
-                    {data.summary.outdated_deps}
-                  </div>
-                  <div className="text-xs text-muted-foreground">Outdated</div>
-                </div>
-              )}
               {(data.summary.fragmentation_issues || 0) > 0 && (
                 <div className="text-center p-3 bg-muted rounded-lg">
                   <div className="text-2xl font-bold text-violet-500">

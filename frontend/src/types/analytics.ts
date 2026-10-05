@@ -324,7 +324,6 @@ export type RecommendationType =
   | 'fix_infrastructure'
   | 'license_compliance'
   | 'supply_chain_risk'
-  | 'outdated_dependency'
   | 'version_fragmentation'
   | 'dev_in_production'
   | 'recurring_vulnerability'
@@ -366,24 +365,13 @@ export interface RecommendationAction {
   suggestion?: string;
   commands?: string[];
   cves?: Array<string | CrossProjectCve | RecurringCve>;
-  options?: string[];
   steps?: string[];
-  file_path?: string;
-  line_number?: number;
-  secret_type?: string;
   files?: string[];
   // Files the recommendation covers, counted before `files` was cut.
   files_total?: number;
   rule_ids?: string[];
-  license_type?: string;
-  components?: string[];
-  resource_type?: string;
-  description?: string;
   packages?: Array<{
     name: string;
-    current?: string;
-    recommended_major?: number;
-    reason?: string;
     versions?: string[];
     suggestion?: string;
     version_count?: number;
@@ -441,7 +429,6 @@ export interface RecommendationsSummary {
   iac_issues: number;
   license_issues: number;
   quality_issues: number;
-  outdated_deps?: number;
   fragmentation_issues?: number;
   trend_alerts?: number;
   cross_project_issues?: number;

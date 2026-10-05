@@ -11,20 +11,17 @@ from app.services.analyzers.end_of_life import EndOfLifeAnalyzer
 from app.services.recommendation.dependencies import (
     analyze_dev_in_production,
     analyze_end_of_life,
-    analyze_outdated_dependencies,
     analyze_version_fragmentation,
 )
 
 
-def _dep(name="requests", version="2.28.0", latest_version=None, direct=True, scope=None, **extra):
+def _dep(name="requests", version="2.28.0", direct=True, scope=None, **extra):
     d = {
         "name": name,
         "version": version,
         "direct": direct,
         **extra,
     }
-    if latest_version is not None:
-        d["latest_version"] = latest_version
     if scope is not None:
         d["scope"] = scope
     return d
@@ -47,91 +44,6 @@ def _eol_finding(
         "details": details,
         "id": finding_id,
     }
-
-
-class TestAnalyzeOutdatedDependenciesEmpty:
-    def test_empty_returns_empty(self):
-        assert analyze_outdated_dependencies([]) == []
-
-
-class TestAnalyzeOutdatedDependenciesDirectOutdated:
-    def test_direct_outdated_produces_recommendation(self):
-        deps = [_dep(name="requests", version="2.28.0", latest_version="2.31.0", direct=True)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 1
-
-    def test_direct_outdated_type(self):
-        deps = [_dep(name="requests", version="2.28.0", latest_version="2.31.0", direct=True)]
-        rec = analyze_outdated_dependencies(deps)[0]
-        assert rec.type == RecommendationType.OUTDATED_DEPENDENCY
-
-    def test_direct_outdated_priority_medium(self):
-        deps = [_dep(name="requests", version="2.28.0", latest_version="2.31.0", direct=True)]
-        rec = analyze_outdated_dependencies(deps)[0]
-        assert rec.priority == Priority.MEDIUM
-
-    def test_direct_outdated_affected_components(self):
-        deps = [_dep(name="requests", version="2.28.0", latest_version="2.31.0", direct=True)]
-        rec = analyze_outdated_dependencies(deps)[0]
-        assert "requests@2.28.0" in rec.affected_components
-
-    def test_multiple_direct_outdated_counted(self):
-        deps = [
-            _dep(name="requests", version="2.28.0", latest_version="2.31.0", direct=True),
-            _dep(name="flask", version="2.0.0", latest_version="3.0.0", direct=True),
-        ]
-        rec = analyze_outdated_dependencies(deps)[0]
-        assert rec.impact == {"total": 0}
-        assert rec.affected_components_total == 2
-
-
-class TestAnalyzeOutdatedDependenciesTransitive:
-    """Transitive outdated deps flagged only if above _OUTDATED_TRANSITIVE_CARD_MIN."""
-
-    def test_few_transitive_not_flagged(self):
-        deps = [
-            _dep(name="sub-a", version="1.0", latest_version="2.0", direct=False),
-            _dep(name="sub-b", version="1.0", latest_version="2.0", direct=False),
-        ]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
-
-    def test_many_transitive_produces_low_priority(self):
-        deps = [_dep(name=f"sub-{i}", version="1.0", latest_version="2.0", direct=False) for i in range(4)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 1
-        assert result[0].priority == Priority.LOW
-
-
-class TestAnalyzeOutdatedDependenciesNotFlagged:
-    @pytest.mark.parametrize(
-        ("version", "latest_version"),
-        [
-            pytest.param("2.28.0", None, id="no_latest_version"),
-            pytest.param("2.31.0", "2.31.0", id="same_version"),
-            pytest.param("2.28.0", "", id="empty_latest_version"),
-        ],
-    )
-    def test_dependency_without_a_newer_version_is_not_flagged(self, version, latest_version):
-        deps = [_dep(name="requests", version=version, latest_version=latest_version)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
-
-
-class TestAnalyzeOutdatedDependenciesPythonSkipped:
-    @pytest.mark.parametrize(
-        ("name", "version", "latest_version"),
-        [
-            pytest.param("python3-yaml", "5.0", "6.0", id="python3_prefix"),
-            pytest.param("python-dateutil", "2.0", "2.9", id="python_prefix"),
-            pytest.param("lib-python", "1.0", "2.0", id="python_suffix"),
-            pytest.param("Python3-Utils", "1.0", "2.0", id="case_insensitive"),
-        ],
-    )
-    def test_a_python_named_dependency_is_skipped(self, name, version, latest_version):
-        deps = [_dep(name=name, version=version, latest_version=latest_version, direct=True)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
 
 
 class TestAnalyzeVersionFragmentationEmpty:

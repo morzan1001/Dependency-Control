@@ -325,7 +325,6 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         (t.FIX_INFRASTRUCTURE, 128),
         (t.LICENSE_COMPLIANCE, 256),
         (t.SUPPLY_CHAIN_RISK, 512),
-        (t.OUTDATED_DEPENDENCY, 1024),
         (t.VERSION_FRAGMENTATION, 10),
         (t.DEV_IN_PRODUCTION, 20),
         (t.DUPLICATE_FUNCTIONALITY, 30),
@@ -344,7 +343,6 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
     ]
     # Hygiene cards count no findings; the summary tallies the components they cover.
     hygiene = {
-        t.OUTDATED_DEPENDENCY,
         t.VERSION_FRAGMENTATION,
         t.DEV_IN_PRODUCTION,
         t.DUPLICATE_FUNCTIONALITY,
@@ -379,7 +377,6 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         "license_issues": 256,
         "quality_issues": 512,
         "crypto_issues": 1500,
-        "outdated_deps": 1024,
         "fragmentation_issues": 100,
         "trend_alerts": 2,
         "cross_project_issues": 8,

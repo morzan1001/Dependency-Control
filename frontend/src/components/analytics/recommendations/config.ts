@@ -85,12 +85,6 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
     color: 'text-yellow-500',
     bgColor: 'bg-yellow-500/10',
   },
-  outdated_dependency: {
-    icon: Clock,
-    label: 'Outdated Dependency',
-    color: 'text-amber-600',
-    bgColor: 'bg-amber-600/10',
-  },
   version_fragmentation: {
     icon: GitBranch,
     label: 'Version Fragmentation',

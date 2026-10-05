@@ -389,8 +389,8 @@ class TestCalculateScore:
             ),
             pytest.param(
                 RecommendationType.ROTATE_SECRETS,
-                RecommendationType.OUTDATED_DEPENDENCY,
-                id="rotate_secrets_over_outdated",
+                RecommendationType.VERSION_FRAGMENTATION,
+                id="rotate_secrets_over_fragmentation",
             ),
             pytest.param(
                 RecommendationType.KNOWN_EXPLOIT,

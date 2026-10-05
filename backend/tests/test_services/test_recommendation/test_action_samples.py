@@ -13,7 +13,6 @@ from app.services.recommendation.crypto import _EVIDENCE_SAMPLED, process_crypto
 from app.services.recommendation.dependencies import (
     analyze_dev_in_production,
     analyze_end_of_life,
-    analyze_outdated_dependencies,
     analyze_version_fragmentation,
 )
 from app.services.recommendation.graph import _DEEPEST_CHAINS_SAMPLED, analyze_deep_dependency_chains
@@ -218,15 +217,7 @@ def _eol_card():
     return analyze_end_of_life(_produced("end_of_life", {"eol_issues": issues}))[0]
 
 
-def _outdated_card():
-    dependencies = [
-        {"name": f"lib-{i:02d}", "version": "1.0.0", "latest_version": "2.0.0", "direct": True}
-        for i in range(_POPULATION)
-    ]
-    return analyze_outdated_dependencies(dependencies)[0]
-
-
-@pytest.mark.parametrize("card", [_malware_card, _typosquat_card, _hash_mismatch_card, _eol_card, _outdated_card])
+@pytest.mark.parametrize("card", [_malware_card, _typosquat_card, _hash_mismatch_card, _eol_card])
 def test_a_package_action_names_how_many_packages_it_sampled(card):
     action = card().action
 

@@ -145,7 +145,6 @@ class TestRecommendationTypeBonusesOrdering:
                 "dev_in_production",
             )
         )
-        assert hygiene_max < self._bonus("outdated_dependency")
         assert hygiene_max < self._bonus("license_compliance")
 
     def test_every_recommendation_type_has_a_bonus_and_nothing_else_does(self):
