@@ -474,6 +474,7 @@ class TestInstanceResponseAllowsNullAudience:
             oidc_audience=None,
             created_at=datetime.now(timezone.utc),
             created_by="user-1",
+            token_configured=False,
         )
         assert response.oidc_audience is None
 

@@ -26,7 +26,6 @@ class RecommendationType(str, Enum):
     SUPPLY_CHAIN_RISK = "supply_chain_risk"
     CRITICAL_RISK = "critical_risk"  # Combined vuln + scorecard risk
     # Dependency Health & Hygiene
-    OUTDATED_DEPENDENCY = "outdated_dependency"
     VERSION_FRAGMENTATION = "version_fragmentation"
     DEV_IN_PRODUCTION = "dev_in_production"
     # Trend-based

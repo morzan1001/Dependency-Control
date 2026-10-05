@@ -18,16 +18,11 @@ def get_uptime_seconds() -> float:
     return time.time() - _startup_time
 
 
-def get_max_uptime_seconds() -> int:
-    """Max uptime before the pod should restart; 0 disables."""
-    return getattr(settings, "MAX_POD_UPTIME_SECONDS", 86400)
-
-
 @router.get("/live", summary="Liveness Probe", response_model=None)
 async def liveness() -> dict[str, Any] | JSONResponse:
     """Liveness probe; reports unhealthy past max uptime to recycle pods for memory."""
     uptime = get_uptime_seconds()
-    max_uptime = get_max_uptime_seconds()
+    max_uptime = settings.MAX_POD_UPTIME_SECONDS
 
     if max_uptime > 0 and uptime > max_uptime:
         uptime_hours = uptime / 3600

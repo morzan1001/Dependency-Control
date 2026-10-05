@@ -31,12 +31,11 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.archive import (
     AdminArchiveListItem,
-    AdminArchiveListResponse,
     ArchiveListItem,
-    ArchiveListResponse,
     ArchiveRestoreResponse,
     ScanPinResponse,
 )
+from app.schemas.pagination import Page
 from app.services.archive import restore_scan, stream_bundle_for_download
 
 logger = logging.getLogger(__name__)
@@ -81,7 +80,7 @@ async def list_archives(
     branch: Annotated[str | None, Query(description="Filter by branch name")] = None,
     date_from: Annotated[datetime | None, Query(description="Filter scans created from this date")] = None,
     date_to: Annotated[datetime | None, Query(description="Filter scans created until this date")] = None,
-) -> ArchiveListResponse:
+) -> Page[ArchiveListItem]:
     """List all archived scans for a project. Requires archive:read permission."""
     await check_project_access(project_id, current_user, db)
 
@@ -100,7 +99,7 @@ async def list_archives(
     )
 
     items = [ArchiveListItem.model_validate(a, from_attributes=True) for a in archives]
-    return ArchiveListResponse(items=items, **page_meta(total, skip, size))
+    return Page[ArchiveListItem](items=items, **page_meta(total, skip, size))
 
 
 @router.get(
@@ -279,7 +278,7 @@ async def list_all_archives(
     branch: Annotated[str | None, Query(description="Filter by branch name")] = None,
     date_from: Annotated[datetime | None, Query(description="Filter scans created from this date")] = None,
     date_to: Annotated[datetime | None, Query(description="Filter scans created until this date")] = None,
-) -> AdminArchiveListResponse:
+) -> Page[AdminArchiveListItem]:
     """List all archived scans across all projects. Requires archive:read_all permission."""
 
     _require_archive_enabled()
@@ -308,4 +307,4 @@ async def list_all_archives(
         )
         for a in archives
     ]
-    return AdminArchiveListResponse(items=items, **page_meta(total, skip, size))
+    return Page[AdminArchiveListItem](items=items, **page_meta(total, skip, size))

@@ -77,7 +77,6 @@ from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.github_instances import GitHubInstanceRepository
-from app.repositories.invitations import InvitationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
@@ -90,6 +89,7 @@ from app.repositories.projects import (
     ownership_fields,
     set_owners_pipeline,
 )
+from app.schemas.pagination import Page
 from app.schemas.project import (
     BranchInfo,
     BranchTip,
@@ -97,7 +97,6 @@ from app.schemas.project import (
     ProjectApiKeyResponse,
     ProjectBranchTips,
     ProjectCreate,
-    ProjectListEnriched,
     ProjectMemberInvite,
     ProjectMemberUpdate,
     ProjectNotificationSettings,
@@ -105,7 +104,7 @@ from app.schemas.project import (
     ProjectWithTeam,
     RecentScan,
     RiskyProject,
-    ScanFindingsResponse,
+    ScanFindingItem,
     ScanHistoryResponse,
     ScanReleaseRef,
     ScanWithReleases,
@@ -333,7 +332,7 @@ async def rotate_api_key(
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
 
-@router.get("/", response_model=ProjectListEnriched, summary="List all projects", responses=RESP_AUTH)
+@router.get("/", response_model=Page[ProjectWithTeam], summary="List all projects", responses=RESP_AUTH)
 async def read_projects(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -1234,7 +1233,7 @@ async def _load_scan_with_access(scan_id: str, current_user: User, db: Any) -> S
 
 @router.get(
     "/scans/{scan_id}/findings",
-    response_model=ScanFindingsResponse,
+    response_model=Page[ScanFindingItem],
     summary="Get scan findings with pagination",
     responses=RESP_AUTH_404,
 )
@@ -1437,7 +1436,6 @@ async def delete_project(
     project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
     waiver_repo = WaiverRepository(db)
-    invitation_repo = InvitationRepository(db)
     callgraph_repo = CallgraphRepository(db)
     release_repo = ReleaseRepository(db)
 
@@ -1447,7 +1445,6 @@ async def delete_project(
 
     await waiver_repo.delete_many({"project_id": project_id})
     await release_repo.delete_many({"project_id": project_id})
-    await invitation_repo.delete_project_invitations_by_project(project_id)
     await callgraph_repo.delete_by_project(project_id)
     await ArchiveMetadataRepository(db).delete_many({"project_id": project_id})
     await WebhookRepository(db).delete_many({"project_id": project_id})

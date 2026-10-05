@@ -1,12 +1,11 @@
 import re
-from datetime import datetime
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.gitlab_instance import is_shared_gitlab_issuer
-from app.schemas._instance_url import strip_trailing_slash
 from app.schemas._not_null import reject_null
-from app.schemas._oidc_audience import validate_audience_not_blank
+from app.schemas._vcs_instance import VcsInstanceBase, VcsInstanceCreate, VcsInstanceResponse, VcsInstanceUpdate
 
 AUTO_CREATE_NEEDS_NAMESPACES = (
     "Auto-creating projects on gitlab.com needs at least one allowed namespace, "
@@ -31,20 +30,7 @@ def _validate_namespaces(value: list[str] | None) -> list[str]:
     return value
 
 
-class GitLabInstanceBase(BaseModel):
-    """Base schema for GitLab instance.
-
-    The oidc_audience field and its blank-check live on the Create/Update
-    schemas, not here, so the Response schema can serialize instances whose
-    audience is null.
-    """
-
-    name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
-    url: str = Field(..., description="Base URL of the GitLab instance (e.g. 'https://gitlab.com')")
-    description: str | None = Field(None, description="Optional description of this instance")
-    is_active: bool = Field(True, description="Whether this instance is currently active")
-    auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
-    sync_teams: bool = Field(False, description="Sync GitLab group members to local teams")
+class GitLabInstanceBase(VcsInstanceBase):
     team_sync_depth: int = Field(
         1,
         ge=0,
@@ -59,43 +45,21 @@ class GitLabInstanceBase(BaseModel):
     )
 
 
-class GitLabInstanceCreate(GitLabInstanceBase):
+class GitLabInstanceCreate(GitLabInstanceBase, VcsInstanceCreate):
     """Schema for creating a new GitLab instance."""
 
-    oidc_audience: str = Field(
-        ...,
-        min_length=1,
-        description="REQUIRED expected 'aud' claim for OIDC tokens from this instance. "
-        "Must match the CI pipeline's requested audience (GitLab id_tokens[].aud).",
-    )
-    access_token: str | None = Field(None, description="Personal or Group Access Token with 'api' scope")
-
-    _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
-    _url_normalised = field_validator("url")(strip_trailing_slash)
 
     @model_validator(mode="after")
-    def validate_token_dependent_features(self) -> "GitLabInstanceCreate":
-        if self.sync_teams and not self.access_token:
-            raise ValueError("An access token is required to enable team syncing")
+    def validate_namespace_scope(self) -> Self:
         if lacks_required_namespaces(self.url, self.auto_create_projects, self.allowed_namespaces):
             raise ValueError(AUTO_CREATE_NEEDS_NAMESPACES)
         return self
 
 
-class GitLabInstanceUpdate(BaseModel):
+class GitLabInstanceUpdate(VcsInstanceUpdate):
     """Schema for updating a GitLab instance. All fields optional."""
 
-    name: str | None = Field(None, description="Human-readable name")
-    url: str | None = Field(None, description="Base URL of the GitLab instance")
-    description: str | None = Field(None, description="Optional description")
-    is_active: bool | None = Field(None, description="Whether this instance is active")
-    access_token: str | None = Field(None, description="Personal or Group Access Token with 'api' scope")
-    oidc_audience: str | None = Field(
-        None, description="Expected 'aud' claim for OIDC tokens. If provided, must not be empty."
-    )
-    auto_create_projects: bool | None = Field(None, description="Automatically create projects from OIDC tokens")
-    sync_teams: bool | None = Field(None, description="Sync GitLab group members to local teams")
     team_sync_depth: int | None = Field(
         None, ge=0, description="GitLab group path depth for team creation (0 = full path)."
     )
@@ -103,43 +67,12 @@ class GitLabInstanceUpdate(BaseModel):
         None, description="Top-level groups whose projects' tokens are accepted; [] accepts every project"
     )
 
-    _not_null = field_validator("name", "url", "is_active", "auto_create_projects", "sync_teams", "team_sync_depth")(
-        reject_null
-    )
-    _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
+    _depth_not_null = field_validator("team_sync_depth")(reject_null)
     _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
-    _url_normalised = field_validator("url")(strip_trailing_slash)
 
 
-class GitLabInstanceResponse(GitLabInstanceBase):
+class GitLabInstanceResponse(GitLabInstanceBase, VcsInstanceResponse):
     """Schema for GitLab instance response (without access_token)."""
-
-    # No blank-check here: the response reflects stored state verbatim so
-    # admins can see and fix instances whose audience is null.
-    oidc_audience: str | None = Field(
-        None, description="Expected 'aud' claim for OIDC tokens. Null means not yet configured (will 403 on ingest)."
-    )
-
-    id: str = Field(..., description="Unique identifier")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    created_by: str = Field(..., description="User ID who created this instance")
-    last_modified_at: datetime | None = Field(None, description="Last modification timestamp")
-
-    token_configured: bool = Field(
-        False, description="Whether an access token is configured (without exposing the token)"
-    )
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class GitLabInstanceList(BaseModel):
-    """Paginated list of GitLab instances."""
-
-    items: list[GitLabInstanceResponse]
-    total: int
-    page: int
-    size: int
-    pages: int
 
 
 class GitLabGroupOption(BaseModel):

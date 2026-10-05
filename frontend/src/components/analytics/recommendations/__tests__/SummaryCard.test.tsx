@@ -51,3 +51,31 @@ describe("SummaryCard dependency coverage", () => {
     expect(screen.queryByText(TRUNCATION_NOTE)).not.toBeInTheDocument();
   });
 });
+
+describe("SummaryCard headline", () => {
+  it("counts each finding once, since total_findings already holds secrets, SAST and IaC", () => {
+    render(
+      <SummaryCard
+        data={makeResponse({
+          total_findings: 10,
+          total_vulnerabilities: 4,
+          summary: { ...EMPTY_SUMMARY, secrets_to_rotate: 2, sast_issues: 3, iac_issues: 1 },
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/^10 findings/)).toBeInTheDocument();
+  });
+
+  it("reports no issues when a scan has neither findings nor insights", () => {
+    render(<SummaryCard data={makeResponse({})} />);
+
+    expect(screen.getByText("No significant issues found")).toBeInTheDocument();
+  });
+
+  it("leads with the insights when a scan has no findings", () => {
+    render(<SummaryCard data={makeResponse({ summary: { ...EMPTY_SUMMARY, fragmentation_issues: 2 } })} />);
+
+    expect(screen.getByText("2 dependency insights found")).toBeInTheDocument();
+  });
+});

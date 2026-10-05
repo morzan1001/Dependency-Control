@@ -13,11 +13,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
-  AlertTriangle,
   ArrowUpCircle,
   ChevronDown,
   ChevronRight,
-  Clock,
   Code,
   Container,
   Copy,
@@ -25,13 +23,10 @@ import {
   FolderTree,
   GitBranch,
   Globe,
-  Key,
   Layers,
   Lightbulb,
   Package,
   RefreshCw,
-  Scale,
-  Server,
   TrendingDown,
   TrendingUp,
   Zap,
@@ -219,49 +214,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
               </div>
             )}
 
-            {recommendation.action.type === 'no_fix' && (
-              <div className="space-y-2">
-                <h5 className="text-sm font-medium flex items-center gap-2">
-                  <Lightbulb className="h-4 w-4" />
-                  Options
-                </h5>
-                <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                  {recommendation.action.options?.map((opt) => (
-                    <li key={opt}>{opt}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {(recommendation.action.type === 'rotate_credential' || recommendation.action.type === 'remove_secret') && (
-              <div className="space-y-2">
-                <h5 className="text-sm font-medium flex items-center gap-2">
-                  <Key className="h-4 w-4" />
-                  Secret Details
-                </h5>
-                <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.secret_type && (
-                    <div>
-                      <span className="text-muted-foreground">Type: </span>
-                      <code className="text-destructive">{recommendation.action.secret_type}</code>
-                    </div>
-                  )}
-                  {recommendation.action.file_path && (
-                    <div>
-                      <span className="text-muted-foreground">File: </span>
-                      <code>{recommendation.action.file_path}</code>
-                      {recommendation.action.line_number && (
-                        <span className="text-muted-foreground"> (Line {recommendation.action.line_number})</span>
-                      )}
-                    </div>
-                  )}
-                  <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                    <li>Rotate the exposed credential immediately</li>
-                    <li>Check git history for previous exposures</li>
-                    <li>Use environment variables or secret managers</li>
-                  </ul>
-                </div>
-              </div>
-            )}
             {recommendation.action.type === 'fix_code' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -294,113 +246,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       </div>
                     </div>
                   )}
-                </div>
-              </div>
-            )}
-            {recommendation.action.type === 'fix_iac' && (
-              <div className="space-y-2">
-                <h5 className="text-sm font-medium flex items-center gap-2">
-                  <Server className="h-4 w-4" />
-                  Infrastructure Issues
-                </h5>
-                <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.resource_type && (
-                    <div>
-                      <span className="text-muted-foreground">Resource Type: </span>
-                      <code>{recommendation.action.resource_type}</code>
-                    </div>
-                  )}
-                  {recommendation.action.description && (
-                    <div className="text-muted-foreground mt-2">
-                      {recommendation.action.description}
-                    </div>
-                  )}
-                  {recommendation.action.files && recommendation.action.files.length > 0 && (
-                    <div className="mt-2">
-                      <span className="text-muted-foreground">Affected Files:</span>
-                      <ul className="list-disc list-inside mt-1 font-mono text-xs">
-                        {recommendation.action.files.slice(0, 5).map((file) => (
-                          <li key={file}>{file}</li>
-                        ))}
-                        {filesBeyond(recommendation.action) > 0 && (
-                          <li className="text-muted-foreground">
-                            {`...and ${filesBeyond(recommendation.action).toLocaleString()} more`}
-                          </li>
-                        )}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            {recommendation.action.type === 'review_license' && (
-              <div className="space-y-2">
-                <h5 className="text-sm font-medium flex items-center gap-2">
-                  <Scale className="h-4 w-4" />
-                  License Details
-                </h5>
-                <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.license_type && (
-                    <div>
-                      <span className="text-muted-foreground">License Type: </span>
-                      <code className="text-severity-high">{recommendation.action.license_type}</code>
-                    </div>
-                  )}
-                  {recommendation.action.components && recommendation.action.components.length > 0 && (
-                    <div className="mt-2">
-                      <span className="text-muted-foreground">Components:</span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.components.map((comp) => (
-                          <Badge key={comp} variant="secondary">{comp}</Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                    <li>Review license compatibility with your project</li>
-                    <li>Consult legal team if needed</li>
-                    <li>Consider alternative packages if incompatible</li>
-                  </ul>
-                </div>
-              </div>
-            )}
-            {recommendation.action.type === 'review_package' && (
-              <div className="space-y-2">
-                <h5 className="text-sm font-medium flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4" />
-                  Supply Chain Concern
-                </h5>
-                <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.description && (
-                    <div className="text-muted-foreground">
-                      {recommendation.action.description}
-                    </div>
-                  )}
-                  <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                    <li>Verify package authenticity and maintainer</li>
-                    <li>Check for recent suspicious updates</li>
-                    <li>Consider pinning to known-good version</li>
-                  </ul>
-                </div>
-              </div>
-            )}
-            {recommendation.action.type === 'upgrade_outdated' && recommendation.action.packages && (
-              <div className="space-y-2">
-                <h5 className="text-sm font-medium flex items-center gap-2">
-                  <Clock className="h-4 w-4" />
-                  Outdated Packages
-                </h5>
-                <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.packages.map((pkg) => (
-                    <div key={pkg.name} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
-                      <div>
-                        <span className="font-medium">{pkg.name}</span>
-                        <span className="text-muted-foreground"> v{pkg.current}</span>
-                        <span className="text-success"> → v{pkg.recommended_major}+</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground max-w-[200px] truncate">{pkg.reason}</span>
-                    </div>
-                  ))}
                 </div>
               </div>
             )}

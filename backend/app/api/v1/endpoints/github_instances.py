@@ -24,13 +24,13 @@ from app.repositories.github_instances import GitHubInstanceRepository
 from app.schemas.github_instance import (
     AUTO_CREATE_NEEDS_OWNERS,
     GitHubInstanceCreate,
-    GitHubInstanceList,
     GitHubInstanceResponse,
     GitHubInstanceTestConnectionResponse,
     GitHubInstanceUpdate,
     GitHubOrgTeam,
     lacks_required_owners,
 )
+from app.schemas.pagination import Page
 from app.services.github import GitHubService, build_org_team_options
 
 router = CustomAPIRouter()
@@ -57,7 +57,7 @@ def _to_response(instance: GitHubInstance) -> GitHubInstanceResponse:
     )
 
 
-@router.get("/", response_model=GitHubInstanceList, responses=RESP_AUTH)
+@router.get("/", response_model=Page[GitHubInstanceResponse], responses=RESP_AUTH)
 async def list_instances(
     db: DatabaseDep,
     current_user: deps.SystemManagerDep,

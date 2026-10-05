@@ -139,7 +139,6 @@ class TestDeleteProjectRoutesThroughGate:
             "ScanRepository": MagicMock(),
             "WaiverRepository": MagicMock(),
             "ReleaseRepository": MagicMock(),
-            "InvitationRepository": MagicMock(),
             "CallgraphRepository": MagicMock(),
             "WebhookRepository": MagicMock(),
             "CryptoPolicyRepository": MagicMock(),
@@ -154,7 +153,6 @@ class TestDeleteProjectRoutesThroughGate:
         scan_repo.iterate_raw = _empty_iter
         repos["WaiverRepository"].delete_many = AsyncMock(return_value=None)
         repos["ReleaseRepository"].delete_many = AsyncMock(return_value=None)
-        repos["InvitationRepository"].delete_project_invitations_by_project = AsyncMock(return_value=None)
         repos["CallgraphRepository"].delete_by_project = AsyncMock(return_value=None)
         repos["ProjectRepository"].delete = AsyncMock(return_value=None)
         repos["WebhookRepository"].delete_many = AsyncMock(return_value=0)

@@ -56,6 +56,7 @@ def test_response_serializes_sync_teams():
         sync_teams=True,
         created_at=datetime.now(timezone.utc),
         created_by="user-1",
+        token_configured=False,
     )
     assert resp.model_dump()["sync_teams"] is True
 
@@ -122,5 +123,6 @@ def test_response_serializes_the_owner_list():
         allowed_owner_ids=["111"],
         created_at=datetime.now(timezone.utc),
         created_by="user-1",
+        token_configured=False,
     )
     assert resp.model_dump()["allowed_owner_ids"] == ["111"]

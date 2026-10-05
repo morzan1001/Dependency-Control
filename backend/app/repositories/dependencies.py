@@ -13,9 +13,6 @@ class DependencyRepository(BaseRepository[Dependency]):
     collection_name = "dependencies"
     model_class = Dependency
 
-    async def get_by_name(self, name: str) -> Dependency | None:
-        return await self.find_one({"name": name})
-
     async def find_by_scan(self, project_id: str, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
         """The scan's dependencies up to ``limit``, and how many it holds."""
         rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)

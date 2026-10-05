@@ -1,3 +1,5 @@
+import type { PaginatedResponse } from './common';
+
 export interface GitHubInstance {
   id: string;
   name: string;
@@ -41,13 +43,7 @@ export interface GitHubInstanceUpdate {
   allowed_owner_ids?: string[];
 }
 
-export interface GitHubInstanceList {
-  items: GitHubInstance[];
-  total: number;
-  page: number;
-  size: number;
-  pages: number;
-}
+export type GitHubInstanceList = PaginatedResponse<GitHubInstance>;
 
 export interface GitHubOrgTeam {
   id: number;

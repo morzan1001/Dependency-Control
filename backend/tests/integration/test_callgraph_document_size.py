@@ -124,23 +124,15 @@ async def test_a_callgraph_over_16_mib_and_200k_entries_is_stored_and_enriches_t
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_legacy_inline_callgraph_is_read_by_reachability_modules_and_chat(client, db, admin_auth_headers):
+async def test_a_legacy_inline_callgraph_is_read_by_reachability_and_chat(client, db):
     await db.callgraphs.insert_one(_legacy_inline(_madge(3, 40, 2)))
 
     [callgraph] = await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db)
-    modules = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph/modules", headers=admin_auth_headers)
-    graph = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph", headers=admin_auth_headers)
     chat = await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT_ID}, _ADMIN, db)
 
     [chat_graph] = chat["callgraphs"]
-    assert (modules.status_code, graph.status_code) == (200, 200)
-    assert (
-        set(callgraph.module_usage),
-        {m["module"] for m in modules.json()["modules"]},
-        set(graph.json()["module_usage"]),
-        set(chat_graph["module_usage"]),
-    ) == ({"pkg-0", "pkg-1"},) * 4
-    assert callgraph.analyzed_modules == graph.json()["analyzed_modules"] == chat_graph["analyzed_modules"]
+    assert set(callgraph.module_usage) == set(chat_graph["module_usage"]) == {"pkg-0", "pkg-1"}
+    assert callgraph.analyzed_modules == chat_graph["analyzed_modules"]
 
 
 @pytest.mark.asyncio

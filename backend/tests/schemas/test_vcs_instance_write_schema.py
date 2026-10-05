@@ -50,3 +50,10 @@ def test_a_create_stores_the_trimmed_audience():
     gitlab = GitLabInstanceCreate(name="gl", url="https://gl.example", oidc_audience="aud ")
 
     assert (github.oidc_audience, gitlab.oidc_audience) == ("aud", "aud")
+
+
+def test_a_create_without_is_active_stores_an_active_instance():
+    github = GitHubInstanceCreate(name="gh", url="https://gh.example", oidc_audience="aud")
+    gitlab = GitLabInstanceCreate(name="gl", url="https://gl.example", oidc_audience="aud")
+
+    assert (github.is_active, gitlab.is_active) == (True, True)

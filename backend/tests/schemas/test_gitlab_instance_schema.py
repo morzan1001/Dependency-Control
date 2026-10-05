@@ -73,6 +73,7 @@ def test_response_serializes_team_sync_depth():
         team_sync_depth=2,
         created_at=datetime.now(timezone.utc),
         created_by="user-1",
+        token_configured=False,
     )
     assert resp.model_dump()["team_sync_depth"] == 2
 
@@ -133,5 +134,6 @@ def test_response_serializes_the_namespace_list():
         allowed_namespaces=["acme"],
         created_at=datetime.now(timezone.utc),
         created_by="user-1",
+        token_configured=False,
     )
     assert resp.model_dump()["allowed_namespaces"] == ["acme"]

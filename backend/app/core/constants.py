@@ -356,7 +356,6 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "no_fix_available": 70,
     "supply_chain_risk": 60,
     "transitive_fix_via_parent": 50,
-    "outdated_dependency": 40,
     "attack_surface_reduction": 40,
     "cross_project_pattern": 30,
     # Low priority hygiene

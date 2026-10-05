@@ -1,4 +1,4 @@
-"""Endpoints for uploading and querying call graph data for reachability analysis."""
+"""Endpoints for uploading and deleting call graph data for reachability analysis."""
 
 import asyncio
 import logging
@@ -23,12 +23,9 @@ from app.models.callgraph import Callgraph
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.callgraph import (
-    CallgraphResponse,
     CallgraphUploadRequest,
     CallgraphUploadResponse,
     DeleteCallgraphResponse,
-    ModuleUsageItem,
-    ModuleUsageResponse,
 )
 from app.services.component_identity import canonical_callgraph_language
 from app.services.gridfs_maintenance import upload_gridfs_json
@@ -47,7 +44,6 @@ _FORMAT_PARSERS = {
 }
 
 _GRAPH_FIELDS = ("module_usage", "analyzed_modules")
-_RESPONSE_PROJECTION = dict.fromkeys((*CallgraphResponse.model_fields, "graph_gridfs_id"), 1)
 
 
 def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
@@ -63,13 +59,6 @@ def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
     return detected
 
 
-def _canonical_language(language: str) -> str:
-    try:
-        return canonical_callgraph_language(language)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 def _resolve_language(request_language: str | None, format_type: str) -> str:
     """Resolve the callgraph language in its canonical spelling; only madge implies one."""
     language = request_language or _FORMAT_LANGUAGE_MAP.get(format_type)
@@ -78,7 +67,10 @@ def _resolve_language(request_language: str | None, format_type: str) -> str:
             status_code=400,
             detail=f"'language' is required for '{format_type}' callgraph payloads",
         )
-    return _canonical_language(language)
+    try:
+        return canonical_callgraph_language(language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 async def _resolve_scan_id(
@@ -216,55 +208,6 @@ async def upload_callgraph(
         analyzed_modules_count=len(parsed.analyzed_modules),
         warnings=warnings,
     )
-
-
-@router.get("/{project_id}/callgraph", responses=RESP_AUTH_404)
-async def get_callgraph(
-    project_id: str,
-    db: DatabaseDep,
-    current_user: CurrentUserDep,
-    language: str | None = None,
-) -> CallgraphResponse:
-    """Get the current callgraph for a project, optionally filtered by language."""
-    await check_project_access(project_id, current_user, db)
-
-    callgraph_repo = CallgraphRepository(db)
-    query: dict[str, Any] = {"project_id": project_id}
-    if language:
-        query["language"] = _canonical_language(language)
-    callgraph = await callgraph_repo.find_one_raw(query, _RESPONSE_PROJECTION)
-    if not callgraph:
-        raise HTTPException(status_code=404, detail="No callgraph found for this project")
-
-    return CallgraphResponse(**await callgraph_repo.load_graph(callgraph))
-
-
-@router.get("/{project_id}/callgraph/modules", responses=RESP_AUTH_404)
-async def get_module_usage(
-    project_id: str,
-    db: DatabaseDep,
-    current_user: CurrentUserDep,
-    language: str | None = None,
-) -> ModuleUsageResponse:
-    """Get external module usage (import counts and locations) from the callgraph, optionally filtered by language."""
-    await check_project_access(project_id, current_user, db)
-
-    callgraph_repo = CallgraphRepository(db)
-    query: dict[str, Any] = {"project_id": project_id}
-    if language:
-        query["language"] = _canonical_language(language)
-    callgraph = await callgraph_repo.find_one_raw(query, {"module_usage": 1, "language": 1, "graph_gridfs_id": 1})
-    if not callgraph:
-        raise HTTPException(status_code=404, detail="No callgraph found")
-    await callgraph_repo.load_graph(callgraph)
-
-    sorted_modules = sorted(
-        (ModuleUsageItem(name=key, **usage) for key, usage in callgraph["module_usage"].items()),
-        key=lambda item: item.import_count + item.call_count,
-        reverse=True,
-    )
-
-    return ModuleUsageResponse(project_id=project_id, language=callgraph["language"], modules=sorted_modules)
 
 
 @router.delete("/{project_id}/callgraph", responses=RESP_AUTH_404)
