@@ -1,3 +1,29 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.45.
+
+## Before the rollout: delete the backend Deployment, keep its pods
+
+The backend Deployment now also selects on `app.kubernetes.io/component: backend`, so its HPA averages over backend pods alone. Kubernetes cannot change a selector in place. Delete the Deployment and leave its ReplicaSet running; the upgrade then adopts the running pods and rolls them:
+
+```bash
+kubectl delete deploy dependency-control-backend --cascade=orphan
+```
+
+The pods keep serving in between, and the HPA reports its target missing until the upgrade recreates it.
+
+## Before the rollout: name the trusted proxies
+
+`backend.env.trustedProxyIps` lists the CIDRs whose `X-Forwarded-For` uvicorn trusts. Left empty it trusts every peer, so a client can choose the address the per-IP rate limits on password reset and verification mails count against. Set it to the ingress controller's pod range.
+
+## After the rollout
+
+- Housekeeping and the branch sync run on one pod per interval, under the `housekeeping` and `branch_sync` locks. The first new pod runs both, because no lock exists yet.
+- Typosquatting compares npm components against the 5,000 most downloaded npm packages, so npm projects can show new typosquatting findings with their next analysis. PyPI keeps its cached ranking until the 24-hour TTL in Redis ends.
+- A Slack install starts from the system settings page, which signs the OAuth state. The Slack app's redirect URL stays `<frontendBaseUrl>/api/v1/integrations/slack/callback`.
+
+
+
 # Release 1.9.45
 
 ## 📦 Build & CI
