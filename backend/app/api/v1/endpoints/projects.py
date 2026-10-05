@@ -1120,9 +1120,9 @@ def _scan_findings_dependency_join() -> list[dict[str, Any]]:
                     }
                 },
                 # Exact spelling first so a qualified finding never takes a same-artifact
-                # sibling's row when both are present.
+                # sibling's row; then direct wins, as in the findings CSV.
                 {"$addFields": {"_exact": {"$eq": ["$name", "$$component"]}}},
-                {"$sort": {"_exact": -1}},
+                {"$sort": {"_exact": -1, "direct": -1, "_id": 1}},
                 {"$limit": 1},
                 {"$project": dict.fromkeys(fields, 1)},
             ],

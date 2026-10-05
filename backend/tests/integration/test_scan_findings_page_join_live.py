@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 
 from app.api.v1.endpoints.projects import _build_scan_findings_pipeline
+from app.services.inventory.findings_export import ExportedScan, iter_findings_rows
 
 _SCAN = "scan-1"
 _SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
@@ -99,3 +100,25 @@ async def test_a_source_type_sort_orders_by_the_joined_dependency(seeded):
     source_types = [dict(row).get("source_type", "") for row in rows]
     assert source_types == sorted(source_types, reverse=True)
     assert source_types[0] == "image"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct_only", [False, True])
+async def test_the_join_takes_the_dependency_row_the_findings_csv_takes(db, direct_only):
+    # Purl-qualifier variants of one name@version that disagree on direct; the direct row comes last.
+    variants = [(False, "?type=jar"), (None, "?type=pom"), (True, "")]
+    await db.dependencies.insert_many(
+        [{**_dependency(0), "direct": direct, "purl": f"pkg:maven/org.example/lib0@1.0{q}"} for direct, q in variants]
+    )
+    await db.findings.insert_one(_finding(1, "lib0"))
+
+    pipeline = _build_scan_findings_pipeline(
+        {"scan_id": _SCAN}, sort_by="severity", sort_dir=-1, skip=0, limit=5, direct_only=direct_only
+    )
+    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+    [exported] = [row async for row in iter_findings_rows(db, [ExportedScan(_SCAN, "main", None, None)])]
+
+    direct_row = (True, "pkg:maven/org.example/lib0@1.0")
+    assert (exported["direct"], exported["purl"]) == direct_row
+    assert [(row.get("direct"), row.get("purl")) for row in bucket["data"]] == [direct_row]
