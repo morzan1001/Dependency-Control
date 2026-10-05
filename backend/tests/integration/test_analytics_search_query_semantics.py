@@ -417,6 +417,25 @@ def _low_license() -> dict:
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+@pytest.mark.parametrize(("finding_type", "expected"), [("license", "frob-lic"), ("vulnerability", "frob-vuln")])
+async def test_the_finding_type_filter_keeps_only_findings_of_that_type(client, db, scanned, finding_type, expected):
+    license_finding = {
+        **_low_license(),
+        "_id": "finding-frob-lic",
+        "component": "frob-lic",
+        "description": "frob ships under GPL-3.0",
+    }
+    await db.findings.insert_many([_vulnerability("frob-vuln"), license_finding])
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": "frob", "finding_type": finding_type}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert ([row["component"] for row in body["items"]], body["total"]) == ([expected], 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 @pytest.mark.parametrize(
     ("finding", "params"),
     [
@@ -484,16 +503,22 @@ async def test_equally_severe_findings_page_without_overlap(client, db, scanned)
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_the_vulnerability_filter_pages_the_matching_dependencies_in_sort_order(client, db, scanned):
+@pytest.mark.parametrize(
+    ("sort_order", "expected"),
+    [("asc", ["alpha-lib", "beta-lib", "zeta-lib"]), ("desc", ["zeta-lib", "beta-lib", "alpha-lib"])],
+)
+async def test_the_vulnerability_filter_pages_the_matching_dependencies_in_sort_order(
+    client, db, scanned, sort_order, expected
+):
     for name in ("zeta-lib", "gamma-lib", "beta-lib", "alpha-lib"):
         await db.dependencies.insert_one(_dependency(name))
     for name in ("zeta-lib", "beta-lib", "alpha-lib"):
         await db.findings.insert_one(_vulnerability(name))
 
-    params = {"q": "lib", "has_vulnerabilities": "true", "sort_by": "name", "sort_order": "asc"}
+    params = {"q": "lib", "has_vulnerabilities": "true", "sort_by": "name", "sort_order": sort_order}
     pages = await _pages(client, _SEARCH_PATH, scanned, params, 3)
 
-    assert [row["package"] for page in pages for row in page["items"]] == ["alpha-lib", "beta-lib", "zeta-lib"]
+    assert [row["package"] for page in pages for row in page["items"]] == expected
     assert pages[0]["total"] == 3
 
 
