@@ -215,6 +215,7 @@ def _sla_input(findings: list[dict], coverage: EvaluationCoverage) -> Evaluation
 
 def _overdue_critical(*, waived: bool = False) -> dict:
     doc = _finding(0)
+    doc["details"] = {"vulnerabilities": [{"id": "CVE-2021-44228", "severity": "CRITICAL"}]}
     doc["first_seen_at"] = datetime.now(timezone.utc) - timedelta(days=_SLA_OVERDUE_DAYS)
     if waived:
         doc["waived"] = True

@@ -18,6 +18,7 @@ def _vuln(severity: Severity, days_ago: int, **kwargs) -> dict:
         "_id": kwargs.pop("_id", f"f-{severity.value}-{days_ago}"),
         "type": FindingType.VULNERABILITY.value,
         "severity": severity.value,
+        "details": {"vulnerabilities": [{"id": "CVE-2021-44228", "severity": severity.value}]},
         "first_seen_at": datetime.now(timezone.utc) - timedelta(days=days_ago),
         **kwargs,
     }
@@ -92,6 +93,7 @@ class TestOverdueBoundary:
             "_id": "f-boundary",
             "type": FindingType.VULNERABILITY.value,
             "severity": Severity.CRITICAL.value,
+            "details": {"vulnerabilities": [{"id": "CVE-2021-44228", "severity": Severity.CRITICAL.value}]},
             "first_seen_at": first_seen,
         }
 
