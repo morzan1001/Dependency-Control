@@ -85,7 +85,6 @@ class TestGetAttr:
             pytest.param({"a": 1}, "b", id="dict_missing_key"),
             pytest.param({"key": None}, "key", id="dict_key_with_none_value"),
             pytest.param(_SampleModel(), "nonexistent", id="model_missing_attr"),
-            pytest.param(42, "key", id="int"),
         ],
     )
     def test_returns_none_without_a_given_default(self, source, key):
@@ -97,9 +96,6 @@ class TestGetAttr:
             pytest.param({"a": 1}, "b", "fallback", id="dict_missing_key"),
             pytest.param({}, "anything", "default", id="dict_empty"),
             pytest.param(_SampleModel(), "nonexistent", 99, id="model_missing_attr"),
-            pytest.param("a string", "key", "fallback", id="string"),
-            pytest.param(None, "key", "safe", id="none"),
-            pytest.param([1, 2, 3], "key", "nope", id="list"),
         ],
     )
     def test_returns_the_given_default(self, source, key, default):

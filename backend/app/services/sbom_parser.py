@@ -659,7 +659,7 @@ class SBOMParser:
     @classmethod
     def _extract_cyclonedx_external_refs(
         cls,
-        external_refs: list[dict[str, Any]],
+        external_refs: Any,
     ) -> tuple[str | None, str | None, str | None, list[Any]]:
         """Return (homepage, repository_url, download_url, distribution hash entries) from externalReferences."""
         homepage: str | None = None

@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from aiobotocore.session import AioSession, get_session  # type: ignore[import-untyped]
+from aiobotocore.session import AioSession, get_session
 from botocore.config import Config as BotoConfig
 
 from app.core.config import settings

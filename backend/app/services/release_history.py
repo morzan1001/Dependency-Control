@@ -66,8 +66,7 @@ Observation = tuple[str, str, datetime] | tuple[str, str, str, datetime]
 def _split_history_key(key: HistoryKey) -> tuple[str | None, str]:
     """Normalise a history key into ``(system, name)``; ``system`` is None for bare-name keys."""
     if isinstance(key, tuple):
-        system, name = key
-        return system, name
+        return key
     return None, key
 
 
@@ -77,10 +76,8 @@ def _split_observation(obs: Observation) -> tuple[str | None, str, str, datetime
     ``system`` is None for the 3-tuple ``(name, version, scan_date)`` form.
     """
     if len(obs) == 4:
-        system, name, version, scan_date = obs  # type: ignore[misc]
-        return system, name, version, scan_date
-    name, version, scan_date = obs  # type: ignore[misc]
-    return None, name, version, scan_date
+        return obs
+    return (None, *obs)
 
 
 @dataclass(frozen=True)

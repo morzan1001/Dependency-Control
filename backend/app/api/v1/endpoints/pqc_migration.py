@@ -1,9 +1,8 @@
 """PQC migration plan REST endpoint."""
 
-from fastapi import Depends, Query
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from fastapi import Query
 
-from app.api.deps import get_current_active_user, get_database
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_403
 from app.core.constants import (
@@ -11,7 +10,6 @@ from app.core.constants import (
     MAX_PQC_PLAN_ITEMS,
     ScopeName,
 )
-from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ScopeResolver
@@ -23,11 +21,11 @@ router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
 @router.get("/pqc-migration", responses=RESP_403)
 async def get_pqc_migration_plan(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     limit: int = Query(DEFAULT_PQC_PLAN_ITEMS, ge=1, le=MAX_PQC_PLAN_ITEMS),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> MigrationPlanResponse:
     resolved = await ScopeResolver(db, current_user).resolve(
         scope=scope,

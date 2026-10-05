@@ -20,8 +20,9 @@ from app.core.metrics import cbom_ingests_total
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
+from app.schemas.cbom import ParsedCBOM
 from app.schemas.ingest import BaseIngest
-from app.services.cbom_parser import ParsedCBOM, parse_cbom
+from app.services.cbom_parser import parse_cbom
 from app.services.notifications.service import safe_notify_project_event
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
