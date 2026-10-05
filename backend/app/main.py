@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
@@ -54,64 +56,9 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description="""
-Dependency Control API for managing software dependencies, analyzing SBOMs,
-and tracking vulnerabilities.
 
-## Features
-* **Project & Team Management**: Organize projects and manage access with teams.
-* **SBOM Ingestion**: Upload and analyze Software Bill of Materials.
-* **Comprehensive Analysis**: Vulnerabilities (Trivy, Grype, OSV), Secrets,
-  License Compliance, Malware, End-of-Life, and Typosquatting.
-* **Risk Management**: Handle false positives with waivers.
-* **Integrations**: Webhooks and Notifications (Email, Slack, Mattermost).
-* **User Management**: Secure authentication with 2FA and email verification.
-
-Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
-    """,
-    version="1.9.45",
-    license_info={
-        "name": "MIT License",
-        "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",
-    },
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-)
-
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-app.add_middleware(PrometheusMiddleware)
-app.add_middleware(RelativeLocationMiddleware)
-
-
-@app.exception_handler(ScopeResolutionError)
-async def scope_resolution_exception_handler(request: Request, exc: ScopeResolutionError) -> JSONResponse:
-    """Map analytics scope-authorization failures to a uniform 403 response."""
-    return JSONResponse(status_code=403, content={"detail": str(exc)})
-
-
-@app.exception_handler(ScopeTooLargeError)
-async def scope_too_large_exception_handler(request: Request, exc: ScopeTooLargeError) -> JSONResponse:
-    """A scope analytics cannot materialise is refused, not answered over an arbitrary subset."""
-    return JSONResponse(status_code=413, content={"detail": str(exc)})
-
-
-@app.exception_handler(IdentityTakenError)
-async def identity_taken_exception_handler(request: Request, exc: IdentityTakenError) -> JSONResponse:
-    return JSONResponse(status_code=400, content={"detail": str(exc)})
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.error(f"Global exception handler caught: {exc}", exc_info=exc)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal Server Error. Please check the logs for more details."},
-    )
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     max_retries = 30
     retry_interval = 5
 
@@ -156,11 +103,68 @@ async def startup_event() -> None:
             logger.exception("Unexpected error during startup: %s", e)
             raise
 
+    try:
+        yield
+    finally:
+        await worker_manager.stop()
+        await close_mongo_connection()
 
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    await worker_manager.stop()
-    await close_mongo_connection()
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    description="""
+Dependency Control API for managing software dependencies, analyzing SBOMs,
+and tracking vulnerabilities.
+
+## Features
+* **Project & Team Management**: Organize projects and manage access with teams.
+* **SBOM Ingestion**: Upload and analyze Software Bill of Materials.
+* **Comprehensive Analysis**: Vulnerabilities (Trivy, Grype, OSV), Secrets,
+  License Compliance, Malware, End-of-Life, and Typosquatting.
+* **Risk Management**: Handle false positives with waivers.
+* **Integrations**: Webhooks and Notifications (Email, Slack, Mattermost).
+* **User Management**: Secure authentication with 2FA and email verification.
+
+Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
+    """,
+    version="1.9.45",
+    license_info={
+        "name": "MIT License",
+        "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",
+    },
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
+)
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(PrometheusMiddleware)
+app.add_middleware(RelativeLocationMiddleware)
+
+
+@app.exception_handler(ScopeResolutionError)
+async def scope_resolution_exception_handler(request: Request, exc: ScopeResolutionError) -> JSONResponse:
+    """Map analytics scope-authorization failures to a uniform 403 response."""
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(ScopeTooLargeError)
+async def scope_too_large_exception_handler(request: Request, exc: ScopeTooLargeError) -> JSONResponse:
+    """A scope analytics cannot materialise is refused, not answered over an arbitrary subset."""
+    return JSONResponse(status_code=413, content={"detail": str(exc)})
+
+
+@app.exception_handler(IdentityTakenError)
+async def identity_taken_exception_handler(request: Request, exc: IdentityTakenError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(f"Global exception handler caught: {exc}", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error. Please check the logs for more details."},
+    )
 
 
 # Internal only, not exposed via Ingress.

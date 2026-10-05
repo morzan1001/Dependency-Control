@@ -74,7 +74,7 @@ db.projects.createIndex({ team_ids: 1 })   // yields team_ids_1
 
 An index on `team_ids` under any *other* name makes the startup `create_index` fail with
 `IndexOptionsConflict` (code 85). That call is unguarded — no try/except around
-`backend/app/core/init_db.py:259` — so the exception aborts `startup_event`, every backend pod
+`backend/app/core/init_db.py:259` — so the exception aborts the startup `lifespan`, every backend pod
 crashes, and the rolling update stalls at the first pod. Drop a wrongly-named index before
 deploying:
 
