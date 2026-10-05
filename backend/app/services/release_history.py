@@ -66,8 +66,7 @@ Observation = tuple[str, str, datetime] | tuple[str, str, str, datetime]
 def _split_history_key(key: HistoryKey) -> tuple[str | None, str]:
     """Normalise a history key into ``(system, name)``; ``system`` is None for bare-name keys."""
     if isinstance(key, tuple):
-        system, name = key
-        return system, name
+        return key
     return None, key
 
 
