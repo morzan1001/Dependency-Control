@@ -137,6 +137,6 @@ async def test_a_group_holds_each_live_advisory_once_however_many_versions_carry
         ]
         await db.findings.insert_one({**_finding(advisories), "_id": f"f-{version}", "version": version})
 
-    groups = await vuln_details_by(FindingRepository(db), "component", {"scan_id": SCAN_ID})
+    groups = await vuln_details_by(FindingRepository(db), {"scan_id": SCAN_ID}, "component")
 
-    assert groups == {COMPONENT: [{"vulnerabilities": [{"id": "CVE-2026-0001", "aliases": [], "severity": "HIGH"}]}]}
+    assert groups == {(COMPONENT,): [{"vulnerabilities": [{"id": "CVE-2026-0001", "aliases": [], "severity": "HIGH"}]}]}

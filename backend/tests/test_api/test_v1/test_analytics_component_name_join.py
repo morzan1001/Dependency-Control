@@ -8,10 +8,9 @@ bare dependency name onto a qualified finding component.
 
 import asyncio
 
-from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
-from app.api.v1.helpers.analytics import severity_counts_from_details
+from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph, _tree_findings_map
 from app.models.dependency import Dependency
-from app.services.component_identity import build_component_index, component_match_query
+from app.services.component_identity import component_match_query
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -24,13 +23,13 @@ def _finding(component, severity="HIGH"):
     return {"component": component, "severity": severity}
 
 
-def build_findings_map(findings):
-    """The tree overlay's map: one CVE per finding, counted under its component."""
-    by_component = {}
+def build_findings_map(findings, version="2.20.2"):
+    """The tree overlay's map: one CVE per finding, counted under its component at ``version``."""
+    by_package = {}
     for index, finding in enumerate(findings):
         advisory = {"id": f"CVE-2026-{index:04d}", "severity": finding["severity"]}
-        by_component.setdefault(finding["component"], []).append({"vulnerabilities": [advisory]})
-    return build_component_index({c: severity_counts_from_details(d) for c, d in by_component.items()})
+        by_package.setdefault((finding["component"], version), []).append({"vulnerabilities": [advisory]})
+    return _tree_findings_map(by_package)
 
 
 def _dep(name, version="2.20.2", purl=None):
@@ -62,7 +61,8 @@ class TestBareDependencyNameResolvesQualifiedFinding:
                 _finding("@angular-devkit/core", "HIGH"),
                 _finding("@angular/core", "CRITICAL"),
                 _finding("@angular/core", "CRITICAL"),
-            ]
+            ],
+            version="19.2.15",
         )
 
         graph = _graph(
@@ -77,7 +77,9 @@ class TestBareDependencyNameResolvesQualifiedFinding:
 
     def test_ambiguous_bare_name_gets_no_overlay(self):
         """Three packages end in 'core'; a bare 'core' dependency must not inherit one of them."""
-        findings_map = build_findings_map([_finding("@angular/core"), _finding("@messageformat/core")])
+        findings_map = build_findings_map(
+            [_finding("@angular/core"), _finding("@messageformat/core")], version="21.1.5"
+        )
 
         graph = _graph([_dep("core", "21.1.5", purl="pkg:npm/%40angular/core@21.1.5")], findings_map)
 
@@ -120,7 +122,7 @@ class TestAliasLookupIsCaseInsensitive:
     """
 
     def test_mixed_case_maven_artifact_resolves_its_qualified_finding(self):
-        findings_map = build_findings_map([_finding("xerces:xercesImpl", "HIGH")])
+        findings_map = build_findings_map([_finding("xerces:xercesImpl", "HIGH")], version="2.12.2")
 
         graph = _graph([_dep("xercesImpl", "2.12.2", purl="pkg:maven/xerces/xercesImpl@2.12.2")], findings_map)
 

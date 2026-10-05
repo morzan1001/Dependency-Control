@@ -344,8 +344,8 @@ def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
     return counts
 
 
-async def vuln_details_by(finding_repo: Any, field: str, match: dict[str, Any]) -> dict[str, list[Any]]:
-    """The distinct live advisories of the vulnerability findings `match` selects, per value of `field`."""
+async def vuln_details_by(finding_repo: Any, match: dict[str, Any], *fields: str) -> dict[tuple[Any, ...], list[Any]]:
+    """The distinct live advisories of the vulnerability findings `match` selects, per value tuple of `fields`."""
     rows = await finding_repo.aggregate(
         [
             {MONGO_MATCH: {**match, "type": "vulnerability", "waived": {"$ne": True}}},
@@ -353,7 +353,7 @@ async def vuln_details_by(finding_repo: Any, field: str, match: dict[str, Any]) 
             {MONGO_MATCH: {"details.vulnerabilities.waived": {"$ne": True}}},
             {
                 MONGO_GROUP: {
-                    "_id": f"${field}",
+                    "_id": {field: f"${field}" for field in fields},
                     "advisories": {
                         "$addToSet": {
                             "id": "$details.vulnerabilities.id",
@@ -367,7 +367,11 @@ async def vuln_details_by(finding_repo: Any, field: str, match: dict[str, Any]) 
         ],
         allow_disk_use=True,
     )
-    return {r["_id"]: [{"vulnerabilities": r["advisories"]}] for r in rows if r["_id"]}
+    return {
+        tuple(r["_id"].get(field) for field in fields): [{"vulnerabilities": r["advisories"]}]
+        for r in rows
+        if r["_id"].get(fields[0])
+    }
 
 
 def build_hotspot_priority_reasons(
@@ -478,8 +482,8 @@ async def gather_cross_project_data(
     )
     scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
-    details_by_scan = await vuln_details_by(finding_repo, "scan_id", {"scan_id": {"$in": other_scan_ids}})
-    scan_cves_map = {scan_id: live_cves(details) for scan_id, details in details_by_scan.items()}
+    details_by_scan = await vuln_details_by(finding_repo, {"scan_id": {"$in": other_scan_ids}}, "scan_id")
+    scan_cves_map = {scan_id: live_cves(details) for (scan_id,), details in details_by_scan.items()}
 
     cross_project_data["shared_packages"] = await dep_repo.aggregate(
         cross_project_package_pipeline(other_scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)

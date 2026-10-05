@@ -220,15 +220,15 @@ async def _top_dependencies(
     listed_artifacts = sorted({extract_artifact_name(dep["name"]) for dep in results})
     details_by_component = await vuln_details_by(
         finding_repo,
-        "component",
         {
             "scan_id": {"$in": scan_ids},
             "project_id": {"$in": project_ids},
             "$expr": {"$in": [artifact_name_expr("$component"), listed_artifacts]},
         },
+        "component",
     )
     vuln_count_map = build_component_index(
-        {component: len(live_cves(details)) for component, details in details_by_component.items()}
+        {component: len(live_cves(details)) for (component,), details in details_by_component.items()}
     )
 
     enriched = []

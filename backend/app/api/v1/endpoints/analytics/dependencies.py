@@ -1,5 +1,6 @@
 """Analytics dependency endpoints: dependency-tree, component-findings, dependency-metadata."""
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
@@ -39,13 +40,16 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
-from app.services.aggregation.versions import newest_first, parse_version_key
+from app.services.aggregation.versions import newest_first, normalize_version, parse_version_key
 from app.services.recommendation.common import live_cves
 from app.services.recommendation.graph import build_dependency_edges
 
 from ._shared import resolve_project_scan_id
 
 router = CustomAPIRouter()
+
+# Live advisory details per component, then per normalized version.
+TreeFindings = dict[str, dict[str, list[Any]]]
 
 
 @dataclass(frozen=True)
@@ -94,10 +98,20 @@ async def _package_finding_query(
     return {**scope, "component": {"$in": same or [component]}}
 
 
-def _build_tree_node(dep: Dependency, findings_map: dict[str, dict[str, int]], *, direct: bool) -> DependencyTreeNode:
+def _tree_findings_map(details_by_package: dict[tuple[Any, ...], list[Any]]) -> TreeFindings:
+    details_by_component: TreeFindings = defaultdict(lambda: defaultdict(list))
+    for (component, version), details in details_by_package.items():
+        details_by_component[component][normalize_version(version)] += details
+    return build_component_index(details_by_component)
+
+
+def _build_tree_node(dep: Dependency, findings_map: TreeFindings, *, direct: bool) -> DependencyTreeNode:
     """Build one node without its children; the graph builder fills in child_ids."""
     # The bare-artifact alias keys are lowercased, dependency names are not.
-    finding_info = lookup_component(findings_map, dep.name) or {}
+    by_version = lookup_component(findings_map, dep.name) or {}
+    # A finding without a version cannot tell the package's versions apart, so it covers them all.
+    details = by_version.get(normalize_version(dep.version), []) + by_version.get("unknown", [])
+    finding_info = severity_counts_from_details(details) if details else {}
     findings_count = sum(finding_info.values())
 
     return DependencyTreeNode(
@@ -121,7 +135,7 @@ def _build_tree_node(dep: Dependency, findings_map: dict[str, dict[str, int]], *
 
 def _build_dependency_graph(
     dependencies: list[Dependency],
-    findings_map: dict[str, dict[str, int]],
+    findings_map: TreeFindings,
     dependencies_total: int,
 ) -> DependencyGraph:
     """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
@@ -201,14 +215,10 @@ async def get_dependency_tree(
     if not dependencies:
         return DependencyGraph()
 
-    details_by_component = await vuln_details_by(
-        finding_repo, "component", {"project_id": project_id, "scan_id": scan_id}
+    details_by_package = await vuln_details_by(
+        finding_repo, {"project_id": project_id, "scan_id": scan_id}, "component", "version"
     )
-    findings_map = build_component_index(
-        {component: severity_counts_from_details(details) for component, details in details_by_component.items()}
-    )
-
-    return _build_dependency_graph(dependencies, findings_map, dependencies_total)
+    return _build_dependency_graph(dependencies, _tree_findings_map(details_by_package), dependencies_total)
 
 
 @router.get("/component-findings", responses=RESP_AUTH)
@@ -371,7 +381,7 @@ async def get_dependency_metadata_endpoint(
 
     finding_query = await _package_finding_query(finding_repo, scan_ids, component, version)
     finding_count = await finding_repo.count(finding_query)
-    package_details = await vuln_details_by(finding_repo, "component", finding_query)
+    package_details = await vuln_details_by(finding_repo, finding_query, "component")
     vuln_count = len(live_cves([details for per_component in package_details.values() for details in per_component]))
 
     return DependencyMetadata(
