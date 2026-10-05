@@ -16,9 +16,9 @@ from app.core.permissions import Permissions
 _API = settings.API_V1_STR
 _BOB_ID = "u-bob"
 _ALICE_ID = "u-alice"
+_CAROL_ID = "u-carol"
 _PASSWORD = "Correct-Horse-1"
 _NEW_PASSWORD = "Battery-Staple-2"
-_WEAK_PASSWORD = "a"
 _INVITATION_TOKEN = "invitation-token"
 _PROJECT_ID = "proj-1"
 _PROJECT_SECRET = "project-secret"
@@ -77,7 +77,20 @@ async def test_user_read_opens_only_the_own_account(api, db):
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_accepting_an_invitation_enforces_the_password_policy(api, db):
+async def test_user_read_all_opens_every_account(api, db):
+    await _add_user(db, _CAROL_ID, "carol", [Permissions.USER_READ_ALL])
+    await _add_user(db, _ALICE_ID, "alice", [])
+
+    response = await api.get(f"{_API}/users/{_ALICE_ID}", headers=_bearer(_CAROL_ID))
+
+    assert response.status_code == _OK
+    assert response.json()["id"] == _ALICE_ID
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("weak_password", ["a", "abcdefgh1"])
+async def test_accepting_an_invitation_enforces_the_password_policy(api, db, weak_password):
     await db.system_invitations.insert_one(
         {
             "_id": "inv-1",
@@ -91,7 +104,7 @@ async def test_accepting_an_invitation_enforces_the_password_policy(api, db):
 
     response = await api.post(
         f"{_API}/invitations/system/accept",
-        json={"token": _INVITATION_TOKEN, "username": "carol", "password": _WEAK_PASSWORD},
+        json={"token": _INVITATION_TOKEN, "username": "carol", "password": weak_password},
     )
 
     assert response.status_code == _UNPROCESSABLE
