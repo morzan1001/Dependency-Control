@@ -712,7 +712,6 @@ NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED: NotificationEvent = "crypto_asset_inge
 NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED: NotificationEvent = "crypto_policy_changed"
 NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED: NotificationEvent = "license_policy_changed"
 NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED: NotificationEvent = "compliance_report_generated"
-NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED: NotificationEvent = "pqc_migration_plan_generated"
 
 NOTIFICATION_EVENTS: frozenset[str] = frozenset(get_args(NotificationEvent))
 
