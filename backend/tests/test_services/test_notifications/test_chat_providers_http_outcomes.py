@@ -48,17 +48,10 @@ def _use_client(monkeypatch, module, client: _Client) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("status", "expected"), [(200, "bot-1"), (401, None)])
-async def test_mattermost_bot_id_comes_only_from_a_successful_lookup(status, expected):
-    client = _Client({"/api/v4/users/me": _Response(status, {"id": "bot-1"})})
-    assert await MattermostProvider()._get_bot_user_id(client, _BASE, {}) == expected
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(("status", "expected"), [(200, "u-1"), (404, None)])
 async def test_mattermost_user_id_comes_only_from_a_successful_lookup(status, expected):
     client = _Client({"/api/v4/users/username/alice": _Response(status, {"id": "u-1"})})
-    assert await MattermostProvider()._get_user_id_by_username(client, "@alice", _BASE, {}) == expected
+    assert await MattermostProvider()._get_user_id(client, "username/alice", _BASE, {}) == expected
 
 
 @pytest.mark.asyncio
@@ -83,6 +76,26 @@ async def test_mattermost_send_succeeds_only_on_a_created_post(monkeypatch, stat
 
     assert await MattermostProvider().send(channel, "Subj", "Body", system_settings=settings) is expected
     assert [(url, payload["channel_id"]) for url, payload in client.posted] == [(f"{_BASE}/api/v4/posts", channel)]
+
+
+@pytest.mark.asyncio
+async def test_a_mattermost_dm_opens_the_channel_as_the_bot_of_the_current_token(monkeypatch):
+    provider = MattermostProvider()
+    for token, bot_id in [("old-tok", "bot-old"), ("new-tok", "bot-new")]:
+        client = _Client(
+            {
+                "/api/v4/users/username/alice": _Response(200, {"id": "u-1"}),
+                "/api/v4/users/me": _Response(200, {"id": bot_id}),
+                "/api/v4/channels/direct": _Response(201, {"id": "dm-1"}),
+                "/api/v4/posts": _Response(201),
+            }
+        )
+        _use_client(monkeypatch, mattermost_provider, client)
+        settings = SystemSettings(mattermost_url=_BASE, mattermost_bot_token=token)
+
+        assert await provider.send("@alice", "Subj", "Body", system_settings=settings) is True
+
+    assert client.posted[0] == (f"{_BASE}/api/v4/channels/direct", ["bot-new", "u-1"])
 
 
 @pytest.mark.asyncio
