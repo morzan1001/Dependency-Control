@@ -192,6 +192,11 @@ class TestOIDCSignatureAndClaims:
 
         assert isinstance(_validate(_make_token(signing_key, aud=AUDIENCE), AUDIENCE, jwks), OIDCPayload)
 
+    def test_an_rs256_token_verifies_against_a_published_rsa_key_advertising_another_alg(self, signing_key):
+        jwks = {"keys": [{**RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True), "kid": KID, "alg": "RS512"}]}
+
+        assert isinstance(_validate(_make_token(signing_key, aud=AUDIENCE), AUDIENCE, jwks), OIDCPayload)
+
     @pytest.mark.parametrize(
         "forge",
         [
