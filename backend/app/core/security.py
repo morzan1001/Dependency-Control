@@ -49,9 +49,6 @@ def _decode_typed_token(token: str, expected_type: str) -> dict[str, Any] | None
     """The claims of a valid JWT of the expected type, or None if invalid."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        logger.debug(f"{expected_type} token expired")
-        return None
     except jwt.PyJWTError as e:
         logger.debug(f"{expected_type} token invalid: {e}")
         return None
