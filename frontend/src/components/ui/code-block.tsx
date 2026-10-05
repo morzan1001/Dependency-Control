@@ -21,7 +21,7 @@ export function CodeBlock({ code, maxHeight = '600px' }: CodeBlockProps) {
       >
         {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
       </Button>
-      <pre 
+      <pre
         className="overflow-auto text-xs font-mono whitespace-pre-wrap break-all"
         style={{ maxHeight }}
       >
