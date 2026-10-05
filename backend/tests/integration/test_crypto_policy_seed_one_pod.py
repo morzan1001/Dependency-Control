@@ -7,7 +7,7 @@ import pytest
 from pymongo.errors import AutoReconnect
 
 from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.crypto_policy.seeder import CURRENT_SEED_VERSION, seed_crypto_policies
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -46,3 +46,15 @@ async def test_a_seed_whose_write_failed_is_applied_by_the_next_start(db, monkey
     await seed_crypto_policies(db)
 
     assert await _history(db) == [("seed", 1)]
+
+
+async def test_a_start_that_finds_the_seed_current_leaves_the_next_seed_bump_unblocked(db, monkeypatch):
+    await seed_crypto_policies(db)
+    # The first seed's lock has expired by the next rollout.
+    await db.distributed_locks.delete_one({"_id": "crypto_policy_seed"})
+    await seed_crypto_policies(db)
+
+    monkeypatch.setattr("app.services.crypto_policy.seeder.CURRENT_SEED_VERSION", CURRENT_SEED_VERSION + 1)
+    await seed_crypto_policies(db)
+
+    assert await _history(db) == [("seed", 1), ("seed", 2)]
