@@ -4,18 +4,24 @@ A branch wrongly listed there takes the project's head off the branch it is real
 same pass rewrites latest_scan_id and the stats block the project tile renders.
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
 from app.models.project import Project
 from app.models.user import User
 from app.services.branch_sync import sync_project_branches
+from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.mocks.github import make_github_instance
+from tests.mocks.gitlab import make_gitlab_instance
 
 MODULE = "app.services.branch_sync"
 ENDPOINTS = "app.api.v1.endpoints.projects"
@@ -301,6 +307,41 @@ async def test_an_existing_live_default_branch_is_kept_without_asking_the_vcs():
 
     assert stored["default_branch"] == _MAIN
     assert stored["_fetch_default_calls"] == 0
+
+
+def _not_found(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(404, request=request)
+
+
+def _timed_out(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("", request=request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "list_branches",
+    [
+        pytest.param(lambda: GitLabService(make_gitlab_instance()).list_branches(100), id="gitlab"),
+        pytest.param(
+            lambda: GitHubService(make_github_instance(access_token="ghp-x")).list_branches("acme", "api"),
+            id="github",
+        ),
+    ],
+)
+@pytest.mark.parametrize(("vcs_answer", "cause"), [(_not_found, "404"), (_timed_out, "ReadTimeout")])
+async def test_a_failed_branch_listing_logs_one_warning_line_without_a_traceback(
+    monkeypatch, caplog, list_branches, vcs_answer, cause
+):
+    """A sync logs every project whose repo the token cannot see, so an ERROR or traceback each buries real alerts."""
+    transport = httpx.MockTransport(vcs_answer)
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=transport))
+
+    with caplog.at_level(logging.WARNING, logger="app.services"):
+        assert await list_branches() is None
+
+    logged = [(r.levelname, r.exc_info) for r in caplog.records if r.levelno >= logging.WARNING]
+    assert logged == [("WARNING", None)]
+    assert cause in caplog.records[-1].getMessage()
 
 
 async def _call_endpoint(project: Project, db: FakeDatabase | None = None) -> list[Any]:

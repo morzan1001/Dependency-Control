@@ -71,6 +71,7 @@ from app.models.release import Release
 from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
+from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.base import and_filters
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -1457,6 +1458,7 @@ async def delete_project(
     await release_repo.delete_many({"project_id": project_id})
     await invitation_repo.delete_project_invitations_by_project(project_id)
     await callgraph_repo.delete_by_project(project_id)
+    await ArchiveMetadataRepository(db).delete_many({"project_id": project_id})
     await WebhookRepository(db).delete_many({"project_id": project_id})
     await CryptoPolicyRepository(db).delete_project_policy(project_id)
     await project_repo.delete(project_id)

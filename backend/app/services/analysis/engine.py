@@ -677,15 +677,6 @@ async def _aggregate_external_results(
             results_summary.append(f"{analyzer_name}: Failed")
 
 
-def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
-    """Analyzer result-row names to purge before a (re)run: internal, post-processor, and crypto.
-
-    Crypto/post-processor rows are regenerated per run whatever active_analyzers says, so they are purged explicitly.
-    """
-    internal_analyzers = [name for name in active_analyzers if name in analyzer_factories]
-    return sorted(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
-
-
 def _prepare_finding_records(
     aggregated_findings: list[Any],
     scan_id: str,
@@ -990,19 +981,6 @@ async def _send_integrations_and_notifications(
     )
 
 
-def _release_memory_to_os() -> None:
-    """Force gc and release glibc heap pages back to OS (Linux-only)."""
-    import gc
-
-    gc.collect()
-    try:
-        import ctypes
-
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):
-        pass
-
-
 def _partial_run_reasons(
     failed_analyzers: list[str],
     sbom_load_failures: int,
@@ -1130,9 +1108,7 @@ async def run_analysis(
             await _apply_handed_over_callgraphs(scan_id, project_id, db)
         return outcome
 
-    await result_repo.delete_many(
-        {"scan_id": scan_id, "analyzer_name": {"$in": _cleanup_analyzer_names(active_analyzers)}}
-    )
+    await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}})
 
     if scan_doc.is_rescan and analysis_rescan_operations_total:
         analysis_rescan_operations_total.inc()
@@ -1307,8 +1283,6 @@ async def run_analysis(
         sbom_generation=sbom_generation,
     )
     if outcome != final_status:
-        del findings_to_insert, vulnerability_findings
-        _release_memory_to_os()
         return outcome
 
     await _announce_outcome(
@@ -1327,7 +1301,5 @@ async def run_analysis(
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
     await record_scan_update_delta(db, scan_id)
-
-    _release_memory_to_os()
 
     return outcome

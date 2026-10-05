@@ -525,11 +525,15 @@ async def _expire_scans(db: Any) -> None:
 
 
 async def run_housekeeping() -> None:
-    """Each pod's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
-    logger.info("Starting housekeeping task...")
-
+    """The cluster's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
     try:
         db = await get_database()
+        # Held to expiry, never released: its TTL is the cadence across pods.
+        if not await DistributedLocksRepository(db).acquire_lock(
+            "housekeeping", new_lock_holder(), ttl_seconds=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
+        ):
+            return
+        logger.info("Starting housekeeping task...")
 
         try:
             await reconcile_release_flags(db)
@@ -566,50 +570,29 @@ async def run_housekeeping() -> None:
         logger.exception("Housekeeping task failed: %s", e)
 
 
-async def trigger_stale_pending_scans(
-    worker_manager: Optional["WorkerManager"] = None,
-) -> None:
-    """Trigger aggregation for 'pending' scans that have results but have gone stale.
-
-    Covers the case where only findings-based scanners (TruffleHog, OpenGrep, etc.) ran
-    without an SBOM scan, or where the SBOM scanner failed to trigger.
-    """
-    if not worker_manager:
+async def trigger_stale_pending_scans(worker_manager: Optional["WorkerManager"] = None) -> None:
+    """Queue the oldest pending scans no scanner result has reached for a while: findings-only runs
+    no SBOM triggered, and scans whose queue entry died with its pod."""
+    if not worker_manager or worker_manager.is_saturated():
         return
-
-    logger.debug("Checking for stale pending scans...")
-    try:
-        db = await get_database()
-
-        stale_threshold = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
-
-        cursor = db.scans.find(
+    db = await get_database()
+    quiet_since = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
+    cursor = (
+        db.scans.find(
             {
                 "status": SCAN_STATUS_PENDING,
-                "last_result_at": {"$lt": stale_threshold, "$exists": True},
-                "received_results": {"$exists": True, "$ne": []},
-            }
+                "$or": [
+                    {"last_result_at": {"$lt": quiet_since}},
+                    {"last_result_at": None, "created_at": {"$lt": quiet_since}},
+                ],
+            },
+            {"_id": 1},
         )
-
-        count = 0
-        async for scan in cursor:
-            scan_id = scan["_id"]
-            received = scan.get("received_results", [])
-            last_result = scan.get("last_result_at")
-
-            logger.info(
-                f"Triggering aggregation for stale pending scan {scan_id}. "
-                f"Received results from: {received}. Last result at: {last_result}"
-            )
-
-            await worker_manager.add_job(str(scan_id))
-            count += 1
-
-        if count > 0:
-            logger.info(f"Triggered aggregation for {count} stale pending scans.")
-
-    except Exception as e:
-        logger.exception("Stale pending scan check failed: %s", e)
+        .sort("created_at", 1)
+        .limit(worker_manager.num_workers)
+    )
+    async for scan in cursor:
+        await worker_manager.add_job(str(scan["_id"]))
 
 
 async def requeue_waiting_adhoc_jobs(worker_manager: Optional["WorkerManager"] = None) -> None:
@@ -678,10 +661,15 @@ async def recover_stuck_scans(
 
 
 async def sync_branch_status() -> None:
-    """Sync branch status for all projects with VCS connections."""
-    logger.info("Starting branch status sync...")
+    """Sync branch status for all projects with VCS connections, on one pod per interval."""
     try:
         db = await get_database()
+        # Held to expiry, never released: its TTL is the cadence across pods.
+        if not await DistributedLocksRepository(db).acquire_lock(
+            "branch_sync", new_lock_holder(), ttl_seconds=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS * 3600
+        ):
+            return
+        logger.info("Starting branch status sync...")
 
         branch_sync_projection = {
             "_id": 1,
@@ -724,11 +712,11 @@ async def stale_scan_loop(
     Runs frequently to quickly catch scans without SBOM trigger.
     """
     while True:
-        try:
-            await trigger_stale_pending_scans(worker_manager)
-            await requeue_waiting_adhoc_jobs(worker_manager)
-        except Exception as e:
-            logger.exception("Stale scan loop failed: %s", e)
+        for requeue in (trigger_stale_pending_scans, requeue_waiting_adhoc_jobs):
+            try:
+                await requeue(worker_manager)
+            except Exception as e:
+                logger.exception("Stale scan loop: %s failed: %s", requeue.__name__, e)
 
         await asyncio.sleep(HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS)
 
@@ -760,8 +748,6 @@ async def housekeeping_loop(
     """Runs the housekeeping tasks on a loop; stale pending scan aggregation runs in its own,
     faster loop.
     """
-    last_housekeeping_run = datetime.min.replace(tzinfo=timezone.utc)
-    last_branch_sync = datetime.min.replace(tzinfo=timezone.utc)
     last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
@@ -790,20 +776,14 @@ async def housekeeping_loop(
         except Exception as e:
             logger.exception("Waiver recalculation failed: %s", e)
 
-        if (datetime.now(timezone.utc) - last_housekeeping_run) > timedelta(
-            hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS
-        ):
-            await run_housekeeping()
-            last_housekeeping_run = datetime.now(timezone.utc)
+        await run_housekeeping()
 
         try:
             await _run_retention(await get_database())
         except Exception as e:
             logger.exception("Housekeeping: retention failed: %s", e)
 
-        if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS):
-            await sync_branch_status()
-            last_branch_sync = datetime.now(timezone.utc)
+        await sync_branch_status()
 
         # Stamped whatever the reconcile did: only one pod gets the lock, and the others
         # must not come back for it every five minutes.

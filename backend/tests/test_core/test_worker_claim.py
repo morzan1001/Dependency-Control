@@ -1,7 +1,7 @@
 """The pending->processing claim is a compare-and-swap: it is all that keeps two pods off one scan."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -232,29 +232,3 @@ async def test_a_scan_rescheduled_past_the_ceiling_counts_as_a_failed_job():
     assert (await db.scans.find_one({"_id": "scan-1"}))["status"] == SCAN_STATUS_FAILED
     notify.assert_called_once()
     assert (_jobs("failed") - failed_before, _durations() - durations_before) == (1, 1)
-
-
-@pytest.mark.asyncio
-async def test_startup_recovers_only_the_pending_scans_without_results_the_stale_loop_cannot_see():
-    """A scan holding results waits for the stale loop's debounce, so a slower scanner can still report."""
-    db = FakeDatabase()
-    now = datetime.now(timezone.utc)
-    old = now - timedelta(minutes=5)
-    for scan in (
-        {"_id": "rescan", "status": "pending", "created_at": old},
-        {"_id": "emptied", "status": "pending", "received_results": [], "created_at": old - timedelta(minutes=1)},
-        {"_id": "findings-only", "status": "pending", "received_results": ["trufflehog"], "created_at": old},
-        {"_id": "just-created", "status": "pending", "created_at": now},
-        {"_id": "done", "status": "completed", "created_at": old},
-    ):
-        await db.scans.insert_one({"project_id": "proj-1", "last_result_at": now, **scan})
-    manager = AnalysisWorkerManager(num_workers=0)
-
-    with (
-        patch("app.core.worker.get_database", AsyncMock(return_value=db)),
-        patch("app.core.worker.housekeeping_loop", AsyncMock()),
-        patch("app.core.worker.stale_scan_loop", AsyncMock()),
-    ):
-        await manager.start()
-
-    assert [manager.queue.get_nowait() for _ in range(manager.queue.qsize())] == ["emptied", "rescan"]
