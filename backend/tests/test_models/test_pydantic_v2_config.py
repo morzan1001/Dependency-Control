@@ -18,18 +18,6 @@ class TestModelIdAlias:
                 id="Project",
             ),
             pytest.param(
-                "app.models.invitation:ProjectInvitation",
-                {
-                    "project_id": "p1",
-                    "email": "a@b.com",
-                    "role": "viewer",
-                    "token": "t",
-                    "invited_by": "u1",
-                    "expires_at": datetime.now(timezone.utc),
-                },
-                id="ProjectInvitation",
-            ),
-            pytest.param(
                 "app.models.github_instance:GitHubInstance",
                 {"name": "GH", "url": "https://token.actions.githubusercontent.com", "created_by": "admin"},
                 id="GitHubInstance",

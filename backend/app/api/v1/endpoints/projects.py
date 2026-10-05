@@ -77,7 +77,6 @@ from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.github_instances import GitHubInstanceRepository
-from app.repositories.invitations import InvitationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
@@ -1437,7 +1436,6 @@ async def delete_project(
     project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
     waiver_repo = WaiverRepository(db)
-    invitation_repo = InvitationRepository(db)
     callgraph_repo = CallgraphRepository(db)
     release_repo = ReleaseRepository(db)
 
@@ -1447,7 +1445,6 @@ async def delete_project(
 
     await waiver_repo.delete_many({"project_id": project_id})
     await release_repo.delete_many({"project_id": project_id})
-    await invitation_repo.delete_project_invitations_by_project(project_id)
     await callgraph_repo.delete_by_project(project_id)
     await ArchiveMetadataRepository(db).delete_many({"project_id": project_id})
     await WebhookRepository(db).delete_many({"project_id": project_id})

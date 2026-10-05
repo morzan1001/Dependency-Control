@@ -500,10 +500,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Cached package metadata.
     await database["dependency_enrichments"].create_index("purl", unique=True)
 
-    # Invitations (InvitationRepository stores project invitations in "invitations").
-    await database["invitations"].create_index("token", unique=True)
-    await database["invitations"].create_index("email")
-
     # Archive Metadata
     await database["archive_metadata"].create_index("project_id")
     await database["archive_metadata"].create_index("scan_id", unique=True)

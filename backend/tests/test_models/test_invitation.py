@@ -1,79 +1,11 @@
-"""Tests for ProjectInvitation and SystemInvitation models."""
+"""Tests for the SystemInvitation model."""
 
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
 
-from app.models.invitation import ProjectInvitation, SystemInvitation
-
-
-class TestProjectInvitationModel:
-    def _make_project_invitation(self, **overrides):
-        defaults = {
-            "project_id": "proj-1",
-            "email": "dev@example.com",
-            "role": "viewer",
-            "token": "tok-abc-123",
-            "invited_by": "admin-1",
-            "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
-        }
-        defaults.update(overrides)
-        return ProjectInvitation(**defaults)
-
-    def test_minimal_valid(self):
-        inv = self._make_project_invitation()
-        assert inv.project_id == "proj-1"
-        assert inv.email == "dev@example.com"
-        assert inv.role == "viewer"
-        assert inv.token == "tok-abc-123"
-        assert inv.invited_by == "admin-1"
-
-    def test_id_auto_generated(self):
-        a = self._make_project_invitation()
-        b = self._make_project_invitation()
-        assert a.id is not None
-        assert len(a.id) > 0
-        assert a.id != b.id
-
-    def test_created_at_auto_set(self):
-        before = datetime.now(timezone.utc)
-        inv = self._make_project_invitation()
-        after = datetime.now(timezone.utc)
-        assert before <= inv.created_at <= after
-
-    def test_expires_at_is_required(self):
-        with pytest.raises(ValidationError):
-            ProjectInvitation(
-                project_id="p1",
-                email="a@b.com",
-                role="viewer",
-                token="t",
-                invited_by="u1",
-            )
-
-    def test_invalid_email_rejected(self):
-        with pytest.raises(ValidationError):
-            self._make_project_invitation(email="not-an-email")
-
-    def test_model_dump_by_alias_contains_id(self):
-        inv = self._make_project_invitation()
-        dumped = inv.model_dump(by_alias=True)
-        assert "_id" in dumped
-        assert dumped["_id"] == inv.id
-
-    def test_accepts_id_from_mongo(self):
-        inv = self._make_project_invitation(_id="inv-custom-id")
-        assert inv.id == "inv-custom-id"
-
-    def test_roundtrip_via_model_dump(self):
-        original = self._make_project_invitation()
-        dumped = original.model_dump(by_alias=True)
-        restored = ProjectInvitation(**dumped)
-        assert restored.id == original.id
-        assert restored.project_id == "proj-1"
-        assert restored.email == "dev@example.com"
-        assert restored.role == "viewer"
+from app.models.invitation import SystemInvitation
 
 
 class TestSystemInvitationModel:

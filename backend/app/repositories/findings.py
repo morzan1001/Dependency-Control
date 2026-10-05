@@ -132,9 +132,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
             )
         return earliest
 
-    async def delete_by_scan(self, scan_id: str) -> int:
-        return await self.delete_many({"scan_id": scan_id})
-
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})
 

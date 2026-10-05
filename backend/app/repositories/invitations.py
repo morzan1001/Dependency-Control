@@ -10,15 +10,8 @@ from app.models.invitation import SystemInvitation
 
 class InvitationRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
-        self.db = db
-        self.project_invitations = db.invitations
         self.system_invitations = db.system_invitations
 
-    async def delete_project_invitations_by_project(self, project_id: str) -> int:
-        result = await self.project_invitations.delete_many({"project_id": project_id})
-        return result.deleted_count
-
-    # System Invitations
     async def get_system_invitation_by_token(self, token: str) -> dict[str, Any] | None:
         return await self.system_invitations.find_one(
             {
