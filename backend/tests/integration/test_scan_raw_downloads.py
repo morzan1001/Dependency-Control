@@ -310,13 +310,19 @@ async def test_the_result_list_carries_each_rows_stored_size_and_none_for_a_dele
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_the_result_list_sizes_a_legacy_inline_result_without_reading_it(db):
+@pytest.mark.parametrize("in_gridfs", [False, True], ids=["legacy-inline", "gridfs"])
+async def test_the_result_list_sizes_a_result_without_reading_it(db, in_gridfs):
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="shop").model_dump(by_alias=True))
     scan = await _scan_with_sboms(db)
-    legacy = {"findings": [{**_SECRET_FINDING, "RawHash": f"{i:08x}"} for i in range(80_000)]}
-    await db.analysis_results.insert_one(
-        {"_id": "legacy-row", "scan_id": scan.id, "analyzer_name": "trufflehog", "result": legacy}
-    )
+    large = {"findings": [{**_SECRET_FINDING, "RawHash": f"{i:08x}"} for i in range(80_000)]}
+    if in_gridfs:
+        await AnalysisResultRepository(db).save_result(scan.id, "trufflehog", large)
+        stored_size = len(json.dumps(large).encode())
+    else:
+        await db.analysis_results.insert_one(
+            {"_id": "legacy-row", "scan_id": scan.id, "analyzer_name": "trufflehog", "result": large}
+        )
+        stored_size = len(bson.encode(large))
 
     tracemalloc.start()
     try:
@@ -325,5 +331,5 @@ async def test_the_result_list_sizes_a_legacy_inline_result_without_reading_it(d
     finally:
         tracemalloc.stop()
 
-    assert listed.size == len(bson.encode(legacy)) > 4 * _MIB
+    assert listed.size == stored_size > 4 * _MIB
     assert peak < _MIB

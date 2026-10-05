@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 
@@ -82,15 +82,16 @@ function scan(status: string) {
 
 function renderPage(entry = SCAN_PATH) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  const router = createMemoryRouter(
+    [{ path: '/projects/:projectId/scans/:scanId', element: <ScanDetails /> }],
+    { initialEntries: [entry] },
+  )
+  render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[entry]}>
-        <Routes>
-          <Route path="/projects/:projectId/scans/:scanId" element={<ScanDetails />} />
-        </Routes>
-      </MemoryRouter>
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   )
+  return router
 }
 
 beforeEach(() => {
@@ -269,7 +270,7 @@ describe('ScanDetails raw tab', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'View app.cdx.json' }))
     const code = await screen.findByText(/"bomFormat"/)
-    fireEvent.click(within(code.parentElement!).getByRole('button'))
+    fireEvent.click(within(code.parentElement!).getByRole('button', { name: 'Copy' }))
 
     expect(writeText).toHaveBeenCalledWith(JSON.stringify(SBOM, null, 2))
   })
@@ -295,6 +296,22 @@ describe('ScanDetails raw tab', () => {
 
     expect(screen.queryByText(/"bomFormat"/)).toBeNull()
     expect(screen.getByRole('button', { name: 'View app.cdx.json' })).toBeEnabled()
+  })
+
+  it('closes an open preview when the page moves to another scan', async () => {
+    vi.mocked(scanApi.getSboms).mockImplementation(async (scanId) => [
+      scanId === 's1' ? SBOM_ROWS[0] : { index: 0, filename: 'huge.cdx.json', size: 500 * 1024 * 1024 },
+    ])
+    const router = renderPage('/projects/p1/scans/s2?tab=raw')
+    await screen.findByRole('button', { name: 'View huge.cdx.json' })
+    await act(() => router.navigate(RAW_TAB))
+    fireEvent.click(await screen.findByRole('button', { name: 'View app.cdx.json' }))
+    await screen.findByText(/"bomFormat"/)
+
+    await act(() => router.navigate(-1))
+
+    expect(await screen.findByRole('button', { name: 'View huge.cdx.json' })).toBeDisabled()
+    expect(scanApi.getSbom).not.toHaveBeenCalledWith('s2', 0)
   })
 
   it('says so when a preview cannot be loaded', async () => {

@@ -623,7 +623,7 @@ export default function ScanDetails() {
                     )}
                     {scanSboms?.map((sbom) => (
                         <RawFileRow
-                            key={sbom.index}
+                            key={`${scanId}:${sbom.index}`}
                             ref={(el) => { sbomRefs.current[sbom.index] = el }}
                             label={sbom.filename || `SBOM #${sbom.index + 1}`}
                             size={sbom.size}
