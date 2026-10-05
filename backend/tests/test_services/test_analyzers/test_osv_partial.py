@@ -112,15 +112,15 @@ async def test_full_success_has_no_partial_marker(monkeypatch):
     assert "partial_components_skipped" not in result
 
 
-def _paged(next_page: httpx.Response):
-    """querybatch: pkg-0 has a second page behind ``page-2``, answered by ``next_page``; records echo their id."""
+def _paged(later_pages: dict[str, httpx.Response]):
+    """querybatch: pkg-0 has further pages behind ``page-2``, answered per token; records echo their id."""
 
     def handle(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(200, json={"id": request.url.path.rsplit("/", 1)[-1]})
         queries = json.loads(request.content)["queries"]
-        if queries[0].get("page_token") == "page-2":
-            return next_page
+        if token := queries[0].get("page_token"):
+            return later_pages[token]
         first_page = {"vulns": [{"id": "OSV-1", "modified": "m"}], "next_page_token": "page-2"}
         return httpx.Response(200, json={"results": [first_page, {"vulns": [{"id": "OSV-2", "modified": "m"}]}, {}]})
 
@@ -129,21 +129,26 @@ def _paged(next_page: httpx.Response):
 
 @pytest.mark.asyncio
 async def test_a_paged_result_is_followed_to_its_last_page(monkeypatch, _cache):
-    last_page = httpx.Response(200, json={"results": [{"vulns": [{"id": "OSV-3", "modified": "m"}]}]})
-    seen = serve_osv(monkeypatch, _paged(last_page))
+    second_page = {"vulns": [{"id": "OSV-3", "modified": "m"}], "next_page_token": "page-3"}
+    third_page = {"vulns": [{"id": "OSV-4", "modified": "m"}]}
+    pages = {
+        "page-2": httpx.Response(200, json={"results": [second_page]}),
+        "page-3": httpx.Response(200, json={"results": [third_page]}),
+    }
+    seen = serve_osv(monkeypatch, _paged(pages))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    assert batch_queries(seen)[3:] == [{"package": {"purl": "pkg:pypi/pkg-0@1.0.0"}, "page_token": "page-2"}]
+    assert [query.get("page_token") for query in batch_queries(seen)[3:]] == ["page-2", "page-3"]
     ids = {entry["component"]: [v["id"] for v in entry["vulnerabilities"]] for entry in result["osv_vulnerabilities"]}
-    assert ids == {"pkg-0": ["OSV-1", "OSV-3"], "pkg-1": ["OSV-2"]}
-    assert [stub["id"] for stub in _cache[CacheKeys.osv("pkg:pypi/pkg-0@1.0.0")]] == ["OSV-1", "OSV-3"]
+    assert ids == {"pkg-0": ["OSV-1", "OSV-3", "OSV-4"], "pkg-1": ["OSV-2"]}
+    assert [stub["id"] for stub in _cache[CacheKeys.osv("pkg:pypi/pkg-0@1.0.0")]] == ["OSV-1", "OSV-3", "OSV-4"]
     assert "partial_components_skipped" not in result
 
 
 @pytest.mark.asyncio
 async def test_a_component_whose_next_page_fails_is_skipped_and_not_cached(monkeypatch, _cache):
-    serve_osv(monkeypatch, _paged(httpx.Response(500)))
+    serve_osv(monkeypatch, _paged({"page-2": httpx.Response(500)}))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
