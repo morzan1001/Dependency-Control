@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.constants import COMPLIANCE_REPORT_STUCK_AFTER_HOURS
 from app.models.compliance_report import ComplianceReport
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
@@ -58,9 +59,10 @@ async def test_sweep_is_noop_when_nothing_expired(db):
 @pytest.mark.live_mongo
 async def test_sweep_fails_reports_left_unfinished_and_frees_their_quota_slot(db):
     repo = ComplianceReportRepository(db)
-    stuck_pending = _report(status=ReportStatus.PENDING, requested_ago=timedelta(hours=7))
-    stuck_generating = _report(status=ReportStatus.GENERATING, requested_ago=timedelta(hours=7))
-    running = _report(status=ReportStatus.GENERATING, requested_ago=timedelta(minutes=5))
+    threshold = timedelta(hours=COMPLIANCE_REPORT_STUCK_AFTER_HOURS)
+    stuck_pending = _report(status=ReportStatus.PENDING, requested_ago=threshold + timedelta(minutes=30))
+    stuck_generating = _report(status=ReportStatus.GENERATING, requested_ago=threshold + timedelta(minutes=30))
+    running = _report(status=ReportStatus.GENERATING, requested_ago=threshold - timedelta(minutes=30))
     for report in (stuck_pending, stuck_generating, running):
         await repo.create(report)
 
