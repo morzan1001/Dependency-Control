@@ -42,7 +42,7 @@ function parseRelatedFindingId(id: string): ParsedRelatedId {
 }
 
 /** Resolve against already-loaded rows: exact id first, then format-specific match; undefined for LIC-/unknown. */
-export function resolveRelatedFindingInRows(rows: readonly Finding[], id: string): Finding | undefined {
+export function resolveRelatedFindingInRows<T extends Finding>(rows: readonly T[], id: string): T | undefined {
     const exact = rows.find(f => f.id === id)
     if (exact) return exact
 

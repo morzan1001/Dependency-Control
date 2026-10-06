@@ -4,7 +4,7 @@ import { useAnalyticsMode } from '@/context/analytics-mode'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { DependencyMetadata, ComponentFinding } from '@/types/analytics'
 import { FindingDetailsModal } from '@/components/findings/FindingDetailsModal'
-import { resolveRelatedFinding } from './related-finding'
+import { resolveRelatedFindingInRows } from '@/components/findings/related-finding-rows'
 import {
   Dialog,
   DialogContent,
@@ -688,7 +688,7 @@ export function AnalyticsDependencyModal({
             projectId={selectedFinding.project_id}
             scanId={selectedFinding.scan_id}
             onSelectFinding={(id) => {
-              const found = resolveRelatedFinding(sortedFindings, id);
+              const found = resolveRelatedFindingInRows(sortedFindings, id);
               if (found) {
                 setSelectedFinding(found);
               }

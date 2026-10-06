@@ -1,9 +1,8 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ComponentFinding, DependencyMetadata } from "@/types/analytics";
+import type { DependencyMetadata } from "@/types/analytics";
 import { AnalyticsDependencyModal } from "../AnalyticsDependencyModal";
-import { resolveRelatedFinding } from "../related-finding";
 import { AnalyticsModeContext } from "@/context/analytics-mode";
 
 const RELEASE_ENVIRONMENT = "production";
@@ -17,24 +16,6 @@ import {
   useDependencyMetadata,
   useComponentFindings,
 } from "@/hooks/queries/use-analytics";
-
-const makeFinding = (overrides: Partial<ComponentFinding>): ComponentFinding =>
-  ({
-    id: "x",
-    type: "vulnerability",
-    severity: "HIGH",
-    component: "pkg",
-    version: "1.0.0",
-    description: "",
-    scanners: [],
-    details: {},
-    found_in: [],
-    aliases: [],
-    waived: false,
-    project_id: "p1",
-    project_name: "Project 1",
-    ...overrides,
-  }) as ComponentFinding;
 
 const baseMetadata: DependencyMetadata = {
   name: "pkg",
@@ -126,51 +107,6 @@ describe("AnalyticsDependencyModal metadata link hardening", () => {
       .getByText("Homepage")
       .closest("a") as HTMLAnchorElement | null;
     expect(home?.getAttribute("href")).toBe("https://home.example.com");
-  });
-});
-
-describe("resolveRelatedFinding", () => {
-  it("resolves EOL ids with hyphenated component names by stripping only the cycle", () => {
-    const findings = [
-      makeFinding({ id: "eol-1", type: "eol", component: "spring-boot" }),
-      makeFinding({ id: "eol-2", type: "eol", component: "spring" }),
-    ];
-    const found = resolveRelatedFinding(findings, "EOL-spring-boot-2");
-    expect(found?.component).toBe("spring-boot");
-  });
-
-  it("resolves single-word EOL component ids", () => {
-    const findings = [makeFinding({ id: "e", type: "eol", component: "openssl" })];
-    expect(resolveRelatedFinding(findings, "EOL-openssl-3")?.component).toBe(
-      "openssl",
-    );
-  });
-
-  it("does not select an arbitrary license finding for an unmatched LIC- id", () => {
-    const findings = [
-      makeFinding({ id: "lic-a", type: "license", component: "gpl-pkg" }),
-    ];
-    expect(resolveRelatedFinding(findings, "LIC-MIT")).toBeUndefined();
-  });
-
-  it("still resolves a LIC- id by exact id match", () => {
-    const findings = [
-      makeFinding({ id: "LIC-MIT", type: "license", component: "pkg" }),
-    ];
-    expect(resolveRelatedFinding(findings, "LIC-MIT")?.id).toBe("LIC-MIT");
-  });
-
-  it("resolves exact id, OUTDATED-, QUALITY: and component:version formats", () => {
-    const findings = [
-      makeFinding({ id: "exact", component: "pkg" }),
-      makeFinding({ id: "o", type: "outdated", component: "lodash" }),
-      makeFinding({ id: "q", type: "quality", component: "react", version: "18.0.0" }),
-      makeFinding({ id: "v", component: "axios", version: "1.2.3" }),
-    ];
-    expect(resolveRelatedFinding(findings, "exact")?.id).toBe("exact");
-    expect(resolveRelatedFinding(findings, "OUTDATED-lodash")?.id).toBe("o");
-    expect(resolveRelatedFinding(findings, "QUALITY:react:18.0.0")?.id).toBe("q");
-    expect(resolveRelatedFinding(findings, "axios:1.2.3")?.id).toBe("v");
   });
 });
 
