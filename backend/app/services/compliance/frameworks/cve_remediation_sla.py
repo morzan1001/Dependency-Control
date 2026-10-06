@@ -74,8 +74,11 @@ def _is_overdue(
     details = finding.get("details") or {}
     # A waived finding stays waived evidence under each of its advisories' severities.
     advisories = (details.get("vulnerabilities") or []) if finding.get("waived") else live_advisories(details)
-    if not any(advisory.get("severity") == severity.value for advisory in advisories):
-        return False
-    # A copy stored before first detection was recorded carries only its scan's time.
-    first_seen = finding.get("first_seen_at") or finding.get("scan_created_at")
-    return first_seen is not None and now - first_seen >= timedelta(days=sla_days)
+    # Copies stored before advisories carried their own date, or before first detection was recorded at all.
+    fallback = finding.get("first_seen_at") or finding.get("scan_created_at")
+    return any(
+        advisory.get("severity") == severity.value
+        and (first_seen := advisory.get("first_seen_at") or fallback) is not None
+        and now - first_seen >= timedelta(days=sla_days)
+        for advisory in advisories
+    )

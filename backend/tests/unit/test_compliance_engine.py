@@ -244,15 +244,20 @@ async def _store_findings(db, pid, scan_id, findings):
 
 
 def _vulnerability(component, severity):
-    return Finding(
-        id=f"CVE-2021-44228:{component}",
-        type=FindingType.VULNERABILITY,
-        severity=severity,
-        component=component,
-        version="2.14.1",
-        description="remote code execution",
-        scanners=["trivy"],
+    aggregator = ResultAggregator()
+    aggregator.add_finding(
+        Finding(
+            id="CVE-2021-44228",
+            type=FindingType.VULNERABILITY,
+            severity=severity,
+            component=component,
+            version="2.14.1",
+            description="remote code execution",
+            scanners=["trivy"],
+        )
     )
+    [finding] = aggregator.get_findings()
+    return finding
 
 
 def _project_scope(pid="p1"):

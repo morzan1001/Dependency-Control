@@ -5,9 +5,10 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from pymongo import ASCENDING, UpdateOne
+from pymongo import ASCENDING, DESCENDING, UpdateOne
 
-from app.models.finding import LOCATION_FINDING_TYPES
+from app.core.cve import advisory_ids
+from app.models.finding import LOCATION_FINDING_TYPES, FindingType
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository, find_window
 
@@ -37,7 +38,23 @@ FIRST_DETECTION_INDEX = [
     ("scan_created_at", ASCENDING),
 ]
 
+# A vulnerability's finding_id names its component@version, so each version's newest copy is one seek.
+NEWEST_VULNERABILITY_INDEX = [("project_id", ASCENDING), ("finding_id", ASCENDING), ("created_at", DESCENDING)]
+VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
+
 _DETECTION_CHUNK_COMPONENTS = 10_000
+
+# What advisory_detections reads of a copy: its component, its date, and each advisory's names and date.
+_COPY_DATES: dict[str, Any] = {
+    "component": "$component",
+    "first_seen_at": {"$ifNull": ["$first_seen_at", "$scan_created_at"]},
+    "advisories": {
+        "$map": {
+            "input": "$details.vulnerabilities",
+            "in": {field: f"$$this.{field}" for field in ("id", "aliases", "resolved_cve", "first_seen_at")},
+        }
+    },
+}
 
 # What names an advisory, and its per-advisory waiver state.
 _ADVISORY_WAIVER_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "waiver_reason")
@@ -146,6 +163,49 @@ class FindingRepository(BaseRepository[FindingRecord]):
                 }
             )
         return earliest
+
+    async def advisory_detections(
+        self, project_id: str, records: Sequence[Mapping[str, Any]]
+    ) -> dict[tuple[str, str], datetime]:
+        """Earliest detection per (component, advisory id) of the records' advisories over every stored version.
+        Every persist carries the earliest dates into its copies, so each version's newest copy answers, except
+        for an advisory none of them lists, which every copy of its component dates."""
+        asked: dict[str, set[str]] = defaultdict(set)
+        for record in records:
+            for entry in record["details"]["vulnerabilities"]:
+                asked[record["component"]].update(advisory_ids(entry))
+        components = list(asked)
+        earliest: dict[tuple[str, str], datetime] = {}
+        for start in range(0, len(components), _DETECTION_CHUNK_COMPONENTS):
+            chunk = components[start : start + _DETECTION_CHUNK_COMPONENTS]
+            versions = await self.collection.distinct(
+                "finding_id", {"project_id": project_id, "component": {"$in": chunk}, **VULNERABILITIES_ONLY}
+            )
+            newest: list[dict[str, Any]] = [
+                {"$match": {"project_id": project_id, "finding_id": {"$in": versions}, **VULNERABILITIES_ONLY}},
+                {"$sort": dict(NEWEST_VULNERABILITY_INDEX)},
+                {"$group": {"_id": "$finding_id", **{key: {"$first": value} for key, value in _COPY_DATES.items()}}},
+            ]
+            await self._fold_advisory_dates(earliest, newest, NEWEST_VULNERABILITY_INDEX)
+            # A scan whose analyzer failed or came back partial stores a newest copy that misses advisories.
+            if missed := [c for c in chunk if any((c, advisory_id) not in earliest for advisory_id in asked[c])]:
+                every = [
+                    {"$match": {"project_id": project_id, "component": {"$in": missed}, **VULNERABILITIES_ONLY}},
+                    {"$project": _COPY_DATES},
+                ]
+                await self._fold_advisory_dates(earliest, every, FIRST_DETECTION_INDEX)
+        return earliest
+
+    async def _fold_advisory_dates(
+        self, earliest: dict[tuple[str, str], datetime], pipeline: list[dict[str, Any]], index: list[tuple[str, int]]
+    ) -> None:
+        async for copy in self.collection.aggregate(pipeline, hint=dict(index)):
+            for advisory in copy["advisories"] or []:
+                # A copy written before its advisories carried their own date has its finding's.
+                if first := advisory.get("first_seen_at") or copy["first_seen_at"]:
+                    for advisory_id in advisory_ids(advisory):
+                        key = (copy["component"], advisory_id)
+                        earliest[key] = min(earliest.get(key, first), first)
 
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})

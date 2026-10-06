@@ -13,6 +13,7 @@ from app.models.project import Project, Scan
 from app.models.user import User
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
+from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_ADMIN
@@ -32,21 +33,27 @@ _NOW = datetime.now(timezone.utc).replace(microsecond=0)
 _LONG_AGO = _NOW - timedelta(days=200)
 
 
-def _vulnerability(component: str, version: str, severity: Severity) -> Finding:
-    return Finding(
-        id=f"{component}:{version}",
-        type=FindingType.VULNERABILITY,
-        severity=severity,
-        component=component,
-        version=version,
-        description="known vulnerable release",
-        scanners=["trivy"],
+def _vulnerability(component: str, version: str, cve: str, severity: Severity) -> Finding:
+    """The aggregator's finding for component@version with its one advisory."""
+    aggregator = ResultAggregator()
+    aggregator.add_finding(
+        Finding(
+            id=cve,
+            type=FindingType.VULNERABILITY,
+            severity=severity,
+            component=component,
+            version=version,
+            description="known vulnerable release",
+            scanners=["trivy"],
+        )
     )
+    [finding] = aggregator.get_findings()
+    return finding
 
 
-_LOG4J = _vulnerability("log4j-core", "2.14.1", Severity.CRITICAL)
-_COMMONS_TEXT = _vulnerability("commons-text", "1.9", Severity.MEDIUM)
-_JACKSON = _vulnerability("jackson-databind", "2.13.0", Severity.HIGH)
+_LOG4J = _vulnerability("log4j-core", "2.14.1", "CVE-2021-44228", Severity.CRITICAL)
+_COMMONS_TEXT = _vulnerability("commons-text", "1.9", "CVE-2022-42889", Severity.MEDIUM)
+_JACKSON = _vulnerability("jackson-databind", "2.13.0", "CVE-2022-42003", Severity.HIGH)
 
 
 async def _build(db, scan_id: str, created_at: datetime, *findings: Finding) -> None:
@@ -93,3 +100,18 @@ async def test_nothing_is_stale_when_the_window_reaches_past_first_detection(his
     result = await _stale(history, days_open=365)
 
     assert result["findings"] == []
+
+
+async def test_a_cve_kept_across_a_version_bump_stays_stale(db, database):
+    await create_indexes(db)
+    project = Project(id=_PROJECT, name="stale-project", default_branch="main", latest_scan_id=_HEAD)
+    await db.projects.insert_one(project.model_dump(by_alias=True))
+    patched = _vulnerability("log4j-core", "2.15.0", "CVE-2021-44228", Severity.CRITICAL)
+    await _build(db, "scan-first", _LONG_AGO, _LOG4J)
+    await _build(db, _HEAD, _NOW, patched)
+
+    result = await _stale(db, days_open=30)
+
+    (row,) = result["findings"]
+    assert row["finding_id"] == patched.id
+    assert ensure_utc(datetime.fromisoformat(row["first_seen_at"])) == _LONG_AGO

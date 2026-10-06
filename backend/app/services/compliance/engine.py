@@ -240,6 +240,7 @@ class ComplianceReportEngine:
                 "scan_created_at",
                 "details.vulnerabilities.severity",
                 "details.vulnerabilities.waived",
+                "details.vulnerabilities.first_seen_at",
             )
             return clause, fields, frozenset(VULNERABILITY_ANALYZERS)
         if framework.key == ReportFramework.LICENSE_AUDIT:
