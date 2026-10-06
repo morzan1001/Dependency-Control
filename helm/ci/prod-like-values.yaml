@@ -101,7 +101,6 @@ chat:
   enabled: true
 
 monitoring:
-  enabled: true
   serviceMonitor:
     enabled: true
     tls:
