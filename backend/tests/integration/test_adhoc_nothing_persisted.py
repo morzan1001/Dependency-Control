@@ -92,7 +92,6 @@ _UNNAMED_COLLECTION = "a_collection_no_one_named"
 _UNMODELLED_DRIVER_API = "get_collection"
 _LEAK_ID = "leak"
 _LEAK_SUFFIX = ".adhoc-leak"
-_TEMP_ROOT_NAME = "adhoc-temp"
 _CALLER_DERIVED_CACHE_KEY = "osv3:0123456789abcdef"
 _SEEDED_POPULAR_PYPI = ["requests", "flask", "django"]
 _MONGO_URL = "mongodb://localhost:27017"
@@ -475,36 +474,17 @@ def recording_cache(monkeypatch: pytest.MonkeyPatch) -> _RecordedCache:
 # ── Net 5: the filesystem
 
 
-class _FilesystemWatch:
-    """Survivors under a private temp root and at the top of the working directory.
-
-    Scoped that way so ordinary library temp usage cannot make the proof flaky: a scratch file
-    the library removes leaves nothing, and bytecode caches deeper in the tree are out of view.
-    """
-
-    def __init__(self, temp_root: Path, working_directory: Path) -> None:
-        self._temp_root = temp_root
-        self._working_directory = working_directory
-        self._entries_before = set(working_directory.iterdir())
-
-    def leaked(self) -> list[str]:
-        left_in_temp = [str(path) for path in self._temp_root.rglob("*") if path.is_file()]
-        appeared_in_cwd = [str(path) for path in set(self._working_directory.iterdir()) - self._entries_before]
-        return sorted(left_in_temp + appeared_in_cwd)
-
-
-def assert_no_files_left_behind(watch: _FilesystemWatch) -> None:
-    leaked = watch.leaked()
+def assert_no_files_left_behind(scratch: Path) -> None:
+    leaked = sorted(str(path) for path in scratch.rglob("*") if path.is_file())
     assert leaked == [], f"ad-hoc analysis left files on disk: {leaked}"
 
 
 @pytest.fixture
-def filesystem_watch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _FilesystemWatch:
-    temp_root = tmp_path / _TEMP_ROOT_NAME
-    temp_root.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(temp_root))
-    monkeypatch.setenv("TMPDIR", str(temp_root))
-    return _FilesystemWatch(temp_root, Path.cwd())
+def filesystem_watch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
 
 
 # ── The proof
@@ -854,6 +834,13 @@ def test_caller_data_cached_under_a_permitted_upstream_key_is_caught():
 def test_a_file_left_behind_is_caught(filesystem_watch):
     with tempfile.NamedTemporaryFile("w", suffix=_LEAK_SUFFIX, delete=False) as handle:
         handle.write(_LEAK_ID)
+
+    with pytest.raises(AssertionError, match=_LEAK_SUFFIX):
+        assert_no_files_left_behind(filesystem_watch)
+
+
+def test_a_file_written_relative_to_the_working_directory_is_caught(filesystem_watch):
+    Path(f"{_LEAK_ID}{_LEAK_SUFFIX}").write_text(_LEAK_ID)
 
     with pytest.raises(AssertionError, match=_LEAK_SUFFIX):
         assert_no_files_left_behind(filesystem_watch)
