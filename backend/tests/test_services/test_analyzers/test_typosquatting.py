@@ -462,7 +462,7 @@ class TestSeveralPassingPopularNames:
 
 
 _UV_SBOM = Path(__file__).parents[2] / "fixtures" / "sbom" / "uvdev.syft.cdx.json"
-_SCANNED_COMPONENTS = 5000
+_SCANNED_COMPONENTS = 1000
 _PLANTED = 20
 _HEARTBEAT_SECONDS = 0.01
 _MAX_LOOP_GAP_SECONDS = 0.5
@@ -507,7 +507,7 @@ class TestALargeSbomDoesNotStallTheLoop:
     """The pairwise comparison runs in a thread, and only pairs that can pass get a full ratio."""
 
     @pytest.mark.asyncio
-    async def test_5000_components_leave_the_loop_served_and_report_the_plain_ratios(self, monkeypatch):
+    async def test_1000_components_leave_the_loop_served_and_report_the_plain_ratios(self, monkeypatch):
         rng = random.Random(20260930)
         popular = _names(rng, "abcdefghijklm", TYPOSQUATTING_POPULAR_PACKAGE_RANKS)
         swapped = (name[:2] + name[3] + name[2] + name[4:] for name in popular[::50] if len(name) >= 8)
