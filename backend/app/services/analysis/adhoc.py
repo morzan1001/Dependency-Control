@@ -44,7 +44,7 @@ from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
-from app.services.enrichment.service import vulnerability_enrichment_service
+from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     component_language_map,
@@ -69,7 +69,7 @@ _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
 _PARTIAL_COVERAGE = "partial coverage: {reason}"
 _ENRICHMENT = "epss_kev"
-_NO_VULNERABILITIES = "no vulnerability findings"
+_NO_ENRICHABLE_IDS = "no CVE or GHSA id to look up"
 _REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
@@ -470,9 +470,7 @@ async def _enrich_vulnerabilities(
     """Add EPSS/KEV to the vulnerability records; returns the EPSS/KEV summary and the per-CVE enrichment."""
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
-    if not vulnerabilities:
-        report.skipped[_ENRICHMENT] = _NO_VULNERABILITIES
-        return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
+    sends = sends_ids(vulnerabilities)
     try:
         threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
     except Exception as exc:
@@ -481,8 +479,10 @@ async def _enrich_vulnerabilities(
     else:
         if unavailable:
             _record_errored(report, _ENRICHMENT, f"{' and '.join(unavailable)} unavailable")
-        else:
+        elif sends:
             _record_ran(report, _ENRICHMENT)
+        else:
+            report.skipped[_ENRICHMENT] = _NO_ENRICHABLE_IDS
     refresh_vulnerability_info(records)
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
