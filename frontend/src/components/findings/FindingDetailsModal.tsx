@@ -549,10 +549,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                     <span className="text-destructive">{vuln.kev_required_action}</span>
                                                                 </div>
                                                             )}
-                                                            {(vuln.exploit_maturity || finding.details?.exploit_maturity) && (
+                                                            {vuln.exploit_maturity && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">Exploit:</span>
-                                                                    <span className={getExploitMaturityClass(vuln.exploit_maturity || finding.details?.exploit_maturity)}>{vuln.exploit_maturity || finding.details?.exploit_maturity}</span>
+                                                                    <span className={getExploitMaturityClass(vuln.exploit_maturity)}>{vuln.exploit_maturity}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.details?.published_date || finding.details?.published_date) && (

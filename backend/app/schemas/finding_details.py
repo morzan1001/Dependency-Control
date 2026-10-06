@@ -138,6 +138,7 @@ class VulnerabilityEntryDetails(_DetailsModel):
     kev_due_date: str | None = None
     kev_required_action: str | None = None
     kev_ransomware_use: bool | None = None
+    exploit_maturity: str | None = None
     risk_score: float | None = None
     github_advisory_url: str | None = None
     resolved_cve: str | None = None

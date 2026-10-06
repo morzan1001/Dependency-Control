@@ -24,7 +24,7 @@ from app.services.enrichment.scoring import calculate_risk_score, fold_enrichmen
 logger = logging.getLogger(__name__)
 
 # Enrichment the document carries only as the roll-up over its advisories.
-_ROLLUP_ONLY_KEYS = frozenset({"epss_date", "exploit_maturity"})
+_ROLLUP_ONLY_KEYS = frozenset({"epss_date"})
 
 
 def _build_enrichment(cve: str, kev_entry: KEVEntry | None, epss_entry: EPSSData | None) -> VulnerabilityEnrichment:
