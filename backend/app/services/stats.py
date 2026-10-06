@@ -159,11 +159,11 @@ async def recalculate_project_stats(
 
 
 async def restamp_single_scan(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> None:
-    """Restamp one scan with the project's active waivers under its stats lock, ahead of the queued recalculation."""
+    """Restamp a scan with the project's active waivers now, or leave it to the queue while its stats lock is taken."""
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"stats_recalc:{project_id}"
     holder_id = new_lock_holder()
-    if not await _acquire_with_backoff(lock_repo, lock_name, holder_id):
+    if not await lock_repo.acquire_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
         return
     try:
         waivers = await WaiverRepository(db).find_active_for_project(project_id)

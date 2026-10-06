@@ -1,5 +1,6 @@
 """A waiver written from a scan answers once that scan's findings carry it, so the page's refetch shows it waived."""
 
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -9,6 +10,7 @@ from app.api.v1.endpoints.waivers import create_waiver
 from app.core.init_db import create_indexes
 from app.models.user import User
 from app.models.waiver import Waiver
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.waiver import WaiverCreate
 from app.services.stats import run_waiver_recalc
 from tests.helpers.permission_presets import PRESET_ADMIN
@@ -62,10 +64,7 @@ async def _seed(db) -> None:
     )
 
 
-async def test_the_named_scan_is_restamped_before_the_response(db):
-    await _seed(db)
-    background = BackgroundTasks()
-
+async def _waive_from_the_feature_scan(db, background: BackgroundTasks) -> None:
     await create_waiver(
         waiver_in=WaiverCreate(
             project_id=_PROJECT,
@@ -80,6 +79,13 @@ async def test_the_named_scan_is_restamped_before_the_response(db):
         current_user=User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN)),
     )
 
+
+async def test_the_named_scan_is_restamped_before_the_response(db):
+    await _seed(db)
+    background = BackgroundTasks()
+
+    await _waive_from_the_feature_scan(db, background)
+
     finding = await db.findings.find_one({"_id": f"{_FEATURE}:gpl"})
     assert finding.get("waived") is True
     assert finding.get("waiver_reason") == _REASON
@@ -91,3 +97,16 @@ async def test_the_named_scan_is_restamped_before_the_response(db):
     # The other scans the waiver reaches are still left to the queued recalculation.
     assert (await db.findings.find_one({"_id": f"{_HEAD}:gpl"})).get("waived") is not True
     assert [task.func for task in background.tasks] == [run_waiver_recalc]
+
+
+async def test_a_taken_stats_lock_leaves_the_named_scan_to_the_queue_without_waiting(db):
+    await _seed(db)
+    await DistributedLocksRepository(db).acquire_lock(f"stats_recalc:{_PROJECT}", "other-holder", 300)
+
+    started = time.monotonic()
+    await _waive_from_the_feature_scan(db, BackgroundTasks())
+
+    # Waiting out the lock's backoff takes 6.2 s; the rest is room for a loaded machine.
+    assert time.monotonic() - started < 3
+    assert (await db.findings.find_one({"_id": f"{_FEATURE}:gpl"})).get("waived") is not True
+    assert await db.waiver_recalc.find_one({"restamp": [_FEATURE]}) is not None
