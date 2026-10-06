@@ -335,6 +335,8 @@ async def test_a_version_another_branch_moved_off_keeps_its_own_cve_dates(db, da
 async def test_a_cve_one_scan_of_its_version_missed_keeps_its_first_detection(db, database):
     high, low = ("CVE-2021-44228", Severity.HIGH), ("CVE-2021-45046", Severity.LOW)
     await _persist(db, "scan-1", _days_ago(200), _log4j_advisories(high, low))
+    # Written when its scan ran: two persists can share a millisecond, and the tie would leave scan-1 newest.
+    await db.findings.update_many({"scan_id": "scan-1"}, {"$set": {"created_at": _days_ago(200)}})
     await _persist(db, "scan-2", _days_ago(5), _log4j_advisories(low))
 
     [doc] = await _persist(db, "scan-3", _days_ago(1), _log4j_advisories(high, low))
