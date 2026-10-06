@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Dashboard from '../Dashboard'
 import type { Project } from '@/types/project'
 
-const { useProjectsMock } = vi.hoisted(() => ({ useProjectsMock: vi.fn() }))
+const { useProjectsMock, navigateMock } = vi.hoisted(() => ({ useProjectsMock: vi.fn(), navigateMock: vi.fn() }))
 
 vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: () => useProjectsMock() }))
 vi.mock('@/hooks/queries/use-analytics', () => ({
@@ -13,7 +13,7 @@ vi.mock('@/hooks/queries/use-analytics', () => ({
 vi.mock('@/hooks/queries/use-scans', () => ({
   useRecentScans: () => ({ data: [], isLoading: false }),
 }))
-vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
+vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }))
 vi.mock('recharts', () => ({
   ResponsiveContainer: () => null,
   BarChart: () => null,
@@ -71,5 +71,18 @@ describe('Dashboard project table team column', () => {
 
     expect(screen.getByText('project-p1')).toBeInTheDocument()
     expect(screen.getByText('Unassigned')).toBeInTheDocument()
+  })
+})
+
+describe('Dashboard severity cards', () => {
+  it.each([
+    ['Critical Vulnerabilities', 'CRITICAL'],
+    ['High Vulnerabilities', 'HIGH'],
+  ])('open the vulnerability search filtered by severity from %s', (title, severity) => {
+    renderDashboard([])
+
+    fireEvent.click(screen.getByText(title))
+
+    expect(navigateMock).toHaveBeenCalledWith(`/analytics?tab=search-vulns&severity=${severity}`)
   })
 })

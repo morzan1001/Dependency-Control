@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import AnalyticsPage from '../Analytics'
@@ -57,7 +58,7 @@ const scope: AnalyticsScope = {
   oldest_analysis_at: OLDEST_ANALYSIS_AT,
 }
 
-function renderPage() {
+function renderPage(url = '/analytics') {
   const auth: AuthContextType = {
     isAuthenticated: true,
     isLoading: false,
@@ -69,7 +70,9 @@ function renderPage() {
 
   return render(
     <AuthContext.Provider value={auth}>
-      <AnalyticsPage />
+      <MemoryRouter initialEntries={[url]}>
+        <AnalyticsPage />
+      </MemoryRouter>
     </AuthContext.Provider>,
   )
 }
@@ -134,5 +137,19 @@ describe('Analytics release mode across tabs', () => {
     expect(screen.getByTestId(MODE_PROBE)).toHaveTextContent(PRODUCTION)
     expect(screen.getByLabelText(SCOPE_LABEL)).toBeEnabled()
     expect(screen.queryByText(HEAD_ONLY_NOTE)).not.toBeInTheDocument()
+  })
+})
+
+describe('Analytics deep link', () => {
+  it('opens the tab the link names', () => {
+    renderPage('/analytics?tab=search-vulns&severity=CRITICAL')
+
+    expect(screen.getByRole('tab', { name: 'Vulnerabilities' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('opens the first tab for a tab the user cannot see', () => {
+    renderPage('/analytics?tab=no-such-tab')
+
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
   })
 })

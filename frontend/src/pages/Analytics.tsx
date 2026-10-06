@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AnalyticsSummaryCards, SeverityDistribution, DependencyTypesChart } from '@/components/analytics/AnalyticsSummary'
 import { AnalyticsScopeControl } from '@/components/analytics/AnalyticsScopeControl'
@@ -30,7 +31,8 @@ export default function AnalyticsPage() {
   const [showFindingsModal, setShowFindingsModal] = useState(false)
   // Undefined is head mode, the default every tab reports until the scope control names an environment.
   const [releaseEnvironment, setReleaseEnvironment] = useState<string | undefined>(undefined)
-  const [pickedTab, setPickedTab] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const pickedTab = searchParams.get('tab')
   const { hasPermission } = useAuth()
 
   const canViewSummary = hasPermission('analytics:read') || hasPermission('analytics:summary')
@@ -88,7 +90,7 @@ export default function AnalyticsPage() {
 
         {canViewSummary && <AnalyticsSummaryCards />}
 
-        <Tabs value={activeTab} onValueChange={setPickedTab} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={(tab) => setSearchParams({ tab }, { replace: true })} className="space-y-6">
           <TabsList>
             {availableTabs.map((tab) => {
               const Icon = tab.icon
