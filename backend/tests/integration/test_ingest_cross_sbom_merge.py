@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from app.core.constants import DEPENDENCIES_SCAN_PACKAGE_INDEX
 from app.core.init_db import create_indexes
 from app.repositories.dependencies import DependencyRepository
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
@@ -227,14 +226,10 @@ async def test_a_finished_store_leaves_exactly_the_new_inventory(db):
     assert all(isinstance(doc["_id"], str) for doc in inventory.values())
 
 
-async def _upsert_key(db) -> None:
-    await db.dependencies.create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
-
-
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_scan_without_rows_takes_inserts_and_a_stored_scan_upserts(db):
-    await _upsert_key(db)
+    await create_indexes(db)
     repo = DependencyRepository(db)
     sbom = _sbom(_dep("a"), _dep("b"))
 
@@ -247,7 +242,7 @@ async def test_a_scan_without_rows_takes_inserts_and_a_stored_scan_upserts(db):
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_rows_a_concurrent_store_inserted_first_are_written_over_once(db):
-    await _upsert_key(db)
+    await create_indexes(db)
     repo = DependencyRepository(db)
     earlier_at = datetime.now(timezone.utc).replace(microsecond=0)
     later_at = earlier_at + timedelta(seconds=1)
@@ -270,7 +265,7 @@ async def test_rows_a_concurrent_store_inserted_first_are_written_over_once(db):
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_first_store_that_fails_part_way_is_completed_by_its_retry(db, monkeypatch):
-    await _upsert_key(db)
+    await create_indexes(db)
     repo = DependencyRepository(db)
     sbom = _sbom(_dep("a"), _dep("b"), _dep("c"))
     build = dependency_store._parsed_dep_to_dependency
