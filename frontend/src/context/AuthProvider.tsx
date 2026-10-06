@@ -6,6 +6,7 @@ import { jwtDecode } from 'jwt-decode'
 import { authApi } from '@/api/auth'
 import { setLogoutCallback } from '@/api/client'
 import { userApi } from '@/api/users'
+import { LOGIN_RETURN_KEY } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { hasPermission as checkPermission } from '@/lib/permissions'
 
@@ -77,7 +78,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     // Mount-only: logout is read via logoutRef so navigation identity changes don't re-fire getMe.
   }, [])
 
-  const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
+  const login = useCallback((accessToken: string, refreshToken: string) => {
     localStorage.setItem('token', accessToken)
     localStorage.setItem('refresh_token', refreshToken)
 
@@ -89,9 +90,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       // Limited token issued for 2FA setup only.
       if (perms.length === 1 && perms[0] === 'auth:setup_2fa') {
         setIsAuthenticated(true)
-        if (!skipNavigation) {
-          navigate('/setup-2fa')
-        }
+        navigate('/setup-2fa', { replace: true })
         return
       }
     } catch (e) {
@@ -99,9 +98,9 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     }
 
     setIsAuthenticated(true)
-    if (!skipNavigation) {
-      navigate('/dashboard')
-    }
+    const returnTo = sessionStorage.getItem(LOGIN_RETURN_KEY) ?? '/dashboard'
+    sessionStorage.removeItem(LOGIN_RETURN_KEY)
+    navigate(returnTo, { replace: true })
   }, [navigate])
 
   const contextValue = useMemo(() => ({

@@ -33,7 +33,7 @@ import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { authApi } from '@/api/auth'
 import { systemApi } from '@/api/system'
-import { ANALYTICS_ROUTE_PERMISSIONS } from '@/lib/constants'
+import { ANALYTICS_ROUTE_PERMISSIONS, LOGIN_RETURN_KEY } from '@/lib/constants'
 import { lazy, Suspense, useState, useEffect } from 'react'
 
 const queryClient = new QueryClient({
@@ -92,7 +92,8 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    sessionStorage.setItem(LOGIN_RETURN_KEY, location.pathname + location.search + location.hash);
+    return <Navigate to="/login" replace />;
   }
 
   return <Force2FAGuard>{children}</Force2FAGuard>;

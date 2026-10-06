@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { MemoryRouter, Navigate, Routes, Route, useNavigate } from 'react-router-dom'
+import { MemoryRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { api } from '@/api/client'
+import { LOGIN_RETURN_KEY } from '@/lib/constants'
 
 import { AuthProvider } from '../AuthProvider'
 import { useAuth } from '../useAuth'
@@ -294,5 +295,61 @@ describe('AuthProvider logout', () => {
       `Bearer ${firstUser}`,
       `Bearer ${secondUser}`,
     ])
+  })
+})
+
+function LocationProbe() {
+  const location = useLocation()
+  return <span data-testid="location">{location.pathname + location.search}</span>
+}
+
+function renderLoginPage(token: string) {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<LoginAs token={token} />} />
+            <Route path="*" element={<LocationProbe />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('AuthProvider login', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    sessionStorage.clear()
+  })
+
+  it('returns to the page a signed-out visitor was sent to log in from', async () => {
+    sessionStorage.setItem(LOGIN_RETURN_KEY, '/projects/p1?tab=scans')
+    renderLoginPage(makeToken(['project:read']))
+
+    fireEvent.click(await screen.findByText('login'))
+
+    expect(await screen.findByTestId('location')).toHaveTextContent('/projects/p1?tab=scans')
+    expect(sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull()
+  })
+
+  it('opens the dashboard when no page is waiting', async () => {
+    renderLoginPage(makeToken(['project:read']))
+
+    fireEvent.click(await screen.findByText('login'))
+
+    expect(await screen.findByTestId('location')).toHaveTextContent('/dashboard')
+  })
+
+  it('sends a session that must enrol in 2FA to the setup page and keeps the page waiting', async () => {
+    sessionStorage.setItem(LOGIN_RETURN_KEY, '/projects/p1')
+    renderLoginPage(makeToken(['auth:setup_2fa']))
+
+    fireEvent.click(await screen.findByText('login'))
+
+    expect(await screen.findByTestId('location')).toHaveTextContent('/setup-2fa')
+    expect(sessionStorage.getItem(LOGIN_RETURN_KEY)).toBe('/projects/p1')
   })
 })

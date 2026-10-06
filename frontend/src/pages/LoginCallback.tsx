@@ -18,7 +18,7 @@ const SSO_ERRORS = new Map([
 
 export default function LoginCallback() {
   const navigate = useNavigate()
-  const { login, isAuthenticated } = useAuth()
+  const { login } = useAuth()
   const processedRef = useRef(false)
 
   useEffect(() => {
@@ -34,15 +34,9 @@ export default function LoginCallback() {
     }
     authApi
       .exchangeOidcLogin()
-      .then(({ access_token, refresh_token }) => login(access_token, refresh_token, true))
+      .then(({ access_token, refresh_token }) => login(access_token, refresh_token))
       .catch(() => fail(SSO_FAILED))
   }, [navigate, login])
-
-  useEffect(() => {
-    if (processedRef.current && isAuthenticated) {
-      navigate('/dashboard', { replace: true })
-    }
-  }, [isAuthenticated, navigate])
 
   return (
     <div className="flex h-screen items-center justify-center">
