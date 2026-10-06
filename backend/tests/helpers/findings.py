@@ -11,8 +11,8 @@ _GRYPE_OUTPUT = json.loads((Path(__file__).parents[1] / "fixtures/grype/grype_0.
 _NPM_MATCH = _GRYPE_OUTPUT["matches"][0]
 
 
-def stored_vulnerability(component: str, version: str, advisories: list[dict[str, Any]]) -> dict[str, Any]:
-    """The aggregator's document for one component@version; other advisory keys are set on it afterwards."""
+def aggregated_vulnerability(component: str, version: str, *advisories: dict[str, Any]) -> Finding:
+    """The aggregator's one finding for component@version holding each advisory's id, severity and fix."""
     aggregator = ResultAggregator()
     for advisory in advisories:
         aggregator.add_finding(
@@ -28,7 +28,12 @@ def stored_vulnerability(component: str, version: str, advisories: list[dict[str
             )
         )
     [finding] = aggregator.get_findings()
-    doc = finding.model_dump()
+    return finding
+
+
+def stored_vulnerability(component: str, version: str, advisories: list[dict[str, Any]]) -> dict[str, Any]:
+    """The aggregator's document for one component@version; other advisory keys are set on it afterwards."""
+    doc = aggregated_vulnerability(component, version, *advisories).model_dump()
     later = {a["id"]: {k: v for k, v in a.items() if k not in _SCANNER_KEYS} for a in advisories}
     for entry in doc["details"]["vulnerabilities"]:
         entry.update(later[entry["id"]])

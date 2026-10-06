@@ -23,6 +23,7 @@ from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from tests.helpers.compliance import evaluation_input
+from tests.helpers.findings import aggregated_vulnerability
 
 _PROJECT = "sla-project"
 _OTHER_PROJECT = "other-project"
@@ -48,22 +49,7 @@ async def _indexes(db):
 
 
 def _vulnerable(component: str, version: str, *advisories: tuple[str, Severity]) -> Finding:
-    """The aggregator's one finding for component@version holding each (CVE, severity) as its own advisory."""
-    aggregator = ResultAggregator()
-    for cve, severity in advisories:
-        aggregator.add_finding(
-            Finding(
-                id=cve,
-                type=FindingType.VULNERABILITY,
-                severity=severity,
-                component=component,
-                version=version,
-                description="",
-                scanners=["trivy"],
-            )
-        )
-    [finding] = aggregator.get_findings()
-    return finding
+    return aggregated_vulnerability(component, version, *({"id": cve, "severity": sev} for cve, sev in advisories))
 
 
 def _log4j_advisories(*advisories: tuple[str, Severity], version: str = "2.14.1") -> Finding:

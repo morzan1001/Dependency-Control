@@ -8,14 +8,14 @@ import pytest_asyncio
 from app.core import ensure_utc
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.core.init_db import create_indexes
-from app.models.finding import Finding, FindingType, Severity
+from app.models.finding import Finding, Severity
 from app.models.project import Project, Scan
 from app.models.user import User
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
-from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.findings import aggregated_vulnerability
 from tests.helpers.permission_presets import PRESET_ADMIN
 
 # The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
@@ -34,21 +34,7 @@ _LONG_AGO = _NOW - timedelta(days=200)
 
 
 def _vulnerability(component: str, version: str, cve: str, severity: Severity) -> Finding:
-    """The aggregator's finding for component@version with its one advisory."""
-    aggregator = ResultAggregator()
-    aggregator.add_finding(
-        Finding(
-            id=cve,
-            type=FindingType.VULNERABILITY,
-            severity=severity,
-            component=component,
-            version=version,
-            description="known vulnerable release",
-            scanners=["trivy"],
-        )
-    )
-    [finding] = aggregator.get_findings()
-    return finding
+    return aggregated_vulnerability(component, version, {"id": cve, "severity": severity})
 
 
 _LOG4J = _vulnerability("log4j-core", "2.14.1", "CVE-2021-44228", Severity.CRITICAL)

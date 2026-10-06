@@ -14,7 +14,7 @@ from app.core.metrics import compliance_reports_total
 from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport
 from app.models.crypto_asset import CryptoAsset
-from app.models.finding import Finding, FindingType, Severity
+from app.models.finding import Severity
 from app.models.project import Project, Scan
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -35,6 +35,7 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.normalizers.license import normalize_license
 from tests.helpers.analyzers import analyze_cyclonedx
 from tests.helpers.compliance import evaluation_input
+from tests.helpers.findings import aggregated_vulnerability
 
 
 def _report(**overrides):
@@ -244,20 +245,7 @@ async def _store_findings(db, pid, scan_id, findings):
 
 
 def _vulnerability(component, severity):
-    aggregator = ResultAggregator()
-    aggregator.add_finding(
-        Finding(
-            id="CVE-2021-44228",
-            type=FindingType.VULNERABILITY,
-            severity=severity,
-            component=component,
-            version="2.14.1",
-            description="remote code execution",
-            scanners=["trivy"],
-        )
-    )
-    [finding] = aggregator.get_findings()
-    return finding
+    return aggregated_vulnerability(component, "2.14.1", {"id": "CVE-2021-44228", "severity": severity})
 
 
 def _project_scope(pid="p1"):
