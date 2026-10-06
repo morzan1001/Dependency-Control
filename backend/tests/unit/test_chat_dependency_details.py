@@ -100,3 +100,18 @@ async def test_a_bare_name_prefers_the_package_of_that_whole_name_over_a_qualifi
     result = await ChatToolRegistry().execute_tool("get_dependency_details", {"dependency_name": "uuid"}, admin, db)
 
     assert result["dependency"]["purl"] == _NPM_UUID["purl"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asked_for", ["lodash", "pkg:npm/lodash"], ids=["name", "versionless-purl"])
+async def test_a_versionless_lookup_answers_with_the_most_recently_added_version(asked_for):
+    db = FakeDatabase()
+    for version in ("4.17.20", "4.17.21"):
+        await DependencyEnrichmentRepository(db).upsert_many(
+            [{"name": "lodash", "version": version, "purl": f"pkg:npm/lodash@{version}", "data": {"license": "MIT"}}]
+        )
+    admin = User(id="u-admin", username="admin", email="admin@test.com", permissions=PRESET_ADMIN)
+
+    result = await ChatToolRegistry().execute_tool("get_dependency_details", {"dependency_name": asked_for}, admin, db)
+
+    assert result["dependency"]["version"] == "4.17.21"

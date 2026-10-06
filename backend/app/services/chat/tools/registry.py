@@ -782,7 +782,7 @@ class ChatToolRegistry:
                 else [{"name": {"$regex": f"^{q}{re.escape(wanted)}$", "$options": "i"}} for q in ("", "[^@][^:]*[:/]")]
             )
             for match in matches:
-                dep = dep or await ctx.db["dependency_enrichments"].find_one(match)
+                dep = dep or await ctx.db["dependency_enrichments"].find_one(match, sort=[("_id", -1)])
         if not dep:
             return {"error": "Dependency not found in enrichment data"}
         return {"dependency": _serialize_doc(dep)}
