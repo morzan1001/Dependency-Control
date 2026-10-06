@@ -1,8 +1,7 @@
 """Who hears about a project's events, once several teams own it.
 
 An owning team's members can read the project, so leaving one of them out of a notification or
-skipping its webhook is the same under-reach the visibility filter had: the mirrored scalar names
-one owner and the reach was built from it. Both are asserted from the other side too — a team that
+skipping its webhook is an under-reach. Both are asserted from the other side too — a team that
 owns nothing must reach nobody.
 """
 
