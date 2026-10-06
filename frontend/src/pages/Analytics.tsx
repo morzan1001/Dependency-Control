@@ -65,6 +65,13 @@ export default function AnalyticsPage() {
   // there and the switch names what is on screen instead of a mode nothing below it obeys.
   const scopeEnvironment = headOnlyTab === undefined ? releaseEnvironment : undefined
 
+  const openTab = (tab: string) => setSearchParams((prev) => {
+    const next = new URLSearchParams(prev)
+    next.set('tab', tab)
+    next.delete('severity')
+    return next
+  }, { replace: true })
+
   const handleComponentSelect = (name: string, version?: string, type?: string) => {
     setSelectedComponent({ name, version, type })
     setShowFindingsModal(true)
@@ -90,7 +97,7 @@ export default function AnalyticsPage() {
 
         {canViewSummary && <AnalyticsSummaryCards />}
 
-        <Tabs value={activeTab} onValueChange={(tab) => setSearchParams({ tab }, { replace: true })} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={openTab} className="space-y-6">
           <TabsList>
             {availableTabs.map((tab) => {
               const Icon = tab.icon
