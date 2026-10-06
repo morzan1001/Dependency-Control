@@ -4,7 +4,7 @@ These notes cover the upgrade from 1.9.48. Run mongosh commands in-pod on the pr
 
 ## Before the rollout (gate): build the newest-copy index on findings
 
-Each analysis dates every advisory by its earliest detection in the project and reads the newest stored copy of each vulnerability through a new partial index that the query names. The index has to exist before the first new pod persists a scan, because startup would otherwise build it in-line over the whole collection and miss the startup probe. Build it without a `name` option, since startup declares it under the default name, and with exactly this filter:
+Each analysis dates every advisory by its earliest detection in the project and reads the newest stored copy of each vulnerability through a new partial index that the query names. The index has to exist before the first new pod starts: startup would otherwise build it in-line over the whole collection and miss the startup probe, and every persist names it. Build it without a `name` option, since startup declares it under the default name, and with exactly this filter:
 
 ```js
 db.findings.createIndex({ project_id: 1, finding_id: 1, created_at: -1 }, { partialFilterExpression: { type: "vulnerability" } })
@@ -23,7 +23,7 @@ Roll out the backend before or together with the frontend. The new frontend sear
 ## After the rollout
 
 - These indexes back hinted reads, and a hinted read fails while its index is missing, so every index cleanup keeps them: on `findings` `scan_id_1_type_1`, `scan_id_1_component_1_version_1`, `project_id_1_finding_id_1_created_at_-1` and `project_id_1_component_1_type_1_finding_id_1_version_1_first_seen_at_1_scan_created_at_1`; on `dependencies` `scan_id_1_name_1_version_1_purl_1`; on `scans` `scans_released_list`.
-- Startup no longer creates `findings` `type_1`, `analysis_results` `scan_id_1`, `dependencies` `scan_id_1_name_1_version_1` and `projects` `team_id_1`, whose reads wider indexes serve. Once every pod runs this release, drop them to save their writes and memory:
+- Startup no longer creates `findings` `type_1`, `analysis_results` `scan_id_1` and `dependencies` `scan_id_1_name_1_version_1`, whose reads wider indexes serve, nor `projects` `team_id_1`, which nothing reads. Once every pod runs this release, drop them to save their writes and memory:
 
   ```js
   db.findings.dropIndex("type_1")
@@ -35,11 +35,12 @@ Roll out the backend before or together with the frontend. The new frontend sear
   A rollback to 1.9.48 or earlier builds them during startup, so recreate them in mongosh before rolling back.
 - Projects keep the `team_id` and `team_source` they last had. The application reads and writes `team_ids` and `team_sources` only. Once no report or query outside the application reads the two fields, remove them: `db.projects.updateMany({}, { $unset: { team_id: "", team_source: "" } })`.
 - The first analysis of each project reads every stored copy of its vulnerable components once to date their advisories, so the primary carries more read load on the first day.
-- A vulnerability finding's `first_seen_at` is the earliest detection of any of its advisories on that component, in any version, and each advisory carries its own date. CVE SLA ages, the scan delta's first seen and the hotspot days known move earlier for CVEs that survived a version bump. Copies stored without a date count from their scan's date, so the `first_seen_at` backfill that the 1.9.42 notes listed is gone from them: run with this release, it would date each advisory by its version's first detection, and the date would stay.
+- A vulnerability finding's `first_seen_at` is the earliest detection of any of its advisories on that component, in any version, and each advisory carries its own date. CVE SLA ages, the scan delta's first seen and the hotspot days known move earlier for CVEs that survived a version bump. Advisories that copies written by 1.9.42 to 1.9.48 already list keep those copies' date, their version's first detection, as before. Copies stored without a date count from their scan's date, so the `first_seen_at` backfill that the 1.9.42 notes listed is gone from them: run with this release, it would date each advisory by its version's first detection, and the date would stay.
 - Per-advisory exploit maturity and first-seen dates appear with a scan's next analysis.
-- API: project responses carry `team_ids`, `team_sources` and `teams` in place of `team_id` and `team_source`. `/system/app-config` leaves out `project_limit_per_user` and `/analytics/dependency-metadata` leaves out `total_finding_count`. `/analytics/component-findings` returns the 100 most severe findings with the full count in `X-Total-Count`. `/analytics/vulnerability-search` accepts a search without `q` and leaves system warnings out unless `finding_type` names them. `GET /waivers` takes `active=true`. The chat and MCP tools `list_projects`, `get_scan_history` and `list_archives` report `projects_total`, `scans_total` and `archives_total`, and `suggest_waiver_for_finding` reads the head build unless given a `scan_id`.
-- Scanner 1.3.1 ships with this backend, and both pipeline examples pin it. Switch pipelines after the deploy, with the hash from `/api/v1/scripts/scanner.sh/hash?v=1.3.1`. A `DEP_CONTROL_RELEASE_ENVIRONMENT` that is not a slug (`^[a-z0-9][a-z0-9_-]{0,31}$`) now sends the scan without a release mark and prints a warning.
+- API: project responses leave out `team_id` and `team_source`; owners are in `team_ids` and `team_sources`, and project list items also carry `teams`. `/system/app-config` leaves out `project_limit_per_user` and `/analytics/dependency-metadata` leaves out `total_finding_count`. `/analytics/component-findings` returns the 100 most severe findings with the full count in `X-Total-Count`. `/analytics/vulnerability-search` accepts a search without `q` and leaves system warnings out unless `finding_type` names them. `GET /waivers` takes `active=true`. The chat and MCP tool `list_projects` reports `projects_total` in place of `count`, and `get_scan_history` and `list_archives` add `scans_total` and `archives_total`. `suggest_waiver_for_finding` reads the head build unless given a `scan_id`, and its answer carries a `scan` block. `get_stale_findings` rows carry the worst stale advisory's severity, CVE and date. `get_dependency_details` matches the whole name or a versionless purl. `find_component_usage` answers an empty name with nothing and also matches qualified names by purl path. `get_expiring_waivers` reports `package` as null where the waiver names none.
+- Scanner 1.3.1 ships with this backend, and both pipeline examples pin it. Switch pipelines after the deploy, with the hash from `/api/v1/scripts/scanner.sh/hash?v=1.3.1`. A `DEP_CONTROL_RELEASE_ENVIRONMENT` that is not a slug after lowercasing (`^[a-z0-9][a-z0-9_-]{0,31}$`) now sends the scan without a release mark and prints a warning.
 - GitHub decorates a pull request through the merge-commit fallback for builds whose branch is `<number>/merge`, which the shipped scanner sends for pull request builds.
+- A deployment that serves the API cross-origin behind its own proxy exposes `X-Total-Count` to the browser, as the bundled Traefik file does.
 
 
 
@@ -257,8 +258,8 @@ After the rollout, once the last pod on the previous image has terminated:
 17. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
 18. Remove memberships of deleted users and leftovers of deleted projects.
 19. Remove stored chat images.
-21. Watch the primary's load, and remove the Helm values and environment variables the backend does not read.
-22. Review the crypto system policy after its seed bump (a review).
+20. Watch the primary's load, and remove the Helm values and environment variables the backend does not read.
+21. Review the crypto system policy after its seed bump (a review).
 
 Once 1.9.42 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
 
