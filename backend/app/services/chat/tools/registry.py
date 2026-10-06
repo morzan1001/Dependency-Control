@@ -1187,15 +1187,16 @@ class ChatToolRegistry:
         head, names = await self._heads_in_scope(ctx)
         if not names:
             return {"matches": [], "message": "No accessible projects"}
-        head_scan_ids = list(head.values())
-        # The caller may quote a finding's group-qualified component; the inventory
-        # stores the bare artifact name, so search on that too.
-        wanted = ctx.args["component_name"]
-        patterns = {wanted, artifact_segment(wanted)}
-        dep_query: dict[str, Any] = {
-            "name": {"$in": [re.compile(re.escape(p), re.IGNORECASE) for p in patterns if p]},
-            "scan_id": {"$in": head_scan_ids},
-        }
+        wanted = (ctx.args["component_name"] or "").strip()
+        if not wanted:
+            return {"matches": [], "count": 0, "matches_total": 0}
+        by_name: list[dict[str, Any]] = [{"name": {"$regex": re.escape(wanted), "$options": "i"}}]
+        segment = artifact_segment(wanted)
+        if segment != wanted:
+            # The inventory may store a qualified component under its bare artifact; its purl keeps the qualifier.
+            path = re.escape(f"{wanted[: -len(segment) - 1]}/{segment}")
+            by_name.append({"purl": {"$regex": f"^pkg:[^/]+/{path}(?:[@?#]|$)", "$options": "i"}})
+        dep_query: dict[str, Any] = {"$or": by_name, "scan_id": {"$in": list(head.values())}}
         if ctx.args.get("version"):
             dep_query["version"] = ctx.args["version"]
         rows, rows_total = await bounded_read(
