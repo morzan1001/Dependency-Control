@@ -13,7 +13,7 @@ import { usePaginationState } from '@/hooks/use-pagination-state';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
 
 export default function UsersPage() {
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState({ defaultSort: 'username', defaultOrder: 'asc' });
   const limit = SMALL_PAGE_SIZE;
@@ -49,6 +49,8 @@ export default function UsersPage() {
   }));
 
   const activeUsers: User[] = (users || []).map(u => ({ ...u, status: 'active' as const }));
+  const selectedUser = [...invitationUsers, ...activeUsers].find(u => u.id === selectedUserId) ?? null;
+  const selectUser = (user: User) => setSelectedUserId(user.id);
 
   const showInvitations = page === 1 && invitationUsers.length > 0;
 
@@ -114,7 +116,7 @@ export default function UsersPage() {
                   page={0}
                   limit={limit}
                   onPageChange={() => {}}
-                  onSelectUser={setSelectedUser}
+                  onSelectUser={selectUser}
                 />
               </CardContent>
             </Card>
@@ -129,7 +131,7 @@ export default function UsersPage() {
                 page={page - 1}
                 limit={limit}
                 onPageChange={(p) => setPage(p + 1)}
-                onSelectUser={setSelectedUser}
+                onSelectUser={selectUser}
                 sortBy={sortBy}
                 sortOrder={sortOrder}
                 onSort={(column) => {
@@ -149,7 +151,7 @@ export default function UsersPage() {
       <UserDetailsDialog 
         user={selectedUser} 
         open={!!selectedUser} 
-        onOpenChange={(open) => !open && setSelectedUser(null)} 
+        onOpenChange={(open) => !open && setSelectedUserId(null)}
       />
     </div>
   );

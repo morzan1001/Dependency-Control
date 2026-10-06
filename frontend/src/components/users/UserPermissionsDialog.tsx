@@ -30,19 +30,8 @@ interface UserPermissionsDialogProps {
 
 export function UserPermissionsDialog({ user, open, onOpenChange }: Readonly<UserPermissionsDialogProps>) {
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user?.permissions || []);
-  const [prevUserId, setPrevUserId] = useState<string | null>(user?.id || null);
-  const [prevOpen, setPrevOpen] = useState(open);
 
   const updateUserMutation = useUpdateUser();
-
-  // Adjust state during render to resync permissions when the user or open state changes.
-  if (user && (user.id !== prevUserId || (open && !prevOpen))) {
-    setPrevUserId(user.id);
-    setPrevOpen(open);
-    setSelectedPermissions(user.permissions || []);
-  } else if (open !== prevOpen) {
-    setPrevOpen(open);
-  }
 
   const addPermission = (permission: string) => {
     setSelectedPermissions(prev => [...prev, permission]);
