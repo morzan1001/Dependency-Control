@@ -101,3 +101,21 @@ describe("DependencyTree lazy expansion + cycle handling", () => {
     expect(screen.queryByText(TRUNCATION_NOTE)).toBeNull();
   });
 });
+
+describe("DependencyTree load error", () => {
+  it("says the request failed instead of reporting no dependencies", async () => {
+    getTree.mockRejectedValue(
+      Object.assign(new Error("Request failed"), { response: { status: 403, data: { detail: "Not enough permissions" } } }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <DependencyTree />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByText("select-project"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not enough permissions");
+    expect(screen.queryByText("No dependencies found for this project")).not.toBeInTheDocument();
+  });
+});

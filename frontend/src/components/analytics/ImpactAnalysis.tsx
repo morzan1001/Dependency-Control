@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/tooltip"
 import { formatEpssScore } from '@/lib/finding-utils'
 import { EpssCell, KevCell } from '@/components/findings/enrichment-cells'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 interface ImpactAnalysisProps {
   onSelectComponent?: (result: ImpactAnalysisResult) => void;
@@ -23,7 +24,7 @@ interface ImpactAnalysisProps {
 const IMPACT_LIMIT = 20
 
 export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisProps>) {
-  const { data: results, isLoading } = useImpactAnalysis(IMPACT_LIMIT, useAnalyticsMode())
+  const { data: results, isLoading, error, refetch } = useImpactAnalysis(IMPACT_LIMIT, useAnalyticsMode())
 
   const maxImpact = results?.reduce((max, r) => Math.max(max, r.fix_impact_score), 0) || 1
 
@@ -89,6 +90,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
             ))}
           </div>
         )}
+        {error && <AnalyticsErrorCard title="Failed to load impact analysis" error={error} onRetry={() => refetch()} />}
         {!isLoading && results && results.length > 0 && (
           <div className="space-y-4">
             <div className="grid gap-4 md:grid-cols-3">
@@ -343,7 +345,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
             </Table>
           </div>
         )}
-        {!isLoading && (!results || results.length === 0) && (
+        {!isLoading && !error && (!results || results.length === 0) && (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <Zap className="h-12 w-12 mb-4" />
             <p>No vulnerabilities found to analyze</p>
