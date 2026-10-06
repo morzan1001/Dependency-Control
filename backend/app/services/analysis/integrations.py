@@ -177,17 +177,10 @@ async def decorate_github_pr(
 
         owner, repo = repo_path
         github_service = GitHubService(github_instance)
-        head_sha, prs = await github_service.get_pull_requests_for_commit(owner, repo, scan_doc.commit_hash)
-        # A head found through a merge commit's parent is a PR's only in that PR's own pull_request
-        # build, whose branch (GITHUB_REF_NAME) is "<number>/merge"; a pushed branch merge is not.
-        relevant_prs = [
-            pr
-            for pr in prs
-            if pr.state == "open"
-            and pr.draft is False
-            and pr.head_sha == head_sha
-            and (head_sha == scan_doc.commit_hash or scan_doc.branch == f"{pr.number}/merge")
-        ]
+        head_sha, prs = await github_service.get_pull_requests_for_commit(
+            owner, repo, scan_doc.commit_hash, scan_doc.branch
+        )
+        relevant_prs = [pr for pr in prs if pr.state == "open" and pr.draft is False and pr.head_sha == head_sha]
         if not relevant_prs:
             logger.info(f"No open PR has scan {scan_id}'s commit as head in project {project.id}")
             return

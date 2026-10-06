@@ -1034,18 +1034,20 @@ class GitHubService:
             return TeamSyncResult(None)
 
     async def get_pull_requests_for_commit(
-        self, owner: str, repo: str, commit_sha: str
+        self, owner: str, repo: str, commit_sha: str, branch: str
     ) -> tuple[str, list[GitHubPullRequest]]:
-        """The sha that matched and its pull requests, retrying via the head parent when it is a merge commit."""
+        """The sha that matched and its pull requests; a "<number>/merge" build reaches that PR via the head parent."""
         pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
-        if pull_requests:
+        if pull_requests or not branch.endswith("/merge"):
             return commit_sha, pull_requests
 
-        # A `pull_request` workflow checks out an ephemeral test-merge commit that GitHub associates with
-        # no pull request (HTTP 200 and an empty list, never a 404); its parents[1] is the PR head.
+        # A `pull_request` workflow (GITHUB_REF_NAME "<number>/merge") checks out an ephemeral test-merge
+        # commit GitHub associates with no pull request (HTTP 200 and [], never a 404); parents[1] is the PR head.
         head_sha = await self._merge_commit_head_parent(owner, repo, commit_sha)
         if head_sha:
-            pull_requests = await self._pull_requests_for_sha(owner, repo, head_sha)
+            pull_requests = [
+                pr for pr in await self._pull_requests_for_sha(owner, repo, head_sha) if branch == f"{pr.number}/merge"
+            ]
             if pull_requests:
                 logger.info(
                     "Resolved %s/%s commit %s to pull request(s) %s via merge-commit head parent %s",
