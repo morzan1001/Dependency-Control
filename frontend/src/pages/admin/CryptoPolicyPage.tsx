@@ -9,7 +9,7 @@ import { getErrorMessage } from "@/lib/utils";
 export function CryptoPolicyPage() {
   const qc = useQueryClient();
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["crypto-policy-system"],
+    queryKey: ["crypto-policy", "system"],
     queryFn: getSystemPolicy,
   });
 
@@ -17,7 +17,7 @@ export function CryptoPolicyPage() {
     mutationFn: (rules: CryptoRule[]) => putSystemPolicy(rules),
     onSuccess: () => {
       toast.success("System policy saved");
-      qc.invalidateQueries({ queryKey: ["crypto-policy-system"] });
+      qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
     onError: (e: unknown) => toast.error(`Save failed: ${getErrorMessage(e)}`),
   });
