@@ -5,15 +5,24 @@ import type { ReactNode } from "react";
 
 import { scanApi } from "@/api/scans";
 import type { ScanWithReleases } from "@/types/scan";
-import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow, useProjectScans, useScan, useScanStats } from "../use-scans";
+import {
+  SCAN_WINDOW_PAGE_SIZE,
+  useProjectScanWindow,
+  useProjectScans,
+  useRecentScans,
+  useScan,
+  useScanStats,
+} from "../use-scans";
 
 vi.mock("@/api/scans", () => ({
-  scanApi: { getProjectScans: vi.fn(), getOne: vi.fn(), getStats: vi.fn(), getFindings: vi.fn() },
+  scanApi: { getProjectScans: vi.fn(), getRecent: vi.fn(), getOne: vi.fn(), getStats: vi.fn(), getFindings: vi.fn() },
 }));
 
 const PROJECT_ID = "p1";
 const TRI_STATE_COUNT = 3;
 const SCAN_ID = "s1";
+const RESCAN_ID = "r1";
+const POLL_WAIT_MS = 10_000;
 const BRANCH = "main";
 const CREATED_AT = "2026-09-04T00:00:00Z";
 const RELEASED_AT = "2026-09-04T01:00:00Z";
@@ -161,7 +170,6 @@ function renderScanPage(client: QueryClient) {
 
 describe("useScan while the scan is being analysed", () => {
   const FINDINGS_AFTER_ANALYSIS = 7;
-  const POLL_WAIT_MS = 10_000;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -217,5 +225,58 @@ describe("useScan while the scan is being analysed", () => {
     await act(() => vi.advanceTimersByTimeAsync(6 * POLL_WAIT_MS));
 
     expect(scanApi.getOne).toHaveBeenCalledTimes(1);
+  });
+});
+
+const LIST_HOOKS = [
+  { name: "useProjectScans", useList: () => useProjectScans(PROJECT_ID), fetchList: () => vi.mocked(scanApi.getProjectScans) },
+  { name: "useRecentScans", useList: useRecentScans, fetchList: () => vi.mocked(scanApi.getRecent) },
+];
+
+describe.each(LIST_HOOKS)("$name while a listed scan is being analysed", ({ useList, fetchList }) => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  function renderList() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    return renderHook(useList, { wrapper });
+  }
+
+  it("polls a running scan until it finishes", async () => {
+    fetchList().mockResolvedValueOnce([scanIn("processing")]).mockResolvedValue([scanIn("completed")]);
+    const { result } = renderList();
+
+    await waitFor(() => expect(result.current.data?.[0].status).toBe("processing"));
+    await act(() => vi.advanceTimersByTimeAsync(POLL_WAIT_MS));
+
+    await waitFor(() => expect(result.current.data?.[0].status).toBe("completed"));
+  });
+
+  it("polls a finished scan while its rescan is queued", async () => {
+    const withRescan = (status: string) => ({ ...scanIn("completed"), latest_run: { scan_id: RESCAN_ID, status } });
+    fetchList().mockResolvedValueOnce([withRescan("pending")]).mockResolvedValue([withRescan("completed")]);
+    const { result } = renderList();
+
+    await waitFor(() => expect(result.current.data?.[0].latest_run?.status).toBe("pending"));
+    await act(() => vi.advanceTimersByTimeAsync(POLL_WAIT_MS));
+
+    await waitFor(() => expect(result.current.data?.[0].latest_run?.status).toBe("completed"));
+  });
+
+  it("does not poll a list with nothing being analysed", async () => {
+    fetchList().mockResolvedValue([scanIn("completed")]);
+    const { result } = renderList();
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    await act(() => vi.advanceTimersByTimeAsync(6 * POLL_WAIT_MS));
+
+    expect(fetchList()).toHaveBeenCalledTimes(1);
   });
 });
