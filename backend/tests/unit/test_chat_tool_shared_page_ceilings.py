@@ -46,7 +46,6 @@ def seeded(db):
     db.projects._docs[_PROJECT] = {
         "_id": _PROJECT,
         "name": "P",
-        "team_id": None,
         "default_branch": _BRANCH,
         "deleted_branches": [],
         "latest_scan_id": _SCAN,

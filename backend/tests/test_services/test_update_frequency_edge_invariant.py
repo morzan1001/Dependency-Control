@@ -156,7 +156,7 @@ async def _assert_identical(db: FakeDatabase) -> UpdateFrequencyMetrics:
 async def _comparisons(db: FakeDatabase) -> tuple[dict[str, Any], dict[str, Any]]:
     """The comparison payload of each read path over this project, ``data_status`` included."""
     await db.projects.insert_one(
-        {"_id": PROJECT, "name": "Project One", "team_id": None, "default_branch": None, "deleted_branches": []}
+        {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []}
     )
     return (
         await _compute_comparison(db, [PROJECT], None, window_days=WINDOW_DAYS),

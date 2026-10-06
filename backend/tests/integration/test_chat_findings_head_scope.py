@@ -54,7 +54,6 @@ async def _seed(db) -> None:
         {
             "_id": _PROJECT,
             "name": _PROJECT_NAME,
-            "team_id": None,
             "default_branch": "main",
             "deleted_branches": [],
             "latest_scan_id": _HEAD,
@@ -88,7 +87,6 @@ async def _seed_foreign_project(db) -> None:
         {
             "_id": _FOREIGN_PROJECT,
             "name": "foreign-project",
-            "team_id": None,
             "default_branch": "main",
             "deleted_branches": [],
             "latest_scan_id": _FOREIGN_HEAD,

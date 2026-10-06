@@ -17,15 +17,13 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _USER = "u1"
 
-# The scalar names one owner and the list names both, which is the shape every project has while
-# the mirror is still written: a reader of the scalar under-shows, a reader of the list does not.
 _PROJECTS = [
-    {"_id": "co-owned", "name": "co-owned", "team_ids": ["a", "b"], "team_id": "a", "members": []},
-    {"_id": "mine-only", "name": "mine-only", "team_ids": ["b"], "team_id": "b", "members": []},
-    {"_id": "theirs", "name": "theirs", "team_ids": ["c"], "team_id": "c", "members": []},
-    {"_id": "unassigned", "name": "unassigned", "team_ids": [], "team_id": None, "members": []},
+    {"_id": "co-owned", "name": "co-owned", "team_ids": ["a", "b"], "members": []},
+    {"_id": "mine-only", "name": "mine-only", "team_ids": ["b"], "members": []},
+    {"_id": "theirs", "name": "theirs", "team_ids": ["c"], "members": []},
+    {"_id": "unassigned", "name": "unassigned", "team_ids": [], "members": []},
     {"_id": "never-written", "name": "never-written", "members": []},
-    {"_id": "direct", "name": "direct", "team_ids": ["c"], "team_id": "c", "members": [{"user_id": _USER}]},
+    {"_id": "direct", "name": "direct", "team_ids": ["c"], "members": [{"user_id": _USER}]},
 ]
 
 

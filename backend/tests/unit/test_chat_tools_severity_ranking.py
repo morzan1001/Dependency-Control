@@ -55,7 +55,7 @@ def _finding(index: int, severity: str) -> dict:
 @pytest.fixture
 def flooded(db):
     """The ordinary shape of a SAST-plus-secrets scan: low-severity hits land before the criticals."""
-    db.projects._docs[_PROJECT] = {"_id": _PROJECT, "name": _PROJECT, "team_id": None}
+    db.projects._docs[_PROJECT] = {"_id": _PROJECT, "name": _PROJECT}
     db.scans._docs[_SCAN] = {
         "_id": _SCAN,
         "project_id": _PROJECT,

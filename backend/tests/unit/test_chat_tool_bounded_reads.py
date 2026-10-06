@@ -314,7 +314,6 @@ async def test_a_capped_project_listing_holds_the_most_recently_scanned(seeded, 
         seeded.projects._docs[f"ps-{index:02d}"] = {
             "_id": f"ps-{index:02d}",
             "name": f"ps-{index:02d}",
-            "team_id": None,
             "last_scan_at": _NOW - timedelta(days=oldest_first - index),
         }
 

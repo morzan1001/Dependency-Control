@@ -28,7 +28,7 @@ def admin_user():
 
 @pytest.fixture
 def seeded(db):
-    db.projects._docs[_PROJECT] = {"_id": _PROJECT, "name": _PROJECT, "team_id": None}
+    db.projects._docs[_PROJECT] = {"_id": _PROJECT, "name": _PROJECT}
     db.scans._docs[_SCAN] = {
         "_id": _SCAN,
         "project_id": _PROJECT,

@@ -41,7 +41,6 @@ def _seed_project(db, project_id=_PROJECT, **overrides):
     doc = {
         "_id": project_id,
         "name": "P",
-        "team_id": None,
         "default_branch": _BRANCH,
         "deleted_branches": [],
         "latest_scan_id": _SCAN,

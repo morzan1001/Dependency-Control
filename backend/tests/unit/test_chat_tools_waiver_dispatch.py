@@ -26,7 +26,6 @@ def _seed_project(db, project_id: str = "proj-1") -> None:
     db.projects._docs[project_id] = {
         "_id": project_id,
         "name": "test-project",
-        "team_id": None,
     }
 
 
@@ -34,7 +33,6 @@ def _seed_scanned_project(db, project_id: str, scan_id: str) -> None:
     db.projects._docs[project_id] = {
         "_id": project_id,
         "name": "test",
-        "team_id": None,
         "default_branch": _BRANCH,
         "deleted_branches": [],
         "latest_scan_id": scan_id,

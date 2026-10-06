@@ -18,10 +18,10 @@ from tests.mocks.fake_mongo import FakeDatabase
 _USER = "u1"
 
 _PROJECTS = [
-    {"_id": "co-owned", "name": "co-owned", "team_ids": ["alpha", "bravo"], "team_id": "alpha", "members": []},
-    {"_id": "alpha-only", "name": "alpha-only", "team_ids": ["alpha"], "team_id": "alpha", "members": []},
-    {"_id": "bravo-only", "name": "bravo-only", "team_ids": ["bravo"], "team_id": "bravo", "members": []},
-    {"_id": "unowned", "name": "unowned", "team_ids": [], "team_id": None, "members": []},
+    {"_id": "co-owned", "name": "co-owned", "team_ids": ["alpha", "bravo"], "members": []},
+    {"_id": "alpha-only", "name": "alpha-only", "team_ids": ["alpha"], "members": []},
+    {"_id": "bravo-only", "name": "bravo-only", "team_ids": ["bravo"], "members": []},
+    {"_id": "unowned", "name": "unowned", "team_ids": [], "members": []},
 ]
 
 

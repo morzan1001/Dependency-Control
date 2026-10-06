@@ -32,8 +32,6 @@ async def _seed(db, *, owners: list[str], alpha_members: list, bravo_members: li
             "_id": _PROJECT,
             "name": "admins",
             "team_ids": owners,
-            # The scalar names the owner that supplies nobody, which is the half a reader of it sees.
-            "team_id": owners[0] if owners else None,
             "members": [{"user_id": _LAST_ADMIN, "role": "admin"}, {"user_id": "u-viewer", "role": "viewer"}],
         }
     )

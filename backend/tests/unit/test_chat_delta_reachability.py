@@ -25,7 +25,7 @@ def admin_user():
 
 
 async def _seed_one_enriched_side(db) -> None:
-    db.projects._docs[_PROJECT] = {"_id": _PROJECT, "name": "test-project", "team_id": None}
+    db.projects._docs[_PROJECT] = {"_id": _PROJECT, "name": "test-project"}
     await db["scans"].insert_many(
         [
             {

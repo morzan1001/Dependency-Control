@@ -34,7 +34,6 @@ async def _seed_head(db) -> None:
         {
             "_id": _PROJECT,
             "name": "advisory-project",
-            "team_id": None,
             "default_branch": "main",
             "deleted_branches": [],
             "latest_scan_id": _SCAN,
@@ -521,7 +520,7 @@ async def test_waiver_status_off_head_reports_an_active_waiver_before_a_lapsed_o
 
 async def test_waiver_status_without_a_head_build_answers_no_scan_data(db, database):
     await db.projects.insert_one(
-        {"_id": _PROJECT, "name": "advisory-project", "team_id": None, "default_branch": "main", "deleted_branches": []}
+        {"_id": _PROJECT, "name": "advisory-project", "default_branch": "main", "deleted_branches": []}
     )
     await db.waivers.insert_one(_dormant_waiver("w-cve", None))
 
