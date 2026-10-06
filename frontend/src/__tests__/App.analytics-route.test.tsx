@@ -1,14 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 import { ANALYTICS_ROUTE_PERMISSIONS } from '../lib/constants'
 import { RequirePermission } from '../context'
 import { AuthContext, type AuthContextType } from '../context/auth-context'
+import DashboardLayout from '../layouts/DashboardLayout'
 
-// Renders the /analytics route gate from App.tsx for a user holding only `perms`.
-function renderAnalyticsGate(perms: string[]) {
-  const authValue: AuthContextType = {
+vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => ({ data: undefined }) }))
+
+function authFor(perms: string[]): AuthContextType {
+  return {
     isAuthenticated: true,
     isLoading: false,
     permissions: perms,
@@ -16,6 +18,11 @@ function renderAnalyticsGate(perms: string[]) {
     login: () => undefined,
     logout: () => undefined,
   }
+}
+
+// Renders the /analytics route gate from App.tsx for a user holding only `perms`.
+function renderAnalyticsGate(perms: string[]) {
+  const authValue = authFor(perms)
 
   return render(
     <AuthContext.Provider value={authValue}>
@@ -56,5 +63,34 @@ describe('/analytics route permission gate', () => {
       expect(screen.getByText('ANALYTICS PAGE')).toBeInTheDocument()
       unmount()
     }
+  })
+})
+
+describe('Analytics nav item', () => {
+  function renderNav(perms: string[]) {
+    return render(
+      <AuthContext.Provider value={authFor(perms)}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <Routes>
+            <Route element={<DashboardLayout />}>
+              <Route path="/dashboard" element={<div>DASHBOARD PAGE</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    )
+  }
+
+  it('is offered to every user the route admits', () => {
+    for (const perm of ANALYTICS_ROUTE_PERMISSIONS) {
+      const { unmount } = renderNav([perm])
+      expect(screen.getByRole('link', { name: 'Analytics' })).toBeInTheDocument()
+      unmount()
+    }
+  })
+
+  it('is not offered to a user the route turns away', () => {
+    renderNav(['analytics:dependencies'])
+    expect(screen.queryByRole('link', { name: 'Analytics' })).not.toBeInTheDocument()
   })
 })
