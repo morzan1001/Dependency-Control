@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from app.core.init_db import create_indexes
+
 _SCAN_ID = "scan-search"
 _SEARCH_PATH = "/api/v1/analytics/search"
 _VULN_SEARCH_PATH = "/api/v1/analytics/vulnerability-search"
@@ -49,6 +51,7 @@ def _vulnerability(component: str, waived: bool = False) -> dict:
 
 @pytest_asyncio.fixture
 async def scanned(db, owner_auth_headers_proj):
+    await create_indexes(db)
     await db.scans.insert_one(
         {
             "_id": _SCAN_ID,

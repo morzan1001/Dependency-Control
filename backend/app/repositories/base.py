@@ -112,8 +112,9 @@ class BaseRepository[T: BaseModel]:
         """Every match, unbounded, for callers that fold the whole set."""
         return await self.collection.find(query, projection).to_list(None)
 
-    async def count(self, query: dict[str, Any] | None = None) -> int:
-        return await self.collection.count_documents(query or {})
+    async def count(self, query: dict[str, Any] | None = None, hint: dict[str, int] | None = None) -> int:
+        options: dict[str, Any] = {"hint": hint} if hint else {}
+        return await self.collection.count_documents(query or {}, **options)
 
     async def exists(self, query: dict[str, Any]) -> bool:
         return await self.collection.find_one(query, {"_id": 1}) is not None

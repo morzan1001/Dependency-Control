@@ -23,6 +23,7 @@ from app.core.cve import canonical_cve
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    FINDINGS_SCAN_TYPE_INDEX,
     get_severity_value,
     severity_rank_expr,
 )
@@ -374,7 +375,7 @@ async def search_vulnerabilities(
 
     query, rows = _build_vuln_query(scan_ids, q or "", severity, in_kev, has_fix, finding_type, include_waived)
 
-    total_count = await finding_repo.count(query)
+    total_count = await finding_repo.count(query, hint=FINDINGS_SCAN_TYPE_INDEX)
 
     direction = parse_sort_direction(sort_order)
     rows_value, finding_value, row_key = _VULN_SORTS.get(sort_by, _VULN_SORTS["severity"])
@@ -388,7 +389,8 @@ async def search_vulnerabilities(
             {"$sort": {"sort_key": direction, "_id": 1}},
             {"$skip": skip},
             {"$limit": limit},
-        ]
+        ],
+        hint=FINDINGS_SCAN_TYPE_INDEX,
     )
 
     results = []

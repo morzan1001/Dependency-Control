@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from app.core.init_db import create_indexes
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.enrichment.service import apply_enrichments
 
@@ -16,6 +17,7 @@ _PATH = "/api/v1/analytics/vulnerability-search"
 
 @pytest_asyncio.fixture
 async def search(client, db, owner_auth_headers_proj):
+    await create_indexes(db)
     await db.scans.insert_one(
         {"_id": _SCAN_ID, "project_id": "p", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
