@@ -154,6 +154,7 @@ _FETCH_PROJECTION: dict[str, int] = {
     "waived": 1,
     "severity": 1,
     "first_seen_at": 1,
+    "scan_created_at": 1,
     "details.vulnerabilities.resolved_cve": 1,
     "details.vulnerabilities.aliases": 1,
 }
@@ -189,6 +190,11 @@ def _doc_type(doc: dict) -> str:
     return doc.get("type") or ""
 
 
+def _first_seen(doc: dict) -> Any:
+    """A copy stored without a detection date counts from its scan's, as the CVE SLA counts it."""
+    return doc.get("first_seen_at") or doc.get("scan_created_at")
+
+
 def _to_item(doc: dict, change: str) -> FindingDeltaItem:
     details = doc.get("details") or {}
     found_in = doc.get("found_in") or []
@@ -201,7 +207,7 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
         component=doc.get("component"),
         cve_id=display_vulnerability_id(details),
         file_path=(found_in[0] if found_in else None),
-        first_seen=doc.get("first_seen_at"),
+        first_seen=_first_seen(doc),
     )
 
 
@@ -209,7 +215,7 @@ def _to_changed_item(from_doc: dict, to_doc: dict) -> FindingDeltaItem:
     before, after = advisory_keys(from_doc), advisory_keys(to_doc)
     added_cves = sorted(cve for _, cve in after - before)
     dropped_cves = sorted(cve for _, cve in before - after)
-    first_seen = [d["first_seen_at"] for d in (from_doc, to_doc) if d.get("first_seen_at")]
+    first_seen = [seen for d in (from_doc, to_doc) if (seen := _first_seen(d))]
     return _to_item(to_doc, "changed").model_copy(
         update={
             "cve_id": next(iter(added_cves + dropped_cves), None),

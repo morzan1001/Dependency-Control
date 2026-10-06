@@ -629,6 +629,7 @@ async def test_fetch_uses_projection(db, monkeypatch):
         "found_in",
         "finding_id",
         "first_seen_at",
+        "scan_created_at",
         "details.vulnerabilities.id",
         "details.sast_findings.id",
         "details.imitated_package",
@@ -640,7 +641,6 @@ async def test_fetch_uses_projection(db, monkeypatch):
     # Keys the delta does not read must not be fetched.
     for gone in (
         "created_at",
-        "scan_created_at",
         "details.fixed_version",
         "details.cve_id",
         "details.vuln_id",

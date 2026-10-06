@@ -355,3 +355,17 @@ async def test_a_removed_finding_reports_its_first_detection_not_its_scan_date(d
     [removed] = (await _delta(db)).items
 
     assert (removed.change, removed.first_seen) == ("removed", _days_ago(200))
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_a_removed_finding_stored_without_a_detection_date_reports_its_scan_date(db, database):
+    lodash = Finding.model_validate(stored_vulnerability("lodash", "4.17.20", [{"id": "CVE-2021-23337"}]))
+    # Copies written before 1.9.42 carry no first_seen_at, so they skip the persist that stamps one.
+    records, _ = _prepare_finding_records([lodash], "scan-a", _PROJECT, _days_ago(300))
+    await db.findings.insert_many(records)
+    await _persist(db, "scan-b", [], _NOW)
+
+    [removed] = (await _delta(db)).items
+
+    assert (removed.change, removed.first_seen) == ("removed", _days_ago(300))
