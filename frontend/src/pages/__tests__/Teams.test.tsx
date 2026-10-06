@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { teamApi } from '@/api/teams'
 import type { Team } from '@/types/team'
 
 import TeamsPage from '../Teams'
-
-const { updateTeam } = vi.hoisted(() => ({ updateTeam: vi.fn() }))
 
 const TEAM: Team = {
   id: 't-1',
@@ -17,11 +17,8 @@ const TEAM: Team = {
   updated_at: '2026-01-01T00:00:00Z',
 }
 
-vi.mock('@/hooks/queries/use-teams', () => ({
-  useTeams: () => ({ data: [TEAM], isLoading: false, error: null }),
-  useUpdateTeam: () => ({ mutate: updateTeam, isPending: false }),
-}))
-vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'u-1' } }) }))
+vi.mock('@/api/teams', () => ({ teamApi: { getAll: vi.fn(), update: vi.fn() } }))
+vi.mock('@/api/users', () => ({ userApi: { getMe: () => Promise.resolve({ id: 'u-1' }) } }))
 vi.mock('@/context/useAuth', () => ({
   useAuth: () => ({ permissions: ['team:update'], hasPermission: (p: string) => p === 'team:update' }),
 }))
@@ -33,9 +30,18 @@ vi.mock('@/components/teams/DeleteTeamDialog', () => ({ DeleteTeamDialog: () => 
 vi.mock('@/components/teams/TeamWebhooksDialog', () => ({ TeamWebhooksDialog: () => null }))
 vi.mock('@/components/teams/TeamBindingDialog', () => ({ TeamBindingDialog: () => null }))
 
+async function renderPage() {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <TeamsPage />
+    </QueryClientProvider>,
+  )
+  await screen.findByText(TEAM.name)
+}
+
 // The card header's only action for a user who may edit but not delete the team.
-function editTeam() {
-  fireEvent.click(within(screen.getByText(TEAM.name).parentElement as HTMLElement).getByRole('button'))
+function editTeam(name = TEAM.name) {
+  fireEvent.click(within(screen.getByText(name).parentElement as HTMLElement).getByRole('button'))
   return screen.getByRole('dialog')
 }
 
@@ -44,13 +50,13 @@ function closeDialog() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks()
-  updateTeam.mockImplementation((_vars, options: { onSuccess: () => void }) => options.onSuccess())
+  vi.resetAllMocks()
+  vi.mocked(teamApi.getAll).mockResolvedValue([TEAM])
 })
 
 describe('TeamsPage edit dialog', () => {
-  it('keeps the description when the team is renamed on its second edit', () => {
-    render(<TeamsPage />)
+  it('keeps the description when the team is renamed on its second edit', async () => {
+    await renderPage()
     editTeam()
     closeDialog()
 
@@ -58,14 +64,40 @@ describe('TeamsPage edit dialog', () => {
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Team Gamma' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Update Team' }))
 
-    expect(updateTeam.mock.calls[0][0]).toEqual({ id: TEAM.id, data: { name: 'Team Gamma', description: TEAM.description } })
+    await waitFor(() =>
+      expect(teamApi.update).toHaveBeenCalledWith(TEAM.id, { name: 'Team Gamma', description: TEAM.description }),
+    )
   })
 
-  it('drops a cancelled edit', () => {
-    render(<TeamsPage />)
+  it('drops a cancelled edit', async () => {
+    await renderPage()
     fireEvent.change(within(editTeam()).getByLabelText('Name'), { target: { value: 'Team Gamma' } })
     closeDialog()
 
     expect(within(editTeam()).getByLabelText('Name')).toHaveValue(TEAM.name)
+  })
+
+  it('stays open until the refetched team list holds the new name', async () => {
+    const renamed = { ...TEAM, name: 'Team Gamma' }
+    let answerRefetch: (teams: Team[]) => void = () => undefined
+    vi.mocked(teamApi.getAll)
+      .mockResolvedValueOnce([TEAM])
+      .mockReturnValueOnce(new Promise((resolve) => (answerRefetch = resolve)))
+    vi.mocked(teamApi.update).mockResolvedValue(renamed)
+    await renderPage()
+    const dialog = editTeam()
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: renamed.name } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Team' }))
+    // The save runs on microtasks only, so a dialog that closes on the PUT alone is gone after one task.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(teamApi.getAll).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Updating...' })).toBeDisabled()
+
+    answerRefetch([renamed])
+    await screen.findByText(renamed.name)
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    expect(within(editTeam(renamed.name)).getByLabelText('Name')).toHaveValue(renamed.name)
   })
 })
