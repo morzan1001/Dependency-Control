@@ -126,11 +126,7 @@ class BaseRepository[T: BaseModel]:
         await self.collection.insert_one(data)
 
     async def replace_many_raw(self, docs: list[dict[str, Any]], fresh: bool = False) -> int:
-        """Upsert each document whole by ``_id``; ordered=False so one failed write doesn't abort the batch.
-
-        ``fresh`` (none of them stored yet) inserts instead, at half an upsert's cost, and replaces the
-        documents an ``_id`` collision refused, such as those a concurrent run wrote first.
-        """
+        """Upsert each document whole by ``_id``; ordered=False so one failed write doesn't abort the batch."""
         if not docs:
             return 0
         try:

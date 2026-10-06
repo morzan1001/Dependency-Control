@@ -20,11 +20,7 @@ class DependencyRepository(BaseRepository[Dependency]):
         return self._to_model_list(rows), total
 
     async def upsert_many(self, dependencies: list[Dependency], fresh: bool = False) -> None:
-        """Write each dependency over its scan's (name, version, purl) row; the row keeps its newest created_at.
-
-        ``fresh`` (the scan has no rows yet) inserts instead, at a third of an upsert's cost, and upserts the
-        rows the unique key refused, such as those a concurrent store wrote first.
-        """
+        """Write each dependency over its scan's (name, version, purl) row; the row keeps its newest created_at."""
         if fresh:
             try:
                 await self.collection.insert_many([d.model_dump(by_alias=True) for d in dependencies], ordered=False)
