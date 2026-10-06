@@ -15,14 +15,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Install Poetry
+        run: pipx install poetry
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
+          cache: 'poetry'
+          cache-dependency-path: backend/poetry.lock
 
       - name: Install dependencies
         run: |
-          pip install poetry
           cd backend
           poetry install --no-interaction
 
@@ -64,21 +68,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Install Poetry
+        run: pipx install poetry
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
+          cache: 'poetry'
+          cache-dependency-path: backend/poetry.lock
 
       - name: Install dependencies
         run: |
-          pip install poetry
           cd backend
           poetry install --no-interaction
 
       - name: Run tests with coverage
         run: |
           cd backend
-          poetry run pytest --cov=app --cov-branch --cov-report=xml:coverage.xml --tb=short -q
+          poetry run pytest -n auto --cov=app --cov-branch --cov-report=xml:coverage.xml --tb=short -q
           sed -i 's|<source>app</source>|<source>backend/app</source>|g' coverage.xml
 
       - name: Upload coverage report
@@ -95,14 +103,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Install Poetry
+        run: pipx install poetry
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
+          cache: 'poetry'
+          cache-dependency-path: backend/poetry.lock
 
       - name: Install dependencies
         run: |
-          pip install poetry
           cd backend
           poetry install --no-interaction
 
