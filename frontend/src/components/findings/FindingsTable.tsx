@@ -194,8 +194,6 @@ function reportUnresolved(outcome: RelatedFindingLookup): void {
 
 export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false, hideHistoricalSecrets = false }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
-    const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
-    const hasScrolledRef = useRef(false)
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [sortBy, setSortBy] = useState("severity")
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
@@ -252,14 +250,14 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         isLoading,
         isError
     } = useInfiniteQuery({
-        // severity is NOT passed to API - we show all findings but scroll to the target
-        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly, hideHistoricalSecrets],
+        queryKey: ['findings', scanId, category, search, severity, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly, hideHistoricalSecrets],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
                 limit: DEFAULT_PAGE_SIZE,
                 category,
                 search,
+                severity,
                 sort_by: sortBy,
                 sort_order: sortOrder,
                 ...(licenseCategory ? { license_category: licenseCategory } : {}),
@@ -280,24 +278,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     })
 
     const allRows = data ? data.pages.flatMap((d) => d.items) : []
-
-    // Derive the scroll-target row index purely from props/data (no ref reads
-    // during render). `hasScrolledRef` is only consulted inside the effect
-    // below to guarantee we scroll at most once per mount.
-    const scrollTargetIndex = severity
-        ? allRows.findIndex(f => f.severity?.toUpperCase() === severity.toUpperCase())
-        : -1
-
-    useEffect(() => {
-        if (!severity || hasScrolledRef.current || scrollTargetIndex < 0) return
-        const targetRow = scrollTargetRef.current
-        if (targetRow) {
-            targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            targetRow.classList.add('ring-2', 'ring-primary', 'ring-offset-1')
-            setTimeout(() => targetRow.classList.remove('ring-2', 'ring-primary', 'ring-offset-1'), 3000)
-            hasScrolledRef.current = true
-        }
-    }, [severity, scrollTargetIndex])
 
     // Load the next page when the sentinel nears the viewport.
     useEffect(() => {
@@ -394,15 +374,13 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {allRows.map((finding, index) => {
+                        {allRows.map((finding) => {
                             const sourceInfo = getSourceInfo(finding?.source_type)
-                            const isScrollTarget = index === scrollTargetIndex
                             const rowClass = `border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
                                 finding.type === 'system_warning' ? 'bg-destructive/5 hover:bg-destructive/10 border-l-2 border-l-destructive' : ''
                             } ${isSecretDeprioritized(finding) ? 'opacity-60 hover:opacity-100' : ''}`
                             return (
                                 <TableRow
-                                    ref={isScrollTarget ? scrollTargetRef : undefined}
                                     onClick={() => setSelectedFinding(finding)}
                                     key={finding.id}
                                     className={rowClass}

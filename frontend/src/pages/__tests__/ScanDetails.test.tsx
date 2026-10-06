@@ -163,6 +163,20 @@ describe('ScanDetails for an editor', () => {
   })
 })
 
+describe('ScanDetails severity link', () => {
+  beforeEach(() => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+  })
+
+  it('names the severity the findings are filtered by and lifts the filter on request', () => {
+    const router = renderPage(`${SCAN_PATH}?severity=CRITICAL`)
+
+    fireEvent.click(screen.getByRole('button', { name: /Severity: CRITICAL/ }))
+
+    expect(new URLSearchParams(router.state.location.search).has('severity')).toBe(false)
+  })
+})
+
 describe('ScanDetails raw tab', () => {
   beforeEach(() => {
     mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })

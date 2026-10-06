@@ -45,3 +45,17 @@ describe("FindingsTable direct-only filter", () => {
     expect((params as Record<string, unknown>).direct_only).toBeUndefined();
   });
 });
+
+describe("FindingsTable severity filter", () => {
+  beforeEach(() => {
+    getFindingsMock.mockReset();
+    getFindingsMock.mockResolvedValue(emptyEnvelope);
+  });
+
+  it("asks the API for the findings of the requested severity only", async () => {
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" severity="CRITICAL" />);
+    await waitFor(() => expect(getFindingsMock).toHaveBeenCalled());
+    const [, params] = getFindingsMock.mock.calls[0];
+    expect((params as Record<string, unknown>).severity).toBe("CRITICAL");
+  });
+});

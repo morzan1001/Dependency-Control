@@ -129,10 +129,11 @@ export default function ScanDetails() {
   const [hideHistoricalSecrets, setHideHistoricalSecrets] = useState(false);
   const hasFindingsFilter = directOnly || hideInfo || hideHistoricalSecrets;
 
-  const handleTabChange = (val: string) => {
+  const setParam = (key: string, value: string | null) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
-      next.set('tab', val);
+      if (value === null) next.delete(key);
+      else next.set(key, value);
       return next;
     }, { replace: true });
   };
@@ -474,7 +475,7 @@ export default function ScanDetails() {
             </Card>
       </div>
 
-            <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
+            <Tabs value={activeTab} onValueChange={(val) => setParam('tab', val)} className="space-y-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
             <TabsList>
                 <TabsTrigger value="overview">All Findings</TabsTrigger>
@@ -490,6 +491,11 @@ export default function ScanDetails() {
             {activeTab !== 'raw' && (
                 <div className="flex items-center gap-4 flex-wrap">
                     <span className="text-sm text-muted-foreground">Filter:</span>
+                    {severityFilter && activeTab === 'overview' && (
+                        <Button variant="secondary" size="sm" onClick={() => setParam('severity', null)} className="gap-1">
+                            Severity: {severityFilter} <X className="h-3 w-3" />
+                        </Button>
+                    )}
                     <div className="flex items-center space-x-2">
                         <Checkbox id="filter-direct-only" checked={directOnly} onCheckedChange={(c) => setDirectOnly(c === true)} />
                         <label htmlFor="filter-direct-only" className="text-sm cursor-pointer">Only direct dependencies</label>
