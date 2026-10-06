@@ -62,7 +62,6 @@ def _user(uid: str, *permissions: str) -> User:
 
 
 async def _seed(db, *, team_order=(_ALPHA, _BRAVO), team_ids: list[str] | None = None):
-    """The scalar names one owner, as every project's does while the mirror is still written."""
     for team in (*team_order, _ZULU):
         await db.teams.insert_one(dict(team))
     for uid in _USER_IDS:
@@ -73,7 +72,6 @@ async def _seed(db, *, team_order=(_ALPHA, _BRAVO), team_ids: list[str] | None =
             "_id": _PROJECT,
             "name": "merge",
             "team_ids": owners,
-            "team_id": owners[0] if owners else None,
             "members": [{"user_id": "u-direct", "role": "editor"}],
         }
     )
@@ -90,7 +88,6 @@ async def _seed_prod_shape(db, *, team_order=(_TOURISTS, _PICKACHU)):
             "_id": _PROD_PROJECT,
             "name": "prod-shape",
             "team_ids": [team["_id"] for team in team_order],
-            "team_id": team_order[0]["_id"],
             "members": [],
         }
     )

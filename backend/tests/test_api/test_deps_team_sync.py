@@ -70,8 +70,6 @@ async def test_a_sync_does_not_evict_a_manual_co_owner():
         db,
         team_ids=["gl-old", "by-hand"],
         team_sources={"gl-old": _GITLAB, "by-hand": "manual"},
-        team_id="gl-old",
-        team_source=_GITLAB,
     )
 
     stored, _ = await _gitlab_sync(db, project, ["gl-new"])
@@ -85,20 +83,18 @@ async def test_a_project_that_moved_group_loses_the_owner_it_left():
     """The mirror image: a union would keep the old group forever, so every transfer would widen
     access instead of moving it."""
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB}, team_id="gl-old")
+    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB})
 
     stored, _ = await _gitlab_sync(db, project, ["gl-new"])
 
     assert stored["team_ids"] == ["gl-new"]
     assert stored["team_sources"] == {"gl-new": _GITLAB}
-    assert stored["team_id"] == "gl-new"
-    assert stored["team_source"] == _GITLAB
 
 
 @pytest.mark.asyncio
 async def test_a_sync_that_could_not_be_asked_writes_nothing():
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB}, team_id="gl-old")
+    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB})
 
     stored, stages = await _gitlab_sync(db, project, None)
 
@@ -113,15 +109,12 @@ async def test_a_sync_that_resolved_nothing_retires_its_own_owners_only():
         db,
         team_ids=["gl-old", "by-hand"],
         team_sources={"gl-old": _GITLAB, "by-hand": "manual"},
-        team_id="gl-old",
     )
 
     stored, _ = await _gitlab_sync(db, project, [])
 
     assert stored["team_ids"] == ["by-hand"]
     assert stored["team_sources"] == {"by-hand": "manual"}
-    assert stored["team_id"] == "by-hand"
-    assert stored["team_source"] == "manual"
 
 
 @pytest.mark.asyncio
@@ -131,15 +124,12 @@ async def test_one_provider_never_touches_the_other_provider_s_owner():
         db,
         team_ids=["gl-a", "gh-a"],
         team_sources={"gl-a": _GITLAB, "gh-a": _GITHUB},
-        team_id="gl-a",
     )
 
     stored, _ = await _github_sync(db, project, ["gh-b"])
 
     assert sorted(stored["team_ids"]) == ["gh-b", "gl-a"]
     assert stored["team_sources"] == {"gl-a": _GITLAB, "gh-b": _GITHUB}
-    # The incumbent scalar still owns the project, so nothing moves it.
-    assert stored["team_id"] == "gl-a"
 
 
 @pytest.mark.asyncio
@@ -152,8 +142,6 @@ async def test_one_gitlab_instance_never_touches_another_gitlab_instance_s_owner
         db,
         team_ids=["gl-a", "gl-b"],
         team_sources={"gl-a": _GITLAB, "gl-b": _SECOND_GITLAB},
-        team_id="gl-a",
-        team_source=_GITLAB,
     )
 
     stored, _ = await _gitlab_sync(db, project, ["gl-b-moved"], instance_id=_SECOND_GITLAB_INSTANCE)
@@ -182,7 +170,6 @@ async def test_an_unchanged_subset_is_not_rewritten():
         db,
         team_ids=["gl-a", "by-hand"],
         team_sources={"gl-a": _GITLAB, "by-hand": "manual"},
-        team_id="gl-a",
     )
 
     _, stages = await _gitlab_sync(db, project, ["gl-a"])
@@ -212,7 +199,7 @@ async def test_a_legacy_owner_with_no_provenance_is_not_retired_by_a_sync():
     218 production projects were in exactly this shape on 2026-09-11.
     """
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["legacy"], team_sources={}, team_id="legacy")
+    project = await _seed(db, team_ids=["legacy"], team_sources={})
 
     stored, _ = await _gitlab_sync(db, project, ["gl-new"])
 
@@ -223,7 +210,7 @@ async def test_a_legacy_owner_with_no_provenance_is_not_retired_by_a_sync():
 @pytest.mark.asyncio
 async def test_a_resolution_past_the_cap_leaves_the_owners_alone(caplog):
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["gl-a"], team_sources={"gl-a": _GITLAB}, team_id="gl-a")
+    project = await _seed(db, team_ids=["gl-a"], team_sources={"gl-a": _GITLAB})
 
     with caplog.at_level("WARNING", logger="app.api.deps"):
         stored, stages = await _gitlab_sync(db, project, [f"gl-{n}" for n in range(MAX_PROJECT_TEAMS + 1)])
@@ -319,7 +306,7 @@ async def test_gitlab_reads_the_project_itself_and_is_told_how_much_room_is_left
 async def test_a_hand_assigned_owner_the_sync_also_resolves_survives_its_later_loss():
     """The picker is the only writer that may take a hand assignment away."""
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["platform"], team_sources={"platform": "manual"}, team_id="platform")
+    project = await _seed(db, team_ids=["platform"], team_sources={"platform": "manual"})
 
     _, stages = await _github_sync(db, project, ["platform"])
     stored, _ = await _github_sync(db, Project(**await db.projects.find_one({"_id": _PROJECT_ID})), [])

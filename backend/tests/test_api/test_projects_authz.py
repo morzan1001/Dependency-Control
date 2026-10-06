@@ -240,8 +240,6 @@ class TestUpdateProjectTeamAssignment:
             members=[],
             team_ids=["team-abc"],
             team_sources={"team-abc": "gitlab"},
-            team_id="team-abc",
-            team_source="gitlab",
         )
 
     def test_the_picked_teams_reach_the_server_as_the_whole_owner_set(self):

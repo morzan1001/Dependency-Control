@@ -866,7 +866,6 @@ class TestIngestGitHubTeamSync:
         mock_svc.sync_team_from_github.assert_not_called()
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == []
-        assert inserted["team_id"] is None
 
     def test_the_repository_comes_from_the_token(self):
         mock_svc, _, db = self._run(
@@ -877,8 +876,8 @@ class TestIngestGitHubTeamSync:
         )
 
     def test_every_resolved_owner_is_written_to_the_project(self):
-        """The guarded pipeline reaches the server, not a $set of the scalar: that is what keeps a
-        manual co-owner and the other provider's entry out of this write."""
+        """The guarded pipeline reaches the server: that is what keeps a manual co-owner and the
+        other provider's entry out of this write."""
         from app.repositories.projects import replace_team_subset_pipeline
 
         _, projects_coll, _ = self._run(
@@ -899,9 +898,6 @@ class TestIngestGitHubTeamSync:
         assert inserted["team_ids"] == ["t-4", "t-9"]
         expected_source = team_source(TEAM_SOURCE_GITHUB, _TEAM_SYNC_INSTANCE["_id"])
         assert inserted["team_sources"] == {"t-4": expected_source, "t-9": expected_source}
-        # The scalars are the first owner in the order a later sync would leave the list in.
-        assert inserted["team_id"] == "t-4"
-        assert inserted["team_source"] == expected_source
 
     def test_an_auto_created_project_without_a_team_is_still_created(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
@@ -909,8 +905,6 @@ class TestIngestGitHubTeamSync:
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == []
         assert inserted["team_sources"] == {}
-        assert inserted["team_id"] is None
-        assert inserted["team_source"] is None
 
 
 _GITLAB_TEAM_SYNC_INSTANCE = {
@@ -968,8 +962,6 @@ class TestIngestGitLabTeamSync:
         assert inserted["team_ids"] == ["t-gl-1"]
         expected_source = team_source(TEAM_SOURCE_GITLAB, _GITLAB_TEAM_SYNC_INSTANCE["_id"])
         assert inserted["team_sources"] == {"t-gl-1": expected_source}
-        assert inserted["team_id"] == "t-gl-1"
-        assert inserted["team_source"] == expected_source
 
 
 _GITHUB_COM_ISSUER = "https://token.actions.githubusercontent.com"

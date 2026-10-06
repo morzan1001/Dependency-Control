@@ -46,7 +46,6 @@ def seeded(db):
         "_id": _PROJECT,
         "name": _PROJECT,
         "team_ids": [_TEAM],
-        "team_id": _TEAM,
         "latest_scan_id": _SCAN,
         "default_branch": "main",
     }
@@ -130,7 +129,6 @@ async def test_team_projects_cut_at_the_ceiling_names_the_team_s_whole_holding(s
             "_id": f"tp-{index}",
             "name": f"p{index}",
             "team_ids": [_TEAM],
-            "team_id": _TEAM,
         }
 
     result = await ChatToolRegistry().execute_tool("get_team_projects", {"team_id": _TEAM}, admin_user, seeded)

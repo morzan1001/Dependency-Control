@@ -288,8 +288,6 @@ class TestDeleteTeam:
                     "name": "shared",
                     "team_ids": ["team-1", "team-keep"],
                     "team_sources": {"team-1": "gitlab", "team-keep": "manual"},
-                    "team_id": "team-1",
-                    "team_source": "gitlab",
                 }
             )
         )
@@ -300,8 +298,6 @@ class TestDeleteTeam:
                     "name": "sole",
                     "team_ids": ["team-1"],
                     "team_sources": {"team-1": "gitlab"},
-                    "team_id": "team-1",
-                    "team_source": "gitlab",
                 }
             )
         )
@@ -312,12 +308,9 @@ class TestDeleteTeam:
         shared = db.projects._docs["p-shared"]
         assert shared["team_ids"] == ["team-keep"]
         assert shared["team_sources"] == {"team-keep": "manual"}
-        assert shared["team_id"] == "team-keep"
-        assert shared["team_source"] == "manual"
 
         sole = db.projects._docs["p-sole"]
         assert sole["team_ids"] == []
-        assert sole["team_id"] is None
         assert "team-1" not in db.teams._docs
 
 

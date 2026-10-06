@@ -42,8 +42,6 @@ def _project(owners: list[str]) -> Project:
         id=_PROJECT,
         name="fanout",
         team_ids=owners,
-        # A reader of the scalar sees only the first owner.
-        team_id=owners[0] if owners else None,
         members=[ProjectMember(user_id="u-direct", role="admin")],
     )
 
@@ -121,7 +119,6 @@ async def test_a_project_channel_override_survives_the_same_users_team_membershi
             id=_PROJECT,
             name="fanout",
             team_ids=["alpha"],
-            team_id="alpha",
             members=[ProjectMember(user_id="u-both", role="admin", notification_preferences=_PROJECT_OVERRIDE)],
         ),
         event_type=_PREFS_EVENT,
@@ -148,9 +145,7 @@ async def _seed_webhooks(db) -> None:
 
 
 async def _fired(db, owners: list[str]) -> set[str]:
-    await db.projects.insert_one(
-        {"_id": _PROJECT, "name": "fanout", "team_ids": owners, "team_id": owners[0] if owners else None}
-    )
+    await db.projects.insert_one({"_id": _PROJECT, "name": "fanout", "team_ids": owners})
     hooks = await WebhookService()._get_webhooks_for_event(db, _PROJECT, _EVENT)
     return {hook.id for hook in hooks}
 

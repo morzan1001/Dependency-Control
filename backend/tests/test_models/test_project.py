@@ -18,24 +18,13 @@ class TestProjectModel:
         assert project.active_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
         assert project.members == []
         assert project.stats is None
-        assert project.team_id is None
+        assert project.team_ids == []
         assert project.gitlab_mr_comments_enabled is False
 
     def test_id_auto_generated(self):
         project = Project(name="test", owner_id="user-1")
         assert project.id is not None
         assert len(project.id) > 0
-
-    def test_team_source_defaults_to_none(self):
-        # None marks unknown provenance for how team_id was last set.
-        project = Project(name="test", owner_id="user-1")
-        assert project.team_source is None
-
-    def test_team_source_accepts_manual_and_gitlab(self):
-        manual = Project(name="m", team_id="t-1", team_source="manual")
-        gitlab = Project(name="g", team_id="t-2", team_source="gitlab")
-        assert manual.team_source == "manual"
-        assert gitlab.team_source == "gitlab"
 
 
 class TestProjectMemberModel:
@@ -83,8 +72,3 @@ class TestAnalysisResultModel:
     def test_minimal_valid(self):
         result = AnalysisResult(scan_id="scan-1", analyzer_name="trivy")
         assert (result.scan_id, result.analyzer_name, result.source) == ("scan-1", "trivy", None)
-
-
-class TestProjectGitHubTeamProvenance:
-    def test_team_source_accepts_github(self):
-        assert Project(name="p", team_source="github").team_source == "github"

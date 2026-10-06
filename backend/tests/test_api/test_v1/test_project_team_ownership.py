@@ -86,14 +86,12 @@ async def test_every_team_the_user_picked_is_stored():
 async def test_a_retained_provider_owner_keeps_its_provenance():
     """Restamping it as a hand assignment would exempt it from the retirement its own provider's
     next sync applies, so any project admin could pin a team the provider no longer resolves."""
-    project = _project(team_ids=["gh-a"], team_sources={"gh-a": "github"}, team_id="gh-a", team_source="github")
+    project = _project(team_ids=["gh-a"], team_sources={"gh-a": "github"})
     db = await _db_with(project, _team("gh-a", "someone-else"), _team("t-new", _ACTOR))
 
     updated = await _put(db, project, _user(), team_ids=["gh-a", "t-new"])
 
     assert updated.team_sources == {"gh-a": "github", "t-new": "manual"}
-    # The incumbent still owns the project, so the scalars stay where they are.
-    assert updated.team_id == "gh-a"
 
     await ProjectRepository(db).update_raw("p-1", replace_team_subset_pipeline("github", []))
 
@@ -106,8 +104,6 @@ async def test_a_deselected_owner_goes_whatever_established_it():
     project = _project(
         team_ids=["gl-a", "t-hand"],
         team_sources={"gl-a": "gitlab", "t-hand": "manual"},
-        team_id="gl-a",
-        team_source="gitlab",
     )
     db = await _db_with(project, _team("gl-a", _ACTOR), _team("t-hand", _ACTOR))
 
@@ -115,14 +111,11 @@ async def test_a_deselected_owner_goes_whatever_established_it():
 
     assert updated.team_ids == ["t-hand"]
     assert updated.team_sources == {"t-hand": "manual"}
-    assert updated.team_id == "t-hand"
-    assert updated.team_source == "manual"
 
 
 @pytest.mark.asyncio
 async def test_a_retained_owner_no_provenance_names_is_read_as_a_hand_assignment():
-    """Every owner carried over from the scalar era arrives with no entry, and any other reading
-    would leave nothing able to retire it."""
+    """Any other reading of an owner without a provenance entry would leave nothing able to retire it."""
     project = _project(team_ids=["legacy", "gl-a"], team_sources={"gl-a": "gitlab"})
     db = await _db_with(project, _team("legacy", _ACTOR), _team("gl-a", _ACTOR))
 
@@ -283,7 +276,6 @@ async def test_a_write_superuser_may_empty_the_owners():
     updated = await _put(db, project, _superuser(), team_ids=[])
 
     assert updated.team_ids == []
-    assert updated.team_id is None
 
 
 @pytest.mark.asyncio
