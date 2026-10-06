@@ -57,6 +57,24 @@ describe("useProjectsDropdown", () => {
     expect(mock).toHaveBeenCalledTimes(2);
   });
 
+  it("requests the remaining pages together instead of one after another", async () => {
+    const total = 3 * DROPDOWN_PAGE_SIZE - 10;
+    const mock = vi.mocked(projectApi.getAll);
+    const held: Array<() => void> = [];
+    mock.mockImplementation((_search, skip = 0) => {
+      const page = makePage(skip as number, Math.min(DROPDOWN_PAGE_SIZE, total - (skip as number)), total);
+      if (skip === 0) return Promise.resolve(page);
+      return new Promise((resolve) => held.push(() => resolve(page)));
+    });
+
+    const { result } = renderHook(() => useProjectsDropdown(), { wrapper });
+
+    await waitFor(() => expect(mock).toHaveBeenCalledTimes(3));
+    held.forEach((release) => release());
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.items.map((p) => p.id)).toEqual(Array.from({ length: total }, (_, i) => `p${i}`));
+  });
+
   it("makes a single request when all projects fit in one page", async () => {
     const mock = vi.mocked(projectApi.getAll);
     mock.mockResolvedValue(makePage(0, 10, 10));
