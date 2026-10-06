@@ -11,8 +11,10 @@ from app.core.init_db import create_indexes
 from app.models.finding import Finding, Severity
 from app.models.project import Project, Scan
 from app.models.user import User
+from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.waivers import WaiverRepository
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.findings import aggregated_vulnerability
@@ -41,6 +43,16 @@ _LOG4J = _vulnerability("log4j-core", "2.14.1", "CVE-2021-44228", Severity.CRITI
 _COMMONS_TEXT = _vulnerability("commons-text", "1.9", "CVE-2022-42889", Severity.MEDIUM)
 _JACKSON = _vulnerability("jackson-databind", "2.13.0", "CVE-2022-42003", Severity.HIGH)
 
+_LOG4SHELL_CRITICAL = {"id": "CVE-2021-44228", "severity": Severity.CRITICAL}
+_CONTEXT_LOOKUP_HIGH = {"id": "CVE-2021-45046", "severity": Severity.HIGH}
+_CONTEXT_LOOKUP_LOW = {"id": "CVE-2021-45046", "severity": Severity.LOW}
+
+
+async def _project(db) -> None:
+    await create_indexes(db)
+    project = Project(id=_PROJECT, name="stale-project", default_branch="main", latest_scan_id=_HEAD)
+    await db.projects.insert_one(project.model_dump(by_alias=True))
+
 
 async def _build(db, scan_id: str, created_at: datetime, *findings: Finding) -> None:
     await ScanRepository(db).create(
@@ -58,9 +70,7 @@ async def _stale(db, **args) -> dict:
 @pytest_asyncio.fixture
 async def history(db):
     """log4j and commons-text first built 200 days ago, jackson new in head, the first build retention-deleted."""
-    await create_indexes(db)
-    project = Project(id=_PROJECT, name="stale-project", default_branch="main", latest_scan_id=_HEAD)
-    await db.projects.insert_one(project.model_dump(by_alias=True))
+    await _project(db)
     await _build(db, "scan-first", _LONG_AGO, _LOG4J, _COMMONS_TEXT)
     await _build(db, _HEAD, _NOW, _LOG4J, _COMMONS_TEXT, _JACKSON)
     await db.findings.delete_many({"scan_id": "scan-first"})
@@ -89,9 +99,7 @@ async def test_nothing_is_stale_when_the_window_reaches_past_first_detection(his
 
 
 async def test_a_cve_kept_across_a_version_bump_stays_stale(db, database):
-    await create_indexes(db)
-    project = Project(id=_PROJECT, name="stale-project", default_branch="main", latest_scan_id=_HEAD)
-    await db.projects.insert_one(project.model_dump(by_alias=True))
+    await _project(db)
     patched = _vulnerability("log4j-core", "2.15.0", "CVE-2021-44228", Severity.CRITICAL)
     await _build(db, "scan-first", _LONG_AGO, _LOG4J)
     await _build(db, _HEAD, _NOW, patched)
@@ -100,4 +108,36 @@ async def test_a_cve_kept_across_a_version_bump_stays_stale(db, database):
 
     (row,) = result["findings"]
     assert row["finding_id"] == patched.id
+    assert ensure_utc(datetime.fromisoformat(row["first_seen_at"])) == _LONG_AGO
+
+
+async def test_a_new_critical_next_to_an_old_low_kept_across_a_bump_is_not_stale(db, database):
+    await _project(db)
+    await _build(db, "scan-first", _LONG_AGO, aggregated_vulnerability("log4j-core", "2.14.1", _CONTEXT_LOOKUP_LOW))
+    patched = aggregated_vulnerability("log4j-core", "2.15.0", _CONTEXT_LOOKUP_LOW, _LOG4SHELL_CRITICAL)
+    await _build(db, _HEAD, _NOW, patched)
+
+    assert (await _stale(db, days_open=30))["findings"] == []
+
+
+async def test_a_new_high_next_to_an_old_waived_critical_is_not_stale(db, database):
+    await _project(db)
+    await WaiverRepository(db).create(
+        Waiver(project_id=_PROJECT, vulnerability_id="CVE-2021-44228", reason="not reachable", created_by="u")
+    )
+    await _build(db, "scan-first", _LONG_AGO, aggregated_vulnerability("log4j-core", "2.14.1", _LOG4SHELL_CRITICAL))
+    patched = aggregated_vulnerability("log4j-core", "2.15.0", _LOG4SHELL_CRITICAL, _CONTEXT_LOOKUP_HIGH)
+    await _build(db, _HEAD, _NOW, patched)
+
+    assert (await _stale(db, days_open=30))["findings"] == []
+
+
+async def test_an_old_high_kept_next_to_a_new_critical_is_named_with_its_own_age(db, database):
+    await _project(db)
+    await _build(db, "scan-first", _LONG_AGO, aggregated_vulnerability("log4j-core", "2.14.1", _CONTEXT_LOOKUP_HIGH))
+    patched = aggregated_vulnerability("log4j-core", "2.15.0", _CONTEXT_LOOKUP_HIGH, _LOG4SHELL_CRITICAL)
+    await _build(db, _HEAD, _NOW, patched)
+
+    (row,) = (await _stale(db, days_open=30))["findings"]
+    assert row["cve"] == "CVE-2021-45046"
     assert ensure_utc(datetime.fromisoformat(row["first_seen_at"])) == _LONG_AGO
