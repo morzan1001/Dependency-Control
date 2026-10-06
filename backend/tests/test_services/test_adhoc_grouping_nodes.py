@@ -74,3 +74,37 @@ def test_an_unhashable_bom_ref_on_a_purl_less_application_does_not_fail_the_docu
     result = parse_sbom(_graph_sbom({"bom-ref": ["bin"], "type": "application", "name": "odd"}))
 
     assert [dep.name for dep in result.dependencies] == ["zlib"]
+
+
+def _spdx_relationship(element: str, kind: str, related: str) -> dict:
+    return {"spdxElementId": element, "relationshipType": kind, "relatedSpdxElement": related}
+
+
+@pytest.mark.asyncio
+async def test_a_trivy_spdx_lock_file_node_is_not_reported_as_dropped():
+    """Trivy's SPDX marshaler links the root, its lock-file node and the packages by CONTAINS only."""
+    sbom = {
+        "spdxVersion": "SPDX-2.3",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "packages": [
+            {"name": "/src", "SPDXID": "SPDXRef-Filesystem-1", "primaryPackagePurpose": "SOURCE"},
+            {"name": "Gemfile.lock", "SPDXID": "SPDXRef-Application-2", "primaryPackagePurpose": "APPLICATION"},
+            {
+                "name": "rack",
+                "SPDXID": "SPDXRef-Package-3",
+                "versionInfo": "3.0.8",
+                "primaryPackagePurpose": "LIBRARY",
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:gem/rack@3.0.8"}],
+            },
+        ],
+        "relationships": [
+            _spdx_relationship("SPDXRef-DOCUMENT", "DESCRIBES", "SPDXRef-Filesystem-1"),
+            _spdx_relationship("SPDXRef-Filesystem-1", "CONTAINS", "SPDXRef-Application-2"),
+            _spdx_relationship("SPDXRef-Application-2", "CONTAINS", "SPDXRef-Package-3"),
+        ],
+    }
+    request = AdhocAnalyzeRequest(sboms=[sbom], analyzers=["license_compliance"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.skipped_inputs == {}
