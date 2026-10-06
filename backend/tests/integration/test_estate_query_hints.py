@@ -85,7 +85,7 @@ async def test_component_findings_resolve_spellings_off_the_scan_component_index
     )
 
     assert [f["finding_id"] for f in resp.json()] == ["CVE-2026-0001"]
-    assert _plan(entries, "findings", "distinct") == ("IXSCAN { scan_id: 1, component: 1, version: 1 }", False)
+    assert _plan(entries, "findings", "aggregate") == ("IXSCAN { scan_id: 1, component: 1, version: 1 }", False)
 
 
 async def test_package_suggestions_match_names_off_the_scan_package_index(client, db, estate):

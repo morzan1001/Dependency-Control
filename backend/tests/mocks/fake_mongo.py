@@ -1829,7 +1829,7 @@ class FakeCollection:
         count = sum(1 for doc in self._docs.values() if _match_doc(doc, query))
         return min(count, limit) if limit else count
 
-    async def distinct(self, field: str, filter: dict | None = None, **_kwargs):
+    async def distinct(self, field: str, filter: dict | None = None):
         seen: list = []
         for doc in self._docs.values():
             # MongoDB's distinct skips documents that lack the field.

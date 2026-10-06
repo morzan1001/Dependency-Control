@@ -89,9 +89,9 @@ async def _package_finding_query(
     scope: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}}
     if version:
         scope["version"] = version
-    names = await finding_repo.collection.distinct(
-        "component", {**scope, **component_match_query(artifact_segment(component))}, hint=FINDINGS_SCAN_COMPONENT_INDEX
-    )
+    any_spelling = {**scope, **component_match_query(artifact_segment(component))}
+    pipeline = [{"$match": any_spelling}, {"$group": {"_id": "$component"}}]
+    names = [row["_id"] for row in await finding_repo.aggregate(pipeline, hint=FINDINGS_SCAN_COMPONENT_INDEX)]
     representative = cluster_by_package_identity([*names, component])
     wanted = representative[normalize_component(component)]
     same = [name for name in names if representative[normalize_component(name)] == wanted]
