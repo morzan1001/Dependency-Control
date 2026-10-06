@@ -118,7 +118,6 @@ function renderOverview(
   mockUseProjectBranchTips.mockReturnValue({ data: branchTips, isLoading: false })
   mockUseScan.mockImplementation((scanId: string) => ({ data: byId.get(scanId) }))
   mockUseLatestProjectRelease.mockReturnValue(releases)
-  mockUseProjectWaivers.mockReturnValue({ data: undefined })
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
@@ -130,6 +129,7 @@ function renderOverview(
 beforeEach(() => {
   vi.clearAllMocks()
   mockUseScanResults.mockReturnValue({ data: [] })
+  mockUseProjectWaivers.mockReturnValue({ data: undefined })
 })
 
 describe('ProjectOverview - enrichment cards', () => {
@@ -374,6 +374,22 @@ describe('ProjectOverview - the trend line', () => {
     ])
 
     expect(trendPoints().map((point) => point[MAIN_BRANCH])).toEqual([5, 2])
+  })
+})
+
+describe('ProjectOverview - waiver tile', () => {
+  it('counts the waivers that have not expired', () => {
+    const ACTIVE = 2
+    const ALL = 5
+    mockUseProjectWaivers.mockImplementation((_projectId: string, options?: { active?: boolean }) => ({
+      data: { pages: [{ total: options?.active ? ACTIVE : ALL }] },
+    }))
+
+    renderOverview([makeScan({}, { critical: 1 })])
+
+    const tile = screen.getByText('Active Waivers').closest('.bg-card') as HTMLElement
+    expect(within(tile).getByText(String(ACTIVE))).toBeInTheDocument()
+    expect(within(tile).queryByText(String(ALL))).not.toBeInTheDocument()
   })
 })
 

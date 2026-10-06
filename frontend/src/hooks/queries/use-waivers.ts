@@ -9,8 +9,8 @@ import { projectKeys } from './use-projects';
 export const waiverKeys = {
     all: ['waivers'] as const,
     project: (projectId: string) => [...waiverKeys.all, 'project', projectId] as const,
-    projectWithParams: (projectId: string, search?: string, sortBy?: string, sortOrder?: string, orphaned?: boolean) =>
-        [...waiverKeys.project(projectId), { search, sortBy, sortOrder, orphaned }] as const,
+    projectWithParams: (projectId: string, search?: string, sortBy?: string, sortOrder?: string, orphaned?: boolean, active?: boolean) =>
+        [...waiverKeys.project(projectId), { search, sortBy, sortOrder, orphaned, active }] as const,
     global: ['waivers', 'global'] as const,
     globalWithParams: (search?: string, sortBy?: string, sortOrder?: string, orphaned?: boolean) =>
         ['waivers', 'global', { search, sortBy, sortOrder, orphaned }] as const,
@@ -66,12 +66,13 @@ export const useProjectWaivers = (
         sortBy?: string;
         sortOrder?: 'asc' | 'desc';
         orphaned?: boolean;
+        active?: boolean;
     }
 ) => {
-    const { search, sortBy = 'created_at', sortOrder = 'desc', orphaned } = options || {};
+    const { search, sortBy = 'created_at', sortOrder = 'desc', orphaned, active } = options || {};
 
     return useInfiniteQuery({
-        queryKey: waiverKeys.projectWithParams(projectId, search, sortBy, sortOrder, orphaned),
+        queryKey: waiverKeys.projectWithParams(projectId, search, sortBy, sortOrder, orphaned, active),
         queryFn: async ({ pageParam = 0 }) => {
             return waiverApi.getByProject(projectId, {
                 skip: pageParam,
@@ -80,6 +81,7 @@ export const useProjectWaivers = (
                 sort_by: sortBy,
                 sort_order: sortOrder,
                 orphaned,
+                active,
             });
         },
         initialPageParam: 0,

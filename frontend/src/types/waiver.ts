@@ -58,5 +58,6 @@ export interface WaiversQueryParams {
   sort_order?: 'asc' | 'desc';
   skip?: number;
   limit?: number;
+  active?: boolean;
   orphaned?: boolean;
 }

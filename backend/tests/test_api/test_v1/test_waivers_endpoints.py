@@ -972,9 +972,9 @@ class TestWaiverResponseShape:
         assert "is_active" not in _make_waiver(id="w-1").model_dump(by_alias=True)
 
 
-class TestOrphanedFilter:
-    """FakeDatabase-backed: the orphaned filter is a query, so a mock that answers every query the
-    same way cannot tell whether it selected anything."""
+class TestListFilters:
+    """FakeDatabase-backed: the filters are queries, so a mock that answers every query the same
+    way cannot tell whether they selected anything."""
 
     _NOW = datetime.now(timezone.utc)
     _WINDOW = timedelta(days=5)
@@ -1008,6 +1008,15 @@ class TestOrphanedFilter:
 
         assert sorted(item["id"] for item in result["items"]) == ["w-orphaned", "w-orphaned-expiring"]
         assert result["total"] == len(result["items"])
+
+    def test_the_active_filter_lists_every_waiver_that_has_not_expired(self, admin_user):
+        db = self._db()
+
+        result = _call_list_waivers(admin_user, db=db, active=True)
+
+        listed = sorted(item["id"] for item in result["items"])
+        assert listed == ["w-matching", "w-orphaned", "w-orphaned-expiring", "w-unevaluated"]
+        assert result["total"] == len(listed)
 
     def test_without_the_filter_every_waiver_is_listed(self, admin_user):
         db = self._db()

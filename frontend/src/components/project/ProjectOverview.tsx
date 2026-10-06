@@ -41,7 +41,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
   const { data: scans, isLoading: scansLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
   const { data: branchTips, isLoading: tipsLoading } = useProjectBranchTips(projectId)
 
-  const { data: waivers } = useProjectWaivers(projectId)
+  const { data: waivers } = useProjectWaivers(projectId, { active: true })
 
   const isLoading = scansLoading || tipsLoading
   const scanList = scans || []
