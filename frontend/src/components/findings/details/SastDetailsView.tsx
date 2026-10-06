@@ -89,8 +89,9 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     const hasMultipleScanners = sastFindings.length > 1 || (finding.scanners?.length ?? 0) > 1
     const showAggregatedView = sastFindings.length > 0 && hasMultipleScanners
     
-    const startLine = details.start?.line || details.line
-    const endLine = details.end?.line || details.line || startLine
+    const position: SastDetails = sastFindings[0]?.details ?? details
+    const startLine = position.start?.line || details.line
+    const endLine = position.end?.line || startLine
 
     const toggleIssue = (id: string) => {
         const newExpanded = new Set(expandedIssues)
@@ -305,8 +306,8 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                     filePath={finding.component || "Unknown"}
                     startLine={startLine}
                     endLine={endLine}
-                    startCol={details.start?.column}
-                    endCol={details.end?.column}
+                    startCol={position.start?.column}
+                    endCol={position.end?.column}
                     scmContext={scanContext}
                 />
                 
@@ -370,8 +371,8 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 filePath={finding.component || "Unknown"}
                 startLine={startLine}
                 endLine={endLine}
-                startCol={details.start?.column}
-                endCol={details.end?.column}
+                startCol={position.start?.column}
+                endCol={position.end?.column}
                 scmContext={scanContext}
             />
             
