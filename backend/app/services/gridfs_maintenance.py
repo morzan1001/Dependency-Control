@@ -13,7 +13,7 @@ from gridfs.errors import NoFile
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core import abatched
-from app.core.constants import ARCHIVE_BATCH_SIZE, ARCHIVE_ORPHAN_MIN_AGE_HOURS
+from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
 from app.db.mongodb import open_gridfs_download_with_retry
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 _GRIDFS_REFERENCE = "gridfs_reference"
 GRIDFS_RESTORE_LOCK_TEMPLATE = "restore-gridfs:{file_id}"
 _REAP_LOCK_TTL_SECONDS = 60
+# Ids per $in of the reference and presence checks: these round trips, not the scans, are a run's cost.
+_REAP_BATCH_SIZE = 1000
 # Every field holding str(fs.files _id); a file none of them names is an orphan.
 _GRIDFS_REFERENCES = (
     ("scans", "sbom_refs.gridfs_id"),
@@ -88,7 +90,7 @@ async def _reap_orphan_chunks(db: Any, cutoff: datetime) -> None:
     """Delete the chunks an upload left without a files document, e.g. when its pod died mid-upload."""
     before = ObjectId.from_datetime(cutoff)
     files_ids = db["fs.chunks"].aggregate([{"$match": {"files_id": {"$lt": before}}}, {"$group": {"_id": "$files_id"}}])
-    async for batch in abatched(files_ids, ARCHIVE_BATCH_SIZE):
+    async for batch in abatched(files_ids, _REAP_BATCH_SIZE):
         ids = [group["_id"] for group in batch]
         present = set(await db["fs.files"].distinct("_id", {"_id": {"$in": ids}}))
         orphans = [file_id for file_id in ids if file_id not in present]
@@ -105,7 +107,7 @@ async def reap_orphan_gridfs_files(db: Any) -> int:
     holder = new_lock_holder()
     deleted = 0
     old_files = db["fs.files"].find({"uploadDate": {"$lt": cutoff}}, {"_id": 1})
-    async for batch in abatched(old_files, ARCHIVE_BATCH_SIZE):
+    async for batch in abatched(old_files, _REAP_BATCH_SIZE):
         referenced = await _referenced_ids(db, [str(doc["_id"]) for doc in batch])
         for doc in batch:
             if str(doc["_id"]) in referenced:
