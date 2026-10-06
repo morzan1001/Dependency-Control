@@ -1,3 +1,48 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.48. Run mongosh commands in-pod on the primary against the application database.
+
+## Before the rollout (gate): build the newest-copy index on findings
+
+Each analysis dates every advisory by its earliest detection in the project and reads the newest stored copy of each vulnerability through a new partial index that the query names. The index has to exist before the first new pod persists a scan, because startup would otherwise build it in-line over the whole collection and miss the startup probe. Build it without a `name` option, since startup declares it under the default name, and with exactly this filter:
+
+```js
+db.findings.createIndex({ project_id: 1, finding_id: 1, created_at: -1 }, { partialFilterExpression: { type: "vulnerability" } })
+```
+
+Start the rollout once `db.findings.getIndexes()` lists `project_id_1_finding_id_1_created_at_-1` on every member and `db.currentOp({ "command.createIndexes": { $exists: true } }).inprog` is empty. A custom name or a different filter makes every new pod fail at startup.
+
+## Before the rollout (gate): installations older than 1.4.55 upgrade through 1.9.48
+
+Startup no longer migrates the sparse GitLab and GitHub project indexes that releases before 1.4.55 created. An installation that still carries them upgrades to 1.9.48 first.
+
+## Roll out the backend first
+
+Roll out the backend before or together with the frontend. The new frontend searches vulnerabilities by severity alone and asks for active waivers, which a 1.9.48 backend refuses or ignores.
+
+## After the rollout
+
+- These indexes back hinted reads, and a hinted read fails while its index is missing, so every index cleanup keeps them: on `findings` `scan_id_1_type_1`, `scan_id_1_component_1_version_1`, `project_id_1_finding_id_1_created_at_-1` and `project_id_1_component_1_type_1_finding_id_1_version_1_first_seen_at_1_scan_created_at_1`; on `dependencies` `scan_id_1_name_1_version_1_purl_1`; on `scans` `scans_released_list`.
+- Startup no longer creates `findings` `type_1`, `analysis_results` `scan_id_1`, `dependencies` `scan_id_1_name_1_version_1` and `projects` `team_id_1`, whose reads wider indexes serve. Once every pod runs this release, drop them to save their writes and memory:
+
+  ```js
+  db.findings.dropIndex("type_1")
+  db.analysis_results.dropIndex("scan_id_1")
+  db.dependencies.dropIndex("scan_id_1_name_1_version_1")
+  db.projects.dropIndex("team_id_1")
+  ```
+
+  A rollback to 1.9.48 or earlier builds them during startup, so recreate them in mongosh before rolling back.
+- Projects keep the `team_id` and `team_source` they last had. The application reads and writes `team_ids` and `team_sources` only. Once no report or query outside the application reads the two fields, remove them: `db.projects.updateMany({}, { $unset: { team_id: "", team_source: "" } })`.
+- The first analysis of each project reads every stored copy of its vulnerable components once to date their advisories, so the primary carries more read load on the first day.
+- A vulnerability finding's `first_seen_at` is the earliest detection of any of its advisories on that component, in any version, and each advisory carries its own date. CVE SLA ages, the scan delta's first seen and the hotspot days known move earlier for CVEs that survived a version bump. Copies stored without a date count from their scan's date, so the `first_seen_at` backfill that the 1.9.42 notes listed is gone from them: run with this release, it would date each advisory by its version's first detection, and the date would stay.
+- Per-advisory exploit maturity and first-seen dates appear with a scan's next analysis.
+- API: project responses carry `team_ids`, `team_sources` and `teams` in place of `team_id` and `team_source`. `/system/app-config` leaves out `project_limit_per_user` and `/analytics/dependency-metadata` leaves out `total_finding_count`. `/analytics/component-findings` returns the 100 most severe findings with the full count in `X-Total-Count`. `/analytics/vulnerability-search` accepts a search without `q` and leaves system warnings out unless `finding_type` names them. `GET /waivers` takes `active=true`. The chat and MCP tools `list_projects`, `get_scan_history` and `list_archives` report `projects_total`, `scans_total` and `archives_total`, and `suggest_waiver_for_finding` reads the head build unless given a `scan_id`.
+- Scanner 1.3.1 ships with this backend, and both pipeline examples pin it. Switch pipelines after the deploy, with the hash from `/api/v1/scripts/scanner.sh/hash?v=1.3.1`. A `DEP_CONTROL_RELEASE_ENVIRONMENT` that is not a slug (`^[a-z0-9][a-z0-9_-]{0,31}$`) now sends the scan without a release mark and prints a warning.
+- GitHub decorates a pull request through the merge-commit fallback for builds whose branch is `<number>/merge`, which the shipped scanner sends for pull request builds.
+
+
+
 # Release 1.9.48
 
 
@@ -180,7 +225,7 @@ Before the rollout, resolve each gate before the first new pod starts:
 12. Canonicalise stored webhook event names, and mark Teams webhooks as `teams`.
 13. Review synced team members and active accounts that are not verified (a review, not a gate).
 14. Review accounts that hold only one of `project:update` and `project:delete` (a review).
-15. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 18 re-creates the listed waivers from it).
+15. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 17 re-creates the listed waivers from it).
 16. Check projects that run `os_malware` without an API key (a review).
 17. Review stored webhook headers that deliveries now refuse (a review).
 18. Check that the tokens behind merge and pull request comments can read their own user (a review).
@@ -200,19 +245,18 @@ After the rollout, once the last pod on the previous image has terminated:
 5. Remove TruffleHog plaintext secrets from `analysis_results`.
 6. Rewrite archive bundles that still hold TruffleHog plaintext.
 7. Name stored secret findings after their detector.
-8. Backfill `first_seen_at`.
-9. Purge leaked chat tool results, then rotate the exposed secrets.
-10. Rotate GitHub Enterprise tokens that reached github.com.
-11. Review GitLab bindings set through the old unchecked path.
-12. Review the retention of projects created in the dialog.
-13. Restamp every project under the new waiver rules. Mandatory on every installation.
-14. Copy each scan's stats into its latest-run summary.
-15. Remove pending scans and releases that refused scanner results left behind.
-16. Clean up callgraph languages, and give old callgraphs an `updated_at`.
-17. Rewrite stored dependency type aliases.
-18. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
-19. Remove memberships of deleted users and leftovers of deleted projects.
-20. Remove stored chat images.
+8. Purge leaked chat tool results, then rotate the exposed secrets.
+9. Rotate GitHub Enterprise tokens that reached github.com.
+10. Review GitLab bindings set through the old unchecked path.
+11. Review the retention of projects created in the dialog.
+12. Restamp every project under the new waiver rules. Mandatory on every installation.
+13. Copy each scan's stats into its latest-run summary.
+14. Remove pending scans and releases that refused scanner results left behind.
+15. Clean up callgraph languages, and give old callgraphs an `updated_at`.
+16. Rewrite stored dependency type aliases.
+17. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
+18. Remove memberships of deleted users and leftovers of deleted projects.
+19. Remove stored chat images.
 21. Watch the primary's load, and remove the Helm values and environment variables the backend does not read.
 22. Review the crypto system policy after its seed bump (a review).
 
@@ -1205,51 +1249,6 @@ for d in db.findings.distinct("details.detector", {"type": "secret"}):
 ```
 
 It names the raw entries first, so a re-aggregation that runs meanwhile already writes names. It walks `analysis_results` once and then runs two `update_many` per known detector on the `type` index. A second run reports 0. Numbers missing from the table (24, 28, 132, 400 and anything above 1063) stay unnamed. Run it again after restoring a scan from a bundle archived before the upgrade.
-
-## After the rollout: backfill `first_seen_at`
-
-The CVE remediation SLA now measures a finding's age from `first_seen_at`, which is stored when a scan's findings are persisted and carried forward from the project's earlier findings, so retention no longer resets it. Existing findings do not have the field and keep passing the SLA until this backfill has run.
-
-Run the backfill off-peak, because step 2 groups the whole findings collection. It sets `first_seen_at` to the earliest `scan_created_at` of each `(project_id, type, component, version, finding_id)`, using `first_seen_at` where a copy already has one, which matches the application's rule. It only touches documents whose field is missing or later than that minimum, so it is idempotent and safe to re-run. Step 3's filter is served by the new index. In-pod mongosh against the application database:
-
-```js
-// 1. Dry run: how many findings lack the field
-db.findings.countDocuments({ first_seen_at: { $exists: false } })
-
-// 2. Earliest detection per identity into a scratch collection
-db.findings.aggregate([
-  { $group: {
-      _id: { project_id: "$project_id", type: "$type", component: "$component",
-             version: "$version", finding_id: "$finding_id" },
-      first_seen_at: { $min: { $ifNull: ["$first_seen_at", "$scan_created_at"] } } } },
-  { $match: { first_seen_at: { $ne: null } } },
-  { $out: "tmp_first_seen_backfill" }
-], { allowDiskUse: true })
-
-// 3. Stamp every copy of each identity (served by the new 7-field findings index)
-let ops = [], modified = 0;
-const flush = () => { if (ops.length) { modified += db.findings.bulkWrite(ops, { ordered: false }).modifiedCount; ops = []; } };
-db.tmp_first_seen_backfill.find().forEach(r => {
-  const k = r._id;
-  ops.push({ updateMany: {
-    filter: { project_id: k.project_id ?? null, type: k.type ?? null, component: k.component ?? null,
-              version: k.version ?? null, finding_id: k.finding_id ?? null,
-              $or: [{ first_seen_at: { $exists: false } }, { first_seen_at: null },
-                    { first_seen_at: { $gt: r.first_seen_at } }] },
-    update: { $set: { first_seen_at: r.first_seen_at } } } });
-  if (ops.length === 1000) flush();
-});
-flush();
-print(`modified ${modified}`);
-
-// 4. Verify (0 expected, except findings that also lack scan_created_at), then clean up
-db.findings.countDocuments({ first_seen_at: { $exists: false } })
-db.tmp_first_seen_backfill.drop()
-```
-
-`?? null` is deliberate. `$group` omits a missing key from `_id`, and `{version: null}` matches both a null and a missing `version`.
-
-Scans restored from archives written before this release come back without `first_seen_at`. Re-running steps 2 to 4 after such a restore stamps them.
 
 ## After the rollout: purge leaked chat tool results, then rotate the exposed secrets
 
