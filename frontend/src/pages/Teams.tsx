@@ -147,7 +147,7 @@ export default function TeamsPage() {
       </div>
 
       {isEditOpen && (
-        <EditTeamDialog team={selectedTeam} isOpen onClose={() => setIsEditOpen(false)} />
+        <EditTeamDialog team={selectedTeam} onClose={() => setIsEditOpen(false)} />
       )}
 
       <TeamBindingDialog

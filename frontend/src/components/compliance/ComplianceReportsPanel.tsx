@@ -98,7 +98,7 @@ export function ComplianceReportsPanel() {
       </div>
 
       {newReportDialog.open && (
-        <NewReportDialog open onClose={newReportDialog.closeDialog} defaultFramework={prefillFramework} />
+        <NewReportDialog onClose={newReportDialog.closeDialog} defaultFramework={prefillFramework} />
       )}
       <ReportDetailDrawer report={selected} onClose={() => setSelectedId(null)} />
     </div>

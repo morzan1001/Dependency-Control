@@ -17,11 +17,10 @@ import { getErrorMessage } from "@/lib/utils"
 
 interface EditTeamDialogProps {
   team: Team | null;
-  isOpen: boolean;
   onClose: () => void;
 }
 
-export function EditTeamDialog({ team, isOpen, onClose }: Readonly<EditTeamDialogProps>) {
+export function EditTeamDialog({ team, onClose }: Readonly<EditTeamDialogProps>) {
   const [name, setName] = useState(team?.name || '');
   const [description, setDescription] = useState(team?.description || '');
   const updateTeamMutation = useUpdateTeam();
@@ -43,7 +42,7 @@ export function EditTeamDialog({ team, isOpen, onClose }: Readonly<EditTeamDialo
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[425px]">
         <form onSubmit={handleUpdateTeam}>
           <DialogHeader>
