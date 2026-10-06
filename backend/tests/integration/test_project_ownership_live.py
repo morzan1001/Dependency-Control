@@ -20,7 +20,7 @@ from app.models.user import User
 from app.repositories.projects import (
     ProjectRepository,
     owners_replaced_by,
-    remove_team_pipeline,
+    remove_team_ops,
     replace_team_subset_pipeline,
     set_owners_pipeline,
 )
@@ -58,7 +58,7 @@ async def _assert_a_deleted_team_leaves_the_others_owning(db) -> None:
     repo = ProjectRepository(db)
     await db.projects.insert_one(dict(_PROJECT))
 
-    changed = await repo.update_many_raw({"team_ids": "gl-stale"}, remove_team_pipeline("gl-stale"))
+    changed = await repo.update_many_raw({"team_ids": "gl-stale"}, remove_team_ops("gl-stale"))
 
     assert changed == 1
     project = Project(**await db.projects.find_one({"_id": "p-live"}))

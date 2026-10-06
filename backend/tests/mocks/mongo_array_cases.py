@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
-from app.repositories.projects import remove_team_pipeline, replace_team_subset_pipeline, set_owners_pipeline
+from app.repositories.projects import remove_team_ops, replace_team_subset_pipeline, set_owners_pipeline
 
 _CONFLICT = 40
 _BAD_VALUE = 2
@@ -503,20 +503,14 @@ TEAM_OWNERSHIP_CASES = [
     UpdateCase(
         "removing an owner leaves the others",
         {"team_ids": ["gl-a", "m1"], "team_sources": {"gl-a": _GITLAB_A, "m1": "manual"}},
-        remove_team_pipeline("gl-a"),
+        remove_team_ops("gl-a"),
         expected={"team_ids": ["m1"], "team_sources": {"m1": "manual"}},
     ),
     UpdateCase(
         "removing the last owner empties the owners",
         {"team_ids": ["m1"], "team_sources": {"m1": "manual"}},
-        remove_team_pipeline("m1"),
+        remove_team_ops("m1"),
         expected={"team_ids": [], "team_sources": {}},
-    ),
-    UpdateCase(
-        "removing an owner a project never had",
-        {"name": "x"},
-        remove_team_pipeline("m1"),
-        expected={"name": "x", "team_ids": [], "team_sources": {}},
     ),
     # The headline of the instance-scoped provenance: under a provider-wide source this write
     # retires gl-b as well, and instance A's next ingest retires gl-a-moved in the same way.

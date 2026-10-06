@@ -128,16 +128,9 @@ def set_owners_pipeline(team_ids: list[str]) -> list[dict[str, Any]]:
     ]
 
 
-def remove_team_pipeline(team_id: str) -> list[dict[str, Any]]:
+def remove_team_ops(team_id: str) -> dict[str, Any]:
     """Remove one owner whatever wrote it."""
-    return [
-        {
-            "$set": {
-                "team_ids": {"$setDifference": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
-                "team_sources": {"$arrayToObject": _team_source_entries({"$ne": ["$$entry.k", team_id]})},
-            }
-        },
-    ]
+    return {"$pull": {"team_ids": team_id}, "$unset": {f"team_sources.{team_id}": ""}}
 
 
 def _literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
