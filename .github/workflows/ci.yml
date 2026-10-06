@@ -21,6 +21,24 @@ jobs:
     name: Frontend
     uses: ./.github/workflows/ci-frontend.yml
 
+  chart:
+    name: Helm Chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Lint and render with default and prod-like values
+        working-directory: helm/dependency-control
+        run: |
+          helm lint .
+          helm template . > /dev/null
+          helm lint . -f ../ci/prod-like-values.yaml
+          helm template . -f ../ci/prod-like-values.yaml > /dev/null
+
   sonarcloud:
     name: SonarCloud
     needs: [backend, frontend]

@@ -1,0 +1,36 @@
+name: Backend Image
+
+# A build check for the image publish-backend.yml pushes at release, run only when its build inputs change.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'backend/Dockerfile'
+      - 'backend/pyproject.toml'
+      - 'backend/poetry.lock'
+      - '.github/workflows/backend-image.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'backend/Dockerfile'
+      - 'backend/pyproject.toml'
+      - 'backend/poetry.lock'
+      - '.github/workflows/backend-image.yml'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Build backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: "."
+          file: "./backend/Dockerfile"
+          platforms: linux/amd64
+          push: false
+          provenance: false

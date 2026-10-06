@@ -1,0 +1,110 @@
+# The switches production turns on, for helm lint/template in CI. Secrets stay empty or name existing Secrets.
+environment: production
+
+global:
+  tls:
+    enabled: true
+
+database:
+  type: percona
+  extraUsers:
+    - name: reporting
+      db: dependency_control
+      passwordSecretRef:
+        name: reporting-mongodb-user
+        key: password
+      roles:
+        - name: read
+          db: dependency_control
+  percona:
+    backup:
+      enabled: true
+      image:
+        repository: percona/percona-backup-mongodb
+        tag: 2.8.0
+      storages:
+        s3:
+          type: s3
+          bucket: mongodb-backup
+          region: europe-west1
+          endpointUrl: https://storage.example.com
+          credentialsSecret: mongodb-backup-credentials
+      tasks:
+        - name: daily-backup
+          enabled: true
+          schedule: "0 2 * * *"
+          keep: 7
+          storageName: s3
+          type: logical
+    monitoring:
+      enabled: true
+
+mongodb-operator:
+  enabled: false
+
+traefik:
+  enabled: false
+
+dragonflyOperator:
+  enabled: true
+  authentication:
+    passwordFromSecret:
+      name: dependency-control-dragonfly-password
+      key: password
+  args:
+    - --cache_mode=true
+
+ingress:
+  className: pomerium
+  hostname: dependency-control.example.com
+  extra:
+    docs:
+      paths:
+        - path: /docs
+        - path: /openapi.json
+          pathType: Exact
+
+backend:
+  env:
+    trustedProxyIps: 10.0.0.0/20
+  autoscaling:
+    minReplicas: 5
+    maxReplicas: 15
+    targetMemoryUtilizationPercentage: null
+
+trivyServer:
+  enabled: true
+  persistence:
+    enabled: false
+
+grypeDbUpdater:
+  enabled: true
+  gcsBucket: grype-db
+  gcpProject: example-project
+
+archiving:
+  enabled: true
+  s3:
+    endpoint: https://storage.example.com
+    existingSecret: archive-s3-credentials
+  encryption:
+    enabled: true
+    existingSecret: archive-encryption-key
+
+ollama:
+  gpu:
+    enabled: true
+  persistence:
+    enabled: false
+
+chat:
+  enabled: true
+
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    tls:
+      enabled: true
+  grafanaDashboard:
+    enabled: true
