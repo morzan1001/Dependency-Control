@@ -2,6 +2,7 @@ import { Suspense, useState } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, MessageSquare, Menu, X, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/context'
@@ -187,16 +188,18 @@ export default function DashboardLayout() {
         {/* Suspense wraps only the Outlet so a lazy route's chunk load keeps the sidebar chrome mounted. */}
         <main className="relative flex-1 overflow-y-auto overflow-x-hidden">
           <div className="p-4 lg:p-8">
-            <Suspense
-              fallback={
-                <div className="space-y-4">
-                  <Skeleton className="h-8 w-48" />
-                  <Skeleton className="h-32 w-full" />
-                </div>
-              }
-            >
-              <Outlet />
-            </Suspense>
+            <ErrorBoundary key={location.pathname}>
+              <Suspense
+                fallback={
+                  <div className="space-y-4">
+                    <Skeleton className="h-8 w-48" />
+                    <Skeleton className="h-32 w-full" />
+                  </div>
+                }
+              >
+                <Outlet />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         </main>
       </div>

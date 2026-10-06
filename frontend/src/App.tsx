@@ -31,7 +31,6 @@ import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { authApi } from '@/api/auth'
 import { systemApi } from '@/api/system'
 import { ANALYTICS_ROUTE_PERMISSIONS } from '@/lib/constants'
@@ -150,9 +149,7 @@ function AppRoutes() {
       } />
       <Route element={
         <ProtectedRoute>
-          <ErrorBoundary>
-            <DashboardLayout />
-          </ErrorBoundary>
+          <DashboardLayout />
         </ProtectedRoute>
       }>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
