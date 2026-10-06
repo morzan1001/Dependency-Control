@@ -5,9 +5,10 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from pymongo import UpdateOne
+from pymongo import ASCENDING, DESCENDING, UpdateOne
 
-from app.models.finding import LOCATION_FINDING_TYPES
+from app.core.cve import advisory_ids, advisory_match
+from app.models.finding import LOCATION_FINDING_TYPES, FindingType
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository, find_window
 
@@ -26,7 +27,33 @@ _VULNERABILITY_IDENTITY_PROJECTION = {
 
 FindingIdentity = tuple[Any, Any, Any, Any]
 
-_DETECTION_CHUNK_COMPONENTS = 1000
+# Every field earliest_detections reads, so it never fetches a document.
+FIRST_DETECTION_INDEX = [
+    ("project_id", ASCENDING),
+    ("component", ASCENDING),
+    ("type", ASCENDING),
+    ("finding_id", ASCENDING),
+    ("version", ASCENDING),
+    ("first_seen_at", ASCENDING),
+    ("scan_created_at", ASCENDING),
+]
+
+# A vulnerability's finding_id names its component@version, so each version's newest copy is one seek.
+NEWEST_VULNERABILITY_INDEX = [("project_id", ASCENDING), ("finding_id", ASCENDING), ("created_at", DESCENDING)]
+VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
+
+_DETECTION_CHUNK = 10_000
+
+# What advisory_detections reads of a copy: its component, and each advisory's names and date.
+_COPY_DATES: dict[str, Any] = {
+    "component": "$component",
+    "advisories": {
+        "$map": {
+            "input": "$details.vulnerabilities",
+            "in": {field: f"$$this.{field}" for field in ("id", "aliases", "resolved_cve", "first_seen_at")},
+        }
+    },
+}
 
 # What names an advisory, and its per-advisory waiver state.
 _ADVISORY_WAIVER_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "waiver_reason")
@@ -94,24 +121,18 @@ class FindingRepository(BaseRepository[FindingRecord]):
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[FindingIdentity, datetime]:
         """Earliest detection per identity among the project's stored copies; a copy predating first_seen_at
-        counts from its scan. Runs on every persist, so it reads only fields the covering index in init_db holds."""
-        by_component: dict[Any, list[Mapping[str, Any]]] = defaultdict(list)
-        for record in records:
-            by_component[record["component"]].append(record)
-        components = list(by_component)
-        types = list({r["type"] for r in records})
+        counts from its scan. Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys."""
         earliest: dict[FindingIdentity, datetime] = {}
-        # One $match naming every component outgrows the 16 MiB command limit on large inventories.
-        for start in range(0, len(components), _DETECTION_CHUNK_COMPONENTS):
-            chunk = components[start : start + _DETECTION_CHUNK_COMPONENTS]
-            finding_ids = list({r["finding_id"] for component in chunk for r in by_component[component]})
+        # One $match naming every finding outgrows the 16 MiB command limit on large scans.
+        for start in range(0, len(records), _DETECTION_CHUNK):
+            asked = records[start : start + _DETECTION_CHUNK]
             pipeline: list[dict[str, Any]] = [
                 {
                     "$match": {
                         "project_id": project_id,
-                        "component": {"$in": chunk},
-                        "type": {"$in": types},
-                        "finding_id": {"$in": finding_ids},
+                        "component": {"$in": list({r["component"] for r in asked})},
+                        "type": {"$in": list({r["type"] for r in asked})},
+                        "finding_id": {"$in": list({r["finding_id"] for r in asked})},
                     }
                 },
                 {
@@ -126,11 +147,67 @@ class FindingRepository(BaseRepository[FindingRecord]):
                     }
                 },
             ]
-            rows = await self.aggregate(pipeline, allow_disk_use=True)
+            # Unhinted, the planner races candidate plans on every persist, which took most of the lookup's time in prod.
+            cursor = self.collection.aggregate(pipeline, hint=dict(FIRST_DETECTION_INDEX), allowDiskUse=True)
             earliest.update(
-                {finding_identity(row["_id"]): first for row in rows if (first := row["first_seen_at"]) is not None}
+                {
+                    finding_identity(row["_id"]): first
+                    async for row in cursor
+                    if (first := row["first_seen_at"]) is not None
+                }
             )
         return earliest
+
+    async def advisory_detections(
+        self, project_id: str, records: Sequence[Mapping[str, Any]]
+    ) -> dict[tuple[str, str], datetime]:
+        """Earliest detection per (component, advisory id) of the records' advisories over every stored version.
+        Every persist dates each advisory of its copy with its earliest detection, so each version's newest copy
+        answers for the advisories it dates, and every copy of the component dates the rest."""
+        asked: dict[str, set[str]] = defaultdict(set)
+        for record in records:
+            for entry in record["details"]["vulnerabilities"]:
+                asked[record["component"]].update(advisory_ids(entry))
+        components = list(asked)
+        earliest: dict[tuple[str, str], datetime] = {}
+        for start in range(0, len(components), _DETECTION_CHUNK):
+            chunk = components[start : start + _DETECTION_CHUNK]
+            versions = await self.collection.distinct(
+                "finding_id", {"project_id": project_id, "component": {"$in": chunk}, **VULNERABILITIES_ONLY}
+            )
+            newest: list[dict[str, Any]] = [
+                {"$match": {"project_id": project_id, "finding_id": {"$in": versions}, **VULNERABILITIES_ONLY}},
+                {"$sort": dict(NEWEST_VULNERABILITY_INDEX)},
+                {"$group": {"_id": "$finding_id", **{key: {"$first": value} for key, value in _COPY_DATES.items()}}},
+            ]
+            await self._fold_advisory_dates(earliest, newest, NEWEST_VULNERABILITY_INDEX)
+            # A scan whose analyzer failed or came back partial stores a newest copy that misses advisories.
+            if undated := {(c, i) for c in chunk for i in asked[c] if (c, i) not in earliest}:
+                every = [
+                    {
+                        "$match": {
+                            "project_id": project_id,
+                            "component": {"$in": list({c for c, _ in undated})},
+                            **VULNERABILITIES_ONLY,
+                            **advisory_match({"$in": list({i for _, i in undated})}),
+                        }
+                    },
+                    # A copy's date spans at most its own version, so only the minimum over every copy may use it.
+                    {"$project": {**_COPY_DATES, "first_seen_at": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}},
+                ]
+                await self._fold_advisory_dates(earliest, every, FIRST_DETECTION_INDEX)
+        return earliest
+
+    async def _fold_advisory_dates(
+        self, earliest: dict[tuple[str, str], datetime], pipeline: list[dict[str, Any]], index: list[tuple[str, int]]
+    ) -> None:
+        async for copy in self.collection.aggregate(pipeline, hint=dict(index)):
+            for advisory in copy["advisories"] or []:
+                # A copy written before its advisories carried their own date has its finding's.
+                if first := advisory.get("first_seen_at") or copy.get("first_seen_at"):
+                    for advisory_id in advisory_ids(advisory):
+                        key = (copy["component"], advisory_id)
+                        earliest[key] = min(earliest.get(key, first), first)
 
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})

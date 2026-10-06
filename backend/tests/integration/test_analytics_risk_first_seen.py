@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 
+from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType
 from app.repositories.findings import FindingRepository
 from app.services.aggregation import ResultAggregator
@@ -21,13 +22,13 @@ def _days_ago(days: int) -> datetime:
     return _NOW - timedelta(days=days)
 
 
-def _vulnerability(component: str, cve: str) -> Finding:
+def _vulnerability(component: str, cve: str, version: str = "1.0.0") -> Finding:
     return Finding(
         id=cve,
         type=FindingType.VULNERABILITY,
         severity="HIGH",
         component=component,
-        version="1.0.0",
+        version=version,
         description="",
         scanners=["trivy"],
         details={"fixed_version": "1.0.1"},
@@ -48,6 +49,7 @@ async def _scan(db, scan_id: str, created_at: datetime, *findings: Finding) -> N
 @pytest_asyncio.fixture
 async def retained(db, owner_auth_headers_proj):
     """lodash was first seen by a scan that retention has since deleted; minimist is new in the head scan."""
+    await create_indexes(db)
     await _scan(db, "scan-old", _days_ago(200), _vulnerability("lodash", "CVE-2021-23337"))
     await _scan(
         db,
@@ -91,3 +93,17 @@ async def test_impact_flags_a_vulnerability_older_than_retention_as_overdue(clie
     lodash = next(row for row in resp.json() if row["component"] == "lodash")
     assert lodash["days_known"] == 200
     assert any(reason.startswith("overdue:") for reason in lodash["priority_reasons"])
+
+
+@pytest.mark.asyncio
+async def test_a_hotspot_whose_cve_survived_a_version_bump_keeps_its_age(client, db, owner_auth_headers_proj):
+    await create_indexes(db)
+    await _scan(db, "scan-old", _days_ago(200), _vulnerability("lodash", "CVE-2021-23337", version="4.17.19"))
+    await _scan(db, "scan-head", _days_ago(2), _vulnerability("lodash", "CVE-2021-23337", version="4.17.20"))
+    await db.projects.update_one({"_id": _PROJECT}, {"$set": {"latest_scan_id": "scan-head"}})
+
+    resp = await client.get("/api/v1/analytics/hotspots", headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    [lodash] = resp.json()
+    assert (lodash["version"], lodash["days_known"]) == ("4.17.20", 200)

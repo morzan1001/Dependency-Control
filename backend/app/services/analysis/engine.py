@@ -28,6 +28,7 @@ from app.core.constants import (
     ScanStatus,
     SCAN_USABLE_STATUSES,
 )
+from app.core.cve import advisory_ids
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -48,7 +49,7 @@ from app.core.metrics import (
 )
 from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.crypto_asset import CryptoAsset
-from app.models.finding import Finding
+from app.models.finding import Finding, FindingType
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
@@ -714,12 +715,27 @@ async def _run_vuln_enrichments(
 async def _stamp_first_seen(
     records: list[dict[str, Any]], project_id: str | None, finding_repo: FindingRepository
 ) -> None:
-    """Carry each finding's earliest detection in the project forward, since retention deletes the
-    scans that first saw it and the SLA age has to survive them."""
-    earliest = await finding_repo.earliest_detections(project_id, records) if project_id else {}
-    for record in records:
+    """Carry each finding's earliest detection in the project forward, since retention deletes the scans
+    that first saw it; a vulnerability's advisories are dated one by one across its component's versions."""
+    vulnerabilities = [r for r in records if r["type"] == FindingType.VULNERABILITY.value]
+    others = [r for r in records if r["type"] != FindingType.VULNERABILITY.value]
+    earliest, advisories = (
+        await asyncio.gather(
+            finding_repo.earliest_detections(project_id, others),
+            finding_repo.advisory_detections(project_id, vulnerabilities),
+        )
+        if project_id
+        else ({}, {})
+    )
+    for record in others:
         detections = (earliest.get(finding_identity(record)), record["scan_created_at"])
         record["first_seen_at"] = min(d for d in detections if d is not None)
+    for record in vulnerabilities:
+        entries = record["details"]["vulnerabilities"]
+        for entry in entries:
+            known = [advisories.get((record["component"], advisory_id)) for advisory_id in advisory_ids(entry)]
+            entry["first_seen_at"] = min(d for d in (*known, record["scan_created_at"]) if d is not None)
+        record["first_seen_at"] = min(entry["first_seen_at"] for entry in entries)
 
 
 def _fit_finding(record: dict[str, Any]) -> dict[str, Any]:

@@ -18,6 +18,7 @@ from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
 from app.db.mongodb import get_database
 from app.models.user import User
+from app.repositories.findings import FIRST_DETECTION_INDEX, NEWEST_VULNERABILITY_INDEX, VULNERABILITIES_ONLY
 from app.repositories.projects import UNSHAPED_OWNERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
@@ -328,18 +329,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
     await database["findings"].create_index(FINDINGS_SCAN_TYPE_INDEX)
     await database["findings"].create_index(FINDINGS_SCAN_COMPONENT_INDEX)
-    # Covering index for earliest_detections: each field it reads must stay in this key.
-    await database["findings"].create_index(
-        [
-            ("project_id", pymongo.ASCENDING),
-            ("component", pymongo.ASCENDING),
-            ("type", pymongo.ASCENDING),
-            ("finding_id", pymongo.ASCENDING),
-            ("version", pymongo.ASCENDING),
-            ("first_seen_at", pymongo.ASCENDING),
-            ("scan_created_at", pymongo.ASCENDING),
-        ]
-    )
+    # Both detection lookups hint these keys; an unsatisfiable hint errors, so every persist needs them.
+    await database["findings"].create_index(FIRST_DETECTION_INDEX)
+    await database["findings"].create_index(NEWEST_VULNERABILITY_INDEX, partialFilterExpression=VULNERABILITIES_ONLY)
 
     await database["waivers"].create_index("finding_id")
     await database["waivers"].create_index("package_name")

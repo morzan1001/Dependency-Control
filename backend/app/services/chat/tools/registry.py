@@ -248,6 +248,19 @@ def _slim_with_project(rows: list[dict[str, Any]], names: dict[str, str]) -> lis
     return [{**_serialize_finding_for_llm(f), "project_name": names.get(_row_project_id(f), "")} for f in rows]
 
 
+def _stale_since(finding: dict[str, Any], allowed_sev: list[str], cutoff: datetime) -> tuple[datetime, str | None, str]:
+    """A vulnerability's worst live advisory in range open before cutoff, oldest among equals; others by their own."""
+    if finding.get("type") != "vulnerability":
+        return finding["first_seen_at"], None, finding["severity"]
+    stale = [
+        (first_seen, canonical_cve(advisory), advisory["severity"])
+        for advisory in live_advisories(finding["details"])
+        if advisory.get("severity") in allowed_sev
+        and (first_seen := advisory.get("first_seen_at") or finding["first_seen_at"]) < cutoff
+    ]
+    return min(stale, key=lambda entry: (-get_severity_value(entry[2]), entry[0]))
+
+
 # How a dependency's directness was established. `direct` alone cannot express it: an
 # inferred-direct package is direct, but ranks below a declared one when ordering fixes.
 _DIRECT_CONFIDENCE_RANK = {"declared": 0, "inferred": 1, "transitive": 2}
@@ -1310,20 +1323,29 @@ class ChatToolRegistry:
         head, names = await self._heads_in_scope(ctx)
         if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        # Aged as the CVE SLA ages it: by a live advisory in range, one stored without a date by its finding's.
+        old_advisory = {
+            "severity": {"$in": allowed_sev},
+            "$or": [{"first_seen_at": {"$lt": cutoff}}, {"first_seen_at": None}],
+            **_ACTIVE,
+        }
         stale, ranking_note = await _ranked_findings(
             ctx.db,
             {
                 "scan_id": {"$in": list(head.values())},
                 "severity": {"$in": allowed_sev},
-                "first_seen_at": {"$lt": datetime.now(timezone.utc) - timedelta(days=days)},
+                "first_seen_at": {"$lt": cutoff},
+                "$or": [{"type": {"$ne": "vulnerability"}}, {"details.vulnerabilities": {"$elemMatch": old_advisory}}],
                 **_ACTIVE,
             },
             ctx.args["limit"],
         )
-        out = [
-            {**slim, "first_seen_at": _clip_value(f.get("first_seen_at"))}
-            for slim, f in zip(_slim_with_project(stale, names), stale, strict=True)
-        ]
+        out = []
+        for f in stale:
+            first_seen, cve, severity = _stale_since(f, allowed_sev, cutoff)
+            row = {**_serialize_finding_for_llm(f, cve=cve), "project_name": names.get(_row_project_id(f), "")}
+            out.append({**row, "severity": severity, "first_seen_at": _clip_value(first_seen)})
         return {
             "findings": out,
             "count": len(out),

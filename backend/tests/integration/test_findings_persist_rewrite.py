@@ -7,9 +7,11 @@ from pathlib import Path
 
 import bson
 import pytest
+import pytest_asyncio
 from pymongo.errors import DocumentTooLarge
 
 from app.core import ensure_utc
+from app.core.init_db import create_indexes
 from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
 from app.services.aggregation import ResultAggregator
@@ -30,6 +32,12 @@ _DATABASES = [
     pytest.param("attrappe", id="attrappe"),
     pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
 ]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _indexes(db):
+    """Persisting hints indexes that a real server holds only once init_db has run."""
+    await create_indexes(db)
 
 
 def _trivy_vulnerability(cve: str, pkg: str) -> dict:

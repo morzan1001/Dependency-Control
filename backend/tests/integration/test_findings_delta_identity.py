@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
+from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType, Severity
 from app.repositories.findings import FindingRepository
@@ -60,6 +62,12 @@ _RC4_SUITE = CipherSuiteEntry(
     mac="MD5",
     weaknesses=["weak-cipher-rc4", "weak-mac-md5"],
 )
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _indexes(db):
+    """Persisting hints indexes that a real server holds only once init_db has run."""
+    await create_indexes(db)
 
 
 def _days_ago(days: int) -> datetime:

@@ -11,6 +11,7 @@ re-validation; it does not exempt readers from declaring what they consume.
 """
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -145,6 +146,8 @@ class VulnerabilityEntryDetails(_DetailsModel):
     # per-entry waiver state (services.waivers.apply.restamp_waivers)
     waived: bool | None = None
     waiver_reason: str | None = None
+    # earliest detection on the component in the project, any version (analysis.engine._stamp_first_seen)
+    first_seen_at: datetime | None = None
 
 
 class VulnerabilityDetails(_DetailsModel):
