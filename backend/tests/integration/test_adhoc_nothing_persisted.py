@@ -18,6 +18,8 @@ import pytest
 import redis.asyncio
 from motor import motor_asyncio
 
+# run_adhoc_analysis imports this lazily; first imported under bypass_attempts, its chain would keep the tripwires.
+import app.api.v1.helpers.callgraph  # noqa: F401
 from app.core.cache import CacheKeys, CacheService, cache_service
 from app.core.config import settings
 from app.db import mongodb
