@@ -14,7 +14,7 @@ from app.core import ensure_utc
 from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType, Severity
 from app.models.waiver import Waiver
-from app.repositories.findings import _DETECTION_CHUNK_COMPONENTS, FindingRepository
+from app.repositories.findings import _DETECTION_CHUNK, FindingRepository
 from app.repositories.waivers import WaiverRepository
 from app.schemas.compliance import ControlResult, ControlStatus
 from app.services.aggregation.aggregator import ResultAggregator
@@ -476,15 +476,42 @@ async def test_the_first_detection_lookup_answers_for_400000_components(db):
     assert {identity[1]: ensure_utc(date) for identity, date in earliest.items()} == {_module(399_999): _days_ago(90)}
 
 
+_ACTUATOR_RULE = "java.spring.security.audit.spring-actuator-fully-enabled.spring-actuator-fully-enabled"
+
+
+def _dense_sast(file: int, line: int) -> Finding:
+    path = f"services/order-service/src/main/java/com/example/order/module{file // 100:03d}/Handler{file:05d}.java"
+    return Finding(
+        id=f"OPENGREP-{_ACTUATOR_RULE}-{path}-{line}",
+        type=FindingType.SAST,
+        severity=Severity.HIGH,
+        component=path,
+        description="spring actuator fully enabled",
+        scanners=["opengrep"],
+    )
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_first_detection_lookup_answers_for_ten_findings_in_each_of_10000_files(db):
+    await _persist(db, "scan-old", _days_ago(90), _dense_sast(9_999, 9))
+    current = [_dense_sast(file, line) for file in range(10_000) for line in range(10)]
+    records, _ = _prepare_finding_records(current, "scan-new", _PROJECT, _NOW)
+
+    earliest = await FindingRepository(db).earliest_detections(_PROJECT, records)
+
+    assert {identity[3]: ensure_utc(date) for identity, date in earliest.items()} == {current[-1].id: _days_ago(90)}
+
+
 @pytest.mark.parametrize("database", _DATABASES)
 @pytest.mark.asyncio
 async def test_copies_across_two_lookup_chunks_give_the_single_chunk_dates(db, database):
     await _persist(db, "scan-a", _days_ago(60), _module_outdated(0))
-    await _persist(db, "scan-b", _days_ago(30), _module_outdated(_DETECTION_CHUNK_COMPONENTS))
+    await _persist(db, "scan-b", _days_ago(30), _module_outdated(_DETECTION_CHUNK))
     repo = FindingRepository(db)
 
-    single_chunk = await repo.earliest_detections(_PROJECT, _module_records(0, _DETECTION_CHUNK_COMPONENTS))
-    two_chunks = await repo.earliest_detections(_PROJECT, _module_records(*range(_DETECTION_CHUNK_COMPONENTS + 1)))
+    single_chunk = await repo.earliest_detections(_PROJECT, _module_records(0, _DETECTION_CHUNK))
+    two_chunks = await repo.earliest_detections(_PROJECT, _module_records(*range(_DETECTION_CHUNK + 1)))
 
     assert two_chunks == single_chunk
     assert sorted(ensure_utc(date) for date in two_chunks.values()) == [_days_ago(60), _days_ago(30)]
@@ -500,7 +527,7 @@ async def test_advisories_across_two_lookup_chunks_give_the_single_chunk_dates(d
     repo = FindingRepository(db)
 
     single_chunk = await repo.advisory_detections(_PROJECT, records)
-    monkeypatch.setattr("app.repositories.findings._DETECTION_CHUNK_COMPONENTS", 1)
+    monkeypatch.setattr("app.repositories.findings._DETECTION_CHUNK", 1)
     two_chunks = await repo.advisory_detections(_PROJECT, records)
 
     assert two_chunks == single_chunk

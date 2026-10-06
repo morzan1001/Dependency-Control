@@ -42,7 +42,7 @@ FIRST_DETECTION_INDEX = [
 NEWEST_VULNERABILITY_INDEX = [("project_id", ASCENDING), ("finding_id", ASCENDING), ("created_at", DESCENDING)]
 VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
 
-_DETECTION_CHUNK_COMPONENTS = 10_000
+_DETECTION_CHUNK = 10_000
 
 # What advisory_detections reads of a copy: its component, its date, and each advisory's names and date.
 _COPY_DATES: dict[str, Any] = {
@@ -123,20 +123,15 @@ class FindingRepository(BaseRepository[FindingRecord]):
     ) -> dict[FindingIdentity, datetime]:
         """Earliest detection per identity among the project's stored copies; a copy predating first_seen_at
         counts from its scan. Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys."""
-        by_component: dict[Any, list[Mapping[str, Any]]] = defaultdict(list)
-        for record in records:
-            by_component[record["component"]].append(record)
-        components = list(by_component)
         earliest: dict[FindingIdentity, datetime] = {}
-        # One $match naming every component outgrows the 16 MiB command limit on large inventories.
-        for start in range(0, len(components), _DETECTION_CHUNK_COMPONENTS):
-            chunk = components[start : start + _DETECTION_CHUNK_COMPONENTS]
-            asked = [record for component in chunk for record in by_component[component]]
+        # One $match naming every finding outgrows the 16 MiB command limit on large scans.
+        for start in range(0, len(records), _DETECTION_CHUNK):
+            asked = records[start : start + _DETECTION_CHUNK]
             pipeline: list[dict[str, Any]] = [
                 {
                     "$match": {
                         "project_id": project_id,
-                        "component": {"$in": chunk},
+                        "component": {"$in": list({r["component"] for r in asked})},
                         "type": {"$in": list({r["type"] for r in asked})},
                         "finding_id": {"$in": list({r["finding_id"] for r in asked})},
                     }
@@ -176,8 +171,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
                 asked[record["component"]].update(advisory_ids(entry))
         components = list(asked)
         earliest: dict[tuple[str, str], datetime] = {}
-        for start in range(0, len(components), _DETECTION_CHUNK_COMPONENTS):
-            chunk = components[start : start + _DETECTION_CHUNK_COMPONENTS]
+        for start in range(0, len(components), _DETECTION_CHUNK):
+            chunk = components[start : start + _DETECTION_CHUNK]
             versions = await self.collection.distinct(
                 "finding_id", {"project_id": project_id, "component": {"$in": chunk}, **VULNERABILITIES_ONLY}
             )
