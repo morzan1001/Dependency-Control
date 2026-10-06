@@ -25,7 +25,6 @@ export default function ScanDelta() {
   const tabParam = searchParams.get('tab')
   const tab: TabId = TAB_IDS.has(tabParam as TabId) ? (tabParam as TabId) : 'findings'
 
-  const [visited, setVisited] = useState<Set<TabId>>(new Set([tab]))
   const [counts, setCounts] = useState<Record<TabId, number | null>>({
     findings: null, components: null, crypto: null,
   })
@@ -62,14 +61,11 @@ export default function ScanDelta() {
   }
 
   const onTabChange = (value: string) => {
-    const tabId = value as TabId
-    setVisited((prev) => new Set(prev).add(tabId))
     setDelta(null)
-    setParams({ tab: tabId })
+    setParams({ tab: value })
   }
 
   const onPairChange = (nextFrom: string, nextTo: string) => {
-    setVisited(new Set<TabId>([tab]))
     setCounts({ findings: null, components: null, crypto: null })
     setDelta(null)
     setParams({ from: nextFrom, to: nextTo })
@@ -97,22 +93,16 @@ export default function ScanDelta() {
           <TabsTrigger value="crypto">Crypto <DeltaBadge count={counts.crypto} /></TabsTrigger>
         </TabsList>
         <TabsContent value="findings">
-          {visited.has('findings') && (
-            <FindingsDeltaTab projectId={id} fromScanId={from} toScanId={to}
-              onLoaded={(loaded) => onLoaded('findings', loaded)} />
-          )}
+          <FindingsDeltaTab projectId={id} fromScanId={from} toScanId={to}
+            onLoaded={(loaded) => onLoaded('findings', loaded)} />
         </TabsContent>
         <TabsContent value="components">
-          {visited.has('components') && (
-            <ComponentsDeltaTab projectId={id} fromScanId={from} toScanId={to}
-              onLoaded={(loaded) => onLoaded('components', loaded)} />
-          )}
+          <ComponentsDeltaTab projectId={id} fromScanId={from} toScanId={to}
+            onLoaded={(loaded) => onLoaded('components', loaded)} />
         </TabsContent>
         <TabsContent value="crypto">
-          {visited.has('crypto') && (
-            <CryptoDeltaTab projectId={id} fromScanId={from} toScanId={to}
-              onLoaded={(loaded) => onLoaded('crypto', loaded)} />
-          )}
+          <CryptoDeltaTab projectId={id} fromScanId={from} toScanId={to}
+            onLoaded={(loaded) => onLoaded('crypto', loaded)} />
         </TabsContent>
       </Tabs>
     </div>

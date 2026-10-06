@@ -19,7 +19,6 @@ export const analyticsKeys = {
     dependencyTree: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'dependency-tree', projectId, { scanId }] as const,
     impactAnalysis: (limit: number, releaseEnvironment?: string) => [...analyticsKeys.all, 'impact-analysis', { limit }, modeOf(releaseEnvironment)] as const,
     hotspots: (sortBy: string, sortOrder: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'hotspots', { sortBy, sortOrder }, modeOf(releaseEnvironment)] as const,
-    search: (query: string, version?: string) => [...analyticsKeys.all, 'search', { query, version }] as const,
     advancedSearch: (filters: Record<string, unknown>, releaseEnvironment?: string) => [...analyticsKeys.all, 'advanced-search', filters, modeOf(releaseEnvironment)] as const,
     vulnerabilitySearch: (filters: Record<string, unknown>, releaseEnvironment?: string) => [...analyticsKeys.all, 'vulnerability-search', filters, modeOf(releaseEnvironment)] as const,
     componentFindings: (component: string, version?: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'component-findings', { component, version }, modeOf(releaseEnvironment)] as const,
@@ -38,14 +37,6 @@ export const useDashboardStats = () => {
         refetchOnWindowFocus: true,
         retry: 2,
     });
-}
-
-export const useSearchDependencies = (query: string, version?: string) => {
-    return useQuery({
-        queryKey: analyticsKeys.search(query, version),
-        queryFn: () => analyticsApi.searchDependencies(query, version),
-        enabled: !!query && query.length > 2
-    })
 }
 
 export const useAnalyticsScope = (releaseEnvironment?: string) => {

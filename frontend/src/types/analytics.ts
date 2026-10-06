@@ -16,22 +16,6 @@ export interface DashboardStats {
     }[];
 }
 
-export interface SearchResult {
-  project_id: string;
-  project_name: string;
-  package: string;
-  version: string;
-  type: string;
-  license?: string;
-  direct?: boolean;
-  direct_inferred?: boolean;
-  purl?: string;
-  source_type?: string;
-  source_target?: string;
-  layer_digest?: string;
-  locations?: string[];
-}
-
 export interface DependencyUsage {
   name: string;
   type: string;

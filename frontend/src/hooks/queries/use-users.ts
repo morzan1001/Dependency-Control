@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
-import { UserCreate, UserUpdate, UserUpdateMe } from '@/types/user';
+import { UserUpdate, UserUpdateMe } from '@/types/user';
 
 export const userKeys = {
   all: ['users'] as const,
@@ -35,16 +35,6 @@ export const usePendingInvitations = () => {
   return useQuery({
     queryKey: userKeys.invitations,
     queryFn: userApi.getPendingInvitations,
-  });
-};
-
-export const useCreateUser = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data: UserCreate) => userApi.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: userKeys.lists() });
-    },
   });
 };
 
