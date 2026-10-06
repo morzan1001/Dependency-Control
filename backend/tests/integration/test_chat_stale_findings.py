@@ -156,3 +156,20 @@ async def test_a_stale_critical_names_the_row_over_an_older_high(db, database):
     (row,) = (await _stale(db, days_open=30))["findings"]
     assert (row["cve"], row["severity"]) == ("CVE-2021-44228", "CRITICAL")
     assert ensure_utc(datetime.fromisoformat(row["first_seen_at"])) == _LONG_AGO
+
+
+async def test_a_head_finding_stored_without_a_detection_date_ages_from_its_scan(db, database):
+    await _project(db)
+    built = _NOW - timedelta(days=400)
+    await ScanRepository(db).create(
+        Scan(id=_HEAD, project_id=_PROJECT, branch="main", status=SCAN_STATUS_COMPLETED, created_at=built)
+    )
+    # Copies written before 1.9.42 carry no first_seen_at, so they skip the persist that stamps one.
+    records, _ = _prepare_finding_records([_LOG4J], _HEAD, _PROJECT, built)
+    await db.findings.insert_many(records)
+
+    result = await _stale(db, days_open=30)
+
+    (row,) = result["findings"]
+    assert row["finding_id"] == _LOG4J.id
+    assert ensure_utc(datetime.fromisoformat(row["first_seen_at"])) == built

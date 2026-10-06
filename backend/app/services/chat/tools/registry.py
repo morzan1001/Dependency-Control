@@ -250,13 +250,13 @@ def _slim_with_project(rows: list[dict[str, Any]], names: dict[str, str]) -> lis
 
 def _stale_since(finding: dict[str, Any], allowed_sev: list[str], cutoff: datetime) -> tuple[datetime, str | None, str]:
     """A vulnerability's worst live advisory in range open before cutoff, oldest among equals; others by their own."""
+    found = finding.get("first_seen_at") or finding["scan_created_at"]
     if finding.get("type") != "vulnerability":
-        return finding["first_seen_at"], None, finding["severity"]
+        return found, None, finding["severity"]
     stale = [
         (first_seen, canonical_cve(advisory), advisory["severity"])
         for advisory in live_advisories(finding["details"])
-        if advisory.get("severity") in allowed_sev
-        and (first_seen := advisory.get("first_seen_at") or finding["first_seen_at"]) < cutoff
+        if advisory.get("severity") in allowed_sev and (first_seen := advisory.get("first_seen_at") or found) < cutoff
     ]
     return min(stale, key=lambda entry: (-get_severity_value(entry[2]), entry[0]))
 
@@ -1324,7 +1324,8 @@ class ChatToolRegistry:
         if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        # Aged as the CVE SLA ages it: by a live advisory in range, one stored without a date by its finding's.
+        # Aged as the CVE SLA ages it: by a live advisory in range, one stored without a date by its finding's,
+        # and a finding stored without one by its scan's.
         old_advisory = {
             "severity": {"$in": allowed_sev},
             "$or": [{"first_seen_at": {"$lt": cutoff}}, {"first_seen_at": None}],
@@ -1335,8 +1336,20 @@ class ChatToolRegistry:
             {
                 "scan_id": {"$in": list(head.values())},
                 "severity": {"$in": allowed_sev},
-                "first_seen_at": {"$lt": cutoff},
-                "$or": [{"type": {"$ne": "vulnerability"}}, {"details.vulnerabilities": {"$elemMatch": old_advisory}}],
+                "$and": [
+                    {
+                        "$or": [
+                            {"first_seen_at": {"$lt": cutoff}},
+                            {"first_seen_at": None, "scan_created_at": {"$lt": cutoff}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"type": {"$ne": "vulnerability"}},
+                            {"details.vulnerabilities": {"$elemMatch": old_advisory}},
+                        ]
+                    },
+                ],
                 **_ACTIVE,
             },
             ctx.args["limit"],
