@@ -121,6 +121,6 @@ function pickMatch(items: Finding[], id: string, parsed: ParsedRelatedId): Findi
         case 'license':
         case 'exact':
         default:
-            return items.find(f => f.id === id) || items[0]
+            return items.find(f => f.id === id)
     }
 }
