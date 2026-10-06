@@ -414,7 +414,7 @@ class TestDriverReadsOneCursor:
         stats_call = next(c for c in captured if c[0] == {"scan_id": "s1"})
         assert "waived" not in stats_call[0]
         assert stats_call[1] == _stats_projection()
-        assert stats_call[2] == [("scan_id", 1), ("type", 1)]
+        assert stats_call[2] == {"scan_id": 1, "type": 1}
 
     @pytest.mark.asyncio
     async def test_driver_still_excludes_waived_findings(self):

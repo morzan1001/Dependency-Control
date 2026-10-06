@@ -6,12 +6,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.notifications.service import notification_service
+from tests.helpers.indexes import create_hinted_indexes
 
 _NOW = datetime(2026, 9, 28, tzinfo=timezone.utc)
 _PAST_THE_USER_CAP = 2001
 
 
 async def _seed_affected_project(db, *, members: list[dict], team_ids: list[str]) -> None:
+    await create_hinted_indexes(db)
     await db.projects.insert_one(
         {"_id": "adv-p", "name": "advised", "members": members, "team_ids": team_ids, "latest_scan_id": "adv-s"}
     )

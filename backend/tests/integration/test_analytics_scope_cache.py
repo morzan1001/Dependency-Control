@@ -9,6 +9,7 @@ import pytest_asyncio
 
 from app.api.v1.helpers.analytics import get_latest_scan_ids, get_projects_with_scans
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
+from tests.helpers.indexes import create_hinted_indexes
 
 pytestmark = pytest.mark.live_mongo
 
@@ -64,6 +65,7 @@ def _dependency(scan_id: str, name: str, purl_type: str) -> dict:
 
 @pytest_asyncio.fixture
 async def scanned(db, owner_auth_headers_proj):
+    await create_hinted_indexes(db)
     await db.scans.insert_one(_scan(_FIRST_SCAN))
     await db.projects.update_one({"_id": _PROJECT}, {"$set": {"latest_scan_id": _FIRST_SCAN}})
     await db.findings.insert_one(_vulnerability(_FIRST_SCAN, "lodash", "CVE-2026-0001"))

@@ -18,7 +18,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.core.constants import SCAN_DEPENDENCY_READ_LIMIT
+from app.core.constants import FINDINGS_SCAN_COMPONENT_INDEX, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
 from app.models.dependency import Dependency
 from app.repositories.dependencies import DependencyRepository
@@ -90,7 +90,7 @@ async def _package_finding_query(
     if version:
         scope["version"] = version
     names = await finding_repo.collection.distinct(
-        "component", {**scope, **component_match_query(artifact_segment(component))}
+        "component", {**scope, **component_match_query(artifact_segment(component))}, hint=FINDINGS_SCAN_COMPONENT_INDEX
     )
     representative = cluster_by_package_identity([*names, component])
     wanted = representative[normalize_component(component)]

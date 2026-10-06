@@ -5,7 +5,14 @@ from typing import Any
 import pymongo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCANS_TIP_SORT, TEAM_SOURCE_GITLAB, team_source
+from app.core.constants import (
+    DEPENDENCIES_SCAN_PACKAGE_INDEX,
+    FINDINGS_SCAN_COMPONENT_INDEX,
+    FINDINGS_SCAN_TYPE_INDEX,
+    SCANS_TIP_SORT,
+    TEAM_SOURCE_GITLAB,
+    team_source,
+)
 from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
@@ -256,17 +263,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Dependencies
     await database["dependencies"].create_index("name")
     await database["dependencies"].create_index("purl")
-    # Unique key permits idempotent upserts during concurrent SBOM ingestion.
-    await database["dependencies"].create_index(
-        [
-            ("scan_id", pymongo.ASCENDING),
-            ("name", pymongo.ASCENDING),
-            ("version", pymongo.ASCENDING),
-            ("purl", pymongo.ASCENDING),
-        ],
-        unique=True,
-        sparse=True,  # null purl is permitted, won't conflict on uniqueness
-    )
+    # Unique key permits idempotent upserts during concurrent SBOM ingestion. sparse is inert (every row has a
+    # scan_id, so purl-less rows are indexed and unique too) but stays: changing it fails on the built index.
+    await database["dependencies"].create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
     await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
@@ -376,16 +375,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["releases"].create_index("scan_id")
 
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
-    # _STATS_CURSOR_HINT hints this exact key pattern; an unsatisfiable hint errors, so without
-    # this index every stats read fails rather than falling back to a scan.
-    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)])
-    await database["findings"].create_index(
-        [
-            ("scan_id", pymongo.ASCENDING),
-            ("component", pymongo.ASCENDING),
-            ("version", pymongo.ASCENDING),
-        ]
-    )
+    await database["findings"].create_index(FINDINGS_SCAN_TYPE_INDEX)
+    await database["findings"].create_index(FINDINGS_SCAN_COMPONENT_INDEX)
     # Covering index for earliest_detections: each field it reads must stay in this key.
     await database["findings"].create_index(
         [

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from tests.helpers.indexes import create_hinted_indexes
+
 # The counts run as Mongo aggregations, so they are checked on the real server.
 pytestmark = pytest.mark.live_mongo
 
@@ -37,6 +39,7 @@ def _finding(advisories: list[dict], component: str = COMPONENT) -> dict:
 
 @pytest_asyncio.fixture
 async def scanned(db, owner_auth_headers_proj):
+    await create_hinted_indexes(db)
     await db.scans.insert_one(
         {"_id": SCAN_ID, "project_id": "p", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
