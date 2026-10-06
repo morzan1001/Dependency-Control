@@ -14,6 +14,8 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
 _SCAN_ID = "head-p"
 _COMPONENT = "lodash"
+# Rows of an older, non-head scan: a read that loses its scan_id bound walks past all of them.
+_DECOYS = 50
 
 
 @pytest_asyncio.fixture
@@ -54,6 +56,44 @@ async def estate(db, owner_auth_headers_proj):
             "details": {"vulnerabilities": [{"id": "CVE-2026-0001", "severity": "HIGH", "aliases": []}]},
         }
     )
+    old = [f"{_COMPONENT}@4.0.{i}" for i in range(_DECOYS)]
+    await db.dependencies.insert_many(
+        [
+            {
+                "_id": f"dep-old-{i}",
+                "scan_id": "old-p",
+                "project_id": "p",
+                "name": _COMPONENT,
+                "version": version.split("@")[1],
+                "purl": f"pkg:npm/{version}",
+                "type": "npm",
+                "direct": True,
+                "parent_components": [],
+            }
+            for i, version in enumerate(old)
+        ]
+    )
+    await db.findings.insert_many(
+        [
+            {
+                "_id": f"finding-old-{i}",
+                "id": "CVE-2026-0001",
+                "finding_id": "CVE-2026-0001",
+                "description": "",
+                "scanners": ["trivy"],
+                "scan_id": "old-p",
+                "project_id": "p",
+                "type": "vulnerability",
+                "severity": "HIGH",
+                "component": _COMPONENT,
+                "version": version.split("@")[1],
+                "waived": False,
+                "scan_created_at": datetime.now(timezone.utc),
+                "details": {"vulnerabilities": [{"id": "CVE-2026-0001", "severity": "HIGH", "aliases": []}]},
+            }
+            for i, version in enumerate(old)
+        ]
+    )
     return owner_auth_headers_proj
 
 
@@ -65,9 +105,9 @@ async def _profiled(db, request):
 
 
 def _plans(entries, collection, command):
-    """(index summary, whether the planner raced candidates) of each hinted ``command`` run on ``collection``."""
+    """(hinted index, whether the read stayed inside the head scan) of each hinted ``command`` on ``collection``."""
     return [
-        (e["planSummary"], e.get("fromMultiPlanner", False))
+        (e["planSummary"], e["keysExamined"] < _DECOYS)
         for e in entries
         if e["ns"].endswith(f".{collection}")
         and command in e["command"]
@@ -80,7 +120,7 @@ async def test_top_dependencies_count_vulnerabilities_off_the_scan_type_index(cl
     resp, entries = await _profiled(db, client.get("/api/v1/analytics/dependencies/top", headers=estate))
 
     assert [(d["name"], d["vulnerability_count"]) for d in resp.json()] == [(_COMPONENT, 1)]
-    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, type: 1 }", False)]
+    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, type: 1 }", True)]
 
 
 async def test_component_findings_resolve_spellings_off_the_scan_component_index(client, db, estate):
@@ -89,7 +129,7 @@ async def test_component_findings_resolve_spellings_off_the_scan_component_index
     )
 
     assert [f["finding_id"] for f in resp.json()] == ["CVE-2026-0001"]
-    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, component: 1, version: 1 }", False)]
+    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, component: 1, version: 1 }", True)]
 
 
 async def test_package_suggestions_match_names_off_the_scan_package_index(client, db, estate):
@@ -101,7 +141,7 @@ async def test_package_suggestions_match_names_off_the_scan_package_index(client
 
     assert resp.json()["names"] == [_COMPONENT]
     plan = _plans(entries, "dependencies", "aggregate")
-    assert plan == [("IXSCAN { scan_id: 1, name: 1, version: 1, purl: 1 }", False)]
+    assert plan == [("IXSCAN { scan_id: 1, name: 1, version: 1, purl: 1 }", True)]
 
 
 async def test_an_advisory_finds_its_projects_off_the_scan_package_index(client, db, estate):
@@ -119,7 +159,7 @@ async def test_an_advisory_finds_its_projects_off_the_scan_package_index(client,
     resp, entries = await _profiled(db, client.post("/api/v1/notifications/broadcast", json=advisory, headers=headers))
 
     assert resp.json()["project_count"] == 1
-    assert _plans(entries, "dependencies", "find") == [("IXSCAN { scan_id: 1, name: 1, version: 1, purl: 1 }", False)]
+    assert _plans(entries, "dependencies", "find") == [("IXSCAN { scan_id: 1, name: 1, version: 1, purl: 1 }", True)]
 
 
 async def test_vulnerability_search_counts_and_pages_off_the_scan_type_index(client, db, estate):
@@ -128,4 +168,4 @@ async def test_vulnerability_search_counts_and_pages_off_the_scan_type_index(cli
     )
 
     assert [item["vulnerability_id"] for item in resp.json()["items"]] == ["CVE-2026-0001"]
-    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, type: 1 }", False)] * 2
+    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, type: 1 }", True)] * 2
