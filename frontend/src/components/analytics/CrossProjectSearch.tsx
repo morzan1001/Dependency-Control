@@ -43,6 +43,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
 
   const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
   const debouncedQuery = useDebounce(query, 300)
+  const debouncedVersion = useDebounce(version, 300)
 
   const releaseEnvironment = useAnalyticsMode()
   const { data: types } = useDependencyTypes(releaseEnvironment)
@@ -50,7 +51,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
 
   const filters = {
     query: debouncedQuery,
-    version,
+    version: debouncedVersion,
     type: selectedType,
     sourceType: selectedSourceType,
     hasVulnerabilities,
@@ -67,7 +68,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     queryKey: analyticsKeys.advancedSearch(filters, releaseEnvironment),
     queryFn: async ({ pageParam = 0 }) => {
       return analyticsApi.searchDependenciesAdvanced(debouncedQuery, {
-        version: version || undefined,
+        version: debouncedVersion || undefined,
         type: selectedType === '__all__' ? undefined : selectedType,
         source_type: selectedSourceType === '__all__' ? undefined : selectedSourceType,
         has_vulnerabilities: hasVulnerabilities === '__all__' ? undefined : hasVulnerabilities === 'true',
