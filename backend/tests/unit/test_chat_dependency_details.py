@@ -11,7 +11,7 @@ _PURL = "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("asked_for", [f"{_PURL}?type=jar#sub", "LOG4J-core"], ids=["qualified-purl", "name-substring"])
+@pytest.mark.parametrize("asked_for", [f"{_PURL}?type=jar#sub", "LOG4J-core"], ids=["qualified-purl", "name-any-case"])
 async def test_the_enrichment_is_found_by_purl_variant_or_by_name(asked_for):
     db = FakeDatabase()
     db.dependency_enrichments._docs["e-1"] = {"_id": "e-1", "purl": _PURL, "name": "log4j-core", "version": "2.14.1"}
