@@ -28,8 +28,8 @@ export interface UserUpdate {
 }
 
 export interface UserUpdateMe {
-  slack_username?: string;
-  mattermost_username?: string;
+  slack_username?: string | null;
+  mattermost_username?: string | null;
   notification_preferences?: Record<string, string[]>;
 }
 

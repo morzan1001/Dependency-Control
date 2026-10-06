@@ -171,6 +171,24 @@ async def test_a_run_that_lost_its_lock_partway_leaves_the_change_queued_for_the
     assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is True
 
 
+async def test_a_project_whose_stats_lock_stays_taken_keeps_its_change_queued(monkeypatch):
+    db = FakeDatabase()
+    await _seed_project(db, "p-1", _GPL)
+    await request_waiver_recalc(db, await _store(db, _gpl_waiver(project_id="p-1")))
+    locks = DistributedLocksRepository(db)
+    await locks.acquire_lock("stats_recalc:p-1", "a-request", 300)
+    monkeypatch.setattr(stats_module, "_LOCK_MAX_RETRIES", 0)
+
+    await run_waiver_recalc(db)
+    assert await _queued(db) == 1
+
+    await locks.release_lock("stats_recalc:p-1", "a-request")
+    await run_waiver_recalc(db)
+
+    assert await _queued(db) == 0
+    assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is True
+
+
 async def test_a_run_finding_the_lock_taken_leaves_the_queue_to_its_holder(monkeypatch):
     db = FakeDatabase()
     await _seed_project(db, "p-1", _GPL)

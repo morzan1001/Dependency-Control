@@ -71,6 +71,7 @@ function renderPage(url = '/analytics') {
     hasPermission: (permission: string) => permission === READ_EVERYTHING,
     login: () => undefined,
     logout: () => undefined,
+    signedOut: false,
   }
 
   return render(

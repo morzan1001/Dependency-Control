@@ -80,8 +80,8 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
 
   const updateProfileMutation = useMutation({
     mutationFn: () => userApi.updateMe({
-      slack_username: slackUsername || undefined,
-      mattermost_username: mattermostUsername || undefined
+      slack_username: slackUsername || null,
+      mattermost_username: mattermostUsername || null
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });

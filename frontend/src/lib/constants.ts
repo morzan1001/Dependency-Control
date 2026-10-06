@@ -40,6 +40,8 @@ export const DROPDOWN_PAGE_SIZE = 100;
 export const MAX_SCANS_FOR_CHARTS = 100;
 export const VIRTUAL_SCROLL_OVERSCAN = 20;
 
+export const LOGIN_RETURN_KEY = 'login-return-to';
+
 export const DEBOUNCE_DELAY_MS = 300;
 export const COPY_FEEDBACK_DELAY_MS = 2000;
 export const API_TIMEOUT_MS = 30000;

@@ -345,12 +345,9 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
         </DialogContent>
       </Dialog>
 
-      <UserPermissionsDialog 
-        key={user?.id}
-        user={user} 
-        open={isPermissionDialogOpen} 
-        onOpenChange={setIsPermissionDialogOpen} 
-      />
+      {isPermissionDialogOpen && (
+        <UserPermissionsDialog user={user} onOpenChange={setIsPermissionDialogOpen} />
+      )}
     </>
   );
 }

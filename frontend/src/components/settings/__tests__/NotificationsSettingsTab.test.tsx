@@ -59,4 +59,16 @@ describe('NotificationsSettingsTab - Slack install', () => {
     expect(screen.queryByRole('button', { name: 'Connect to Slack Workspace' })).not.toBeInTheDocument()
     expect(getSlackAuthorizeUrl).not.toHaveBeenCalled()
   })
+
+  it('offers the install after the client secret field is emptied, since an empty secret saves nothing', () => {
+    renderTab({ ...SLACK_APP, slack_client_secret: '' })
+
+    expect(screen.getByRole('button', { name: 'Connect to Slack Workspace' })).toBeInTheDocument()
+  })
+
+  it('asks to save a pending client secret removal before connecting', () => {
+    renderTab({ ...SLACK_APP, slack_client_secret: null })
+
+    expect(screen.getByText('Please save your changes before connecting to Slack.')).toBeInTheDocument()
+  })
 })

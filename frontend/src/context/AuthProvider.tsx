@@ -6,6 +6,7 @@ import { jwtDecode } from 'jwt-decode'
 import { authApi } from '@/api/auth'
 import { setLogoutCallback } from '@/api/client'
 import { userApi } from '@/api/users'
+import { LOGIN_RETURN_KEY } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { hasPermission as checkPermission } from '@/lib/permissions'
 
@@ -23,10 +24,12 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [permissions, setPermissions] = useState<string[]>([])
+  const [signedOut, setSignedOut] = useState(false)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (explicit = false) => {
+    if (explicit) setSignedOut(true)
     // Revoked while the tokens are still stored, so the interceptor can refresh an expired access token first.
     if (localStorage.getItem('token')) {
       await authApi.logout().catch((error: unknown) => logger.warn('Server logout failed', error))
@@ -61,9 +64,8 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       }
 
       try {
-        const decoded: DecodedToken = jwtDecode(token)
-        setPermissions(decoded.permissions || [])
-        await userApi.getMe()
+        const me = await userApi.getMe()
+        setPermissions(me.permissions)
         setIsAuthenticated(true)
       } catch (error) {
         logger.error('Auth init failed', error)
@@ -78,7 +80,8 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     // Mount-only: logout is read via logoutRef so navigation identity changes don't re-fire getMe.
   }, [])
 
-  const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
+  const login = useCallback((accessToken: string, refreshToken: string) => {
+    setSignedOut(false)
     localStorage.setItem('token', accessToken)
     localStorage.setItem('refresh_token', refreshToken)
 
@@ -90,9 +93,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       // Limited token issued for 2FA setup only.
       if (perms.length === 1 && perms[0] === 'auth:setup_2fa') {
         setIsAuthenticated(true)
-        if (!skipNavigation) {
-          navigate('/setup-2fa')
-        }
+        navigate('/setup-2fa', { replace: true })
         return
       }
     } catch (e) {
@@ -100,9 +101,9 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     }
 
     setIsAuthenticated(true)
-    if (!skipNavigation) {
-      navigate('/dashboard')
-    }
+    const returnTo = sessionStorage.getItem(LOGIN_RETURN_KEY) ?? '/dashboard'
+    sessionStorage.removeItem(LOGIN_RETURN_KEY)
+    navigate(returnTo, { replace: true })
   }, [navigate])
 
   const contextValue = useMemo(() => ({
@@ -112,7 +113,8 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     isLoading,
     permissions,
     hasPermission,
-  }), [isAuthenticated, login, logout, isLoading, permissions, hasPermission])
+    signedOut,
+  }), [isAuthenticated, login, logout, isLoading, permissions, hasPermission, signedOut])
 
   return (
     <AuthContext.Provider value={contextValue}>

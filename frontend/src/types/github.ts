@@ -23,7 +23,7 @@ export interface GitHubInstanceCreate {
   github_url?: string;
   description?: string;
   is_active?: boolean;
-  oidc_audience?: string;
+  oidc_audience: string;
   auto_create_projects?: boolean;
   sync_teams?: boolean;
   access_token?: string;
@@ -33,8 +33,8 @@ export interface GitHubInstanceCreate {
 export interface GitHubInstanceUpdate {
   name?: string;
   url?: string;
-  github_url?: string;
-  description?: string;
+  github_url?: string | null;
+  description?: string | null;
   is_active?: boolean;
   oidc_audience?: string;
   auto_create_projects?: boolean;

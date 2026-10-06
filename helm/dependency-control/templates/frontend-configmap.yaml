@@ -12,6 +12,10 @@ metadata:
     app.kubernetes.io/component: frontend
 data:
   default.conf: |
+    map $uri $cache_control {
+        ~^/assets/  "public, max-age=31536000, immutable";
+        default     "no-cache";
+    }
     {{- if .Values.global.tls.enabled }}
     server {
         listen 443 ssl;
@@ -37,9 +41,15 @@ data:
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-XSS-Protection "1; mode=block" always;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        # Server level on purpose: any add_header inside a location drops the four above for it.
+        add_header Cache-Control $cache_control;
 
         location / {
             try_files $uri $uri/ /index.html;
+        }
+
+        location /assets/ {
+            try_files $uri =404;
         }
 
         error_page 500 502 503 504 /50x.html;
@@ -55,8 +65,14 @@ data:
         root /usr/share/nginx/html;
         index index.html;
 
+        add_header Cache-Control $cache_control;
+
         location / {
             try_files $uri $uri/ /index.html;
+        }
+
+        location /assets/ {
+            try_files $uri =404;
         }
 
         error_page 500 502 503 504 /50x.html;

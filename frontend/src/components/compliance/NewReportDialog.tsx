@@ -42,14 +42,13 @@ interface ScopeOption {
 }
 
 interface Props {
-  open: boolean;
   onClose: () => void;
   defaultFramework?: ReportFramework;
   defaultFormat?: ReportFormat;
 }
 
 export function NewReportDialog({
-  open, onClose, defaultFramework = "nist-sp-800-131a", defaultFormat = "pdf",
+  onClose, defaultFramework = "nist-sp-800-131a", defaultFormat = "pdf",
 }: Readonly<Props>) {
   const qc = useQueryClient();
   const { hasPermission } = useAuth();
@@ -91,10 +90,6 @@ export function NewReportDialog({
     onSuccess: () => {
       toast.success("Report queued");
       qc.invalidateQueries({ queryKey: ["compliance-reports"] });
-      setComment("");
-      setScope("user");
-      setScopeId("");
-      setScopeError(null);
       onClose();
     },
     onError: (e: Error) => toast.error(`Failed to queue report: ${e.message}`),
@@ -110,7 +105,7 @@ export function NewReportDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Generate Compliance Report</DialogTitle></DialogHeader>
         <div className="space-y-3">

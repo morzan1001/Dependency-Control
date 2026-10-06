@@ -28,7 +28,7 @@ export function IntegrationsSettingsTab({
               <SecretInput
                 id="github-token"
                 placeholder="ghp_..."
-                value={formData.github_token || ''}
+                value={formData.github_token}
                 configured={!!formData.github_token_configured}
                 onChange={(value) => handleInputChange('github_token', value)}
               />
@@ -51,7 +51,7 @@ export function IntegrationsSettingsTab({
               <Label htmlFor="malware-api">Open Source Malware API Key</Label>
               <SecretInput
                 id="malware-api"
-                value={formData.open_source_malware_api_key || ''}
+                value={formData.open_source_malware_api_key}
                 configured={!!formData.open_source_malware_api_key_configured}
                 onChange={(value) => handleInputChange('open_source_malware_api_key', value)}
               />

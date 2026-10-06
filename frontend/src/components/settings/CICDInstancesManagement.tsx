@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { AxiosError } from "axios";
 import { Plus, Trash2, Edit2, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { gitlabInstancesApi } from "@/api/gitlab-instances";
@@ -39,6 +38,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { getErrorMessage } from "@/lib/utils";
 
 interface InstanceFormData {
   type: InstanceType;
@@ -110,9 +110,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance created successfully");
       closeCreateDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to create instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const updateGitLabMutation = useMutation({
@@ -123,9 +121,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance updated successfully");
       closeEditDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to update instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const deleteGitLabMutation = useMutation({
@@ -135,9 +131,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance deleted successfully");
       setDeleteInstance(null);
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to delete instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const testGitLabMutation = useMutation({
@@ -167,9 +161,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance created successfully");
       closeCreateDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to create instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const updateGitHubMutation = useMutation({
@@ -180,9 +172,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance updated successfully");
       closeEditDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to update instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const deleteGitHubMutation = useMutation({
@@ -192,9 +182,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance deleted successfully");
       setDeleteInstance(null);
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to delete instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const testGitHubMutation = useMutation({
@@ -235,7 +223,7 @@ export function CICDInstancesManagement() {
         url: formData.url,
         description: formData.description || undefined,
         access_token: formData.access_token,
-        oidc_audience: formData.oidc_audience || undefined,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
@@ -249,7 +237,7 @@ export function CICDInstancesManagement() {
         url: formData.url,
         github_url: formData.github_url || undefined,
         description: formData.description || undefined,
-        oidc_audience: formData.oidc_audience || undefined,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         is_active: formData.is_active,
@@ -267,9 +255,9 @@ export function CICDInstancesManagement() {
       const data: GitLabInstanceUpdate = {
         name: formData.name,
         url: formData.url,
-        description: formData.description || undefined,
+        description: formData.description || null,
         access_token: formData.access_token || undefined,
-        oidc_audience: formData.oidc_audience || undefined,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
@@ -281,9 +269,9 @@ export function CICDInstancesManagement() {
       const data: GitHubInstanceUpdate = {
         name: formData.name,
         url: formData.url,
-        github_url: formData.github_url || undefined,
-        description: formData.description || undefined,
-        oidc_audience: formData.oidc_audience || undefined,
+        github_url: formData.github_url || null,
+        description: formData.description || null,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         is_active: formData.is_active,
@@ -332,7 +320,7 @@ export function CICDInstancesManagement() {
   };
 
   const isCreateDisabled = () => {
-    if (isCreatePending || !formData.name || !formData.url) return true;
+    if (isCreatePending || !formData.name || !formData.url || !formData.oidc_audience.trim()) return true;
     if (formData.sync_teams && !formData.access_token) return true;
     return lacksRequiredAllowlist(formData);
   };
@@ -505,7 +493,7 @@ export function CICDInstancesManagement() {
             </Button>
             <Button
               onClick={handleUpdate}
-              disabled={isUpdatePending || !formData.name || !formData.url}
+              disabled={isUpdatePending || !formData.name || !formData.url || !formData.oidc_audience.trim()}
             >
               {isUpdatePending ? "Updating..." : "Update Instance"}
             </Button>
@@ -671,7 +659,7 @@ function InstanceForm({
       </div>
 
       <div className="grid gap-2">
-        <Label htmlFor="ci-oidc-audience">OIDC Audience</Label>
+        <Label htmlFor="ci-oidc-audience">OIDC Audience *</Label>
         <Input
           id="ci-oidc-audience"
           placeholder={formData.type === "gitlab" ? "https://dependencycontrol.example.com" : "dependency-control"}
@@ -679,7 +667,7 @@ function InstanceForm({
           onChange={(e) => setFormData((prev) => ({ ...prev, oidc_audience: e.target.value }))}
         />
         <p className="text-sm text-muted-foreground">
-          Expected 'aud' claim for OIDC tokens from this instance (optional).
+          Expected 'aud' claim for OIDC tokens from this instance; the CI job must request this audience.
         </p>
       </div>
 

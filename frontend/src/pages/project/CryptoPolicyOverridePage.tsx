@@ -18,7 +18,7 @@ interface Props {
 export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
   const qc = useQueryClient();
   const effective = useQuery({
-    queryKey: ["crypto-policy-effective", projectId],
+    queryKey: ["crypto-policy", "effective", projectId],
     queryFn: () => getEffectivePolicy(projectId),
   });
 
@@ -26,8 +26,7 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
     mutationFn: (rules: CryptoRule[]) => putProjectPolicy(projectId, rules),
     onSuccess: () => {
       toast.success("Override saved");
-      qc.invalidateQueries({ queryKey: ["crypto-policy-effective", projectId] });
-      qc.invalidateQueries({ queryKey: ["crypto-policy-override", projectId] });
+      qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
     onError: (e: unknown) => toast.error(`Save failed: ${getErrorMessage(e)}`),
   });
@@ -36,8 +35,7 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
     mutationFn: () => deleteProjectPolicy(projectId),
     onSuccess: () => {
       toast.success("Override removed");
-      qc.invalidateQueries({ queryKey: ["crypto-policy-effective", projectId] });
-      qc.invalidateQueries({ queryKey: ["crypto-policy-override", projectId] });
+      qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
   });
 

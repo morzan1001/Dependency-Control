@@ -32,7 +32,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
   const pruneDialog = useDialogState();
 
   const { data } = useQuery({
-    queryKey: ["policy-audit", policyScope, projectId],
+    queryKey: ["crypto-policy", "audit", policyScope, projectId],
     queryFn: async () => {
       if (policyScope === "system") return listSystemAudit({ limit: PAGE_SIZE });
       return listProjectAudit(projectId!, { limit: PAGE_SIZE });
@@ -49,8 +49,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
     },
     onSuccess: () => {
       toast.success("Policy reverted");
-      qc.invalidateQueries({ queryKey: ["policy-audit"] });
-      qc.invalidateQueries({ queryKey: ["crypto-policy", policyScope, projectId] });
+      qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
     onError: (e: unknown) => toast.error(`Revert failed: ${getErrorMessage(e)}`),
   });
@@ -62,7 +61,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
     },
     onSuccess: (res) => {
       toast.success(`Pruned ${res.deleted} entr${res.deleted === 1 ? "y" : "ies"}`);
-      qc.invalidateQueries({ queryKey: ["policy-audit"] });
+      qc.invalidateQueries({ queryKey: ["crypto-policy", "audit"] });
       pruneDialog.closeDialog();
     },
     onError: (e: unknown) => toast.error(`Prune failed: ${getErrorMessage(e)}`),

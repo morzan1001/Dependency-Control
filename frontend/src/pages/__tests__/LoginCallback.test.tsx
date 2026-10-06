@@ -51,7 +51,7 @@ describe('LoginCallback', () => {
 
     renderCallbackFlow()
 
-    await waitFor(() => expect(login).toHaveBeenCalledWith('a', 'r', true))
+    await waitFor(() => expect(login).toHaveBeenCalledWith('a', 'r'))
     expect(exchangeOidcLogin).toHaveBeenCalledTimes(1)
   })
 

@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { MemoryRouter, Navigate, Routes, Route, useNavigate } from 'react-router-dom'
+import { MemoryRouter, Navigate, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { api } from '@/api/client'
+import { LOGIN_RETURN_KEY } from '@/lib/constants'
 
 import { AuthProvider } from '../AuthProvider'
 import { useAuth } from '../useAuth'
@@ -68,6 +69,11 @@ function AuthProbe() {
   )
 }
 
+function PermissionsProbe() {
+  const { permissions, isLoading } = useAuth()
+  return <span data-testid="permissions">{isLoading ? '' : permissions.join(',')}</span>
+}
+
 function renderApp(routes: React.ReactNode, queryClient = new QueryClient()) {
   return render(
     <QueryClientProvider client={queryClient}>
@@ -124,7 +130,7 @@ function Projects() {
   return (
     <div>
       <span data-testid="owner">{data?.owner ?? ''}</span>
-      <button onClick={logout}>logout</button>
+      <button onClick={() => logout(true)}>logout</button>
     </div>
   )
 }
@@ -166,7 +172,7 @@ describe('AuthProvider init effect', () => {
     localStorage.setItem('refresh_token', 'refresh')
 
     // Only the mount call resolves; a later failure matters only if the effect re-fires.
-    getMe.mockResolvedValueOnce({ id: 'user-1' })
+    getMe.mockResolvedValueOnce({ id: 'user-1', permissions: ['read'] })
     getMe.mockRejectedValue(new Error('transient 500'))
 
     renderApp(probeRoutes)
@@ -188,6 +194,17 @@ describe('AuthProvider init effect', () => {
     expect(screen.queryByTestId('login-page')).not.toBeInTheDocument()
   })
 
+  it('takes the permissions from the server rather than from the stored token', async () => {
+    // The token predates an admin's change: user:read_all was revoked and project:read granted since.
+    localStorage.setItem('token', makeToken(['user:read_all']))
+    localStorage.setItem('refresh_token', 'refresh')
+    getMe.mockResolvedValue({ id: 'user-1', permissions: ['project:read'] })
+
+    renderApp(<Route path="/dashboard" element={<PermissionsProbe />} />)
+
+    await waitFor(() => expect(screen.getByTestId('permissions').textContent).toBe('project:read'))
+  })
+
   it('sets unauthenticated when no token is present', async () => {
     renderApp(probeRoutes)
     await waitFor(() => {
@@ -203,7 +220,7 @@ describe('AuthProvider logout', () => {
     vi.clearAllMocks()
     localStorage.clear()
     stubBackend()
-    getMe.mockResolvedValue({ id: 'user-1' })
+    getMe.mockResolvedValue({ id: 'user-1', permissions: ['read'] })
   })
 
   it('revokes the server session with the session token', async () => {
@@ -278,5 +295,61 @@ describe('AuthProvider logout', () => {
       `Bearer ${firstUser}`,
       `Bearer ${secondUser}`,
     ])
+  })
+})
+
+function LocationProbe() {
+  const location = useLocation()
+  return <span data-testid="location">{location.pathname + location.search}</span>
+}
+
+function renderLoginPage(token: string) {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<LoginAs token={token} />} />
+            <Route path="*" element={<LocationProbe />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('AuthProvider login', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    sessionStorage.clear()
+  })
+
+  it('returns to the page a signed-out visitor was sent to log in from', async () => {
+    sessionStorage.setItem(LOGIN_RETURN_KEY, '/projects/p1?tab=scans')
+    renderLoginPage(makeToken(['project:read']))
+
+    fireEvent.click(await screen.findByText('login'))
+
+    expect(await screen.findByTestId('location')).toHaveTextContent('/projects/p1?tab=scans')
+    expect(sessionStorage.getItem(LOGIN_RETURN_KEY)).toBeNull()
+  })
+
+  it('opens the dashboard when no page is waiting', async () => {
+    renderLoginPage(makeToken(['project:read']))
+
+    fireEvent.click(await screen.findByText('login'))
+
+    expect(await screen.findByTestId('location')).toHaveTextContent('/dashboard')
+  })
+
+  it('sends a session that must enrol in 2FA to the setup page and keeps the page waiting', async () => {
+    sessionStorage.setItem(LOGIN_RETURN_KEY, '/projects/p1')
+    renderLoginPage(makeToken(['auth:setup_2fa']))
+
+    fireEvent.click(await screen.findByText('login'))
+
+    expect(await screen.findByTestId('location')).toHaveTextContent('/setup-2fa')
+    expect(sessionStorage.getItem(LOGIN_RETURN_KEY)).toBe('/projects/p1')
   })
 })

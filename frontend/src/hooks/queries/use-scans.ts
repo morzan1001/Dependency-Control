@@ -1,6 +1,9 @@
+import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { projectApi } from '@/api/projects';
 import { scanApi } from '@/api/scans';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
+import { isScanInProgress } from '@/lib/scan-status';
 import { ScanWithReleases } from '@/types/scan';
 
 export interface ScanListFilters {
@@ -95,12 +98,25 @@ export const useProjectBranchTips = (projectId: string) => {
     });
 }
 
+const SCAN_POLL_INTERVAL_MS = 5000
+
 export const useScan = (scanId: string) => {
-    return useQuery({
+    const queryClient = useQueryClient();
+    const query = useQuery({
         queryKey: scanKeys.detail(scanId),
         queryFn: () => scanApi.getOne(scanId),
-        enabled: !!scanId
+        enabled: !!scanId,
+        refetchInterval: (q) => (isScanInProgress(q.state.data?.status) ? SCAN_POLL_INTERVAL_MS : false),
     })
+    const inProgress = isScanInProgress(query.data?.status);
+    const wasInProgress = useRef(inProgress);
+    useEffect(() => {
+        if (wasInProgress.current && !inProgress) {
+            queryClient.invalidateQueries({ predicate: (q) => q.queryKey.includes(scanId) });
+        }
+        wasInProgress.current = inProgress;
+    }, [inProgress, queryClient, scanId]);
+    return query;
 }
 
 export const useScanHistory = (projectId: string, scanId: string) => {
@@ -146,6 +162,14 @@ export const useScanSbom = (scanId: string, index: number) => {
     return useQuery({
         queryKey: scanKeys.sbom(scanId, index),
         queryFn: () => scanApi.getSbom(scanId, index)
+    })
+}
+
+export const useUnpinScan = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ projectId, scanId }: { projectId: string, scanId: string }) => projectApi.unpinScan(projectId, scanId),
+        onSuccess: (_, variables) => queryClient.invalidateQueries({ queryKey: scanKeys.detail(variables.scanId) }),
     })
 }
 

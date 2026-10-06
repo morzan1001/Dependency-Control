@@ -17,6 +17,7 @@ function authFor(perms: string[]): AuthContextType {
     hasPermission: (permission: string) => perms.includes(permission),
     login: () => undefined,
     logout: () => undefined,
+    signedOut: false,
   }
 }
 

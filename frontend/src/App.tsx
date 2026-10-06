@@ -31,10 +31,9 @@ import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { authApi } from '@/api/auth'
 import { systemApi } from '@/api/system'
-import { ANALYTICS_ROUTE_PERMISSIONS } from '@/lib/constants'
+import { ANALYTICS_ROUTE_PERMISSIONS, LOGIN_RETURN_KEY } from '@/lib/constants'
 import { lazy, Suspense, useState, useEffect } from 'react'
 
 const queryClient = new QueryClient({
@@ -78,7 +77,7 @@ function Force2FAGuard({ children }: Readonly<{ children: React.ReactNode }>) {
 }
 
 function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, signedOut } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -93,7 +92,8 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    if (!signedOut) sessionStorage.setItem(LOGIN_RETURN_KEY, location.pathname + location.search + location.hash);
+    return <Navigate to="/login" replace />;
   }
 
   return <Force2FAGuard>{children}</Force2FAGuard>;
@@ -150,9 +150,7 @@ function AppRoutes() {
       } />
       <Route element={
         <ProtectedRoute>
-          <ErrorBoundary>
-            <DashboardLayout />
-          </ErrorBoundary>
+          <DashboardLayout />
         </ProtectedRoute>
       }>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

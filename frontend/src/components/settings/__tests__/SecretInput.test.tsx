@@ -15,6 +15,31 @@ describe('SecretInput', () => {
     expect(screen.getByPlaceholderText('ghp_...')).toBeInTheDocument()
   })
 
+  it('offers to remove a stored secret', () => {
+    const onChange = vi.fn()
+    render(<SecretInput id="s" value="" configured onChange={onChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+    expect(onChange).toHaveBeenCalledWith(null)
+  })
+
+  it('offers no removal when nothing is stored', () => {
+    render(<SecretInput id="s" value="" configured={false} onChange={() => {}} />)
+
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
+  })
+
+  it('shows a pending removal and lets it be undone', () => {
+    const onChange = vi.fn()
+    render(<SecretInput id="s" value={null} configured onChange={onChange} />)
+
+    expect(screen.getByPlaceholderText('Removed when you save')).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+
+    expect(onChange).toHaveBeenCalledWith('')
+  })
+
   it('keeps the typed value editable and reports changes', () => {
     const onChange = vi.fn()
     render(<SecretInput id="s" value="abc" configured onChange={onChange} />)

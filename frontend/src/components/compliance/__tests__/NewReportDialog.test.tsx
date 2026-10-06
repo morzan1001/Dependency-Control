@@ -30,14 +30,14 @@ describe("NewReportDialog", () => {
   });
 
   it("renders the dialog title when open", () => {
-    withClient(<NewReportDialog open onClose={() => {}} />);
+    withClient(<NewReportDialog onClose={() => {}} />);
     expect(screen.getByText(/Generate Compliance Report/i)).toBeInTheDocument();
   });
 
   it("submits with default user scope and calls createReport", async () => {
     const { createReport } = await import("@/api/compliance");
     vi.mocked(createReport).mockClear();
-    withClient(<NewReportDialog open onClose={vi.fn()} />);
+    withClient(<NewReportDialog onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /Generate/i }));
     await new Promise((r) => setTimeout(r, 0));
     expect(createReport).toHaveBeenCalledWith(
@@ -46,13 +46,13 @@ describe("NewReportDialog", () => {
   });
 
   it("hides Global scope when user lacks system:manage and analytics:global", () => {
-    withClient(<NewReportDialog open onClose={() => {}} />);
+    withClient(<NewReportDialog onClose={() => {}} />);
     expect(screen.queryByText(/^Global$/)).not.toBeInTheDocument();
   });
 
   it("shows Global scope option when user has system:manage", () => {
     permissionSet.add("system:manage");
-    withClient(<NewReportDialog open onClose={() => {}} />);
+    withClient(<NewReportDialog onClose={() => {}} />);
     const triggers = screen.getAllByRole("combobox");
     fireEvent.click(triggers[0]);
     expect(screen.getAllByText(/Global/).length).toBeGreaterThan(0);

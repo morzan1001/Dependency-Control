@@ -94,7 +94,7 @@ export function NotificationsSettingsTab({
             <SecretInput
               id="smtp-password"
               placeholder="••••••••"
-              value={formData.smtp_password || ''}
+              value={formData.smtp_password}
               configured={!!formData.smtp_password_configured}
               onChange={(value) => handleInputChange('smtp_password', value)}
             />
@@ -182,7 +182,7 @@ export function NotificationsSettingsTab({
                   <SecretInput
                     id="slack-client-secret"
                     placeholder="e.g. 8f7d6e5c4b3a2..."
-                    value={formData.slack_client_secret || ''}
+                    value={formData.slack_client_secret}
                     configured={!!formData.slack_client_secret_configured}
                     onChange={(value) => handleInputChange('slack_client_secret', value)}
                   />
@@ -216,7 +216,7 @@ export function NotificationsSettingsTab({
                       </>
                     )}
                     
-                    {(formData.slack_client_id !== settings?.slack_client_id || formData.slack_client_secret !== settings?.slack_client_secret || formData.slack_oauth_scopes !== settings?.slack_oauth_scopes) ? (
+                    {(formData.slack_client_id !== settings?.slack_client_id || (formData.slack_client_secret !== undefined && formData.slack_client_secret !== '') || formData.slack_oauth_scopes !== settings?.slack_oauth_scopes) ? (
                       <div className="p-3 mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-900">
                         Please save your changes before connecting to Slack.
                       </div>
@@ -258,7 +258,7 @@ export function NotificationsSettingsTab({
                 <SecretInput
                   id="slack-token-manual"
                   placeholder="xoxb-..."
-                  value={formData.slack_bot_token || ''}
+                  value={formData.slack_bot_token}
                   configured={!!formData.slack_bot_token_configured}
                   onChange={(value) => handleInputChange('slack_bot_token', value)}
                 />
@@ -295,7 +295,7 @@ export function NotificationsSettingsTab({
             <Label htmlFor="mattermost-token">Mattermost Bot Token</Label>
             <SecretInput
               id="mattermost-token"
-              value={formData.mattermost_bot_token || ''}
+              value={formData.mattermost_bot_token}
               configured={!!formData.mattermost_bot_token_configured}
               onChange={(value) => handleInputChange('mattermost_bot_token', value)}
             />

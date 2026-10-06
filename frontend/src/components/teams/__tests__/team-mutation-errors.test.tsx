@@ -94,7 +94,7 @@ describe("team mutations show the server's refusal", () => {
 
   it("updating a team", async () => {
     teamApi.update.mockRejectedValue(apiError(404, "Team not found"));
-    renderWithClient(<EditTeamDialog team={TEAM} isOpen onClose={vi.fn()} />);
+    renderWithClient(<EditTeamDialog team={TEAM} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Update Team" }));
 

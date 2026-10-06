@@ -4,6 +4,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 
+import { projectApi } from '@/api/projects'
 import { scanApi } from '@/api/scans'
 import type { ProjectMember } from '@/types/project'
 import type { SbomResponse, ScanAnalysisResult } from '@/types/scan'
@@ -13,7 +14,10 @@ import ScanDetails from '../ScanDetails'
 const mockUseScan = vi.fn()
 const mockMutate = vi.fn()
 const releaseControlProps = vi.fn()
-const { member } = vi.hoisted(() => ({ member: { current: undefined as ProjectMember | undefined } }))
+const { member, auth } = vi.hoisted(() => ({
+  member: { current: undefined as ProjectMember | undefined },
+  auth: { permissions: [] as string[] },
+}))
 const ALREADY_UNDER_WAY = 'A re-scan of this scan is already under way.'
 const RESCAN_BUTTON = { name: /trigger re-scan/i }
 const SCAN_PATH = '/projects/p1/scans/s1'
@@ -52,7 +56,8 @@ vi.mock('@/hooks/queries/use-projects', () => ({
   }),
 }))
 
-vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ permissions: [] }) }))
+vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ permissions: auth.permissions }) }))
+vi.mock('@/api/projects', () => ({ projectApi: { unpinScan: vi.fn().mockResolvedValue({ scan_id: 's1', pinned: false }) } }))
 vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'u1' } }) }))
 
 // The own member row as GET /projects/{id} returns it to a user who holds the project through a team.
@@ -97,6 +102,7 @@ function renderPage(entry = SCAN_PATH) {
 beforeEach(() => {
   vi.clearAllMocks()
   member.current = teamMember('editor')
+  auth.permissions = []
 })
 
 afterEach(cleanup)
@@ -342,5 +348,51 @@ describe('ScanDetails raw tab', () => {
 
     const row = (await screen.findByRole('button', { name: 'Download SBOM #2' })).parentElement
     await waitFor(() => expect(row).toHaveClass('ring-2'))
+  })
+})
+
+describe('ScanDetails for a scan pinned by an archive restore', () => {
+  const UNPIN_BUTTON = { name: /unpin/i }
+  const pinned = () => ({ ...scan('completed'), pinned: true })
+
+  beforeEach(() => {
+    member.current = teamMember('admin')
+    auth.permissions = ['archive:restore']
+  })
+
+  it('lets a project admin unpin it so retention can process it again', async () => {
+    mockUseScan.mockReturnValue({ data: pinned(), isLoading: false })
+
+    renderPage()
+    fireEvent.click(screen.getByRole('button', UNPIN_BUTTON))
+
+    await waitFor(() => expect(projectApi.unpinScan).toHaveBeenCalledWith('p1', 's1'))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+  })
+
+  it('offers no unpin for a scan that is not pinned', () => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+
+    renderPage()
+
+    expect(screen.queryByRole('button', UNPIN_BUTTON)).not.toBeInTheDocument()
+  })
+
+  it('offers no unpin to a project editor, whom the server refuses', () => {
+    member.current = teamMember('editor')
+    mockUseScan.mockReturnValue({ data: pinned(), isLoading: false })
+
+    renderPage()
+
+    expect(screen.queryByRole('button', UNPIN_BUTTON)).not.toBeInTheDocument()
+  })
+
+  it('offers no unpin without archive:restore', () => {
+    auth.permissions = []
+    mockUseScan.mockReturnValue({ data: pinned(), isLoading: false })
+
+    renderPage()
+
+    expect(screen.queryByRole('button', UNPIN_BUTTON)).not.toBeInTheDocument()
   })
 })

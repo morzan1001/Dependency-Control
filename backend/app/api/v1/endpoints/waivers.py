@@ -29,7 +29,7 @@ from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository, non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.normalizers.utils import FindingIdPrefix
-from app.services.stats import request_waiver_recalc, run_waiver_recalc
+from app.services.stats import request_waiver_recalc, restamp_single_scan, run_waiver_recalc
 from app.services.waivers.matching import finding_rule_id, waiver_query
 
 
@@ -159,6 +159,8 @@ async def create_waiver(
     await waiver_repo.create(waiver)
 
     await request_waiver_recalc(db, waiver, restamp=[scan_id] if scan_id else [])
+    if project and scan_id:
+        await restamp_single_scan(db, project.id, scan_id)
     background_tasks.add_task(run_waiver_recalc, db)
 
     return waiver

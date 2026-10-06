@@ -74,9 +74,7 @@ export const useUpdateTeam = () => {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<TeamCreate> }) => 
       teamApi.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: teamKeys.lists() }),
   });
 };
 

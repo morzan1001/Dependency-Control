@@ -17,28 +17,13 @@ import { getErrorMessage } from "@/lib/utils"
 
 interface EditTeamDialogProps {
   team: Team | null;
-  isOpen: boolean;
   onClose: () => void;
 }
 
-export function EditTeamDialog({ team, isOpen, onClose }: Readonly<EditTeamDialogProps>) {
+export function EditTeamDialog({ team, onClose }: Readonly<EditTeamDialogProps>) {
   const [name, setName] = useState(team?.name || '');
   const [description, setDescription] = useState(team?.description || '');
-  const [prevTeamId, setPrevTeamId] = useState<string | null>(team?.id || null);
   const updateTeamMutation = useUpdateTeam();
-
-  // Intentional state adjustment during render to reset fields when the team prop changes.
-  if (team && team.id !== prevTeamId) {
-    setPrevTeamId(team.id);
-    setName(team.name || '');
-    setDescription(team.description || '');
-  }
-
-  const handleClose = () => {
-    setName('');
-    setDescription('');
-    onClose();
-  };
 
   const handleUpdateTeam = (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +32,7 @@ export function EditTeamDialog({ team, isOpen, onClose }: Readonly<EditTeamDialo
         { id: team.id, data: { name, description } },
         {
           onSuccess: () => {
-             handleClose();
+             onClose();
              toast.success("Team updated successfully");
           },
           onError: (error) => toast.error("Failed to update team", { description: getErrorMessage(error) }),
@@ -57,7 +42,7 @@ export function EditTeamDialog({ team, isOpen, onClose }: Readonly<EditTeamDialo
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
+    <Dialog open onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[425px]">
         <form onSubmit={handleUpdateTeam}>
           <DialogHeader>
