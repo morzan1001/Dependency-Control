@@ -15,6 +15,7 @@ from app.repositories.findings import FindingRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analysis.engine import _partial_run_reasons, _persist_findings_and_waivers, _prepare_finding_records
+from tests.helpers.profiler import inserts_and_upserts, profiled
 
 pytestmark = pytest.mark.asyncio
 
@@ -104,6 +105,19 @@ async def test_reanalysis_drops_rows_the_run_no_longer_found_and_rewrites_the_re
     assert ensure_utc(stored["created_at"]) > _EARLIER_RUN
     assert state_when_the_waiver_pass_ran == [(False, None)]
     assert (stored["waived"], stored["waiver_reason"]) == (True, "accepted")
+
+
+@pytest.mark.live_mongo
+async def test_a_scan_without_findings_takes_inserts_and_a_rewrite_replaces(db):
+    records = _trivy_records(
+        _trivy_vulnerability("CVE-2023-45288", "golang.org/x/net"),
+        _trivy_vulnerability("CVE-2024-24790", "golang.org/x/text"),
+    )
+
+    _, first = await profiled(db, _persist(db, [dict(r) for r in records]))
+    _, again = await profiled(db, _persist(db, [dict(r) for r in records]))
+
+    assert (inserts_and_upserts(first, "findings"), inserts_and_upserts(again, "findings")) == ((2, 0), (0, 2))
 
 
 def _padded_to(record: dict, size: int) -> dict:

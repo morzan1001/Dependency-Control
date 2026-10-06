@@ -390,7 +390,7 @@ async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _stored_sboms, 
 async def test_k8_partial_findings_persistence_is_surfaced(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "stub", _ErrorResultAnalyzer())
 
-    async def _drop_all_docs(self, docs):
+    async def _drop_all_docs(self, docs, fresh=False):
         return 0
 
     monkeypatch.setattr(FindingRepository, "replace_many_raw", _drop_all_docs)

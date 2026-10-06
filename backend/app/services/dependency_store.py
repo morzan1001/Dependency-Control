@@ -65,8 +65,11 @@ async def store_scan_dependencies(
     # Deletes only rows no write since this one has touched, so after a failure part-way or an
     # overlapping store of the same scan the newest write's rows are all still there.
     written_at = datetime.now(timezone.utc)
+    fresh = not await dep_repo.exists({"scan_id": scan_id})
     for start in range(0, len(merged), _DEP_CHUNK_SIZE):
         chunk = merged[start : start + _DEP_CHUNK_SIZE]
-        await dep_repo.upsert_many([_parsed_dep_to_dependency(dep, project_id, scan_id, written_at) for dep in chunk])
+        await dep_repo.upsert_many(
+            [_parsed_dep_to_dependency(dep, project_id, scan_id, written_at) for dep in chunk], fresh
+        )
     await dep_repo.delete_older_writes({"scan_id": scan_id}, written_at)
     return len(merged)

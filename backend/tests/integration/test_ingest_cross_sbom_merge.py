@@ -4,16 +4,19 @@ two or more SBOMs; a 60-scan sample of them index-dropped 2,772 of 21,730 parsed
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from app.core.constants import DEPENDENCIES_SCAN_PACKAGE_INDEX
 from app.core.init_db import create_indexes
 from app.repositories.dependencies import DependencyRepository
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 from app.services import dependency_store
 from app.services.dependency_store import store_scan_dependencies
 from app.services.sbom_parser import parse_sbom
+from tests.helpers.profiler import inserts_and_upserts, profiled
 
 _PROJECT_ID = "test-project-id"
 _SCAN_ID = "8e0d76a5-1291-5949-8e0d-0d90b4bd9e02"
@@ -222,6 +225,70 @@ async def test_a_finished_store_leaves_exactly_the_new_inventory(db):
     assert sorted(inventory) == ["new", "shared", "vendored-blob"]
     assert (inventory["shared"]["_id"], inventory["shared"]["scope"]) == (kept_id, "runtime")
     assert all(isinstance(doc["_id"], str) for doc in inventory.values())
+
+
+async def _upsert_key(db) -> None:
+    await db.dependencies.create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_scan_without_rows_takes_inserts_and_a_stored_scan_upserts(db):
+    await _upsert_key(db)
+    repo = DependencyRepository(db)
+    sbom = _sbom(_dep("a"), _dep("b"))
+
+    _, first = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo))
+    _, again = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo))
+
+    assert (inserts_and_upserts(first, "dependencies"), inserts_and_upserts(again, "dependencies")) == ((2, 0), (0, 2))
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_rows_a_concurrent_store_inserted_first_are_written_over_once(db):
+    await _upsert_key(db)
+    repo = DependencyRepository(db)
+    earlier_at = datetime.now(timezone.utc).replace(microsecond=0)
+    later_at = earlier_at + timedelta(seconds=1)
+    earlier = [dependency_store._parsed_dep_to_dependency(_dep(n), _PROJECT_ID, _SCAN_ID, earlier_at) for n in "ab"]
+    later = [
+        dependency_store._parsed_dep_to_dependency(_dep(n, scope="runtime"), _PROJECT_ID, _SCAN_ID, later_at)
+        for n in "abc"
+    ]
+
+    await repo.upsert_many(earlier, fresh=True)
+    # The later store also found the scan empty, before the earlier one's rows arrived.
+    await repo.upsert_many(later, fresh=True)
+
+    inventory = await _inventory(db)
+    assert sorted(inventory) == ["a", "b", "c"]
+    assert [inventory[n]["_id"] for n in "ab"] == [d.id for d in earlier]
+    assert {(row["scope"], row["created_at"]) for row in inventory.values()} == {("runtime", later_at)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_first_store_that_fails_part_way_is_completed_by_its_retry(db, monkeypatch):
+    await _upsert_key(db)
+    repo = DependencyRepository(db)
+    sbom = _sbom(_dep("a"), _dep("b"), _dep("c"))
+    build = dependency_store._parsed_dep_to_dependency
+
+    def fail_on_second_chunk(parsed_dep, *args):
+        if parsed_dep.name == "c":
+            raise ConnectionResetError("network gone mid-store")
+        return build(parsed_dep, *args)
+
+    monkeypatch.setattr(dependency_store, "_DEP_CHUNK_SIZE", 2)
+    monkeypatch.setattr(dependency_store, "_parsed_dep_to_dependency", fail_on_second_chunk)
+    with pytest.raises(ConnectionResetError):
+        await store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo)
+    monkeypatch.setattr(dependency_store, "_parsed_dep_to_dependency", build)
+
+    stored = await store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo)
+
+    assert (stored, sorted(await _inventory(db))) == (3, ["a", "b", "c"])
 
 
 class _CleanupAfterBothWrote(DependencyRepository):
