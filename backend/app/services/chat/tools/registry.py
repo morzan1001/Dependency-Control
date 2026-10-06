@@ -506,9 +506,14 @@ class ChatToolRegistry:
         search = ctx.args.get("search")
         name_filter = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
         query = and_filters(ctx.user_project_query, name_filter)
-        limit = ctx.args["limit"]
-        cursor = ctx.db["projects"].find(query, _PROJECT_ROW_PROJECTION, sort=[("last_scan_at", -1)], limit=limit)
-        projects = await cursor.to_list(length=limit)
+        projects, projects_total = await bounded_read(
+            ctx.db["projects"],
+            query,
+            subject="projects",
+            limit=ctx.args["limit"],
+            projection=_PROJECT_ROW_PROJECTION,
+            sort=[("last_scan_at", -1)],
+        )
         team_names = await resolve_team_names(ctx.db, {tid for p in projects for tid in p.get("team_ids") or []})
         stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
         rows = []
@@ -517,7 +522,7 @@ class ChatToolRegistry:
             row["stats"] = stats[p["_id"]].model_dump(exclude_unset=True) if p["_id"] in stats else None
             row["teams"] = [ref.model_dump() for ref in team_refs(p.get("team_ids") or [], team_names)]
             rows.append(row)
-        return {"projects": rows, "count": len(rows)}
+        return {"projects": rows, "projects_total": projects_total}
 
     async def _tool_get_project_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -547,11 +552,15 @@ class ChatToolRegistry:
 
     async def _tool_get_scan_history(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        limit = ctx.args["limit"]
         # Newest-first across every branch and status, so the first row is a queued run on a
         # branch nobody ships as often as it is the build the project stands on.
-        cursor = ctx.db["scans"].find({"project_id": project["_id"]}, sort=[("created_at", -1)], limit=limit)
-        scans = await cursor.to_list(length=limit)
+        scans, scans_total = await bounded_read(
+            ctx.db["scans"],
+            {"project_id": project["_id"]},
+            subject="scans",
+            limit=ctx.args["limit"],
+            sort=[("created_at", -1)],
+        )
         head_scan_id = await self._head_scan_id(project, ctx.db)
         return {
             "scans": [
@@ -563,6 +572,7 @@ class ChatToolRegistry:
                 }
                 for s in scans
             ],
+            "scans_total": scans_total,
             "head_scan_id": head_scan_id,
             "hint": (
                 "head_scan_id is the build that represents this project. Rows are ordered by "
@@ -1460,10 +1470,10 @@ class ChatToolRegistry:
         elif not read_all:
             # Id-listed even for project:read_all: an archive outlives the project it came from.
             query["project_id"] = {"$in": await self._get_authorized_project_ids(ctx)}
-        limit = ctx.args["limit"]
-        cursor = ctx.db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
-        archives = await cursor.to_list(length=limit)
-        return {"archives": [_serialize_doc(a, _ARCHIVE_FIELDS) for a in archives]}
+        archives, archives_total = await bounded_read(
+            ctx.db["archive_metadata"], query, subject="archives", limit=ctx.args["limit"], sort=[("archived_at", -1)]
+        )
+        return {"archives": [_serialize_doc(a, _ARCHIVE_FIELDS) for a in archives], "archives_total": archives_total}
 
     async def _tool_get_archive_details(self, ctx: _ToolContext) -> dict[str, Any]:
         archive = await ctx.db["archive_metadata"].find_one({"_id": ctx.args["archive_id"]})
