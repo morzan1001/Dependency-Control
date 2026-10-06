@@ -1067,9 +1067,8 @@ class ChatToolRegistry:
 
     async def _tool_suggest_waiver_for_finding(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        finding = await ctx.db["findings"].find_one(
-            {"finding_id": ctx.args["finding_id"], "project_id": project["_id"]}
-        )
+        scan_id, build = await self._scan_under_answer(ctx, project)
+        finding = await ctx.db["findings"].find_one({"finding_id": ctx.args["finding_id"], "scan_id": scan_id})
         if not finding:
             return {"error": _ERR_FINDING_NOT_FOUND}
         details = finding.get("details") or {}
@@ -1086,6 +1085,7 @@ class ChatToolRegistry:
                 ),
                 "suggested_expiry_days": 0,
                 "recommend_waive": False,
+                "scan": build,
             }
         tier = reachability_display_tier(finding.get("reachable"), finding.get("reachability_level"))
         deprioritized = is_deprioritized_vulnerability(
@@ -1118,6 +1118,7 @@ class ChatToolRegistry:
                 "reachability": tier,
                 "has_fix_version": bool(fix),
             },
+            "scan": build,
             "hint": (
                 "Show these signals to the user and let them edit the suggested reason "
                 "before creating the waiver. This tool does NOT create the waiver. When recommend_waive "

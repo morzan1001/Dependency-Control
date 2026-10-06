@@ -344,6 +344,45 @@ async def test_a_waiver_is_not_suggested_for_a_kev_listed_finding(db, database):
     assert "KEV" in result["suggested_reason"]
 
 
+async def test_a_waiver_suggestion_reads_the_finding_on_the_head_build(db, database):
+    await _seed_head(db)
+    # Stored first, so a lookup across the project's builds meets the copy from before the CVE entered KEV.
+    older = _finding("f-struts-old", "HIGH", "struts", [{"id": "CVE-2017-5638", "epss_score": 0.001}], epss_score=0.001)
+    await db.findings.insert_one({**older, "scan_id": "s-older"})
+    await db.findings.insert_one(
+        _finding("f-struts", "HIGH", "struts", [{"id": "CVE-2017-5638", "in_kev": True}], in_kev=True)
+    )
+
+    result = await _call(db, "suggest_waiver_for_finding", project_id=_PROJECT, finding_id="struts:1.0.0")
+
+    assert result["recommend_waive"] is False
+    assert "KEV" in result["suggested_reason"]
+
+
+async def test_a_waiver_suggestion_reads_the_finding_on_the_build_scan_id_names(db, database):
+    await _seed_head(db)
+    await db.scans.insert_one(
+        {
+            "_id": "s-branch",
+            "project_id": _PROJECT,
+            "branch": "feature/struts",
+            "status": SCAN_STATUS_COMPLETED,
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+    finding = _finding("f-struts", "LOW", "struts", [{"id": "CVE-2017-5638", "epss_score": 0.001}], epss_score=0.001)
+    await db.findings.insert_one({**finding, "scan_id": "s-branch"})
+
+    on_head = await _call(db, "suggest_waiver_for_finding", project_id=_PROJECT, finding_id="struts:1.0.0")
+    on_branch = await _call(
+        db, "suggest_waiver_for_finding", project_id=_PROJECT, finding_id="struts:1.0.0", scan_id="s-branch"
+    )
+
+    assert on_head == {"error": "Finding not found"}
+    assert on_branch["recommend_waive"] is True
+    assert (on_branch["scan"]["scan_id"], on_branch["scan"]["is_head"]) == ("s-branch", False)
+
+
 async def test_remediation_plan_leaves_waived_advisories_out(db, database):
     await _seed_head(db)
     finding = _finding(
