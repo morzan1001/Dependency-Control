@@ -4,7 +4,7 @@ import { projectApi } from '@/api/projects';
 import { scanApi } from '@/api/scans';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
 import { isScanInProgress } from '@/lib/scan-status';
-import { ScanWithReleases } from '@/types/scan';
+import { Scan, ScanWithReleases } from '@/types/scan';
 
 export interface ScanListFilters {
     page: number;
@@ -36,11 +36,17 @@ export const scanKeys = {
     window: (projectId: string, pages: number) => [...scanKeys.project(projectId), 'window', pages] as const,
 }
 
+const SCAN_POLL_INTERVAL_MS = 5000
+
+const pollWhileAnalysing = (scans?: Scan[]) =>
+    scans?.some((s) => isScanInProgress(s.status) || isScanInProgress(s.latest_run?.status)) ? SCAN_POLL_INTERVAL_MS : false
+
 export const useRecentScans = () => {
     return useQuery({
         queryKey: scanKeys.recent(),
         queryFn: scanApi.getRecent,
-        staleTime: 60 * 1000
+        staleTime: 60 * 1000,
+        refetchInterval: (q) => pollWhileAnalysing(q.state.data),
     });
 }
 
@@ -56,7 +62,8 @@ export const useProjectScans = (
             skip: (page - 1) * limit, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches, isRelease
         }),
         enabled: !!projectId,
-        placeholderData: keepPreviousData
+        placeholderData: keepPreviousData,
+        refetchInterval: (q) => pollWhileAnalysing(q.state.data),
     });
 }
 
@@ -97,8 +104,6 @@ export const useProjectBranchTips = (projectId: string) => {
         enabled: !!projectId
     });
 }
-
-const SCAN_POLL_INTERVAL_MS = 5000
 
 export const useScan = (scanId: string) => {
     const queryClient = useQueryClient();
