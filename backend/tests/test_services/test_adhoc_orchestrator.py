@@ -558,7 +558,21 @@ async def test_an_sbom_nothing_could_be_read_from_is_not_reported_as_a_clean_run
 
     assert _NO_COMPONENTS in response.analyzers.skipped_inputs[_SBOM_LABEL]
     assert response.analyzers.ran == [_ENRICHMENT]
+    assert "license_compliance" in response.analyzers.skipped
     assert response.findings == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("payload", "outcome"), [(_TRUFFLEHOG, "ran"), ({"findings": None}, "errored")])
+async def test_a_posted_scanner_named_among_the_analyzers_gets_one_outcome(payload, outcome):
+    request = AdhocAnalyzeRequest(
+        scanners={_TRUFFLEHOG_NAME: payload}, analyzers=[_TRUFFLEHOG_NAME], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert _TRUFFLEHOG_NAME in getattr(response.analyzers, outcome)
+    assert _TRUFFLEHOG_NAME not in response.analyzers.skipped
 
 
 @pytest.mark.asyncio

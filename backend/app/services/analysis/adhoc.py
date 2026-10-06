@@ -101,6 +101,7 @@ _OSV = "osv"
 ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = (_OSV, "license_compliance")
 
 _NOT_REQUESTED = "not requested"
+_NO_READABLE_SBOM = "no readable SBOM to analyse"
 _UNCACHED_FANOUT = (
     "off by default: this path publishes nothing to the shared cache, so every run re-queries "
     "the upstream registry for each package it recognises"
@@ -233,12 +234,14 @@ def _input_label(parsed_input: _ParsedInput) -> str:
 
 
 def _record_ran(report: AnalyzerReport, name: str) -> None:
+    report.skipped.pop(name, None)
     if name not in report.ran and name not in report.errored:
         report.ran.append(name)
 
 
 def _record_errored(report: AnalyzerReport, name: str, reason: str) -> None:
     """A failure on one input shadows a success on another: partial coverage must not read as complete."""
+    report.skipped.pop(name, None)
     report.errored.setdefault(name, []).append(reason)
     if name in report.ran:
         report.ran.remove(name)
@@ -619,6 +622,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     settings_for = _build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
+    if not parsed_inputs:
+        report.skipped.update(dict.fromkeys(requested, _NO_READABLE_SBOM))
 
     for parsed_input in parsed_inputs:
         for name in requested:
