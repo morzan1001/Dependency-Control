@@ -33,7 +33,7 @@ from app.models.user import User
 from app.repositories.base import and_filters
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
-from app.repositories.projects import ProjectRepository, remove_team_pipeline
+from app.repositories.projects import ProjectRepository, remove_team_ops
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.repositories.webhooks import WebhookRepository
@@ -155,7 +155,7 @@ async def delete_team(
 
     safe_team_id = sanitize_for_log(team_id)
 
-    updated_count = await ProjectRepository(db).update_many_raw({"team_ids": team_id}, remove_team_pipeline(team_id))
+    updated_count = await ProjectRepository(db).update_many_raw({"team_ids": team_id}, remove_team_ops(team_id))
     if updated_count > 0:
         logger.info("Team %s deleted: unassigned from %d project(s)", safe_team_id, updated_count)
 

@@ -2,7 +2,7 @@
 
 The guard exists so a project cannot be left with nobody able to administer it. An owning team's
 admins are project admins, so the question it really asks is whether *any* owner supplies one —
-and answering it from the mirrored scalar refuses a removal the co-owner makes perfectly safe,
+and answering it from one owner refuses a removal the co-owner makes perfectly safe,
 while answering it too loosely leaves a project stranded.
 """
 
@@ -32,8 +32,6 @@ async def _seed(db, *, owners: list[str], alpha_members: list, bravo_members: li
             "_id": _PROJECT,
             "name": "admins",
             "team_ids": owners,
-            # The scalar names the owner that supplies nobody, which is the half a reader of it sees.
-            "team_id": owners[0] if owners else None,
             "members": [{"user_id": _LAST_ADMIN, "role": "admin"}, {"user_id": "u-viewer", "role": "viewer"}],
         }
     )

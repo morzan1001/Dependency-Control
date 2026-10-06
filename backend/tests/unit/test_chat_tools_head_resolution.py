@@ -183,7 +183,6 @@ def _point_at(db, scan_id):
     db.projects._docs[_PROJECT] = {
         "_id": _PROJECT,
         "name": _PROJECT_NAME,
-        "team_id": None,
         "default_branch": _DEFAULT_BRANCH,
         "deleted_branches": [_DELETED_BRANCH],
         "latest_scan_id": scan_id,

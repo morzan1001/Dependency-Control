@@ -38,7 +38,7 @@ def _stored(language: str, module: str, *, created_at: datetime, updated_at: dat
 
 
 async def _seed(db, *callgraphs: dict) -> None:
-    await db.projects.insert_one({"_id": _PROJECT, "name": "callgraph-project", "team_id": None})
+    await db.projects.insert_one({"_id": _PROJECT, "name": "callgraph-project"})
     await db.callgraphs.insert_many(list(callgraphs))
 
 

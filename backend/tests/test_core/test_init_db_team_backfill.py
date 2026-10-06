@@ -35,15 +35,13 @@ def _seed_team(db, _id, name, **fields):
     db.teams._docs[_id] = doc
 
 
-def _seed_project(db, _id, team_id, team_source=None, **fields):
-    """A project as the phase-1 migration leaves it: the owner in the list, the scalar mirroring it."""
+def _seed_project(db, _id, team_id, provenance=None, **fields):
+    """A project with one owner and, when given, that owner's provenance entry."""
     doc = {
         "_id": _id,
         "name": _id,
         "team_ids": [team_id] if team_id else [],
-        "team_sources": {team_id: team_source} if team_id and team_source else {},
-        "team_id": team_id,
-        "team_source": team_source,
+        "team_sources": {team_id: provenance} if team_id and provenance else {},
     }
     doc.update(fields)
     db.projects._docs[_id] = doc
@@ -106,7 +104,6 @@ class TestBackfillProvenance:
         asyncio.run(_backfill_member_and_team_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-a")}
-        assert db.projects._docs["p1"]["team_source"] == team_source(TEAM_SOURCE_GITLAB, "inst-a")
 
     def test_leaves_a_co_owner_this_team_did_not_supply_alone(self):
         db = FakeDatabase()
@@ -165,12 +162,11 @@ class TestBackfillProvenance:
         db = FakeDatabase()
         _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
         # A project already explicitly marked manual must be preserved.
-        _seed_project(db, "p1", "t-synced", team_source="manual")
+        _seed_project(db, "p1", "t-synced", provenance="manual")
 
         asyncio.run(_backfill_member_and_team_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "manual"}
-        assert db.projects._docs["p1"]["team_source"] == "manual"
 
     def test_does_not_move_an_owner_to_this_teams_instance(self):
         """The guard is absent-and-null and nothing else. An entry already naming another instance
@@ -178,12 +174,11 @@ class TestBackfillProvenance:
         instance's next ingest to retire."""
         db = FakeDatabase()
         _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
-        _seed_project(db, "p1", "t-synced", team_source=team_source(TEAM_SOURCE_GITLAB, "inst-b"))
+        _seed_project(db, "p1", "t-synced", provenance=team_source(TEAM_SOURCE_GITLAB, "inst-b"))
 
         asyncio.run(_backfill_member_and_team_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-b")}
-        assert db.projects._docs["p1"]["team_source"] == team_source(TEAM_SOURCE_GITLAB, "inst-b")
 
     def test_idempotent_second_run_is_noop(self):
         db = FakeDatabase()

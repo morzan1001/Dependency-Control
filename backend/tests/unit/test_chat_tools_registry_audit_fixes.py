@@ -41,7 +41,6 @@ def _seed_project(db, project_id=_PROJECT, **overrides):
     doc = {
         "_id": project_id,
         "name": "P",
-        "team_id": None,
         "default_branch": _BRANCH,
         "deleted_branches": [],
         "latest_scan_id": _SCAN,
@@ -150,7 +149,7 @@ class TestComplianceReportsVisibility:
             "name": "team-a",
             "members": [{"user_id": "u-1", "role": "member"}],
         }
-        db.projects._docs["p-1"] = {"_id": "p-1", "name": "P1", "team_ids": ["t-1"], "team_id": "t-1"}
+        db.projects._docs["p-1"] = {"_id": "p-1", "name": "P1", "team_ids": ["t-1"]}
 
         repo_instance = MagicMock()
         repo_instance.list = AsyncMock(return_value=[])

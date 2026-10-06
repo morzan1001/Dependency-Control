@@ -60,48 +60,6 @@ def owners_replaced_by(project: Project, source: str) -> set[str]:
     return {team_id for team_id, entry in project.team_sources.items() if entry == source}
 
 
-# Read against the freshly written list, so it has to run in a stage of its own.
-_MIRRORED_OWNER = {
-    "$cond": [
-        {"$in": [{"$ifNull": ["$team_id", None]}, {"$ifNull": ["$team_ids", []]}]},
-        "$team_id",
-        {"$ifNull": [{"$arrayElemAt": [{"$ifNull": ["$team_ids", []]}, 0]}, None]},
-    ]
-}
-
-_MIRRORED_SOURCE = {
-    "$ifNull": [
-        {
-            "$arrayElemAt": [
-                {
-                    "$map": {
-                        "input": _team_source_entries({"$eq": ["$$entry.k", {"$ifNull": ["$team_id", None]}]}),
-                        "as": "entry",
-                        "in": "$$entry.v",
-                    }
-                },
-                0,
-            ]
-        },
-        None,
-    ]
-}
-
-
-def scalar_mirror_stages() -> list[dict[str, Any]]:
-    """Point the legacy scalars at one of the stored owners, so the queries still reading them see
-    a team that genuinely owns the project rather than one it lost.
-
-    The incumbent is kept whenever it is still an owner: the array's order is whatever ``$setUnion``
-    produced, and letting it decide would flip the team a project lists under whenever a co-owner
-    with a lower id is added.
-    """
-    return [
-        {"$set": {"team_id": _MIRRORED_OWNER}},
-        {"$set": {"team_source": _MIRRORED_SOURCE}},
-    ]
-
-
 def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[str, Any]]:
     """A pipeline update replacing exactly the owners ``source`` set, leaving the others alone.
 
@@ -140,7 +98,6 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
                 },
             }
         },
-        *scalar_mirror_stages(),
     ]
 
 
@@ -168,25 +125,12 @@ def set_owners_pipeline(team_ids: list[str]) -> list[dict[str, Any]]:
                 "team_sources": {"$mergeObjects": [dict.fromkeys(owners, TEAM_SOURCE_MANUAL), _sources_kept(owners)]},
             }
         },
-        *scalar_mirror_stages(),
     ]
 
 
-def remove_team_pipeline(team_id: str) -> list[dict[str, Any]]:
-    """Remove one owner whatever wrote it, and the scalars with it when it was the mirrored one.
-
-    ``$pull`` and ``$unset`` would express the first half in one classic update, but not the
-    second: only a pipeline can point the scalars at a remaining owner in the same write.
-    """
-    return [
-        {
-            "$set": {
-                "team_ids": {"$setDifference": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
-                "team_sources": {"$arrayToObject": _team_source_entries({"$ne": ["$$entry.k", team_id]})},
-            }
-        },
-        *scalar_mirror_stages(),
-    ]
+def remove_team_ops(team_id: str) -> dict[str, Any]:
+    """Remove one owner whatever wrote it."""
+    return {"$pull": {"team_ids": team_id}, "$unset": {f"team_sources.{team_id}": ""}}
 
 
 def _literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
@@ -198,18 +142,9 @@ def _literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
-    """The stored ownership of a project being inserted, scalars included.
-
-    Sorted, because that is the order ``$setUnion`` leaves behind: an unsorted insert would have
-    the first sync reorder the list and move the scalars to a different owner for no reason.
-    """
+    """The stored ownership of a project being inserted, in the order ``$setUnion`` leaves behind."""
     owners = sorted(set(team_ids))
-    return {
-        "team_ids": owners,
-        "team_sources": dict.fromkeys(owners, source),
-        "team_id": owners[0] if owners else None,
-        "team_source": source if owners else None,
-    }
+    return {"team_ids": owners, "team_sources": dict.fromkeys(owners, source)}
 
 
 def _gitlab_key(instance_id: str, project_id: int) -> dict[str, Any]:

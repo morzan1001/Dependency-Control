@@ -10,7 +10,7 @@ import pytest
 # Exactly what ProjectSettings.tsx handleUpdate() sends.
 _FORM_PAYLOAD = {
     "name": "project-p",
-    "team_id": None,
+    "team_ids": [],
     "retention_days": 30,
     "retention_action": "archive",
     "active_analyzers": ["trivy"],
@@ -21,6 +21,7 @@ _FORM_PAYLOAD = {
     "gitlab_instance_id": "gl-1",
     "gitlab_project_id": 4242,
     "gitlab_project_path": "group/sub/project",
+    "github_pr_comments_enabled": False,
 }
 
 
@@ -49,7 +50,7 @@ async def test_every_field_the_form_sends_is_persisted(client, db, owner_auth_he
     assert resp.status_code == 200, resp.text
 
     stored = await db.projects.find_one({"_id": "p"})
-    missing = {k: v for k, v in _FORM_PAYLOAD.items() if k != "team_id" and stored.get(k) != v}
+    missing = {k: v for k, v in _FORM_PAYLOAD.items() if stored.get(k) != v}
     assert not missing, f"dropped or altered on the way to the database: {missing}"
 
 

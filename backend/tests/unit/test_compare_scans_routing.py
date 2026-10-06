@@ -59,7 +59,7 @@ async def _build(db, scan_id: str, created_at: datetime, finding: Finding, algor
 @pytest_asyncio.fixture
 async def seeded(db):
     """Upgrading log4j away and pulling lodash in, while the code moves from MD5 to SHA-256."""
-    await db.projects.insert_one({"_id": _PROJECT, "name": "test-project", "team_id": None})
+    await db.projects.insert_one({"_id": _PROJECT, "name": "test-project"})
     await _build(db, _FROM, _NOW - timedelta(days=1), _LOG4J, "MD5")
     await _build(db, _TO, _NOW, _LODASH, "SHA-256")
     return db

@@ -30,7 +30,6 @@ def _seed_project(db, project_id=_PROJECT, latest_scan_id=_SCAN):
     db.projects._docs[project_id] = {
         "_id": project_id,
         "name": "P",
-        "team_id": None,
         "default_branch": _BRANCH,
         "deleted_branches": [],
         "latest_scan_id": latest_scan_id,

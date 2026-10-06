@@ -20,7 +20,7 @@ from app.models.user import User
 from app.repositories.projects import (
     ProjectRepository,
     owners_replaced_by,
-    remove_team_pipeline,
+    remove_team_ops,
     replace_team_subset_pipeline,
     set_owners_pipeline,
 )
@@ -36,8 +36,6 @@ _PROJECT = {
     "name": "demo",
     "team_ids": ["gl-stale", "kept-by-hand"],
     "team_sources": {"gl-stale": _GITLAB_A, "kept-by-hand": "manual"},
-    "team_id": "gl-stale",
-    "team_source": _GITLAB_A,
 }
 
 
@@ -50,10 +48,6 @@ async def _assert_a_sync_keeps_the_manual_co_owner(db) -> None:
     project = Project(**await db.projects.find_one({"_id": "p-live"}))
     assert sorted(project.team_ids) == ["gl-fresh", "kept-by-hand"]
     assert project.team_sources == {"kept-by-hand": "manual", "gl-fresh": _GITLAB_A}
-    # The scalar named the owner that was just retired, so it follows the list rather than a team
-    # that no longer owns anything.
-    assert project.team_id == "gl-fresh"
-    assert project.team_source == _GITLAB_A
     # The project must stay findable: an ownership write that stored null would drop it out of
     # the unassigned view and every ownership view at once.
     assert await db.projects.count_documents({"team_ids": {"$size": 0}}) == 0
@@ -64,12 +58,12 @@ async def _assert_a_deleted_team_leaves_the_others_owning(db) -> None:
     repo = ProjectRepository(db)
     await db.projects.insert_one(dict(_PROJECT))
 
-    changed = await repo.update_many_raw({"team_ids": "gl-stale"}, remove_team_pipeline("gl-stale"))
+    changed = await repo.update_many_raw({"team_ids": "gl-stale"}, remove_team_ops("gl-stale"))
 
     assert changed == 1
     project = Project(**await db.projects.find_one({"_id": "p-live"}))
     assert project.team_ids == ["kept-by-hand"]
-    assert project.team_id == "kept-by-hand"
+    assert project.team_sources == {"kept-by-hand": "manual"}
 
 
 async def _assert_an_untouched_document_gains_both_shapes(db) -> None:
@@ -81,7 +75,6 @@ async def _assert_an_untouched_document_gains_both_shapes(db) -> None:
     stored = await db.projects.find_one({"_id": "p-bare"})
     assert stored["team_ids"] == []
     assert stored["team_sources"] == {}
-    assert stored["team_id"] is None
     assert await db.projects.count_documents({"team_ids": {"$size": 0}}) == 1
 
 
@@ -92,8 +85,6 @@ _UNMIGRATED_PROJECT = {
     "gitlab_project_id": 100,
     "team_ids": ["gl-still-held", "gl-group-left", "by-hand"],
     "team_sources": {"gl-still-held": "gitlab", "gl-group-left": "gitlab", "by-hand": "manual"},
-    "team_id": "gl-still-held",
-    "team_source": "gitlab",
 }
 
 
@@ -118,8 +109,6 @@ _TWO_INSTANCE_PROJECT = {
     "name": "owned-from-two-instances",
     "team_ids": ["gl-a-team", "gl-b-team", "kept-by-hand"],
     "team_sources": {"gl-a-team": _GITLAB_A, "gl-b-team": _GITLAB_B, "kept-by-hand": "manual"},
-    "team_id": "gl-a-team",
-    "team_source": _GITLAB_A,
 }
 
 
@@ -159,7 +148,6 @@ _LEGACY_PROJECT = {
     "name": "predates-provenance",
     "team_ids": ["legacy"],
     "team_sources": {},
-    "team_id": "legacy",
 }
 
 
@@ -191,8 +179,6 @@ _RACE_PROJECT = {
     "name": "two-admins",
     "team_ids": ["t-a", "t-b"],
     "team_sources": {"t-a": "manual", "t-b": "manual"},
-    "team_id": "t-a",
-    "team_source": "manual",
 }
 
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
-from app.repositories.projects import remove_team_pipeline, replace_team_subset_pipeline, set_owners_pipeline
+from app.repositories.projects import remove_team_ops, replace_team_subset_pipeline, set_owners_pipeline
 
 _CONFLICT = 40
 _BAD_VALUE = 2
@@ -424,87 +424,37 @@ TEAM_OWNERSHIP_CASES = [
         expected={
             "team_ids": ["gh-z", "gl-a", "gl-c", "manual-b"],
             "team_sources": {"manual-b": "manual", "gh-z": _GITHUB_A, "gl-c": _GITLAB_A, "gl-a": _GITLAB_A},
-            "team_id": "gh-z",
-            "team_source": _GITHUB_A,
         },
     ),
     UpdateCase(
         "a sync that resolved nothing keeps the manual co-owner",
         {"team_ids": ["manual-b"], "team_sources": {"manual-b": "manual"}},
         replace_team_subset_pipeline(_GITLAB_A, []),
-        expected={
-            "team_ids": ["manual-b"],
-            "team_sources": {"manual-b": "manual"},
-            "team_id": "manual-b",
-            "team_source": "manual",
-        },
+        expected={"team_ids": ["manual-b"], "team_sources": {"manual-b": "manual"}},
     ),
     UpdateCase(
         "a sync drops the owner it no longer resolves",
         {"team_ids": ["gl-a", "manual-b"], "team_sources": {"gl-a": _GITLAB_A, "manual-b": "manual"}},
         replace_team_subset_pipeline(_GITLAB_A, ["gl-c"]),
-        expected={
-            "team_ids": ["gl-c", "manual-b"],
-            "team_sources": {"manual-b": "manual", "gl-c": _GITLAB_A},
-            "team_id": "gl-c",
-            "team_source": _GITLAB_A,
-        },
-    ),
-    UpdateCase(
-        "the scalars follow the owner a sync replaced",
-        {"team_id": "gl-a", "team_source": _GITLAB_A, "team_ids": ["gl-a"], "team_sources": {"gl-a": _GITLAB_A}},
-        replace_team_subset_pipeline(_GITLAB_A, ["gl-b"]),
-        expected={
-            "team_ids": ["gl-b"],
-            "team_sources": {"gl-b": _GITLAB_A},
-            "team_id": "gl-b",
-            "team_source": _GITLAB_A,
-        },
-    ),
-    UpdateCase(
-        "the scalars stay on an owner the sync did not touch",
-        {
-            "team_id": "manual-b",
-            "team_source": "manual",
-            "team_ids": ["manual-b"],
-            "team_sources": {"manual-b": "manual"},
-        },
-        replace_team_subset_pipeline(_GITHUB_A, ["gh-a"]),
-        expected={
-            "team_ids": ["gh-a", "manual-b"],
-            "team_sources": {"manual-b": "manual", "gh-a": _GITHUB_A},
-            "team_id": "manual-b",
-            "team_source": "manual",
-        },
+        expected={"team_ids": ["gl-c", "manual-b"], "team_sources": {"manual-b": "manual", "gl-c": _GITLAB_A}},
     ),
     UpdateCase(
         "the guard turns absent fields into an empty list",
         {"name": "x"},
         replace_team_subset_pipeline(_GITHUB_A, []),
-        expected={"name": "x", "team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
+        expected={"name": "x", "team_ids": [], "team_sources": {}},
     ),
     UpdateCase(
         "the guard writes the resolved owners onto absent fields",
         {"name": "x"},
         replace_team_subset_pipeline(_GITHUB_A, ["gh-1"]),
-        expected={
-            "name": "x",
-            "team_ids": ["gh-1"],
-            "team_sources": {"gh-1": _GITHUB_A},
-            "team_id": "gh-1",
-            "team_source": _GITHUB_A,
-        },
+        expected={"name": "x", "team_ids": ["gh-1"], "team_sources": {"gh-1": _GITHUB_A}},
     ),
     UpdateCase(
         "only team_ids is absent",
         {"team_sources": {"m": "manual"}},
         replace_team_subset_pipeline(_GITLAB_A, ["g1"]),
-        expected={
-            "team_ids": ["g1"],
-            "team_sources": {"m": "manual", "g1": _GITLAB_A},
-            "team_id": "g1",
-            "team_source": _GITLAB_A,
-        },
+        expected={"team_ids": ["g1"], "team_sources": {"m": "manual", "g1": _GITLAB_A}},
     ),
     UpdateCase(
         "an unguarded pipeline stores null",
@@ -516,96 +466,57 @@ TEAM_OWNERSHIP_CASES = [
     # its provenance is what stops any project admin from laundering one into an immortal owner.
     UpdateCase(
         "the whole-set write keeps a retained owner's provenance and stamps the new one",
-        {"team_id": "gl-a", "team_source": _GITLAB_A, "team_ids": ["gl-a"], "team_sources": {"gl-a": _GITLAB_A}},
+        {"team_ids": ["gl-a"], "team_sources": {"gl-a": _GITLAB_A}},
         set_owners_pipeline(["gl-a", "m1"]),
-        expected={
-            "team_ids": ["gl-a", "m1"],
-            "team_sources": {"gl-a": _GITLAB_A, "m1": "manual"},
-            "team_id": "gl-a",
-            "team_source": _GITLAB_A,
-        },
+        expected={"team_ids": ["gl-a", "m1"], "team_sources": {"gl-a": _GITLAB_A, "m1": "manual"}},
     ),
     UpdateCase(
         "the whole-set write drops a deselected owner whatever established it",
-        {
-            "team_id": "gl-a",
-            "team_source": _GITLAB_A,
-            "team_ids": ["gl-a", "m1"],
-            "team_sources": {"gl-a": _GITLAB_A, "m1": "manual"},
-        },
+        {"team_ids": ["gl-a", "m1"], "team_sources": {"gl-a": _GITLAB_A, "m1": "manual"}},
         set_owners_pipeline(["m1"]),
-        expected={"team_ids": ["m1"], "team_sources": {"m1": "manual"}, "team_id": "m1", "team_source": "manual"},
+        expected={"team_ids": ["m1"], "team_sources": {"m1": "manual"}},
     ),
     UpdateCase(
         "the whole-set write onto absent fields",
         {"name": "x"},
         set_owners_pipeline(["m1"]),
-        expected={
-            "name": "x",
-            "team_ids": ["m1"],
-            "team_sources": {"m1": "manual"},
-            "team_id": "m1",
-            "team_source": "manual",
-        },
+        expected={"name": "x", "team_ids": ["m1"], "team_sources": {"m1": "manual"}},
     ),
     UpdateCase(
         "a retained owner no provenance names is stamped as hand-assigned",
         {"team_ids": ["legacy"], "team_sources": {}},
         set_owners_pipeline(["legacy"]),
-        expected={
-            "team_ids": ["legacy"],
-            "team_sources": {"legacy": "manual"},
-            "team_id": "legacy",
-            "team_source": "manual",
-        },
+        expected={"team_ids": ["legacy"], "team_sources": {"legacy": "manual"}},
     ),
     UpdateCase(
-        "picking nothing empties both shapes",
-        {"team_id": "gl-a", "team_source": _GITLAB_A, "team_ids": ["gl-a"], "team_sources": {"gl-a": _GITLAB_A}},
+        "picking nothing empties the owners",
+        {"team_ids": ["gl-a"], "team_sources": {"gl-a": _GITLAB_A}},
         set_owners_pipeline([]),
-        expected={"team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
+        expected={"team_ids": [], "team_sources": {}},
     ),
     UpdateCase(
         "a provider leaves an owner no provenance names alone",
         {"team_ids": ["legacy", "gl-a"], "team_sources": {"gl-a": _GITLAB_A}},
         replace_team_subset_pipeline(_GITLAB_A, ["gl-b"]),
-        expected={
-            "team_ids": ["gl-b", "legacy"],
-            "team_sources": {"gl-b": _GITLAB_A},
-            "team_id": "gl-b",
-            "team_source": _GITLAB_A,
-        },
+        expected={"team_ids": ["gl-b", "legacy"], "team_sources": {"gl-b": _GITLAB_A}},
     ),
     UpdateCase(
-        "removing the mirrored owner moves the scalars to a survivor",
-        {
-            "team_id": "gl-a",
-            "team_source": _GITLAB_A,
-            "team_ids": ["gl-a", "m1"],
-            "team_sources": {"gl-a": _GITLAB_A, "m1": "manual"},
-        },
-        remove_team_pipeline("gl-a"),
-        expected={"team_ids": ["m1"], "team_sources": {"m1": "manual"}, "team_id": "m1", "team_source": "manual"},
+        "removing an owner leaves the others",
+        {"team_ids": ["gl-a", "m1"], "team_sources": {"gl-a": _GITLAB_A, "m1": "manual"}},
+        remove_team_ops("gl-a"),
+        expected={"team_ids": ["m1"], "team_sources": {"m1": "manual"}},
     ),
     UpdateCase(
-        "removing the last owner empties both shapes",
-        {"team_id": "m1", "team_source": "manual", "team_ids": ["m1"], "team_sources": {"m1": "manual"}},
-        remove_team_pipeline("m1"),
-        expected={"team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
-    ),
-    UpdateCase(
-        "removing an owner a project never had",
-        {"name": "x"},
-        remove_team_pipeline("m1"),
-        expected={"name": "x", "team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
+        "removing the last owner empties the owners",
+        {"team_ids": ["m1"], "team_sources": {"m1": "manual"}},
+        remove_team_ops("m1"),
+        expected={"team_ids": [], "team_sources": {}},
     ),
     # The headline of the instance-scoped provenance: under a provider-wide source this write
     # retires gl-b as well, and instance A's next ingest retires gl-a-moved in the same way.
     UpdateCase(
         "one instance of a provider leaves another instance's owner alone",
         {
-            "team_id": "gl-a",
-            "team_source": _GITLAB_A,
             "team_ids": ["gl-a", "gl-b", "manual-c"],
             "team_sources": {"gl-a": _GITLAB_A, "gl-b": _GITLAB_B, "manual-c": "manual"},
         },
@@ -613,8 +524,6 @@ TEAM_OWNERSHIP_CASES = [
         expected={
             "team_ids": ["gl-a", "gl-b-moved", "manual-c"],
             "team_sources": {"gl-a": _GITLAB_A, "manual-c": "manual", "gl-b-moved": _GITLAB_B},
-            "team_id": "gl-a",
-            "team_source": _GITLAB_A,
         },
     ),
     # The picker is the only writer that may take a hand assignment away, so a provider resolving
@@ -623,34 +532,19 @@ TEAM_OWNERSHIP_CASES = [
         "a sync resolving a hand-assigned owner leaves it hand-assigned",
         {"team_ids": ["platform"], "team_sources": {"platform": "manual"}},
         replace_team_subset_pipeline(_GITHUB_A, ["platform", "gh-new"]),
-        expected={
-            "team_ids": ["gh-new", "platform"],
-            "team_sources": {"platform": "manual", "gh-new": _GITHUB_A},
-            "team_id": "gh-new",
-            "team_source": _GITHUB_A,
-        },
+        expected={"team_ids": ["gh-new", "platform"], "team_sources": {"platform": "manual", "gh-new": _GITHUB_A}},
     ),
     UpdateCase(
         "a sync resolving an owner another instance holds leaves it with that instance",
         {"team_ids": ["shared"], "team_sources": {"shared": _GITLAB_B}},
         replace_team_subset_pipeline(_GITLAB_A, ["shared"]),
-        expected={
-            "team_ids": ["shared"],
-            "team_sources": {"shared": _GITLAB_B},
-            "team_id": "shared",
-            "team_source": _GITLAB_B,
-        },
+        expected={"team_ids": ["shared"], "team_sources": {"shared": _GITLAB_B}},
     ),
     UpdateCase(
         "a provider value naming no instance belongs to no instance's subset",
         {"team_ids": ["legacy-gl"], "team_sources": {"legacy-gl": "gitlab"}},
         replace_team_subset_pipeline(_GITLAB_A, ["gl-x"]),
-        expected={
-            "team_ids": ["gl-x", "legacy-gl"],
-            "team_sources": {"legacy-gl": "gitlab", "gl-x": _GITLAB_A},
-            "team_id": "gl-x",
-            "team_source": _GITLAB_A,
-        },
+        expected={"team_ids": ["gl-x", "legacy-gl"], "team_sources": {"legacy-gl": "gitlab", "gl-x": _GITLAB_A}},
     ),
 ]
 

@@ -466,6 +466,19 @@ class GitHubService:
         visible: bool | None = await self._cached(f"repository_visible:{org}/{repo}", fetch, bool)
         return visible
 
+    async def _is_personal_account(self, owner: str) -> bool:
+        """Whether a repository owner is a user, whose repositories no team can hold, not an organisation."""
+
+        async def fetch() -> bool | None:
+            endpoint = f"/users/{owner}"
+            async with _org_walk_gate(self._instance_id):
+                response = await self._api_get(endpoint)
+            if response is None or not response_ok("GitHub", endpoint, response):
+                return None
+            return _json_document(response).get("type") == "User"
+
+        return await self._cached(f"owner_kind:{owner}", fetch, bool) is True
+
     async def get_org_teams(self, org: str) -> list[dict[str, Any]] | None:
         """Every team of an organisation, with the parent that tells two same-named ones apart."""
 
@@ -857,6 +870,8 @@ class GitHubService:
         of them. Reads only: nothing is written before the whole set is known."""
         org_teams = await self.get_org_teams(org)
         if org_teams is None:
+            if await self._is_personal_account(org):
+                return []
             logger.warning(
                 "Could not list the teams of GitHub organisation %s; leaving %s/%s untouched.", org, org, repo
             )
@@ -1019,18 +1034,20 @@ class GitHubService:
             return TeamSyncResult(None)
 
     async def get_pull_requests_for_commit(
-        self, owner: str, repo: str, commit_sha: str
+        self, owner: str, repo: str, commit_sha: str, branch: str
     ) -> tuple[str, list[GitHubPullRequest]]:
-        """The sha that matched and its pull requests, retrying via the head parent when it is a merge commit."""
+        """The sha that matched and its pull requests; a "<number>/merge" build reaches that PR via the head parent."""
         pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
-        if pull_requests:
+        if pull_requests or not branch.endswith("/merge"):
             return commit_sha, pull_requests
 
-        # A `pull_request` workflow checks out an ephemeral test-merge commit that GitHub associates with
-        # no pull request (HTTP 200 and an empty list, never a 404); its parents[1] is the PR head.
+        # A `pull_request` workflow (GITHUB_REF_NAME "<number>/merge") checks out an ephemeral test-merge
+        # commit GitHub associates with no pull request (HTTP 200 and [], never a 404); parents[1] is the PR head.
         head_sha = await self._merge_commit_head_parent(owner, repo, commit_sha)
         if head_sha:
-            pull_requests = await self._pull_requests_for_sha(owner, repo, head_sha)
+            pull_requests = [
+                pr for pr in await self._pull_requests_for_sha(owner, repo, head_sha) if branch == f"{pr.number}/merge"
+            ]
             if pull_requests:
                 logger.info(
                     "Resolved %s/%s commit %s to pull request(s) %s via merge-commit head parent %s",
@@ -1070,10 +1087,10 @@ class GitHubService:
         head_sha = parents[1].get("sha")
         return str(head_sha) if head_sha else None
 
-    async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment]:
-        """Issue comments on a pull request, uncapped so an old scan comment is never missed and duplicated."""
+    async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment] | None:
+        """Issue comments on a pull request, uncapped so an old scan comment is never missed; None when a page failed."""
         comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments", max_pages=None)
-        return [GitHubIssueComment(**c) for c in comments] if comments else []
+        return None if comments is None else [GitHubIssueComment(**c) for c in comments]
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
         """Post a comment on a pull request."""

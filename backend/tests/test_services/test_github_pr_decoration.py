@@ -177,7 +177,7 @@ class TestPullRequestFiltering:
         svc = _service([_pr(7)])
         _run_with_service(_enabled_project(), _make_scan(commit_hash="abc"), svc)
 
-        svc.get_pull_requests_for_commit.assert_awaited_once_with("acme", "widget", "abc")
+        svc.get_pull_requests_for_commit.assert_awaited_once_with("acme", "widget", "abc", "main")
 
     def test_a_pull_request_whose_head_moved_past_the_scanned_commit_is_left_alone(self):
         svc = _service([_pr(7, head="abc"), _pr(8, head="def")])
@@ -210,7 +210,8 @@ class TestPullRequestWorkflowScans:
     """GITHUB_SHA is the test-merge commit; GitHub replaces merge_commit_sha whenever it re-tests mergeability."""
 
     @staticmethod
-    def _decorate(pr_head):
+    def _decorate(pr_head, branch="42/merge", comments_page=()):
+        """The endpoints decorating the scan read through _api_get, and the ones it posted to."""
         from app.services.analysis.integrations import decorate_github_pr
         from app.services.github import GitHubService
 
@@ -233,24 +234,45 @@ class TestPullRequestWorkflowScans:
             ),
             "/user": _json_response({"login": "dc-bot", "id": _BOT}),
         }
+        api_get = AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
         api_post = AsyncMock(return_value=_json_response({"id": 1}, 201))
         db = create_mock_db({"github_instances": create_mock_collection(find_one=_USABLE_INSTANCE_DOC)})
         with (
+            patch.object(GitHubService, "_api_get", api_get),
             patch.object(
-                GitHubService, "_api_get", AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
+                GitHubService,
+                "_api_get_paginated",
+                AsyncMock(return_value=None if comments_page is None else list(comments_page)),
             ),
-            patch.object(GitHubService, "_api_get_paginated", AsyncMock(return_value=[])),
             patch.object(GitHubService, "_api_post", api_post),
         ):
-            scan = _make_scan(commit_hash=_TEST_MERGE)
+            scan = _make_scan(commit_hash=_TEST_MERGE, branch=branch)
             asyncio.run(decorate_github_pr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan, _enabled_project(), db))
-        return [call.args[0] for call in api_post.await_args_list]
+        return [call.args[0] for call in api_get.await_args_list], [call.args[0] for call in api_post.await_args_list]
 
     def test_the_current_head_is_decorated_after_github_retested_the_merge(self):
-        assert self._decorate(pr_head=_HEAD) == ["/repos/acme/widget/issues/42/comments"]
+        _, posted = self._decorate(pr_head=_HEAD)
+        assert posted == ["/repos/acme/widget/issues/42/comments"]
 
     def test_a_test_merge_of_a_superseded_head_is_left_alone(self):
-        assert self._decorate(pr_head=_NEWER_HEAD) == []
+        _, posted = self._decorate(pr_head=_NEWER_HEAD)
+        assert posted == []
+
+    def test_a_comment_listing_that_failed_posts_no_second_comment(self):
+        _, posted = self._decorate(pr_head=_HEAD, comments_page=None)
+        assert posted == []
+
+    def test_a_merge_build_decorates_only_its_own_pull_request(self):
+        """PRs opened from one branch share its head, and #7's test merge must not write #42's comment."""
+        _, posted = self._decorate(pr_head=_HEAD, branch="7/merge")
+        assert posted == []
+
+    def test_a_pushed_merge_of_a_branch_leaves_that_branchs_pull_request_alone(self):
+        """Merging feature into a branch without a PR and pushing gives a commit of the same shape,
+        whose second parent heads the feature's PR; that PR is not this build's to look up or comment on."""
+        requested, posted = self._decorate(pr_head=_HEAD, branch="integration")
+        assert requested == [f"/repos/acme/widget/commits/{_TEST_MERGE}/pulls"]
+        assert posted == []
 
 
 class TestCommentUpsert:

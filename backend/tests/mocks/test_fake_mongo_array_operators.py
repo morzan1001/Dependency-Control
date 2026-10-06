@@ -1,6 +1,6 @@
 """The attrappe's array operators, pinned to what Percona Server for MongoDB 8.0.17-6 answers.
 
-The multi-team work replaces a scalar ``team_id`` with a ``team_ids`` array whose syncs must
+Project ownership is a ``team_ids`` array whose syncs must
 replace their own subset of owners, so these operators carry the whole feature. Every case below
 is shared with ``tests/integration/test_mongo_array_operator_agreement.py``, which runs the same
 table against a real server.
