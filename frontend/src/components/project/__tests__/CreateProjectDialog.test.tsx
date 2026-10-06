@@ -41,6 +41,14 @@ describe('CreateProjectDialog', () => {
     expect(submit().active_analyzers).toBeUndefined()
   })
 
+  it('warns when an enrichment is picked without a vulnerability scanner to feed it', () => {
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /trivy/i }))
+
+    expect(screen.getByText('Requires at least one vulnerability scanner to be enabled')).toBeInTheDocument()
+  })
+
   it('sends the analyzers the user picked', () => {
     render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
 
