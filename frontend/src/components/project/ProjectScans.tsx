@@ -98,8 +98,9 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
       )
       let prevCompleted: Scan | undefined
       for (const scan of chronological) {
+        if (!isScanUsable(resolveRun(scan).status)) continue
         if (prevCompleted) partners.set(scan.id, prevCompleted)
-        if (isScanUsable(resolveRun(scan).status)) prevCompleted = scan
+        prevCompleted = scan
       }
     }
     return partners

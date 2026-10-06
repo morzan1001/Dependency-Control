@@ -112,6 +112,16 @@ describe('ProjectScans - Delta comparison partner', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/projects/p1/delta?from=main-partial&to=main-new')
   })
 
+  it('offers no Delta on a scan whose run has delivered no numbers', () => {
+    const failed = makeScan({ id: 'main-failed', status: 'failed', created_at: '2026-07-03T00:00:00Z' })
+    const pending = makeScan({ id: 'main-pending', status: 'pending', created_at: '2026-07-02T00:00:00Z' })
+    const done = makeScan({ id: 'main-done', created_at: '2026-07-01T00:00:00Z' })
+
+    renderScans([failed, pending, done])
+
+    expect(screen.queryByRole('button', { name: 'Delta' })).not.toBeInTheDocument()
+  })
+
   it('renders the completed_with_errors badge in the pipelines table', () => {
     renderScans([makeScan({ id: 'main-partial', status: 'completed_with_errors' })])
 
