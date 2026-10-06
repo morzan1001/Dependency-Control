@@ -8,6 +8,7 @@ import pytest_asyncio
 from app.core.init_db import create_indexes
 from app.core.permissions import Permissions
 from tests.helpers.auth import bearer_headers
+from tests.helpers.profiler import profiled
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -58,18 +59,16 @@ async def estate(db, owner_auth_headers_proj):
 
 async def _profiled(db, request):
     """The response of ``request`` and every operation the server ran meanwhile."""
-    await db.command("profile", 2)
-    try:
-        resp = await request
-    finally:
-        await db.command("profile", 0)
+    resp, entries = await profiled(db, request)
     assert resp.status_code == 200, resp.text
-    return resp, await db["system.profile"].find({"planSummary": {"$exists": True}}).to_list(None)
+    return resp, entries
 
 
 def _plan(entries, collection, command):
     """(index summary, whether the planner raced candidates) of the one ``command`` run on ``collection``."""
-    [entry] = [e for e in entries if e["ns"].endswith(f".{collection}") and command in e["command"]]
+    [entry] = [
+        e for e in entries if e["ns"].endswith(f".{collection}") and command in e["command"] and "planSummary" in e
+    ]
     return entry["planSummary"], entry.get("fromMultiPlanner", False)
 
 

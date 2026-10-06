@@ -22,6 +22,7 @@ from app.repositories.api_keys import ApiKeyRepository
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files, upload_gridfs_json
 from app.services.scan_cascade import delete_scans_and_related_data
 from tests.helpers.compliance import generated_report
+from tests.helpers.profiler import profiled
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
 _SBOM = json.loads((_FIXTURES / "sbom/npmpeer.syft.cdx.json").read_text())
@@ -209,13 +210,8 @@ async def test_one_run_reaps_exactly_the_old_unreferenced_files_and_leftover_chu
 
 async def _distinct_round_trips(db) -> int:
     """How many distinct commands one reaper run sends."""
-    await db["system.profile"].drop()
-    await db.command("profile", 2)
-    try:
-        await reap_orphan_gridfs_files(db)
-    finally:
-        await db.command("profile", 0)
-    return await db["system.profile"].count_documents({"command.distinct": {"$exists": True}})
+    _, entries = await profiled(db, reap_orphan_gridfs_files(db))
+    return sum(1 for entry in entries if "distinct" in entry.get("command", {}))
 
 
 @pytest.mark.asyncio
