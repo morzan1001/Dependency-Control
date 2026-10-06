@@ -87,7 +87,7 @@ export default function Setup2FA() {
           {step === 'verify' && setupData && (
             <form onSubmit={handleVerify} className="space-y-4">
               <div className="flex justify-center p-4 bg-white rounded-lg border">
-                <img src={setupData.qr_code} alt="2FA QR Code" className="w-48 h-48" />
+                <img src={`data:image/png;base64,${setupData.qr_code}`} alt="2FA QR Code" className="w-48 h-48" />
               </div>
               
               <div className="text-center text-sm font-mono bg-muted p-2 rounded">
