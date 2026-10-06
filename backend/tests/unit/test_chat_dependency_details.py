@@ -20,3 +20,22 @@ async def test_the_enrichment_is_found_by_purl_variant_or_by_name(asked_for):
     result = await ChatToolRegistry().execute_tool("get_dependency_details", {"dependency_name": asked_for}, admin, db)
 
     assert result["dependency"]["purl"] == _PURL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asked_for", ["requests", "pkg:pypi/requests"], ids=["whole-name", "versionless-purl"])
+async def test_a_name_or_versionless_purl_finds_that_package_not_one_containing_it(asked_for):
+    db = FakeDatabase()
+    # Stored first, so a substring match meets the wrong package before the right one.
+    for _id, name in (("e-toolbelt", "requests-toolbelt"), ("e-requests", "requests")):
+        db.dependency_enrichments._docs[_id] = {
+            "_id": _id,
+            "purl": f"pkg:pypi/{name}@2.31.0",
+            "name": name,
+            "version": "2.31.0",
+        }
+    admin = User(id="u-admin", username="admin", email="admin@test.com", permissions=PRESET_ADMIN)
+
+    result = await ChatToolRegistry().execute_tool("get_dependency_details", {"dependency_name": asked_for}, admin, db)
+
+    assert result["dependency"]["purl"] == "pkg:pypi/requests@2.31.0"

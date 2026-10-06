@@ -39,6 +39,7 @@ from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cv
 from app.core.housekeeping import resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
+from app.core.purl import canonical_purl
 from app.core.risk_scoring import (
     ACTIVELY_EXPLOITED_MATURITY,
     calculate_exploit_maturity,
@@ -771,11 +772,15 @@ class ChatToolRegistry:
         return {"hotspots": hotspots}
 
     async def _tool_get_dependency_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        dep = await DependencyEnrichmentRepository(ctx.db).get_by_purl(ctx.args["dependency_name"])
+        wanted = ctx.args["dependency_name"]
+        dep = await DependencyEnrichmentRepository(ctx.db).get_by_purl(wanted)
         if not dep:
-            dep = await ctx.db["dependency_enrichments"].find_one(
-                {"name": {"$regex": re.escape(ctx.args["dependency_name"]), "$options": "i"}}
+            match = (
+                {"purl": {"$regex": f"^{re.escape(canonical_purl(wanted))}@"}}
+                if wanted.startswith("pkg:")
+                else {"name": {"$regex": f"^{re.escape(wanted)}$", "$options": "i"}}
             )
+            dep = await ctx.db["dependency_enrichments"].find_one(match)
         if not dep:
             return {"error": "Dependency not found in enrichment data"}
         return {"dependency": _serialize_doc(dep)}
