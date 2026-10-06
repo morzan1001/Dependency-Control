@@ -356,7 +356,6 @@ async def test_a_qualified_hotspot_lists_the_findings_stored_under_the_bare_name
     metadata = await _analytics(client, "dependency-metadata", seeded, component=QUALIFIED)
 
     assert sorted(f["type"] for f in findings) == ["license", "outdated", "vulnerability"]
-    assert metadata["total_finding_count"] == len(findings)
     assert metadata["total_vulnerability_count"] == 1
 
 
@@ -370,7 +369,7 @@ async def test_both_panels_decide_a_bare_name_from_the_same_version_scoped_evide
     metadata = await _analytics(client, "dependency-metadata", seeded, component="core", version="1.0")
 
     assert [f["component"] for f in findings] == ["com.a:core"]
-    assert metadata["total_finding_count"] == len(findings)
+    assert metadata["total_vulnerability_count"] == len(findings)
 
 
 @pytest.mark.asyncio
@@ -383,7 +382,7 @@ async def test_a_bare_name_shared_by_two_packages_resolves_to_neither(client, db
     metadata = await _analytics(client, "dependency-metadata", seeded, component="core")
 
     assert findings == []
-    assert metadata["total_finding_count"] == 0
+    assert metadata["total_vulnerability_count"] == 0
 
 
 def _maven(_id: str, group: str, name: str = "core", version: str = "1.0", **extra) -> dict:

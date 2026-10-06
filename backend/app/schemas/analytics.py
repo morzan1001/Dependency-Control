@@ -210,7 +210,6 @@ class DependencyMetadata(BaseModel):
     project_count: int = 0
     affected_projects: list[dict[str, Any]] = []  # [{id, name, direct}]
     total_vulnerability_count: int = 0
-    total_finding_count: int = 0
 
     enrichment_sources: list[str] = []
 
