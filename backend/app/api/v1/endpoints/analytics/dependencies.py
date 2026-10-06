@@ -388,7 +388,6 @@ async def get_dependency_metadata_endpoint(
     info = await _get_enrichment_info(enrichment_repo, first_dep.purl)
 
     finding_query = await _package_finding_query(finding_repo, scan_ids, component, version)
-    finding_count = await finding_repo.count(finding_query)
     package_details = await vuln_details_by(finding_repo, finding_query, "component")
     vuln_count = len(live_cves([details for per_component in package_details.values() for details in per_component]))
 
@@ -414,6 +413,5 @@ async def get_dependency_metadata_endpoint(
         project_count=len(affected_projects),
         affected_projects=list(affected_projects.values()),
         total_vulnerability_count=vuln_count,
-        total_finding_count=finding_count,
         enrichment_sources=info.enrichment_sources,
     )

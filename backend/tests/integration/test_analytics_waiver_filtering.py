@@ -94,13 +94,13 @@ async def test_component_findings_skip_waived_findings(client, seeded):
     resp = await client.get("/api/v1/analytics/component-findings", params={"component": "waived-pkg"}, headers=seeded)
     assert resp.status_code == 200, resp.text
     assert resp.json() == []
+    assert resp.headers["x-total-count"] == "0"
 
 
 @pytest.mark.asyncio
 async def test_dependency_metadata_skips_waived_findings(client, seeded):
     resp = await client.get("/api/v1/analytics/dependency-metadata", params={"component": "waived-pkg"}, headers=seeded)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["total_finding_count"] == 0
     assert resp.json()["total_vulnerability_count"] == 0
 
 
