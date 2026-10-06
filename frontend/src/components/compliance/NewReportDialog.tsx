@@ -91,10 +91,6 @@ export function NewReportDialog({
     onSuccess: () => {
       toast.success("Report queued");
       qc.invalidateQueries({ queryKey: ["compliance-reports"] });
-      setComment("");
-      setScope("user");
-      setScopeId("");
-      setScopeError(null);
       onClose();
     },
     onError: (e: Error) => toast.error(`Failed to queue report: ${e.message}`),

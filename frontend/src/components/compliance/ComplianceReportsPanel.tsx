@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { formatDateTime } from "@/lib/utils";
-import type { ComplianceReportMeta, ReportFramework } from "@/types/compliance";
+import type { ReportFramework } from "@/types/compliance";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
 
 export function ComplianceReportsPanel() {
   const newReportDialog = useDialogState();
-  const [selected, setSelected] = useState<ComplianceReportMeta | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [prefillFramework, setPrefillFramework] = useState<ReportFramework | undefined>();
 
   const { data, isLoading, isError } = useQuery({
@@ -38,6 +38,7 @@ export function ComplianceReportsPanel() {
   }, [newReportDialog]);
 
   const reports = data?.reports ?? [];
+  const selected = reports.find((r) => r._id === selectedId) ?? null;
 
   return (
     <div className="space-y-4">
@@ -77,11 +78,11 @@ export function ComplianceReportsPanel() {
                 role="button"
                 tabIndex={0}
                 className="cursor-pointer border-t hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                onClick={() => setSelected(r)}
+                onClick={() => setSelectedId(r._id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setSelected(r);
+                    setSelectedId(r._id);
                   }
                 }}
               >
@@ -96,12 +97,10 @@ export function ComplianceReportsPanel() {
         </table>
       </div>
 
-      <NewReportDialog
-        open={newReportDialog.open}
-        onClose={newReportDialog.closeDialog}
-        defaultFramework={prefillFramework}
-      />
-      <ReportDetailDrawer report={selected} onClose={() => setSelected(null)} />
+      {newReportDialog.open && (
+        <NewReportDialog open onClose={newReportDialog.closeDialog} defaultFramework={prefillFramework} />
+      )}
+      <ReportDetailDrawer report={selected} onClose={() => setSelectedId(null)} />
     </div>
   );
 }
