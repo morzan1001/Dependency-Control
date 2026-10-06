@@ -8,8 +8,6 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _CRYPTO_RULES = "crypto_rules"
 _NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
-# The enrichment stage runs on every request and is reported last.
-_ENRICHMENT = "epss_kev"
 
 _SEED_POLICY = "shipped seed rules"
 
@@ -208,7 +206,7 @@ async def test_a_cbom_no_rule_matches_still_reports_the_stage_as_ran():
     """Coverage that found nothing is not the same as no coverage."""
     response = await _run([_cbom(_AES_256)])
 
-    assert response.analyzers.ran == [_CRYPTO_RULES, _ENRICHMENT]
+    assert response.analyzers.ran == [_CRYPTO_RULES]
     assert _crypto_findings(response) == []
     assert _CRYPTO_RULES not in response.analyzers.skipped
 

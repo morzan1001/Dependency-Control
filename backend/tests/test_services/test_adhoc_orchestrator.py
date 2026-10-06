@@ -36,7 +36,7 @@ _CRYPTO_ANALYZER = "crypto_weak_algorithm"
 # The stage that evaluates the crypto rules; it reports itself as skipped for an SBOM
 # carrying no cryptographic-asset components.
 _CRYPTO_RULES = "crypto_rules"
-# The enrichment stage runs on every request and is reported last.
+# The EPSS/KEV stage reports itself as skipped for a run that yields no vulnerability finding.
 _ENRICHMENT = "epss_kev"
 # Reachability needs a callgraph none of these requests posts, so it reports itself as skipped.
 _REACHABILITY = "reachability"
@@ -220,7 +220,7 @@ async def test_posted_scanner_payload_becomes_a_finding():
     assert secrets[0]["component"] == _SECRET_FILE
     # Ad-hoc waivers match on finding_id, so the posted Raw must hash to the scan pipeline's id.
     assert secrets[0]["finding_id"] == "SECRET-8-317e5726"
-    assert response.analyzers.ran == [_TRUFFLEHOG_NAME, _ENRICHMENT]
+    assert response.analyzers.ran == [_TRUFFLEHOG_NAME]
 
 
 @pytest.mark.asyncio
@@ -285,10 +285,11 @@ async def test_unknown_analyzer_name_is_reported_not_silently_dropped():
     # Every registered analyzer the request left out is accounted for alongside it.
     assert set(response.analyzers.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS | {
         _UNKNOWN_NAME,
+        _ENRICHMENT,
         _REACHABILITY,
         _CRYPTO_RULES,
     }
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
 
 
 @pytest.mark.asyncio
@@ -343,6 +344,7 @@ async def test_unparseable_sbom_is_reported_without_aborting_the_run():
     assert _SBOM_LABEL in response.analyzers.skipped_inputs
     # ``skipped`` is keyed by analyzer name; an input label in there is unreadable for consumers.
     assert set(response.analyzers.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS | {
+        _ENRICHMENT,
         _REACHABILITY,
         _CRYPTO_RULES,
     }
@@ -386,7 +388,7 @@ async def test_malformed_posted_scanner_output_is_reported_not_raised(scanner, p
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert scanner in response.analyzers.errored
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
     assert response.findings == [], "a payload reported as errored must not also contribute findings"
 
@@ -480,10 +482,11 @@ async def test_empty_posted_payload_is_skipped_rather_than_reported_as_ran():
     assert response.analyzers.skipped[_TRUFFLEHOG_NAME] == _EMPTY_PAYLOAD
     assert set(response.analyzers.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS | {
         _TRUFFLEHOG_NAME,
+        _ENRICHMENT,
         _REACHABILITY,
         _CRYPTO_RULES,
     }
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
 
 
 @pytest.mark.asyncio
@@ -501,7 +504,7 @@ async def test_blank_error_string_is_reported_not_aggregated(monkeypatch):
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.errored == {"osv": [f"{_FIRST_SBOM_SOURCE}: "]}
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
 
@@ -526,7 +529,7 @@ async def test_an_analyzer_that_failed_on_one_sbom_is_not_also_reported_as_ran(m
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.errored == {"osv": [f"{_SECOND_SBOM_SOURCE}: {_ANALYZER_ERROR}"]}
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
 
 
 @pytest.mark.asyncio
@@ -557,7 +560,7 @@ async def test_an_sbom_nothing_could_be_read_from_is_not_reported_as_a_clean_run
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert _NO_COMPONENTS in response.analyzers.skipped_inputs[_SBOM_LABEL]
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
     assert "license_compliance" in response.analyzers.skipped
     assert response.findings == []
 
@@ -583,7 +586,7 @@ async def test_a_scanner_payload_shape_the_normalizer_cannot_read_is_not_reporte
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert _UNRECOGNISED_PAYLOAD in response.analyzers.errored[scanner][0]
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
 
@@ -641,7 +644,7 @@ async def test_the_stages_that_left_the_process_are_named_whether_or_not_they_su
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert set(response.analyzers.notes) == {_OSV_NAME, _ENRICHMENT}
+    assert set(response.analyzers.notes) == {_OSV_NAME}
     assert _OSV_UPSTREAM in response.analyzers.notes[_OSV_NAME]
 
 
@@ -651,7 +654,7 @@ async def test_an_analyzer_that_never_ran_is_not_named_in_the_notes():
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert set(response.analyzers.notes) == {_ENRICHMENT}
+    assert response.analyzers.notes == {}
 
 
 @pytest.mark.asyncio
@@ -704,7 +707,7 @@ async def test_a_scanner_payload_that_genuinely_found_nothing_still_counts_as_ra
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.ran == [_TRUFFLEHOG_NAME, _ENRICHMENT]
+    assert response.analyzers.ran == [_TRUFFLEHOG_NAME]
     assert response.analyzers.errored == {}
 
 
@@ -743,7 +746,7 @@ async def test_a_component_routed_to_crypto_assets_is_not_reported_as_dropped():
     # nothing out of is reported there instead.
     assert response.analyzers.skipped_inputs == {}
     # The routed asset is what the crypto stage evaluates, so it reports itself as having run.
-    assert response.analyzers.ran == [_CRYPTO_RULES, _ENRICHMENT]
+    assert response.analyzers.ran == [_CRYPTO_RULES]
 
 
 @pytest.mark.asyncio
@@ -755,7 +758,7 @@ async def test_one_malformed_sub_field_rejects_the_whole_input_and_says_so():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.skipped_inputs[_SBOM_LABEL].startswith("could not be parsed:")
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
     assert response.findings == []
 
 
@@ -782,7 +785,7 @@ async def test_every_failure_reason_is_kept_and_attributed_to_its_input(monkeypa
     assert response.analyzers.errored == {
         "osv": [f"{_FIRST_SBOM_SOURCE}: {_ANALYZER_ERROR} 1", f"{_THIRD_SBOM_SOURCE}: {_ANALYZER_ERROR} 3"]
     }
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
 
 
 @pytest.mark.asyncio
@@ -801,7 +804,7 @@ async def test_a_normalizer_that_cannot_read_an_analyzer_result_is_reported_not_
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert list(response.analyzers.errored) == ["osv"]
-    assert response.analyzers.ran == [_ENRICHMENT]
+    assert response.analyzers.ran == []
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
 

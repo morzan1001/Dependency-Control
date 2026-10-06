@@ -69,6 +69,7 @@ _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
 _PARTIAL_COVERAGE = "partial coverage: {reason}"
 _ENRICHMENT = "epss_kev"
+_NO_VULNERABILITIES = "no vulnerability findings"
 _REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
@@ -476,6 +477,9 @@ async def _enrich_vulnerabilities(
     """Add EPSS/KEV to the vulnerability records; returns the EPSS/KEV summary and the per-CVE enrichment."""
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
+    if not vulnerabilities:
+        report.skipped[_ENRICHMENT] = _NO_VULNERABILITIES
+        return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
     try:
         threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
     except Exception as exc:
