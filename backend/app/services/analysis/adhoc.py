@@ -102,7 +102,7 @@ _OSV = "osv"
 ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = (_OSV, "license_compliance")
 
 _NOT_REQUESTED = "not requested"
-_NO_READABLE_SBOM = "no readable SBOM to analyse"
+_NO_PACKAGE_COMPONENTS = "no package components to analyse"
 _UNCACHED_FANOUT = (
     "off by default: this path publishes nothing to the shared cache, so every run re-queries "
     "the upstream registry for each package it recognises"
@@ -363,14 +363,10 @@ def _aggregate_posted_scanners(
         _record_ran(report, name)
 
 
-def _yielded_nothing(parsed: ParsedSBOM) -> bool:
-    return not parsed.dependencies and not parsed.crypto_assets
-
-
 def _input_defects(parsed: ParsedSBOM) -> list[str]:
     """What the caller needs to know about an input the parser only partly understood."""
     defects: list[str] = []
-    if _yielded_nothing(parsed):
+    if not parsed.dependencies and not parsed.crypto_assets:
         defects.append(_NO_COMPONENTS.format(sbom_format=parsed.format.value))
     lost = {
         reason: count
@@ -406,9 +402,6 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
         defects = _input_defects(parsed)
         if defects:
             report.skipped_inputs[label] = "; ".join(defects)
-        # An input nothing could be read from must not be analysed into a clean bill of health.
-        if _yielded_nothing(parsed):
-            continue
         parsed_inputs.append(
             _ParsedInput(
                 position=position,
@@ -626,10 +619,12 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     settings_for = _build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
-    if not parsed_inputs:
-        report.skipped.update(dict.fromkeys(requested, _NO_READABLE_SBOM))
+    # An input without package components must not be analysed into a clean bill of health.
+    package_inputs = [parsed_input for parsed_input in parsed_inputs if parsed_input.components]
+    if not package_inputs:
+        report.skipped.update(dict.fromkeys(requested, _NO_PACKAGE_COMPONENTS))
 
-    for parsed_input in parsed_inputs:
+    for parsed_input in package_inputs:
         for name in requested:
             await _run_one_analyzer(
                 name,

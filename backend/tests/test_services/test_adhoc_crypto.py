@@ -8,6 +8,8 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _CRYPTO_RULES = "crypto_rules"
 _NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
+_OSV = "osv"
+_NO_PACKAGE_COMPONENTS = "no package components to analyse"
 
 _SEED_POLICY = "shipped seed rules"
 
@@ -253,3 +255,25 @@ async def test_a_cbom_gives_the_component_analyzers_no_components_to_grade():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert [finding for finding in response.findings if finding not in _crypto_findings(response)] == []
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_without_package_components_is_not_reported_as_sent_to_osv():
+    request = AdhocAnalyzeRequest(sboms=[_cbom(_AES_256)], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.ran == [_CRYPTO_RULES]
+    assert response.analyzers.skipped[_OSV] == _NO_PACKAGE_COMPONENTS
+    assert _OSV not in response.analyzers.notes
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_beside_a_library_sbom_leaves_the_library_analysed():
+    request = AdhocAnalyzeRequest(
+        sboms=[_cbom(_AES_256), _LIBRARY_SBOM], analyzers=["license_compliance"], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.ran == ["license_compliance", _CRYPTO_RULES]
