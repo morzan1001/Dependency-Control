@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { projectApi } from '@/api/projects';
 import { scanApi } from '@/api/scans';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
 import { isScanInProgress } from '@/lib/scan-status';
@@ -171,6 +172,14 @@ export const useScanSbom = (scanId: string, index: number) => {
     return useQuery({
         queryKey: scanKeys.sbom(scanId, index),
         queryFn: () => scanApi.getSbom(scanId, index)
+    })
+}
+
+export const useUnpinScan = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ projectId, scanId }: { projectId: string, scanId: string }) => projectApi.unpinScan(projectId, scanId),
+        onSuccess: (_, variables) => queryClient.invalidateQueries({ queryKey: scanKeys.detail(variables.scanId) }),
     })
 }
 

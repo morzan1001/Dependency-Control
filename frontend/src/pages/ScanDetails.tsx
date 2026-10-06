@@ -2,17 +2,18 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useEffect, useRef, useCallback, useState } from 'react'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { scanApi } from '@/api/scans'
-import { useScan, useScanHistory, useTriggerRescan, useScanResult, useScanResults, useScanSbom, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
+import { useScan, useScanHistory, useTriggerRescan, useScanResult, useScanResults, useScanSbom, useScanStats, useScanSboms, useUnpinScan } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
 import { useAuth } from '@/context/useAuth'
-import { isProjectEditor } from '@/lib/project-roles'
+import { hasPermission } from '@/lib/permissions'
+import { isProjectAdmin, isProjectEditor } from '@/lib/project-roles'
 import { FindingsTable } from '@/components/findings/FindingsTable'
 import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSection'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Download, Eye, EyeOff, X } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Download, Eye, EyeOff, PinOff, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -145,6 +146,7 @@ export default function ScanDetails() {
   const { data: currentUser } = useCurrentUser()
 
   const triggerRescanMutation = useTriggerRescan()
+  const unpinMutation = useUnpinScan()
 
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]
@@ -212,6 +214,7 @@ export default function ScanDetails() {
   }
 
   const canWrite = !!currentUser && isProjectEditor(project, currentUser.id, permissions)
+  const canUnpin = !!currentUser && isProjectAdmin(project, currentUser.id, permissions) && hasPermission(permissions, 'archive:restore')
 
   const scanContext: ScanContext = {
     projectUrl: scan.project_url,
@@ -311,6 +314,20 @@ export default function ScanDetails() {
                     </Button>
                     <MarkReleaseButton projectId={projectId!} scan={scan} />
                 </>
+            )}
+            {scan.pinned && canUnpin && (
+                <Button
+                    variant="outline"
+                    title="Restored from the archive and kept from retention until unpinned"
+                    disabled={unpinMutation.isPending}
+                    onClick={() => unpinMutation.mutate({ projectId: projectId!, scanId: scanId! }, {
+                        onSuccess: () => toast.success("Scan unpinned", { description: "Retention can archive or delete it again." }),
+                        onError: (error) => toast.error("Unpin failed", { description: getErrorMessage(error) }),
+                    })}
+                >
+                    <PinOff className="mr-2 h-4 w-4" />
+                    Unpin
+                </Button>
             )}
         </div>
       </div>
