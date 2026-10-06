@@ -1,5 +1,3 @@
-import { Permissions } from './permissions';
-
 export const AVAILABLE_ANALYZERS = [
   { id: 'trivy', label: 'Trivy (Container/FS)', description: 'Scans container images and filesystems for vulnerabilities (CVEs) and misconfigurations.', category: 'vulnerability' },
   { id: 'grype', label: 'Grype (Anchore)', description: 'A vulnerability scanner for container images and filesystems, similar to Trivy.', category: 'vulnerability' },
@@ -51,17 +49,7 @@ export const API_REFRESH_TIMEOUT_MS = 10000;
 // finishes anyway and lands in the cache.
 export const UPDATE_FREQUENCY_TIMEOUT_MS = 300000;
 
-export const ANALYTICS_PERMISSIONS = [
-  Permissions.ANALYTICS_READ,
-  Permissions.ANALYTICS_SUMMARY,
-  Permissions.ANALYTICS_DEPENDENCIES,
-  Permissions.ANALYTICS_TREE,
-  Permissions.ANALYTICS_IMPACT,
-  Permissions.ANALYTICS_HOTSPOTS,
-  Permissions.ANALYTICS_SEARCH,
-] as const;
-
-// Permissions that gate the /analytics route: any one grants a usable tab.
+// Permissions that gate the /analytics route and its nav item: any one grants a usable tab.
 // Must stay in sync with the per-tab checks in pages/Analytics.tsx (includes
 // analytics:recommendations, excludes analytics:dependencies which no tab checks).
 export const ANALYTICS_ROUTE_PERMISSIONS = [

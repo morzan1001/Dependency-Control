@@ -90,14 +90,14 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
                       {prioritized?.actionable_critical || 0}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      Critical + Exploitable + Reachable
+                      Critical + Exploitable
                     </div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="max-w-xs">
-                    Critical vulnerabilities that are either in CISA KEV (actively exploited) 
-                    or have high EPSS (&gt;10%), AND are confirmed reachable in your code.
+                    Critical vulnerabilities that are either in CISA KEV (actively exploited)
+                    or have high EPSS (&gt;10%), and not ruled out by reachability analysis.
                     These require immediate attention.
                   </p>
                 </TooltipContent>
@@ -116,14 +116,14 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
                       {prioritized?.actionable_high || 0}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      High + Exploitable + Reachable
+                      High + Exploitable
                     </div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="max-w-xs">
-                    High severity vulnerabilities with real exploitation risk 
-                    that affect code paths in your application.
+                    High severity vulnerabilities with real exploitation risk (KEV or high EPSS),
+                    not ruled out by reachability analysis.
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -147,8 +147,8 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="max-w-xs">
-                    All vulnerabilities that are both exploitable (KEV or high EPSS) 
-                    AND reachable in your application.
+                    All vulnerabilities that are exploitable (KEV or high EPSS)
+                    and not ruled out by reachability analysis.
                   </p>
                 </TooltipContent>
               </Tooltip>

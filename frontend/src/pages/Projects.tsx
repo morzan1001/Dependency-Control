@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useProjects } from '@/hooks/queries/use-projects';
 import { useTeams } from '@/hooks/queries/use-teams';
-import { useAppConfig } from '@/hooks/queries/use-system';
 import { useAuth } from '@/context/useAuth';
 import { usePaginationState } from '@/hooks/use-pagination-state';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,18 +42,6 @@ export default function ProjectsPage() {
 
   const projects = projectsData?.items || [];
   const totalPages = projectsData?.pages || 0;
-
-  const { data: appConfig } = useAppConfig();
-
-  const isLimitReached = () => {
-      if (hasPermission('system:manage')) return false;
-      // 0 / unset means unlimited
-      if (!appConfig?.project_limit_per_user) return false;
-      if (projectsData?.total !== undefined) {
-         return projectsData.total >= appConfig.project_limit_per_user;
-      }
-      return false;
-  };
 
   if (isLoadingProjects) {
     return (
@@ -122,7 +109,7 @@ export default function ProjectsPage() {
             {sortOrder === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
           </Button>
           {hasPermission('project:create') && (
-            <Button onClick={() => setIsCreateOpen(true)} disabled={isLimitReached()}>
+            <Button onClick={() => setIsCreateOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               New Project
             </Button>

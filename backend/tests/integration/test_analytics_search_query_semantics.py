@@ -546,3 +546,64 @@ async def test_a_finding_that_is_its_own_row_sorts_by_its_own_values(client, db,
     pages = await _pages(client, _VULN_SEARCH_PATH, scanned, {"q": "pkg", "sort_by": sort_by, "sort_order": "desc"}, 2)
 
     assert [row[field] for page in pages for row in page["items"]] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_severity_filter_without_a_query_lists_the_unwaived_rows_of_that_severity(client, db, scanned):
+    await db.findings.insert_many(
+        [
+            _named("crit-pkg", "CRITICAL", {"id": "CVE-2026-0001", "severity": "CRITICAL"}),
+            _named("waived-cve-pkg", "CRITICAL", {"id": "CVE-2026-0002", "severity": "CRITICAL", "waived": True}),
+            _named("high-pkg", "HIGH", {"id": "CVE-2026-0003", "severity": "HIGH"}),
+        ]
+    )
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"severity": "CRITICAL"}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [(row["component"], row["vulnerability_id"]) for row in body["items"]] == [("crit-pkg", "CVE-2026-0001")]
+    assert body["total"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({}, ("high-pkg", "CVE-2026-0003")),
+        ({"finding_type": "system_warning"}, ("Scanner System", "SCAN-ERROR-os_malware")),
+    ],
+    ids=["by default", "asked for by type"],
+)
+async def test_the_vulnerability_search_lists_a_scanner_error_only_when_its_type_is_asked_for(
+    client, db, scanned, params, expected
+):
+    scan_error = {
+        "_id": "finding-scan-error",
+        "id": "SCAN-ERROR-os_malware",
+        "finding_id": "SCAN-ERROR-os_malware",
+        "description": "Scanner 'os_malware' returned partial results: rate limited",
+        "scanners": ["os_malware"],
+        "scan_id": _SCAN_ID,
+        "project_id": "p",
+        "type": "system_warning",
+        "severity": "HIGH",
+        "component": "Scanner System",
+        "version": "",
+        "waived": False,
+        "details": {},
+    }
+    await db.findings.insert_many(
+        [
+            _named("high-pkg", "HIGH", {"id": "CVE-2026-0003", "severity": "HIGH"}),
+            scan_error,
+        ]
+    )
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"severity": "HIGH", **params}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert ([(row["component"], row["vulnerability_id"]) for row in body["items"]], body["total"]) == ([expected], 1)

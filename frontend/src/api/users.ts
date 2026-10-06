@@ -1,5 +1,5 @@
 import { api, buildQueryParams } from '@/api/client';
-import { User, UserCreate, UserUpdate, UserUpdateMe, SystemInvitation } from '@/types/user';
+import { User, UserUpdate, UserUpdateMe, SystemInvitation } from '@/types/user';
 
 export const userApi = {
   getAll: async (skip = 0, limit = 20, search?: string, sortBy = 'username', sortOrder = 'asc'): Promise<User[]> => {
@@ -11,11 +11,6 @@ export const userApi = {
 
   getMe: async (): Promise<User> => {
     const response = await api.get<User>('/users/me');
-    return response.data;
-  },
-
-  create: async (data: UserCreate): Promise<User> => {
-    const response = await api.post<User>('/users/', data);
     return response.data;
   },
 

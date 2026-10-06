@@ -3,7 +3,6 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ComponentFinding, DependencyMetadata } from "@/types/analytics";
 import { AnalyticsDependencyModal } from "../AnalyticsDependencyModal";
-import { resolveRelatedFinding } from "../related-finding";
 import { AnalyticsModeContext } from "@/context/analytics-mode";
 
 const RELEASE_ENVIRONMENT = "production";
@@ -18,24 +17,6 @@ import {
   useComponentFindings,
 } from "@/hooks/queries/use-analytics";
 
-const makeFinding = (overrides: Partial<ComponentFinding>): ComponentFinding =>
-  ({
-    id: "x",
-    type: "vulnerability",
-    severity: "HIGH",
-    component: "pkg",
-    version: "1.0.0",
-    description: "",
-    scanners: [],
-    details: {},
-    found_in: [],
-    aliases: [],
-    waived: false,
-    project_id: "p1",
-    project_name: "Project 1",
-    ...overrides,
-  }) as ComponentFinding;
-
 const baseMetadata: DependencyMetadata = {
   name: "pkg",
   version: "1.0.0",
@@ -43,8 +24,9 @@ const baseMetadata: DependencyMetadata = {
   project_count: 0,
   affected_projects: [],
   total_vulnerability_count: 0,
-  total_finding_count: 0,
 };
+
+const NO_FINDINGS = { items: [], total: 0 };
 
 function renderModal(metadata: DependencyMetadata) {
   (useDependencyMetadata as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -52,7 +34,7 @@ function renderModal(metadata: DependencyMetadata) {
     isLoading: false,
   });
   (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
-    data: [],
+    data: NO_FINDINGS,
     isLoading: false,
   });
   return render(
@@ -129,51 +111,6 @@ describe("AnalyticsDependencyModal metadata link hardening", () => {
   });
 });
 
-describe("resolveRelatedFinding", () => {
-  it("resolves EOL ids with hyphenated component names by stripping only the cycle", () => {
-    const findings = [
-      makeFinding({ id: "eol-1", type: "eol", component: "spring-boot" }),
-      makeFinding({ id: "eol-2", type: "eol", component: "spring" }),
-    ];
-    const found = resolveRelatedFinding(findings, "EOL-spring-boot-2");
-    expect(found?.component).toBe("spring-boot");
-  });
-
-  it("resolves single-word EOL component ids", () => {
-    const findings = [makeFinding({ id: "e", type: "eol", component: "openssl" })];
-    expect(resolveRelatedFinding(findings, "EOL-openssl-3")?.component).toBe(
-      "openssl",
-    );
-  });
-
-  it("does not select an arbitrary license finding for an unmatched LIC- id", () => {
-    const findings = [
-      makeFinding({ id: "lic-a", type: "license", component: "gpl-pkg" }),
-    ];
-    expect(resolveRelatedFinding(findings, "LIC-MIT")).toBeUndefined();
-  });
-
-  it("still resolves a LIC- id by exact id match", () => {
-    const findings = [
-      makeFinding({ id: "LIC-MIT", type: "license", component: "pkg" }),
-    ];
-    expect(resolveRelatedFinding(findings, "LIC-MIT")?.id).toBe("LIC-MIT");
-  });
-
-  it("resolves exact id, OUTDATED-, QUALITY: and component:version formats", () => {
-    const findings = [
-      makeFinding({ id: "exact", component: "pkg" }),
-      makeFinding({ id: "o", type: "outdated", component: "lodash" }),
-      makeFinding({ id: "q", type: "quality", component: "react", version: "18.0.0" }),
-      makeFinding({ id: "v", component: "axios", version: "1.2.3" }),
-    ];
-    expect(resolveRelatedFinding(findings, "exact")?.id).toBe("exact");
-    expect(resolveRelatedFinding(findings, "OUTDATED-lodash")?.id).toBe("o");
-    expect(resolveRelatedFinding(findings, "QUALITY:react:18.0.0")?.id).toBe("q");
-    expect(resolveRelatedFinding(findings, "axios:1.2.3")?.id).toBe("v");
-  });
-});
-
 describe("AnalyticsDependencyModal copy button", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -213,7 +150,7 @@ describe("AnalyticsDependencyModal scope", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (useDependencyMetadata as ReturnType<typeof vi.fn>).mockReturnValue({ data: baseMetadata, isLoading: false });
-    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false });
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({ data: NO_FINDINGS, isLoading: false });
   });
 
   function renderInMode(releaseEnvironment: string | undefined) {
@@ -256,5 +193,51 @@ describe("AnalyticsDependencyModal version", () => {
     renderModal({ ...baseMetadata, versions: ["1.0.0"] });
 
     expect(screen.queryByText(/Most used of/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AnalyticsDependencyModal findings list", () => {
+  const finding = (id: string, severity: string): ComponentFinding =>
+    ({
+      id,
+      type: "vulnerability",
+      severity,
+      component: "pkg",
+      version: "1.0.0",
+      description: "",
+      scanners: [],
+      details: {},
+      found_in: [],
+      aliases: [],
+      waived: false,
+      project_id: "p1",
+      project_name: "Project 1",
+      scan_id: `scan-${id}`,
+    }) as ComponentFinding;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // A name that spans several package paths, such as openssl from deb and apk, has no metadata.
+    (useDependencyMetadata as ReturnType<typeof vi.fn>).mockReturnValue({ data: null, isLoading: false });
+  });
+
+  function renderFindings() {
+    return render(
+      <MemoryRouter>
+        <AnalyticsDependencyModal component="pkg" version="1.0.0" open onOpenChange={() => {}} />
+      </MemoryRouter>,
+    );
+  }
+
+  it("counts every finding and says the list holds only the most severe of them", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [finding("CVE-1", "CRITICAL"), finding("CVE-2", "HIGH")], total: 130 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    expect(screen.getByText("130")).toBeInTheDocument();
+    expect(screen.getByText("Showing the 2 most severe of 130 findings.")).toBeInTheDocument();
   });
 });

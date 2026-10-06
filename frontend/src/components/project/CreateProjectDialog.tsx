@@ -6,10 +6,9 @@ import { useAppConfig } from "@/hooks/queries/use-system";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Copy, Check } from "lucide-react";
 import { toast } from "sonner";
-import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from "@/lib/constants";
+import { AnalyzerChecklist } from "./AnalyzerChecklist";
 import {
   Dialog,
   DialogContent,
@@ -104,7 +103,7 @@ export function CreateProjectDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
@@ -245,59 +244,16 @@ export function CreateProjectDialog({
 
             <div className="space-y-3 pt-2">
               <Label>Active Analyzers</Label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {Object.entries(ANALYZER_CATEGORIES).map(
-                  ([category, info]) => {
-                    const categoryAnalyzers = AVAILABLE_ANALYZERS.filter(
-                      (a) => a.category === category
-                    );
-                    if (categoryAnalyzers.length === 0) return null;
-
-                    return (
-                      <div key={category} className="space-y-2">
-                        <h4 className="font-medium text-sm text-muted-foreground border-b pb-1">
-                          {info.label}
-                        </h4>
-                        <div className="space-y-2">
-                          {categoryAnalyzers.map((analyzer) => (
-                            <div
-                              key={analyzer.id}
-                              className="flex items-start space-x-2"
-                            >
-                              <Checkbox
-                                id={analyzer.id}
-                                checked={analyzers.includes(analyzer.id)}
-                                onCheckedChange={() =>
-                                  toggleAnalyzer(analyzer.id)
-                                }
-                              />
-                              <div className="grid gap-1.5 leading-none">
-                                <label
-                                  htmlFor={analyzer.id}
-                                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                                >
-                                  {analyzer.label}
-                                </label>
-                                <p className="text-xs text-muted-foreground">
-                                  {analyzer.description}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  }
-                )}
-              </div>
+              <AnalyzerChecklist
+                idPrefix="create-analyzer"
+                selected={analyzers}
+                onToggle={toggleAnalyzer}
+                className="max-h-[300px]"
+              />
             </div>
 
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-              >
+              <Button type="button" variant="outline" onClick={handleClose}>
                 Cancel
               </Button>
               <Button type="submit" disabled={createProjectMutation.isPending}>

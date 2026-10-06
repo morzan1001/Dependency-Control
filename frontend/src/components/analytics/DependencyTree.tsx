@@ -15,6 +15,7 @@ import {
 import { ChevronRight, ChevronDown, Package, AlertTriangle, Shield, Layers, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSourceInfo } from '@/lib/finding-utils'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 interface DependencyNodeProps {
   node: DependencyTreeNode;
@@ -192,7 +193,7 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showDirectOnly, setShowDirectOnly] = useState(false)
 
-  const { data: graph, isLoading: isLoadingTree } = useDependencyTree(selectedProjectId)
+  const { data: graph, isLoading: isLoadingTree, error, refetch } = useDependencyTree(selectedProjectId)
 
   const nodes = useMemo(() => graph?.nodes ?? [], [graph])
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
@@ -260,6 +261,9 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
                 ))}
               </div>
             )
+          }
+          if (error) {
+            return <AnalyticsErrorCard title="Failed to load the dependency tree" error={error} onRetry={() => refetch()} />
           }
           if (hasDependencies) {
             return (

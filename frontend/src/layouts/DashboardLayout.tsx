@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/context'
 import { useAppConfig } from '@/hooks/queries/use-system'
-import { ANALYTICS_PERMISSIONS } from '@/lib/constants'
+import { ANALYTICS_ROUTE_PERMISSIONS } from '@/lib/constants'
 
 interface NavItem {
   href: string
@@ -43,7 +43,7 @@ export default function DashboardLayout() {
       href: '/analytics',
       label: 'Analytics',
       icon: BarChart3,
-      show: hasAnyPermission(ANALYTICS_PERMISSIONS)
+      show: hasAnyPermission(ANALYTICS_ROUTE_PERMISSIONS)
     },
     {
       href: '/chat',

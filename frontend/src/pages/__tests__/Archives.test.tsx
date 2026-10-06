@@ -1,12 +1,13 @@
 // Force a non-UTC timezone so date parsing is exercised in local time.
 process.env.TZ = 'America/New_York'
 
-import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { act, render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
 import ArchivesPage from '../Archives'
 import type { AdminArchiveListItem, AdminArchiveListResponse, ArchiveFilters } from '@/types/archive'
+import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 const mockUseAdminArchives = vi.fn()
 
@@ -78,5 +79,25 @@ describe('ArchivesPage - date filters', () => {
 
     expect(filters?.date_from).toBe(new Date('2026-07-01T00:00:00').toISOString())
     expect(filters?.date_to).toBe(new Date('2026-07-01T23:59:59').toISOString())
+  })
+})
+
+describe('ArchivesPage branch filter', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('asks for a branch once the user stops typing, not once per keystroke', () => {
+    vi.useFakeTimers()
+    renderPage()
+    const input = screen.getByLabelText('Branch')
+
+    for (const value of ['m', 'ma', 'main']) fireEvent.change(input, { target: { value } })
+    act(() => {
+      vi.advanceTimersByTime(DEBOUNCE_DELAY_MS)
+    })
+
+    const requested = mockUseAdminArchives.mock.calls.map(([, , filters]) => (filters as ArchiveFilters | undefined)?.branch)
+    expect(new Set(requested.filter(Boolean))).toEqual(new Set(['main']))
   })
 })

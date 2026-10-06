@@ -69,21 +69,21 @@ export const useProjectBranches = (id: string) => {
   });
 };
 
-export const useProjectsDropdown = () => {
+export const useProjectsDropdown = ({ enabled = true }: { enabled?: boolean } = {}) => {
   return useQuery({
     queryKey: projectKeys.dropdown(),
     // Page through all projects so dropdowns are not truncated to the first page.
     queryFn: async () => {
       const first = await projectApi.getAll(undefined, 0, DROPDOWN_PAGE_SIZE, 'name', 'asc');
-      const items = [...first.items];
-      while (items.length < first.total) {
-        const next = await projectApi.getAll(undefined, items.length, DROPDOWN_PAGE_SIZE, 'name', 'asc');
-        if (next.items.length === 0) break;
-        items.push(...next.items);
-      }
-      return { ...first, items, total: first.total };
+      const rest = await Promise.all(
+        Array.from({ length: Math.ceil(first.total / DROPDOWN_PAGE_SIZE) - 1 }, (_, i) =>
+          projectApi.getAll(undefined, (i + 1) * DROPDOWN_PAGE_SIZE, DROPDOWN_PAGE_SIZE, 'name', 'asc'),
+        ),
+      );
+      return { ...first, items: [first, ...rest].flatMap((page) => page.items) };
     },
     staleTime: 5 * 60 * 1000,
+    enabled,
   });
 };
 

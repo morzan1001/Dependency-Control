@@ -36,7 +36,8 @@ import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePa
 import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings, Check, ChevronDown } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
-import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES, NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
+import { NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
+import { AnalyzerChecklist } from './AnalyzerChecklist'
 import {
   Select,
   SelectContent,
@@ -620,73 +621,24 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
 
                 <div className="grid gap-2">
                     <Label>Active Analyzers</Label>
-                    <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[300px] overflow-y-auto">
-                        {Object.entries(ANALYZER_CATEGORIES).map(([categoryId, categoryInfo]) => {
-                          const categoryAnalyzers = AVAILABLE_ANALYZERS.filter(a => a.category === categoryId);
-                          if (categoryAnalyzers.length === 0) return null;
-                          
-                          return (
-                            <div key={categoryId} className="mb-3 last:mb-0">
-                              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 pb-1 border-b">
-                                {categoryInfo.label}
-                              </div>
-                              {categoryAnalyzers.map((analyzer) => {
-                                const hasRequiredDeps = !analyzer.dependsOn || analyzer.dependsOn.some(dep => analyzers.includes(dep));
-                                const analyzerEnabled = analyzers.includes(analyzer.id);
-                                const showConfigureButton = hasSettingsSchema(analyzer.id) && analyzerEnabled && canUpdate;
-                                return (
-                                  <div key={analyzer.id} className="flex items-start space-x-2 py-2">
-                                    <Checkbox
-                                      id={`settings-analyzer-${analyzer.id}`}
-                                      checked={analyzers.includes(analyzer.id)}
-                                      onCheckedChange={() => toggleAnalyzer(analyzer.id)}
-                                      className="mt-1"
-                                    />
-                                    <div className="flex flex-col gap-1 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <Label htmlFor={`settings-analyzer-${analyzer.id}`} className="font-medium cursor-pointer">
-                                          {analyzer.label}
-                                        </Label>
-                                        {analyzer.isPostProcessor && (
-                                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded">
-                                            Post-Processor
-                                          </span>
-                                        )}
-                                        {analyzer.requiresCallgraph && (
-                                          <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 rounded">
-                                            Callgraph Required
-                                          </span>
-                                        )}
-                                        {showConfigureButton && (
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            className="ml-auto h-7 px-2 text-xs"
-                                            onClick={() => setOpenSettingsAnalyzer(analyzer.id)}
-                                          >
-                                            <Settings className="h-3.5 w-3.5 mr-1" />
-                                            Configure
-                                          </Button>
-                                        )}
-                                      </div>
-                                      <p className="text-xs text-muted-foreground">
-                                        {analyzer.description}
-                                      </p>
-                                      {analyzer.isPostProcessor && !hasRequiredDeps && analyzers.includes(analyzer.id) && (
-                                        <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                          <AlertTriangle className="h-3 w-3" />
-                                          Requires at least one vulnerability scanner to be enabled
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          );
-                        })}
-                    </div>
+                    <AnalyzerChecklist
+                        idPrefix="settings-analyzer"
+                        selected={analyzers}
+                        onToggle={toggleAnalyzer}
+                        className="max-h-[300px]"
+                        renderAction={(analyzerId) => hasSettingsSchema(analyzerId) && analyzers.includes(analyzerId) && canUpdate && (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="ml-auto h-7 px-2 text-xs"
+                                onClick={() => setOpenSettingsAnalyzer(analyzerId)}
+                            >
+                                <Settings className="h-3.5 w-3.5 mr-1" />
+                                Configure
+                            </Button>
+                        )}
+                    />
                 </div>
                 {canUpdate && (
                     <Button type="submit" disabled={updateProjectMutation.isPending}>

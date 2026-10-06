@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AlertTriangle, Package, ExternalLink } from 'lucide-react'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 interface DependencyStatsProps {
   onSelectDependency?: (dep: DependencyUsage) => void;
@@ -31,7 +32,7 @@ export function DependencyStats({ onSelectDependency }: Readonly<DependencyStats
 
   const { data: types } = useDependencyTypes(releaseEnvironment)
 
-  const { data: dependencies, isLoading } = useTopDependencies(limit, selectedType, releaseEnvironment)
+  const { data: dependencies, isLoading, error, refetch } = useTopDependencies(limit, selectedType, releaseEnvironment)
 
   const handleRowClick = (dep: DependencyUsage) => {
     onSelectDependency?.(dep)
@@ -81,6 +82,9 @@ export function DependencyStats({ onSelectDependency }: Readonly<DependencyStats
                 ))}
               </div>
             )
+          }
+          if (error) {
+            return <AnalyticsErrorCard title="Failed to load top dependencies" error={error} onRetry={() => refetch()} />
           }
           if (dependencies && dependencies.length > 0) {
             return (

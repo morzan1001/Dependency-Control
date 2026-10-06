@@ -15,59 +15,6 @@ vi.mock("@/api/client", async () => {
 
 const mockGet = api.get as unknown as ReturnType<typeof vi.fn>;
 
-describe("analyticsApi.searchDependencies", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("unwraps the paginated envelope and returns the items array", async () => {
-    const items = [
-      {
-        project_id: "p1",
-        project_name: "Proj One",
-        package: "react",
-        version: "18.2.0",
-        type: "npm",
-        license: "MIT",
-        direct: true,
-      },
-    ];
-    mockGet.mockResolvedValue({
-      data: { items, total: 1, page: 0, size: 50 },
-    });
-
-    const result = await analyticsApi.searchDependencies("react");
-
-    expect(Array.isArray(result)).toBe(true);
-    expect(result).toEqual(items);
-    expect(result).toHaveLength(1);
-    expect(result.map((r) => r.package)).toEqual(["react"]);
-  });
-
-  it("hits the /analytics/search endpoint with q and version params", async () => {
-    mockGet.mockResolvedValue({
-      data: { items: [], total: 0, page: 0, size: 50 },
-    });
-
-    await analyticsApi.searchDependencies("lodash", "4.17.21");
-
-    const [url, config] = mockGet.mock.calls[0];
-    expect(url).toBe("/analytics/search");
-    const params = config.params as URLSearchParams;
-    expect(params.get("q")).toBe("lodash");
-    expect(params.get("version")).toBe("4.17.21");
-  });
-
-  it("returns an empty array when the envelope has no items", async () => {
-    mockGet.mockResolvedValue({
-      data: { items: [], total: 0, page: 0, size: 50 },
-    });
-
-    const result = await analyticsApi.searchDependencies("nonexistent");
-
-    expect(result).toEqual([]);
-    expect(result).toHaveLength(0);
-  });
-});
-
 describe("analyticsApi update-frequency query params", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -182,5 +129,23 @@ describe("analyticsApi release environment", () => {
     const [requested, config] = mockGet.mock.calls[0];
     expect(requested).toBe(url);
     expect((config.params as URLSearchParams).has(RELEASE_PARAM)).toBe(false);
+  });
+});
+
+describe("analyticsApi.getComponentFindings", () => {
+  const findings = [{ id: "CVE-1" }, { id: "CVE-2" }];
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("takes the total from the header, which counts beyond the listed findings", async () => {
+    mockGet.mockResolvedValue({ data: findings, headers: { "x-total-count": "130" } });
+
+    expect(await analyticsApi.getComponentFindings("openssl")).toEqual({ items: findings, total: 130 });
+  });
+
+  it("counts the list itself when the server sends no total", async () => {
+    mockGet.mockResolvedValue({ data: findings, headers: {} });
+
+    expect(await analyticsApi.getComponentFindings("openssl")).toEqual({ items: findings, total: 2 });
   });
 });

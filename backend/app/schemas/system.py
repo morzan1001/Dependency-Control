@@ -137,7 +137,6 @@ class AppConfig(BaseModel):
     """
 
     archive_enabled: bool
-    project_limit_per_user: int
     retention_mode: str
     global_retention_days: int
     global_retention_action: str

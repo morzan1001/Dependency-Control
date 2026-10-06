@@ -221,6 +221,20 @@ async def test_the_result_does_not_depend_on_finding_or_entry_order(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_each_advisory_carries_its_own_exploit_maturity(monkeypatch):
+    kev = [_kev("CVE-1", "2025-01-01", ransomware=True)]
+    service = _service(monkeypatch, kev=kev, epss=[_epss("CVE-2", 0.02)])
+    finding = _vuln_finding("pkg", {"id": "CVE-1"}, {"id": "CVE-2"}, {"id": "CVE-3"})
+
+    await service.enrich_findings([finding])
+
+    details = finding["details"]
+    by_id = {entry["id"]: entry.get("exploit_maturity") for entry in details["vulnerabilities"]}
+    assert by_id == {"CVE-1": "weaponized", "CVE-2": "medium", "CVE-3": None}
+    assert details["exploit_maturity"] == "weaponized"
+
+
+@pytest.mark.asyncio
 async def test_every_written_key_is_declared_at_its_level(monkeypatch):
     service = _service(monkeypatch, kev=[_kev("CVE-1", "2025-01-01")], epss=[_epss("CVE-1", 0.5)])
     finding = _vuln_finding("pkg", {"id": "CVE-1", "cvss_score": 7.5}, {"id": "GHSA-x", "cvss_score": 5.0})

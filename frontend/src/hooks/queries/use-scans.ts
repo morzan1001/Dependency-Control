@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { scanApi } from '@/api/scans';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
-import { ScanFindingsParams, ScanWithReleases } from '@/types/scan';
+import { ScanWithReleases } from '@/types/scan';
 
 export interface ScanListFilters {
     page: number;
@@ -25,7 +25,6 @@ export const scanKeys = {
     detail: (scanId: string) => [...scanKeys.details(), scanId] as const,
     branchTips: (projectId: string) => [...scanKeys.project(projectId), 'branch-tips'] as const,
     history: (projectId: string, scanId: string) => [...scanKeys.project(projectId), 'history', scanId] as const,
-    findings: (scanId: string, filters: ScanFindingsParams) => [...scanKeys.detail(scanId), 'findings', filters] as const,
     results: (scanId: string) => [...scanKeys.detail(scanId), 'results'] as const,
     result: (scanId: string, resultId: string) => [...scanKeys.results(scanId), resultId] as const,
     stats: (scanId: string) => [...scanKeys.detail(scanId), 'stats'] as const,
@@ -109,15 +108,6 @@ export const useScanHistory = (projectId: string, scanId: string) => {
         queryKey: scanKeys.history(projectId, scanId),
         queryFn: () => scanApi.getHistory(projectId, scanId),
         enabled: !!projectId && !!scanId
-    })
-}
-
-export const useScanFindings = (scanId: string, params: ScanFindingsParams) => {
-    return useQuery({
-        queryKey: scanKeys.findings(scanId, params),
-        queryFn: () => scanApi.getFindings(scanId, params),
-        enabled: !!scanId,
-        placeholderData: keepPreviousData
     })
 }
 

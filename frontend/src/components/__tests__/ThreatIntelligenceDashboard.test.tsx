@@ -88,3 +88,14 @@ describe("ThreatIntelligenceDashboard KEV row", () => {
     expect(screen.getByText("KEV findings (actively exploited)")).toBeInTheDocument();
   });
 });
+
+describe("ThreatIntelligenceDashboard actionable counts", () => {
+  // Actionable counts include findings no reachability verdict exists for, so the labels claim no reachability.
+  it("labels them by severity and exploitability only", () => {
+    render(<ThreatIntelligenceDashboard stats={makeStats({ total: 2, deprioritized_count: 0 })} />);
+
+    expect(screen.getByText("Critical + Exploitable")).toBeInTheDocument();
+    expect(screen.getByText("High + Exploitable")).toBeInTheDocument();
+    expect(screen.queryByText(/Exploitable \+ Reachable/)).not.toBeInTheDocument();
+  });
+});

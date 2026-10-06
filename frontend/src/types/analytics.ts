@@ -16,22 +16,6 @@ export interface DashboardStats {
     }[];
 }
 
-export interface SearchResult {
-  project_id: string;
-  project_name: string;
-  package: string;
-  version: string;
-  type: string;
-  license?: string;
-  direct?: boolean;
-  direct_inferred?: boolean;
-  purl?: string;
-  source_type?: string;
-  source_target?: string;
-  layer_digest?: string;
-  locations?: string[];
-}
-
 export interface DependencyUsage {
   name: string;
   type: string;
@@ -300,7 +284,6 @@ export interface DependencyMetadata {
   project_count: number;
   affected_projects: Array<{ id: string; name: string; direct: boolean; direct_inferred?: boolean }>;
   total_vulnerability_count: number;
-  total_finding_count: number;
   enrichment_sources?: string[];
 }
 

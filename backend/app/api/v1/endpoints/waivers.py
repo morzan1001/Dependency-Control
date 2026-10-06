@@ -173,6 +173,7 @@ async def list_waivers(
     finding_id: str | None = None,
     package_name: str | None = None,
     search: Annotated[str | None, Query(description="Search in package name, reason, or finding ID")] = None,
+    active: Annotated[bool, Query(description="Only return waivers that have not expired")] = False,
     orphaned: Annotated[
         bool, Query(description="Only return orphaned waivers (evaluated but matching 0 findings)")
     ] = False,
@@ -216,15 +217,12 @@ async def list_waivers(
         else:
             query["$or"] = search_or
 
+    if active or orphaned:
+        query = and_filters(query, non_expired_waiver_filter(datetime.now(timezone.utc)))
+
     if orphaned:
-        # Mirror the UI badge: evaluated, suppressing 0 findings, and not expired.
-        now = datetime.now(timezone.utc)
-        orphaned_clause: dict[str, Any] = {
-            "last_eval_scan_id": {"$ne": None},
-            "last_match_count": 0,
-            **non_expired_waiver_filter(now),
-        }
-        query = and_filters(query, orphaned_clause)
+        # Mirror the UI badge: active, evaluated, and suppressing 0 findings.
+        query = and_filters(query, {"last_eval_scan_id": {"$ne": None}, "last_match_count": 0})
 
     waiver_repo = WaiverRepository(db)
 

@@ -52,9 +52,3 @@ export const useEnable2FA = () => {
             authApi.enable2FA(code, password)
     })
 }
-
-export const useDisable2FA = () => {
-    return useMutation({
-        mutationFn: authApi.disable2FA
-    })
-}

@@ -52,7 +52,9 @@ vi.mock('recharts', () => {
   const Passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
   return {
     ResponsiveContainer: Passthrough,
-    LineChart: Passthrough,
+    LineChart: ({ children, data }: { children?: React.ReactNode; data?: unknown }) => (
+      <div data-testid="trend-chart" data-points={JSON.stringify(data)}>{children}</div>
+    ),
     BarChart: Passthrough,
     PieChart: Passthrough,
     Line: () => null,
@@ -116,7 +118,6 @@ function renderOverview(
   mockUseProjectBranchTips.mockReturnValue({ data: branchTips, isLoading: false })
   mockUseScan.mockImplementation((scanId: string) => ({ data: byId.get(scanId) }))
   mockUseLatestProjectRelease.mockReturnValue(releases)
-  mockUseProjectWaivers.mockReturnValue({ data: undefined })
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
@@ -128,6 +129,7 @@ function renderOverview(
 beforeEach(() => {
   vi.clearAllMocks()
   mockUseScanResults.mockReturnValue({ data: [] })
+  mockUseProjectWaivers.mockReturnValue({ data: undefined })
 })
 
 describe('ProjectOverview - enrichment cards', () => {
@@ -357,6 +359,37 @@ describe('ProjectOverview - the trend window', () => {
     renderOverview(Array.from({ length: 99 }, (_unused, index) => scanAt(index)))
 
     expect(screen.queryByText(BOUNDED_NOTE)).not.toBeInTheDocument()
+  })
+})
+
+describe('ProjectOverview - the trend line', () => {
+  const trendPoints = () => JSON.parse(screen.getByTestId('trend-chart').dataset.points ?? '[]') as Record<string, unknown>[]
+
+  it('plots only scans whose numbers are complete', () => {
+    renderOverview([
+      makeScan({ id: 's-done', created_at: '2026-07-01T00:00:00Z' }, { critical: 3, high: 2 }),
+      makeScan({ id: 's-partial', status: 'completed_with_errors', created_at: '2026-07-02T00:00:00Z' }, { critical: 1, high: 1 }),
+      makeScan({ id: 's-queued', status: 'pending', created_at: '2026-07-03T00:00:00Z' }, {}),
+      makeScan({ id: 's-failed', status: 'failed', created_at: '2026-07-04T00:00:00Z' }, { critical: 0 }),
+    ])
+
+    expect(trendPoints().map((point) => point[MAIN_BRANCH])).toEqual([5, 2])
+  })
+})
+
+describe('ProjectOverview - waiver tile', () => {
+  it('counts the waivers that have not expired', () => {
+    const ACTIVE = 2
+    const ALL = 5
+    mockUseProjectWaivers.mockImplementation((_projectId: string, options?: { active?: boolean }) => ({
+      data: { pages: [{ total: options?.active ? ACTIVE : ALL }] },
+    }))
+
+    renderOverview([makeScan({}, { critical: 1 })])
+
+    const tile = screen.getByText('Active Waivers').closest('.bg-card') as HTMLElement
+    expect(within(tile).getByText(String(ACTIVE))).toBeInTheDocument()
+    expect(within(tile).queryByText(String(ALL))).not.toBeInTheDocument()
   })
 })
 

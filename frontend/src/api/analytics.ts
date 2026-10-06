@@ -2,7 +2,6 @@ import { api, buildQueryParams } from '@/api/client';
 import { UPDATE_FREQUENCY_TIMEOUT_MS } from '@/lib/constants';
 import {
     DashboardStats,
-    SearchResult,
     AnalyticsScope,
     AnalyticsSummary,
     DependencyUsage,
@@ -25,13 +24,6 @@ export const analyticsApi = {
     getDashboardStats: async (): Promise<DashboardStats> => {
         const response = await api.get<DashboardStats>('/projects/dashboard/stats');
         return response.data;
-    },
-
-    searchDependencies: async (query: string, version?: string): Promise<SearchResult[]> => {
-        const params = buildQueryParams({ q: query, version });
-        // /analytics/search returns a paginated envelope; unwrap .items to a bare array.
-        const response = await api.get<AdvancedSearchResponse>('/analytics/search', { params });
-        return response.data.items;
     },
 
     getScope: async (releaseEnvironment?: string): Promise<AnalyticsScope> => {
@@ -123,10 +115,10 @@ export const analyticsApi = {
         component: string,
         version?: string,
         releaseEnvironment?: string
-      ): Promise<ComponentFinding[]> => {
+      ): Promise<{ items: ComponentFinding[]; total: number }> => {
         const params = buildQueryParams({ component, version, release_environment: releaseEnvironment });
         const response = await api.get<ComponentFinding[]>('/analytics/component-findings', { params });
-        return response.data;
+        return { items: response.data, total: Number(response.headers['x-total-count'] ?? response.data.length) };
     },
 
     getDependencyMetadata: async (

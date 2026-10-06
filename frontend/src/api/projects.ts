@@ -74,11 +74,6 @@ export const projectApi = {
     return response.data;
   },
 
-  transferOwnership: async (projectId: string, newOwnerId: string): Promise<Project> => {
-    const response = await api.post<Project>(`/projects/${projectId}/transfer-ownership`, { new_owner_id: newOwnerId });
-    return response.data;
-  },
-
   getArchives: async (
     projectId: string,
     page: number = 1,

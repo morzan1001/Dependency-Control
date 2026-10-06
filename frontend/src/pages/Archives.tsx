@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAdminArchives } from '@/hooks/queries/use-archives'
+import { useDebounce } from '@/hooks/use-debounce'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -22,17 +23,18 @@ const ARCHIVE_SKELETON_KEYS = ['s1', 's2', 's3', 's4', 's5']
 export default function ArchivesPage() {
   const [page, setPage] = useState(1)
   const [branchFilter, setBranchFilter] = useState('')
+  const debouncedBranch = useDebounce(branchFilter)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const size = 20
 
   const filters: (ArchiveFilters & { project_id?: string }) | undefined = useMemo(() => {
     const f: ArchiveFilters & { project_id?: string } = {}
-    if (branchFilter) f.branch = branchFilter
+    if (debouncedBranch) f.branch = debouncedBranch
     if (dateFrom) f.date_from = new Date(dateFrom + 'T00:00:00').toISOString()
     if (dateTo) f.date_to = new Date(dateTo + 'T23:59:59').toISOString()
     return Object.keys(f).length > 0 ? f : undefined
-  }, [branchFilter, dateFrom, dateTo])
+  }, [debouncedBranch, dateFrom, dateTo])
 
   const { data, isLoading } = useAdminArchives(page, size, filters)
 

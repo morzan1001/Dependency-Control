@@ -296,6 +296,7 @@ def _build_vuln_query(
         row_conds.append({"$ne": ["$$v.waived", True]})
     query: dict[str, Any] = {
         "scan_id": {"$in": scan_ids},
+        "type": finding_type or {"$ne": FindingType.SYSTEM_WARNING.value},
         "$or": [
             {"details.vulnerabilities": {"$elemMatch": {**names_advisory, **advisory_row}}},
             {
@@ -309,8 +310,6 @@ def _build_vuln_query(
             },
         ],
     }
-    if finding_type:
-        query["type"] = finding_type
     if not include_waived:
         query["waived"] = {"$ne": True}
     rows = {"$filter": {"input": {"$ifNull": ["$details.vulnerabilities", []]}, "as": "v", "cond": {"$and": row_conds}}}
@@ -346,9 +345,9 @@ async def search_vulnerabilities(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     q: Annotated[
-        str,
+        str | None,
         Query(min_length=2, description="Search query for CVE, GHSA, or other vulnerability identifiers"),
-    ],
+    ] = None,
     severity: Annotated[str | None, Query(description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW")] = None,
     in_kev: Annotated[bool | None, Query(description="Filter by CISA KEV inclusion")] = None,
     has_fix: Annotated[bool | None, Query(description="Filter by fix availability")] = None,
@@ -373,7 +372,7 @@ async def search_vulnerabilities(
 
     finding_repo = FindingRepository(db)
 
-    query, rows = _build_vuln_query(scan_ids, q, severity, in_kev, has_fix, finding_type, include_waived)
+    query, rows = _build_vuln_query(scan_ids, q or "", severity, in_kev, has_fix, finding_type, include_waived)
 
     total_count = await finding_repo.count(query)
 

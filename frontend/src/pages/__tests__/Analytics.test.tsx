@@ -1,9 +1,11 @@
 import { render, screen, fireEvent } from '@testing-library/react'
+import { MemoryRouter, useSearchParams } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import AnalyticsPage from '../Analytics'
 import { AuthContext, type AuthContextType } from '@/context/auth-context'
 import { useAnalyticsMode } from '@/context/analytics-mode'
+import { useAnalyticsView } from '@/components/crypto/analytics/useAnalyticsView'
 import type { AnalyticsScope } from '@/types/analytics'
 
 const MODE_PROBE = 'analytics-mode'
@@ -42,12 +44,16 @@ vi.mock('@/components/analytics/DependencyTree', () => ({ DependencyTree: () => 
 vi.mock('@/components/analytics/ImpactAnalysis', () => ({ ImpactAnalysis: () => null }))
 vi.mock('@/components/analytics/VulnerabilityHotspots', () => ({ VulnerabilityHotspots: () => <ModeProbe /> }))
 vi.mock('@/components/analytics/CrossProjectSearch', () => ({ CrossProjectSearch: () => null }))
-vi.mock('@/components/analytics/VulnerabilitySearch', () => ({ VulnerabilitySearch: () => null }))
+vi.mock('@/components/analytics/VulnerabilitySearch', () => ({
+  VulnerabilitySearch: () => <span data-testid="vuln-severity">{useSearchParams()[0].get('severity') ?? 'all'}</span>,
+}))
 vi.mock('@/components/analytics/Recommendations', () => ({ Recommendations: () => <ModeProbe /> }))
 vi.mock('@/components/analytics/UpdateFrequency', () => ({ UpdateFrequency: () => null }))
 vi.mock('@/components/analytics/UpdateFrequencyComparison', () => ({ UpdateFrequencyComparison: () => null }))
 vi.mock('@/components/analytics/AnalyticsDependencyModal', () => ({ AnalyticsDependencyModal: () => null }))
-vi.mock('@/components/analytics/CryptoAnalyticsTab', () => ({ CryptoAnalyticsTab: () => null }))
+vi.mock('@/components/analytics/CryptoAnalyticsTab', () => ({
+  CryptoAnalyticsTab: () => <span data-testid="crypto-view">{useAnalyticsView()}</span>,
+}))
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
 const scope: AnalyticsScope = {
@@ -57,7 +63,7 @@ const scope: AnalyticsScope = {
   oldest_analysis_at: OLDEST_ANALYSIS_AT,
 }
 
-function renderPage() {
+function renderPage(url = '/analytics') {
   const auth: AuthContextType = {
     isAuthenticated: true,
     isLoading: false,
@@ -69,7 +75,9 @@ function renderPage() {
 
   return render(
     <AuthContext.Provider value={auth}>
-      <AnalyticsPage />
+      <MemoryRouter initialEntries={[url]}>
+        <AnalyticsPage />
+      </MemoryRouter>
     </AuthContext.Provider>,
   )
 }
@@ -134,5 +142,38 @@ describe('Analytics release mode across tabs', () => {
     expect(screen.getByTestId(MODE_PROBE)).toHaveTextContent(PRODUCTION)
     expect(screen.getByLabelText(SCOPE_LABEL)).toBeEnabled()
     expect(screen.queryByText(HEAD_ONLY_NOTE)).not.toBeInTheDocument()
+  })
+})
+
+describe('Analytics deep link', () => {
+  it('opens the tab the link names', () => {
+    renderPage('/analytics?tab=search-vulns&severity=CRITICAL')
+
+    expect(screen.getByRole('tab', { name: 'Vulnerabilities' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('opens the first tab for a tab the user cannot see', () => {
+    renderPage('/analytics?tab=no-such-tab')
+
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps the crypto view across a tab round trip', () => {
+    renderPage('/analytics?tab=cryptography&analytics_view=heatmap')
+
+    openTab(HOTSPOTS_TAB)
+    openTab('Cryptography')
+
+    expect(screen.getByTestId('crypto-view')).toHaveTextContent('heatmap')
+  })
+
+  it('presets the severity a link names only until the user switches tabs', () => {
+    renderPage('/analytics?tab=search-vulns&severity=CRITICAL')
+    expect(screen.getByTestId('vuln-severity')).toHaveTextContent('CRITICAL')
+
+    openTab(HOTSPOTS_TAB)
+    openTab('Vulnerabilities')
+
+    expect(screen.getByTestId('vuln-severity')).toHaveTextContent('all')
   })
 })

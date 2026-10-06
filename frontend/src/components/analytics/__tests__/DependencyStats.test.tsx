@@ -97,3 +97,20 @@ describe("DependencyStats version badge", () => {
     });
   });
 });
+
+describe("DependencyStats load error", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (analyticsApi.getDependencyTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (analyticsApi.getTopDependencies as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(new Error("Request failed"), { response: { status: 403, data: { detail: "Not enough permissions" } } }),
+    );
+  });
+
+  it("says the request failed instead of reporting no dependencies", async () => {
+    renderStats();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not enough permissions");
+    expect(screen.queryByText("No dependencies found")).not.toBeInTheDocument();
+  });
+});

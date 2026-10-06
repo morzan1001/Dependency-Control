@@ -110,12 +110,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                   {renderSortIcon('email')}
                 </div>
               </TableHead>
-              <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
-                <div className="flex items-center">
-                  Status
-                  {renderSortIcon('status')}
-                </div>
-              </TableHead>
+              <TableHead>Status</TableHead>
               <TableHead>2FA</TableHead>
               <TableHead>Permissions</TableHead>
               <TableHead>Actions</TableHead>

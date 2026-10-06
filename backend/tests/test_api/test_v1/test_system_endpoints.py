@@ -184,7 +184,6 @@ class TestGetAppConfig:
         from app.api.v1.endpoints.system import get_app_config
 
         settings = _make_settings(
-            project_limit_per_user=10,
             gitlab_integration_enabled=True,
             gitlab_access_token="glpat-tok",
             slack_bot_token="xoxb-tok",
@@ -201,7 +200,6 @@ class TestGetAppConfig:
                 )
             )
 
-        assert result.project_limit_per_user == 10
         assert result.notifications.slack is True
         assert result.notifications.email is True
 

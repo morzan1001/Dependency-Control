@@ -549,10 +549,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                     <span className="text-destructive">{vuln.kev_required_action}</span>
                                                                 </div>
                                                             )}
-                                                            {(vuln.exploit_maturity || finding.details?.exploit_maturity) && (
+                                                            {vuln.exploit_maturity && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">Exploit:</span>
-                                                                    <span className={getExploitMaturityClass(vuln.exploit_maturity || finding.details?.exploit_maturity)}>{vuln.exploit_maturity || finding.details?.exploit_maturity}</span>
+                                                                    <span className={getExploitMaturityClass(vuln.exploit_maturity)}>{vuln.exploit_maturity}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.details?.published_date || finding.details?.published_date) && (
@@ -648,7 +648,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                 {!showWaiverForm && (
                     <DialogFooter className="gap-2 sm:gap-0">
                         {canCreateWaiver && (
-                            <Button variant="outline" onClick={() => setShowWaiverForm(true)}>
+                            <Button variant="outline" onClick={() => handleWaive()}>
                                 <ShieldAlert className="mr-2 h-4 w-4" />
                                 Create Waiver
                             </Button>

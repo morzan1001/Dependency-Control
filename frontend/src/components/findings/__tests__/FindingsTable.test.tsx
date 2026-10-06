@@ -94,7 +94,7 @@ describe("resolveRelatedFindingInRows", () => {
 });
 
 describe("fetchRelatedFinding", () => {
-  it("prefers exact id then first item for LIC- ids (API path precedence)", async () => {
+  it("resolves a LIC- id by its exact id among the search hits", async () => {
     getFindingsMock.mockResolvedValue({
       items: [
         makeFinding({ id: "LIC-MIT", type: "license" }),
@@ -113,6 +113,18 @@ describe("fetchRelatedFinding", () => {
       skip: 0,
       limit: RELATED_FINDING_SEARCH_LIMIT,
     });
+  });
+
+  it("opens no finding when the search hits hold none with the referenced id", async () => {
+    getFindingsMock.mockResolvedValue({
+      items: [makeFinding({ id: "LIC-MIT", type: "license" })],
+      total: 1,
+      page: 1,
+      size: 1,
+      pages: 1,
+    });
+
+    expect(await fetchRelatedFinding("scan1", "LIC-Apache-2.0")).toEqual({ status: "missing" });
   });
 
   it("queries the outdated type with the parsed component", async () => {

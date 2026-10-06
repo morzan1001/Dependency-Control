@@ -98,7 +98,7 @@ export default function Dashboard() {
       icon: ShieldAlert,
       description: "Click to view",
       className: "text-destructive",
-      onClick: () => navigate("/analytics?tab=vulnerabilities&severity=CRITICAL"),
+      onClick: () => navigate("/analytics?tab=search-vulns&severity=CRITICAL"),
     },
     {
       title: "High Vulnerabilities",
@@ -106,7 +106,7 @@ export default function Dashboard() {
       icon: Activity,
       description: "Click to view",
       className: "text-severity-high",
-      onClick: () => navigate("/analytics?tab=vulnerabilities&severity=HIGH"),
+      onClick: () => navigate("/analytics?tab=search-vulns&severity=HIGH"),
     },
     {
       title: "Avg Project Risk Score",

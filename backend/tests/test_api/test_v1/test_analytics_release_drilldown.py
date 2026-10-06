@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import Response
 
 from app.api.v1.endpoints.analytics.dependencies import (
     get_component_findings,
@@ -152,6 +153,7 @@ async def test_the_drill_down_finds_what_release_mode_hotspots_ranked():
             release_environment=DEFAULT_RELEASE_ENVIRONMENT,
         )
         findings = await get_component_findings(
+            response=Response(),
             current_user=_user(),
             db=db,
             component=_RELEASED_COMPONENT,
@@ -180,7 +182,7 @@ async def test_the_drill_down_still_reports_the_branch_tip_when_no_environment_i
 
     with patch(f"{_DEPENDENCIES}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))):
         findings = await get_component_findings(
-            current_user=_user(), db=db, component=_RELEASED_COMPONENT, version=_HEAD_VERSION
+            response=Response(), current_user=_user(), db=db, component=_RELEASED_COMPONENT, version=_HEAD_VERSION
         )
         metadata = await get_dependency_metadata_endpoint(
             current_user=_user(), db=db, component=_RELEASED_COMPONENT, version=_HEAD_VERSION, type=None
@@ -201,6 +203,7 @@ async def test_component_findings_forwards_the_environment():
         ) as resolve,
     ):
         result = await get_component_findings(
+            response=Response(),
             current_user=_user(),
             db=FakeDatabase(),
             component=_RELEASED_COMPONENT,
@@ -243,7 +246,7 @@ async def test_the_drill_down_defaults_to_the_branch_tip():
         ) as resolve,
     ):
         await get_component_findings(
-            current_user=_user(), db=FakeDatabase(), component=_RELEASED_COMPONENT, version=None
+            response=Response(), current_user=_user(), db=FakeDatabase(), component=_RELEASED_COMPONENT, version=None
         )
         await get_dependency_metadata_endpoint(
             current_user=_user(), db=FakeDatabase(), component=_RELEASED_COMPONENT, version=None, type=None

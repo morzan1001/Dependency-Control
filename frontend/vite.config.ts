@@ -12,33 +12,19 @@ export default defineConfig({
     },
   },
   build: {
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        // Automatic chunking based on module paths for better caching
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
-            // Core React dependencies
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
-              return 'vendor-react'
-            }
-            // UI framework (Radix)
-            if (id.includes('@radix-ui')) {
-              return 'vendor-ui'
-            }
-            // Data fetching & state
-            if (id.includes('@tanstack')) {
-              return 'vendor-query'
-            }
-            // Charts
-            if (id.includes('recharts') || id.includes('d3-')) {
-              return 'vendor-charts'
-            }
-          }
+        codeSplitting: {
+          // A group also takes the dependencies of its modules that no higher-priority group
+          // claimed, so react has to outrank every library built on it.
+          groups: [
+            { name: 'vendor-react', test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/, priority: 4 },
+            { name: 'vendor-ui', test: /[\\/]node_modules[\\/]@radix-ui[\\/]/, priority: 3 },
+            { name: 'vendor-query', test: /[\\/]node_modules[\\/]@tanstack[\\/]/, priority: 2 },
+          ],
         },
       },
     },
-    // Increase chunk size warning limit slightly
-    chunkSizeWarningLimit: 600,
   },
   server: {
     proxy: {
