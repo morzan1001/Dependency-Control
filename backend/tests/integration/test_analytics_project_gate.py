@@ -9,8 +9,8 @@ from tests.helpers.auth import bearer_headers
 
 _ANALYTICS = [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_RECOMMENDATIONS]
 # project:update opens every project on every other project route, without project:read.
-_WRITE_SUPERUSER = bearer_headers("editor-of-all", [*_ANALYTICS, Permissions.PROJECT_UPDATE])
-_MEMBER_OF_NOTHING = bearer_headers("stranger", [*_ANALYTICS, Permissions.PROJECT_READ])
+_WRITE_SUPERUSER = ("editor-of-all", [*_ANALYTICS, Permissions.PROJECT_UPDATE])
+_MEMBER_OF_NOTHING = ("stranger", [*_ANALYTICS, Permissions.PROJECT_READ])
 
 
 _ROUTES = ["recommendations", "update-frequency", "scan-delta"]
@@ -38,7 +38,7 @@ async def test_a_write_superuser_opens_a_project_they_are_not_a_member_of(client
     await _seed_project_with_scans(db)
     path, params = _request(route, "gp")
 
-    resp = await client.get(path, params=params, headers=_WRITE_SUPERUSER)
+    resp = await client.get(path, params=params, headers=bearer_headers(*_WRITE_SUPERUSER))
 
     assert resp.status_code == 200, resp.text
 
@@ -49,7 +49,7 @@ async def test_a_non_member_is_refused(client, db, route):
     await _seed_project_with_scans(db)
     path, params = _request(route, "gp")
 
-    resp = await client.get(path, params=params, headers=_MEMBER_OF_NOTHING)
+    resp = await client.get(path, params=params, headers=bearer_headers(*_MEMBER_OF_NOTHING))
 
     assert resp.status_code == 403, resp.text
 
@@ -59,7 +59,7 @@ async def test_a_non_member_is_refused(client, db, route):
 async def test_an_unknown_project_is_not_found(client, route):
     path, params = _request(route, "absent")
 
-    resp = await client.get(path, params=params, headers=_WRITE_SUPERUSER)
+    resp = await client.get(path, params=params, headers=bearer_headers(*_WRITE_SUPERUSER))
 
     assert resp.status_code == 404, resp.text
     assert resp.json()["detail"] == "Project not found"

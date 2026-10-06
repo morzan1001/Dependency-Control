@@ -14,7 +14,7 @@ from tests.helpers.auth import bearer_headers
 
 _MEMBER_USER_ID = "testuser"
 _OTHER_USER_ID = "another-user"
-_WRITE_SUPERUSER = bearer_headers("editor-at-large", [Permissions.PROJECT_READ, Permissions.PROJECT_UPDATE])
+_WRITE_SUPERUSER = ("editor-at-large", [Permissions.PROJECT_READ, Permissions.PROJECT_UPDATE])
 
 
 async def _insert_report(
@@ -165,7 +165,7 @@ async def test_a_project_write_superuser_lists_a_project_report_outside_its_memb
     await db.projects.insert_one({"_id": "p-foreign", "name": "p-foreign", "members": []})
     report = await _insert_report(db, requested_by=_OTHER_USER_ID, scope="project", scope_id="p-foreign")
 
-    assert report in await _listed_ids(client, _WRITE_SUPERUSER)
+    assert report in await _listed_ids(client, bearer_headers(*_WRITE_SUPERUSER))
 
 
 @pytest.mark.asyncio
@@ -173,7 +173,7 @@ async def test_a_project_write_superuser_opens_a_project_report_outside_its_memb
     await db.projects.insert_one({"_id": "p-foreign", "name": "p-foreign", "members": []})
     report = await _insert_report(db, requested_by=_OTHER_USER_ID, scope="project", scope_id="p-foreign")
 
-    resp = await client.get(f"/api/v1/compliance/reports/{report}", headers=_WRITE_SUPERUSER)
+    resp = await client.get(f"/api/v1/compliance/reports/{report}", headers=bearer_headers(*_WRITE_SUPERUSER))
 
     assert resp.status_code == 200, resp.text
 
