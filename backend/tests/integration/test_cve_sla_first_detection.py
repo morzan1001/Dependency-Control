@@ -401,7 +401,7 @@ async def test_a_cve_matches_its_earlier_detection_under_an_alias(db, database):
     )
     aggregator = ResultAggregator()
     aggregator.add_finding(ghsa)
-    await _persist(db, "scan-1", _days_ago(200), *aggregator.get_findings())
+    await _store_copy(db, "scan-1", _days_ago(200), *aggregator.get_findings())
 
     [doc] = await _persist(db, "scan-2", _NOW, _log4j_advisories(_LOG4SHELL, version="2.15.0"))
 
@@ -483,6 +483,21 @@ async def test_the_advisory_lookup_reads_one_copy_per_stored_version(db):
         "CVE-2021-44228": _days_ago(90),
         "CVE-2021-45046": _days_ago(40),
     }
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_cve_new_to_the_component_brings_back_only_the_copies_that_could_date_it(db):
+    for scan in range(4):
+        await _persist(db, f"old-{scan}", _days_ago(90 - scan), _log4j_advisories(_LOG4SHELL))
+    current = _log4j_advisories(_LOG4SHELL, _CONTEXT_LOOKUP)
+    records, _ = _prepare_finding_records([current], "scan-now", _PROJECT, _NOW)
+
+    commands = await _profiled(db, _stamp_first_seen(records, _PROJECT, FindingRepository(db)))
+
+    newest_copy = 1
+    assert sum(c.get("nreturned", 0) for c in commands if "aggregate" in c["command"]) == newest_copy
+    assert _advisory_first_seen(records[0]) == {"CVE-2021-44228": _days_ago(90), "CVE-2021-45046": _NOW}
 
 
 def _module(n: int) -> str:

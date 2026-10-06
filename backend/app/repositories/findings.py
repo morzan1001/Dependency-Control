@@ -7,7 +7,7 @@ from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, UpdateOne
 
-from app.core.cve import advisory_ids
+from app.core.cve import advisory_ids, advisory_match
 from app.models.finding import LOCATION_FINDING_TYPES, FindingType
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository, find_window
@@ -182,9 +182,16 @@ class FindingRepository(BaseRepository[FindingRecord]):
             ]
             await self._fold_advisory_dates(earliest, newest, NEWEST_VULNERABILITY_INDEX)
             # A scan whose analyzer failed or came back partial stores a newest copy that misses advisories.
-            if missed := [c for c in chunk if any((c, advisory_id) not in earliest for advisory_id in asked[c])]:
+            if undated := {(c, i) for c in chunk for i in asked[c] if (c, i) not in earliest}:
                 every = [
-                    {"$match": {"project_id": project_id, "component": {"$in": missed}, **VULNERABILITIES_ONLY}},
+                    {
+                        "$match": {
+                            "project_id": project_id,
+                            "component": {"$in": list({c for c, _ in undated})},
+                            **VULNERABILITIES_ONLY,
+                            **advisory_match({"$in": list({i for _, i in undated})}),
+                        }
+                    },
                     # A copy's date spans at most its own version, so only the minimum over every copy may use it.
                     {"$project": {**_COPY_DATES, "first_seen_at": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}},
                 ]
