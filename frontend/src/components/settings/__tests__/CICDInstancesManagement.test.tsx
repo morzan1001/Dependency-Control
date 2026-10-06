@@ -2,21 +2,26 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+import { toast } from 'sonner'
+
 import { CICDInstancesManagement } from '../CICDInstancesManagement'
 import type { GitHubInstance } from '@/types/github'
 import type { GitLabInstance } from '@/types/gitlab'
 
 const mockGitHubCreate = vi.fn().mockResolvedValue({})
 const mockGitHubUpdate = vi.fn().mockResolvedValue({})
+const mockGitHubDelete = vi.fn().mockResolvedValue({})
+const mockGitLabCreate = vi.fn().mockResolvedValue({})
 const mockGitLabUpdate = vi.fn().mockResolvedValue({})
+const mockGitLabDelete = vi.fn().mockResolvedValue({})
 const mockUseGitHubInstances = vi.fn()
 const mockUseGitLabInstances = vi.fn()
 
 vi.mock('@/api/gitlab-instances', () => ({
   gitlabInstancesApi: {
-    create: vi.fn(),
+    create: (...args: unknown[]) => mockGitLabCreate(...args),
     update: (...args: unknown[]) => mockGitLabUpdate(...args),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => mockGitLabDelete(...args),
     testConnection: vi.fn(),
   },
 }))
@@ -24,7 +29,7 @@ vi.mock('@/api/github-instances', () => ({
   githubInstancesApi: {
     create: (...args: unknown[]) => mockGitHubCreate(...args),
     update: (...args: unknown[]) => mockGitHubUpdate(...args),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => mockGitHubDelete(...args),
     testConnection: vi.fn(),
   },
 }))
@@ -375,5 +380,61 @@ describe('CICDInstancesManagement delete confirmation', () => {
     expect(dialog).toHaveTextContent('A team whose only admin came from this sync is left without one')
     expect(dialog).toHaveTextContent('An instance that projects still link to is refused')
     expect(dialog).not.toHaveTextContent('lose their CI/CD integration')
+  })
+})
+
+// FastAPI's 422 body: detail is a list of validation entries, not a sentence.
+const VALIDATION_FAILURE = {
+  response: {
+    status: 422,
+    data: { detail: [{ type: 'value_error', loc: ['body', 'oidc_audience'], msg: 'Value error, oidc_audience must not be empty' }] },
+  },
+}
+
+function fillCreateForm(provider: 'GitLab' | 'GitHub') {
+  fireEvent.click(screen.getByRole('button', { name: 'Add Instance' }))
+  const dialog = screen.getByRole('dialog')
+  if (provider === 'GitHub') {
+    fireEvent.click(within(dialog).getByRole('combobox'))
+    fireEvent.click(screen.getByRole('option', { name: 'GitHub' }))
+  }
+  fireEvent.change(within(dialog).getByLabelText('Name *'), { target: { value: `${provider} test` } })
+  fireEvent.change(within(dialog).getByLabelText(provider === 'GitHub' ? 'OIDC Issuer URL *' : 'URL *'), {
+    target: { value: 'https://ci.example.com' },
+  })
+  fireEvent.change(within(dialog).getByLabelText(/^OIDC Audience/), { target: { value: 'dependency-control' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create Instance' }))
+}
+
+function updateFrom(row: RegExp) {
+  fireEvent.click(within(openEditDialog(row)).getByRole('button', { name: 'Update Instance' }))
+}
+
+function deleteFrom(row: RegExp) {
+  fireEvent.click(within(screen.getByRole('row', { name: row })).getAllByRole('button')[2])
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }))
+}
+
+describe('CICDInstancesManagement refusals', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance({ oidc_audience: 'https://dc.example.com' }))
+    mockUseGitHubInstances.mockReturnValue(githubInstance())
+  })
+
+  it.each([
+    ['creating a GitLab instance', mockGitLabCreate, () => fillCreateForm('GitLab')],
+    ['creating a GitHub instance', mockGitHubCreate, () => fillCreateForm('GitHub')],
+    ['updating a GitLab instance', mockGitLabUpdate, () => updateFrom(/Internal GitLab/)],
+    ['updating a GitHub instance', mockGitHubUpdate, () => updateFrom(/GitHub\.com/)],
+    ['deleting a GitLab instance', mockGitLabDelete, () => deleteFrom(/Internal GitLab/)],
+    ['deleting a GitHub instance', mockGitHubDelete, () => deleteFrom(/GitHub\.com/)],
+  ])('shows the validation message as text when %s is refused', async (_, call, act) => {
+    call.mockRejectedValueOnce(VALIDATION_FAILURE)
+    renderManagement()
+
+    act()
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('oidc_audience must not be empty'))
   })
 })

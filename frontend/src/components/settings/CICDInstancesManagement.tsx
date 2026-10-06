@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { AxiosError } from "axios";
 import { Plus, Trash2, Edit2, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { gitlabInstancesApi } from "@/api/gitlab-instances";
@@ -39,6 +38,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { getErrorMessage } from "@/lib/utils";
 
 interface InstanceFormData {
   type: InstanceType;
@@ -110,9 +110,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance created successfully");
       closeCreateDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to create instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const updateGitLabMutation = useMutation({
@@ -123,9 +121,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance updated successfully");
       closeEditDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to update instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const deleteGitLabMutation = useMutation({
@@ -135,9 +131,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance deleted successfully");
       setDeleteInstance(null);
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to delete instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const testGitLabMutation = useMutation({
@@ -167,9 +161,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance created successfully");
       closeCreateDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to create instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const updateGitHubMutation = useMutation({
@@ -180,9 +172,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance updated successfully");
       closeEditDialog();
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to update instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const deleteGitHubMutation = useMutation({
@@ -192,9 +182,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance deleted successfully");
       setDeleteInstance(null);
     },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error(error.response?.data?.detail || "Failed to delete instance");
-    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 
   const testGitHubMutation = useMutation({
