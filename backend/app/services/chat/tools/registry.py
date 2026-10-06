@@ -1360,7 +1360,7 @@ class ChatToolRegistry:
                     "vulnerability_id": w.get("vulnerability_id"),
                     "reason": _clip_value(w.get("reason") or ""),
                     "expires_at": _clip_value(expires),
-                    "package": f"{w.get('package_name', '')}@{w.get('package_version', '')}",
+                    "package": "@".join(p for p in (w.get("package_name"), w.get("package_version")) if p) or None,
                 }
             )
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}

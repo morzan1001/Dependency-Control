@@ -308,6 +308,33 @@ async def test_an_expiring_waiver_answer_names_every_waiver_in_the_window(seeded
 
 
 @pytest.mark.asyncio
+async def test_an_expiring_waiver_names_only_the_package_parts_it_holds(seeded, admin_user):
+    expires = datetime.now(timezone.utc) + timedelta(days=_WELL_INSIDE_THE_WINDOW)
+    for finding_id, name, version in (
+        ("f-cve", None, None),
+        ("f-pkg", "requests", None),
+        ("f-ver", "requests", "2.26.0"),
+    ):
+        seeded.waivers._docs[finding_id] = {
+            "_id": finding_id,
+            "project_id": _PROJECT,
+            "finding_id": finding_id,
+            "package_name": name,
+            "package_version": version,
+            "reason": "r",
+            "expiration_date": expires,
+        }
+
+    result = await ChatToolRegistry().execute_tool("get_expiring_waivers", {}, admin_user, seeded)
+
+    assert {w["finding_id"]: w["package"] for w in result["waivers"]} == {
+        "f-cve": None,
+        "f-pkg": "requests",
+        "f-ver": "requests@2.26.0",
+    }
+
+
+@pytest.mark.asyncio
 async def test_a_capped_project_listing_holds_the_most_recently_scanned(seeded, admin_user):
     """An estate larger than the cap is answered with a page, so the page has to be the freshest
     projects rather than whichever ones the collection happens to hand back first."""
