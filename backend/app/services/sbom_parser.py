@@ -473,13 +473,13 @@ class SBOMParser:
 
         parsed_by_ref: dict[Any, ParsedDependency] = {}
         for comp in components:
-            comp_type = comp.get("type")
+            comp_type, bom_ref = comp.get("type"), comp.get("bom-ref")
             if comp_type in ("cryptographic-asset", "file"):
                 # Crypto assets are parsed into crypto_assets; file-catalog entries aren't dependencies.
                 self._count_skipped(result, comp_type)
             elif comp_type in self._NON_DEPENDENCY_COMPONENT_TYPES:
                 self._count_skipped(result, "non-dependency")
-            elif comp.get("bom-ref") in root_refs or comp.get("purl") in root_refs:
+            elif bom_ref in root_refs or comp.get("purl") in root_refs:
                 self._count_skipped(result, "root-component")
             elif parsed := self._append_parsed(
                 result,
@@ -489,8 +489,10 @@ class SBOMParser:
                 result.source_type,
                 result.source_target,
                 directness,
+                # Trivy's purl-less lock-file and binary nodes only group packages.
+                structural=comp_type == "application" and isinstance(bom_ref, str) and bom_ref in transparent,
             ):
-                parsed_by_ref[comp.get("bom-ref") or parsed.purl] = parsed
+                parsed_by_ref[bom_ref or parsed.purl] = parsed
         _resolve_parent_refs(parsed_by_ref, forward)
 
     def _append_parsed(
@@ -500,6 +502,7 @@ class SBOMParser:
         parse_one: Callable[..., ParsedDependency | None],
         item: dict[str, Any],
         *args: Any,
+        structural: bool = False,
     ) -> ParsedDependency | None:
         try:
             parsed = parse_one(item, *args)
@@ -508,7 +511,7 @@ class SBOMParser:
             self._count_skipped(result, "parse-error")
             return None
         if parsed is None:
-            self._count_skipped(result, "unidentifiable")
+            self._count_skipped(result, "non-dependency" if structural else "unidentifiable")
         else:
             result.dependencies.append(parsed)
         return parsed
@@ -1068,6 +1071,7 @@ class SBOMParser:
                 result.source_type,
                 result.source_target,
                 found_by,
+                structural=pkg.get("SPDXID") in described,
             ):
                 parsed_by_id[pkg.get("SPDXID")] = parsed
         _resolve_parent_refs(parsed_by_id, forward)
