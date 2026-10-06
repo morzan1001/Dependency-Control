@@ -69,7 +69,7 @@ export const useProjectBranches = (id: string) => {
   });
 };
 
-export const useProjectsDropdown = () => {
+export const useProjectsDropdown = ({ enabled = true }: { enabled?: boolean } = {}) => {
   return useQuery({
     queryKey: projectKeys.dropdown(),
     // Page through all projects so dropdowns are not truncated to the first page.
@@ -84,6 +84,7 @@ export const useProjectsDropdown = () => {
       return { ...first, items, total: first.total };
     },
     staleTime: 5 * 60 * 1000,
+    enabled,
   });
 };
 

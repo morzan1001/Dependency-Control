@@ -65,11 +65,11 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
 
   // Fetch all projects (paged) so membership isn't truncated in large orgs.
-  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown();
+  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown({ enabled: open });
 
   const projects = projectsData?.items || [];
 
-  const { data: teams, isLoading: isLoadingTeams, error: errorTeams } = useTeams();
+  const { data: teams, isLoading: isLoadingTeams, error: errorTeams } = useTeams(undefined, undefined, undefined, { enabled: open });
 
   const updateUserMutation = useUpdateUser();
   const migrateUserMutation = useAdminMigrateUser();
