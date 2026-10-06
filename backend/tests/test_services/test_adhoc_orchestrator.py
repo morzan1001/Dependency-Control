@@ -152,6 +152,9 @@ _UNREADABLE_SCANNER_PAYLOADS = [
     ("bearer", {"critical": [{"id": "x", "title": "t", "filename": "f.py", "line_number": 1}]}),
     ("kics", {"total_counter": 7}),
     ("trufflehog", {"results": [{"DetectorType": 8, "Raw": "AKIAIOSFODNN7EXAMPLE", "Verified": True}]}),
+    ("trufflehog", {"findings": None}),
+    ("kics", {"queries": {}}),
+    ("opengrep", {"results": ""}),
 ]
 
 # The parser caps nesting; a component below the cap is dropped rather than analysed.

@@ -340,7 +340,7 @@ def _aggregate_posted_scanners(
             _record_errored(report, name, str(payload["error"]))
             continue
         expected_keys = _POSTED_SCANNERS[name][0]
-        if not any(key in payload for key in expected_keys):
+        if all(_posted_entries(name, payload, key) is None for key in expected_keys):
             quoted = " or ".join(f"'{key}'" for key in expected_keys)
             _record_errored(report, name, _UNRECOGNISED_PAYLOAD.format(keys=quoted))
             continue
