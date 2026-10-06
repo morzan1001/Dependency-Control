@@ -339,7 +339,6 @@ describe('ProjectSettings GitLab binding', () => {
 function appConfig(rescan: Pick<AppConfig, 'global_rescan_enabled' | 'global_rescan_interval'>): AppConfig {
   return {
     archive_enabled: false,
-    project_limit_per_user: 0,
     retention_mode: 'project',
     global_retention_days: 90,
     global_retention_action: 'delete',

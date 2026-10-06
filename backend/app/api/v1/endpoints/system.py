@@ -96,7 +96,6 @@ async def get_app_config(
 
     return AppConfig(
         archive_enabled=is_archive_enabled(),
-        project_limit_per_user=settings.project_limit_per_user,
         retention_mode=settings.retention_mode,
         global_retention_days=settings.global_retention_days,
         global_retention_action=settings.global_retention_action,
