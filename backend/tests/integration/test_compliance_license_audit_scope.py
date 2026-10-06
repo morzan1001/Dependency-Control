@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.init_db import create_indexes
 from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
@@ -52,6 +53,7 @@ async def _scan_project(db, project_id: str, policy: dict) -> list[dict]:
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_team_audit_fails_only_the_project_whose_policy_forbids_gpl(db):
+    await create_indexes(db)
     await seed_crypto_policies(db)
     await _scan_project(db, "internal-tool", {"distribution_model": "internal_only"})
     [shipped] = await _scan_project(db, "shipped-app", {})

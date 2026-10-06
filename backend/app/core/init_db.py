@@ -11,6 +11,7 @@ from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
 from app.db.mongodb import get_database
 from app.models.user import User
+from app.repositories.findings import FIRST_DETECTION_INDEX
 from app.repositories.projects import UNSHAPED_OWNERS, scalar_mirror_stages
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
@@ -386,18 +387,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.ASCENDING),
         ]
     )
-    # Covering index for earliest_detections: each field it reads must stay in this key.
-    await database["findings"].create_index(
-        [
-            ("project_id", pymongo.ASCENDING),
-            ("component", pymongo.ASCENDING),
-            ("type", pymongo.ASCENDING),
-            ("finding_id", pymongo.ASCENDING),
-            ("version", pymongo.ASCENDING),
-            ("first_seen_at", pymongo.ASCENDING),
-            ("scan_created_at", pymongo.ASCENDING),
-        ]
-    )
+    # earliest_detections hints this key; an unsatisfiable hint errors, so every persist needs it.
+    await database["findings"].create_index(FIRST_DETECTION_INDEX)
 
     await database["dependencies"].create_index(
         [

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 
+from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType
 from app.repositories.findings import FindingRepository
 from app.services.aggregation import ResultAggregator
@@ -48,6 +49,7 @@ async def _scan(db, scan_id: str, created_at: datetime, *findings: Finding) -> N
 @pytest_asyncio.fixture
 async def retained(db, owner_auth_headers_proj):
     """lodash was first seen by a scan that retention has since deleted; minimist is new in the head scan."""
+    await create_indexes(db)
     await _scan(db, "scan-old", _days_ago(200), _vulnerability("lodash", "CVE-2021-23337"))
     await _scan(
         db,

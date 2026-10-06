@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from pymongo import UpdateOne
+from pymongo import ASCENDING, UpdateOne
 
 from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.finding_record import FindingRecord
@@ -26,7 +26,18 @@ _VULNERABILITY_IDENTITY_PROJECTION = {
 
 FindingIdentity = tuple[Any, Any, Any, Any]
 
-_DETECTION_CHUNK_COMPONENTS = 1000
+# Every field earliest_detections reads, so it never fetches a document.
+FIRST_DETECTION_INDEX = [
+    ("project_id", ASCENDING),
+    ("component", ASCENDING),
+    ("type", ASCENDING),
+    ("finding_id", ASCENDING),
+    ("version", ASCENDING),
+    ("first_seen_at", ASCENDING),
+    ("scan_created_at", ASCENDING),
+]
+
+_DETECTION_CHUNK_COMPONENTS = 10_000
 
 # What names an advisory, and its per-advisory waiver state.
 _ADVISORY_WAIVER_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "waiver_reason")
@@ -94,24 +105,23 @@ class FindingRepository(BaseRepository[FindingRecord]):
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[FindingIdentity, datetime]:
         """Earliest detection per identity among the project's stored copies; a copy predating first_seen_at
-        counts from its scan. Runs on every persist, so it reads only fields the covering index in init_db holds."""
+        counts from its scan. Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys."""
         by_component: dict[Any, list[Mapping[str, Any]]] = defaultdict(list)
         for record in records:
             by_component[record["component"]].append(record)
         components = list(by_component)
-        types = list({r["type"] for r in records})
         earliest: dict[FindingIdentity, datetime] = {}
         # One $match naming every component outgrows the 16 MiB command limit on large inventories.
         for start in range(0, len(components), _DETECTION_CHUNK_COMPONENTS):
             chunk = components[start : start + _DETECTION_CHUNK_COMPONENTS]
-            finding_ids = list({r["finding_id"] for component in chunk for r in by_component[component]})
+            asked = [record for component in chunk for record in by_component[component]]
             pipeline: list[dict[str, Any]] = [
                 {
                     "$match": {
                         "project_id": project_id,
                         "component": {"$in": chunk},
-                        "type": {"$in": types},
-                        "finding_id": {"$in": finding_ids},
+                        "type": {"$in": list({r["type"] for r in asked})},
+                        "finding_id": {"$in": list({r["finding_id"] for r in asked})},
                     }
                 },
                 {
@@ -126,9 +136,14 @@ class FindingRepository(BaseRepository[FindingRecord]):
                     }
                 },
             ]
-            rows = await self.aggregate(pipeline, allow_disk_use=True)
+            # Unhinted, the planner races candidate plans on every persist, which took most of the lookup's time in prod.
+            cursor = self.collection.aggregate(pipeline, hint=dict(FIRST_DETECTION_INDEX), allowDiskUse=True)
             earliest.update(
-                {finding_identity(row["_id"]): first for row in rows if (first := row["first_seen_at"]) is not None}
+                {
+                    finding_identity(row["_id"]): first
+                    async for row in cursor
+                    if (first := row["first_seen_at"]) is not None
+                }
             )
         return earliest
 

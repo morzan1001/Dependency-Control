@@ -7,6 +7,7 @@ import pytest_asyncio
 
 from app.core import ensure_utc
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
 from app.models.user import User
@@ -64,6 +65,7 @@ async def _stale(db, **args) -> dict:
 @pytest_asyncio.fixture
 async def history(db):
     """log4j and commons-text first built 200 days ago, jackson new in head, the first build retention-deleted."""
+    await create_indexes(db)
     project = Project(id=_PROJECT, name="stale-project", default_branch="main", latest_scan_id=_HEAD)
     await db.projects.insert_one(project.model_dump(by_alias=True))
     await _build(db, "scan-first", _LONG_AGO, _LOG4J, _COMMONS_TEXT)

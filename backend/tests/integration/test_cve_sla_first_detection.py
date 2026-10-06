@@ -7,16 +7,17 @@ read back from the surviving history could never outgrow the retention window.
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytest_asyncio
 
 from app.core import ensure_utc
 from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType, Severity
 from app.models.waiver import Waiver
-from app.repositories.findings import FindingRepository
+from app.repositories.findings import _DETECTION_CHUNK_COMPONENTS, FindingRepository
 from app.repositories.waivers import WaiverRepository
 from app.schemas.compliance import ControlResult, ControlStatus
 from app.services.aggregation.aggregator import ResultAggregator
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
+from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records, _stamp_first_seen
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
@@ -37,6 +38,12 @@ _DATABASES = [
 
 def _days_ago(days: int) -> datetime:
     return _NOW - timedelta(days=days)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _indexes(db):
+    """Persisting hints indexes that a real server holds only once init_db has run."""
+    await create_indexes(db)
 
 
 def _log4j_advisories(*advisories: tuple[str, Severity]) -> Finding:
@@ -103,20 +110,6 @@ async def _sla_controls(db, scan_id: str) -> dict[str, ControlResult]:
 
 def _first_seen(docs: list[dict]) -> list[datetime | None]:
     return [ensure_utc(doc.get("first_seen_at")) for doc in docs]
-
-
-def _explain_values(node, key: str) -> list:
-    """Every value of ``key`` in the plan that ran; the planner's rejected candidates may fetch."""
-    if isinstance(node, dict):
-        return [
-            v
-            for k, child in node.items()
-            if k != "rejectedPlans"
-            for v in ([child] if k == key else _explain_values(child, key))
-        ]
-    if isinstance(node, list):
-        return [v for child in node for v in _explain_values(child, key)]
-    return []
 
 
 @pytest.mark.parametrize("database", _DATABASES)
@@ -276,46 +269,46 @@ async def test_a_finding_waived_cve_by_cve_is_waived_evidence_under_each_cves_se
     assert controls["CVE-SLA-HIGH"].waiver_reasons == ["not reachable"]
 
 
-@pytest.mark.live_mongo
-@pytest.mark.asyncio
-async def test_the_first_detection_lookup_reads_index_entries_only(db, monkeypatch):
-    await create_indexes(db)
-    await _store_legacy_copy(db, _days_ago(150))
-    unrelated = [
-        Finding(
-            id=f"lib-{n}:1.0",
-            type=FindingType.VULNERABILITY,
-            severity=Severity.LOW,
-            component=f"lib-{n}",
-            version="1.0",
-            description="noise",
-            scanners=["trivy"],
-        )
-        for n in range(40)
-    ]
-    for scan in range(3):
-        await _persist(db, f"scan-{scan}", _days_ago(30 - scan), _critical_cve(), _versionless_sast(), *unrelated)
-    issued: list[list[dict]] = []
-    aggregate = FindingRepository.aggregate
-
-    async def _record(self, pipeline, *args, **kwargs):
-        issued.append(pipeline)
-        return await aggregate(self, pipeline, *args, **kwargs)
-
-    monkeypatch.setattr(FindingRepository, "aggregate", _record)
-
-    docs = await _persist(db, "scan-3", _NOW, _critical_cve(), _versionless_sast())
-    explain = await db.command(
-        {"explain": {"aggregate": "findings", "pipeline": issued[0], "cursor": {}}, "verbosity": "executionStats"}
+def _outdated(component: str, version: str) -> Finding:
+    return Finding(
+        id=f"OUTDATED-{component}",
+        type=FindingType.OUTDATED,
+        severity=Severity.INFO,
+        component=component,
+        version=version,
+        description="a newer release exists",
+        scanners=["outdated_packages"],
     )
 
-    stages = _explain_values(explain, "stage")
-    docs_examined = _explain_values(explain, "totalDocsExamined")
-    assert "IXSCAN" in stages
-    assert "FETCH" not in stages
-    assert docs_examined and not any(docs_examined)
-    assert max(_explain_values(explain, "totalKeysExamined")) < len(unrelated)
-    assert {doc["component"]: ensure_utc(doc["first_seen_at"]) for doc in docs} == {
+
+async def _profiled(db, awaitable) -> list[dict]:
+    """What the awaited call ran against findings, as the server's profiler recorded it."""
+    await db.command("profile", 2)
+    try:
+        await awaitable
+    finally:
+        await db.command("profile", 0)
+    return await db["system.profile"].find({"ns": f"{db.name}.findings"}).to_list(None)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_first_detection_lookup_reads_index_keys_of_the_dated_findings_only(db):
+    await _store_legacy_copy(db, _days_ago(150))
+    noise = [_outdated(f"lib-{n}", "1.0") for n in range(40)]
+    for scan in range(3):
+        await _persist(db, f"scan-{scan}", _days_ago(30 - scan), _critical_cve(), _versionless_sast(), *noise)
+    records, _ = _prepare_finding_records([_critical_cve(), _versionless_sast()], "scan-now", _PROJECT, _NOW)
+    # Prod replans this lookup on nearly every persist, so the first plan after a cold cache is the one to judge.
+    await db.command({"planCacheClear": "findings"})
+
+    commands = await _profiled(db, _stamp_first_seen(records, _PROJECT, FindingRepository(db)))
+
+    copies_of_dated_findings = 4 + 3
+    assert not any(command.get("fromMultiPlanner") for command in commands)
+    assert sum(command["docsExamined"] for command in commands) == 0
+    assert 0 < sum(command["keysExamined"] for command in commands) <= copies_of_dated_findings + len(records)
+    assert {record["component"]: ensure_utc(record["first_seen_at"]) for record in records} == {
         "log4j-core": _days_ago(150),
         "src/app.py": _days_ago(30),
     }
@@ -342,7 +335,6 @@ def _module_records(*numbers: int) -> list[dict]:
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_the_first_detection_lookup_answers_for_400000_components(db):
-    await create_indexes(db)
     await _persist(db, "scan-old", _days_ago(90), _module_cve(399_999))
 
     earliest = await FindingRepository(db).earliest_detections(_PROJECT, _module_records(*range(400_000)))
@@ -356,11 +348,11 @@ async def test_the_first_detection_lookup_answers_for_400000_components(db):
 @pytest.mark.asyncio
 async def test_copies_across_two_lookup_chunks_give_the_single_chunk_dates(db, database):
     await _persist(db, "scan-a", _days_ago(60), _module_cve(0))
-    await _persist(db, "scan-b", _days_ago(30), _module_cve(1_999))
+    await _persist(db, "scan-b", _days_ago(30), _module_cve(_DETECTION_CHUNK_COMPONENTS))
     repo = FindingRepository(db)
 
-    single_chunk = await repo.earliest_detections(_PROJECT, _module_records(0, 1_999))
-    two_chunks = await repo.earliest_detections(_PROJECT, _module_records(*range(2_000)))
+    single_chunk = await repo.earliest_detections(_PROJECT, _module_records(0, _DETECTION_CHUNK_COMPONENTS))
+    two_chunks = await repo.earliest_detections(_PROJECT, _module_records(*range(_DETECTION_CHUNK_COMPONENTS + 1)))
 
     assert two_chunks == single_chunk
     assert sorted(ensure_utc(date) for date in two_chunks.values()) == [_days_ago(60), _days_ago(30)]
