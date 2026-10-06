@@ -337,6 +337,23 @@ class TestARejectedReadIsLogged:
         assert f"GitLab API GET {endpoint} returned HTTP 401" in [r.getMessage() for r in caplog.records]
 
 
+class TestMergeRequestNotes:
+    def test_every_page_is_read(self, gitlab_instance_a):
+        """Notes come newest first, so a cap cuts off the scan note and the upsert posts another."""
+        service = GitLabService(gitlab_instance_a)
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
+            asyncio.run(service.get_merge_request_notes(100, 7))
+
+        paginated.assert_awaited_once_with("/projects/100/merge_requests/7/notes", max_pages=None)
+
+    def test_a_failed_read_is_none_rather_than_no_notes(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
+            assert asyncio.run(service.get_merge_request_notes(100, 7)) is None
+
+
 class TestGroupListing:
     def test_the_search_term_is_passed_to_gitlab(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)

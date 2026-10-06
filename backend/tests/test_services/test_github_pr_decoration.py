@@ -210,7 +210,7 @@ class TestPullRequestWorkflowScans:
     """GITHUB_SHA is the test-merge commit; GitHub replaces merge_commit_sha whenever it re-tests mergeability."""
 
     @staticmethod
-    def _decorate(pr_head, branch="42/merge"):
+    def _decorate(pr_head, branch="42/merge", comments_page=()):
         from app.services.analysis.integrations import decorate_github_pr
         from app.services.github import GitHubService
 
@@ -239,7 +239,11 @@ class TestPullRequestWorkflowScans:
             patch.object(
                 GitHubService, "_api_get", AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
             ),
-            patch.object(GitHubService, "_api_get_paginated", AsyncMock(return_value=[])),
+            patch.object(
+                GitHubService,
+                "_api_get_paginated",
+                AsyncMock(return_value=None if comments_page is None else list(comments_page)),
+            ),
             patch.object(GitHubService, "_api_post", api_post),
         ):
             scan = _make_scan(commit_hash=_TEST_MERGE, branch=branch)
@@ -251,6 +255,9 @@ class TestPullRequestWorkflowScans:
 
     def test_a_test_merge_of_a_superseded_head_is_left_alone(self):
         assert self._decorate(pr_head=_NEWER_HEAD) == []
+
+    def test_a_comment_listing_that_failed_posts_no_second_comment(self):
+        assert self._decorate(pr_head=_HEAD, comments_page=None) == []
 
     def test_a_pushed_merge_of_a_branch_leaves_that_branchs_pull_request_alone(self):
         """Merging feature into a branch without a PR and pushing gives a commit of the same shape,

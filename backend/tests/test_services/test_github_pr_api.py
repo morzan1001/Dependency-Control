@@ -260,10 +260,11 @@ class TestGetPullRequestComments:
         assert [c.id for c in comments] == [11, 12]
         assert comments[1].body is None
 
-    def test_returns_empty_list_on_api_failure(self):
+    def test_a_failed_read_is_none_rather_than_no_comments(self):
+        """An empty list would have the upsert post a second scan comment beside the first."""
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         with patch.object(service, "_api_get_paginated", new_callable=AsyncMock, return_value=None):
-            assert asyncio.run(service.get_pull_request_comments("acme", "widget", 7)) == []
+            assert asyncio.run(service.get_pull_request_comments("acme", "widget", 7)) is None
 
 
 class TestWritePullRequestComments:

@@ -52,13 +52,16 @@ def _build_scan_comment(stats: Stats, scan_url: str, status: ScanStatus, error: 
 
 
 async def _upsert_scan_comment(
-    comments: list[tuple[int, str]],
+    comments: list[tuple[int, str]] | None,
     body: str,
     update: Callable[[int, str], Awaitable[bool]],
     post: Callable[[str], Awaitable[bool]],
     label: str,
 ) -> None:
-    """Edit the first marked comment in `comments` (the bot's own, oldest first) or post a new one."""
+    """Edit the first marked comment (the bot's own, oldest first) or post one; an unread list (None) posts no second."""
+    if comments is None:
+        logger.warning("Scan comment on %s skipped: its comments could not be read", label)
+        return
     existing = next(((cid, text) for cid, text in comments if _SCAN_COMMENT_MARKER in text), None)
     if existing is None:
         action, success = "post", await post(body)
@@ -126,7 +129,7 @@ async def decorate_gitlab_mr(
             try:
                 notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr.iid)
                 # GitLab lists notes newest first.
-                own = [(note.id, note.body) for note in reversed(notes) if note.author_id == bot_id]
+                own = None if notes is None else [(n.id, n.body) for n in reversed(notes) if n.author_id == bot_id]
                 await _upsert_scan_comment(
                     own,
                     body,
@@ -198,7 +201,7 @@ async def decorate_github_pr(
         for pr in relevant_prs:
             try:
                 comments = await github_service.get_pull_request_comments(owner, repo, pr.number)
-                own = [(comment.id, comment.body or "") for comment in comments if comment.user_id == bot_id]
+                own = None if comments is None else [(c.id, c.body or "") for c in comments if c.user_id == bot_id]
                 await _upsert_scan_comment(
                     own,
                     body,

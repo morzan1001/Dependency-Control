@@ -538,6 +538,14 @@ class TestMrCommentTarget:
         svc.get_merge_request_notes.assert_not_awaited()
         svc.post_merge_request_comment.assert_not_awaited()
 
+    def test_a_note_listing_that_failed_posts_no_second_note(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.services.analysis.integrations"):
+            svc = self._decorate([make_merge_request(iid=1)], None)
+
+        svc.post_merge_request_comment.assert_not_awaited()
+        svc.update_merge_request_comment.assert_not_awaited()
+        assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
 
 class TestTeamSyncNamespaceCheck:
     """Team sync should only run for group-namespace projects."""

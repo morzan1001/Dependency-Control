@@ -1070,10 +1070,10 @@ class GitHubService:
         head_sha = parents[1].get("sha")
         return str(head_sha) if head_sha else None
 
-    async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment]:
-        """Issue comments on a pull request, uncapped so an old scan comment is never missed and duplicated."""
+    async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment] | None:
+        """Issue comments on a pull request, uncapped so an old scan comment is never missed; None when a page failed."""
         comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments", max_pages=None)
-        return [GitHubIssueComment(**c) for c in comments] if comments else []
+        return None if comments is None else [GitHubIssueComment(**c) for c in comments]
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
         """Post a comment on a pull request."""

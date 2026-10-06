@@ -309,10 +309,10 @@ class GitLabService:
             logger.error(f"Failed to post MR comment: {response.status_code} - {response.text}")
         return False
 
-    async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> list[GitLabNote]:
-        """Fetch all notes (comments) from a merge request."""
-        notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
-        return [GitLabNote(**n) for n in notes] if notes else []
+    async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> list[GitLabNote] | None:
+        """Every note on a merge request, newest first; None when a page failed."""
+        notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes", max_pages=None)
+        return None if notes is None else [GitLabNote(**n) for n in notes]
 
     async def update_merge_request_comment(self, project_id: int, mr_iid: int, note_id: int, body: str) -> bool:
         """Updates an existing comment on a merge request."""
