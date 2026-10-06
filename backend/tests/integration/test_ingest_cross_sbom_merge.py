@@ -236,7 +236,7 @@ async def test_a_scan_without_rows_takes_inserts_and_a_stored_scan_upserts(db):
     _, first = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo))
     _, again = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo))
 
-    assert (inserts_and_upserts(first, "dependencies"), inserts_and_upserts(again, "dependencies")) == ((2, 0), (0, 2))
+    assert (inserts_and_upserts(first, "dependencies"), inserts_and_upserts(again, "dependencies")) == ((1, 0), (0, 2))
 
 
 @pytest.mark.asyncio

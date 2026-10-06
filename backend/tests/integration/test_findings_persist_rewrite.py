@@ -117,7 +117,7 @@ async def test_a_scan_without_findings_takes_inserts_and_a_rewrite_replaces(db):
     _, first = await profiled(db, _persist(db, [dict(r) for r in records]))
     _, again = await profiled(db, _persist(db, [dict(r) for r in records]))
 
-    assert (inserts_and_upserts(first, "findings"), inserts_and_upserts(again, "findings")) == ((2, 0), (0, 2))
+    assert (inserts_and_upserts(first, "findings"), inserts_and_upserts(again, "findings")) == ((1, 0), (0, 2))
 
 
 def _padded_to(record: dict, size: int) -> dict:

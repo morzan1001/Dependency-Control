@@ -17,7 +17,7 @@ async def profiled[T](db, call: Awaitable[T]) -> tuple[T, list[dict[str, Any]]]:
 
 
 def inserts_and_upserts(entries: list[dict[str, Any]], collection: str) -> tuple[int, int]:
-    """(documents inserted, upserting updates run) on ``collection``."""
+    """(insert commands, upserting updates) run on ``collection``."""
     ops = [entry for entry in entries if entry["ns"].endswith(f".{collection}")]
-    inserted = sum(op.get("ninserted", 0) for op in ops if op["op"] == "insert")
-    return inserted, sum(1 for op in ops if op["op"] == "update" and op["command"].get("upsert"))
+    inserts = sum(1 for op in ops if op["op"] == "insert")
+    return inserts, sum(1 for op in ops if op["op"] == "update" and op["command"].get("upsert"))
