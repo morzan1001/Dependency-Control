@@ -7,9 +7,9 @@ from app.services.analysis.adhoc import run_adhoc_analysis
 from tests.mocks.fake_mongo import FakeDatabase
 
 _CRYPTO_RULES = "crypto_rules"
-_NO_CRYPTO_ASSETS = "no cryptographic-asset components in the SBOM"
-# The enrichment stage runs on every request and is reported last.
-_ENRICHMENT = "epss_kev"
+_NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
+_OSV = "osv"
+_NO_PACKAGE_COMPONENTS = "no package components to analyse"
 
 _SEED_POLICY = "shipped seed rules"
 
@@ -114,6 +114,30 @@ async def test_a_weak_key_in_the_posted_cbom_becomes_one_finding_per_violated_ty
 
 
 @pytest.mark.asyncio
+async def test_a_key_size_written_as_a_json_number_is_graded_like_its_string():
+    algorithm = {"primitive": "pke", "parameterSetIdentifier": 1024}
+    rsa = {**_RSA_1024, "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": algorithm}}
+
+    response = await _run([_cbom(rsa)])
+
+    assert sorted(finding["type"] for finding in _crypto_findings(response)) == [
+        _TYPE_QUANTUM_VULNERABLE,
+        _TYPE_WEAK_KEY,
+    ]
+    assert _CRYPTO_RULES in response.analyzers.ran
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("readable", [[_MD5], []], ids=["beside-a-readable-asset", "alone"])
+async def test_a_crypto_component_the_parser_cannot_read_is_reported_as_dropped(readable):
+    unreadable = {"type": "cryptographic-asset", "bom-ref": "crypto/no-properties", "name": "SHA-1"}
+
+    response = await _run([_cbom(*readable, unreadable)])
+
+    assert "(cryptographic-asset=1)" in response.analyzers.skipped_inputs["SBOM #1"]
+
+
+@pytest.mark.asyncio
 async def test_rules_of_two_types_at_the_same_severity_each_keep_their_finding():
     crypto = _crypto_findings(await _run([_cbom(_DSA)]))
 
@@ -184,7 +208,7 @@ async def test_a_cbom_no_rule_matches_still_reports_the_stage_as_ran():
     """Coverage that found nothing is not the same as no coverage."""
     response = await _run([_cbom(_AES_256)])
 
-    assert response.analyzers.ran == [_CRYPTO_RULES, _ENRICHMENT]
+    assert response.analyzers.ran == [_CRYPTO_RULES]
     assert _crypto_findings(response) == []
     assert _CRYPTO_RULES not in response.analyzers.skipped
 
@@ -231,3 +255,25 @@ async def test_a_cbom_gives_the_component_analyzers_no_components_to_grade():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert [finding for finding in response.findings if finding not in _crypto_findings(response)] == []
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_without_package_components_is_not_reported_as_sent_to_osv():
+    request = AdhocAnalyzeRequest(sboms=[_cbom(_AES_256)], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.ran == [_CRYPTO_RULES]
+    assert response.analyzers.skipped[_OSV] == _NO_PACKAGE_COMPONENTS
+    assert _OSV not in response.analyzers.notes
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_beside_a_library_sbom_leaves_the_library_analysed():
+    request = AdhocAnalyzeRequest(
+        sboms=[_cbom(_AES_256), _LIBRARY_SBOM], analyzers=["license_compliance"], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.ran == ["license_compliance", _CRYPTO_RULES]

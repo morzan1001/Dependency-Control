@@ -473,13 +473,13 @@ class SBOMParser:
 
         parsed_by_ref: dict[Any, ParsedDependency] = {}
         for comp in components:
-            comp_type = comp.get("type")
+            comp_type, bom_ref = comp.get("type"), comp.get("bom-ref")
             if comp_type in ("cryptographic-asset", "file"):
                 # Crypto assets are parsed into crypto_assets; file-catalog entries aren't dependencies.
                 self._count_skipped(result, comp_type)
             elif comp_type in self._NON_DEPENDENCY_COMPONENT_TYPES:
                 self._count_skipped(result, "non-dependency")
-            elif comp.get("bom-ref") in root_refs or comp.get("purl") in root_refs:
+            elif bom_ref in root_refs or comp.get("purl") in root_refs:
                 self._count_skipped(result, "root-component")
             elif parsed := self._append_parsed(
                 result,
@@ -489,8 +489,10 @@ class SBOMParser:
                 result.source_type,
                 result.source_target,
                 directness,
+                # Trivy's purl-less lock-file and binary nodes only group packages.
+                structural=comp_type == "application" and isinstance(bom_ref, str) and bom_ref in transparent,
             ):
-                parsed_by_ref[comp.get("bom-ref") or parsed.purl] = parsed
+                parsed_by_ref[bom_ref or parsed.purl] = parsed
         _resolve_parent_refs(parsed_by_ref, forward)
 
     def _append_parsed(
@@ -500,6 +502,7 @@ class SBOMParser:
         parse_one: Callable[..., ParsedDependency | None],
         item: dict[str, Any],
         *args: Any,
+        structural: bool = False,
     ) -> ParsedDependency | None:
         try:
             parsed = parse_one(item, *args)
@@ -508,7 +511,7 @@ class SBOMParser:
             self._count_skipped(result, "parse-error")
             return None
         if parsed is None:
-            self._count_skipped(result, "unidentifiable")
+            self._count_skipped(result, "non-dependency" if structural else "unidentifiable")
         else:
             result.dependencies.append(parsed)
         return parsed
@@ -1003,10 +1006,13 @@ class SBOMParser:
         return self._classify_license_value(value, dedicated_url)
 
     @staticmethod
-    def _build_spdx_dependency_graph(relationships: Any, doc_spdx_id: Any) -> tuple[dict[Any, list[Any]], set[Any]]:
-        """(DEPENDS_ON edges with DEPENDENCY_OF reversed into them, the packages the document describes)."""
+    def _build_spdx_dependency_graph(
+        relationships: Any, doc_spdx_id: Any
+    ) -> tuple[dict[Any, list[Any]], set[Any], set[str]]:
+        """(DEPENDS_ON edges with DEPENDENCY_OF reversed into them, the packages the document describes, containers)."""
         forward: dict[Any, list[Any]] = {}
         described: set[Any] = set()
+        containers: set[str] = set()
         for rel in _graph_entries(relationships, "relationships"):
             rel_type = rel.get("relationshipType")
             element, related = rel.get("spdxElementId"), rel.get("relatedSpdxElement")
@@ -1016,7 +1022,9 @@ class SBOMParser:
                 forward.setdefault(related, []).append(element)
             elif rel_type in ("DESCRIBES", "DOCUMENT_DESCRIBES") and element == doc_spdx_id:
                 described.add(related)
-        return forward, described
+            elif rel_type == "CONTAINS" and isinstance(element, str):
+                containers.add(element)
+        return forward, described, containers
 
     def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         creation_info = sbom.get("creationInfo")
@@ -1032,7 +1040,7 @@ class SBOMParser:
         )
 
         doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
-        forward, described = self._build_spdx_dependency_graph(sbom.get("relationships") or [], doc_spdx_id)
+        forward, described, containers = self._build_spdx_dependency_graph(sbom.get("relationships") or [], doc_spdx_id)
         # SPDX 2.2 names the described packages in documentDescribes instead of DESCRIBES relationships.
         described.update(ref for ref in sbom.get("documentDescribes") or [] if isinstance(ref, str))
         directness, subjects = _resolve_directness(forward, {doc_spdx_id, *described}, set(), set())
@@ -1068,6 +1076,9 @@ class SBOMParser:
                 result.source_type,
                 result.source_target,
                 found_by,
+                # Trivy's purl-less lock-file and binary nodes only group packages.
+                structural=pkg.get("SPDXID") in described
+                or (pkg.get("primaryPackagePurpose") == "APPLICATION" and pkg.get("SPDXID") in containers),
             ):
                 parsed_by_id[pkg.get("SPDXID")] = parsed
         _resolve_parent_refs(parsed_by_id, forward)

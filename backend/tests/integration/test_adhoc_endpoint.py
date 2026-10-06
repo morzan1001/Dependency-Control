@@ -37,7 +37,6 @@ _ENVELOPE = {
     "waivers_applied",
     "waived_count",
 }
-_ENRICHMENT = "epss_kev"
 _LICENSE_COMPLIANCE = "license_compliance"
 _SECRET_MARKER = "swordfish"
 _PENDING = "pending"
@@ -138,7 +137,7 @@ async def test_a_queued_analysis_answers_what_the_pipeline_computes(client, db, 
     assert resp.headers["content-type"].startswith("application/json")
     body = resp.json()
     assert set(body) == _ENVELOPE
-    assert set(body["analyzers"]["notes"]) == {_ENRICHMENT}
+    assert body["analyzers"]["notes"] == {}
     expected = await run_adhoc_analysis(AdhocAnalyzeRequest(**_request()), db)
     assert _without_timestamps(body) == _without_timestamps(expected.model_dump(mode="json"))
 

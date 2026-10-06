@@ -111,7 +111,7 @@ async def test_the_chat_and_mcp_tools_refuse_a_member_holding_no_project_read_pe
     listed = await registry.execute_tool("list_projects", {}, no_read, db)
     named = await registry.execute_tool("get_project_details", {"project_id": "direct"}, no_read, db)
 
-    assert listed == {"projects": [], "count": 0}
+    assert listed == {"projects": [], "projects_total": 0}
     assert "error" in named
     assert (
         await registry.execute_tool(

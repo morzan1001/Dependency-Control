@@ -51,6 +51,19 @@ def _vulnerabilities(finding: dict[str, Any]) -> list[dict[str, Any]]:
     return (finding.get("details") or {}).get("vulnerabilities") or []
 
 
+def _ghsa_ids(findings: list[dict[str, Any]]) -> list[str]:
+    return sorted({i for f in findings for v in _vulnerabilities(f) if (i := v.get("id") or "").startswith("GHSA-")})
+
+
+def _cves(findings: list[dict[str, Any]]) -> list[str]:
+    return sorted({cve for f in findings for v in _vulnerabilities(f) for cve in entry_cves(v)})
+
+
+def sends_ids(findings: list[dict[str, Any]]) -> bool:
+    """Whether enrich_findings puts any id of these findings on the wire."""
+    return bool(_ghsa_ids(findings) or _cves(findings))
+
+
 def _resolve_ghsa(vuln: dict[str, Any], ghsa_data: GHSAData) -> bool:
     """Record GitHub's CVE on a GHSA advisory; True when its identity grew."""
     vuln["github_advisory_url"] = ghsa_data.advisory_url
@@ -182,16 +195,12 @@ class VulnerabilityEnrichmentService:
         self, findings: list[dict[str, Any]], github_token: str | None = None
     ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
         """Fold GHSA, EPSS and KEV into the findings in place; returns per-CVE enrichment and the unreadable sources."""
-        ghsa_ids = sorted(
-            {i for f in findings for v in _vulnerabilities(f) if (i := v.get("id") or "").startswith("GHSA-")}
-        )
-        if ghsa_ids:
+        if ghsa_ids := _ghsa_ids(findings):
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
             resolutions = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
             _dedupe_finding_vulnerabilities(_apply_ghsa_resolutions(findings, resolutions))
 
-        cves = sorted({cve for f in findings for v in _vulnerabilities(f) for cve in entry_cves(v)})
-        enrichments, unavailable = await self._enrich_cves(cves)
+        enrichments, unavailable = await self._enrich_cves(_cves(findings))
         for finding in findings:
             apply_enrichments(finding.setdefault("details", {}), enrichments)
         return enrichments, unavailable

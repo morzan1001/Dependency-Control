@@ -216,6 +216,81 @@ async def test_find_component_usage_accepts_a_qualified_component(db, seeded):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("component", "stored_names", "expected"),
+    [
+        (QUALIFIED, ["jackson-databind-nullable"], [BARE]),
+        ("golang.org/x/net", ["golang.org/x/net", "netty-common"], ["golang.org/x/net"]),
+    ],
+)
+async def test_find_component_usage_never_matches_a_bare_artifact_inside_another_name(
+    db, seeded, component, stored_names, expected
+):
+    from app.core.permissions import Permissions
+    from app.models.user import User
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    await db.dependencies.insert_many([_dependency(f"d-{name}", name=name) for name in stored_names])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
+
+    result = await ChatToolRegistry().execute_tool("find_component_usage", {"component_name": component}, user, db)
+
+    assert sorted(m["component"] for m in result["matches"]) == expected
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("component", "own", "same_named"),
+    [
+        (
+            "github.com/google/uuid",
+            {"name": "github.com/google/uuid", "group": None, "purl": "pkg:golang/github.com/google/uuid@v1.6.0"},
+            {"name": "uuid", "group": None, "purl": "pkg:npm/uuid@9.0.1"},
+        ),
+        (
+            "symfony/console",
+            {"name": "console", "group": "symfony", "purl": "pkg:composer/symfony/console@v5.4.0"},
+            {"name": "console", "group": None, "purl": "pkg:npm/console@0.7.2"},
+        ),
+        (
+            "com.google.zxing:core",
+            {"name": "core", "group": "com.google.zxing", "purl": "pkg:maven/com.google.zxing/core@3.5.0"},
+            {"name": "core", "group": "org.eclipse.jdt", "purl": "pkg:maven/org.eclipse.jdt/core@3.5.0"},
+        ),
+        (
+            "org.apache.logging.log4j:log4j-core",
+            {"name": "log4j-core", "group": None, "purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1"},
+            {"name": "log4j-core", "group": None, "purl": "pkg:maven/org.example/log4j-core@2.17.1"},
+        ),
+    ],
+)
+async def test_find_component_usage_skips_a_same_named_package_under_another_qualifier(
+    db, seeded, component, own, same_named
+):
+    from app.core.permissions import Permissions
+    from app.models.user import User
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    await db.dependencies.insert_many([{**_dependency("own"), **own}, {**_dependency("other"), **same_named}])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
+
+    result = await ChatToolRegistry().execute_tool("find_component_usage", {"component_name": component}, user, db)
+
+    assert [m["purl"] for m in result["matches"]] == [own["purl"]]
+
+
+@pytest.mark.asyncio
 async def test_findings_export_prefers_the_direct_row_on_a_name_version_collision(db, seeded):
     """Multi-SBOM scans store the same name@version under two purl spellings (bare and
     ?type=jar). On 60 sampled production multi-SBOM scans 2,452 of 11,882 dependency docs

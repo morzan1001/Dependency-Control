@@ -12,6 +12,7 @@ from tests.helpers.enrichment import Upstreams, serve_enrichment
 from tests.mocks.fake_mongo import FakeDatabase
 
 _ENRICHMENT = "epss_kev"
+_NO_ENRICHABLE_IDS = "no CVE or GHSA id to look up"
 _TRUFFLEHOG_NAME = "trufflehog"
 _FEED_DOWN = "EPSS feed down"
 _SECRET_FILE = "app/config.py"
@@ -69,11 +70,16 @@ def _secrets_request() -> AdhocAnalyzeRequest:
     return AdhocAnalyzeRequest(scanners={_TRUFFLEHOG_NAME: _TRUFFLEHOG}, analyzers=[], apply_global_waivers=False)
 
 
+def _vulnerable_request(monkeypatch, *analyzers: str) -> AdhocAnalyzeRequest:
+    serve_analyzer(monkeypatch, "osv", _vulnerable_osv({"id": _CVE, "severity": "HIGH", "summary": "example"}))
+    return AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv", *analyzers], apply_global_waivers=False)
+
+
 @pytest.mark.asyncio
 async def test_enrichment_failure_is_reported(monkeypatch):
     _serve(monkeypatch, side_effect=RuntimeError(_FEED_DOWN))
 
-    response = await run_adhoc_analysis(_secrets_request(), FakeDatabase())
+    response = await run_adhoc_analysis(_vulnerable_request(monkeypatch), FakeDatabase())
 
     assert response.analyzers.errored[_ENRICHMENT] == [_FEED_DOWN]
     assert _ENRICHMENT not in response.analyzers.ran
@@ -83,30 +89,48 @@ async def test_enrichment_failure_is_reported(monkeypatch):
 async def test_an_unreadable_source_reports_the_stage_as_errored(monkeypatch):
     _serve(monkeypatch, return_value=({}, ["KEV"]))
 
-    response = await run_adhoc_analysis(_secrets_request(), FakeDatabase())
+    response = await run_adhoc_analysis(_vulnerable_request(monkeypatch), FakeDatabase())
 
     assert response.analyzers.errored[_ENRICHMENT] == ["KEV unavailable"]
     assert _ENRICHMENT not in response.analyzers.ran
 
 
 @pytest.mark.asyncio
-async def test_summary_is_always_present(monkeypatch):
-    _serve(monkeypatch)
+async def test_a_run_without_vulnerability_findings_skips_the_stage_and_sends_nothing(fake_cache, monkeypatch):
+    seen = serve_enrichment(monkeypatch, fake_cache, Upstreams())
 
     response = await run_adhoc_analysis(_secrets_request(), FakeDatabase())
 
+    assert seen == []
+    assert response.analyzers.skipped[_ENRICHMENT] == _NO_ENRICHABLE_IDS
+    assert _ENRICHMENT not in response.analyzers.ran
+    assert _ENRICHMENT not in response.analyzers.notes
     assert response.epss_kev_summary["total_vulnerabilities"] == 0
-    assert response.analyzers.ran[-1] == _ENRICHMENT
+
+
+@pytest.mark.asyncio
+async def test_advisories_without_a_cve_or_ghsa_id_are_scored_and_send_nothing(fake_cache, monkeypatch):
+    from app.services.enrichment.scoring import calculate_risk_score
+
+    advisory = {"id": "RUSTSEC-2021-0139", "aliases": [], "severity": "CRITICAL", "cvss_score": 9.8, "summary": "s"}
+    serve_analyzer(monkeypatch, "osv", _vulnerable_osv(advisory))
+    seen = serve_enrichment(monkeypatch, fake_cache, Upstreams())
+
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert seen == []
+    assert response.analyzers.skipped[_ENRICHMENT] == _NO_ENRICHABLE_IDS
+    assert _ENRICHMENT not in response.analyzers.ran
+    assert _ENRICHMENT not in response.analyzers.notes
+    assert response.epss_kev_summary["max_risk_score"] == calculate_risk_score(9.8, None, False, False)
 
 
 @pytest.mark.asyncio
 async def test_naming_the_stage_does_not_report_it_as_both_run_and_skipped(monkeypatch):
     _serve(monkeypatch)
 
-    request = AdhocAnalyzeRequest(
-        scanners={_TRUFFLEHOG_NAME: _TRUFFLEHOG}, analyzers=[_ENRICHMENT], apply_global_waivers=False
-    )
-    response = await run_adhoc_analysis(request, FakeDatabase())
+    response = await run_adhoc_analysis(_vulnerable_request(monkeypatch, _ENRICHMENT), FakeDatabase())
 
     assert _ENRICHMENT in response.analyzers.ran
     assert _ENRICHMENT not in response.analyzers.skipped

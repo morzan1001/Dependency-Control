@@ -505,13 +505,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "Draft a waiver justification for a specific finding based on reachability, "
                 "severity, EPSS and fix availability. Use when the user says 'should we "
                 "waive this?' or 'help me write a waiver for finding X'. Returns a "
-                "suggested reason + recommended expiry, NOT a stored waiver."
+                "suggested reason + recommended expiry, NOT a stored waiver. Reads the finding on the "
+                f"project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD}"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "finding_id": {"type": "string", "description": "The finding identifier (component:version)."},
                     "project_id": {"type": "string", "description": "The project that owns the finding."},
+                    "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
                 },
                 "required": ["finding_id", "project_id"],
             },

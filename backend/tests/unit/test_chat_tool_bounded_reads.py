@@ -306,6 +306,33 @@ async def test_an_expiring_waiver_answer_names_every_waiver_in_the_window(seeded
 
 
 @pytest.mark.asyncio
+async def test_an_expiring_waiver_names_only_the_package_parts_it_holds(seeded, admin_user):
+    expires = datetime.now(timezone.utc) + timedelta(days=_WELL_INSIDE_THE_WINDOW)
+    for finding_id, name, version in (
+        ("f-cve", None, None),
+        ("f-pkg", "requests", None),
+        ("f-ver", "requests", "2.26.0"),
+    ):
+        seeded.waivers._docs[finding_id] = {
+            "_id": finding_id,
+            "project_id": _PROJECT,
+            "finding_id": finding_id,
+            "package_name": name,
+            "package_version": version,
+            "reason": "r",
+            "expiration_date": expires,
+        }
+
+    result = await ChatToolRegistry().execute_tool("get_expiring_waivers", {}, admin_user, seeded)
+
+    assert {w["finding_id"]: w["package"] for w in result["waivers"]} == {
+        "f-cve": None,
+        "f-pkg": "requests",
+        "f-ver": "requests@2.26.0",
+    }
+
+
+@pytest.mark.asyncio
 async def test_a_capped_project_listing_holds_the_most_recently_scanned(seeded, admin_user):
     """An estate larger than the cap is answered with a page, so the page has to be the freshest
     projects rather than whichever ones the collection happens to hand back first."""
@@ -321,3 +348,27 @@ async def test_a_capped_project_listing_holds_the_most_recently_scanned(seeded, 
 
     freshest = [f"ps-{index:02d}" for index in range(oldest_first, oldest_first - _PROJECT_PAGE, -1)]
     assert [p["id"] for p in result["projects"]] == freshest
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "collection", "rows_key", "row", "already_seeded"),
+    [
+        ("list_projects", "projects", "projects", lambda i: {"_id": f"row-{i}", "name": f"p-{i}"}, 1),
+        ("get_scan_history", "scans", "scans", lambda i: {"_id": f"row-{i}", "project_id": _PROJECT}, 1),
+        ("list_archives", "archive_metadata", "archives", lambda i: {"_id": f"row-{i}", "project_id": _PROJECT}, 0),
+    ],
+)
+async def test_a_capped_listing_names_the_population_it_was_cut_from(
+    seeded, admin_user, tool, collection, rows_key, row, already_seeded
+):
+    population = _PROJECT_PAGE + _OVER_THE_CEILING
+    _fill(getattr(seeded, collection), population, row)
+
+    result = await ChatToolRegistry().execute_tool(
+        tool, {"project_id": _PROJECT, "limit": _PROJECT_PAGE}, admin_user, seeded
+    )
+
+    assert len(result[rows_key]) == _PROJECT_PAGE
+    assert result[f"{rows_key}_total"] == population + already_seeded
+    assert result["_bounded_read"] is True

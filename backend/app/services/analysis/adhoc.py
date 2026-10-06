@@ -44,7 +44,7 @@ from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
-from app.services.enrichment.service import vulnerability_enrichment_service
+from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     component_language_map,
@@ -69,14 +69,16 @@ _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
 _PARTIAL_COVERAGE = "partial coverage: {reason}"
 _ENRICHMENT = "epss_kev"
+_NO_ENRICHABLE_IDS = "no CVE or GHSA id to look up"
 _REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 
 # Counted as skipped from the dependency graph by design: a crypto asset is routed into
-# ``crypto_assets`` and the rest are not dependencies. Nothing the caller posted was lost.
-_DELIBERATE_SKIP_REASONS = frozenset({"cryptographic-asset", "file", "non-dependency", "root-component"})
+# ``crypto_assets`` once it parses, and the rest are not dependencies.
+_CRYPTO_ASSET = "cryptographic-asset"
+_DELIBERATE_SKIP_REASONS = frozenset({_CRYPTO_ASSET, "file", "non-dependency", "root-component"})
 _UNRECOGNISED_PAYLOAD = "unrecognised payload shape: expected {keys}"
 
 _BEARER = "bearer"
@@ -100,6 +102,7 @@ _OSV = "osv"
 ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = (_OSV, "license_compliance")
 
 _NOT_REQUESTED = "not requested"
+_NO_PACKAGE_COMPONENTS = "no package components to analyse"
 _UNCACHED_FANOUT = (
     "off by default: this path publishes nothing to the shared cache, so every run re-queries "
     "the upstream registry for each package it recognises"
@@ -120,7 +123,7 @@ ADHOC_SKIP_REASONS: dict[str, str] = {
 _SBOM_POSITION = "SBOM #{position}"
 
 _CRYPTO_RULES = "crypto_rules"
-_NO_CRYPTO_ASSETS = "no cryptographic-asset components in the SBOM"
+_NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
 # ``normalize_crypto`` rebuilds each dict into a Finding carrying its own type, so one dispatch
 # key covers every crypto finding type the rules emit.
 _CRYPTO_DISPATCH_KEY = "crypto_weak_algorithm"
@@ -232,12 +235,14 @@ def _input_label(parsed_input: _ParsedInput) -> str:
 
 
 def _record_ran(report: AnalyzerReport, name: str) -> None:
+    report.skipped.pop(name, None)
     if name not in report.ran and name not in report.errored:
         report.ran.append(name)
 
 
 def _record_errored(report: AnalyzerReport, name: str, reason: str) -> None:
     """A failure on one input shadows a success on another: partial coverage must not read as complete."""
+    report.skipped.pop(name, None)
     report.errored.setdefault(name, []).append(reason)
     if name in report.ran:
         report.ran.remove(name)
@@ -340,7 +345,7 @@ def _aggregate_posted_scanners(
             _record_errored(report, name, str(payload["error"]))
             continue
         expected_keys = _POSTED_SCANNERS[name][0]
-        if not any(key in payload for key in expected_keys):
+        if all(_posted_entries(name, payload, key) is None for key in expected_keys):
             quoted = " or ".join(f"'{key}'" for key in expected_keys)
             _record_errored(report, name, _UNRECOGNISED_PAYLOAD.format(keys=quoted))
             continue
@@ -358,20 +363,19 @@ def _aggregate_posted_scanners(
         _record_ran(report, name)
 
 
-def _yielded_nothing(parsed: ParsedSBOM) -> bool:
-    return not parsed.dependencies and not parsed.crypto_assets
-
-
 def _input_defects(parsed: ParsedSBOM) -> list[str]:
     """What the caller needs to know about an input the parser only partly understood."""
     defects: list[str] = []
-    if _yielded_nothing(parsed):
+    if not parsed.dependencies and not parsed.crypto_assets:
         defects.append(_NO_COMPONENTS.format(sbom_format=parsed.format.value))
     lost = {
         reason: count
         for reason, count in parsed.skipped_reasons.items()
         if reason not in _DELIBERATE_SKIP_REASONS and count
     }
+    unread_crypto = parsed.skipped_reasons.get(_CRYPTO_ASSET, 0) - len(parsed.crypto_assets)
+    if unread_crypto > 0:
+        lost[_CRYPTO_ASSET] = unread_crypto
     if lost:
         reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(lost.items()))
         defects.append(_DROPPED_COMPONENTS.format(count=sum(lost.values()), reasons=reasons))
@@ -398,9 +402,6 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
         defects = _input_defects(parsed)
         if defects:
             report.skipped_inputs[label] = "; ".join(defects)
-        # An input nothing could be read from must not be analysed into a clean bill of health.
-        if _yielded_nothing(parsed):
-            continue
         parsed_inputs.append(
             _ParsedInput(
                 position=position,
@@ -469,6 +470,7 @@ async def _enrich_vulnerabilities(
     """Add EPSS/KEV to the vulnerability records; returns the EPSS/KEV summary and the per-CVE enrichment."""
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
+    sends = sends_ids(vulnerabilities)
     try:
         threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
     except Exception as exc:
@@ -477,8 +479,10 @@ async def _enrich_vulnerabilities(
     else:
         if unavailable:
             _record_errored(report, _ENRICHMENT, f"{' and '.join(unavailable)} unavailable")
-        else:
+        elif sends:
             _record_ran(report, _ENRICHMENT)
+        else:
+            report.skipped[_ENRICHMENT] = _NO_ENRICHABLE_IDS
     refresh_vulnerability_info(records)
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
@@ -615,8 +619,12 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     settings_for = _build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
+    # An input without package components must not be analysed into a clean bill of health.
+    package_inputs = [parsed_input for parsed_input in parsed_inputs if parsed_input.components]
+    if not package_inputs:
+        report.skipped.update(dict.fromkeys(requested, _NO_PACKAGE_COMPONENTS))
 
-    for parsed_input in parsed_inputs:
+    for parsed_input in package_inputs:
         for name in requested:
             await _run_one_analyzer(
                 name,

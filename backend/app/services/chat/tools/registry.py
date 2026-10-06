@@ -39,6 +39,7 @@ from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cv
 from app.core.housekeeping import resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
+from app.core.purl import canonical_purl
 from app.core.risk_scoring import (
     ACTIVELY_EXPLOITED_MATURITY,
     calculate_exploit_maturity,
@@ -506,9 +507,14 @@ class ChatToolRegistry:
         search = ctx.args.get("search")
         name_filter = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
         query = and_filters(ctx.user_project_query, name_filter)
-        limit = ctx.args["limit"]
-        cursor = ctx.db["projects"].find(query, _PROJECT_ROW_PROJECTION, sort=[("last_scan_at", -1)], limit=limit)
-        projects = await cursor.to_list(length=limit)
+        projects, projects_total = await bounded_read(
+            ctx.db["projects"],
+            query,
+            subject="projects",
+            limit=ctx.args["limit"],
+            projection=_PROJECT_ROW_PROJECTION,
+            sort=[("last_scan_at", -1)],
+        )
         team_names = await resolve_team_names(ctx.db, {tid for p in projects for tid in p.get("team_ids") or []})
         stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
         rows = []
@@ -517,7 +523,7 @@ class ChatToolRegistry:
             row["stats"] = stats[p["_id"]].model_dump(exclude_unset=True) if p["_id"] in stats else None
             row["teams"] = [ref.model_dump() for ref in team_refs(p.get("team_ids") or [], team_names)]
             rows.append(row)
-        return {"projects": rows, "count": len(rows)}
+        return {"projects": rows, "projects_total": projects_total}
 
     async def _tool_get_project_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -547,11 +553,15 @@ class ChatToolRegistry:
 
     async def _tool_get_scan_history(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        limit = ctx.args["limit"]
         # Newest-first across every branch and status, so the first row is a queued run on a
         # branch nobody ships as often as it is the build the project stands on.
-        cursor = ctx.db["scans"].find({"project_id": project["_id"]}, sort=[("created_at", -1)], limit=limit)
-        scans = await cursor.to_list(length=limit)
+        scans, scans_total = await bounded_read(
+            ctx.db["scans"],
+            {"project_id": project["_id"]},
+            subject="scans",
+            limit=ctx.args["limit"],
+            sort=[("created_at", -1)],
+        )
         head_scan_id = await self._head_scan_id(project, ctx.db)
         return {
             "scans": [
@@ -563,6 +573,7 @@ class ChatToolRegistry:
                 }
                 for s in scans
             ],
+            "scans_total": scans_total,
             "head_scan_id": head_scan_id,
             "hint": (
                 "head_scan_id is the build that represents this project. Rows are ordered by "
@@ -761,11 +772,17 @@ class ChatToolRegistry:
         return {"hotspots": hotspots}
 
     async def _tool_get_dependency_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        dep = await DependencyEnrichmentRepository(ctx.db).get_by_purl(ctx.args["dependency_name"])
+        wanted = ctx.args["dependency_name"]
+        dep = await DependencyEnrichmentRepository(ctx.db).get_by_purl(wanted)
         if not dep:
-            dep = await ctx.db["dependency_enrichments"].find_one(
-                {"name": {"$regex": re.escape(ctx.args["dependency_name"]), "$options": "i"}}
+            matches = (
+                [{"purl": {"$regex": f"^{re.escape(canonical_purl(wanted))}@"}}]
+                if wanted.startswith("pkg:")
+                # The whole name wins over the name after a ':' or '/' qualifier; an npm "@scope/name" stays whole.
+                else [{"name": {"$regex": f"^{q}{re.escape(wanted)}$", "$options": "i"}} for q in ("", "[^@][^:]*[:/]")]
             )
+            for match in matches:
+                dep = dep or await ctx.db["dependency_enrichments"].find_one(match, sort=[("_id", -1)])
         if not dep:
             return {"error": "Dependency not found in enrichment data"}
         return {"dependency": _serialize_doc(dep)}
@@ -1067,9 +1084,8 @@ class ChatToolRegistry:
 
     async def _tool_suggest_waiver_for_finding(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        finding = await ctx.db["findings"].find_one(
-            {"finding_id": ctx.args["finding_id"], "project_id": project["_id"]}
-        )
+        scan_id, build = await self._scan_under_answer(ctx, project)
+        finding = await ctx.db["findings"].find_one({"finding_id": ctx.args["finding_id"], "scan_id": scan_id})
         if not finding:
             return {"error": _ERR_FINDING_NOT_FOUND}
         details = finding.get("details") or {}
@@ -1086,6 +1102,7 @@ class ChatToolRegistry:
                 ),
                 "suggested_expiry_days": 0,
                 "recommend_waive": False,
+                "scan": build,
             }
         tier = reachability_display_tier(finding.get("reachable"), finding.get("reachability_level"))
         deprioritized = is_deprioritized_vulnerability(
@@ -1118,6 +1135,7 @@ class ChatToolRegistry:
                 "reachability": tier,
                 "has_fix_version": bool(fix),
             },
+            "scan": build,
             "hint": (
                 "Show these signals to the user and let them edit the suggested reason "
                 "before creating the waiver. This tool does NOT create the waiver. When recommend_waive "
@@ -1186,15 +1204,16 @@ class ChatToolRegistry:
         head, names = await self._heads_in_scope(ctx)
         if not names:
             return {"matches": [], "message": "No accessible projects"}
-        head_scan_ids = list(head.values())
-        # The caller may quote a finding's group-qualified component; the inventory
-        # stores the bare artifact name, so search on that too.
-        wanted = ctx.args["component_name"]
-        patterns = {wanted, artifact_segment(wanted)}
-        dep_query: dict[str, Any] = {
-            "name": {"$in": [re.compile(re.escape(p), re.IGNORECASE) for p in patterns if p]},
-            "scan_id": {"$in": head_scan_ids},
-        }
+        wanted = (ctx.args["component_name"] or "").strip()
+        if not wanted:
+            return {"matches": [], "count": 0, "matches_total": 0}
+        by_name: list[dict[str, Any]] = [{"name": {"$regex": re.escape(wanted), "$options": "i"}}]
+        segment = artifact_segment(wanted)
+        if segment != wanted:
+            # The inventory may store a qualified component under its bare artifact; its purl keeps the qualifier.
+            path = re.escape(f"{wanted[: -len(segment) - 1]}/{segment}")
+            by_name.append({"purl": {"$regex": f"^pkg:[^/]+/{path}(?:[@?#]|$)", "$options": "i"}})
+        dep_query: dict[str, Any] = {"$or": by_name, "scan_id": {"$in": list(head.values())}}
         if ctx.args.get("version"):
             dep_query["version"] = ctx.args["version"]
         rows, rows_total = await bounded_read(
@@ -1358,7 +1377,7 @@ class ChatToolRegistry:
                     "vulnerability_id": w.get("vulnerability_id"),
                     "reason": _clip_value(w.get("reason") or ""),
                     "expires_at": _clip_value(expires),
-                    "package": f"{w.get('package_name', '')}@{w.get('package_version', '')}",
+                    "package": "@".join(p for p in (w.get("package_name"), w.get("package_version")) if p) or None,
                 }
             )
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
@@ -1458,10 +1477,10 @@ class ChatToolRegistry:
         elif not read_all:
             # Id-listed even for project:read_all: an archive outlives the project it came from.
             query["project_id"] = {"$in": await self._get_authorized_project_ids(ctx)}
-        limit = ctx.args["limit"]
-        cursor = ctx.db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
-        archives = await cursor.to_list(length=limit)
-        return {"archives": [_serialize_doc(a, _ARCHIVE_FIELDS) for a in archives]}
+        archives, archives_total = await bounded_read(
+            ctx.db["archive_metadata"], query, subject="archives", limit=ctx.args["limit"], sort=[("archived_at", -1)]
+        )
+        return {"archives": [_serialize_doc(a, _ARCHIVE_FIELDS) for a in archives], "archives_total": archives_total}
 
     async def _tool_get_archive_details(self, ctx: _ToolContext) -> dict[str, Any]:
         archive = await ctx.db["archive_metadata"].find_one({"_id": ctx.args["archive_id"]})
