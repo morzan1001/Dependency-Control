@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
-from fastapi import Query
+from fastapi import Query, Response
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -18,9 +18,10 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.core.constants import SCAN_DEPENDENCY_READ_LIMIT
+from app.core.constants import SCAN_DEPENDENCY_READ_LIMIT, severity_rank_expr
 from app.core.permissions import Permissions
 from app.models.dependency import Dependency
+from app.models.finding_record import FindingRecord
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository
@@ -50,6 +51,8 @@ router = CustomAPIRouter()
 
 # Live advisory details per component, then per normalized version.
 TreeFindings = dict[str, dict[str, list[Any]]]
+
+_COMPONENT_FINDINGS_SHOWN = 100
 
 
 @dataclass(frozen=True)
@@ -223,13 +226,14 @@ async def get_dependency_tree(
 
 @router.get("/component-findings", responses=RESP_AUTH)
 async def get_component_findings(
+    response: Response,
     current_user: CurrentUserDep,
     db: DatabaseDep,
     component: Annotated[str, Query(description="Component/package name")],
     version: Annotated[str | None, Query(description="Specific version")] = None,
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[dict[str, Any]]:
-    """Get all findings for a specific component across accessible projects."""
+    """The most severe findings of a component across accessible projects, all of them counted in X-Total-Count."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     projects = await get_user_projects(current_user, db)
@@ -249,15 +253,19 @@ async def get_component_findings(
     # Waived findings are excluded here as everywhere else, so this list agrees with the
     # severity tiles and the hotspot ranking for the same scan.
     query = await _package_finding_query(finding_repo, scan_ids, component, version)
-    finding_records = await finding_repo.find_many(query, limit=100)
-
-    results = []
-    for fr in finding_records:
-        finding = fr.model_dump()
-        finding["project_name"] = project_name_map.get(fr.project_id, "Unknown")
-        results.append(finding)
-
-    return results
+    response.headers["X-Total-Count"] = str(await finding_repo.count(query))
+    docs = await finding_repo.aggregate(
+        [
+            {"$match": query},
+            {"$addFields": {"severity_rank": severity_rank_expr("$severity")}},
+            {"$sort": {"severity_rank": -1, "_id": 1}},
+            {"$limit": _COMPONENT_FINDINGS_SHOWN},
+        ]
+    )
+    return [
+        {**FindingRecord(**doc).model_dump(), "project_name": project_name_map.get(doc["project_id"], "Unknown")}
+        for doc in docs
+    ]
 
 
 def _build_dep_query(scan_ids: list[str], component: str, version: str | None, type: str | None) -> dict[str, Any]:

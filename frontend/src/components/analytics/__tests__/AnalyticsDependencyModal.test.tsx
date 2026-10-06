@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { DependencyMetadata } from "@/types/analytics";
+import type { ComponentFinding, DependencyMetadata } from "@/types/analytics";
 import { AnalyticsDependencyModal } from "../AnalyticsDependencyModal";
 import { AnalyticsModeContext } from "@/context/analytics-mode";
 
@@ -24,8 +24,9 @@ const baseMetadata: DependencyMetadata = {
   project_count: 0,
   affected_projects: [],
   total_vulnerability_count: 0,
-  total_finding_count: 0,
 };
+
+const NO_FINDINGS = { items: [], total: 0 };
 
 function renderModal(metadata: DependencyMetadata) {
   (useDependencyMetadata as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -33,7 +34,7 @@ function renderModal(metadata: DependencyMetadata) {
     isLoading: false,
   });
   (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
-    data: [],
+    data: NO_FINDINGS,
     isLoading: false,
   });
   return render(
@@ -149,7 +150,7 @@ describe("AnalyticsDependencyModal scope", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (useDependencyMetadata as ReturnType<typeof vi.fn>).mockReturnValue({ data: baseMetadata, isLoading: false });
-    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false });
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({ data: NO_FINDINGS, isLoading: false });
   });
 
   function renderInMode(releaseEnvironment: string | undefined) {
@@ -192,5 +193,51 @@ describe("AnalyticsDependencyModal version", () => {
     renderModal({ ...baseMetadata, versions: ["1.0.0"] });
 
     expect(screen.queryByText(/Most used of/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AnalyticsDependencyModal findings list", () => {
+  const finding = (id: string, severity: string): ComponentFinding =>
+    ({
+      id,
+      type: "vulnerability",
+      severity,
+      component: "pkg",
+      version: "1.0.0",
+      description: "",
+      scanners: [],
+      details: {},
+      found_in: [],
+      aliases: [],
+      waived: false,
+      project_id: "p1",
+      project_name: "Project 1",
+      scan_id: `scan-${id}`,
+    }) as ComponentFinding;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // A name that spans several package paths, such as openssl from deb and apk, has no metadata.
+    (useDependencyMetadata as ReturnType<typeof vi.fn>).mockReturnValue({ data: null, isLoading: false });
+  });
+
+  function renderFindings() {
+    return render(
+      <MemoryRouter>
+        <AnalyticsDependencyModal component="pkg" version="1.0.0" open onOpenChange={() => {}} />
+      </MemoryRouter>,
+    );
+  }
+
+  it("counts every finding and says the list holds only the most severe of them", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [finding("CVE-1", "CRITICAL"), finding("CVE-2", "HIGH")], total: 130 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    expect(screen.getByText("130")).toBeInTheDocument();
+    expect(screen.getByText("Showing the 2 most severe of 130 findings.")).toBeInTheDocument();
   });
 });

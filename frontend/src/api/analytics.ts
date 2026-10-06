@@ -123,10 +123,10 @@ export const analyticsApi = {
         component: string,
         version?: string,
         releaseEnvironment?: string
-      ): Promise<ComponentFinding[]> => {
+      ): Promise<{ items: ComponentFinding[]; total: number }> => {
         const params = buildQueryParams({ component, version, release_environment: releaseEnvironment });
         const response = await api.get<ComponentFinding[]>('/analytics/component-findings', { params });
-        return response.data;
+        return { items: response.data, total: Number(response.headers['x-total-count'] ?? response.data.length) };
     },
 
     getDependencyMetadata: async (

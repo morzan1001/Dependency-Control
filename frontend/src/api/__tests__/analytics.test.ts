@@ -184,3 +184,21 @@ describe("analyticsApi release environment", () => {
     expect((config.params as URLSearchParams).has(RELEASE_PARAM)).toBe(false);
   });
 });
+
+describe("analyticsApi.getComponentFindings", () => {
+  const findings = [{ id: "CVE-1" }, { id: "CVE-2" }];
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("takes the total from the header, which counts beyond the listed findings", async () => {
+    mockGet.mockResolvedValue({ data: findings, headers: { "x-total-count": "130" } });
+
+    expect(await analyticsApi.getComponentFindings("openssl")).toEqual({ items: findings, total: 130 });
+  });
+
+  it("counts the list itself when the server sends no total", async () => {
+    mockGet.mockResolvedValue({ data: findings, headers: {} });
+
+    expect(await analyticsApi.getComponentFindings("openssl")).toEqual({ items: findings, total: 2 });
+  });
+});

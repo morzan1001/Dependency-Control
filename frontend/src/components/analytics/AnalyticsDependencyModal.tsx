@@ -506,14 +506,15 @@ export function AnalyticsDependencyModal({
   const { data: metadata, isLoading: isLoadingMetadata } = useDependencyMetadata(
     enabledComponent, version, type, releaseEnvironment,
   )
-  const { data: findings, isLoading: isLoadingFindings } = useComponentFindings(
+  const { data: findingsPage, isLoading: isLoadingFindings } = useComponentFindings(
     enabledComponent, version, releaseEnvironment,
   )
+  const totalFindings = findingsPage?.total ?? 0
 
   const sortedFindings = useMemo(() => {
-    if (!findings) return []
-    
-    return [...findings].sort((a, b) => {
+    if (!findingsPage) return []
+
+    return [...findingsPage.items].sort((a, b) => {
       let comparison = 0
       
       switch (sortBy) {
@@ -534,7 +535,7 @@ export function AnalyticsDependencyModal({
       
       return sortOrder === 'asc' ? comparison : -comparison
     })
-  }, [findings, sortBy, sortOrder])
+  }, [findingsPage, sortBy, sortOrder])
 
   const handleSort = (field: SortField) => {
     if (sortBy === field) {
@@ -577,10 +578,15 @@ export function AnalyticsDependencyModal({
             <h3 className="text-lg font-medium flex items-center gap-2">
               <Shield className="h-5 w-5" />
               Findings
-              {sortedFindings.length > 0 && (
-                <Badge variant="secondary">{sortedFindings.length}</Badge>
+              {totalFindings > 0 && (
+                <Badge variant="secondary">{totalFindings}</Badge>
               )}
             </h3>
+            {sortedFindings.length < totalFindings && (
+              <p className="text-sm text-muted-foreground">
+                Showing the {sortedFindings.length} most severe of {totalFindings} findings.
+              </p>
+            )}
 
             {isLoadingFindings && (
               <div className="space-y-2">
