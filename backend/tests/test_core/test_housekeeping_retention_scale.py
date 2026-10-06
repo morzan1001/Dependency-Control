@@ -14,12 +14,11 @@ MODULE = "app.core.housekeeping"
 
 _PROJECT_ID = "p1"
 _RETENTION_DAYS = 30
-_NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+_NOW = datetime.now(timezone.utc)
 _EXPIRED_AT = _NOW - timedelta(days=365)
-# More than one batch, and a last batch that is not full.
-_CANDIDATE_COUNT = ARCHIVE_BATCH_SIZE * 2 + 3
+_CANDIDATE_COUNT = ARCHIVE_BATCH_SIZE + 1
 # In the second batch, so a per-batch lookup has to run more than once to protect it.
-_RESCAN_SOURCE_INDEX = ARCHIVE_BATCH_SIZE + 1
+_RESCAN_SOURCE_INDEX = ARCHIVE_BATCH_SIZE
 _RESCAN_ID = "rescan-of-the-source"
 _INT_FLAGGED_RELEASE = "release-flagged-with-one"
 _INT_PINNED = "pinned-with-one"

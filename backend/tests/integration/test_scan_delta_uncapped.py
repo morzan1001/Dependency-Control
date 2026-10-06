@@ -22,9 +22,9 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 _PROJECT = "delta-project"
 _SBOM = json.loads((Path(__file__).parents[1] / "fixtures/sbom/npmpeer.syft.cdx.json").read_text())
 _COMPONENT = next(c for c in _SBOM["components"] if c.get("purl"))
-_DEPENDENCIES = 60_000
+_DEPENDENCIES = 50_001
 # Sorts past the 50,000th row of the scan's name order.
-_BUMPED = 55_000
+_BUMPED = 50_000
 _EXTRA_CVE = "CVE-2026-00001"
 
 
@@ -94,7 +94,8 @@ async def _count(db, scan_id: str, clause: dict) -> int:
     return await db.findings.count_documents({"project_id": _PROJECT, "scan_id": scan_id, **clause})
 
 
-@pytest.mark.parametrize("side_size", [40, 52_000], ids=["small", "past-the-old-cap"])
+# 50,007 puts the lowest waived index, side_size - 7, on row 50,001.
+@pytest.mark.parametrize("side_size", [40, 50_007], ids=["small", "past-the-old-cap"])
 async def test_the_findings_delta_reads_every_finding_and_every_waiver_of_both_scans(db, side_size):
     """The last indices hold every waiver and change, so on the large side they sit past row 50,000."""
     await create_indexes(db)

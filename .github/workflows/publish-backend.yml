@@ -11,6 +11,7 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -19,10 +20,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Lowercase Image Name
+      - name: Lowercase Repo Name
         run: |
           REPO_LOWER=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NAME=${REPO_LOWER}-backend" >> $GITHUB_ENV
           echo "REPO_NAME=${REPO_LOWER}" >> $GITHUB_ENV
 
       - name: Set up QEMU

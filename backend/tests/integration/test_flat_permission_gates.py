@@ -6,8 +6,8 @@ from app.core.config import settings
 from app.core.permissions import Permissions
 from tests.helpers.auth import bearer_headers
 
-_NO_PERMISSIONS = bearer_headers("nobody", [])
-_CHAT_ACCESS_ONLY = bearer_headers("chatter", [Permissions.CHAT_ACCESS])
+_NO_PERMISSIONS = ("nobody", [])
+_CHAT_ACCESS_ONLY = ("chatter", [Permissions.CHAT_ACCESS])
 
 _ARCHIVE_ROUTES = [
     ("GET", "/api/v1/projects/p/archives", Permissions.ARCHIVE_READ),
@@ -36,19 +36,19 @@ def _refusal(permission: str) -> dict[str, str]:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("method", "path", "permission"), _ARCHIVE_ROUTES)
 async def test_an_archive_route_names_the_permission_it_refuses_on(client, method, path, permission):
-    resp = await client.request(method, path, headers=_NO_PERMISSIONS)
+    resp = await client.request(method, path, headers=bearer_headers(*_NO_PERMISSIONS))
 
     assert resp.status_code == 403
     assert resp.json() == _refusal(permission)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("method", "path", "headers", "permission"), _CHAT_ROUTES)
-async def test_a_chat_route_names_the_permission_it_refuses_on(client, monkeypatch, method, path, headers, permission):
+@pytest.mark.parametrize(("method", "path", "caller", "permission"), _CHAT_ROUTES)
+async def test_a_chat_route_names_the_permission_it_refuses_on(client, monkeypatch, method, path, caller, permission):
     monkeypatch.setattr(settings, "CHAT_ENABLED", True)
     body = {"content": "hi"} if path.endswith("/messages") else {"title": "t"} if method == "POST" else None
 
-    resp = await client.request(method, path, headers=headers, json=body)
+    resp = await client.request(method, path, headers=bearer_headers(*caller), json=body)
 
     assert resp.status_code == 403
     assert resp.json() == _refusal(permission)

@@ -1,10 +1,12 @@
-"""The live scanner uploads the same sbom, cbom and callgraph bodies as the frozen 1.2.0 release."""
+"""The live scanner uploads the same sbom, cbom and callgraph bodies as the frozen 1.2.0 release, and a release mark
+only for an environment the ingest accepts."""
 
 import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -37,7 +39,7 @@ def _stub(directory: Path, name: str, body: str) -> None:
     path.chmod(0o755)
 
 
-def _uploaded_body(script: Path, command: str, tmp_path: Path) -> object:
+def _uploaded_body(script: Path, command: str, tmp_path: Path, **extra_env: str) -> Any:
     stubs, workdir = tmp_path / "bin", tmp_path / "repo"
     stubs.mkdir(parents=True)
     workdir.mkdir()
@@ -63,6 +65,7 @@ def _uploaded_body(script: Path, command: str, tmp_path: Path) -> object:
         "COMMIT_MESSAGE": 'fix: quote "this" and\nthat',
         "CBOM_FILE": str(_FIXTURES / "cbom" / "legacy_crypto_mixed.json"),
         "CAPTURE": str(capture),
+        **extra_env,
     }
     subprocess.run(["bash", str(script), command], cwd=workdir, env=env, check=True, timeout=60, capture_output=True)
     return json.loads(capture.read_text())
@@ -76,3 +79,16 @@ def test_the_uploaded_body_matches_the_frozen_1_2_0_release(command, tmp_path):
     live = _uploaded_body(_SCRIPTS / "scanner.sh", command, tmp_path / "live")
 
     assert live == frozen
+
+
+def test_an_environment_the_ingest_would_reject_drops_the_whole_release_mark(tmp_path):
+    """Dropping only the environment would still mark the scan, and the ingest would file it under production."""
+    body = _uploaded_body(
+        _SCRIPTS / "scanner.sh",
+        "sbom",
+        tmp_path,
+        DEP_CONTROL_IS_RELEASE="true",
+        DEP_CONTROL_RELEASE_ENVIRONMENT="staging eu",
+    )
+
+    assert (body["is_release"], body["release_environment"]) == (False, None)
