@@ -466,6 +466,19 @@ class GitHubService:
         visible: bool | None = await self._cached(f"repository_visible:{org}/{repo}", fetch, bool)
         return visible
 
+    async def _is_personal_account(self, owner: str) -> bool:
+        """Whether a repository owner is a user, whose repositories no team can hold, not an organisation."""
+
+        async def fetch() -> bool | None:
+            endpoint = f"/users/{owner}"
+            async with _org_walk_gate(self._instance_id):
+                response = await self._api_get(endpoint)
+            if response is None or not response_ok("GitHub", endpoint, response):
+                return None
+            return _json_document(response).get("type") == "User"
+
+        return await self._cached(f"owner_kind:{owner}", fetch, bool) is True
+
     async def get_org_teams(self, org: str) -> list[dict[str, Any]] | None:
         """Every team of an organisation, with the parent that tells two same-named ones apart."""
 
@@ -857,6 +870,8 @@ class GitHubService:
         of them. Reads only: nothing is written before the whole set is known."""
         org_teams = await self.get_org_teams(org)
         if org_teams is None:
+            if await self._is_personal_account(org):
+                return []
             logger.warning(
                 "Could not list the teams of GitHub organisation %s; leaving %s/%s untouched.", org, org, repo
             )

@@ -491,6 +491,20 @@ class TestSyncTeamFromGithub:
         assert any("acme" in record.getMessage() for record in caplog.records)
 
     @pytest.mark.asyncio
+    async def test_a_repository_a_personal_account_owns_is_held_by_no_team(self):
+        """GitHub keeps the repository id across a transfer, so a repository moved out of its
+        organisation still finds its project, and the organisation's teams must leave it."""
+        service = _service()
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, org_teams=None) as stubs:
+            stubs.repository.return_value = _response(200, {"login": "acme", "type": "User"})
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-pay"})
+
+        assert result == TeamSyncResult([])
+        assert stubs.repository.await_args.args == ("/users/acme",)
+
+    @pytest.mark.asyncio
     async def test_the_bound_teams_are_read_for_this_instance_and_the_organisation_the_path_names(self):
         service = _service("gh-1")
         team_repo = _team_repo()
