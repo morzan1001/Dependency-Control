@@ -54,7 +54,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
     }
   }, [searchParams, setSearchParams, queryClient])
 
-  const handleInputChange = (field: keyof SystemSettingsType, value: string | number | boolean | string[]) => {
+  const handleInputChange = (field: keyof SystemSettingsType, value: string | number | boolean | string[] | null) => {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 

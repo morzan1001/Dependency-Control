@@ -7,14 +7,14 @@ export interface SystemSettings {
   smtp_host?: string;
   smtp_port?: number;
   smtp_user?: string;
-  smtp_password?: string;
+  smtp_password?: string | null;
   smtp_encryption?: string;
   emails_from_email?: string;
   emails_from_name?: string;
   oidc_enabled?: boolean;
   oidc_provider_name?: string;
   oidc_client_id?: string;
-  oidc_client_secret?: string;
+  oidc_client_secret?: string | null;
   oidc_issuer?: string;
   oidc_authorization_endpoint?: string;
   oidc_token_endpoint?: string;
@@ -28,17 +28,17 @@ export interface SystemSettings {
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
   crypto_policy_mode: 'global' | 'project';
-  slack_bot_token?: string;
+  slack_bot_token?: string | null;
   slack_client_id?: string;
-  slack_client_secret?: string;
+  slack_client_secret?: string | null;
   slack_oauth_scopes?: string;
-  slack_refresh_token?: string;
+  slack_refresh_token?: string | null;
   slack_token_expires_at?: number;
   mattermost_url?: string;
-  mattermost_bot_token?: string;
-  github_token?: string;
-  open_source_malware_api_key?: string;
-  gitlab_access_token?: string;
+  mattermost_bot_token?: string | null;
+  github_token?: string | null;
+  open_source_malware_api_key?: string | null;
+  gitlab_access_token?: string | null;
   // Secret values are never echoed by the API; these flags report stored state.
   github_token_configured?: boolean;
   smtp_password_configured?: boolean;
@@ -85,7 +85,7 @@ export interface AppConfig {
 
 export interface SettingsTabProps {
   formData: Partial<SystemSettings>;
-  handleInputChange: (field: keyof SystemSettings, value: string | number | boolean | string[]) => void;
+  handleInputChange: (field: keyof SystemSettings, value: string | number | boolean | string[] | null) => void;
   handleSave: () => void;
   hasPermission: (permission: string) => boolean;
   isPending: boolean;

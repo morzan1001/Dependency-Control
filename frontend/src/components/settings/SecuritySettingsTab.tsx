@@ -130,7 +130,7 @@ export function SecuritySettingsTab({
                   <Label htmlFor="oidc-client-secret">Client Secret</Label>
                   <SecretInput
                     id="oidc-client-secret"
-                    value={formData.oidc_client_secret || ''}
+                    value={formData.oidc_client_secret}
                     configured={!!formData.oidc_client_secret_configured}
                     onChange={(value) => handleInputChange('oidc_client_secret', value)}
                   />

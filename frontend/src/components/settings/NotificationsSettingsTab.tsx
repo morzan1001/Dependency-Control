@@ -94,7 +94,7 @@ export function NotificationsSettingsTab({
             <SecretInput
               id="smtp-password"
               placeholder="••••••••"
-              value={formData.smtp_password || ''}
+              value={formData.smtp_password}
               configured={!!formData.smtp_password_configured}
               onChange={(value) => handleInputChange('smtp_password', value)}
             />
@@ -182,7 +182,7 @@ export function NotificationsSettingsTab({
                   <SecretInput
                     id="slack-client-secret"
                     placeholder="e.g. 8f7d6e5c4b3a2..."
-                    value={formData.slack_client_secret || ''}
+                    value={formData.slack_client_secret}
                     configured={!!formData.slack_client_secret_configured}
                     onChange={(value) => handleInputChange('slack_client_secret', value)}
                   />
@@ -258,7 +258,7 @@ export function NotificationsSettingsTab({
                 <SecretInput
                   id="slack-token-manual"
                   placeholder="xoxb-..."
-                  value={formData.slack_bot_token || ''}
+                  value={formData.slack_bot_token}
                   configured={!!formData.slack_bot_token_configured}
                   onChange={(value) => handleInputChange('slack_bot_token', value)}
                 />
@@ -295,7 +295,7 @@ export function NotificationsSettingsTab({
             <Label htmlFor="mattermost-token">Mattermost Bot Token</Label>
             <SecretInput
               id="mattermost-token"
-              value={formData.mattermost_bot_token || ''}
+              value={formData.mattermost_bot_token}
               configured={!!formData.mattermost_bot_token_configured}
               onChange={(value) => handleInputChange('mattermost_bot_token', value)}
             />
