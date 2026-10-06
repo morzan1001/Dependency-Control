@@ -210,7 +210,7 @@ class TestPullRequestWorkflowScans:
     """GITHUB_SHA is the test-merge commit; GitHub replaces merge_commit_sha whenever it re-tests mergeability."""
 
     @staticmethod
-    def _decorate(pr_head):
+    def _decorate(pr_head, branch="42/merge"):
         from app.services.analysis.integrations import decorate_github_pr
         from app.services.github import GitHubService
 
@@ -242,7 +242,7 @@ class TestPullRequestWorkflowScans:
             patch.object(GitHubService, "_api_get_paginated", AsyncMock(return_value=[])),
             patch.object(GitHubService, "_api_post", api_post),
         ):
-            scan = _make_scan(commit_hash=_TEST_MERGE)
+            scan = _make_scan(commit_hash=_TEST_MERGE, branch=branch)
             asyncio.run(decorate_github_pr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan, _enabled_project(), db))
         return [call.args[0] for call in api_post.await_args_list]
 
@@ -251,6 +251,11 @@ class TestPullRequestWorkflowScans:
 
     def test_a_test_merge_of_a_superseded_head_is_left_alone(self):
         assert self._decorate(pr_head=_NEWER_HEAD) == []
+
+    def test_a_pushed_merge_of_a_branch_leaves_that_branchs_pull_request_alone(self):
+        """Merging feature into a branch without a PR and pushing gives a commit of the same shape,
+        whose second parent heads the feature's PR; that PR's comment is not this build's to write."""
+        assert self._decorate(pr_head=_HEAD, branch="integration") == []
 
 
 class TestCommentUpsert:
