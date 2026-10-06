@@ -775,13 +775,14 @@ class ChatToolRegistry:
         wanted = ctx.args["dependency_name"]
         dep = await DependencyEnrichmentRepository(ctx.db).get_by_purl(wanted)
         if not dep:
-            match = (
-                {"purl": {"$regex": f"^{re.escape(canonical_purl(wanted))}@"}}
+            matches = (
+                [{"purl": {"$regex": f"^{re.escape(canonical_purl(wanted))}@"}}]
                 if wanted.startswith("pkg:")
-                # A ':' or '/' qualifier may precede the name; an npm "@scope/name" stays whole.
-                else {"name": {"$regex": f"^(?:[^@][^:]*[:/])?{re.escape(wanted)}$", "$options": "i"}}
+                # The whole name wins over the name after a ':' or '/' qualifier; an npm "@scope/name" stays whole.
+                else [{"name": {"$regex": f"^{q}{re.escape(wanted)}$", "$options": "i"}} for q in ("", "[^@][^:]*[:/]")]
             )
-            dep = await ctx.db["dependency_enrichments"].find_one(match)
+            for match in matches:
+                dep = dep or await ctx.db["dependency_enrichments"].find_one(match)
         if not dep:
             return {"error": "Dependency not found in enrichment data"}
         return {"dependency": _serialize_doc(dep)}

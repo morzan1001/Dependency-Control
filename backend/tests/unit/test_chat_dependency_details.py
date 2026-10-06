@@ -3,11 +3,19 @@
 import pytest
 
 from app.models.user import User
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_ADMIN
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PURL = "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1"
+_NPM_UUID = {"name": "uuid", "version": "9.0.1", "purl": "pkg:npm/uuid@9.0.1", "data": {"license": "MIT"}}
+_GO_UUID = {
+    "name": "github.com/google/uuid",
+    "version": "v1.6.0",
+    "purl": "pkg:golang/github.com/google/uuid@v1.6.0",
+    "data": {"license": "BSD-3-Clause"},
+}
 
 
 @pytest.mark.asyncio
@@ -78,3 +86,17 @@ async def test_a_name_or_versionless_purl_finds_that_package_not_one_containing_
     result = await ChatToolRegistry().execute_tool("get_dependency_details", {"dependency_name": asked_for}, admin, db)
 
     assert result["dependency"]["purl"] == "pkg:pypi/requests@2.31.0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enriched", [(_GO_UUID, _NPM_UUID), (_NPM_UUID, _GO_UUID)], ids=["go-first", "npm-first"])
+async def test_a_bare_name_prefers_the_package_of_that_whole_name_over_a_qualified_one(enriched):
+    db = FakeDatabase()
+    # Both orders, so the answer cannot hinge on which package was stored first or last.
+    for package in enriched:
+        await DependencyEnrichmentRepository(db).upsert_many([package])
+    admin = User(id="u-admin", username="admin", email="admin@test.com", permissions=PRESET_ADMIN)
+
+    result = await ChatToolRegistry().execute_tool("get_dependency_details", {"dependency_name": "uuid"}, admin, db)
+
+    assert result["dependency"]["purl"] == _NPM_UUID["purl"]
