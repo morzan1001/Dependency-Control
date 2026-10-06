@@ -35,6 +35,7 @@ http:
         accessControlExposeHeaders:
           - "Content-Length"
           - "Content-Range"
+          - "X-Total-Count"
         accessControlAllowOriginList:
           - "https://dependencycontrol.local"
         accessControlAllowCredentials: true
