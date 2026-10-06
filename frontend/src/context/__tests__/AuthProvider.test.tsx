@@ -68,6 +68,11 @@ function AuthProbe() {
   )
 }
 
+function PermissionsProbe() {
+  const { permissions, isLoading } = useAuth()
+  return <span data-testid="permissions">{isLoading ? '' : permissions.join(',')}</span>
+}
+
 function renderApp(routes: React.ReactNode, queryClient = new QueryClient()) {
   return render(
     <QueryClientProvider client={queryClient}>
@@ -166,7 +171,7 @@ describe('AuthProvider init effect', () => {
     localStorage.setItem('refresh_token', 'refresh')
 
     // Only the mount call resolves; a later failure matters only if the effect re-fires.
-    getMe.mockResolvedValueOnce({ id: 'user-1' })
+    getMe.mockResolvedValueOnce({ id: 'user-1', permissions: ['read'] })
     getMe.mockRejectedValue(new Error('transient 500'))
 
     renderApp(probeRoutes)
@@ -188,6 +193,17 @@ describe('AuthProvider init effect', () => {
     expect(screen.queryByTestId('login-page')).not.toBeInTheDocument()
   })
 
+  it('takes the permissions from the server rather than from the stored token', async () => {
+    // The token predates an admin's change: user:read_all was revoked and project:read granted since.
+    localStorage.setItem('token', makeToken(['user:read_all']))
+    localStorage.setItem('refresh_token', 'refresh')
+    getMe.mockResolvedValue({ id: 'user-1', permissions: ['project:read'] })
+
+    renderApp(<Route path="/dashboard" element={<PermissionsProbe />} />)
+
+    await waitFor(() => expect(screen.getByTestId('permissions').textContent).toBe('project:read'))
+  })
+
   it('sets unauthenticated when no token is present', async () => {
     renderApp(probeRoutes)
     await waitFor(() => {
@@ -203,7 +219,7 @@ describe('AuthProvider logout', () => {
     vi.clearAllMocks()
     localStorage.clear()
     stubBackend()
-    getMe.mockResolvedValue({ id: 'user-1' })
+    getMe.mockResolvedValue({ id: 'user-1', permissions: ['read'] })
   })
 
   it('revokes the server session with the session token', async () => {

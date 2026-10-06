@@ -72,9 +72,4 @@ export const authApi = {
     const response = await api.post<User>('/users/me/2fa/disable', { password });
     return response.data;
   },
-
-  getMe: async (): Promise<User> => {
-    const response = await api.get<User>('/users/me');
-    return response.data;
-  }
 };

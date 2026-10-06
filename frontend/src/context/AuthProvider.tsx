@@ -61,9 +61,8 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       }
 
       try {
-        const decoded: DecodedToken = jwtDecode(token)
-        setPermissions(decoded.permissions || [])
-        await userApi.getMe()
+        const me = await userApi.getMe()
+        setPermissions(me.permissions)
         setIsAuthenticated(true)
       } catch (error) {
         logger.error('Auth init failed', error)
