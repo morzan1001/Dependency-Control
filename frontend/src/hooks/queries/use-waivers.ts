@@ -1,4 +1,4 @@
-import { useMutation, useInfiniteQuery, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useInfiniteQuery, useQuery, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query';
 import { waiverApi } from '@/api/waivers';
 import { WaiverUpdate } from '@/types/waiver';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
@@ -132,5 +132,6 @@ export const useGlobalWaivers = (
             const nextSkip = lastPage.page * lastPage.size;
             return nextSkip < lastPage.total ? nextSkip : undefined;
         },
+        placeholderData: keepPreviousData,
     });
 }

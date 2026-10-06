@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { teamApi } from '@/api/teams';
 import { TeamBindingRequest, TeamCreate, TeamMemberCreate } from '@/types/team';
 
@@ -25,6 +25,7 @@ export const useTeams = (
     queryKey: teamKeys.list({ search, sortBy, sortOrder }),
     queryFn: () => teamApi.getAll(search, sortBy, sortOrder),
     enabled,
+    placeholderData: keepPreviousData,
   });
 };
 
