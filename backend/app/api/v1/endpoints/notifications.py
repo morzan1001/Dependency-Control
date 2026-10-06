@@ -13,7 +13,11 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import project_admin_ids
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
-from app.core.constants import NOTIFICATION_EVENT_ANALYSIS_COMPLETED, NOTIFICATION_EVENT_VULNERABILITY_FOUND
+from app.core.constants import (
+    DEPENDENCIES_SCAN_PACKAGE_INDEX,
+    NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
+    NOTIFICATION_EVENT_VULNERABILITY_FOUND,
+)
 from app.core.permissions import Permissions
 from app.core.purl import package_identity, pep503_normalize
 from app.models.broadcast import Broadcast
@@ -116,7 +120,9 @@ async def suggest_packages(
     ]
 
     try:
-        cursor = DependencyRepository(db).collection.aggregate(pipeline, maxTimeMS=_PACKAGE_SUGGESTION_TIME_LIMIT_MS)
+        cursor = DependencyRepository(db).collection.aggregate(
+            pipeline, maxTimeMS=_PACKAGE_SUGGESTION_TIME_LIMIT_MS, hint=DEPENDENCIES_SCAN_PACKAGE_INDEX
+        )
         results = await cursor.to_list(probe)
     except ExecutionTimeout:
         return PackageSuggestions(names=[], more=True)
@@ -186,7 +192,7 @@ async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict
 
     affected: dict[str, dict[str, bool]] = {}
     projection = {"_id": 0, "scan_id": 1, "name": 1, "version": 1, "type": 1, "purl": 1, "group": 1}
-    async for dep in DependencyRepository(db).iterate_raw(query, projection):
+    async for dep in DependencyRepository(db).collection.find(query, projection, hint=DEPENDENCIES_SCAN_PACKAGE_INDEX):
         dep_type, dep_path = package_identity(dep.get("purl"), dep["name"], dep.get("type"), dep.get("group"))
         candidates = rules_by_segment.get(_segment_key(dep_path), [])
         version = dep.get("version") or ""

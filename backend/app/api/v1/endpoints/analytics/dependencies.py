@@ -18,7 +18,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.core.constants import SCAN_DEPENDENCY_READ_LIMIT, severity_rank_expr
+from app.core.constants import FINDINGS_SCAN_COMPONENT_INDEX, SCAN_DEPENDENCY_READ_LIMIT, severity_rank_expr
 from app.core.permissions import Permissions
 from app.models.dependency import Dependency
 from app.models.finding_record import FindingRecord
@@ -92,9 +92,9 @@ async def _package_finding_query(
     scope: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}}
     if version:
         scope["version"] = version
-    names = await finding_repo.collection.distinct(
-        "component", {**scope, **component_match_query(artifact_segment(component))}
-    )
+    any_spelling = {**scope, **component_match_query(artifact_segment(component))}
+    pipeline = [{"$match": any_spelling}, {"$group": {"_id": "$component"}}]
+    names = [row["_id"] for row in await finding_repo.aggregate(pipeline, hint=FINDINGS_SCAN_COMPONENT_INDEX)]
     representative = cluster_by_package_identity([*names, component])
     wanted = representative[normalize_component(component)]
     same = [name for name in names if representative[normalize_component(name)] == wanted]

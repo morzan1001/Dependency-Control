@@ -3,10 +3,11 @@
 from typing import Any
 
 from pymongo import UpdateOne
+from pymongo.errors import BulkWriteError
 
 from app.core.purl import package_identity_expr
 from app.models.dependency import Dependency
-from app.repositories.base import BaseRepository, find_window
+from app.repositories.base import DUPLICATE_KEY_ERROR, BaseRepository, find_window
 
 
 class DependencyRepository(BaseRepository[Dependency]):
@@ -18,8 +19,17 @@ class DependencyRepository(BaseRepository[Dependency]):
         rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)
         return self._to_model_list(rows), total
 
-    async def upsert_many(self, dependencies: list[Dependency]) -> None:
+    async def upsert_many(self, dependencies: list[Dependency], fresh: bool = False) -> None:
         """Write each dependency over its scan's (name, version, purl) row; the row keeps its newest created_at."""
+        if fresh:
+            try:
+                await self.collection.insert_many([d.model_dump(by_alias=True) for d in dependencies], ordered=False)
+                return
+            except BulkWriteError as e:
+                errors = e.details["writeErrors"]
+                if e.details.get("writeConcernErrors") or any(err["code"] != DUPLICATE_KEY_ERROR for err in errors):
+                    raise
+                dependencies = [dependencies[err["index"]] for err in errors]
         await self.collection.bulk_write(
             [
                 UpdateOne(

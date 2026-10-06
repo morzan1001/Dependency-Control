@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
-from app.core.constants import API_KEY_SURFACE_ADHOC, ARCHIVE_BATCH_SIZE
+from app.core.constants import API_KEY_SURFACE_ADHOC
 from app.core.init_db import create_indexes
 from app.core.permissions import Permissions
 from app.core.worker import AnalysisWorkerManager
@@ -21,6 +22,7 @@ from app.repositories.api_keys import ApiKeyRepository
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files, upload_gridfs_json
 from app.services.scan_cascade import delete_scans_and_related_data
 from tests.helpers.compliance import generated_report
+from tests.helpers.profiler import profiled
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
 _SBOM = json.loads((_FIXTURES / "sbom/npmpeer.syft.cdx.json").read_text())
@@ -151,9 +153,11 @@ async def test_a_file_younger_than_the_window_is_kept(db):
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_the_reaper_walks_more_than_one_batch(db, monkeypatch):
+    batch = 50
+    monkeypatch.setattr("app.services.gridfs_maintenance._REAP_BATCH_SIZE", batch)
     repo = AnalysisResultRepository(db)
     orphans = set()
-    for i in range(2 * ARCHIVE_BATCH_SIZE + 1):
+    for i in range(2 * batch + 1):
         orphans.add(await upload_gridfs_json(db, f"orphan-{i}.json", {"findings": []}))
         await repo.save_result(f"scan-{i}", "trufflehog", {"findings": []})
     referenced = set(await db.analysis_results.distinct("result_gridfs_id"))
@@ -162,6 +166,66 @@ async def test_the_reaper_walks_more_than_one_batch(db, monkeypatch):
     deleted = await reap_orphan_gridfs_files(db)
 
     assert (deleted, await _file_ids(db)) == (len(orphans), referenced)
+
+
+def _minted(at: datetime) -> ObjectId:
+    """An id the driver mints when an upload opens at ``at``."""
+    return ObjectId(int(at.timestamp()).to_bytes(4, "big") + os.urandom(8))
+
+
+async def _stored(db, file_id: ObjectId, uploaded: datetime) -> ObjectId:
+    await db["fs.files"].insert_one(
+        {"_id": file_id, "length": 2, "chunkSize": 261120, "uploadDate": uploaded, "filename": "f.json"}
+    )
+    await db["fs.chunks"].insert_one({"_id": _minted(uploaded), "files_id": file_id, "n": 0, "data": b"{}"})
+    return file_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_one_run_reaps_exactly_the_old_unreferenced_files_and_leftover_chunks(db):
+    now = datetime.now(timezone.utc)
+    old, recent = now - timedelta(days=30), now - timedelta(hours=1)
+    referenced = await _stored(db, _minted(old), old)
+    await db.analysis_results.insert_one({"_id": "r", "scan_id": "s", "result_gridfs_id": str(referenced)})
+    await _stored(db, _minted(old), old)
+    young = await _stored(db, _minted(recent), recent)
+    # A restore re-uploads under the archived id and inserts the rows naming it afterwards.
+    restored = await _stored(db, _minted(old), recent)
+    leftover, restoring, uploading = _minted(old), _minted(old), _minted(recent)
+    await db["fs.chunks"].insert_many(
+        [
+            {"_id": _minted(old), "files_id": leftover, "n": 0, "data": b"{"},
+            {"_id": _minted(recent), "files_id": restoring, "n": 0, "data": b"{"},
+            {"_id": _minted(recent), "files_id": uploading, "n": 0, "data": b"{"},
+        ]
+    )
+
+    deleted = await reap_orphan_gridfs_files(db)
+
+    assert deleted == 1
+    assert await _file_ids(db) == {str(referenced), str(young), str(restored)}
+    assert set(await db["fs.chunks"].distinct("files_id")) == {referenced, young, restored, restoring, uploading}
+
+
+async def _distinct_round_trips(db) -> int:
+    """How many distinct commands one reaper run sends."""
+    _, entries = await profiled(db, reap_orphan_gridfs_files(db))
+    return sum(1 for entry in entries if "distinct" in entry.get("command", {}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_reaping_twice_the_files_costs_no_more_round_trips(db, monkeypatch):
+    repo = AnalysisResultRepository(db)
+    _every_file_outlived_the_window(monkeypatch)
+    for i in range(60):
+        await repo.save_result(f"scan-{i}", "trufflehog", {"findings": []})
+    fewer = await _distinct_round_trips(db)
+    for i in range(60, 120):
+        await repo.save_result(f"scan-{i}", "trufflehog", {"findings": []})
+
+    assert await _distinct_round_trips(db) == fewer
 
 
 @pytest.mark.asyncio

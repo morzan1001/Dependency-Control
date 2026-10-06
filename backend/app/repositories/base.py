@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 UpdateOps = dict[str, Any] | list[dict[str, Any]]
 
+DUPLICATE_KEY_ERROR = 11000
+
 
 async def find_window(
     collection: AsyncIOMotorCollection, query: dict[str, Any], limit: int, **find_kwargs: Any
@@ -123,11 +125,14 @@ class BaseRepository[T: BaseModel]:
     async def create_raw(self, data: dict[str, Any]) -> None:
         await self.collection.insert_one(data)
 
-    async def replace_many_raw(self, docs: list[dict[str, Any]]) -> int:
+    async def replace_many_raw(self, docs: list[dict[str, Any]], fresh: bool = False) -> int:
         """Upsert each document whole by ``_id``; ordered=False so one failed write doesn't abort the batch."""
         if not docs:
             return 0
         try:
+            if fresh:
+                await self.collection.insert_many(docs, ordered=False)
+                return len(docs)
             result = await self.collection.bulk_write(
                 [ReplaceOne({"_id": doc["_id"]}, doc, upsert=True) for doc in docs], ordered=False
             )
@@ -135,16 +140,19 @@ class BaseRepository[T: BaseModel]:
         except BulkWriteError as e:
             if e.details.get("writeConcernErrors"):
                 raise
-            write_errors = e.details["writeErrors"]
-            logger.warning(
-                "Bulk replace into %s dropped %d of %d docs (first error: %s)",
-                self.collection_name,
-                len(write_errors),
-                len(docs),
-                (write_errors[0].get("errmsg", "") or "")[:200] if write_errors else "",
-            )
-            written: int = e.details.get("nUpserted", 0) + e.details.get("nMatched", 0)
-            return written
+            errors = e.details["writeErrors"]
+            stored = {error["index"] for error in errors if fresh and error["code"] == DUPLICATE_KEY_ERROR}
+            dropped = [error for error in errors if error["index"] not in stored]
+            if dropped:
+                logger.warning(
+                    "Bulk replace into %s dropped %d of %d docs (first error: %s)",
+                    self.collection_name,
+                    len(dropped),
+                    len(docs),
+                    (dropped[0].get("errmsg", "") or "")[:200],
+                )
+            written: int = e.details.get("nInserted", 0) + e.details.get("nUpserted", 0) + e.details.get("nMatched", 0)
+            return written + await self.replace_many_raw([docs[index] for index in sorted(stored)])
 
     async def update(self, id: str, update_data: dict[str, Any]) -> T | None:
         if update_data:
@@ -184,14 +192,15 @@ class BaseRepository[T: BaseModel]:
         pipeline: list[dict[str, Any]],
         limit: int | None = None,
         allow_disk_use: bool = False,
+        hint: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
         """allow_disk_use lets mongod spill large $group/$sort sets to disk past the 100MB limit."""
-        cursor = (
-            self.collection.aggregate(pipeline, allowDiskUse=True)
-            if allow_disk_use
-            else self.collection.aggregate(pipeline)
-        )
-        return await cursor.to_list(limit)
+        options: dict[str, Any] = {}
+        if allow_disk_use:
+            options["allowDiskUse"] = True
+        if hint:
+            options["hint"] = hint
+        return await self.collection.aggregate(pipeline, **options).to_list(limit)
 
     async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T, None]:
         async for doc in self.collection.find(query or {}):

@@ -4,11 +4,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any, ClassVar, NamedTuple, cast
 
-from pymongo import ASCENDING
-
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    FINDINGS_SCAN_TYPE_INDEX,
     HIGH_RISK_SCORE_THRESHOLD,
     sort_by_severity,
 )
@@ -528,7 +527,7 @@ def _stats_projection() -> dict[str, int]:
 
 # scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
 # the waiver restamp, so hinting either opens a skip window mid-cursor.
-_STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
+_STATS_CURSOR_HINT = FINDINGS_SCAN_TYPE_INDEX
 
 
 class ScanTally(NamedTuple):

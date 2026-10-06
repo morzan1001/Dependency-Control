@@ -1794,6 +1794,8 @@ class FakeCollection:
         return result
 
     async def create_index(self, keys, **kwargs):
+        if isinstance(keys, dict):
+            keys = list(keys.items())
         if kwargs.get("unique"):
             fields = [keys] if isinstance(keys, str) else [key for key, _direction in keys]
             self._unique_keys.append(tuple(fields))

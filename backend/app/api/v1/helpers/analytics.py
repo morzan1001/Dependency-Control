@@ -343,7 +343,9 @@ def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
     return counts
 
 
-async def vuln_details_by(finding_repo: Any, match: dict[str, Any], *fields: str) -> dict[tuple[Any, ...], list[Any]]:
+async def vuln_details_by(
+    finding_repo: Any, match: dict[str, Any], *fields: str, hint: dict[str, int] | None = None
+) -> dict[tuple[Any, ...], list[Any]]:
     """The distinct live advisories of the vulnerability findings `match` selects, per value tuple of `fields`."""
     rows = await finding_repo.aggregate(
         [
@@ -365,6 +367,7 @@ async def vuln_details_by(finding_repo: Any, match: dict[str, Any], *fields: str
             },
         ],
         allow_disk_use=True,
+        hint=hint,
     )
     return {
         tuple(r["_id"].get(field) for field in fields): [{"vulnerabilities": r["advisories"]}]

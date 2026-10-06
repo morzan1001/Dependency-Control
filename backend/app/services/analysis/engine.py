@@ -756,9 +756,10 @@ async def _persist_findings_and_waivers(
         record["created_at"] = written_at
     # Fitted before the first write: the server drops a document just over 16 MiB from the batch without failing it.
     fitted = [_fit_finding(record) for record in findings_to_insert]
+    fresh = not await finding_repo.exists({"scan_id": scan_id})
     persisted_count = 0
     for i in range(0, len(fitted), _BULK_CHUNK_SIZE):
-        persisted_count += await finding_repo.replace_many_raw(fitted[i : i + _BULK_CHUNK_SIZE])
+        persisted_count += await finding_repo.replace_many_raw(fitted[i : i + _BULK_CHUNK_SIZE], fresh)
     # Only after every chunk is written, so a persist that raises leaves the previous findings in place.
     await finding_repo.delete_older_writes({"scan_id": scan_id}, written_at)
 

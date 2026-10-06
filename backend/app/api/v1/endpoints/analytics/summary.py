@@ -18,6 +18,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.cache import scope_digest
+from app.core.constants import FINDINGS_SCAN_TYPE_INDEX
 from app.core.permissions import Permissions
 from app.core.purl import package_identity_expr
 from app.repositories.dependencies import DependencyRepository
@@ -226,6 +227,7 @@ async def _top_dependencies(
             "$expr": {"$in": [artifact_name_expr("$component"), listed_artifacts]},
         },
         "component",
+        hint=FINDINGS_SCAN_TYPE_INDEX,
     )
     vuln_count_map = build_component_index(
         {component: len(live_cves(details)) for (component,), details in details_by_component.items()}

@@ -15,6 +15,7 @@ import pytest_asyncio
 from app.repositories.dependencies import DependencyRepository
 from app.services.dependency_store import store_scan_dependencies
 from app.services.sbom_parser import parse_sbom
+from tests.helpers.indexes import create_hinted_indexes
 
 SCAN_ID = "scan-join"
 QUALIFIED = "com.fasterxml.jackson.core:jackson-databind"
@@ -64,6 +65,7 @@ def _dependency(_id: str = "d1", name: str = BARE, direct: bool = True) -> dict:
 
 @pytest_asyncio.fixture
 async def seeded(db, owner_auth_headers_proj):
+    await create_hinted_indexes(db)
     await db.scans.insert_one(
         {
             "_id": SCAN_ID,

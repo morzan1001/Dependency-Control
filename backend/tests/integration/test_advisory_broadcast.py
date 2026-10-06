@@ -9,6 +9,7 @@ import pytest_asyncio
 from app.core.permissions import Permissions
 from app.services.notifications.service import notification_service
 from tests.helpers.auth import bearer_headers
+from tests.helpers.indexes import create_hinted_indexes
 
 _NOW = datetime(2026, 9, 28, tzinfo=timezone.utc)
 
@@ -42,6 +43,7 @@ _INVENTORY = {
 
 @pytest_asyncio.fixture
 async def headers(db, client):
+    await create_hinted_indexes(db)
     for project_id, dependencies in _INVENTORY.items():
         admin = f"admin-{project_id}"
         await db.users.insert_one({"_id": admin, "username": admin, "email": f"{admin}@x.io", "is_active": True})

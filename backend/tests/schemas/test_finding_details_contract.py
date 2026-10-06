@@ -59,6 +59,9 @@ ALLOWED_UNDECLARED: dict[tuple[str, str], str] = {
     ("nUpserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("nMatched", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("writeConcernErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
+    ("nInserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
+    ("writeErrors", "app/repositories/dependencies.py"): "pymongo BulkWriteError.details key",
+    ("writeConcernErrors", "app/repositories/dependencies.py"): "pymongo BulkWriteError.details key",
     ("keyPattern", "app/repositories/users.py"): "pymongo DuplicateKeyError.details key",
 }
 

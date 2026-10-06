@@ -869,6 +869,12 @@ SCAN_USABLE_STATUSES = [
 # BSON dates are milliseconds, so a date-ordered pick of scans tie-breaks on _id, lowest first.
 SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", 1)]
 
+# Indexes that reads over every head scan hint: unhinted, a selective filter makes the planner trial-run
+# each scan_id index to the end before it picks one. init_db creates them; a hint without its index errors.
+FINDINGS_SCAN_TYPE_INDEX: dict[str, int] = {"scan_id": 1, "type": 1}
+FINDINGS_SCAN_COMPONENT_INDEX: dict[str, int] = {"scan_id": 1, "component": 1, "version": 1}
+DEPENDENCIES_SCAN_PACKAGE_INDEX: dict[str, int] = {"scan_id": 1, "name": 1, "version": 1, "purl": 1}
+
 # Version changes the "recent updates" list answers with, and the samples the delta writer keeps
 # per scan. One number for both: a writer keeping fewer than the readers show leaves a busy scan
 # unable to fill the list on its own, and the two read paths then answer with different events.
