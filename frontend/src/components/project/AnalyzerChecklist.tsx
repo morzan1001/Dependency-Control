@@ -18,8 +18,6 @@ export function AnalyzerChecklist({ idPrefix, selected, onToggle, className, ren
     <div className={cn('flex flex-col gap-2 border rounded-md p-4 overflow-y-auto', className)}>
       {Object.entries(ANALYZER_CATEGORIES).map(([categoryId, categoryInfo]) => {
         const categoryAnalyzers = AVAILABLE_ANALYZERS.filter((a) => a.category === categoryId)
-        if (categoryAnalyzers.length === 0) return null
-
         return (
           <div key={categoryId} className="mb-3 last:mb-0">
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 pb-1 border-b">
