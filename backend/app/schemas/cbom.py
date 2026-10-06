@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CryptoAssetType(str, Enum):
@@ -38,6 +38,9 @@ QUANTUM_VULNERABLE_PRIMITIVES: frozenset[CryptoPrimitive] = frozenset(
 
 class ParsedCryptoAsset(BaseModel):
     """Normalized crypto asset from CycloneDX 1.6 cryptoProperties."""
+
+    # The parser assigns raw document values; checking each one confines a bad value to its own component.
+    model_config = ConfigDict(validate_assignment=True, coerce_numbers_to_str=True)
 
     bom_ref: str
     name: str

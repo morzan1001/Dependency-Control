@@ -77,6 +77,29 @@ async def test_sbom_without_crypto_components_persists_no_crypto_assets(db):
     assert count == 0, f"Expected 0 CryptoAssets for a plain SBOM, got {count}"
 
 
+@pytest.mark.asyncio
+async def test_a_json_number_in_a_crypto_text_field_keeps_every_asset_of_the_sbom(db):
+    rsa = {"assetType": "algorithm", "algorithmProperties": {"primitive": "pke", "parameterSetIdentifier": 2048}}
+    tls = {"assetType": "protocol", "protocolProperties": {"type": "tls", "version": 1.2}}
+    sbom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "components": [
+            {"type": "cryptographic-asset", "bom-ref": "algo-rsa", "name": "RSA", "cryptoProperties": rsa},
+            {"type": "cryptographic-asset", "bom-ref": "proto-tls", "name": "TLS", "cryptoProperties": tls},
+        ],
+    }
+    scan_id = "scan-numeric-crypto-fields"
+
+    await process_sbom_document(0, sbom, scan_id, db, _MinimalAggregator(), [], None, project_id="test-project-id")
+
+    stored = await db.crypto_assets.find({"scan_id": scan_id}).to_list(None)
+    assert sorted((a["bom_ref"], a["parameter_set_identifier"], a["version"]) for a in stored) == [
+        ("algo-rsa", "2048", None),
+        ("proto-tls", None, "1.2"),
+    ]
+
+
 _PROJECT_ID = "embedded-cbom-project"
 _WORKER = "pod-a/worker-0"
 

@@ -114,6 +114,20 @@ async def test_a_weak_key_in_the_posted_cbom_becomes_one_finding_per_violated_ty
 
 
 @pytest.mark.asyncio
+async def test_a_key_size_written_as_a_json_number_is_graded_like_its_string():
+    algorithm = {"primitive": "pke", "parameterSetIdentifier": 1024}
+    rsa = {**_RSA_1024, "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": algorithm}}
+
+    response = await _run([_cbom(rsa)])
+
+    assert sorted(finding["type"] for finding in _crypto_findings(response)) == [
+        _TYPE_QUANTUM_VULNERABLE,
+        _TYPE_WEAK_KEY,
+    ]
+    assert _CRYPTO_RULES in response.analyzers.ran
+
+
+@pytest.mark.asyncio
 async def test_rules_of_two_types_at_the_same_severity_each_keep_their_finding():
     crypto = _crypto_findings(await _run([_cbom(_DSA)]))
 
