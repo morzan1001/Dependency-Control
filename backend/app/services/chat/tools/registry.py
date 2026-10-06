@@ -778,7 +778,8 @@ class ChatToolRegistry:
             match = (
                 {"purl": {"$regex": f"^{re.escape(canonical_purl(wanted))}@"}}
                 if wanted.startswith("pkg:")
-                else {"name": {"$regex": f"^{re.escape(wanted)}$", "$options": "i"}}
+                # A ':' or '/' qualifier may precede the name; an npm "@scope/name" stays whole.
+                else {"name": {"$regex": f"^(?:[^@][^:]*[:/])?{re.escape(wanted)}$", "$options": "i"}}
             )
             dep = await ctx.db["dependency_enrichments"].find_one(match)
         if not dep:
