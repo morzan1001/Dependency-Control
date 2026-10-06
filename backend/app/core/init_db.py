@@ -41,44 +41,6 @@ RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
 ]
 # The index order left once project_id is matched by equality.
 RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
-_TIE_BREAK_INDEXES: tuple[tuple[str, list[tuple[str, int]]], ...] = (
-    ("scans", SCANS_TIP_INDEX_KEY),
-    ("releases", RELEASES_LATEST_LOOKUP_KEY),
-)
-
-
-async def _migrate_tie_break_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Drop the date-only ancestor of each tie-break index.
-
-    Mongo rejects a key change under an existing index name, and an ancestor left behind is a
-    second index every write to the collection has to maintain for no additional plan.
-    """
-    for collection_name, key in _TIE_BREAK_INDEXES:
-        collection = database[collection_name]
-        ancestor = [(field, direction) for field, direction in key if field != "_id"]
-        for idx_name, idx_info in (await collection.index_information()).items():
-            if [tuple(pair) for pair in idx_info.get("key", [])] == ancestor:
-                logger.info(f"Dropping index superseded by the {collection_name} tie-break key: {idx_name}")
-                await collection.drop_index(idx_name)
-
-
-async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Drop old sparse GitLab/GitHub project indexes; sparse compound indexes still collide on
-    explicit null (Pydantic serializes None), so they are rebuilt with partialFilterExpression."""
-    projects_collection = database["projects"]
-    existing_indexes = await projects_collection.index_information()
-
-    for idx_name, idx_info in existing_indexes.items():
-        key = idx_info.get("key", [])
-        is_sparse = idx_info.get("sparse", False)
-
-        if key == [("gitlab_instance_id", 1), ("gitlab_project_id", 1)] and is_sparse:
-            logger.info(f"Dropping old sparse GitLab index: {idx_name}")
-            await projects_collection.drop_index(idx_name)
-
-        if key == [("github_instance_id", 1), ("github_repository_id", 1)] and is_sparse:
-            logger.info(f"Dropping old sparse GitHub index: {idx_name}")
-            await projects_collection.drop_index(idx_name)
 
 
 async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
@@ -208,8 +170,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """Create indexes for all collections."""
     logger.info("Creating database indexes...")
 
-    await _migrate_project_indexes(database)
-    await _migrate_tie_break_indexes(database)
     await _backfill_member_and_team_provenance(database)
     # After the provenance backfill, whose pipeline writes team_ids on the projects it stamps.
     await _normalise_unowned_projects(database)
@@ -242,7 +202,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index("sbom_refs.gridfs_id")
 
     # Analysis Results
-    await database["analysis_results"].create_index("scan_id")
     await database["analysis_results"].create_index(
         [("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)]
     )
@@ -256,7 +215,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Dependencies
     await database["dependencies"].create_index("name")
     await database["dependencies"].create_index("purl")
-    # Unique key permits idempotent upserts during concurrent SBOM ingestion.
+    # Unique key permits idempotent upserts during concurrent SBOM ingestion. Every row carries a
+    # scan_id, so sparse leaves none out and the key serves every (scan_id, name, version) read.
     await database["dependencies"].create_index(
         [
             ("scan_id", pymongo.ASCENDING),
@@ -265,7 +225,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("purl", pymongo.ASCENDING),
         ],
         unique=True,
-        sparse=True,  # null purl is permitted, won't conflict on uniqueness
+        sparse=True,
     )
     await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
@@ -289,7 +249,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # Findings
     await database["findings"].create_index("severity")
-    await database["findings"].create_index("type")
     await database["findings"].create_index("finding_id")  # Logical CVE id, not _id.
     # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
     await database["findings"].create_index(
@@ -396,14 +355,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.ASCENDING),
             ("first_seen_at", pymongo.ASCENDING),
             ("scan_created_at", pymongo.ASCENDING),
-        ]
-    )
-
-    await database["dependencies"].create_index(
-        [
-            ("scan_id", pymongo.ASCENDING),
-            ("name", pymongo.ASCENDING),
-            ("version", pymongo.ASCENDING),
         ]
     )
 

@@ -1431,9 +1431,9 @@ class FakeCollection:
         """The keys a document contributes to one unique index.
 
         Sparse semantics: a document contributes nothing when every indexed field is ABSENT. An
-        explicit null is a value and still collides — which is why init_db rebuilds the sparse
-        compound project indexes with a partialFilterExpression (see _migrate_project_indexes),
-        Pydantic serialising None being exactly how those nulls arrive.
+        explicit null is a value and still collides — which is why init_db scopes the compound
+        project indexes with a partialFilterExpression, Pydantic serialising None being exactly how
+        those nulls arrive.
 
         A field inside an array contributes one key per element, as a multikey index does, and a
         document's own duplicates collapse into one key — so the server accepts two equal entries
@@ -1801,12 +1801,6 @@ class FakeCollection:
             self.created_indexes.append(keys)
         else:
             self.created_indexes.append(tuple(key for key, _direction in keys))
-
-    async def index_information(self):
-        return {}
-
-    async def drop_index(self, *args, **kwargs):
-        return None
 
     # -- reads ------------------------------------------------------------
 

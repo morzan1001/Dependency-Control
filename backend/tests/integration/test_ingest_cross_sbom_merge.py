@@ -133,8 +133,7 @@ async def test_a_component_without_its_own_purl_is_still_merged(db):
 async def test_the_fake_index_treats_a_null_purl_as_a_colliding_value(db):
     """Guards the emulation, not the app. A sparse COMPOUND index only skips a document when
     every indexed field is absent, and a missing field is indexed as null — so two purl-less
-    rows for one name@version collide in real Mongo exactly as an explicit-null pair does.
-    init_db._migrate_project_indexes documents the same trap for the project indexes."""
+    rows for one name@version collide in real Mongo exactly as an explicit-null pair does."""
     from pymongo.errors import DuplicateKeyError
 
     await create_indexes(db)
