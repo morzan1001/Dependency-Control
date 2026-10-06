@@ -146,12 +146,9 @@ export default function TeamsPage() {
         ))}
       </div>
 
-      <EditTeamDialog 
-        key={selectedTeam?.id}
-        team={selectedTeam} 
-        isOpen={isEditOpen} 
-        onClose={() => setIsEditOpen(false)} 
-      />
+      {isEditOpen && (
+        <EditTeamDialog team={selectedTeam} isOpen onClose={() => setIsEditOpen(false)} />
+      )}
 
       <TeamBindingDialog
         key={`binding-${selectedTeam?.id}`}
