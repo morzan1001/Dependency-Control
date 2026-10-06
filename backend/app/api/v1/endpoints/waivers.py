@@ -217,18 +217,12 @@ async def list_waivers(
         else:
             query["$or"] = search_or
 
-    if active:
+    if active or orphaned:
         query = and_filters(query, non_expired_waiver_filter(datetime.now(timezone.utc)))
 
     if orphaned:
-        # Mirror the UI badge: evaluated, suppressing 0 findings, and not expired.
-        now = datetime.now(timezone.utc)
-        orphaned_clause: dict[str, Any] = {
-            "last_eval_scan_id": {"$ne": None},
-            "last_match_count": 0,
-            **non_expired_waiver_filter(now),
-        }
-        query = and_filters(query, orphaned_clause)
+        # Mirror the UI badge: active, evaluated, and suppressing 0 findings.
+        query = and_filters(query, {"last_eval_scan_id": {"$ne": None}, "last_match_count": 0})
 
     waiver_repo = WaiverRepository(db)
 
