@@ -23,7 +23,7 @@ export interface GitLabInstanceCreate {
   description?: string;
   is_active?: boolean;
   access_token?: string;
-  oidc_audience?: string;
+  oidc_audience: string;
   auto_create_projects?: boolean;
   sync_teams?: boolean;
   team_sync_depth?: number;

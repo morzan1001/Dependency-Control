@@ -74,6 +74,7 @@ function gitlabInstance(overrides: Partial<GitLabInstance> = {}) {
           id: 'gl-1',
           name: 'Internal GitLab',
           url: 'https://gitlab.example.com',
+          oidc_audience: 'https://dc.example.com',
           is_active: true,
           auto_create_projects: false,
           sync_teams: true,
@@ -206,6 +207,7 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     fireEvent.change(within(dialog).getByLabelText('OIDC Issuer URL *'), {
       target: { value: 'https://token.actions.githubusercontent.com' },
     })
+    fireEvent.change(within(dialog).getByLabelText('OIDC Audience *'), { target: { value: 'dependency-control' } })
     return dialog
   }
 
@@ -254,6 +256,7 @@ describe('CICDInstancesManagement owner and namespace allowlists', () => {
 
     fireEvent.change(within(dialog).getByLabelText('Name *'), { target: { value: 'GitHub.com' } })
     fireEvent.change(within(dialog).getByLabelText('OIDC Issuer URL *'), { target: { value: url } })
+    fireEvent.change(within(dialog).getByLabelText('OIDC Audience *'), { target: { value: 'dependency-control' } })
     return dialog
   }
 
@@ -402,7 +405,7 @@ function fillCreateForm(provider: 'GitLab' | 'GitHub') {
   fireEvent.change(within(dialog).getByLabelText(provider === 'GitHub' ? 'OIDC Issuer URL *' : 'URL *'), {
     target: { value: 'https://ci.example.com' },
   })
-  fireEvent.change(within(dialog).getByLabelText(/^OIDC Audience/), { target: { value: 'dependency-control' } })
+  fireEvent.change(within(dialog).getByLabelText('OIDC Audience *'), { target: { value: 'dependency-control' } })
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create Instance' }))
 }
 
@@ -418,7 +421,7 @@ function deleteFrom(row: RegExp) {
 describe('CICDInstancesManagement refusals', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockUseGitLabInstances.mockReturnValue(gitlabInstance({ oidc_audience: 'https://dc.example.com' }))
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
     mockUseGitHubInstances.mockReturnValue(githubInstance())
   })
 
@@ -436,5 +439,38 @@ describe('CICDInstancesManagement refusals', () => {
     act()
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('oidc_audience must not be empty'))
+  })
+})
+
+describe('CICDInstancesManagement OIDC audience', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseGitLabInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+    mockUseGitHubInstances.mockReturnValue(githubInstance())
+  })
+
+  it('asks for the audience before an instance can be created', () => {
+    renderManagement()
+    fireEvent.click(screen.getByRole('button', { name: 'Add Instance' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Name *'), { target: { value: 'Internal GitLab' } })
+    fireEvent.change(within(dialog).getByLabelText('URL *'), { target: { value: 'https://gitlab.example.com' } })
+
+    expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeDisabled()
+
+    fireEvent.change(within(dialog).getByLabelText('OIDC Audience *'), { target: { value: '   ' } })
+    expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeDisabled()
+
+    fireEvent.change(within(dialog).getByLabelText('OIDC Audience *'), { target: { value: 'https://dc.example.com' } })
+    expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeEnabled()
+  })
+
+  it('does not save an instance whose audience was emptied', () => {
+    renderManagement()
+    const dialog = openEditDialog(/GitHub\.com/)
+
+    fireEvent.change(within(dialog).getByLabelText('OIDC Audience *'), { target: { value: '' } })
+
+    expect(within(dialog).getByRole('button', { name: 'Update Instance' })).toBeDisabled()
   })
 })

@@ -223,7 +223,7 @@ export function CICDInstancesManagement() {
         url: formData.url,
         description: formData.description || undefined,
         access_token: formData.access_token,
-        oidc_audience: formData.oidc_audience || undefined,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
@@ -237,7 +237,7 @@ export function CICDInstancesManagement() {
         url: formData.url,
         github_url: formData.github_url || undefined,
         description: formData.description || undefined,
-        oidc_audience: formData.oidc_audience || undefined,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         is_active: formData.is_active,
@@ -257,7 +257,7 @@ export function CICDInstancesManagement() {
         url: formData.url,
         description: formData.description || undefined,
         access_token: formData.access_token || undefined,
-        oidc_audience: formData.oidc_audience || undefined,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
@@ -271,7 +271,7 @@ export function CICDInstancesManagement() {
         url: formData.url,
         github_url: formData.github_url || undefined,
         description: formData.description || undefined,
-        oidc_audience: formData.oidc_audience || undefined,
+        oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
         is_active: formData.is_active,
@@ -320,7 +320,7 @@ export function CICDInstancesManagement() {
   };
 
   const isCreateDisabled = () => {
-    if (isCreatePending || !formData.name || !formData.url) return true;
+    if (isCreatePending || !formData.name || !formData.url || !formData.oidc_audience.trim()) return true;
     if (formData.sync_teams && !formData.access_token) return true;
     return lacksRequiredAllowlist(formData);
   };
@@ -493,7 +493,7 @@ export function CICDInstancesManagement() {
             </Button>
             <Button
               onClick={handleUpdate}
-              disabled={isUpdatePending || !formData.name || !formData.url}
+              disabled={isUpdatePending || !formData.name || !formData.url || !formData.oidc_audience.trim()}
             >
               {isUpdatePending ? "Updating..." : "Update Instance"}
             </Button>
@@ -659,7 +659,7 @@ function InstanceForm({
       </div>
 
       <div className="grid gap-2">
-        <Label htmlFor="ci-oidc-audience">OIDC Audience</Label>
+        <Label htmlFor="ci-oidc-audience">OIDC Audience *</Label>
         <Input
           id="ci-oidc-audience"
           placeholder={formData.type === "gitlab" ? "https://dependencycontrol.example.com" : "dependency-control"}
@@ -667,7 +667,7 @@ function InstanceForm({
           onChange={(e) => setFormData((prev) => ({ ...prev, oidc_audience: e.target.value }))}
         />
         <p className="text-sm text-muted-foreground">
-          Expected 'aud' claim for OIDC tokens from this instance (optional).
+          Expected 'aud' claim for OIDC tokens from this instance; the CI job must request this audience.
         </p>
       </div>
 
