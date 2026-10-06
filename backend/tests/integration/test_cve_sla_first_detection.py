@@ -81,9 +81,10 @@ async def _persist(db, scan_id: str, scan_created_at: datetime, *findings: Findi
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 
-async def _store_legacy_copy(db, scan_created_at: datetime) -> None:
-    legacy, _ = _prepare_finding_records([_critical_cve()], "legacy-scan", _PROJECT, scan_created_at)
-    await db.findings.insert_many(legacy)
+async def _store_copy(db, scan_id: str, scan_created_at: datetime, finding: Finding, **stored: datetime) -> None:
+    """A copy as releases before advisory dates stored it, with only the finding-level dates given."""
+    [record], _ = _prepare_finding_records([finding], scan_id, _PROJECT, scan_created_at)
+    await db.findings.insert_one({**record, **stored})
 
 
 async def _sla_controls(db, scan_id: str) -> dict[str, ControlResult]:
@@ -152,7 +153,7 @@ async def test_reanalysing_a_scan_keeps_the_date_it_had_inherited(db, database):
 @pytest.mark.parametrize("database", _DATABASES)
 @pytest.mark.asyncio
 async def test_a_stored_finding_without_first_seen_at_counts_from_its_scan(db, database):
-    await _store_legacy_copy(db, _days_ago(150))
+    await _store_copy(db, "legacy-scan", _days_ago(150), _critical_cve())
 
     docs = await _persist(db, "scan-1", _NOW, _critical_cve())
 
@@ -204,7 +205,7 @@ async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database
 @pytest.mark.parametrize("database", _DATABASES)
 @pytest.mark.asyncio
 async def test_a_critical_cve_in_a_copy_predating_first_seen_at_fails_its_sla_from_its_scan_date(db, database):
-    await _store_legacy_copy(db, _days_ago(400))
+    await _store_copy(db, "legacy-scan", _days_ago(400), _critical_cve())
 
     critical = (await _sla_controls(db, "legacy-scan"))["CVE-SLA-CRITICAL"]
 
@@ -348,12 +349,41 @@ async def test_a_cve_one_scan_of_its_version_missed_keeps_its_first_detection(db
 @pytest.mark.parametrize("database", _DATABASES)
 @pytest.mark.asyncio
 async def test_an_advisory_stored_without_its_own_date_counts_from_its_findings_first_detection(db, database):
-    dated, _ = _prepare_finding_records([_critical_cve()], "dated-scan", _PROJECT, _days_ago(30))
-    await db.findings.insert_many([{**dated[0], "first_seen_at": _days_ago(150), "created_at": _days_ago(30)}])
+    await _store_copy(
+        db, "dated-scan", _days_ago(30), _critical_cve(), first_seen_at=_days_ago(150), created_at=_days_ago(30)
+    )
 
     [doc] = await _persist(db, "scan-1", _NOW, _log4j_advisories(_LOG4SHELL, version="2.15.0"))
 
     assert _advisory_first_seen(doc) == {"CVE-2021-44228": _days_ago(150)}
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_undated_copies_of_another_version_do_not_cut_a_cves_earlier_detection(db, database):
+    high, low = ("CVE-2021-44228", Severity.HIGH), ("CVE-2021-45046", Severity.LOW)
+    await _store_copy(db, "v-100", _days_ago(100), _log4j_advisories(low))
+    await _store_copy(db, "v-60", _days_ago(60), _log4j_advisories(high, low))
+    await _store_copy(db, "w-20", _days_ago(20), _log4j_advisories(high, version="2.15.0"))
+
+    [doc] = await _persist(db, "scan-now", _NOW, _log4j_advisories(high, low))
+
+    assert _advisory_first_seen(doc) == {"CVE-2021-44228": _days_ago(60), "CVE-2021-45046": _days_ago(100)}
+    assert (await _sla_controls(db, "scan-now"))["CVE-SLA-HIGH"].status == ControlStatus.FAILED.value
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_a_partial_newest_copy_does_not_hand_a_cve_to_another_versions_undated_copy(db, database):
+    high, low = ("CVE-2021-44228", Severity.HIGH), ("CVE-2021-45046", Severity.LOW)
+    partial, bumped = _log4j_advisories(low), _log4j_advisories(high, version="2.15.0")
+    await _store_copy(db, "v-200", _days_ago(200), _log4j_advisories(high, low))
+    await _store_copy(db, "v-4", _days_ago(4), partial, first_seen_at=_days_ago(200), created_at=_days_ago(4))
+    await _store_copy(db, "w-3", _days_ago(3), bumped, first_seen_at=_days_ago(10), created_at=_days_ago(3))
+
+    [doc] = await _persist(db, "scan-now", _NOW, _log4j_advisories(high, low))
+
+    assert _advisory_first_seen(doc) == {"CVE-2021-44228": _days_ago(200), "CVE-2021-45046": _days_ago(200)}
 
 
 @pytest.mark.parametrize("database", _DATABASES)

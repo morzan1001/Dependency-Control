@@ -44,10 +44,9 @@ VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
 
 _DETECTION_CHUNK = 10_000
 
-# What advisory_detections reads of a copy: its component, its date, and each advisory's names and date.
+# What advisory_detections reads of a copy: its component, and each advisory's names and date.
 _COPY_DATES: dict[str, Any] = {
     "component": "$component",
-    "first_seen_at": {"$ifNull": ["$first_seen_at", "$scan_created_at"]},
     "advisories": {
         "$map": {
             "input": "$details.vulnerabilities",
@@ -163,8 +162,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[tuple[str, str], datetime]:
         """Earliest detection per (component, advisory id) of the records' advisories over every stored version.
-        Every persist carries the earliest dates into its copies, so each version's newest copy answers, except
-        for an advisory none of them lists, which every copy of its component dates."""
+        Every persist dates each advisory of its copy with its earliest detection, so each version's newest copy
+        answers for the advisories it dates, and every copy of the component dates the rest."""
         asked: dict[str, set[str]] = defaultdict(set)
         for record in records:
             for entry in record["details"]["vulnerabilities"]:
@@ -186,7 +185,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
             if missed := [c for c in chunk if any((c, advisory_id) not in earliest for advisory_id in asked[c])]:
                 every = [
                     {"$match": {"project_id": project_id, "component": {"$in": missed}, **VULNERABILITIES_ONLY}},
-                    {"$project": _COPY_DATES},
+                    # A copy's date spans at most its own version, so only the minimum over every copy may use it.
+                    {"$project": {**_COPY_DATES, "first_seen_at": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}},
                 ]
                 await self._fold_advisory_dates(earliest, every, FIRST_DETECTION_INDEX)
         return earliest
@@ -197,7 +197,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         async for copy in self.collection.aggregate(pipeline, hint=dict(index)):
             for advisory in copy["advisories"] or []:
                 # A copy written before its advisories carried their own date has its finding's.
-                if first := advisory.get("first_seen_at") or copy["first_seen_at"]:
+                if first := advisory.get("first_seen_at") or copy.get("first_seen_at"):
                     for advisory_id in advisory_ids(advisory):
                         key = (copy["component"], advisory_id)
                         earliest[key] = min(earliest.get(key, first), first)
