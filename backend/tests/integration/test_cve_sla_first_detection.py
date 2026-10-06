@@ -14,7 +14,12 @@ from app.core import ensure_utc
 from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType, Severity
 from app.models.waiver import Waiver
-from app.repositories.findings import _DETECTION_CHUNK, FindingRepository
+from app.repositories.findings import (
+    _DETECTION_CHUNK,
+    NEWEST_VULNERABILITY_INDEX,
+    VULNERABILITIES_ONLY,
+    FindingRepository,
+)
 from app.repositories.waivers import WaiverRepository
 from app.schemas.compliance import ControlResult, ControlStatus
 from app.services.aggregation.aggregator import ResultAggregator
@@ -579,3 +584,12 @@ async def test_advisories_across_two_lookup_chunks_give_the_single_chunk_dates(d
 
     assert two_chunks == single_chunk
     assert sorted(ensure_utc(date) for date in two_chunks.values()) == [_days_ago(60), _days_ago(30)]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_startup_accepts_the_newest_copy_index_built_ahead_of_the_rollout(db):
+    await db.findings.drop_indexes()
+    await db.findings.create_index(NEWEST_VULNERABILITY_INDEX, partialFilterExpression=VULNERABILITIES_ONLY)
+
+    await create_indexes(db)

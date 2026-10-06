@@ -389,9 +389,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
     # Both detection lookups hint these keys; an unsatisfiable hint errors, so every persist needs them.
     await database["findings"].create_index(FIRST_DETECTION_INDEX)
-    await database["findings"].create_index(
-        NEWEST_VULNERABILITY_INDEX, name="newest_vulnerability_copy", partialFilterExpression=VULNERABILITIES_ONLY
-    )
+    await database["findings"].create_index(NEWEST_VULNERABILITY_INDEX, partialFilterExpression=VULNERABILITIES_ONLY)
 
     await database["dependencies"].create_index(
         [
