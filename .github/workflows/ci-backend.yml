@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Install dependencies
         run: |
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mongo:
-        image: mongo:7
+        image: percona/percona-server-mongodb:8.0.17-6
         ports:
           - 27017:27017
         options: >-
@@ -67,7 +67,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Install dependencies
         run: |
@@ -98,7 +98,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Install dependencies
         run: |
