@@ -18,6 +18,8 @@ export const waiverKeys = {
 
 const invalidateWaiverDependents = (queryClient: QueryClient) => {
     queryClient.invalidateQueries({ queryKey: scanKeys.all });
+    queryClient.invalidateQueries({ queryKey: ['findings'] });
+    queryClient.invalidateQueries({ queryKey: ['waived-findings-probe'] });
     queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
     queryClient.invalidateQueries({ queryKey: projectKeys.all });
 };
