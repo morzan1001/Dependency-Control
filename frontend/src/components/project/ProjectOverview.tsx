@@ -5,6 +5,7 @@ import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan } from '@/types/scan'
 import { resolveRun } from '@/lib/scan-run'
+import { isScanUsable } from '@/lib/scan-status'
 import { highestRiskBranch } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
@@ -46,7 +47,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
   const scanList = scans || []
   const trendWindowBounded = scanList.length >= MAX_SCANS_FOR_CHARTS
 
-  const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
+  const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch) && isScanUsable(s.status))
 
   const selectedTips = useMemo(
     () => (branchTips?.branches ?? []).filter((row) => selectedBranches.includes(row.branch)),
