@@ -139,5 +139,20 @@ async def test_an_old_high_kept_next_to_a_new_critical_is_named_with_its_own_age
     await _build(db, _HEAD, _NOW, patched)
 
     (row,) = (await _stale(db, days_open=30))["findings"]
-    assert row["cve"] == "CVE-2021-45046"
+    assert (row["cve"], row["severity"]) == ("CVE-2021-45046", "HIGH")
+    assert ensure_utc(datetime.fromisoformat(row["first_seen_at"])) == _LONG_AGO
+
+
+async def test_a_stale_critical_names_the_row_over_an_older_high(db, database):
+    await _project(db)
+    older_high = {"id": "CVE-2000-0001", "severity": Severity.HIGH}
+    await _build(
+        db, "scan-first", _NOW - timedelta(days=300), aggregated_vulnerability("log4j-core", "2.14.1", older_high)
+    )
+    both = aggregated_vulnerability("log4j-core", "2.14.1", older_high, _LOG4SHELL_CRITICAL)
+    await _build(db, "scan-second", _LONG_AGO, both)
+    await _build(db, _HEAD, _NOW, both)
+
+    (row,) = (await _stale(db, days_open=30))["findings"]
+    assert (row["cve"], row["severity"]) == ("CVE-2021-44228", "CRITICAL")
     assert ensure_utc(datetime.fromisoformat(row["first_seen_at"])) == _LONG_AGO
