@@ -1,14 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { scanApi } from "@/api/scans";
 import type { ScanWithReleases } from "@/types/scan";
-import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow, useProjectScans } from "../use-scans";
+import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow, useProjectScans, useScan, useScanStats } from "../use-scans";
 
 vi.mock("@/api/scans", () => ({
-  scanApi: { getProjectScans: vi.fn() },
+  scanApi: { getProjectScans: vi.fn(), getOne: vi.fn(), getStats: vi.fn(), getFindings: vi.fn() },
 }));
 
 const PROJECT_ID = "p1";
@@ -134,5 +134,88 @@ describe("useProjectScanWindow", () => {
     expect(result.current.data?.scans).toHaveLength(SCAN_WINDOW_PAGE_SIZE * 2);
     const skips = vi.mocked(scanApi.getProjectScans).mock.calls.map((call) => call[1]?.skip);
     expect(skips).toEqual([0, SCAN_WINDOW_PAGE_SIZE]);
+  });
+});
+
+function scanIn(status: string): ScanWithReleases {
+  return { id: SCAN_ID, project_id: PROJECT_ID, branch: BRANCH, created_at: CREATED_AT, status, releases: [] };
+}
+
+// The scan page: the scan itself, its category stats, and the findings table under its own key.
+function renderScanPage(client: QueryClient) {
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return renderHook(
+    () => ({
+      scan: useScan(SCAN_ID),
+      stats: useScanStats(SCAN_ID),
+      findings: useQuery({
+        queryKey: ["findings", SCAN_ID, "security"],
+        queryFn: () => scanApi.getFindings(SCAN_ID, {}),
+      }),
+    }),
+    { wrapper },
+  );
+}
+
+describe("useScan while the scan is being analysed", () => {
+  const FINDINGS_AFTER_ANALYSIS = 7;
+  const POLL_WAIT_MS = 10_000;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(scanApi.getStats).mockResolvedValueOnce({ security: 0 }).mockResolvedValue({ security: 3 });
+    vi.mocked(scanApi.getFindings)
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, size: 50, pages: 0 })
+      .mockResolvedValue({ items: [], total: FINDINGS_AFTER_ANALYSIS, page: 1, size: 50, pages: 1 });
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it("polls a running scan until it finishes", async () => {
+    vi.mocked(scanApi.getOne).mockResolvedValueOnce(scanIn("processing")).mockResolvedValue(scanIn("completed"));
+    const { result } = renderScanPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await waitFor(() => expect(result.current.scan.data?.status).toBe("processing"));
+    await act(() => vi.advanceTimersByTimeAsync(POLL_WAIT_MS));
+
+    await waitFor(() => expect(result.current.scan.data?.status).toBe("completed"));
+  });
+
+  it("refreshes what the page shows about the scan once it finishes", async () => {
+    vi.mocked(scanApi.getOne).mockResolvedValueOnce(scanIn("pending")).mockResolvedValue(scanIn("completed"));
+    const { result } = renderScanPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await waitFor(() => expect(result.current.stats.data?.security).toBe(0));
+    await act(() => vi.advanceTimersByTimeAsync(POLL_WAIT_MS));
+
+    await waitFor(() => expect(result.current.stats.data?.security).toBe(3));
+    await waitFor(() => expect(result.current.findings.data?.total).toBe(FINDINGS_AFTER_ANALYSIS));
+  });
+
+  it("stops polling once the scan has finished", async () => {
+    vi.mocked(scanApi.getOne).mockResolvedValueOnce(scanIn("processing")).mockResolvedValue(scanIn("completed"));
+    const { result } = renderScanPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await waitFor(() => expect(result.current.scan.data?.status).toBe("processing"));
+    await act(() => vi.advanceTimersByTimeAsync(POLL_WAIT_MS));
+    await waitFor(() => expect(result.current.scan.data?.status).toBe("completed"));
+    const settled = vi.mocked(scanApi.getOne).mock.calls.length;
+
+    await act(() => vi.advanceTimersByTimeAsync(6 * POLL_WAIT_MS));
+
+    expect(scanApi.getOne).toHaveBeenCalledTimes(settled);
+  });
+
+  it("does not poll a scan that is already analysed", async () => {
+    vi.mocked(scanApi.getOne).mockResolvedValue(scanIn("completed"));
+    const { result } = renderScanPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await waitFor(() => expect(result.current.scan.data?.status).toBe("completed"));
+    await act(() => vi.advanceTimersByTimeAsync(6 * POLL_WAIT_MS));
+
+    expect(scanApi.getOne).toHaveBeenCalledTimes(1);
   });
 });
