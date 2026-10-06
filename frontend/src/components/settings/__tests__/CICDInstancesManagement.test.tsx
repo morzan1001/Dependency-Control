@@ -474,3 +474,36 @@ describe('CICDInstancesManagement OIDC audience', () => {
     expect(within(dialog).getByRole('button', { name: 'Update Instance' })).toBeDisabled()
   })
 })
+
+describe('CICDInstancesManagement optional fields', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseGitLabInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+  })
+
+  it('removes the description and base URL an admin empties', async () => {
+    mockUseGitHubInstances.mockReturnValue(githubInstance({ description: 'Public GitHub' }))
+    renderManagement()
+    const dialog = openEditDialog(/GitHub\.com/)
+
+    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: '' } })
+    fireEvent.change(within(dialog).getByLabelText('GitHub Base URL'), { target: { value: '' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Instance' }))
+
+    await waitFor(() => expect(mockGitHubUpdate).toHaveBeenCalled())
+    expect(mockGitHubUpdate.mock.calls[0][1]).toMatchObject({ description: null, github_url: null })
+  })
+
+  it('removes the description of a GitLab instance', async () => {
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance({ description: 'Self-hosted' }))
+    renderManagement()
+    const dialog = openEditDialog(/Internal GitLab/)
+
+    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: '' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Instance' }))
+
+    await waitFor(() => expect(mockGitLabUpdate).toHaveBeenCalled())
+    expect(mockGitLabUpdate.mock.calls[0][1]).toMatchObject({ description: null })
+  })
+})

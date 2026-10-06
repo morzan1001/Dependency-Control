@@ -33,7 +33,7 @@ export interface GitLabInstanceCreate {
 export interface GitLabInstanceUpdate {
   name?: string;
   url?: string;
-  description?: string;
+  description?: string | null;
   is_active?: boolean;
   access_token?: string;
   oidc_audience?: string;

@@ -49,7 +49,18 @@ describe('UserDetailsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(updateMe).toHaveBeenCalledTimes(1))
-    expect(updateMe.mock.calls[0][0]).toEqual({ slack_username: 'U123', mattermost_username: undefined })
+    expect(updateMe.mock.calls[0][0]).toEqual({ slack_username: 'U123', mattermost_username: null })
+  })
+
+  it('removes a stored Slack member ID when the field is emptied', async () => {
+    updateMe.mockResolvedValue(LOCAL_USER)
+    renderCard({ ...LOCAL_USER, slack_username: 'U123' })
+
+    fireEvent.change(screen.getByLabelText('Slack Member ID'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(updateMe).toHaveBeenCalledTimes(1))
+    expect(updateMe.mock.calls[0][0]).toMatchObject({ slack_username: null })
   })
 
   it('keeps the email of an identity-provider account read-only', () => {

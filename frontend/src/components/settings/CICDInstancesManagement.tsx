@@ -255,7 +255,7 @@ export function CICDInstancesManagement() {
       const data: GitLabInstanceUpdate = {
         name: formData.name,
         url: formData.url,
-        description: formData.description || undefined,
+        description: formData.description || null,
         access_token: formData.access_token || undefined,
         oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
@@ -269,8 +269,8 @@ export function CICDInstancesManagement() {
       const data: GitHubInstanceUpdate = {
         name: formData.name,
         url: formData.url,
-        github_url: formData.github_url || undefined,
-        description: formData.description || undefined,
+        github_url: formData.github_url || null,
+        description: formData.description || null,
         oidc_audience: formData.oidc_audience,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
