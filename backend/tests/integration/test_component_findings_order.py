@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.core.init_db import create_indexes
+
 SCAN_ID = "scan-busy"
 COMPONENT = "busy-pkg"
 LOW_COUNT = 104
@@ -32,6 +34,7 @@ def _finding(index: int, severity: str) -> dict:
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_component_findings_list_the_most_severe_first(client, db, owner_auth_headers_proj):
+    await create_indexes(db)
     await db.scans.insert_one(
         {"_id": SCAN_ID, "project_id": "p", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
