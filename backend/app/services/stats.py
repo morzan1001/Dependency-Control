@@ -119,7 +119,7 @@ async def recalculate_project_stats(
     lock_name = f"stats_recalc:{project_id}"
     holder_id = new_lock_holder()
     if not await _acquire_with_backoff(lock_repo, lock_name, holder_id):
-        return None
+        raise TimeoutError(f"{lock_name} stayed taken")
 
     try:
         waivers = await waiver_repo.find_active_for_project(project_id)
@@ -231,7 +231,8 @@ async def _queue_expired_waivers(db: AsyncIOMotorDatabase) -> None:
 async def _recalculate_changed(
     db: AsyncIOMotorDatabase, queued: list[dict[str, Any]], lock_repo: DistributedLocksRepository, holder_id: str
 ) -> bool:
-    """Recalculate every project the queued waivers can reach, each on its own; False once the run lost its lock."""
+    """Recalculate every project the queued waivers can reach, each on its own; False once the run lost its lock or
+    a project's stats lock stayed taken."""
     changed = []
     restamps: dict[str, list[str]] = {}
     for doc in queued:
@@ -258,6 +259,8 @@ async def _recalculate_changed(
             return False
         try:
             await recalculate_project_stats(project_id, db, project_reach, restamp=restamps.get(project_id, ()))
+        except TimeoutError:
+            return False
         except Exception:
             failed += 1
             logger.exception("Waiver recalculation failed for project %s", project_id)

@@ -568,7 +568,7 @@ class TestLockContentionRetry:
         assert backoff_delays == [pytest.approx(0.2), pytest.approx(0.4)]
 
     @pytest.mark.asyncio
-    async def test_recalc_returns_none_after_exhausting_retries(self, seeded_db, monkeypatch):
+    async def test_recalc_raises_after_exhausting_retries(self, seeded_db, monkeypatch):
         from app.repositories.distributed_locks import DistributedLocksRepository
 
         calls = {"n": 0}
@@ -584,9 +584,9 @@ class TestLockContentionRetry:
 
         monkeypatch.setattr("app.services.stats.asyncio.sleep", fake_sleep)
 
-        result = await recalculate_project_stats(PROJECT_ID, seeded_db)
+        with pytest.raises(TimeoutError):
+            await recalculate_project_stats(PROJECT_ID, seeded_db)
 
-        assert result is None  # gives up gracefully
         # Initial attempt + _LOCK_MAX_RETRIES retries.
         from app.services.stats import _LOCK_MAX_RETRIES
 
