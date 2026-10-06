@@ -16,7 +16,6 @@ _PROJECT_ID = "p1"
 _RETENTION_DAYS = 30
 _NOW = datetime.now(timezone.utc)
 _EXPIRED_AT = _NOW - timedelta(days=365)
-# One full batch and one more scan.
 _CANDIDATE_COUNT = ARCHIVE_BATCH_SIZE + 1
 # In the second batch, so a per-batch lookup has to run more than once to protect it.
 _RESCAN_SOURCE_INDEX = ARCHIVE_BATCH_SIZE
