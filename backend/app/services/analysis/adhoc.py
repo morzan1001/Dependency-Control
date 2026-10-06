@@ -75,8 +75,9 @@ _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 
 # Counted as skipped from the dependency graph by design: a crypto asset is routed into
-# ``crypto_assets`` and the rest are not dependencies. Nothing the caller posted was lost.
-_DELIBERATE_SKIP_REASONS = frozenset({"cryptographic-asset", "file", "non-dependency", "root-component"})
+# ``crypto_assets`` once it parses, and the rest are not dependencies.
+_CRYPTO_ASSET = "cryptographic-asset"
+_DELIBERATE_SKIP_REASONS = frozenset({_CRYPTO_ASSET, "file", "non-dependency", "root-component"})
 _UNRECOGNISED_PAYLOAD = "unrecognised payload shape: expected {keys}"
 
 _BEARER = "bearer"
@@ -120,7 +121,7 @@ ADHOC_SKIP_REASONS: dict[str, str] = {
 _SBOM_POSITION = "SBOM #{position}"
 
 _CRYPTO_RULES = "crypto_rules"
-_NO_CRYPTO_ASSETS = "no cryptographic-asset components in the SBOM"
+_NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
 # ``normalize_crypto`` rebuilds each dict into a Finding carrying its own type, so one dispatch
 # key covers every crypto finding type the rules emit.
 _CRYPTO_DISPATCH_KEY = "crypto_weak_algorithm"
@@ -372,6 +373,9 @@ def _input_defects(parsed: ParsedSBOM) -> list[str]:
         for reason, count in parsed.skipped_reasons.items()
         if reason not in _DELIBERATE_SKIP_REASONS and count
     }
+    unread_crypto = parsed.skipped_reasons.get(_CRYPTO_ASSET, 0) - len(parsed.crypto_assets)
+    if unread_crypto > 0:
+        lost[_CRYPTO_ASSET] = unread_crypto
     if lost:
         reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(lost.items()))
         defects.append(_DROPPED_COMPONENTS.format(count=sum(lost.values()), reasons=reasons))

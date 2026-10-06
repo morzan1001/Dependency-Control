@@ -7,7 +7,7 @@ from app.services.analysis.adhoc import run_adhoc_analysis
 from tests.mocks.fake_mongo import FakeDatabase
 
 _CRYPTO_RULES = "crypto_rules"
-_NO_CRYPTO_ASSETS = "no cryptographic-asset components in the SBOM"
+_NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
 # The enrichment stage runs on every request and is reported last.
 _ENRICHMENT = "epss_kev"
 
@@ -125,6 +125,16 @@ async def test_a_key_size_written_as_a_json_number_is_graded_like_its_string():
         _TYPE_WEAK_KEY,
     ]
     assert _CRYPTO_RULES in response.analyzers.ran
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("readable", [[_MD5], []], ids=["beside-a-readable-asset", "alone"])
+async def test_a_crypto_component_the_parser_cannot_read_is_reported_as_dropped(readable):
+    unreadable = {"type": "cryptographic-asset", "bom-ref": "crypto/no-properties", "name": "SHA-1"}
+
+    response = await _run([_cbom(*readable, unreadable)])
+
+    assert "(cryptographic-asset=1)" in response.analyzers.skipped_inputs["SBOM #1"]
 
 
 @pytest.mark.asyncio
