@@ -24,10 +24,12 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [permissions, setPermissions] = useState<string[]>([])
+  const [signedOut, setSignedOut] = useState(false)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (explicit = false) => {
+    if (explicit) setSignedOut(true)
     // Revoked while the tokens are still stored, so the interceptor can refresh an expired access token first.
     if (localStorage.getItem('token')) {
       await authApi.logout().catch((error: unknown) => logger.warn('Server logout failed', error))
@@ -79,6 +81,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   }, [])
 
   const login = useCallback((accessToken: string, refreshToken: string) => {
+    setSignedOut(false)
     localStorage.setItem('token', accessToken)
     localStorage.setItem('refresh_token', refreshToken)
 
@@ -110,7 +113,8 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     isLoading,
     permissions,
     hasPermission,
-  }), [isAuthenticated, login, logout, isLoading, permissions, hasPermission])
+    signedOut,
+  }), [isAuthenticated, login, logout, isLoading, permissions, hasPermission, signedOut])
 
   return (
     <AuthContext.Provider value={contextValue}>

@@ -162,7 +162,7 @@ export default function DashboardLayout() {
             <User className="h-4 w-4" />
             Profile
           </Link>
-          <Button variant="outline" className="w-full justify-start gap-3" onClick={logout}>
+          <Button variant="outline" className="w-full justify-start gap-3" onClick={() => logout(true)}>
             <LogOut className="h-4 w-4" />
             Logout
           </Button>

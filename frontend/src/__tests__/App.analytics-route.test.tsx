@@ -15,6 +15,7 @@ function renderAnalyticsGate(perms: string[]) {
     hasPermission: (permission: string) => perms.includes(permission),
     login: () => undefined,
     logout: () => undefined,
+    signedOut: false,
   }
 
   return render(

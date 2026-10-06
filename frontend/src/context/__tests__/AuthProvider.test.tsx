@@ -130,7 +130,7 @@ function Projects() {
   return (
     <div>
       <span data-testid="owner">{data?.owner ?? ''}</span>
-      <button onClick={logout}>logout</button>
+      <button onClick={() => logout(true)}>logout</button>
     </div>
   )
 }

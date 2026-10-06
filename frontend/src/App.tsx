@@ -77,7 +77,7 @@ function Force2FAGuard({ children }: Readonly<{ children: React.ReactNode }>) {
 }
 
 function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, signedOut } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -92,7 +92,7 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   }
 
   if (!isAuthenticated) {
-    sessionStorage.setItem(LOGIN_RETURN_KEY, location.pathname + location.search + location.hash);
+    if (!signedOut) sessionStorage.setItem(LOGIN_RETURN_KEY, location.pathname + location.search + location.hash);
     return <Navigate to="/login" replace />;
   }
 
