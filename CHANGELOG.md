@@ -1,3 +1,11 @@
+# Release 1.9.50
+
+## 📦 Build & CI
+
+- chore(release): 1.9.50 keeps the archive severity counts on one line (#0)
+
+
+
 # Release 1.9.49
 
 
