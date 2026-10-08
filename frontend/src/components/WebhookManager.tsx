@@ -1,5 +1,6 @@
 import { useState } from "react"
-import { Webhook, WebhookCreate } from "@/types/webhook"
+import { Webhook, WebhookCreate, WebhookType } from "@/types/webhook"
+import { webhookApi } from "@/api/webhooks"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -8,15 +9,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
-import { Trash2, Plus } from "lucide-react"
+import { Trash2, Plus, Send } from "lucide-react"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/context/useAuth"
 import { useDialogState } from "@/hooks/use-dialog-state"
-import { formatDate } from "@/lib/utils"
+import { formatDate, formatDateTime, getErrorMessage } from "@/lib/utils"
 
 // Mirrors the server's detection, which decides the type when the request names none.
-function detectWebhookType(url: string): "generic" | "teams" {
+function detectWebhookType(url: string): WebhookType {
   let host: string;
   let path: string;
   try {
@@ -26,10 +27,19 @@ function detectWebhookType(url: string): "generic" | "teams" {
   } catch {
     return "generic";
   }
+  if (host === "hooks.slack.com") return "slack";
   if (host === "webhook.office.com" || host.endsWith(".webhook.office.com")) return "teams";
   if ((host === "logic.azure.com" || host.endsWith(".logic.azure.com")) && path.includes("/workflows/")) return "teams";
   if ((host === "api.powerplatform.com" || host.endsWith(".api.powerplatform.com")) && path.includes("/workflows/")) return "teams";
   return "generic";
+}
+
+const TYPE_LABELS: Record<WebhookType, string> = { generic: "Generic", teams: "Teams", slack: "Slack" };
+
+// The server stamps last_triggered_at on success and last_failure_at on failure, so the later one is the current state.
+function isFailing(webhook: Webhook): boolean {
+  if (!webhook.last_failure_at) return false;
+  return !webhook.last_triggered_at || Date.parse(webhook.last_failure_at) > Date.parse(webhook.last_triggered_at);
 }
 
 interface WebhookManagerProps {
@@ -41,6 +51,7 @@ interface WebhookManagerProps {
   readonly description?: string
   readonly createPermission?: string | boolean
   readonly deletePermission?: string | boolean
+  readonly testPermission?: string | boolean
 }
 
 export function WebhookManager({ 
@@ -51,7 +62,8 @@ export function WebhookManager({
   title = "Webhooks", 
   description = "Manage webhooks for event notifications.",
   createPermission = "webhook:create",
-  deletePermission = "webhook:delete"
+  deletePermission = "webhook:delete",
+  testPermission = "webhook:update"
 }: WebhookManagerProps) {
   const createDialog = useDialogState()
   const { hasPermission } = useAuth()
@@ -61,6 +73,9 @@ export function WebhookManager({
   const canDeleteWh = typeof deletePermission === 'boolean'
     ? deletePermission
     : hasPermission(deletePermission)
+  const canTest = typeof testPermission === 'boolean'
+    ? testPermission
+    : hasPermission(testPermission)
   const [newWebhook, setNewWebhook] = useState<WebhookCreate>({
     url: "",
     events: [],
@@ -76,7 +91,7 @@ export function WebhookManager({
     {
       id: "vulnerability.found",
       label: "Vulnerability found",
-      description: "Fires when a new vulnerability is detected in a scan.",
+      description: "Fires when a scan finds critical, high, KEV or high-EPSS vulnerabilities.",
     },
     {
       id: "analysis.failed",
@@ -134,6 +149,16 @@ export function WebhookManager({
       toast.success("Webhook deleted")
     } catch {
       toast.error("Failed to delete webhook")
+    }
+  }
+
+  const handleTest = async (id: string) => {
+    try {
+      const result = await webhookApi.test(id)
+      if (result.success) toast.success(`Test delivered (HTTP ${result.status_code})`)
+      else toast.error(`Test failed: ${result.error}`)
+    } catch (error) {
+      toast.error(getErrorMessage(error))
     }
   }
 
@@ -248,15 +273,16 @@ export function WebhookManager({
             <TableRow>
               <TableHead className="w-auto">URL</TableHead>
               <TableHead className="w-[90px]">Type</TableHead>
+              <TableHead className="w-[100px]">Status</TableHead>
               <TableHead className="w-[200px]">Events</TableHead>
               <TableHead className="w-[150px]">Created At</TableHead>
-              <TableHead className="w-[50px]"></TableHead>
+              <TableHead className="w-[90px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {webhooks.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   No webhooks configured
                 </TableCell>
               </TableRow>
@@ -265,9 +291,22 @@ export function WebhookManager({
                 <TableRow key={webhook.id}>
                   <TableCell className="font-mono text-xs truncate max-w-0" title={webhook.url}>{webhook.url}</TableCell>
                   <TableCell>
-                    <Badge variant={webhook.webhook_type === "teams" ? "default" : "outline"}>
-                      {webhook.webhook_type === "teams" ? "Teams" : "Generic"}
+                    <Badge variant={webhook.webhook_type && webhook.webhook_type !== "generic" ? "default" : "outline"}>
+                      {TYPE_LABELS[webhook.webhook_type ?? "generic"]}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {isFailing(webhook) ? (
+                      <Badge variant="destructive" title={`Last failed delivery: ${formatDateTime(webhook.last_failure_at)}`}>
+                        Failing
+                      </Badge>
+                    ) : webhook.last_triggered_at ? (
+                      <Badge variant="outline" title={`Last delivery: ${formatDateTime(webhook.last_triggered_at)}`}>
+                        Delivered
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">No deliveries yet</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
@@ -278,11 +317,18 @@ export function WebhookManager({
                   </TableCell>
                   <TableCell>{formatDate(webhook.created_at)}</TableCell>
                   <TableCell>
-                    {canDeleteWh && (
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    )}
+                    <div className="flex">
+                      {canTest && (
+                        <Button variant="ghost" size="icon" aria-label="Send test" title="Send test" onClick={() => handleTest(webhook.id)}>
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {canDeleteWh && (
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

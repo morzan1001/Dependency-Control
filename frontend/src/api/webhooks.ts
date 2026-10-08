@@ -1,5 +1,5 @@
 import { api } from '@/api/client';
-import { Webhook, WebhookCreate } from '@/types/webhook';
+import { Webhook, WebhookCreate, WebhookTestResult } from '@/types/webhook';
 
 export const webhookApi = {
   getGlobal: async (): Promise<Webhook[]> => {
@@ -34,5 +34,10 @@ export const webhookApi = {
 
   delete: async (id: string): Promise<void> => {
     await api.delete(`/webhooks/${id}`);
+  },
+
+  test: async (id: string): Promise<WebhookTestResult> => {
+    const response = await api.post<WebhookTestResult>(`/webhooks/${id}/test`);
+    return response.data;
   }
 };

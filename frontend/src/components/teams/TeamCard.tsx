@@ -1,7 +1,7 @@
 import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { useCurrentUser } from '@/hooks/queries/use-users';
-import { canUpdateTeam, canDeleteTeam, canManageTeamMembers, canCreateTeamWebhooks, canDeleteTeamWebhooks } from '@/lib/team-roles';
+import { canUpdateTeam, canDeleteTeam, canManageTeamMembers, canCreateTeamWebhooks, canDeleteTeamWebhooks, canTestTeamWebhooks } from '@/lib/team-roles';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { UserPlus, Trash2, Edit, Bell, Link2 } from 'lucide-react';
@@ -32,7 +32,9 @@ export function TeamCard({
   const canRemove = currentUser ? canDeleteTeam(team, currentUser.id, permissions) : false;
   const canManageMembers = currentUser ? canManageTeamMembers(team, currentUser.id, permissions) : false;
   const canWebhooks = currentUser
-    ? canCreateTeamWebhooks(team, currentUser.id, permissions) || canDeleteTeamWebhooks(team, currentUser.id, permissions)
+    ? canCreateTeamWebhooks(team, currentUser.id, permissions)
+      || canDeleteTeamWebhooks(team, currentUser.id, permissions)
+      || canTestTeamWebhooks(team, currentUser.id, permissions)
     : false;
   // A binding decides which repositories of the whole estate land in this team.
   const canBind = hasPermission('system:manage');

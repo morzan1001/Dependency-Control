@@ -1,3 +1,5 @@
+export type WebhookType = "generic" | "teams" | "slack";
+
 export interface Webhook {
   id: string;
   project_id?: string;
@@ -7,12 +9,19 @@ export interface Webhook {
   is_active: boolean;
   created_at: string;
   last_triggered_at?: string;
-  webhook_type?: "generic" | "teams";
+  last_failure_at?: string;
+  webhook_type?: WebhookType;
 }
 
 export interface WebhookCreate {
   url: string;
   events: string[];
   secret?: string;
-  webhook_type?: "generic" | "teams";
+  webhook_type?: WebhookType;
+}
+
+export interface WebhookTestResult {
+  success: boolean;
+  status_code: number | null;
+  error: string | null;
 }

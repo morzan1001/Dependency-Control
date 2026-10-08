@@ -1,15 +1,23 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
+import { toast } from "sonner";
+
+import { webhookApi } from "@/api/webhooks";
+import type { Webhook } from "@/types/webhook";
+
 import { WebhookManager } from "../WebhookManager";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/api/webhooks", () => ({ webhookApi: { test: vi.fn() } }));
 
 vi.mock("@/context/useAuth", () => ({
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
-    permissions: ["webhook:create", "webhook:delete"],
+    permissions: ["webhook:create", "webhook:delete", "webhook:update"],
     hasPermission: (p: string) =>
-      ["webhook:create", "webhook:delete"].includes(p),
+      ["webhook:create", "webhook:delete", "webhook:update"].includes(p),
     login: vi.fn(),
     logout: vi.fn(),
   }),
@@ -59,5 +67,47 @@ describe("WebhookManager", () => {
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
     expect(onCreate.mock.calls[0][0].webhook_type).toBe(expected);
+  });
+
+  const slackHook: Webhook = {
+    id: "w-slack",
+    url: "https://hooks.slack.com/services/T0/B0/x",
+    events: ["vulnerability.found"],
+    is_active: true,
+    created_at: "2026-10-07T07:26:42Z",
+    webhook_type: "slack",
+    last_failure_at: "2026-10-07T09:25:42Z",
+  };
+
+  const renderWith = (webhooks: Webhook[]) =>
+    render(
+      <WebhookManager
+        webhooks={webhooks}
+        isLoading={false}
+        onCreate={vi.fn()}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+  it("labels a Slack webhook as Slack", () => {
+    renderWith([slackHook]);
+
+    expect(screen.getByText("Slack")).toBeInTheDocument();
+  });
+
+  it("marks a webhook whose last delivery failed", () => {
+    renderWith([slackHook, { ...slackHook, id: "w-ok", last_triggered_at: "2026-10-07T10:00:00Z" }]);
+
+    expect(screen.getAllByText("Failing")).toHaveLength(1);
+  });
+
+  it("shows why a test delivery failed", async () => {
+    vi.mocked(webhookApi.test).mockResolvedValue({ success: false, status_code: 400, error: "HTTP 400: no_text" });
+    renderWith([slackHook]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Send test/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("HTTP 400: no_text")));
+    expect(webhookApi.test).toHaveBeenCalledWith("w-slack");
   });
 });

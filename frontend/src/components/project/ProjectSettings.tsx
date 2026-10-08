@@ -23,7 +23,7 @@ import {
   canRotateApiKey,
   canEnforceNotifications,
   canCreateProjectWebhook,
-  canDeleteProjectWebhook,
+  canDeleteProjectWebhook, canTestProjectWebhook,
 } from '@/lib/project-roles'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -141,6 +141,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const canEnforce = canEnforceNotifications(project, userId, permissions)
   const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
   const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
+  const canTestWh = canTestProjectWebhook(project, userId, permissions)
   const canEditCryptoPolicy = isProjectAdmin(project, userId, permissions)
   const isSystemManager = permissions.includes('system:manage')
   const isMember = !!project.members?.some(m => m.user_id === userId)
@@ -776,6 +777,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
         onDelete={handleDeleteWebhook}
         createPermission={canCreateWh}
         deletePermission={canDeleteWh}
+        testPermission={canTestWh}
       />
 
       {(canUpdate || canDelete || canRotateKey) && (

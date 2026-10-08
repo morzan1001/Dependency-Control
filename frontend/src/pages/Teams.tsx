@@ -15,7 +15,7 @@ import { DeleteTeamDialog } from '@/components/teams/DeleteTeamDialog';
 import { TeamWebhooksDialog } from '@/components/teams/TeamWebhooksDialog';
 import { TeamBindingDialog } from '@/components/teams/TeamBindingDialog';
 import { useCurrentUser } from '@/hooks/queries/use-users';
-import { canCreateTeamWebhooks, canDeleteTeamWebhooks } from '@/lib/team-roles';
+import { canCreateTeamWebhooks, canDeleteTeamWebhooks, canTestTeamWebhooks } from '@/lib/team-roles';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import {
   Select,
@@ -182,6 +182,7 @@ export default function TeamsPage() {
         onClose={() => setIsWebhooksOpen(false)}
         canCreate={webhookTeam && currentUser ? canCreateTeamWebhooks(webhookTeam, currentUser.id, permissions) : false}
         canDelete={webhookTeam && currentUser ? canDeleteTeamWebhooks(webhookTeam, currentUser.id, permissions) : false}
+        canTest={webhookTeam && currentUser ? canTestTeamWebhooks(webhookTeam, currentUser.id, permissions) : false}
       />
     </div>
   );

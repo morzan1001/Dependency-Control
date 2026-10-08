@@ -95,3 +95,12 @@ export function canDeleteTeamWebhooks(
 ): boolean {
   return canWriteTeamWebhook(team, userId, globalPermissions, 'webhook:delete');
 }
+
+/** Test team webhook: team admin OR webhook:update plus (membership OR global team:update) */
+export function canTestTeamWebhooks(
+  team: Team,
+  userId: string,
+  globalPermissions: string[]
+): boolean {
+  return canWriteTeamWebhook(team, userId, globalPermissions, 'webhook:update');
+}
