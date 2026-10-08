@@ -161,9 +161,11 @@ async def update_webhook(
     if "url" in update_data and "webhook_type" not in update_data:
         update_data["webhook_type"] = detect_webhook_type(update_data["url"])
 
-    # Failures under the old delivery settings would keep a corrected webhook marked failing and its circuit open.
+    # Results under the old delivery settings would misreport the new ones and keep an old circuit open.
     if any(field in update_data and update_data[field] != getattr(webhook, field) for field in _DELIVERY_FIELDS):
-        update_data.update(consecutive_failures=0, circuit_breaker_until=None, last_failure_at=None)
+        update_data.update(
+            consecutive_failures=0, circuit_breaker_until=None, last_failure_at=None, last_triggered_at=None
+        )
 
     return await webhook_repo.update(webhook_id, update_data)
 

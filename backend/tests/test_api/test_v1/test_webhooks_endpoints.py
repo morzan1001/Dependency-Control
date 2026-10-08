@@ -275,14 +275,15 @@ class TestUpdateWebhook:
             pytest.param({"url": _TEAMS_URL, "secret": _SECRET}, False, id="unchanged-values"),
         ],
     )
-    def test_changing_how_deliveries_go_out_clears_the_failure_state(self, admin_user, update, cleared):
+    def test_changing_how_deliveries_go_out_clears_the_delivery_state(self, admin_user, update, cleared):
         from app.api.v1.endpoints.webhooks import update_webhook
         from app.schemas.webhook import WebhookUpdate
 
-        failure_state = {
+        delivery_state = {
             "consecutive_failures": 5,
             "circuit_breaker_until": datetime(2099, 1, 1, tzinfo=timezone.utc),
             "last_failure_at": datetime(2026, 10, 8, 8, 18, tzinfo=timezone.utc),
+            "last_triggered_at": datetime(2026, 8, 29, 9, 0, tzinfo=timezone.utc),
         }
         db = FakeDatabase()
         asyncio.run(
@@ -293,7 +294,7 @@ class TestUpdateWebhook:
                     "events": ["scan.completed"],
                     "webhook_type": "teams",
                     "secret": _SECRET,
-                    **failure_state,
+                    **delivery_state,
                 }
             )
         )
@@ -306,8 +307,8 @@ class TestUpdateWebhook:
             )
 
         stored = db.webhooks._docs["wh-1"]
-        cleared_state = {"consecutive_failures": 0, "circuit_breaker_until": None, "last_failure_at": None}
-        assert {field: stored[field] for field in failure_state} == (cleared_state if cleared else failure_state)
+        cleared_state = dict.fromkeys(delivery_state, None) | {"consecutive_failures": 0}
+        assert {field: stored[field] for field in delivery_state} == (cleared_state if cleared else delivery_state)
 
 
 class TestDeleteWebhook:
