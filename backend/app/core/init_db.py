@@ -94,7 +94,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["users"].create_index("email", unique=True)
 
     # Projects
-    await database["projects"].create_index("owner_id")
     # Multikey: serves the element equality every ownership filter is and the $in a member's visible
     # scope is. The project list sorts after filtering and this index cannot supply that order, so it
     # blocking-sorts the matched set; a compound {team_ids, <sort key>} would remove it (measured), but
@@ -119,7 +118,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["analysis_results"].create_index("result_gridfs_id", sparse=True)
 
     # Waivers
-    await database["waivers"].create_index("project_id")
     await database["waivers"].create_index("expiration_date")
     await database["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
@@ -163,21 +161,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ]
     )
 
-    # Finding Records
-    await database["finding_records"].create_index(
-        [("project_id", pymongo.ASCENDING), ("finding.component", pymongo.ASCENDING)]
-    )
-    await database["finding_records"].create_index(
-        [
-            ("project_id", pymongo.ASCENDING),
-            ("finding.component", pymongo.ASCENDING),
-            ("finding.type", pymongo.ASCENDING),
-        ]
-    )
-    await database["finding_records"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("finding.type", pymongo.ASCENDING)]
-    )
-
     # GitLab compound index: project_id must be unique per instance.
     await database["projects"].create_index(
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
@@ -194,7 +177,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["projects"].create_index([("created_at", pymongo.DESCENDING)])
 
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
-    await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)])
     await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
     await database["scans"].create_index(
         [
@@ -247,7 +229,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["waivers"].create_index("finding_id")
     await database["waivers"].create_index("package_name")
 
-    await database["webhooks"].create_index("project_id")
     await database["webhooks"].create_index(
         [("is_active", pymongo.ASCENDING), ("circuit_breaker_until", pymongo.ASCENDING)]
     )
@@ -263,7 +244,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # TTL: auto-cleans expired distributed locks.
     await database["distributed_locks"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
-    await database["token_blacklist"].create_index("jti", unique=True)
     # TTL: drops blacklisted JWTs after they would have expired anyway.
     await database["token_blacklist"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
@@ -338,7 +318,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["dependency_enrichments"].create_index("purl", unique=True)
 
     # Archive Metadata
-    await database["archive_metadata"].create_index("project_id")
     await database["archive_metadata"].create_index("scan_id", unique=True)
     await database["archive_metadata"].create_index(
         [("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
@@ -356,10 +335,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await chat_messages.create_index(
         [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
         name="conversation_messages_chronological",
-    )
-    await chat_messages.create_index(
-        [("conversation_id", pymongo.ASCENDING)],
-        name="conversation_cascade_delete",
     )
 
     # Unified API keys
@@ -381,8 +356,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
 
     # Crypto Assets (CBOM)
-    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
-    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index(

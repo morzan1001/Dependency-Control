@@ -16,7 +16,7 @@ class TestModelIdAlias:
         [
             pytest.param(
                 "app.models.project:Project",
-                {"name": "p", "owner_id": "u1"},
+                {"name": "p"},
                 id="Project",
             ),
             pytest.param(
@@ -113,7 +113,7 @@ class TestDatetimeSerialization:
     def test_project_datetime_json(self):
         from app.models.project import Project
 
-        p = Project(name="test", owner_id="u1")
+        p = Project(name="test")
         data = p.model_dump(mode="json")
         assert isinstance(data["created_at"], str)
         datetime.fromisoformat(data["created_at"])
@@ -267,7 +267,6 @@ class TestMongoRoundTrip:
 
         original = Project(
             name="My App",
-            owner_id="u1",
             members=[ProjectMember(user_id="u2", role="editor")],
             active_analyzers=["trivy", "osv"],
             retention_days=30,
@@ -429,21 +428,21 @@ class TestProjectApiKeyHashExclusion:
     def test_model_dump_excludes_api_key_hash(self):
         from app.models.project import Project
 
-        p = Project(name="test", owner_id="u1", api_key_hash="hashed-secret")
+        p = Project(name="test", api_key_hash="hashed-secret")
         dumped = p.model_dump(by_alias=True)
         assert "api_key_hash" not in dumped
 
     def test_api_key_hash_accessible_on_instance(self):
         from app.models.project import Project
 
-        p = Project(name="test", owner_id="u1", api_key_hash="hashed-secret")
+        p = Project(name="test", api_key_hash="hashed-secret")
         assert p.api_key_hash == "hashed-secret"
 
     def test_repository_create_excludes_api_key_hash(self):
         # api_key_hash is set later via a $set update (key generation/rotation), so create() omits it.
         from app.models.project import Project
 
-        project = Project(name="test", owner_id="u1")
+        project = Project(name="test")
         dumped = project.model_dump(by_alias=True)
 
         assert "api_key_hash" not in dumped

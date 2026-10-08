@@ -57,7 +57,6 @@ def _comment(comment_id, body, author=_BOT):
 def _enabled_project(**overrides):
     defaults = {
         "name": "Test",
-        "owner_id": "u1",
         "github_instance_id": "gh-1",
         "github_repository_id": "42",
         "github_repository_path": "acme/widget",

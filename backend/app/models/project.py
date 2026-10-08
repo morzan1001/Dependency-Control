@@ -29,7 +29,6 @@ class ProjectMember(BaseModel):
 
 class Project(MongoDocument, CreatedAtModel):
     name: str
-    owner_id: str | None = None  # Deprecated: use team/member admins instead
     team_ids: list[str] = Field(default_factory=list, description="Every team that owns this project")
     # Provenance per owner: "manual", or "<provider>:<instance id>" naming the sync that established
     # it. A sync only ever replaces the entries naming its own instance, so a hand assignment and
