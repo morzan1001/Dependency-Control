@@ -430,50 +430,14 @@ def _patch_three_pages(service, fetched_pages):
     return _patch_api_client(service, mock_client)
 
 
-class TestGitHubPaginationCap:
-    def test_cap_truncates_and_warns_naming_the_endpoint(self, caplog):
-        """A hit cap must be visible: the result stops at the cap AND a WARNING names endpoint, cap and item count."""
+class TestGitHubPagination:
+    def test_follows_the_link_header_to_the_last_page(self, caplog):
         service = GitHubService(make_github_instance(access_token="ghp-test-token"))
         fetched_pages: list[int] = []
 
         with _patch_three_pages(service, fetched_pages):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=2))
-
-        assert fetched_pages == [1, 2]
-        assert result is not None
-        assert [t["slug"] for t in result] == ["payments", "platform"]
-
-        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
-        message = warnings[0].getMessage()
-        assert _TEAMS_ENDPOINT in message
-        assert "cap of 2 page(s)" in message
-        assert "(2 items)" in message
-        assert "TRUNCATED" in message
-
-    def test_cap_exactly_matching_available_pages_does_not_warn(self, caplog):
-        """A complete result that ends on the cap boundary must not raise a false truncation alarm."""
-        service = GitHubService(make_github_instance(access_token="ghp-test-token"))
-        fetched_pages: list[int] = []
-
-        with _patch_three_pages(service, fetched_pages):
-            with caplog.at_level("WARNING", logger="app.services.github"):
-                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=len(_TEAM_PAGES)))
-
-        assert fetched_pages == [1, 2, 3]
-        assert result is not None
-        assert [t["slug"] for t in result] == ["payments", "platform", "sre"]
-        assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == []
-
-    def test_max_pages_none_fetches_every_page(self, caplog):
-        """max_pages=None is uncapped: all three pages are fetched and nothing warns."""
-        service = GitHubService(make_github_instance(access_token="ghp-test-token"))
-        fetched_pages: list[int] = []
-
-        with _patch_three_pages(service, fetched_pages):
-            with caplog.at_level("WARNING", logger="app.services.github"):
-                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=None))
+                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT))
 
         assert fetched_pages == [1, 2, 3]
         assert result is not None

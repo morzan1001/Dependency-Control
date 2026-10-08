@@ -293,22 +293,18 @@ class GitHubService:
             return None
 
     async def _iter_pages(
-        self,
-        endpoint: str,
-        params: dict[str, Any] | None = None,
-        max_pages: int | None = 10,
+        self, endpoint: str, params: dict[str, Any] | None = None
     ) -> AsyncGenerator[list[dict[str, Any]] | None]:
-        """Each page of a Link-header-paginated GET, then a final None if one failed; a hit ``max_pages`` warns."""
+        """Each page of a Link-header-paginated GET, then a final None if one failed."""
         if not self.instance.access_token or self.api_url is None:
             yield None
             return
 
         failed = False
         page = 1
-        item_count = 0
         try:
             async with self._api_client() as client:
-                while max_pages is None or page <= max_pages:
+                while True:
                     response = await client.get(
                         f"{self.api_url}{endpoint}",
                         headers=self._get_auth_headers(),
@@ -321,12 +317,9 @@ class GitHubService:
                     items = response.json()
                     if not items:
                         break
-                    item_count += len(items)
                     yield items
 
                     if 'rel="next"' not in response.headers.get("link", ""):
-                        break
-                    if self._cap_reached(endpoint, page, max_pages, item_count):
                         break
                     page += 1
         except Exception as e:
@@ -338,32 +331,15 @@ class GitHubService:
             yield None
 
     async def _api_get_paginated(
-        self,
-        endpoint: str,
-        params: dict[str, Any] | None = None,
-        max_pages: int | None = 10,
+        self, endpoint: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]] | None:
         """Every item of a paginated GET, or None when a page failed."""
         all_items: list[dict[str, Any]] = []
-        async for items in self._iter_pages(endpoint, params, max_pages):
+        async for items in self._iter_pages(endpoint, params):
             if items is None:
                 return None
             all_items.extend(items)
         return all_items
-
-    @staticmethod
-    def _cap_reached(endpoint: str, page: int, max_pages: int | None, item_count: int) -> bool:
-        """True (and logs a WARNING) when a finite cap is hit while the Link header still offers a next page."""
-        if max_pages is None or page < max_pages:
-            return False
-        logger.warning(
-            "GitHub API GET %s hit the pagination cap of %d page(s) (%d items) but the Link header "
-            'still offers rel="next". Result is TRUNCATED.',
-            sanitize_for_log(endpoint),
-            max_pages,
-            item_count,
-        )
-        return True
 
     async def list_branches(self, owner: str, repo: str) -> list[str] | None:
         """Fetches all branch names from a GitHub repository. Returns None on API failure."""
@@ -484,7 +460,7 @@ class GitHubService:
 
         async def fetch() -> list[dict[str, Any]] | None:
             async with _org_walk_gate(self._instance_id):
-                teams = await self._api_get_paginated(f"/orgs/{org}/teams", max_pages=None)
+                teams = await self._api_get_paginated(f"/orgs/{org}/teams")
             if teams is None:
                 return None
             return [
@@ -512,7 +488,7 @@ class GitHubService:
         async with _org_walk_gate(self._instance_id):
             if budget.when() is None:
                 budget.reschedule(asyncio.get_running_loop().time() + _GITHUB_ORG_WALK_TIMEOUT)
-            async with aclosing(self._iter_pages(f"/orgs/{org}/teams/{slug}/repos", max_pages=None)) as pages:
+            async with aclosing(self._iter_pages(f"/orgs/{org}/teams/{slug}/repos")) as pages:
                 async for repositories in pages:
                     if repositories is None:
                         return None
@@ -580,7 +556,7 @@ class GitHubService:
         Uncached, unlike ``get_org_teams``: a connection test must observe the token as it is now,
         not as it was five minutes ago.
         """
-        teams = await self._api_get_paginated(f"/orgs/{org}/teams", max_pages=None)
+        teams = await self._api_get_paginated(f"/orgs/{org}/teams")
         return None if teams is None else len(teams)
 
     async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:
@@ -592,7 +568,7 @@ class GitHubService:
             # The endpoint returns plain user objects, so the role can only come from the query.
             for github_role, role in _GITHUB_TEAM_ROLES:
                 async with _org_walk_gate(self._instance_id):
-                    page = await self._api_get_paginated(endpoint, params={"role": github_role}, max_pages=None)
+                    page = await self._api_get_paginated(endpoint, params={"role": github_role})
                 if page is None:
                     return None
                 members.extend({"login": user["login"], "role": role} for user in page if user.get("login"))
@@ -604,7 +580,7 @@ class GitHubService:
     async def get_viewer_organisations(self) -> list[dict[str, Any]] | None:
         """Organisations the token's own identity belongs to. Uncached: a connection test must
         observe the token as it is now, not as it was five minutes ago."""
-        return await self._api_get_paginated("/user/orgs", max_pages=None)
+        return await self._api_get_paginated("/user/orgs")
 
     async def get_core_rate_limit(self) -> GitHubCoreRateLimit | None:
         """The token's core budget, or None when it cannot be read (GHES answers 404 with rate limiting off).
@@ -1088,8 +1064,8 @@ class GitHubService:
         return str(head_sha) if head_sha else None
 
     async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment] | None:
-        """Issue comments on a pull request, uncapped so an old scan comment is never missed; None when a page failed."""
-        comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments", max_pages=None)
+        """Issue comments on a pull request; None when a page failed."""
+        comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments")
         return None if comments is None else [GitHubIssueComment(**c) for c in comments]
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:

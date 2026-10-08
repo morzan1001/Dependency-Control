@@ -207,8 +207,7 @@ async def test_losing_the_last_live_branch_clears_the_head_and_its_stats():
 
 @pytest.mark.asyncio
 async def test_a_head_cleared_while_its_branch_was_gone_comes_back_with_the_branch():
-    """A re-created branch, or one back inside the listing cap, would otherwise leave stats empty
-    until the next build."""
+    """A re-created branch would otherwise leave stats empty until the next build."""
     stored = await _run(
         _project(deleted_branches=[_MAIN], latest_scan_id=None, stats=None),
         [_scan("s-main", _MAIN, stats={"critical": _CRITICALS})],
@@ -342,6 +341,56 @@ async def test_a_failed_branch_listing_logs_one_warning_line_without_a_traceback
     logged = [(r.levelname, r.exc_info) for r in caplog.records if r.levelno >= logging.WARNING]
     assert logged == [("WARNING", None)]
     assert cause in caplog.records[-1].getMessage()
+
+
+_LISTED_BRANCHES = [*(f"bugfix/{n:04d}" for n in range(1, 1001)), _MAIN]
+
+
+def _branch_pages(request: httpx.Request) -> httpx.Response:
+    """Both providers' branch listing as they answer it: a Link header, which GitLab sends with its x-total-pages."""
+    if "page" not in request.url.params:
+        return httpx.Response(200, json={"default_branch": _MAIN}, request=request)
+    page, per_page = int(request.url.params["page"]), int(request.url.params["per_page"])
+    last = -(-len(_LISTED_BRANCHES) // per_page)
+    links = [f'<{request.url.copy_set_param("page", last)}>; rel="last"']
+    if page < last:
+        links.insert(0, f'<{request.url.copy_set_param("page", page + 1)}>; rel="next"')
+    names = _LISTED_BRANCHES[(page - 1) * per_page : page * per_page]
+    headers = {"link": ", ".join(links), "x-total-pages": str(last), "x-total": str(len(_LISTED_BRANCHES))}
+    return httpx.Response(200, json=[{"name": name} for name in names], headers=headers, request=request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("link", "instances", "instance"),
+    [
+        pytest.param({}, "gitlab_instances", _USABLE_INSTANCE, id="gitlab"),
+        pytest.param(
+            {"gitlab_instance_id": None, "github_instance_id": "inst-1", "github_repository_path": "acme/api"},
+            "github_instances",
+            {**_USABLE_INSTANCE, "github_url": "https://github.com"},
+            id="github",
+        ),
+    ],
+)
+async def test_a_branch_past_the_thousandth_is_not_filed_as_deleted(monkeypatch, link, instances, instance):
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(_branch_pages)))
+    project = _project(latest_scan_id="s-main", stats={"critical": 9}, **link)
+    db = await _db(
+        project,
+        [
+            _scan("s-main", _MAIN, stats={"critical": 9}),
+            _scan("s-bugfix", "bugfix/0001", _T0 - timedelta(days=3), stats={"critical": 0}),
+        ],
+    )
+    await getattr(db, instances).insert_one(dict(instance))
+
+    assert await sync_project_branches(project, db) is True
+
+    stored = await db.projects.find_one({"_id": _PROJECT_ID})
+    assert stored["deleted_branches"] == []
+    assert stored["latest_scan_id"] == "s-main"
+    assert stored["stats"] == {"critical": 9}
 
 
 async def _call_endpoint(project: Project, db: FakeDatabase | None = None) -> list[Any]:

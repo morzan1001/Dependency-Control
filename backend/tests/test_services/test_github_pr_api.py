@@ -241,13 +241,12 @@ class TestRejectedLookupsAreLoud:
 
 
 class TestGetPullRequestComments:
-    def test_lists_issue_comments_uncapped(self):
-        """Spec §6: the scan comment can sit past page 10 on a long-lived PR."""
+    def test_lists_the_pull_requests_issue_comments(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         with patch.object(service, "_api_get_paginated", new_callable=AsyncMock, return_value=[]) as paginated:
             asyncio.run(service.get_pull_request_comments("acme", "widget", 7))
 
-        paginated.assert_awaited_once_with("/repos/acme/widget/issues/7/comments", max_pages=None)
+        paginated.assert_awaited_once_with("/repos/acme/widget/issues/7/comments")
 
     def test_parses_comments_and_tolerates_a_missing_body(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
