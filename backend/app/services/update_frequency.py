@@ -629,10 +629,6 @@ _MAX_OBSERVATIONS = 10_000
 ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
 
 
-def ecosystem_counts(deps: dict[str, dict[str, str]]) -> dict[str, int]:
-    return dict(Counter(info["type"] for info in deps.values()))
-
-
 def dominant_ecosystem(eco: Mapping[str, Any]) -> str | None:
     """Ecosystem owning >=70% of the newest scan's classified deps; ``"mixed"`` otherwise.
 
@@ -967,7 +963,7 @@ async def compute_update_frequency(
         state.ever_outdated,
         state.ever_resolved,
         rate_days,
-        dominant_ecosystem(ecosystem_counts(prev_deps)),
+        dominant_ecosystem(Counter(info["type"] for info in prev_deps.values())),
     )
     return folded.to_metrics(
         project_id,
