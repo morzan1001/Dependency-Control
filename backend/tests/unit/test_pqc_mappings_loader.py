@@ -1,6 +1,5 @@
 from app.services.pqc_migration.mappings_loader import (
     CURRENT_MAPPINGS_VERSION,
-    clear_mappings_cache,
     load_mappings,
     normalise_family,
 )
@@ -41,14 +40,3 @@ def test_family_alias_normalises_case_insensitively():
     assert normalise_family("DIFFIE-HELLMAN", m) == "DH"
     assert normalise_family("EC-dsa", m) == "ECDSA"
     assert normalise_family("ECDSA", m) == "ECDSA"
-
-
-def test_clear_mappings_cache_forces_reload():
-    """clear_mappings_cache exposes lru_cache's cache_clear so tests can invalidate a stale load_mappings result."""
-    first = load_mappings()
-    assert load_mappings.cache_info().currsize == 1
-    clear_mappings_cache()
-    assert load_mappings.cache_info().currsize == 0
-    second = load_mappings()
-    assert second.version == first.version
-    assert load_mappings.cache_info().currsize == 1

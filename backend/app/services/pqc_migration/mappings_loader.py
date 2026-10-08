@@ -72,11 +72,6 @@ def load_mappings() -> PQCMappings:
     )
 
 
-def clear_mappings_cache() -> None:
-    """Clear the in-process ``load_mappings`` cache so the YAML is re-read."""
-    load_mappings.cache_clear()
-
-
 def _parse_date(s: str) -> datetime:
     from datetime import timezone
 
