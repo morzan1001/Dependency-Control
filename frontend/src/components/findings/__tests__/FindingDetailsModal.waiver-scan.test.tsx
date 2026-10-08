@@ -39,7 +39,7 @@ describe("FindingDetailsModal waiver", () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter>
-          <FindingDetailsModal finding={FINDING} isOpen onClose={() => {}} projectId="p1" scanId="scan-feature" />
+          <FindingDetailsModal finding={FINDING} onClose={() => {}} projectId="p1" scanId="scan-feature" />
         </MemoryRouter>
       </QueryClientProvider>,
     );

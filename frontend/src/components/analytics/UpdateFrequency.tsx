@@ -33,10 +33,6 @@ import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
 import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
 import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
 
-interface UpdateFrequencyProps {
-  projectId?: string
-}
-
 const updateTypeColors: Record<string, string> = {
   patch: '#22c55e',
   minor: '#eab308',
@@ -386,40 +382,32 @@ function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }
   )
 }
 
-export function UpdateFrequency({ projectId: initialProjectId }: Readonly<UpdateFrequencyProps>) {
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
+export function UpdateFrequency() {
+  const [selectedProjectId, setSelectedProjectId] = useState('')
   const [windowDays, setWindowDays] = useState<number | undefined>(90)
 
   const { data, isFetching, error, refetch } = useUpdateFrequency(selectedProjectId, { windowDays })
 
   return (
     <div className="space-y-6">
-      {!initialProjectId && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Update Frequency</CardTitle>
-            <CardDescription>
-              Analyze how regularly and incrementally your project updates its dependencies
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-center gap-4">
-              <ProjectCombobox
-                value={selectedProjectId}
-                onValueChange={setSelectedProjectId}
-                className="w-[350px]"
-              />
-              <WindowSelect value={windowDays} onChange={setWindowDays} />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {initialProjectId && selectedProjectId && (
-        <div className="flex justify-end">
-          <WindowSelect value={windowDays} onChange={setWindowDays} />
-        </div>
-      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Update Frequency</CardTitle>
+          <CardDescription>
+            Analyze how regularly and incrementally your project updates its dependencies
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-4">
+            <ProjectCombobox
+              value={selectedProjectId}
+              onValueChange={setSelectedProjectId}
+              className="w-[350px]"
+            />
+            <WindowSelect value={windowDays} onChange={setWindowDays} />
+          </div>
+        </CardContent>
+      </Card>
 
       {isFetching && selectedProjectId && (
         <div className="space-y-4">
@@ -440,7 +428,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         />
       )}
 
-      {!selectedProjectId && !initialProjectId && (
+      {!selectedProjectId && (
         <Card>
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">

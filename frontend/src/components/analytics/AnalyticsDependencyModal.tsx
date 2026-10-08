@@ -50,13 +50,13 @@ import {
   Link2,
   ChevronDown,
   ChevronUp,
-  ArrowUp,
-  ArrowDown,
   Tag,
   Copy,
   Check,
 } from "lucide-react"
-import { getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { getDisplayId, getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
+import { SortIcon } from './VulnerabilityHotspots'
 
 // Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
@@ -71,13 +71,6 @@ function formatEnrichmentSource(source: string): string {
   if (source === "deps_dev") return "deps.dev"
   if (source === "license_compliance") return "License Scanner"
   return source
-}
-
-const SortIcon = ({ field, sortBy, sortOrder }: { field: SortField, sortBy: SortField, sortOrder: 'asc'|'desc' }) => {
-  if (sortBy !== field) return null
-  return sortOrder === 'asc' 
-    ? <ArrowUp className="h-4 w-4 inline-block ml-1" />
-    : <ArrowDown className="h-4 w-4 inline-block ml-1" />
 }
 
 interface AnalyticsDependencyModalProps {
@@ -107,43 +100,14 @@ function safeHref(url?: string | null): string | undefined {
   return url && (url.startsWith('http://') || url.startsWith('https://')) ? url : undefined
 }
 
-function InfoRow({
-  icon: Icon,
-  label,
-  value,
-  href,
-  copyable = false,
-}: Readonly<{
-  icon: React.ElementType
-  label: string
-  value?: string | null
-  href?: string
-  copyable?: boolean
-}>) {
+function InfoRow({ icon: Icon, label, value }: Readonly<{ icon: React.ElementType; label: string; value?: string | null }>) {
   if (!value) return null
-
-  const validHref = safeHref(href)
-
   return (
     <div className="flex items-start gap-3 py-1.5">
       <Icon className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs text-muted-foreground">{label}</p>
-        <div className="flex items-center gap-2">
-          {validHref ? (
-            <a
-              href={validHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-primary hover:underline break-all"
-            >
-              {value}
-            </a>
-          ) : (
-            <p className="text-sm break-all">{value}</p>
-          )}
-          {copyable && <CopyButton text={value} />}
-        </div>
+        <p className="text-sm break-all">{value}</p>
       </div>
     </div>
   )
@@ -411,9 +375,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
             </div>
           )}
 
-          {metadata.group && (
-            <InfoRow icon={Tag} label="Group" value={metadata.group} />
-          )}
+          <InfoRow icon={Tag} label="Group" value={metadata.group} />
 
           {hasMaintainerInfo && (
             <div className="space-y-1">
@@ -497,7 +459,6 @@ export function AnalyticsDependencyModal({
   const [sortBy, setSortBy] = useState<SortField>('severity')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedFinding, setSelectedFinding] = useState<ComponentFinding | null>(null)
-  const [findingModalOpen, setFindingModalOpen] = useState(false)
 
   const enabledComponent = open ? component : ''
   // The mode the table that opened this modal rendered from, so the drill-down cannot report a
@@ -506,7 +467,7 @@ export function AnalyticsDependencyModal({
   const { data: metadata, isLoading: isLoadingMetadata } = useDependencyMetadata(
     enabledComponent, version, type, releaseEnvironment,
   )
-  const { data: findingsPage, isLoading: isLoadingFindings } = useComponentFindings(
+  const { data: findingsPage, isLoading: isLoadingFindings, error: findingsError, refetch: refetchFindings } = useComponentFindings(
     enabledComponent, version, releaseEnvironment,
   )
   const totalFindings = findingsPage?.total ?? 0
@@ -519,7 +480,7 @@ export function AnalyticsDependencyModal({
       
       switch (sortBy) {
         case 'id':
-          comparison = (a.id || '').localeCompare(b.id || '')
+          comparison = (getDisplayId(a) ?? '').localeCompare(getDisplayId(b) ?? '')
           break
         case 'type':
           comparison = (a.type || '').localeCompare(b.type || '')
@@ -595,6 +556,9 @@ export function AnalyticsDependencyModal({
                 ))}
               </div>
             )}
+            {findingsError && (
+              <AnalyticsErrorCard title="Failed to load findings" error={findingsError} onRetry={() => refetchFindings()} />
+            )}
             {!isLoadingFindings && sortedFindings.length > 0 && (
               <Table className="table-fixed">
                 <TableHeader>
@@ -632,25 +596,12 @@ export function AnalyticsDependencyModal({
                 <TableBody>
                   {sortedFindings.map((finding) => (
                     <TableRow
-                      key={`${finding.id}-${finding.project_id}-${finding.scan_id}`}
+                      key={`${finding.type}:${finding.id}:${finding.version}:${finding.scan_id}`}
                       className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => {
-                        setSelectedFinding(finding)
-                        setFindingModalOpen(true)
-                      }}
+                      onClick={() => setSelectedFinding(finding)}
                     >
                       <TableCell className="font-mono text-xs truncate">
-                        <div className="flex items-center gap-1">
-                          {(() => {
-                            if (finding.id?.startsWith('CVE-')) {
-                              return <span className="text-destructive font-medium">{finding.id}</span>
-                            }
-                            if (finding.id?.includes('Multiple')) {
-                              return <span className="text-orange-500 font-medium">{finding.id}</span>
-                            }
-                            return <span>{finding.id || '-'}</span>
-                          })()}
-                        </div>
+                        {getDisplayId(finding) || '-'}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{finding.type}</Badge>
@@ -674,7 +625,7 @@ export function AnalyticsDependencyModal({
                 </TableBody>
               </Table>
             )}
-            {!isLoadingFindings && sortedFindings.length === 0 && (
+            {!isLoadingFindings && !findingsError && sortedFindings.length === 0 && (
               <div className="flex flex-col items-center justify-center py-8 text-muted-foreground bg-muted/30 rounded-lg">
                 <Shield className="h-8 w-8 mb-2" />
                 <p>No findings for this dependency</p>
@@ -686,24 +637,17 @@ export function AnalyticsDependencyModal({
         {selectedFinding && (
           <FindingDetailsModal
             finding={selectedFinding}
-            isOpen={findingModalOpen}
-            onClose={() => {
-              setFindingModalOpen(false)
-              setSelectedFinding(null)
-            }}
+            onClose={() => setSelectedFinding(null)}
             projectId={selectedFinding.project_id}
             scanId={selectedFinding.scan_id}
             onSelectFinding={(id) => {
-              const found = resolveRelatedFindingInRows(sortedFindings, id);
+              const sameScan = sortedFindings.filter((f) => f.scan_id === selectedFinding.scan_id)
+              const found = resolveRelatedFindingInRows(sameScan, id, selectedFinding)
               if (found) {
                 setSelectedFinding(found);
               }
             }}
-            onNavigate={() => {
-              setFindingModalOpen(false)
-              setSelectedFinding(null)
-              onOpenChange(false)
-            }}
+            onNavigate={() => onOpenChange(false)}
           />
         )}
       </DialogContent>

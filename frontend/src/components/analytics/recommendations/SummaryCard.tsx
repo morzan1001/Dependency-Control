@@ -1,20 +1,43 @@
 import { RecommendationsResponse } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  AlertTriangle,
-  Lightbulb,
-  ShieldAlert,
-} from 'lucide-react'
+import { AlertTriangle, Lightbulb, ShieldAlert, type LucideIcon } from 'lucide-react'
+
+interface Tile {
+  label: string
+  value: number
+  color: string
+}
+
+const nonZero = (tiles: Tile[]) => tiles.filter((tile) => tile.value > 0)
+
+function TileGroup({ title, icon: Icon, tiles }: Readonly<{ title: string; icon: LucideIcon; tiles: Tile[] }>) {
+  if (tiles.length === 0) return null
+  return (
+    <div>
+      <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+        <Icon className="h-4 w-4" />
+        {title}
+      </h4>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="text-center p-3 bg-muted rounded-lg">
+            <div className={`text-2xl font-bold ${tile.color}`}>{tile.value}</div>
+            <div className="text-xs text-muted-foreground">{tile.label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }>) {
-  const hasOtherFindings = (data.summary.secrets_to_rotate || 0) > 0 ||
-    (data.summary.sast_issues || 0) > 0 ||
-    (data.summary.iac_issues || 0) > 0 ||
-    (data.summary.license_issues || 0) > 0;
-
-  const totalInsights = (data.summary.fragmentation_issues || 0) +
-    (data.summary.trend_alerts || 0) +
-    (data.summary.cross_project_issues || 0);
+  const { summary } = data
+  const healthTiles = nonZero([
+    { label: 'Fragmentation', value: summary.fragmentation_issues ?? 0, color: 'text-violet-500' },
+    { label: 'Trend Alerts', value: summary.trend_alerts ?? 0, color: 'text-rose-500' },
+    { label: 'Cross-Project', value: summary.cross_project_issues ?? 0, color: 'text-sky-500' },
+  ])
+  const totalInsights = healthTiles.reduce((sum, tile) => sum + tile.value, 0)
 
   const insightsDescription =
     totalInsights > 0 ? `${totalInsights} dependency insights found` : 'No significant issues found';
@@ -39,118 +62,27 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
             scoped to those rows and under-reports the rest.
           </div>
         )}
-        {(data.total_vulnerabilities || 0) > 0 && (
-          <div>
-            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-              <ShieldAlert className="h-4 w-4" />
-              Vulnerabilities
-            </h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <div className="text-2xl font-bold text-success">
-                  {data.summary.total_fixable_vulns || 0}
-                </div>
-                <div className="text-xs text-muted-foreground">Fixable</div>
-              </div>
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <div className="text-2xl font-bold text-gray-500">
-                  {data.summary.total_unfixable_vulns || 0}
-                </div>
-                <div className="text-xs text-muted-foreground">No Fix</div>
-              </div>
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <div className="text-2xl font-bold text-blue-500">
-                  {data.summary.base_image_updates || 0}
-                </div>
-                <div className="text-xs text-muted-foreground">Image Updates</div>
-              </div>
-              <div className="text-center p-3 bg-muted rounded-lg">
-                <div className="text-2xl font-bold text-purple-500">
-                  {(data.summary.direct_updates || 0) + (data.summary.transitive_updates || 0)}
-                </div>
-                <div className="text-xs text-muted-foreground">Pkg Updates</div>
-              </div>
-            </div>
-          </div>
-        )}
-        {hasOtherFindings && (
-          <div>
-            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />
-              Other Security Findings
-            </h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {(data.summary.secrets_to_rotate || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-destructive">
-                    {data.summary.secrets_to_rotate}
-                  </div>
-                  <div className="text-xs text-muted-foreground">Secrets</div>
-                </div>
-              )}
-              {(data.summary.sast_issues || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-cyan-500">
-                    {data.summary.sast_issues}
-                  </div>
-                  <div className="text-xs text-muted-foreground">SAST Issues</div>
-                </div>
-              )}
-              {(data.summary.iac_issues || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-indigo-500">
-                    {data.summary.iac_issues}
-                  </div>
-                  <div className="text-xs text-muted-foreground">IAC Issues</div>
-                </div>
-              )}
-              {(data.summary.license_issues || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-pink-500">
-                    {data.summary.license_issues}
-                  </div>
-                  <div className="text-xs text-muted-foreground">License Issues</div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        {((data.summary.fragmentation_issues || 0) > 0 ||
-          (data.summary.trend_alerts || 0) > 0 ||
-          (data.summary.cross_project_issues || 0) > 0) && (
-          <div>
-            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-              <Lightbulb className="h-4 w-4" />
-              Health & Insights
-            </h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {(data.summary.fragmentation_issues || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-violet-500">
-                    {data.summary.fragmentation_issues}
-                  </div>
-                  <div className="text-xs text-muted-foreground">Fragmentation</div>
-                </div>
-              )}
-              {(data.summary.trend_alerts || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-rose-500">
-                    {data.summary.trend_alerts}
-                  </div>
-                  <div className="text-xs text-muted-foreground">Trend Alerts</div>
-                </div>
-              )}
-              {(data.summary.cross_project_issues || 0) > 0 && (
-                <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-sky-500">
-                    {data.summary.cross_project_issues}
-                  </div>
-                  <div className="text-xs text-muted-foreground">Cross-Project</div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        <TileGroup
+          title="Vulnerabilities"
+          icon={ShieldAlert}
+          tiles={data.total_vulnerabilities > 0 ? [
+            { label: 'Fixable', value: summary.total_fixable_vulns, color: 'text-success' },
+            { label: 'No Fix', value: summary.total_unfixable_vulns, color: 'text-gray-500' },
+            { label: 'Image Updates', value: summary.base_image_updates, color: 'text-blue-500' },
+            { label: 'Pkg Updates', value: summary.direct_updates + summary.transitive_updates, color: 'text-purple-500' },
+          ] : []}
+        />
+        <TileGroup
+          title="Other Security Findings"
+          icon={AlertTriangle}
+          tiles={nonZero([
+            { label: 'Secrets', value: summary.secrets_to_rotate, color: 'text-destructive' },
+            { label: 'SAST Issues', value: summary.sast_issues, color: 'text-cyan-500' },
+            { label: 'IAC Issues', value: summary.iac_issues, color: 'text-indigo-500' },
+            { label: 'License Issues', value: summary.license_issues, color: 'text-pink-500' },
+          ])}
+        />
+        <TileGroup title="Health & Insights" icon={Lightbulb} tiles={healthTiles} />
       </CardContent>
     </Card>
   )

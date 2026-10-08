@@ -178,6 +178,36 @@ describe("AnalyticsDependencyModal scope", () => {
   });
 });
 
+describe("AnalyticsDependencyModal additional details", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("lists the group, maintainers and publication date it knows and nothing for the rest", () => {
+    renderModal({
+      ...baseMetadata,
+      group: "org.acme",
+      author: "Ann Author",
+      deps_dev: { published_at: "2024-01-02T00:00:00Z" },
+    });
+
+    fireEvent.click(screen.getByText(/Additional Details/i));
+
+    expect(screen.getByText("Group").nextElementSibling).toHaveTextContent("org.acme");
+    expect(screen.getByText("Author").nextElementSibling).toHaveTextContent("Ann Author");
+    expect(screen.getByText("Published").nextElementSibling).toHaveTextContent(/2024/);
+    expect(screen.queryByText("Publisher")).not.toBeInTheDocument();
+  });
+
+  it("leaves the group out when the metadata names none", () => {
+    renderModal({ ...baseMetadata, author: "Ann Author" });
+
+    fireEvent.click(screen.getByText(/Additional Details/i));
+
+    expect(screen.queryByText("Group")).not.toBeInTheDocument();
+  });
+});
+
 describe("AnalyticsDependencyModal version", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -239,5 +269,73 @@ describe("AnalyticsDependencyModal findings list", () => {
 
     expect(screen.getByText("130")).toBeInTheDocument();
     expect(screen.getByText("Showing the 2 most severe of 130 findings.")).toBeInTheDocument();
+  });
+
+  it("says the findings failed to load instead of reporting none, and retries them", () => {
+    const refetch = vi.fn();
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: Object.assign(new Error("Request failed"), { response: { status: 403, data: { detail: "Not enough permissions" } } }),
+      refetch,
+    });
+
+    renderFindings();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Not enough permissions");
+    expect(screen.queryByText("No findings for this dependency")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("names a vulnerability row by its advisory, not by the package it aggregates on", () => {
+    const single = { ...finding("pkg:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-1" }] } };
+    const several = {
+      ...finding("lib:2.0", "HIGH"),
+      details: { vulnerabilities: [{ id: "CVE-2024-2" }, { id: "CVE-2024-3" }] },
+    };
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [single, several], total: 2 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    expect(screen.getByText("CVE-2024-1")).toBeInTheDocument();
+    expect(screen.getByText("Multiple Vulnerabilities")).toBeInTheDocument();
+    expect(screen.queryByText("pkg:1.0")).not.toBeInTheDocument();
+  });
+
+  it("marks the column the findings are sorted by and the direction", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [finding("CVE-1", "HIGH")], total: 1 },
+      isLoading: false,
+    });
+
+    renderFindings();
+    const header = (name: string) => screen.getByText(name, { selector: "th" });
+    expect(header("Severity").querySelector("svg.lucide-arrow-down")).not.toBeNull();
+
+    fireEvent.click(header("Type"));
+
+    expect(header("Type").querySelector("svg.lucide-arrow-up")).not.toBeNull();
+    expect(header("Severity").querySelector("svg")).toBeNull();
+  });
+
+  it("sorts the Finding column by the advisory it shows", () => {
+    const rows = [
+      { ...finding("a:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-9" }] } },
+      { ...finding("b:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-1" }] } },
+    ];
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: rows, total: 2 },
+      isLoading: false,
+    });
+
+    renderFindings();
+    fireEvent.click(screen.getByText("Finding", { selector: "th" }));
+
+    const shown = screen.getAllByText(/^CVE-2024-/).map((cell) => cell.textContent);
+    expect(shown).toEqual(["CVE-2024-1", "CVE-2024-9"]);
   });
 });

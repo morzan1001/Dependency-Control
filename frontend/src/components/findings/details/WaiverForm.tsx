@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { getErrorMessage } from '@/lib/utils'
 import { expirationDateInputToIso } from '@/lib/waiver-date'
@@ -11,10 +10,9 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useCreateWaiver, waiverKeys } from '@/hooks/queries/use-waivers'
+import { useCreateWaiver } from '@/hooks/queries/use-waivers'
 import { WaiverScope, WaiverStatus } from '@/types/waiver'
 import { Finding } from '@/types/scan'
-import { getFindingId, getFindingPackage, getFindingVersion } from './finding-details-helpers'
 
 const SCOPE_TYPES = new Set(['sast', 'iac'])
 
@@ -59,7 +57,6 @@ export function WaiverForm({
   const [date, setDate] = useState(isoToDateInput(initialExpiration))
   const [scope, setScope] = useState<WaiverScope>(initialScope ?? 'finding')
   const [status, setStatus] = useState<WaiverStatus>(initialStatus ?? 'accepted_risk')
-  const queryClient = useQueryClient()
 
   const createWaiverMutation = useCreateWaiver()
 
@@ -73,10 +70,10 @@ export function WaiverForm({
     createWaiverMutation.mutate({
       project_id: projectId,
       scan_id: scanId,
-      finding_id: vulnId ? undefined : getFindingId(finding),
+      finding_id: vulnId ? undefined : finding.id,
       vulnerability_id: vulnId || undefined,
-      package_name: getFindingPackage(finding),
-      package_version: getFindingVersion(finding),
+      package_name: finding.component || 'Unknown',
+      package_version: finding.version || undefined,
       finding_type: finding.type || 'unknown',
       scope,
       rule_id: scope === 'rule' ? ruleId : undefined,
@@ -86,7 +83,6 @@ export function WaiverForm({
     }, {
         onSuccess: () => {
             toast.success('Waiver created successfully')
-            queryClient.invalidateQueries({ queryKey: waiverKeys.project(projectId) })
             onSuccess()
         },
         onError: (error) => {

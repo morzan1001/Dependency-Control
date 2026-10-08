@@ -41,9 +41,26 @@ function parseRelatedFindingId(id: string): ParsedRelatedId {
     return { kind: 'exact' }
 }
 
-/** Resolve against already-loaded rows: exact id first, then format-specific match; undefined for LIC-/unknown. */
-export function resolveRelatedFindingInRows<T extends Finding>(rows: readonly T[], id: string): T | undefined {
-    const exact = rows.find(f => f.id === id)
+// The backend's extract_artifact_name, under which it links one package's spellings (group:artifact, artifact).
+function artifactName(component: string | undefined): string {
+    const name = (component ?? '').trim().toLowerCase()
+    if (name.includes(':')) return name.slice(name.lastIndexOf(':') + 1)
+    return /^@[^/]*\/[^/]*$/.test(name) ? name : name.slice(name.lastIndexOf('/') + 1)
+}
+
+// Ids are not unique per scan (a license id names only the license); cross-links join one package's findings.
+function preferSamePackage<T extends Finding>(matches: readonly T[], from: Finding): T | undefined {
+    const pick = (samePackage: (f: T) => boolean) => {
+        const found = matches.filter(samePackage)
+        return found.find(f => f.version === from.version) ?? found[0]
+    }
+    return pick(f => f.component?.toLowerCase() === from.component?.toLowerCase())
+        ?? pick(f => artifactName(f.component) === artifactName(from.component))
+}
+
+/** Resolve a reference `from` holds: exact id first, then format-specific match; undefined for LIC-/unknown. */
+export function resolveRelatedFindingInRows<T extends Finding>(rows: readonly T[], id: string, from: Finding): T | undefined {
+    const exact = preferSamePackage(rows.filter(f => f.id === id), from)
     if (exact) return exact
 
     const parsed = parseRelatedFindingId(id)
@@ -68,6 +85,7 @@ export function resolveRelatedFindingInRows<T extends Finding>(rows: readonly T[
                 : undefined
         case 'vulnerability':
             return rows.find(f =>
+                f.type === 'vulnerability' &&
                 f.component?.toLowerCase() === parsed.component?.toLowerCase() &&
                 f.version === parsed.version
             )
@@ -87,40 +105,21 @@ export function lookupOutcome(finding: Finding | undefined, matched: number): Re
     return { status: 'missing' }
 }
 
+// Every package with that license shares a license id, so the search names the package by the artifact each spelling holds.
+function searchTerm(parsed: ParsedRelatedId, id: string, from: Finding): string | undefined {
+    if (parsed.kind === 'license') return artifactName(from.component)
+    return parsed.kind === 'exact' ? id : parsed.component
+}
+
 /** Resolve a related-finding reference via the API when it is not in the loaded rows. */
-export async function fetchRelatedFinding(scanId: string, id: string): Promise<RelatedFindingLookup> {
+export async function fetchRelatedFinding(scanId: string, id: string, from: Finding): Promise<RelatedFindingLookup> {
     const parsed = parseRelatedFindingId(id)
-    const search = parsed.kind === 'license' || parsed.kind === 'exact' ? id : parsed.component
-    const type = parsed.kind === 'exact' ? undefined : parsed.kind
     const res = await scanApi.getFindings(scanId, {
-        type,
-        search,
+        type: parsed.kind === 'exact' ? undefined : parsed.kind,
+        search: searchTerm(parsed, id, from),
         skip: 0,
         limit: RELATED_FINDING_SEARCH_LIMIT,
     })
 
-    return lookupOutcome(pickMatch(res.items, id, parsed), res.total)
-}
-
-function pickMatch(items: Finding[], id: string, parsed: ParsedRelatedId): Finding | undefined {
-    switch (parsed.kind) {
-        case 'outdated':
-        case 'eol':
-        case 'quality':
-            return items.find(f =>
-                f.type === parsed.kind &&
-                f.component?.toLowerCase() === parsed.component.toLowerCase() &&
-                (parsed.kind !== 'quality' || !parsed.version || f.version === parsed.version)
-            )
-        case 'vulnerability':
-            return items.find(f =>
-                f.type === 'vulnerability' &&
-                f.component?.toLowerCase() === parsed.component?.toLowerCase() &&
-                f.version === parsed.version
-            )
-        case 'license':
-        case 'exact':
-        default:
-            return items.find(f => f.id === id)
-    }
+    return lookupOutcome(resolveRelatedFindingInRows(res.items, id, from), res.total)
 }

@@ -44,9 +44,8 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getDependencyTree: async (projectId: string, scanId?: string): Promise<DependencyGraph> => {
-        const params = buildQueryParams({ scan_id: scanId });
-        const response = await api.get<DependencyGraph>(`/analytics/projects/${projectId}/dependency-tree`, { params });
+    getDependencyTree: async (projectId: string): Promise<DependencyGraph> => {
+        const response = await api.get<DependencyGraph>(`/analytics/projects/${projectId}/dependency-tree`);
         return response.data;
     },
 
@@ -138,12 +137,8 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getProjectRecommendations: async (projectId: string, scanId?: string): Promise<RecommendationsResponse> => {
-        const params = buildQueryParams({ scan_id: scanId });
-        const response = await api.get<RecommendationsResponse>(
-            `/analytics/projects/${projectId}/recommendations`,
-            { params }
-        );
+    getProjectRecommendations: async (projectId: string): Promise<RecommendationsResponse> => {
+        const response = await api.get<RecommendationsResponse>(`/analytics/projects/${projectId}/recommendations`);
         return response.data;
     },
 

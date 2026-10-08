@@ -1,18 +1,9 @@
 import { Badge } from "@/components/ui/badge"
 import { ExternalLink, LucideIcon } from "lucide-react"
 
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
-
-interface BadgeItem {
-    label: string
-    url?: string
-    variant?: BadgeVariant
-    className?: string
-}
-
 interface BadgeListProps {
-    readonly items: (string | BadgeItem)[]
-    readonly variant?: BadgeVariant
+    readonly items: string[]
+    readonly variant?: "default" | "secondary" | "destructive" | "outline"
     readonly icon?: LucideIcon
     readonly buildUrl?: (item: string) => string
     readonly formatLabel?: (item: string) => string
@@ -32,23 +23,15 @@ export function BadgeList({
     return (
         <div className="flex flex-wrap gap-2">
             {items.map((item) => {
-                const isSimple = typeof item === 'string'
-                const simpleLabel = formatLabel ? formatLabel(item as string) : (item as string)
-                const label = isSimple ? simpleLabel : item.label
-                const simpleUrl = buildUrl ? buildUrl(item as string) : undefined
-                const url = isSimple ? simpleUrl : item.url
-                const itemVariant = isSimple ? variant : (item.variant || variant)
-                const itemClassName = isSimple ? badgeClassName : (item.className || badgeClassName)
-                const itemKey = isSimple ? (item as string) : item.label
-
+                const url = buildUrl?.(item)
                 const badge = (
                     <Badge
-                        key={itemKey}
-                        variant={itemVariant}
-                        className={`${url ? 'hover:bg-muted cursor-pointer' : ''} ${itemClassName}`}
+                        key={item}
+                        variant={variant}
+                        className={`${url ? 'hover:bg-muted cursor-pointer' : ''} ${badgeClassName}`}
                     >
                         {Icon && <Icon className="h-3 w-3 mr-1" />}
-                        {label}
+                        {formatLabel ? formatLabel(item) : item}
                         {url && <ExternalLink className="h-3 w-3 ml-1" />}
                     </Badge>
                 )
@@ -56,7 +39,7 @@ export function BadgeList({
                 if (url) {
                     return (
                         <a
-                            key={itemKey}
+                            key={item}
                             href={url}
                             target="_blank"
                             rel="noopener noreferrer"

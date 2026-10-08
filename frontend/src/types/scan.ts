@@ -69,7 +69,6 @@ export interface NestedVulnerability {
   kev_ransomware_use?: boolean;
   kev_date_added?: string;
   kev_required_action?: string;
-  reachability?: ReachabilityInfo;
 }
 
 export interface QualityIssueDetails {

@@ -9,12 +9,7 @@ import {
   Stamp
 } from 'lucide-react'
 
-interface FindingTypeBadgeProps {
-  type: string
-  className?: string
-}
-
-export function FindingTypeBadge({ type, className = '' }: Readonly<FindingTypeBadgeProps>) {
+export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
   const getBadgeStyle = (type: string) => {
     switch (type?.toLowerCase()) {
       case 'vulnerability':
@@ -96,7 +91,7 @@ export function FindingTypeBadge({ type, className = '' }: Readonly<FindingTypeB
   return (
     <Badge 
       variant={style.variant}
-      className={`${style.className} flex items-center gap-1.5 ${className}`}
+      className={`${style.className} flex items-center gap-1.5`}
     >
       {Icon && <Icon className="h-3 w-3" />}
       <span className="capitalize">{style.label}</span>

@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Progress } from '@/components/ui/progress'
-import { AlertTriangle, TrendingUp, Zap, Shield, CheckCircle, XCircle, Lock, Calendar, Target, TrendingUp as TrendingUpIcon, CircleAlert, Globe, Clock } from 'lucide-react'
+import { AlertTriangle, TrendingUp, Zap, Shield, CheckCircle, XCircle, Lock, Calendar, Target, CircleAlert, Globe, Clock } from 'lucide-react'
 import {
   Tooltip,
   TooltipContent,
@@ -14,8 +14,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatEpssScore } from '@/lib/finding-utils'
+import { withRemainder } from '@/lib/sampled-list'
 import { EpssCell, KevCell } from '@/components/findings/enrichment-cells'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
+import { SeverityBreakdownBadges } from './VulnerabilityHotspots'
 
 interface ImpactAnalysisProps {
   onSelectComponent?: (result: ImpactAnalysisResult) => void;
@@ -49,7 +51,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
       'deadline_overdue': <AlertTriangle className="h-3 w-3 text-red-500 flex-shrink-0" />,
       'deadline': <Calendar className="h-3 w-3 text-orange-500 flex-shrink-0" />,
       'kev': <Target className="h-3 w-3 text-red-500 flex-shrink-0" />,
-      'epss': <TrendingUpIcon className="h-3 w-3 text-orange-500 flex-shrink-0" />,
+      'epss': <TrendingUp className="h-3 w-3 text-orange-500 flex-shrink-0" />,
       'critical': <CircleAlert className="h-3 w-3 text-red-500 flex-shrink-0" />,
       'blast_radius': <Globe className="h-3 w-3 text-blue-500 flex-shrink-0" />,
       'fix_available': <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />,
@@ -173,7 +175,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               </Badge>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Fix versions: {r.fix_versions?.join(', ') || 'Available'}</p>
+                              <p>Fix versions: {withRemainder(r.fix_versions, r.fix_version_count)}</p>
                             </TooltipContent>
                           </Tooltip>
                       )}
@@ -227,28 +229,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                       {r.affected_projects}
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-1">
-                        {r.findings_by_severity.critical > 0 && (
-                          <Badge variant="destructive" className="text-xs">
-                            C:{r.findings_by_severity.critical}
-                          </Badge>
-                        )}
-                        {r.findings_by_severity.high > 0 && (
-                          <Badge className="text-xs bg-orange-500 hover:bg-orange-600">
-                            H:{r.findings_by_severity.high}
-                          </Badge>
-                        )}
-                        {r.findings_by_severity.medium > 0 && (
-                          <Badge className="text-xs bg-yellow-500 hover:bg-yellow-600 text-black">
-                            M:{r.findings_by_severity.medium}
-                          </Badge>
-                        )}
-                        {r.findings_by_severity.low > 0 && (
-                          <Badge className="text-xs bg-blue-500 hover:bg-blue-600">
-                            L:{r.findings_by_severity.low}
-                          </Badge>
-                        )}
-                      </div>
+                      <SeverityBreakdownBadges breakdown={r.findings_by_severity} />
                     </TableCell>
                     <TableCell className="text-center">
                       <EpssCell
@@ -304,7 +285,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               </div>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Fix versions: {r.fix_versions?.join(', ') || 'Available'}</p>
+                              <p>Fix versions: {withRemainder(r.fix_versions, r.fix_version_count) || 'Available'}</p>
                             </TooltipContent>
                           </Tooltip>
                       ) : (

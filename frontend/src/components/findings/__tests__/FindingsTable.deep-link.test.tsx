@@ -59,4 +59,25 @@ describe("FindingsTable ?finding= deep link", () => {
     await waitFor(() => expect(toast.warning).toHaveBeenCalled());
     expect(screen.queryByTestId("opened-finding")).not.toBeInTheDocument();
   });
+
+  it("opens the finding once on a page that also lists the waived findings", async () => {
+    getFindingsMock.mockImplementation(async (_scanId: string, params: { search?: string }) =>
+      params.search === LINKED_ID ? envelope([{ id: LINKED_ID }]) : envelope([]),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/?finding=${LINKED_ID}`]}>
+          <FindingsTable scanId="s1" projectId="p1" />
+          <FindingsTable scanId="s1" projectId="p1" waivedFilter="waived" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByTestId("opened-finding")).toHaveTextContent(LINKED_ID);
+    await waitFor(() => expect(screen.getAllByTestId("opened-finding")).toHaveLength(1));
+    const searches = getFindingsMock.mock.calls.filter(([, params]) => params.search === LINKED_ID);
+    expect(searches).toHaveLength(1);
+  });
 });

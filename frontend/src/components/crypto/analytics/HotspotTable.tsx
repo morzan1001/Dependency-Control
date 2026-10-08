@@ -1,12 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
-import { useAnalyticsList } from "@/hooks/useAnalyticsList";
 import { formatDate } from "@/lib/utils";
-import type {
-  AnalyticsScope,
-  GroupingDimension,
-  HotspotEntry,
-  HotspotResponse,
-} from "@/types/cryptoAnalytics";
+import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
 
 interface Props {
   scope: AnalyticsScope;
@@ -15,16 +10,19 @@ interface Props {
 }
 
 export function HotspotTable({ scope, scopeId, groupBy }: Readonly<Props>) {
-  const { items, isLoading, isEmpty } = useAnalyticsList<HotspotResponse, HotspotEntry>({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy }),
-    selectItems: (resp) => resp.items,
   });
+  const items = data?.items ?? [];
 
   if (isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">Loading hotspots…</div>;
   }
-  if (isEmpty) {
+  if (isError) {
+    return <div className="p-4 text-sm text-destructive">Failed to load hotspots.</div>;
+  }
+  if (items.length === 0) {
     return <div className="p-4 text-sm text-muted-foreground">No hotspots in this scope.</div>;
   }
 

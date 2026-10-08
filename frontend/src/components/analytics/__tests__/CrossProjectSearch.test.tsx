@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, it, expect, vi } from "vitest";
@@ -11,11 +11,12 @@ vi.mock("@/api/analytics", () => ({
     getDependencyTypes: vi.fn(),
   },
 }));
-vi.mock("@/hooks/queries/use-projects", () => ({
-  useProjectsDropdown: () => ({ data: { items: [] } }),
+vi.mock("@/api/projects", () => ({
+  projectApi: { getAll: vi.fn(async () => ({ items: [], total: 0, page: 1, size: 50, pages: 0 })), getOne: vi.fn() },
 }));
 
 import { analyticsApi } from "@/api/analytics";
+import { projectApi } from "@/api/projects";
 
 const search = vi.mocked(analyticsApi.searchDependenciesAdvanced);
 
@@ -51,5 +52,118 @@ describe("CrossProjectSearch version filter", () => {
 
     const versions = search.mock.calls.map(([, options]) => options?.version);
     expect(versions).toEqual([undefined, "4.17"]);
+  });
+});
+
+describe("CrossProjectSearch load error", () => {
+  it("says the search failed instead of reporting no packages, and retries it", async () => {
+    search.mockReset();
+    search.mockRejectedValue(
+      Object.assign(new Error("Request failed"), { response: { status: 403, data: { detail: "Not enough permissions" } } }),
+    );
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not enough permissions");
+    expect(screen.queryByText(/No packages found/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("CrossProjectSearch later page error", () => {
+  it("keeps the loaded rows when a later page fails", async () => {
+    search.mockReset();
+    search.mockImplementation(async (_q, options) => {
+      if (options?.skip) throw new Error("Request failed with status code 504");
+      const items = [0, 1, 2].map((i) => ({
+        project_id: "p",
+        project_name: "P",
+        package: `lodash-${i}`,
+        version: "4.17.21",
+        type: "npm",
+        direct: true,
+      }));
+      return { items, total: items.length + 1, page: 1, size: 50, pages: 2 };
+    });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+
+    const main = document.createElement("main");
+    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    document.body.appendChild(main);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+      { container: main },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+    await screen.findByText("lodash-0");
+    await waitFor(() => expect(client.getQueryCache().getAll().some((q) => q.state.status === "error")).toBe(true));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+
+    expect(screen.getByText("lodash-0")).toBeInTheDocument();
+  });
+});
+
+describe("CrossProjectSearch project filter", () => {
+  it("reads no project list until the filter panel opens, and then a single page", async () => {
+    const getAll = vi.mocked(projectApi.getAll);
+    getAll.mockClear();
+    getAll.mockResolvedValue({ items: [], total: 801, page: 1, size: 100, pages: 9 });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(getAll).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+    await waitFor(() => expect(getAll).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("CrossProjectSearch source filter", () => {
+  it("offers the image, file and directory sources with their source icons", async () => {
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+    fireEvent.click(screen.getByText("All sources").closest("button")!);
+
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["All sources", "Docker Image", "Source File", "Directory"]);
+    const iconClasses = options.slice(1).map((option) => option.querySelector("svg")!.getAttribute("class"));
+    expect(iconClasses[0]).toContain("lucide-container h-4 w-4 text-blue-500");
+    expect(iconClasses[1]).toContain("lucide-file-code h-4 w-4 text-green-500");
+    expect(iconClasses[2]).toContain("lucide-hard-drive h-4 w-4 text-amber-500");
   });
 });

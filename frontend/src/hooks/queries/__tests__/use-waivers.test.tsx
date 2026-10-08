@@ -83,6 +83,20 @@ describe("waiver mutations", () => {
     await waitFor(() => expect(waivedProbe).toHaveBeenCalledTimes(2));
   });
 
+  it("refetch an open project waiver list once after a waiver is created", async () => {
+    getAll.mockResolvedValue(emptyPage);
+    const { result } = renderHook(() => ({ list: useWaiverList("p1"), create: useCreateWaiver() }), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+
+    act(() => result.current.create.mutate({ project_id: "p1", finding_id: "f1", reason: "accepted" }));
+
+    await waitFor(() => expect(result.current.create.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.list.isFetching).toBe(false));
+    expect(getAll).toHaveBeenCalledTimes(2);
+  });
+
   it("refetch both after a waiver is deleted", async () => {
     const { result, findings, waivedProbe } = renderScanPageWith(useDeleteWaiver);
     await waitFor(() => expect(findings).toHaveBeenCalledTimes(1));

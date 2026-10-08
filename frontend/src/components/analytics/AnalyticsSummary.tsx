@@ -3,9 +3,10 @@ import { useAnalyticsMode } from '@/context/analytics-mode'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Package, AlertTriangle, Layers, PieChart } from 'lucide-react'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 export function AnalyticsSummaryCards() {
-  const { data: summary, isLoading } = useAnalyticsSummary(useAnalyticsMode())
+  const { data: summary, isLoading, error, refetch } = useAnalyticsSummary(useAnalyticsMode())
 
   if (isLoading) {
     return (
@@ -15,6 +16,9 @@ export function AnalyticsSummaryCards() {
         ))}
       </div>
     )
+  }
+  if (error) {
+    return <AnalyticsErrorCard title="Failed to load the analytics summary" error={error} onRetry={() => refetch()} />
   }
 
   const stats = [
@@ -149,8 +153,9 @@ export function DependencyTypesChart() {
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />
   }
+  if (!summary) return null
 
-  const types = summary?.dependency_types || []
+  const types = summary.dependency_types
   if (types.length === 0) {
     return (
       <Card>

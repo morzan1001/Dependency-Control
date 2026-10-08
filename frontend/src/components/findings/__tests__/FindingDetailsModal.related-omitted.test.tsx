@@ -39,7 +39,7 @@ function renderModal(finding: Finding) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <FindingDetailsModal finding={finding} isOpen onClose={() => {}} projectId={PROJECT_ID} />
+        <FindingDetailsModal finding={finding} onClose={() => {}} projectId={PROJECT_ID} />
       </MemoryRouter>
     </QueryClientProvider>,
   );

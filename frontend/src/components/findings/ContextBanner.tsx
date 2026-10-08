@@ -1,8 +1,8 @@
 import React from 'react'
 
-export type BannerVariant = 'info' | 'warning' | 'danger' | 'success'
+type BannerVariant = 'info' | 'warning' | 'danger' | 'success'
 
-export interface ContextBannerProps {
+interface ContextBannerProps {
   icon: React.ElementType
   title: string
   children: React.ReactNode

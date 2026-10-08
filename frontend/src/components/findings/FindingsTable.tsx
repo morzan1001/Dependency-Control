@@ -18,7 +18,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
-import { getSourceInfo, isSecretDeprioritized, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
+import { getDisplayId, getSourceInfo, isSecretDeprioritized, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
 import { toast } from 'sonner'
 import {
@@ -31,30 +31,6 @@ import {
 
 // Fixed string keys avoid the array-index-as-key anti-pattern.
 const SKELETON_ROW_KEYS = Array.from({ length: 10 }, (_, i) => `skeleton-row-${i}`)
-
-type FindingWithDetails = {
-    id: string
-    type?: string
-    details?: {
-        vulnerabilities?: ReadonlyArray<{ id?: string }>
-        quality_issues?: ReadonlyArray<{ id?: string }>
-    }
-}
-
-// Aggregated findings show "Multiple …"; a single issue shows its id; else the finding's own id.
-function getDisplayId(finding: FindingWithDetails): string | undefined {
-    const vulnCount = finding.details?.vulnerabilities?.length ?? 0
-    if (finding.type === 'vulnerability') {
-        if (vulnCount > 1) return 'Multiple Vulnerabilities'
-        if (vulnCount === 1) return finding.details?.vulnerabilities?.[0]?.id
-    }
-    const qualityCount = finding.details?.quality_issues?.length ?? 0
-    if (finding.type === 'quality') {
-        if (qualityCount > 1) return 'Multiple Quality Issues'
-        if (qualityCount === 1) return finding.details?.quality_issues?.[0]?.id
-    }
-    return finding.id
-}
 
 interface ReachabilityIndicatorProps {
     readonly reachability: NonNullable<NonNullable<Finding['details']>['reachability']>
@@ -204,7 +180,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     const openedDeepLinkRef = useRef<string | null>(null)
 
     useEffect(() => {
-        if (!deepLinkFindingId) {
+        // The active table's unfiltered search also opens waived findings; a second opener stacks a modal.
+        if (!deepLinkFindingId || waivedFilter === 'waived') {
             openedDeepLinkRef.current = null
             return
         }
@@ -228,7 +205,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
             }
         })()
         return () => { cancelled = true }
-    }, [deepLinkFindingId, scanId])
+    }, [deepLinkFindingId, scanId, waivedFilter])
 
     // Strip the ?finding=… param once the user closes the drawer so the
     // deep-link doesn't immediately reopen it.
@@ -382,7 +359,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                             return (
                                 <TableRow
                                     onClick={() => setSelectedFinding(finding)}
-                                    key={finding.id}
+                                    key={`${finding.type}:${finding.id}:${finding.component}:${finding.version}`}
                                     className={rowClass}
                                 >
                                     <TableCell className="p-4 align-middle">
@@ -456,11 +433,10 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     projectId={projectId}
                     scanId={scanId}
                     scanContext={scanContext}
-                    isOpen={!!selectedFinding}
                     onClose={closeSelectedFinding}
                     onSelectFinding={async (id) => {
                         // Prefer a match among the already-loaded rows.
-                        const inRows = resolveRelatedFindingInRows(allRows, id)
+                        const inRows = resolveRelatedFindingInRows(allRows, id, selectedFinding)
                         if (inRows) {
                             setSelectedFinding(inRows)
                             return
@@ -468,7 +444,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                         // If not present locally (e.g. switching between
                         // quality/security tabs), fall back to the API.
                         try {
-                            const outcome = await fetchRelatedFinding(scanId, id)
+                            const outcome = await fetchRelatedFinding(scanId, id, selectedFinding)
                             if (outcome.status === 'found') setSelectedFinding(outcome.finding)
                             else reportUnresolved(outcome)
                         } catch (err) {

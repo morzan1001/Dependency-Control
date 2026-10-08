@@ -28,10 +28,7 @@ export const useCreateWaiver = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: waiverApi.create,
-        onSuccess: (_, variables) => {
-            if (variables.project_id) {
-                queryClient.invalidateQueries({ queryKey: waiverKeys.project(variables.project_id) });
-            }
+        onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: waiverKeys.all });
             invalidateWaiverDependents(queryClient);
         }
