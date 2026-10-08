@@ -225,48 +225,24 @@ def admin_auth_headers():
     return bearer_headers("admin-user", PRESET_ADMIN)
 
 
-@pytest_asyncio.fixture
-async def owner_auth_headers_proj(client, db):
+async def _project_admin_headers(db, project_id: str, username: str) -> dict[str, str]:
     """The username doubles as the user id because _fake_get_current_user sets id=username."""
     from app.core.permissions import Permissions
-    from app.models.project import Project, ProjectMember
+    from app.models.project import ProjectMember
     from tests.helpers.permission_presets import PRESET_USER
 
-    username = "ownerp"
-    permissions = [*PRESET_USER, Permissions.PROJECT_READ]
-
-    project_p = Project(id="p", name="project-p")
-    member = ProjectMember(user_id=username, role="admin")
-    project_p.members = [member]
-
-    project_doc = project_p.model_dump(by_alias=True)
-    await db.projects.update_one(
-        {"_id": "p"},
-        {_SET_ON_INSERT: project_doc},
-        upsert=True,
+    project = Project(
+        id=project_id, name=f"project-{project_id}", members=[ProjectMember(user_id=username, role="admin")]
     )
+    await db.projects.update_one({"_id": project_id}, {_SET_ON_INSERT: project.model_dump(by_alias=True)}, upsert=True)
+    return bearer_headers(username, [*PRESET_USER, Permissions.PROJECT_READ])
 
-    return bearer_headers(username, permissions)
+
+@pytest_asyncio.fixture
+async def owner_auth_headers_proj(client, db):
+    return await _project_admin_headers(db, "p", "ownerp")
 
 
 @pytest_asyncio.fixture
 async def owner_auth_headers_proj_p2(client, db):
-    from app.core.permissions import Permissions
-    from app.models.project import Project, ProjectMember
-    from tests.helpers.permission_presets import PRESET_USER
-
-    username = "ownerp2"
-    permissions = [*PRESET_USER, Permissions.PROJECT_READ]
-
-    project_p2 = Project(id="p2", name="project-p2")
-    member = ProjectMember(user_id=username, role="admin")
-    project_p2.members = [member]
-
-    project_doc = project_p2.model_dump(by_alias=True)
-    await db.projects.update_one(
-        {"_id": "p2"},
-        {_SET_ON_INSERT: project_doc},
-        upsert=True,
-    )
-
-    return bearer_headers(username, permissions)
+    return await _project_admin_headers(db, "p2", "ownerp2")

@@ -12,13 +12,12 @@ from app.models.finding import Finding, Severity
 from app.models.project import Project, Scan
 from app.models.user import User
 from app.models.waiver import Waiver
-from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
+from app.services.analysis.engine import _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.databases import DATABASES
-from tests.helpers.findings import aggregated_vulnerability
+from tests.helpers.findings import aggregated_vulnerability, persist_findings
 from tests.helpers.permission_presets import PRESET_ADMIN
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
@@ -53,8 +52,7 @@ async def _build(db, scan_id: str, created_at: datetime, *findings: Finding) -> 
     await ScanRepository(db).create(
         Scan(id=scan_id, project_id=_PROJECT, branch="main", status=SCAN_STATUS_COMPLETED, created_at=created_at)
     )
-    records, _ = _prepare_finding_records(list(findings), scan_id, _PROJECT, created_at)
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, scan_id, _PROJECT, findings, created_at)
 
 
 async def _stale(db, **args) -> dict:

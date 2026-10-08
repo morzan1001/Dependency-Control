@@ -1,7 +1,6 @@
 """Tests for GitLabService multi-instance support."""
 
 import asyncio
-from functools import partial
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
@@ -11,7 +10,7 @@ import pytest
 from app.models.gitlab_api import OIDCPayload
 from app.models.gitlab_instance import GitLabInstance
 from app.services.gitlab import GitLabGroupLookup, GitLabService
-from tests.helpers.oidc import rsa_public_jwk
+from tests.helpers.oidc import rsa_public_jwk, serve_idp
 from tests.mocks.gitlab import make_gitlab_instance
 
 
@@ -213,21 +212,10 @@ def jwks_cache(fake_cache, monkeypatch):
     return fake_cache
 
 
-def _serve_idp(monkeypatch, handler):
-    requested: list[str] = []
-
-    async def recording(request):
-        requested.append(str(request.url))
-        return handler(request)
-
-    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(recording)))
-    return requested
-
-
 @pytest.mark.asyncio
 class TestGitLabJwksSource:
     async def test_a_dead_instance_is_asked_once_per_known_location(self, monkeypatch, jwks_cache, gitlab_instance_a):
-        requested = _serve_idp(monkeypatch, lambda request: httpx.Response(502))
+        requested = serve_idp(monkeypatch, lambda request: httpx.Response(502))
         service = GitLabService(gitlab_instance_a)
 
         assert await service.get_jwks() is None
@@ -246,7 +234,7 @@ class TestGitLabJwksSource:
                 return httpx.Response(404)
             return httpx.Response(200, json=_JWKS if request.url.host == "gitlab-old.com" else moved)
 
-        _serve_idp(monkeypatch, handler)
+        serve_idp(monkeypatch, handler)
 
         assert await GitLabService(make_gitlab_instance(id="same", url="https://gitlab-old.com")).get_jwks() == _JWKS
         assert await GitLabService(make_gitlab_instance(id="same", url="https://gitlab-new.com")).get_jwks() == moved
@@ -259,7 +247,7 @@ class TestGitLabJwksSource:
                 return httpx.Response(200, json={"jwks_uri": "https://gitlab-a.com/oauth/discovery/keys"})
             return httpx.Response(status["code"], json=_JWKS)
 
-        _serve_idp(monkeypatch, handler)
+        serve_idp(monkeypatch, handler)
         service = GitLabService(gitlab_instance_a)
         assert await service.get_jwks() == _JWKS
 

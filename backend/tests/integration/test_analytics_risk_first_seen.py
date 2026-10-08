@@ -7,9 +7,8 @@ import pytest_asyncio
 
 from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType
-from app.repositories.findings import FindingRepository
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
+from tests.helpers.findings import persist_findings
 
 pytestmark = pytest.mark.live_mongo
 
@@ -42,8 +41,7 @@ async def _scan(db, scan_id: str, created_at: datetime, *findings: Finding) -> N
     aggregator = ResultAggregator()
     for finding in findings:
         aggregator.add_finding(finding)
-    records, _ = _prepare_finding_records(aggregator.get_findings(), scan_id, _PROJECT, created_at)
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, scan_id, _PROJECT, aggregator.get_findings(), created_at)
 
 
 @pytest_asyncio.fixture

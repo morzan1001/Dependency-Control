@@ -7,11 +7,9 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.core.init_db import create_indexes
 from app.models.project import Project, Scan
-from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.compliance import ControlStatus, ReportFramework
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.scopes import ResolvedScope
 from app.services.analyzers.license_compliance import LicenseAnalyzer
 from app.services.compliance.engine import ComplianceReportEngine
@@ -19,6 +17,7 @@ from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.normalizers.license import normalize_license
 from tests.helpers.analyzers import analyze_cyclonedx
+from tests.helpers.findings import persist_findings
 
 _GPL_COMPONENT = {
     "type": "library",
@@ -45,8 +44,7 @@ async def _scan_project(db, project_id: str, policy: dict) -> list[dict]:
     result = await analyze_cyclonedx(LicenseAnalyzer(), [_GPL_COMPONENT], policy)
     aggregator = ResultAggregator()
     normalize_license(aggregator, result, source="sbom.json")
-    records, _ = _prepare_finding_records(aggregator.get_findings(), scan_id, project_id, datetime.now(timezone.utc))
-    await _persist_findings_and_waivers(records, scan_id, project_id, FindingRepository(db), db)
+    await persist_findings(db, scan_id, project_id, aggregator.get_findings(), datetime.now(timezone.utc))
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 

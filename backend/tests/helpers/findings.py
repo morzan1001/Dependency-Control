@@ -1,10 +1,13 @@
 import json
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.models.finding import Finding, FindingType
+from app.repositories.findings import FindingRepository
 from app.services.aggregation.aggregator import ResultAggregator
+from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 
 _SCANNER_KEYS = ("id", "severity", "fixed_version")
 _GRYPE_OUTPUT = json.loads((Path(__file__).parents[1] / "fixtures/grype/grype_0.119_matches.json").read_text())
@@ -59,3 +62,11 @@ def grype_findings(matches: Iterable[tuple[str, str, str | None]], *, severity: 
     aggregator = ResultAggregator()
     aggregator.aggregate("grype", report)
     return aggregator.get_findings()
+
+
+async def persist_findings(
+    db: Any, scan_id: str, project_id: str, findings: Iterable[Finding], created_at: datetime
+) -> None:
+    """Store the findings the way an analysis run of that scan writes them."""
+    records, _ = _prepare_finding_records(list(findings), scan_id, project_id, created_at)
+    await _persist_findings_and_waivers(records, scan_id, project_id, FindingRepository(db), db)

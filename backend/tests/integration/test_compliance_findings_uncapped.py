@@ -9,17 +9,15 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.core.init_db import create_indexes
 from app.models.compliance_report import ComplianceReport
 from app.models.project import Project, Scan
-from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.compliance import ControlStatus, ReportFormat, ReportFramework, ReportStatus
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.compliance.renderers.json_renderer import JsonRenderer
 from app.services.crypto_policy.seeder import seed_crypto_policies
-from tests.helpers.findings import grype_findings
+from tests.helpers.findings import grype_findings, persist_findings
 
 _PROJECT = "sla-project"
 _SCAN = "sla-scan"
@@ -37,8 +35,7 @@ async def test_a_cve_sla_report_evaluates_every_overdue_finding(db):
     findings = grype_findings(
         ((f"brace-expansion-{i:06d}", "2.0.1", None) for i in range(_OVERDUE)), severity="Critical"
     )
-    records, _ = _prepare_finding_records(findings, _SCAN, _PROJECT, datetime.now(timezone.utc) - timedelta(days=400))
-    await _persist_findings_and_waivers(records, _SCAN, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, _SCAN, _PROJECT, findings, datetime.now(timezone.utc) - timedelta(days=400))
     resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
 
     inputs, evaluation = await ComplianceReportEngine().evaluate(

@@ -6,13 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.repositories.findings import FindingRepository
 from tests.mocks.fake_mongo import FakeDatabase
-from tests.mocks.mongodb import create_mock_collection
-
-
-def _make_mock_db(collection):
-    db = MagicMock()
-    db.__getitem__ = MagicMock(return_value=collection)
-    return db
+from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
 def _capture_pipeline(collection) -> list[dict[str, Any]]:
@@ -30,7 +24,7 @@ class TestGetSeverityDistributionScanScope:
         agg_cursor = MagicMock()
         agg_cursor.to_list = AsyncMock(return_value=agg_results or [])
         collection.aggregate = MagicMock(return_value=agg_cursor)
-        db = _make_mock_db(collection)
+        db = create_mock_db({"findings": collection})
         repo = FindingRepository(db)
         result = asyncio.run(repo.get_severity_distribution(scan_ids))
         return result, collection

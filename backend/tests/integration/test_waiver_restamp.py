@@ -9,18 +9,14 @@ from app.core.metrics import analysis_waivers_applied_total
 from app.models.finding import Finding, FindingType, Severity
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
-from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.adhoc import apply_global_waivers_in_memory
-from app.services.analysis.engine import (
-    _finalize_scan_and_project,
-    _persist_findings_and_waivers,
-    _prepare_finding_records,
-)
+from app.services.analysis.engine import _finalize_scan_and_project
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.stats import recalculate_project_stats
 from tests.helpers.databases import DATABASES
+from tests.helpers.findings import persist_findings
 from tests.mocks.fake_mongo import FakeDatabase
 
 pytestmark = pytest.mark.asyncio
@@ -137,8 +133,7 @@ def _waiver_where_the_secret_last_was() -> Waiver:
 
 
 async def _persist(db, scan_id: str, *findings: Finding) -> list[dict]:
-    records, _ = _prepare_finding_records(list(findings), scan_id, _PROJECT, datetime.now(timezone.utc))
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, scan_id, _PROJECT, findings, datetime.now(timezone.utc))
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 

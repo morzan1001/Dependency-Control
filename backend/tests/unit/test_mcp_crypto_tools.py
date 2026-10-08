@@ -1,7 +1,6 @@
 """Unit tests for the crypto-asset chat tools in app.services.chat.tools."""
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -12,17 +11,11 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
-from tests.mocks.mongodb import create_mock_collection
+from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 _PROJECT = "p-crypto"
 _SCAN = "s-crypto"
 _BRANCH = "main"
-
-
-def _make_mock_db(collection):
-    db = MagicMock()
-    db.__getitem__ = MagicMock(return_value=collection)
-    return db
 
 
 def _algorithm(bom_ref: str, name: str, primitive: CryptoPrimitive) -> CryptoAsset:
@@ -99,7 +92,7 @@ async def test_mcp_get_crypto_summary():
 
     agg_results = [{"_id": "algorithm", "count": 1}]
     mock_col = create_mock_collection(aggregate=agg_results, count_documents=1)
-    db = _make_mock_db(mock_col)
+    db = create_mock_db({"crypto_assets": mock_col})
 
     result = await get_crypto_summary(db, project_id="p2", scan_id="s2")
     assert result["total"] == 1

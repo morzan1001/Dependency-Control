@@ -11,11 +11,10 @@ import pytest_asyncio
 from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType, Severity
-from app.repositories.findings import FindingRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
+from app.services.analysis.engine import _prepare_finding_records
 from app.services.analytics.findings_delta import (
     FINDING_IDENTITY_PROJECTION,
     compare_findings,
@@ -27,7 +26,7 @@ from app.services.analyzers.crypto.certificate_lifecycle import evaluate_certifi
 from app.services.analyzers.crypto.protocol_cipher import evaluate_protocols
 from app.services.crypto_policy.resolver import EffectivePolicy
 from tests.helpers.databases import DATABASES
-from tests.helpers.findings import stored_vulnerability
+from tests.helpers.findings import persist_findings, stored_vulnerability
 
 _PROJECT = "identity-project"
 # Whole seconds, so the server's millisecond precision cannot move the dates the tests compare.
@@ -78,8 +77,7 @@ def _aggregated(*results: tuple[str, dict]) -> list[Finding]:
 
 
 async def _persist(db, scan_id: str, findings: list[Finding], created_at: datetime = _NOW) -> None:
-    records, _ = _prepare_finding_records(findings, scan_id, _PROJECT, created_at)
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, scan_id, _PROJECT, findings, created_at)
 
 
 async def _delta(db, from_scan: str = "scan-a", to_scan: str = "scan-b"):

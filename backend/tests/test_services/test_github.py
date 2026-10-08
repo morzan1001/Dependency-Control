@@ -1,7 +1,6 @@
 """Tests for GitHubService OIDC validation, API pagination and write verbs."""
 
 import asyncio
-from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -10,7 +9,7 @@ import pytest
 
 from app.models.github_api import GitHubOIDCPayload
 from app.services.github import GitHubService
-from tests.helpers.oidc import rsa_public_jwk
+from tests.helpers.oidc import rsa_public_jwk, serve_idp
 from tests.mocks.github import github_instance_a, github_instance_b, make_github_instance
 
 
@@ -290,21 +289,10 @@ def jwks_cache(fake_cache, monkeypatch):
     return fake_cache
 
 
-def _serve_idp(monkeypatch, handler):
-    requested: list[str] = []
-
-    async def recording(request):
-        requested.append(str(request.url))
-        return handler(request)
-
-    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(recording)))
-    return requested
-
-
 @pytest.mark.asyncio
 class TestGitHubJwksSource:
     async def test_github_com_keys_come_from_the_fixed_location(self, monkeypatch, jwks_cache):
-        requested = _serve_idp(monkeypatch, lambda request: httpx.Response(200, json=_JWKS))
+        requested = serve_idp(monkeypatch, lambda request: httpx.Response(200, json=_JWKS))
 
         assert await GitHubService(github_instance_a()).get_jwks() == _JWKS
         assert requested == ["https://token.actions.githubusercontent.com/.well-known/jwks"]
@@ -321,7 +309,7 @@ class TestGitHubJwksSource:
                 return httpx.Response(404)
             return httpx.Response(200, json=rotated if request.url.path.endswith("/keys") else _JWKS)
 
-        requested = _serve_idp(monkeypatch, handler)
+        requested = serve_idp(monkeypatch, handler)
         service = GitHubService(github_instance_b())
         assert await service.get_jwks() == _JWKS
         assert requested == [f"{base}/.well-known/openid-configuration", f"{base}/.well-known/jwks"]
@@ -330,7 +318,7 @@ class TestGitHubJwksSource:
         assert await service.refresh_jwks() == rotated
 
     async def test_a_malformed_issuer_serves_no_key_set(self, monkeypatch, jwks_cache):
-        requested = _serve_idp(monkeypatch, lambda request: httpx.Response(200, json=_JWKS))
+        requested = serve_idp(monkeypatch, lambda request: httpx.Response(200, json=_JWKS))
         service = GitHubService(make_github_instance(url="https://github.corp.example.com:_services/token"))
 
         assert await service.get_jwks() is None

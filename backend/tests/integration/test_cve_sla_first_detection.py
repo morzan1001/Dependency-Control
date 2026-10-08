@@ -23,13 +23,13 @@ from app.repositories.findings import (
 from app.repositories.waivers import WaiverRepository
 from app.schemas.compliance import ControlResult, ControlStatus
 from app.services.aggregation.aggregator import ResultAggregator
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records, _stamp_first_seen
+from app.services.analysis.engine import _prepare_finding_records, _stamp_first_seen
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from tests.helpers.compliance import evaluation_input
 from tests.helpers.databases import DATABASES
-from tests.helpers.findings import aggregated_vulnerability
+from tests.helpers.findings import aggregated_vulnerability, persist_findings
 
 _PROJECT = "sla-project"
 _OTHER_PROJECT = "other-project"
@@ -75,8 +75,7 @@ def _versionless_sast() -> Finding:
 
 
 async def _persist(db, scan_id: str, scan_created_at: datetime, *findings: Finding, project_id: str = _PROJECT):
-    records, _ = _prepare_finding_records(list(findings), scan_id, project_id, scan_created_at)
-    await _persist_findings_and_waivers(records, scan_id, project_id, FindingRepository(db), db)
+    await persist_findings(db, scan_id, project_id, findings, scan_created_at)
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 

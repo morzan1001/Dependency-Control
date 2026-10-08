@@ -1,3 +1,6 @@
+from functools import partial
+
+import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
@@ -12,3 +15,15 @@ def rsa_public_jwk(kid: str) -> dict:
 
 def ci_token(claims: dict) -> str:
     return jwt.encode(claims, _PRIVATE_KEY, algorithm="RS256", headers={"kid": "ci-key"})
+
+
+def serve_idp(monkeypatch, handler) -> list[str]:
+    """Answer every httpx request with ``handler``; returns the requested URLs in arrival order."""
+    requested: list[str] = []
+
+    async def recording(request):
+        requested.append(str(request.url))
+        return handler(request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(recording)))
+    return requested
