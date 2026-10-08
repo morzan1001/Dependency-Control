@@ -38,7 +38,7 @@ _PRERELEASE_TAG = re.compile(
 _SEMVER_SYSTEMS = frozenset({"npm", "go", "cargo", "nuget"})
 
 
-def _is_stable_release(version: str, system: str | None) -> bool:
+def _is_stable_release(version: str, system: str) -> bool:
     """True for X.Y.Z; False for pre-releases under the ecosystem's version scheme."""
     if system in _SEMVER_SYSTEMS:
         return "-" not in version.split("+", 1)[0]
@@ -55,30 +55,10 @@ class ReleaseInfo:
 
 
 # Keyed by ``(system, name)`` so same-named packages across ecosystems don't collide.
-# A plain ``str`` key is treated as name-only (unknown system).
-HistoryKey = str | tuple[str, str]
-ReleaseHistory = dict[HistoryKey, list[ReleaseInfo]]
+ReleaseHistory = dict[tuple[str, str], list[ReleaseInfo]]
 
-# ``(name, version, scan_date)`` or ecosystem-aware ``(system, name, version, scan_date)``:
-# the 4-tuple disambiguates same-named packages across ecosystems, the 3-tuple matches name-only.
-Observation = tuple[str, str, datetime] | tuple[str, str, str, datetime]
-
-
-def _split_history_key(key: HistoryKey) -> tuple[str | None, str]:
-    """Normalise a history key into ``(system, name)``; ``system`` is None for bare-name keys."""
-    if isinstance(key, tuple):
-        return key
-    return None, key
-
-
-def _split_observation(obs: Observation) -> tuple[str | None, str, str, datetime]:
-    """Normalise an observation into ``(system, name, version, scan_date)``.
-
-    ``system`` is None for the 3-tuple ``(name, version, scan_date)`` form.
-    """
-    if len(obs) == 4:
-        return obs
-    return (None, *obs)
+# ``(system, name, version, scan_date)`` of the first scan that held the version.
+Observation = tuple[str, str, str, datetime]
 
 
 @dataclass(frozen=True)
@@ -128,31 +108,19 @@ def compute_adoption_latencies(
 ) -> list[int]:
     """Days between upstream publish and first observed scan, per package/version.
 
-    An ecosystem-aware observation matches its exact ``(system, name, version)`` release;
-    a name-only observation matches on name+version. Observations whose version is missing
-    from the history are skipped.
+    An observation matches only the release of its own ``(system, name, version)``; one
+    whose version is missing from the history is skipped.
     """
-    exact_lookup: dict[tuple[str, str, str], datetime] = {}
-    name_lookup: dict[tuple[str, str], datetime] = {}
-    for key, releases in history.items():
-        system, name = _split_history_key(key)
-        for r in releases:
-            if system is not None:
-                exact_lookup[(system, name, r.version)] = r.published_at
-            # Name-only fallback for system-less callers; last write wins on a name collision.
-            name_lookup[(name, r.version)] = r.published_at
-
-    latencies: list[int] = []
-    for obs in observations:
-        system, name, version, scan_date = _split_observation(obs)
-        published_at: datetime | None = None
-        if system is not None:
-            published_at = exact_lookup.get((system, name, version))
-        if published_at is None:
-            published_at = name_lookup.get((name, version))
-        if published_at is not None:
-            latencies.append((scan_date - published_at).days)
-    return latencies
+    published = {
+        (system, name, release.version): release.published_at
+        for (system, name), releases in history.items()
+        for release in releases
+    }
+    return [
+        (scan_date - published[(system, name, version)]).days
+        for system, name, version, scan_date in observations
+        if (system, name, version) in published
+    ]
 
 
 def aggregate_upstream_metrics(
@@ -170,8 +138,7 @@ def aggregate_upstream_metrics(
     gap_medians: list[float] = []
     days_since: list[int] = []
 
-    for key, releases in history.items():
-        system, _ = _split_history_key(key)
+    for (system, _name), releases in history.items():
         stable = [r for r in releases if _is_stable_release(r.version, system)]
         if not stable:
             continue

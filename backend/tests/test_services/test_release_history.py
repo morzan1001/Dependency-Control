@@ -137,20 +137,20 @@ class TestComputeAdoptionLatencies:
         # pkg-a v1.1.0 published 30 days before _REF; first scan that saw it 5 days before _REF
         # -> adoption latency = 25 days
         history = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=400)),
                 ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=30)),
             ],
         }
         observations = [
-            ("pkg-a", "1.1.0", _REF - timedelta(days=5)),
+            ("pypi", "pkg-a", "1.1.0", _REF - timedelta(days=5)),
         ]
         latencies = compute_adoption_latencies(history, observations)
         assert latencies == [25]
 
     def test_skips_versions_with_unknown_publish_date(self):
-        history = {"pkg-a": []}  # no release info for any version
-        observations = [("pkg-a", "1.0.0", _REF)]
+        history = {("pypi", "pkg-a"): []}  # no release info for any version
+        observations = [("pypi", "pkg-a", "1.0.0", _REF)]
         assert compute_adoption_latencies(history, observations) == []
 
 
@@ -166,13 +166,13 @@ class TestAggregateUpstreamMetrics:
         # pkg-a: 3 releases in last year, gap median ~60d, last 30 days ago
         # pkg-b: 1 release in last year, no gap median, last 90 days ago
         history = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 _ri(days_ago=180),
                 _ri(days_ago=120),
                 _ri(days_ago=60),
                 _ri(days_ago=30),
             ],
-            "pkg-b": [
+            ("pypi", "pkg-b"): [
                 _ri(days_ago=90),
             ],
         }
@@ -194,7 +194,7 @@ class TestAggregateUpstreamMetrics:
     def test_releases_count_excludes_prereleases(self):
         # 2 stable + 3 betas in last 12m -> stable-only count is 2.
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=300)),
                 ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=280)),
                 ReleaseInfo(version="1.0.0-rc1", published_at=_REF - timedelta(days=200)),
@@ -273,7 +273,7 @@ class TestAggregateUpstreamMetrics:
     def test_days_between_excludes_prereleases(self):
         # Stable releases 100 days apart; betas would shrink the gap if counted.
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=200)),
                 ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=150)),
                 ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=100)),
@@ -288,7 +288,7 @@ class TestAggregateUpstreamMetrics:
         # Latest stable is 200 days old; a beta released yesterday must
         # not pretend the package is "actively maintained".
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=200)),
                 ReleaseInfo(version="2.0.0-beta1", published_at=_REF - timedelta(days=1)),
             ],
@@ -301,11 +301,11 @@ class TestAggregateUpstreamMetrics:
         # the right thing — the upstream publish date of *that* beta,
         # not a hypothetical filtered-out release.
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=20)),
             ],
         }
-        observations = [("pkg", "1.0.0-beta1", _REF - timedelta(days=5))]
+        observations = [("pypi", "pkg", "1.0.0-beta1", _REF - timedelta(days=5))]
         result = aggregate_upstream_metrics(history, observations=observations, ref=_REF)
         assert result.adoption_latency_days_median == 15
 
@@ -340,14 +340,14 @@ class TestAggregateUpstreamMetrics:
 
     def test_adoption_latency_uses_observation_input(self):
         history = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=100)),
                 ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=20)),
             ],
         }
         observations = [
-            ("pkg-a", "1.0.0", _REF - timedelta(days=80)),  # latency 20
-            ("pkg-a", "1.1.0", _REF - timedelta(days=5)),  # latency 15
+            ("pypi", "pkg-a", "1.0.0", _REF - timedelta(days=80)),  # latency 20
+            ("pypi", "pkg-a", "1.1.0", _REF - timedelta(days=5)),  # latency 15
         ]
         result = aggregate_upstream_metrics(history, observations=observations, ref=_REF)
         assert result.adoption_latency_days_median is not None
@@ -429,6 +429,13 @@ class TestDepsDevFetcher:
 class TestEcosystemKeyingNoConflation:
     """Keying history/observations by (system, name) keeps same-named packages in different ecosystems separate."""
 
+    def test_an_observation_never_borrows_another_ecosystems_publish_date(self):
+        history = {
+            ("npm", "chalk"): [ReleaseInfo(version="5.3.0", published_at=_REF - timedelta(days=300))],
+            ("pypi", "chalk"): [ReleaseInfo(version="0.1.0", published_at=datetime(2015, 1, 1, tzinfo=timezone.utc))],
+        }
+        assert compute_adoption_latencies(history, [("npm", "chalk", "0.1.0", _REF)]) == []
+
     def test_aggregate_counts_both_ecosystems_of_same_name(self):
         # Cadence aggregation iterates history values; with (system, name) keys
         # both same-named packages contribute instead of one clobbering the other.
@@ -454,19 +461,3 @@ class TestEcosystemKeyingNoConflation:
         ]
         latencies = compute_adoption_latencies(history, observations)
         assert sorted(latencies) == [10, 50]
-
-    def test_name_only_history_and_observations_still_work(self):
-        # Name-keyed history + 3-tuple observations (what update_frequency passes) must resolve.
-        history = {
-            "pkg-a": [ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=30))],
-        }
-        observations = [("pkg-a", "1.1.0", _REF - timedelta(days=5))]
-        assert compute_adoption_latencies(history, observations) == [25]
-
-    def test_system_observation_falls_back_to_name_keyed_history(self):
-        # A system-aware observation matches name-keyed history via the name+version fallback.
-        history = {
-            "pkg-a": [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=40))],
-        }
-        observations = [("pypi", "pkg-a", "1.0.0", _REF - timedelta(days=10))]
-        assert compute_adoption_latencies(history, observations) == [30]

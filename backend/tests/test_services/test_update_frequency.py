@@ -1427,7 +1427,7 @@ class TestStreamingOrchestrator:
         scan0_date = scans[0]["created_at"]
         scan1_date = scans[1]["created_at"]
         history: ReleaseHistory = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 ReleaseInfo(version="1.0.0", published_at=scan0_date - timedelta(days=100)),
                 ReleaseInfo(version="1.0.1", published_at=scan1_date - timedelta(days=20)),
             ],
@@ -1700,7 +1700,7 @@ class TestStreamingOrchestrator:
         scan1_date = scans[1]["created_at"]
         registry_name = "org.apache.logging.log4j:log4j-core"
         history: ReleaseHistory = {
-            registry_name: [
+            ("maven", registry_name): [
                 ReleaseInfo(version="2.14.0", published_at=scans[0]["created_at"] - timedelta(days=100)),
                 ReleaseInfo(version="2.17.0", published_at=scan1_date - timedelta(days=15)),
             ],
