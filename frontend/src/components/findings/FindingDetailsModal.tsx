@@ -124,10 +124,12 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
     const handleSbomClick = (source: string) => {
         if (!scanId) return
         const match = /SBOM #(\d+)/i.exec(source)
-        const sbomIndex = match ? Number.parseInt(match[1], 10) - 1 : 0
+        // A root-component name does not say which SBOM it came from unless the scan has only one.
+        let sbomQuery = scanContext?.sbomCount === 1 ? '&sbom=0' : ''
+        if (match) sbomQuery = `&sbom=${Number.parseInt(match[1], 10) - 1}`
         onClose()
         onNavigate?.()
-        navigate(`/projects/${projectId}/scans/${scanId}?tab=raw&sbom=${sbomIndex}`)
+        navigate(`/projects/${projectId}/scans/${scanId}?tab=raw${sbomQuery}`)
     }
 
     return (

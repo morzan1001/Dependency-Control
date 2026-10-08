@@ -51,6 +51,7 @@ export interface ScanContext {
     pipelineUrl?: string | null
     commitHash?: string | null
     branch?: string | null
+    sbomCount?: number
 }
 
 

@@ -222,6 +222,7 @@ export default function ScanDetails() {
     pipelineUrl: scan.pipeline_url,
     commitHash: scan.commit_hash,
     branch: scan.branch,
+    sbomCount: scan.sbom_refs?.length,
   }
 
   const activeAnalyzers = project.active_analyzers || [];
