@@ -20,6 +20,7 @@ from app.schemas.compliance import ReportFramework
 from ._helpers import MAX_CRYPTO_ASSET_PAGE, MAX_DAY_WINDOW, MAX_FINDING_ROWS, MAX_PLAN_STEPS, MAX_SUMMARY_ROWS
 
 _DESC_PROJECT_ID = "The project ID"
+_DESC_FINDING_ROW_ID = "A finding row's finding_id (component:version) or its id"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
 _DESC_OPTIONAL_SCAN_ID = (
     "Optional scan ID. Omit it to ask about the project's head build — the newest usable build on "
@@ -183,7 +184,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "finding_id": {"type": "string", "description": "The finding ID"},
+                    "finding_id": {"type": "string", "description": _DESC_FINDING_ROW_ID},
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["finding_id", "project_id"],
@@ -774,7 +775,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "finding_id": {"type": "string", "description": "The finding/vulnerability ID"},
+                    "finding_id": {"type": "string", "description": _DESC_FINDING_ROW_ID},
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["finding_id", "project_id"],

@@ -201,6 +201,21 @@ async def test_vulnerability_details_list_the_worst_advisories_first_and_name_th
     assert (worst["id"], worst["in_kev"], worst["fixed_version"]) == ("CVE-2020-0001", False, None)
 
 
+async def test_a_finding_row_is_looked_up_under_either_id_it_carries(db, database):
+    await _seed_head(db)
+    await db.findings.insert_one(_log4j(reachability={"confidence_score": 0.9}))
+    row = (await _call(db, "get_scan_findings", project_id=_PROJECT))["findings"][0]
+
+    for wanted in (row["id"], row["finding_id"]):
+        details = await _call(db, "get_vulnerability_details", project_id=_PROJECT, finding_id=wanted)
+        reachability = await _call(db, "check_reachability", project_id=_PROJECT, finding_id=wanted)
+        waiver = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id=reachability["finding_id"])
+
+        assert details["finding"]["id"] == "f-log4j"
+        assert (reachability["finding_id"], reachability["confidence_score"]) == ("log4j-core:1.0.0", 0.9)
+        assert waiver["findings_total"] == 1
+
+
 async def test_a_cve_is_found_under_the_ghsa_advisory_that_resolved_to_it(db, database):
     await _seed_head(db)
     await db.findings.insert_one(

@@ -623,9 +623,7 @@ class ChatToolRegistry:
 
     async def _tool_get_vulnerability_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
-        if not finding:
-            return {"error": _ERR_FINDING_NOT_FOUND}
+        finding = await self._require_finding(ctx, project)
         slim = _serialize_finding_for_llm(finding)
         slim["project_name"] = project.get("name", "")
         advisories = ranked_advisories(finding.get("details"))
@@ -1487,15 +1485,12 @@ class ChatToolRegistry:
         return {"callgraphs": [_serialize_doc(await repo.load_graph(doc)) for doc in newest]}
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
-        if not finding:
-            return {"error": _ERR_FINDING_NOT_FOUND}
+        finding = await self._require_finding(ctx, await self._require_project(ctx))
         reachability = (finding.get("details") or {}).get("reachability") or {}
         is_reachable = finding.get("reachable")
         analysis_level = finding.get("reachability_level")
         return {
-            "finding_id": finding["_id"],
+            "finding_id": finding.get("finding_id"),
             "is_reachable": is_reachable,
             "status": reachability_display_tier(is_reachable, analysis_level),
             "analysis_level": analysis_level,
@@ -1780,6 +1775,15 @@ class ChatToolRegistry:
     async def _in_scope(self, ctx: _ToolContext) -> dict[str, Any]:
         """A `project_id` filter to the caller's projects; none for a caller who reads them all."""
         return {"project_id": {"$in": await self._get_authorized_project_ids(ctx)}} if ctx.user_project_query else {}
+
+    async def _require_finding(self, ctx: _ToolContext, project: dict[str, Any]) -> dict[str, Any]:
+        """The finding `finding_id` names: a row's id, or a finding_id in the project's head build."""
+        wanted = ctx.args["finding_id"]
+        named = [{"_id": wanted}, {"finding_id": wanted, "scan_id": await self._head_scan_id(project, ctx.db)}]
+        finding: dict[str, Any] | None = await ctx.db["findings"].find_one({"project_id": project["_id"], "$or": named})
+        if not finding:
+            raise _ToolRefusal(_ERR_FINDING_NOT_FOUND)
+        return finding
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
         """The scan representing the head of a project the caller already read and authorised."""
