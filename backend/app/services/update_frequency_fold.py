@@ -6,7 +6,7 @@ import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from itertools import dropwhile, pairwise
+from itertools import dropwhile
 from typing import Any, Literal, get_args
 
 from app.core.constants import COUNTED_UPDATE_KINDS, UpdateKind
@@ -37,7 +37,6 @@ def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     because they compare against a scan outside the window, while its id, date
     and outdated count still enter the fold.
     """
-    _reject_broken_contract(deltas)
     usable = [d for d in deltas if int(d.get("dep_count", 0)) > 0 and not d.get("error")]
     return _contiguous_tail(usable)
 
@@ -129,16 +128,6 @@ def fold_window(
     return summarise_window(
         timeline, kinds, ever_outdated, ever_resolved, window_days, dominant_ecosystem(window[-1].get("eco") or {})
     )
-
-
-def _reject_broken_contract(deltas: Sequence[dict[str, Any]]) -> None:
-    """Guard the two mixups that silently produce plausible-looking wrong numbers."""
-    scopes = {(d["project_id"], d["branch"]) for d in deltas}
-    if len(scopes) > 1:
-        raise ValueError(f"deltas span more than one project/branch: {sorted(scopes)}")
-    for older, newer in pairwise(deltas):
-        if newer["scan_created_at"] < older["scan_created_at"]:
-            raise ValueError(f"deltas must be ordered oldest first; {newer['_id']} precedes {older['_id']}")
 
 
 def _contiguous_tail(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:

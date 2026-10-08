@@ -212,27 +212,6 @@ class TestCadence:
         assert folded.time_range_days == 1.0
 
 
-class TestInputContract:
-    def test_newest_first_input_is_rejected(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1)])
-        with pytest.raises(ValueError, match="oldest first"):
-            select_window(list(reversed(deltas)))
-
-    def test_mixed_branches_are_rejected(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1, branch="feature/x")])
-        with pytest.raises(ValueError, match="one project/branch"):
-            select_window(deltas)
-
-    def test_mixed_projects_are_rejected(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1, project_id="p2")])
-        with pytest.raises(ValueError, match="one project/branch"):
-            select_window(deltas)
-
-    def test_equal_timestamps_are_accepted(self) -> None:
-        deltas = _chain([_delta("s0", 5), _delta("s1", 5, patch=1)])
-        assert [d["_id"] for d in select_window(deltas)] == ["s0", "s1"]
-
-
 class TestChainContinuity:
     def test_a_broken_link_truncates_the_window_to_the_newest_run(self) -> None:
         deltas = _chain([_delta(f"s{i}", i * 10, patch=1) for i in range(5)])

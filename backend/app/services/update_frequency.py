@@ -757,8 +757,7 @@ async def elect_primary_branch(
 ) -> str | None:
     """One project's primary branch in the window."""
     activity = await window_scans_by_branch(scan_repo, [project_id], since)
-    by_branch = {branch: seen for (_project_id, branch), seen in activity.items()}
-    return select_primary_branch(by_branch, default_branch, deleted_branches)
+    return select_primary_branch(activity.get(project_id, {}), default_branch, deleted_branches)
 
 
 # Slack for the scans the ledger reached between the two reads. A missing backfill
@@ -867,10 +866,9 @@ async def _load_completed_scans(
     return scans_raw, len(docs) >= fetch_limit
 
 
-def _spanned_days(bars: Sequence[ScanTimelineEntry]) -> int:
-    """Whole days the retained stretch covers, floored at one so a burst cannot inflate a rate."""
-    span: timedelta = datetime.fromisoformat(bars[-1].date) - datetime.fromisoformat(bars[0].date)
-    return max(1, round(span.total_seconds() / 86400))
+def spanned_days(first: datetime, last: datetime) -> int:
+    """Whole days a folded stretch covers, floored at one so a burst cannot inflate a rate."""
+    return max(1, round((last - first).total_seconds() / 86400))
 
 
 async def compute_update_frequency(
@@ -962,7 +960,11 @@ async def compute_update_frequency(
     )
     # Past the cap the walk never saw the older part of the window, so the rate divides by
     # the stretch it did fold rather than by a window it only partly covered.
-    rate_days = _spanned_days(bars) if truncated else window_days
+    rate_days = (
+        spanned_days(datetime.fromisoformat(bars[0].date), datetime.fromisoformat(bars[-1].date))
+        if truncated
+        else window_days
+    )
     folded = summarise_window(
         bars,
         state.type_counter,
@@ -1010,6 +1012,24 @@ async def _maybe_fetch_upstream_cadence(
         system, registry_name = spec
         observations.append((system, registry_name, version, scan_date))
     return aggregate_upstream_metrics(history, observations=observations)
+
+
+def _project_key(project: dict[str, Any]) -> str:
+    return str(project.get("_id") or project.get("id", ""))
+
+
+def placeholder_summary(
+    project: dict[str, Any], status: UpdateDataStatus, window_days: int, branch: str | None = None
+) -> ProjectUpdateSummary:
+    """A row without numbers, naming the branch it looked at, so every project stays accounted for once."""
+    return ProjectUpdateSummary(
+        project_id=_project_key(project),
+        project_name=project.get("name", ""),
+        teams=project.get("teams") or [],
+        data_status=status,
+        branch=branch,
+        window_days=window_days,
+    )
 
 
 def _rate(summary: ProjectUpdateSummary) -> float:
@@ -1062,7 +1082,6 @@ async def compute_update_frequency_comparison(
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     window_days: int = 90,
-    release_fetcher: ReleaseHistoryFetcher | None = None,
 ) -> UpdateFrequencyComparison:
     """Cross-project update-frequency ranking.
 
@@ -1077,36 +1096,17 @@ async def compute_update_frequency_comparison(
     semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
     since = window_cutoff(window_days)
 
-    def _project_key(project: dict[str, Any]) -> str:
-        return str(project.get("_id") or project.get("id", ""))
-
     activity = await window_scans_by_branch(scan_repo, [_project_key(p) for p in projects], since)
-    by_project: dict[str, dict[str, BranchWindowActivity]] = {}
-    for (project_id, branch), seen in activity.items():
-        by_project.setdefault(project_id, {})[branch] = seen
-
-    def _placeholder(
-        project: dict[str, Any], status: UpdateDataStatus, branch: str | None = None
-    ) -> ProjectUpdateSummary:
-        """A row without numbers, naming the branch it looked at, so every project stays accounted for once."""
-        return ProjectUpdateSummary(
-            project_id=_project_key(project),
-            project_name=project.get("name", ""),
-            teams=project.get("teams") or [],
-            data_status=status,
-            branch=branch,
-            window_days=window_days,
-        )
 
     async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary:
         project_id = _project_key(project)
         project_name = project.get("name", "")
         teams = project.get("teams") or []
 
-        branches = by_project.get(project_id, {})
+        branches = activity.get(project_id, {})
         primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
         if primary is None:
-            return _placeholder(project, "insufficient_data")
+            return placeholder_summary(project, "insufficient_data", window_days)
 
         async with semaphore:
             try:
@@ -1117,15 +1117,14 @@ async def compute_update_frequency_comparison(
                     dep_repo=dep_repo,
                     analysis_repo=analysis_repo,
                     window_days=window_days,
-                    release_fetcher=release_fetcher,
                     branch=primary,
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
-                return _placeholder(project, "error", primary)
+                return placeholder_summary(project, "error", window_days, primary)
 
             if metrics.scan_count < 2:
-                return _placeholder(project, "insufficient_data", primary)
+                return placeholder_summary(project, "insufficient_data", window_days, primary)
 
             return ProjectUpdateSummary(
                 project_id=metrics.project_id,
@@ -1152,7 +1151,7 @@ async def compute_update_frequency_comparison(
         r
         if isinstance(r, ProjectUpdateSummary)
         # gather() hands back anything that escaped _compute_single's own guard.
-        else _placeholder(project, "error")
+        else placeholder_summary(project, "error", window_days)
         for project, r in zip(projects, results, strict=True)
     ]
     for outcome in results:

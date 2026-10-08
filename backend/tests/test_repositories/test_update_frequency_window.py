@@ -51,8 +51,11 @@ class TestGroupWindowByBranch:
 
         buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1", "p2"], T0 - timedelta(days=1))
 
-        assert set(buckets) == {("p1", "main"), ("p1", "develop"), ("p2", "main")}
-        assert [d["_id"] for d in buckets["p1", "main"]] == ["s1", "s2"]
+        assert {project: set(branches) for project, branches in buckets.items()} == {
+            "p1": {"main", "develop"},
+            "p2": {"main"},
+        }
+        assert [d["_id"] for d in buckets["p1"]["main"]] == ["s1", "s2"]
 
     @pytest.mark.asyncio
     async def test_every_delta_names_its_project_and_branch(self):
@@ -61,7 +64,7 @@ class TestGroupWindowByBranch:
 
         buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
 
-        delta = buckets["p1", "main"][0]
+        delta = buckets["p1"]["main"][0]
         assert (delta["project_id"], delta["branch"]) == ("p1", "main")
 
     @pytest.mark.asyncio
@@ -73,7 +76,7 @@ class TestGroupWindowByBranch:
 
         buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
 
-        assert [d["_id"] for d in buckets["p1", "main"]] == ["keep"]
+        assert [d["_id"] for d in buckets["p1"]["main"]] == ["keep"]
 
     @pytest.mark.asyncio
     async def test_the_large_outdated_arrays_stay_out_of_the_grouped_output(self):
@@ -84,7 +87,7 @@ class TestGroupWindowByBranch:
 
         buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
 
-        delta = buckets["p1", "main"][0]
+        delta = buckets["p1"]["main"][0]
         assert "updates_sample" not in delta
         assert delta["outdated_added"] == ["flask"]
 
@@ -123,7 +126,7 @@ class TestGroupWindowByBranch:
         db.scan_update_deltas.aggregate = _refuse  # type: ignore[method-assign]
         buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
 
-        assert [d["_id"] for d in buckets["p1", "main"]] == ["s0", "s1", "s2"]
+        assert [d["_id"] for d in buckets["p1"]["main"]] == ["s0", "s1", "s2"]
 
     @pytest.mark.asyncio
     async def test_an_empty_scope_issues_no_query(self):
@@ -160,7 +163,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], T0 - timedelta(days=1))
 
-        assert activity["p1", "main"].commit_count == 2
+        assert activity["p1"]["main"].commit_count == 2
 
     @pytest.mark.asyncio
     async def test_a_commit_scanned_again_later_still_counts_once(self):
@@ -171,7 +174,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], T0 - timedelta(days=1))
 
-        assert activity["p1", "main"].commit_count == 2
+        assert activity["p1"]["main"].commit_count == 2
 
     @pytest.mark.asyncio
     async def test_scans_naming_no_commit_each_stand_for_themselves(self):
@@ -183,7 +186,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], T0 - timedelta(days=1))
 
-        assert activity["p1", "main"].commit_count == 3
+        assert activity["p1"]["main"].commit_count == 3
 
     @pytest.mark.asyncio
     async def test_each_project_branch_reports_its_scan_count_and_newest_scan(self):
@@ -195,12 +198,11 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1", "p2"], T0 - timedelta(days=1))
 
-        assert {key: seen.commit_count for key, seen in activity.items()} == {
-            ("p1", "main"): 2,
-            ("p1", "develop"): 1,
-            ("p2", "main"): 1,
-        }
-        assert activity["p1", "main"].last_scan_at == T0 + timedelta(minutes=30)
+        assert {
+            project: {branch: seen.commit_count for branch, seen in branches.items()}
+            for project, branches in activity.items()
+        } == {"p1": {"main": 2, "develop": 1}, "p2": {"main": 1}}
+        assert activity["p1"]["main"].last_scan_at == T0 + timedelta(minutes=30)
 
     @pytest.mark.asyncio
     async def test_the_newest_scan_comes_back_utc_aware(self):
@@ -209,7 +211,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
-        assert activity["p1", "main"].last_scan_at.tzinfo is not None
+        assert activity["p1"]["main"].last_scan_at.tzinfo is not None
 
     @pytest.mark.asyncio
     async def test_rescans_and_unusable_scans_are_not_counted(self):
@@ -220,8 +222,8 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], T0 - timedelta(days=1))
 
-        assert activity["p1", "main"].commit_count == 1
-        assert activity["p1", "main"].last_scan_at == T0
+        assert activity["p1"]["main"].commit_count == 1
+        assert activity["p1"]["main"].last_scan_at == T0
 
     @pytest.mark.asyncio
     async def test_only_scans_inside_the_window_count(self):
@@ -231,7 +233,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], T0 - timedelta(days=1))
 
-        assert activity["p1", "main"].commit_count == 1
+        assert activity["p1"]["main"].commit_count == 1
 
     @pytest.mark.asyncio
     async def test_without_a_window_the_whole_history_counts(self):
@@ -241,7 +243,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
-        assert activity["p1", "main"].commit_count == 2
+        assert activity["p1"]["main"].commit_count == 2
 
     @pytest.mark.asyncio
     async def test_scans_naming_no_branch_are_left_out(self):
@@ -252,7 +254,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
-        assert list(activity) == [("p1", "main")]
+        assert {project: list(branches) for project, branches in activity.items()} == {"p1": ["main"]}
 
     @pytest.mark.asyncio
     async def test_a_scan_carrying_no_branch_field_at_all_is_left_out(self):
@@ -277,7 +279,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
-        assert list(activity) == [("p1", "main")]
+        assert {project: list(branches) for project, branches in activity.items()} == {"p1": ["main"]}
 
     @pytest.mark.asyncio
     async def test_a_scan_dated_in_text_falls_outside_every_calendar_window(self):
@@ -290,7 +292,7 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], T0 - timedelta(days=1))
 
-        assert activity["p1", "main"].commit_count == 1
+        assert activity["p1"]["main"].commit_count == 1
 
     @pytest.mark.asyncio
     async def test_a_branch_whose_dates_are_restored_iso_strings_keeps_its_count(self):
@@ -301,8 +303,8 @@ class TestWindowScansByBranch:
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
-        assert activity["p1", "main"].commit_count == 2
-        assert activity["p1", "main"].last_scan_at == datetime.min.replace(tzinfo=timezone.utc)
+        assert activity["p1"]["main"].commit_count == 2
+        assert activity["p1"]["main"].last_scan_at == datetime.min.replace(tzinfo=timezone.utc)
 
     @pytest.mark.asyncio
     async def test_a_scope_larger_than_one_batch_is_read_in_batches(self):

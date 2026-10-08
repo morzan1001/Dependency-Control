@@ -21,11 +21,7 @@ async def rollup_metrics(db: Any, project: dict[str, Any], window_days: int) -> 
     assert since is not None
     activity = await window_scans_by_branch(ScanRepository(db), [project_id], since)
     buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch([project_id], since)
-    resolved = _resolve_window(
-        {branch: seen for (_pid, branch), seen in activity.items()},
-        {branch: deltas for (_pid, branch), deltas in buckets.items()},
-        project,
-    )
+    resolved = _resolve_window(activity.get(project_id, {}), buckets.get(project_id, {}), project)
     if resolved.status != "ready":
         return None
     anchor_id = resolved.window[0]["_id"]

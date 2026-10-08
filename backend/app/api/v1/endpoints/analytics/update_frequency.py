@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Annotated, Any, cast
 
 from fastapi import HTTPException, Query, Request
@@ -24,12 +24,13 @@ from app.core.permissions import Permissions
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.projects import ProjectRepository
-from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
     ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
+    usable_scan_match,
     window_scans_by_branch,
 )
 from app.schemas.analytics import (
@@ -43,8 +44,10 @@ from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
+    placeholder_summary,
     rank_summaries,
     select_primary_branch,
+    spanned_days,
     window_cutoff,
 )
 from app.services.update_frequency_fold import (
@@ -130,9 +133,7 @@ def _comparison_cache_key(
 
 async def _branch_scan_token(db: DatabaseDep, project_id: str, branch: str | None, since: datetime | None) -> str:
     """Count and newest completion of the scans the walk reads; the latter catches a re-finalised scan."""
-    match: dict[str, Any] = {**USABLE_BUILD_MATCH, "project_id": project_id, "branch": branch}
-    if since is not None:
-        match["created_at"] = {"$gte": since}
+    match = {**usable_scan_match(since), "project_id": project_id, "branch": branch}
     rows = await ScanRepository(db).aggregate(
         [{"$match": match}, {"$group": {"_id": None, "scans": {"$sum": 1}, "completed_at": {"$max": "$completed_at"}}}]
     )
@@ -294,17 +295,9 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
     # Past the cap the branch's own commit count describes a longer stretch than either
     # path reads, so comparing against it would demote exactly the busiest projects.
     status: UpdateDataStatus = "ready" if capped else commit_coverage(deltas, window, activity.scans_per_commit).status
-    measured_days = _spanned_days(bars) if capped else None
+    # Measured representative to representative, the two scans the bars are dated by.
+    measured_days = spanned_days(bars[0][-1]["scan_created_at"], bars[-1][-1]["scan_created_at"]) if capped else None
     return _ResolvedWindow(branch, window, status, measured_days, WINDOW_HARD_LIMIT if capped else None)
-
-
-def _spanned_days(bars: list[list[dict[str, Any]]]) -> int:
-    """Whole days the folded stretch covers, floored at one so a burst cannot inflate a rate.
-
-    Measured representative to representative, the two scans the bars are dated by.
-    """
-    span: timedelta = bars[-1][-1]["scan_created_at"] - bars[0][-1]["scan_created_at"]
-    return max(1, round(span.total_seconds() / 86400))
 
 
 def _rollup_summary(
@@ -313,25 +306,15 @@ def _rollup_summary(
     baselines: dict[str, set[str]],
     window_days: int,
 ) -> ProjectUpdateSummary:
-    project_id = str(project["_id"])
-    project_name = project.get("name", "")
-    teams = project.get("teams") or []
     if resolved.status not in ("ready", "partial"):
-        return ProjectUpdateSummary(
-            project_id=project_id,
-            project_name=project_name,
-            teams=teams,
-            data_status=resolved.status,
-            branch=resolved.branch,
-            window_days=window_days,
-        )
+        return placeholder_summary(project, resolved.status, window_days, resolved.branch)
 
     anchor_id = resolved.window[0]["_id"]
     folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
     return folded.to_summary(
-        project_id,
-        project_name,
-        teams,
+        str(project["_id"]),
+        project.get("name", ""),
+        project.get("teams") or [],
         branch=resolved.branch,
         window_days=window_days,
         data_status=resolved.status,
@@ -356,17 +339,8 @@ async def _compute_comparison_from_rollup(
     activity = await window_scans_by_branch(ScanRepository(db), project_ids, since)
     buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(project_ids, since)
 
-    scans_by_project: dict[str, dict[str, BranchWindowActivity]] = {}
-    for (project_id, branch), seen in activity.items():
-        scans_by_project.setdefault(project_id, {})[branch] = seen
-    deltas_by_project: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for (project_id, branch), deltas in buckets.items():
-        deltas_by_project.setdefault(project_id, {})[branch] = deltas
-
     resolved = {
-        project_id: _resolve_window(
-            scans_by_project.get(project_id, {}), deltas_by_project.get(project_id, {}), project
-        )
+        project_id: _resolve_window(activity.get(project_id, {}), buckets.get(project_id, {}), project)
         for project_id, project in zip(project_ids, projects_raw, strict=True)
     }
 

@@ -127,8 +127,8 @@ async def window_scans_by_branch(
     scan_repo: ScanRepository,
     project_ids: Sequence[str],
     since: datetime | None,
-) -> dict[tuple[str, str], BranchWindowActivity]:
-    """Comparable commits per (project, branch), over the window itself when one is given.
+) -> dict[str, dict[str, BranchWindowActivity]]:
+    """Comparable commits per project and branch, over the window itself when one is given.
 
     Both read paths choose their branch from these counts, so neither can settle on a
     branch the other would not, and both can tell how much of the window their numbers
@@ -137,7 +137,7 @@ async def window_scans_by_branch(
     # A findings-only scan holds no dependencies to compare; $ne keeps scans older than sbom_refs.
     scoped = {**usable_scan_match(since), "sbom_refs": {"$ne": []}}
 
-    activity: dict[tuple[str, str], BranchWindowActivity] = {}
+    activity: dict[str, dict[str, BranchWindowActivity]] = {}
     for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
             {"$match": {"project_id": {"$in": list(batch)}, **scoped}},
@@ -165,7 +165,8 @@ async def window_scans_by_branch(
             # Archive restore can insert a scan date as an ISO string, which $max hands back verbatim.
             moment = last_scan_at if isinstance(last_scan_at, datetime) else UNDATED
             per_commit = {c["t"]: int(c["n"]) for c in row["commits"] if isinstance(c.get("t"), str)}
-            activity[chain] = BranchWindowActivity(per_commit, moment)
+            project_id, branch = chain
+            activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, moment)
     return activity
 
 
@@ -251,8 +252,8 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
 
     async def group_window_by_branch(
         self, project_ids: Sequence[str], since: datetime
-    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
-        """In-window deltas of every project, bucketed by (project, branch), oldest first.
+    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
+        """In-window deltas of every project, bucketed by project and branch, oldest first.
 
         Bucketing happens here rather than in a ``$group``: a delta carries the outdated
         names its scan added and resolved, and accumulating those arrays server-side costs
@@ -260,7 +261,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         exceeded the 100 MB a blocking stage may hold. Reading them plainly has no such
         ceiling, transfers the same bytes, and leaves every metric in the pure fold.
         """
-        buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        buckets: dict[str, dict[str, list[dict[str, Any]]]] = {}
         for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             query = {
                 "project_id": {"$in": list(batch)},
@@ -274,9 +275,11 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 chain = _named_branch({"p": doc.get("project_id"), "b": doc.get("branch")})
                 if chain is None:
                     continue
-                buckets.setdefault(chain, []).append(doc)
-        for deltas in buckets.values():
-            deltas.sort(key=_chain_order)
+                project_id, branch = chain
+                buckets.setdefault(project_id, {}).setdefault(branch, []).append(doc)
+        for branches in buckets.values():
+            for deltas in branches.values():
+                deltas.sort(key=_chain_order)
         return buckets
 
     async def window_ledger_by_branch(
