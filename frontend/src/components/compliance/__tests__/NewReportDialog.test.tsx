@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReport } from "@/api/compliance";
+import { teamApi } from "@/api/teams";
 import { NewReportDialog } from "../NewReportDialog";
 
 vi.mock("@/api/compliance", () => ({
@@ -49,6 +50,7 @@ describe("NewReportDialog", () => {
   beforeEach(() => {
     permissionSet.clear();
     vi.mocked(createReport).mockClear();
+    vi.mocked(teamApi.getAll).mockClear();
   });
 
   it("offers the caller's teams by name and sends the picked team's id", async () => {
@@ -58,6 +60,33 @@ describe("NewReportDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate" }));
 
     await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ scope: "team", scope_id: "t-9" })));
+  });
+
+  it.each(["analytics:global", "system:manage", "project:read_all"])(
+    "lets a caller with %s but without team:read_all type the id of any team",
+    async (permission) => {
+      permissionSet.add(permission);
+      permissionSet.add("team:read");
+      withClient(<NewReportDialog onClose={vi.fn()} />);
+      await pickOption(screen.getAllByRole("combobox")[0], "Team");
+      fireEvent.change(screen.getByPlaceholderText("Team ID"), { target: { value: " t-other " } });
+      fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+      await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ scope: "team", scope_id: "t-other" })));
+      expect(teamApi.getAll).not.toHaveBeenCalled();
+    },
+  );
+
+  it("offers a team:read_all holder the teams by name", async () => {
+    permissionSet.add("system:manage");
+    permissionSet.add("team:read_all");
+    withClient(<NewReportDialog onClose={vi.fn()} />);
+    await pickOption(screen.getAllByRole("combobox")[0], "Team");
+    await pickOption(screen.getAllByRole("combobox")[1], "Payments");
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+    await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ scope: "team", scope_id: "t-9" })));
+    expect(screen.queryByPlaceholderText("Team ID")).not.toBeInTheDocument();
   });
 
   it("forgets the picked team when the scope changes", async () => {

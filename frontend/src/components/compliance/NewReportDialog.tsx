@@ -8,6 +8,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ProjectCombobox } from "@/components/ui/project-combobox";
 import { createReport } from "@/api/compliance";
 import type { ReportFormat, ReportFramework } from "@/types/compliance";
@@ -55,6 +56,8 @@ export function NewReportDialog({
   const qc = useQueryClient();
   const { hasPermission } = useAuth();
   const canGlobal = hasPermission("system:manage") || hasPermission("analytics:global");
+  // The server lets these callers report on any team, while GET /teams lists at most their own.
+  const typesTeamId = (canGlobal || hasPermission("project:read_all")) && !hasPermission("team:read_all");
 
   const scopeOptions = useMemo<ScopeOption[]>(() => {
     const opts: ScopeOption[] = [
@@ -80,7 +83,7 @@ export function NewReportDialog({
   const [scopeError, setScopeError] = useState<string | null>(null);
 
   const needsScopeId = scope === "project" || scope === "team";
-  const { data: teams } = useTeams(undefined, "name", "asc", { enabled: scope === "team" });
+  const { data: teams } = useTeams(undefined, "name", "asc", { enabled: scope === "team" && !typesTeamId });
   const pickScopeId = (id: string) => { setScopeId(id); setScopeError(null); };
 
   const submit = useMutation({
@@ -130,9 +133,13 @@ export function NewReportDialog({
           {needsScopeId && (
             <label className="block text-sm">
               <span className="text-muted-foreground">{scope === "project" ? "Project" : "Team"}</span>
-              {scope === "project" ? (
+              {scope === "project" && (
                 <ProjectCombobox value={scopeId} onValueChange={pickScopeId} className="mt-1" />
-              ) : (
+              )}
+              {scope === "team" && typesTeamId && (
+                <Input value={scopeId} onChange={(e) => pickScopeId(e.target.value.trim())} placeholder="Team ID" className="mt-1" />
+              )}
+              {scope === "team" && !typesTeamId && (
                 <Select value={scopeId} onValueChange={pickScopeId}>
                   <SelectTrigger className="mt-1"><SelectValue placeholder="Select a team..." /></SelectTrigger>
                   <SelectContent>
