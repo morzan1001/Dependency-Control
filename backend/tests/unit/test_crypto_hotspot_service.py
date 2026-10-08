@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -262,6 +262,23 @@ async def test_group_by_severity_excludes_waived_findings(db):
     by_key = {e.key: e for e in result.items}
     assert by_key["HIGH"].finding_count == 1
     assert by_key["LOW"].finding_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_weakness_tag_row_spans_every_severity_it_was_seen_at(db):
+    base = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    for index, (severity, day) in enumerate((("HIGH", 3), ("LOW", 1), ("HIGH", 7))):
+        finding = _crypto_finding(f"f{index}", asset_name="RSA", project_id="pt", scan_id="st", severity=severity)
+        finding["details"] |= {"weakness_tags": ["short-key"], "bom_ref": f"b{index % 2}"}
+        await db.findings.insert_one(finding | {"scan_created_at": base + timedelta(days=day)})
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="weakness_tag", scan_id="st")
+
+    [entry] = result.items
+    assert (entry.key, entry.finding_count, entry.asset_count) == ("short-key", 3, 2)
+    assert entry.severity_mix == {"HIGH": 2, "LOW": 1}
+    assert (entry.first_seen, entry.last_seen) == (base + timedelta(days=1), base + timedelta(days=7))
 
 
 @pytest.mark.asyncio
