@@ -366,3 +366,20 @@ async def test_concurrent_callers_of_one_view_share_one_aggregation(db):
         await asyncio.gather(*(service.hotspots(resolved=resolved, group_by="name", limit=10) for _ in range(3)))
 
     assert runs == 1
+
+
+@pytest.mark.asyncio
+async def test_a_named_scan_cached_for_its_owner_is_not_served_to_an_outsider(db):
+    """User-scope callers share scope and scope_id, so only their project sets tell their entries apart."""
+    await CryptoAssetRepository(db).bulk_upsert(
+        "po", "so", [_asset("a1", "MD5", CryptoPrimitive.HASH, project_id="po", scan_id="so")]
+    )
+    service = CryptoHotspotService(db)
+    owner = ResolvedScope(scope="user", scope_id=None, project_ids=["po"])
+    outsider = ResolvedScope(scope="user", scope_id=None, project_ids=["elsewhere"])
+
+    seen_by_owner = await service.hotspots(resolved=owner, group_by="name", scan_id="so")
+    seen_by_outsider = await service.hotspots(resolved=outsider, group_by="name", scan_id="so")
+
+    assert [entry.key for entry in seen_by_owner.items] == ["MD5"]
+    assert seen_by_outsider.items == []

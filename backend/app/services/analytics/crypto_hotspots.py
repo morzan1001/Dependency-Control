@@ -53,7 +53,8 @@ class CryptoHotspotService:
         limit = max(1, min(limit, 500))
 
         latest_scan_ids = await self._pick_scan_ids(resolved, scan_id)
-        key = ("crypto-hotspots", resolved.scope, resolved.scope_id, group_by, scope_digest(latest_scan_ids), limit)
+        scope = (resolved.scope, resolved.scope_id, scope_digest(resolved.project_ids))
+        key = ("crypto-hotspots", *scope, group_by, scope_digest(latest_scan_ids), limit)
         return await self.cache.get_or_compute(key, lambda: self._build(resolved, group_by, latest_scan_ids, limit))
 
     async def _build(
