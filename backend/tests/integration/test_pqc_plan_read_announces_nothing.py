@@ -5,18 +5,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.constants import NOTIFICATION_EVENTS, WEBHOOK_VALID_EVENTS
-from app.services.analytics.cache import get_analytics_cache
 from app.services.notifications.service import notification_service
 from app.services.webhooks import webhook_service
 
 pytestmark = [pytest.mark.live_mongo, pytest.mark.asyncio]
-
-
-@pytest.fixture(autouse=True)
-def _cold_plan_cache():
-    get_analytics_cache().clear()
-    yield
-    get_analytics_cache().clear()
 
 
 async def test_reading_a_project_plan_delivers_no_webhook_and_no_notification(
