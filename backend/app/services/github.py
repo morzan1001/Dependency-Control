@@ -658,9 +658,7 @@ class GitHubService:
         emails = await self._public_emails(logins)
         if emails is None:
             return None
-        wanted = sorted({email for email in emails.values() if email})
-        users = await user_repo.find_raw_by_verified_emails(wanted) if wanted else []
-        by_email = {str(user.get("email", "")).lower(): user for user in users}
+        by_email = await user_repo.verified_users_by_email({email for email in emails.values() if email})
         return {login: user for login, email in emails.items() if email and (user := by_email.get(email.lower()))}
 
     async def resolve_login(self, login: str, user_repo: UserRepository) -> dict[str, Any] | None:

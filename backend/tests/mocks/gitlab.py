@@ -125,8 +125,8 @@ def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[Magic
     team_repo.add_binding_if_absent = AsyncMock()
 
     user_repo = MagicMock()
-    user_repo.find_raw_by_verified_emails = AsyncMock(
-        side_effect=lambda emails: [{**user_doc, "email": email} for email in emails] if user_doc else []
+    user_repo.verified_users_by_email = AsyncMock(
+        side_effect=lambda emails: {email.lower(): {**user_doc, "email": email} for email in emails} if user_doc else {}
     )
 
     with (

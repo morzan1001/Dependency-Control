@@ -226,9 +226,9 @@ class TestOnlyActiveMembersWithAccessAreOwners:
             make_repositories(existing_team=_existing_team([_SYNCED, _MANUAL])) as (team_repo, user_repo),
             patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=api_members)),
         ):
-            user_repo.find_raw_by_verified_emails.side_effect = lambda emails: [
-                self._USERS[email] for email in emails if email in self._USERS
-            ]
+            user_repo.verified_users_by_email.side_effect = lambda emails: {
+                email: self._USERS[email] for email in emails if email in self._USERS
+            }
             _run(service)
         return _written_subset(team_repo)
 
@@ -397,7 +397,7 @@ class TestTheOwnerBudget:
 
         assert result.team_ids is None
         team_repo.create_bound.assert_not_awaited()
-        user_repo.find_raw_by_verified_emails.assert_not_awaited()
+        user_repo.verified_users_by_email.assert_not_awaited()
 
     def test_a_bound_team_still_answers_without_room(self):
         service = _service()

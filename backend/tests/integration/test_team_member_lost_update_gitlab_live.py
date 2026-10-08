@@ -61,14 +61,14 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
     team_repo = TeamRepository(db)
     user_repo = UserRepository(db)
     service = GitLabService(make_gitlab_instance(id=_INSTANCE, access_token="glpat-secret"))
-    resolve = user_repo.find_raw_by_verified_emails
+    resolve = user_repo.verified_users_by_email
 
-    async def _resolve_while_the_admin_adds_one(emails: list[str]):
+    async def _resolve_while_the_admin_adds_one(emails: set[str]):
         await asyncio.sleep(_MID_SYNC)
         assert await team_repo.add_member(_TEAM_ID, added.model_dump(), datetime.now(timezone.utc))
         return await resolve(emails)
 
-    user_repo.find_raw_by_verified_emails = _resolve_while_the_admin_adds_one
+    user_repo.verified_users_by_email = _resolve_while_the_admin_adds_one
 
     with (
         patch("app.services.gitlab.UserRepository", return_value=user_repo),

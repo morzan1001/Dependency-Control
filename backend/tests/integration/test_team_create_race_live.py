@@ -35,14 +35,14 @@ async def test_two_ingests_of_one_new_group_both_own_through_the_one_team(db, ca
     await create_team_indexes(db)
     await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     user_repo = UserRepository(db)
-    resolve = user_repo.find_raw_by_verified_emails
+    resolve = user_repo.verified_users_by_email
     both_missed_the_team = asyncio.Barrier(2)
 
-    async def _resolve_once_both_ingests_missed(emails: list[str]):
+    async def _resolve_once_both_ingests_missed(emails: set[str]):
         await both_missed_the_team.wait()
         return await resolve(emails)
 
-    user_repo.find_raw_by_verified_emails = _resolve_once_both_ingests_missed
+    user_repo.verified_users_by_email = _resolve_once_both_ingests_missed
 
     async def _ingest():
         service = GitLabService(make_gitlab_instance(id="gl-1", access_token="glpat-secret"))

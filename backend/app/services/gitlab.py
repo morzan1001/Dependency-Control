@@ -365,9 +365,7 @@ class GitLabService:
         user_repo: UserRepository,
     ) -> tuple[list[TeamMember], int, bool]:
         """(owners, unresolved count, any resolved), matching only verified local users, tagged with this instance."""
-        wanted = sorted({member.email for member in gitlab_members if member.email})
-        users = await user_repo.find_raw_by_verified_emails(wanted) if wanted else []
-        by_email = {str(user.get("email", "")).lower(): user for user in users}
+        by_email = await user_repo.verified_users_by_email({member.email for member in gitlab_members if member.email})
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
         resolved_any = False
