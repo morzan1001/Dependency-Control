@@ -8,7 +8,7 @@ from app.models.project import Project, Scan
 from app.services.analytics.crypto_delta import compare_crypto
 from app.services.analytics.scopes import ResolvedScope
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
-from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, fixture_component, store_cbom
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, content_ref, filler_components, fixture_component, store_cbom
 
 _PROJECT_ID = "crypto-scale-project"
 
@@ -27,7 +27,7 @@ async def test_a_pqc_plan_lists_a_vulnerable_asset_past_the_old_asset_cap(db):
         resolved=ResolvedScope(scope="project", scope_id=_PROJECT_ID, project_ids=[_PROJECT_ID])
     )
 
-    assert [item.asset_bom_ref for item in plan.items] == ["algo-rsa1024"]
+    assert [item.asset_bom_ref for item in plan.items] == [content_ref(rsa)]
 
 
 @pytest.mark.asyncio

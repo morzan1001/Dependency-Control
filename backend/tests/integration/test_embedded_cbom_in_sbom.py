@@ -16,6 +16,7 @@ from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.analyzers import bundled_iana_catalog, process_sbom_document
+from tests.helpers.cbom import content_ref, fixture_component
 from tests.helpers.sboms import store_sbom
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
@@ -94,9 +95,9 @@ async def test_a_json_number_in_a_crypto_text_field_keeps_every_asset_of_the_sbo
     await process_sbom_document(0, sbom, scan_id, db, _MinimalAggregator(), [], None, project_id="test-project-id")
 
     stored = await db.crypto_assets.find({"scan_id": scan_id}).to_list(None)
-    assert sorted((a["bom_ref"], a["parameter_set_identifier"], a["version"]) for a in stored) == [
-        ("algo-rsa", "2048", None),
-        ("proto-tls", None, "1.2"),
+    assert sorted((a["name"], a["parameter_set_identifier"], a["version"]) for a in stored) == [
+        ("RSA", "2048", None),
+        ("TLS", None, "1.2"),
     ]
 
 
@@ -138,12 +139,16 @@ async def test_a_scan_of_several_sboms_evaluates_its_crypto_assets_once(db, cata
     rows = await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
     assert sorted(row["analyzer_name"] for row in rows) == sorted(CRYPTO_ANALYZERS)
     findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
+    rsa, md5, tls = (
+        content_ref(fixture_component("legacy_crypto_mixed.json", ref))
+        for ref in ("algo-rsa1024", "algo-md5", "proto-tls10")
+    )
     assert sorted((f["type"], f["component"]) for f in findings) == [
-        ("crypto_quantum_vulnerable", "RSA [bom-ref:algo-rsa1024]"),
-        ("crypto_weak_algorithm", "MD5 [bom-ref:algo-md5]"),
-        ("crypto_weak_algorithm", "TLS [bom-ref:proto-tls10]"),
-        ("crypto_weak_key", "RSA [bom-ref:algo-rsa1024]"),
-        ("crypto_weak_protocol", "tls 1.0 [bom-ref:proto-tls10]"),
+        ("crypto_quantum_vulnerable", f"RSA [bom-ref:{rsa}]"),
+        ("crypto_weak_algorithm", f"MD5 [bom-ref:{md5}]"),
+        ("crypto_weak_algorithm", f"TLS [bom-ref:{tls}]"),
+        ("crypto_weak_key", f"RSA [bom-ref:{rsa}]"),
+        ("crypto_weak_protocol", f"tls 1.0 [bom-ref:{tls}]"),
     ]
     assert all(f["found_in"] == ["CBOM"] for f in findings)
     catalog_loader.assert_awaited_once()

@@ -8,7 +8,7 @@ from typing import Any
 
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.services.cbom_parser import parse_cbom
+from app.services.cbom_parser import parse_cbom, parse_crypto_components
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -29,6 +29,12 @@ def filler_components(indices: Iterable[int]) -> list[dict[str, Any]]:
     del template["cryptoProperties"]["oid"]
     template["cryptoProperties"]["algorithmProperties"]["parameterSetIdentifier"] = "512"
     return [{**template, "bom-ref": f"hash-{i:06d}", "name": f"BLAKE2b-{i:06d}"} for i in indices]
+
+
+def content_ref(component: dict[str, Any]) -> str:
+    """The bom-ref the parser derives for a crypto component that appears once in its document."""
+    [asset] = parse_crypto_components([component])
+    return asset.bom_ref
 
 
 def cbom_of(components: list[dict[str, Any]]) -> dict[str, Any]:

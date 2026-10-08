@@ -12,6 +12,7 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.cbom_parser import parse_cbom
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.analyzers import evaluate_crypto
+from tests.helpers.cbom import content_ref
 
 
 def _cert(
@@ -565,7 +566,8 @@ async def _analyze_spec_cbom(db, components, rules):
 @pytest.mark.asyncio
 async def test_seeded_policy_judges_a_spec_shaped_certificate_by_its_rules(db):
     now = datetime.now(timezone.utc)
-    result = await _analyze_spec_cbom(db, _spec_cert_chain(now, "SHA1withRSA", "RSA", 1024), load_seed_rules())
+    chain = _spec_cert_chain(now, "SHA1withRSA", "RSA", 1024)
+    result = await _analyze_spec_cbom(db, chain, load_seed_rules())
     by_type = {f["type"]: f for f in result["findings"]}
     assert set(by_type) == {"crypto_cert_weak_signature", "crypto_cert_weak_key"}
     weak_sig = by_type["crypto_cert_weak_signature"]
@@ -573,7 +575,7 @@ async def test_seeded_policy_judges_a_spec_shaped_certificate_by_its_rules(db):
     weak_key = by_type["crypto_cert_weak_key"]
     assert (weak_key["severity"], weak_key["details"]["rule_id"]) == ("HIGH", "nist-131a-rsa-min-2048")
     assert (weak_key["details"]["key_size_bits"], weak_key["details"]["min_key_size_bits"]) == (1024, 2048)
-    assert weak_key["details"]["related_algo_bom_ref"] == "key-algo"
+    assert weak_key["details"]["related_algo_bom_ref"] == content_ref(chain[3])
 
 
 @pytest.mark.asyncio

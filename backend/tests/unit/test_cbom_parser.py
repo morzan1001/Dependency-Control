@@ -1,8 +1,13 @@
 import json
 from pathlib import Path
 
+from app.models.crypto_asset import CryptoAsset
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.services.analysis.registry import crypto_evaluators
 from app.services.cbom_parser import parse_cbom, parse_crypto_components
+from app.services.crypto_policy.resolver import EffectivePolicy
+from app.services.crypto_policy.seeder import load_seed_rules
+from tests.helpers.analyzers import bundled_iana_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -24,7 +29,7 @@ def test_parse_legacy_md5_algorithm_details():
 
 
 def test_parse_legacy_rsa1024_key_size():
-    rsa = next(a for a in parse_cbom(_load("legacy_crypto_mixed.json")) if a.bom_ref == "algo-rsa1024")
+    rsa = next(a for a in parse_cbom(_load("legacy_crypto_mixed.json")) if a.name == "RSA")
     assert rsa.key_size_bits == 1024
     assert rsa.primitive == CryptoPrimitive.PKE
     assert rsa.padding == "PKCS1v15"
@@ -43,6 +48,35 @@ def test_parse_modern_crypto_no_weak_algos():
     key_sizes = {a.key_size_bits for a in assets if a.key_size_bits}
     assert 256 in key_sizes
     assert 4096 in key_sizes
+
+
+def test_two_cbomkit_theia_runs_over_one_tree_give_the_same_crypto_findings():
+    """theia draws every bom-ref at random per run; the two fixtures are two runs over the same files."""
+    rules = load_seed_rules()
+    policy = EffectivePolicy(rules=rules, system_rules=rules, system_version=1, override_version=None)
+    evaluators = crypto_evaluators(bundled_iana_catalog()).values()
+
+    def findings(fixture: str) -> set[tuple[str, str]]:
+        assets = [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parse_cbom(_load(fixture))]
+        return {(f["id"], f["component"]) for evaluate in evaluators for f in evaluate(assets, policy)["findings"]}
+
+    run_a, run_b = findings("cbomkit_theia_run_a.json"), findings("cbomkit_theia_run_b.json")
+
+    assert run_a
+    assert run_a == run_b
+
+
+def test_references_between_assets_survive_the_content_refs():
+    by_name = {a.name: a for a in parse_cbom(_load("cbomkit_theia_run_a.json")) if a.asset_type != "algorithm"}
+    by_ref = {a.bom_ref: a for a in parse_cbom(_load("cbomkit_theia_run_a.json"))}
+    certificate, public_key = (
+        by_name["b1-test"],
+        next(a for a in by_ref.values() if a.asset_type == "related-crypto-material" and a.algorithm_ref),
+    )
+
+    assert by_ref[certificate.signature_algorithm_ref].name == "SHA256-RSA"
+    assert by_ref[certificate.subject_public_key_ref] == public_key
+    assert by_ref[public_key.algorithm_ref].name == "RSA"
 
 
 def test_parse_crypto_components_extracts_from_sbom():
