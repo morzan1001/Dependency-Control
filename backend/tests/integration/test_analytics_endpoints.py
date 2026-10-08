@@ -352,10 +352,9 @@ async def test_recommendations_recurrence_window_holds_the_newest_scans(client, 
     assert recurring[0]["affected_components"] == ["lib"]
 
 
-async def _recurring_cards(client, headers, scan_id: str) -> list[dict]:
-    resp = await client.get(
-        "/api/v1/analytics/projects/p/recommendations", params={"scan_id": scan_id}, headers=headers
-    )
+async def _recurring_cards(client, headers, scan_id: str | None = None) -> list[dict]:
+    params = {"scan_id": scan_id} if scan_id else None
+    resp = await client.get("/api/v1/analytics/projects/p/recommendations", params=params, headers=headers)
     assert resp.status_code == 200, resp.text
     return [r for r in resp.json()["recommendations"] if r["type"] == "recurring_vulnerability"]
 
@@ -396,6 +395,21 @@ async def test_recommendations_recurrence_window_counts_a_rescanned_build_once(c
         await _seed_build(db, f"rescan-{index}", 3 - index, "CVE-2026-3333", is_rescan=True, original_scan_id="build")
 
     assert await _recurring_cards(client, owner_auth_headers_proj, "build") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_enrichment")
+async def test_recommendations_recurrence_window_holds_the_releases_of_a_project_built_only_from_tags(
+    client, db, owner_auth_headers_proj
+):
+    """A tag pipeline writes its tag into branch, so no two builds of such a project share a branch."""
+    for index in range(4):
+        tag = f"v1.0.{index}"
+        await _seed_build(db, f"tag-{index}", 10 - index, "CVE-2026-4444", branch=tag, commit_tag=tag)
+
+    cards = await _recurring_cards(client, owner_auth_headers_proj)
+
+    assert [card["action"]["cves"] for card in cards] == [[{"cve": "CVE-2026-4444", "components": ["lib"], "scans": 4}]]
 
 
 @pytest.mark.asyncio

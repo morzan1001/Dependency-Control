@@ -436,19 +436,22 @@ class ScanRepository:
         return None
 
     async def get_preceding_scans(self, scan_id: str, limit: int) -> list[Scan]:
-        """The builds the given scan's commit succeeded, newest first: the usable builds on its branch
-        that predate it. A rescan carries today's date over an older commit, so a rescan is measured
-        by the build it re-analysed and never counts as a predecessor."""
-        fields = {"project_id": 1, "branch": 1, "created_at": 1, "is_rescan": 1, "original_scan_id": 1}
+        """The builds the given scan's commit succeeded, newest first: the usable builds that predate it
+        on its branch, or among the project's tag builds for a tag build that names no branch. A rescan
+        carries today's date over an older commit, so a rescan is measured by the build it re-analysed
+        and never counts as a predecessor."""
+        fields = {"project_id": 1, "branch": 1, "commit_tag": 1, "created_at": 1, "is_rescan": 1, "original_scan_id": 1}
         current = await self.collection.find_one({"_id": scan_id}, fields)
         if current and current.get("is_rescan") and current.get("original_scan_id"):
             current = await self.collection.find_one({"_id": current["original_scan_id"]}, fields)
         if not current or current.get("created_at") is None:
             return []
+        branch, tag = current.get("branch"), current.get("commit_tag")
+        line = {"commit_tag": {"$nin": [None, ""]}} if tag and tag == branch else {"branch": branch}
         query = {
             **USABLE_BUILD_MATCH,
             "project_id": current.get("project_id"),
-            "branch": current.get("branch"),
+            **line,
             "created_at": {"$lt": current["created_at"]},
         }
         return await self.find_many(query, sort=SCANS_TIP_SORT, limit=limit)

@@ -479,6 +479,11 @@ class TestGetPrecedingScan:
         preceding = await ScanRepository(db).get_preceding_scans(scan_id, 1)
         return preceding[0].id if preceding else None
 
+    @staticmethod
+    async def _preceding_ids(scans: list[dict]) -> list[str]:
+        db = await _seeded(scans)
+        return [scan.id for scan in await ScanRepository(db).get_preceding_scans(_HEAD, 9)]
+
     def test_the_newest_earlier_build_on_the_same_branch(self):
         result = asyncio.run(
             self._preceding_id(
@@ -498,6 +503,48 @@ class TestGetPrecedingScan:
         )
 
         assert result is None
+
+    def test_a_branch_build_with_an_empty_tag_stays_on_its_branch(self):
+        """CI sends an empty tag on every branch pipeline."""
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan(_HEAD, "p1", "main", 0, commit_tag=""),
+                    _scan("feature-build", "p1", "feature/x", 1, commit_tag=""),
+                    _scan("previous", "p1", "main", 5, commit_tag=""),
+                ]
+            )
+        )
+
+        assert result == "previous"
+
+    def test_a_tag_build_that_names_no_branch_follows_the_projects_earlier_tag_builds(self):
+        """A tag pipeline writes its tag into branch, so each release names a branch no other build has."""
+        result = asyncio.run(
+            self._preceding_ids(
+                [
+                    _scan(_HEAD, "p1", "v1.1", 0, commit_tag="v1.1"),
+                    _scan("main-build", "p1", "main", 1, commit_tag=""),
+                    _scan("v1.0", "p1", "v1.0", 5, commit_tag="v1.0"),
+                    _scan("feature-build", "p1", "feature/x", 6, commit_tag=""),
+                ]
+            )
+        )
+
+        assert result == ["v1.0"]
+
+    def test_a_tag_build_that_carries_its_branch_stays_on_that_branch(self):
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan(_HEAD, "p1", "main", 0, commit_tag="v1.1"),
+                    _scan("main-build", "p1", "main", 1, commit_tag=""),
+                    _scan("v1.0", "p1", "v1.0", 5, commit_tag="v1.0"),
+                ]
+            )
+        )
+
+        assert result == "main-build"
 
     def test_an_unusable_scan_is_not_a_build(self):
         """A failed run holds no findings, so a delta against it invents a fix for everything."""
