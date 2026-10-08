@@ -12,14 +12,12 @@ interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
-  scanId?: string;
-  onSelect?: (entry: HotspotEntry) => void;
 }
 
-export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Readonly<Props>) {
+export function HotspotTable({ scope, scopeId, groupBy }: Readonly<Props>) {
   const { items, isLoading, isEmpty } = useAnalyticsList<HotspotResponse, HotspotEntry>({
-    queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
-    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
+    queryKey: ["crypto-hotspots", scope, scopeId, groupBy],
+    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy }),
     selectItems: (resp) => resp.items,
   });
 
@@ -45,11 +43,7 @@ export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Read
         </thead>
         <tbody>
           {items.map((e) => (
-            <tr
-              key={e.key}
-              className="border-t cursor-pointer hover:bg-muted/30"
-              onClick={() => onSelect?.(e)}
-            >
+            <tr key={e.key} className="border-t hover:bg-muted/30">
               <td className="p-2 font-mono">{e.key}</td>
               <td className="p-2">{e.asset_count}</td>
               <td className="p-2">{e.finding_count}</td>

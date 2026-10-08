@@ -10,13 +10,12 @@ interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
-  scanId?: string;
 }
 
-export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Readonly<Props>) {
+export function HotspotHeatmap({ scope, scopeId, groupBy }: Readonly<Props>) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
-    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
+    queryKey: ["crypto-hotspots", scope, scopeId, groupBy],
+    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy }),
   });
   const { data: projectsData } = useProjectsDropdown();
 

@@ -7,7 +7,6 @@ interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
-  scanId?: string;
 }
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -26,10 +25,10 @@ function topSeverity(mix: Record<string, number>): string {
   return "UNKNOWN";
 }
 
-export function HotspotTreemap({ scope, scopeId, groupBy, scanId }: Readonly<Props>) {
+export function HotspotTreemap({ scope, scopeId, groupBy }: Readonly<Props>) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
-    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
+    queryKey: ["crypto-hotspots", scope, scopeId, groupBy],
+    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy }),
   });
   if (isLoading) return <div className="p-4 text-sm">Loading treemap…</div>;
   if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load treemap data.</div>;
