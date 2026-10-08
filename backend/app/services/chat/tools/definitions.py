@@ -750,10 +750,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": (
                 "Summarise a project's most recently uploaded call graph per language: per-module import and call "
                 "counts with each module's importing files and used symbols, and totals. A graph too large for the "
-                "answer lists only its busiest modules' counts (module_usage_total counts all). A graph comes from "
-                "whichever build last uploaded one, which can be another branch or an older build than head; its "
-                "branch, scan_id and updated_at name that build, so state them. For whether a specific finding "
-                "is reachable, use check_reachability."
+                "answer lists counts only, busiest first, and only its busiest modules if still too large "
+                "(module_usage_total counts all). A graph comes from whichever build last uploaded one, which can "
+                "be another branch or an older build than head; its branch, scan_id and updated_at name that "
+                "build, so state them. For whether a specific finding is reachable, use check_reachability."
             ),
             "parameters": {
                 "type": "object",

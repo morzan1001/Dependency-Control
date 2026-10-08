@@ -6,6 +6,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 from typing import Any, ClassVar
 
 from fastapi import HTTPException
@@ -227,14 +228,13 @@ _CALLGRAPH_MODULES_SHOWN = 25
 
 
 def _callgraph_summary(graph: dict[str, Any]) -> dict[str, Any]:
-    """The busiest modules' import and call counts; their file and symbol lists outgrow the answer cap."""
+    """Every module's import and call counts, busiest first, without the file and symbol lists."""
     usage = graph.get("module_usage") or {}
     busiest = sorted(
         usage.items(), key=lambda m: (m[1].get("call_count", 0), m[1].get("import_count", 0)), reverse=True
     )
     graph["module_usage"] = {
-        name: {"import_count": u.get("import_count", 0), "call_count": u.get("call_count", 0)}
-        for name, u in busiest[:_CALLGRAPH_MODULES_SHOWN]
+        name: {"import_count": u.get("import_count", 0), "call_count": u.get("call_count", 0)} for name, u in busiest
     }
     graph["module_usage_total"] = len(usage)
     graph["analyzed_modules"] = _clip_value(graph.get("analyzed_modules") or [])
@@ -1492,8 +1492,12 @@ class ChatToolRegistry:
         newest = await ctx.db["callgraphs"].aggregate(pipeline).to_list(length=None)
         repo = CallgraphRepository(ctx.db)
         answer = {"callgraphs": [_serialize_doc(await repo.load_graph(doc)) for doc in newest]}
+        # Shrinking each graph keeps every language; _truncate_if_too_large would drop whole graphs instead.
         if _json_size(answer) > MAX_TOOL_RESULT_BYTES:
             answer["callgraphs"] = [_callgraph_summary(graph) for graph in answer["callgraphs"]]
+        if _json_size(answer) > MAX_TOOL_RESULT_BYTES:
+            for graph in answer["callgraphs"]:
+                graph["module_usage"] = dict(islice(graph["module_usage"].items(), _CALLGRAPH_MODULES_SHOWN))
         return answer
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:

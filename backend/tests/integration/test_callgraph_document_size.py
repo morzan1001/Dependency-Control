@@ -120,7 +120,7 @@ async def test_a_callgraph_over_16_mib_and_200k_entries_is_stored_and_enriches_t
     assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
     chat = await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT_ID}, _ADMIN, db)
     [chat_graph] = chat["callgraphs"]
-    assert chat_graph["module_usage_total"] == 2_000
+    assert (chat_graph["module_usage_total"], len(chat_graph["module_usage"])) == (2_000, 25)
     assert len(json.dumps(chat).encode()) <= MAX_TOOL_RESULT_BYTES
 
 

@@ -130,11 +130,11 @@ async def test_a_graph_within_the_answer_budget_keeps_every_module_s_files_and_s
     assert graph["analyzed_modules"] == stored["analyzed_modules"]
 
 
-async def test_a_graph_past_the_answer_budget_is_summarised_by_its_busiest_modules(db, database):
+async def test_a_graph_past_the_answer_budget_lists_every_module_s_counts_busiest_first(db, database):
     await _seed(db, _graph(60, 5))
 
     [graph] = (await _call(db))["callgraphs"]
 
-    assert graph["module_usage_total"] == 60
+    assert graph["module_usage_total"] == len(graph["module_usage"]) == 60
     assert list(graph["module_usage"])[:2] == ["pkg-59", "pkg-58"]
     assert graph["module_usage"]["pkg-59"] == {"import_count": 59, "call_count": 59}
