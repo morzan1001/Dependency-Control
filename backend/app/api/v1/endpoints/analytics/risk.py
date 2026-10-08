@@ -1,7 +1,7 @@
 """Analytics risk endpoints: /impact and /hotspots."""
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -67,6 +67,13 @@ _CVES_SHOWN = 5
 _FIRST_SEEN = {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}
 
 HotspotSort = Literal["finding_count", "component", "first_seen", "epss", "risk"]
+_MONGO_SORTS = {"component": "_id.component", "first_seen": "first_seen"}
+# The other keys derive from the advisories and their enrichment, so they rank in Python.
+_PYTHON_RANKS: dict[str, Callable[[dict[str, Any], Mapping[str, VulnerabilityEnrichment]], float]] = {
+    "finding_count": lambda r, _enrichments: sum(severity_counts_from_details(r["details_list"]).values()),
+    "epss": lambda r, enrichments: process_cve_enrichments(r["details_list"], enrichments).max_epss or 0,
+    "risk": lambda r, enrichments: process_cve_enrichments(r["details_list"], enrichments).max_risk or 0,
+}
 
 
 def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
@@ -302,23 +309,14 @@ async def _hotspots(
         return []
 
     sort_direction = parse_sort_direction(sort_order)
-    # finding_count/epss/risk are derived in Python (from advisories / enrichment), so they are
-    # sorted and paginated in Python; only component/first_seen can be ordered in Mongo.
-    mongo_sort_field = {"component": "_id.component", "first_seen": "first_seen"}.get(sort_by)
-    post_sort_by = sort_by if sort_by in ("finding_count", "epss", "risk") else None
-
     pipeline = _vulnerable_groups(scan_ids)
-    if mongo_sort_field:
-        pipeline.append({"$sort": {mongo_sort_field: sort_direction, "_id": 1}})
-        pipeline.append({"$skip": skip})
-        pipeline.append({"$limit": limit})
-
-    results = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
-    enrichments = await _enrich(results)
+    if sort_by in _MONGO_SORTS:
+        pipeline += [{"$sort": {_MONGO_SORTS[sort_by]: sort_direction, "_id": 1}}, {"$skip": skip}, {"$limit": limit}]
+    groups = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
 
     # A component can be group-qualified while the inventory keeps the bare artifact name,
     # so both spellings go into the filter and the index resolves either way.
-    candidates = list({name for r in results for name in component_name_candidates(r["_id"]["component"])})
+    candidates = list({name for r in groups for name in component_name_candidates(r["_id"]["component"])})
     type_pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "name": {"$in": candidates}}},
         {
@@ -337,7 +335,17 @@ async def _hotspots(
     type_index_by_version = {version: build_component_index(types) for version, types in types_by_version.items()}
     type_index = build_component_index(types_by_name)
 
-    hotspots = [
+    # Only an enrichment-ranked sort needs every group enriched; the others enrich their page alone.
+    enrichments = await _enrich(groups) if sort_by in ("epss", "risk") else None
+    if rank := _PYTHON_RANKS.get(sort_by):
+        # $group emits its rows in no fixed order, so ties need an order of their own to page through.
+        groups.sort(key=lambda r: (r["_id"]["component"], r["_id"].get("version") or "unknown"))
+        groups.sort(key=lambda r: rank(r, enrichments or {}), reverse=sort_direction == -1)
+        groups = groups[skip : skip + limit]
+    if enrichments is None:
+        enrichments = await _enrich(groups)
+
+    return [
         _build_hotspot(
             r,
             enrichments,
@@ -345,17 +353,5 @@ async def _hotspots(
             type_index,
             project_name_map,
         )
-        for r in results
+        for r in groups
     ]
-
-    _post_sort_keys = {
-        "finding_count": lambda x: x.finding_count,
-        "epss": lambda x: x.max_epss_score or 0,
-        "risk": lambda x: x.max_risk_score or 0,
-    }
-    if post_sort_by:
-        # $group emits its rows in no fixed order, so ties need an order of their own to page through.
-        hotspots.sort(key=lambda x: (x.component, x.version))
-        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=sort_direction == -1)
-        hotspots = hotspots[skip : skip + limit]
-    return hotspots
