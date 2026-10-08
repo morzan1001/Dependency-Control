@@ -15,6 +15,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from itertools import pairwise
 from typing import Any
 
 from app.core.config import settings
@@ -124,6 +125,7 @@ async def _reconcile(db: Any) -> ReconcileReport:
 def _classify(scans: Sequence[tuple[str, datetime]], ledger: dict[str, LedgerEntry], since: datetime) -> _ChainDrift:
     """What one chain's ledger holds too little, too old, too detached, or too much of."""
     owed = frozenset(scan_id for scan_id, _created_at in scans)
+    skipping = _skip_links(ledger, owed)
     repairs = []
     for scan_id, created_at in scans:
         entry = ledger.get(scan_id)
@@ -133,6 +135,8 @@ def _classify(scans: Sequence[tuple[str, datetime]], ledger: dict[str, LedgerEnt
             repairs.append(_Repair(scan_id, created_at, "stale"))
         elif _severed(entry, owed, ledger, since):
             repairs.append(_Repair(scan_id, created_at, "severed"))
+        elif scan_id in skipping:
+            repairs.append(_Repair(scan_id, created_at, "relink"))
     # A delta whose scan lost its usable status counts here too: the writer drops such a
     # delta as well, because it keeps describing dependencies a re-ingest already deleted.
     orphans = tuple(sorted(delta_id for delta_id in ledger if delta_id not in owed))
@@ -151,6 +155,24 @@ def _severed(entry: LedgerEntry, owed: frozenset[str], ledger: dict[str, LedgerE
     if prev is None or prev in owed or prev in ledger:
         return False
     return entry.prev_created_at is not None and entry.prev_created_at >= since
+
+
+def _skip_links(ledger: dict[str, LedgerEntry], owed: frozenset[str]) -> set[str]:
+    """Deltas diffed against another scan than the comparable one before them.
+
+    Two ingests racing for one predecessor, or a recompute that failed under its successor,
+    leave such a link, and the fold truncates its window there while every census agrees.
+    The oldest delta is not judged, since its predecessor may lie before the window, nor is
+    one diffed against an orphan, which reaches the writer as a dependent once deleted.
+    """
+    chain = sorted(
+        (entry.scan_created_at, scan_id) for scan_id, entry in ledger.items() if scan_id in owed and entry.comparable
+    )
+    return {
+        scan_id
+        for (_, before), (_, scan_id) in pairwise(chain)
+        if (prev := ledger[scan_id].prev_scan_id) != before and (prev in owed or prev not in ledger)
+    }
 
 
 async def _repair_chain(db: Any, chain: tuple[str, str], drift: _ChainDrift, report: ReconcileReport) -> None:
@@ -220,25 +242,27 @@ def _publish(report: ReconcileReport) -> None:
         logger.info("Update-frequency reconcile: %d chain(s) in step with the ledger", report.chains)
         return
     logger.warning(
-        "Update-frequency reconcile found drift in %d of %d chain(s): "
-        "derived %d missing, %d outdated, %d severed and %d successor delta(s), deleted %d orphan(s)",
+        "Update-frequency reconcile found drift in %d of %d chain(s): derived %d missing, %d outdated, "
+        "%d severed, %d relinked and %d successor delta(s), deleted %d orphan(s)",
         report.drifted_chains,
         report.chains,
         report.resolved["missing"],
         report.resolved["stale"],
         report.resolved["severed"],
+        report.resolved["relink"],
         report.resolved["dependent"],
         report.resolved["orphan"],
     )
     if deferred:
         logger.warning(
             "Update-frequency reconcile hit its per-run caps (%d repairs, %d orphan deletes) and left "
-            "%d missing, %d outdated, %d severed, %d successor and %d orphan delta(s) for the next run",
+            "%d missing, %d outdated, %d severed, %d relink, %d successor and %d orphan delta(s) for the next run",
             _MAX_REPAIRS,
             _MAX_ORPHAN_DELETES,
             report.deferred["missing"],
             report.deferred["stale"],
             report.deferred["severed"],
+            report.deferred["relink"],
             report.deferred["dependent"],
             report.deferred["orphan"],
         )

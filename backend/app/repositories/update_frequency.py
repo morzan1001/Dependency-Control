@@ -49,6 +49,9 @@ class LedgerEntry:
     schema_version: int | None
     prev_scan_id: str | None
     prev_created_at: datetime | None
+    scan_created_at: datetime
+    # Carries dependencies and no writer failure, so a later scan can be diffed against it.
+    comparable: bool
 
 
 def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
@@ -57,6 +60,8 @@ def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
         pushed.get("v"),
         pushed.get("prev"),
         prev_at if isinstance(prev_at, datetime) else None,
+        pushed["at"],
+        int(pushed.get("n") or 0) > 0 and not pushed.get("e"),
     )
 
 
@@ -277,9 +282,9 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     async def window_ledger_by_branch(
         self, project_ids: Sequence[str], since: datetime
     ) -> dict[tuple[str, str], dict[str, LedgerEntry]]:
-        """Version and predecessor link of every in-window delta, keyed by scan id, per chain.
+        """Version, place and predecessor link of every in-window delta, keyed by scan id, per chain.
 
-        Only those three fields travel, not the document: the reconcile compares ledger
+        Only those fields travel, not the document: the reconcile compares ledger
         membership and the chain links, and pushing whole deltas would make the nightly
         census as heavy as the comparison endpoint's fold.
         """
@@ -296,6 +301,9 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                                 "v": "$schema_version",
                                 "prev": "$prev_scan_id",
                                 "prev_at": "$prev_created_at",
+                                "at": "$scan_created_at",
+                                "n": "$dep_count",
+                                "e": "$error",
                             }
                         },
                     }
