@@ -192,8 +192,8 @@ class TestProcessSastImpactAndAction:
         action = process_sast(findings)[0].action
         assert action["category"] == "Injection"
         assert action["files"] == ["app/api.py", "app/db.py"]
-        assert action["rules"] == sorted([_NOSQL_INJECTION["check_id"], _SQL_INJECTION["check_id"]])
-        assert action["rules_total"] == 2
+        assert action["rule_ids"] == sorted([_NOSQL_INJECTION["check_id"], _SQL_INJECTION["check_id"]])
+        assert action["rule_ids_total"] == 2
 
     def test_affected_components_limited_to_twenty(self):
         findings = _opengrep(*(_opengrep_item(_SQL_INJECTION, path=f"file{i}.py") for i in range(25)))

@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Any
 
-from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES
+from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES, max_severity
 from app.schemas.recommendation import (
     Effort,
     Priority,
@@ -13,8 +13,9 @@ from app.services.component_identity import build_component_index, lookup_compon
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     ModelOrDict,
-    live_cves,
+    cve_severities,
     get_attr,
+    live_advisories,
     sample_components,
     sampled,
     scorecard_details,
@@ -53,28 +54,33 @@ def correlate_scorecard_with_vulnerabilities(
     scorecard_index = build_component_index(scorecard_by_component)
 
     high_risk_vulns: list[dict[str, Any]] = []
+    risky_cves: dict[str, str | None] = {}
+    unmaintained_cves: set[str] = set()
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
-        severity = str(get_attr(vf, "severity", "")).upper()
-
         scorecard = lookup_component(scorecard_index, component)
         if not scorecard:
             continue
 
         score = scorecard["overall_score"]
         is_unmaintained = scorecard["has_maintenance_issues"]
+        severities = cve_severities(live_advisories(get_attr(vf, "details")))
+        risky = {cve: severity for cve, severity in severities.items() if severity in ("CRITICAL", "HIGH")}
 
         # A score exists only where deps_dev flagged it under the project's own threshold.
-        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score is not None):
+        if risky and (is_unmaintained or score is not None):
+            for cve, severity in risky.items():
+                risky_cves[cve] = max_severity(risky_cves.get(cve), severity)
+            if is_unmaintained:
+                unmaintained_cves |= risky.keys()
             high_risk_vulns.append(
                 {
                     "component": component,
                     "version": get_attr(vf, "version"),
-                    "vuln_severity": severity,
                     "scorecard_score": score,
                     "unmaintained": is_unmaintained,
-                    **sampled("cves", live_cves([get_attr(vf, "details")]), _RISKY_PACKAGE_CVES_SAMPLED),
+                    **sampled("cves", list(risky), _RISKY_PACKAGE_CVES_SAMPLED),
                     "project_url": scorecard.get("project_url"),
                 }
             )
@@ -91,7 +97,6 @@ def correlate_scorecard_with_vulnerabilities(
             for v in high_risk_vulns
         )
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
-        low_score_count = len(high_risk_vulns) - unmaintained_count
 
         recommendations.append(
             Recommendation(
@@ -99,14 +104,14 @@ def correlate_scorecard_with_vulnerabilities(
                 priority=Priority.CRITICAL,
                 title="Critical Vulnerabilities in Poorly Maintained Packages",
                 description=(
-                    f"Found {len(high_risk_vulns)} critical/high vulnerabilities in packages "
+                    f"Found {len(risky_cves)} critical/high vulnerabilities in packages "
                     f"with concerning OpenSSF Scorecard ratings. "
-                    f"{unmaintained_count} are in unmaintained packages, "
-                    f"{low_score_count} are in packages flagged by OpenSSF Scorecard. "
+                    f"{len(unmaintained_cves)} are in unmaintained packages, "
+                    f"{len(risky_cves) - len(unmaintained_cves)} are in packages flagged by OpenSSF Scorecard. "
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={
-                    **severity_impact(v["vuln_severity"] for v in high_risk_vulns),
+                    **severity_impact(risky_cves.values()),
                     "unmaintained_count": unmaintained_count,
                 },
                 affected_components=risky_shown,
@@ -201,7 +206,7 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
         priority=Priority.HIGH if len(widespread_cves) > _SHARED_CVES_HIGH_PRIORITY else Priority.MEDIUM,
         title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
         description=(
-            f"These CVEs appear in {len(widespread_cves)} or more of your projects, {scope_note}. "
+            f"These CVEs appear in {CROSS_PROJECT_MIN_OCCURRENCES} or more of your projects, {scope_note}. "
             "Fixing them once (e.g., in a shared package or template) "
             "could benefit all affected projects."
         ),
@@ -285,8 +290,6 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
     if not any(p["total_critical"] > _TOP_PROJECT_CRITICAL_GATE for p in top_problematic):
         return None
 
-    critical = sum(p["total_critical"] for p in top_problematic)
-    high = sum(p["total_high"] for p in top_problematic)
     return Recommendation(
         type=RecommendationType.CROSS_PROJECT_PATTERN,
         priority=Priority.MEDIUM,
@@ -296,7 +299,7 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
             "than others. Consider prioritizing remediation efforts "
             "on these projects."
         ),
-        impact={"critical": critical, "high": high, "medium": 0, "low": 0, "total": critical + high},
+        impact={"total": 0},
         affected_components=[],
         action={
             "type": "prioritize_projects",

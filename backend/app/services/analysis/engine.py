@@ -21,6 +21,7 @@ from pymongo.errors import DocumentTooLarge
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
     DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -103,6 +104,15 @@ logger = logging.getLogger(__name__)
 _BULK_CHUNK_SIZE = 500
 _MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 _SLIMMED_ADVISORY_FIELDS = frozenset({"description", "references", "details"})
+# What an alert shows of a finding; the advisory text can reach hundreds of MB on a large scan.
+_ANNOUNCED_ADVISORY_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "epss_score", "kev_due_date")
+_ANNOUNCED_FINDING_PROJECTION = {
+    **dict.fromkeys(("type", "component", "version"), 1),
+    **{
+        f"details.vulnerabilities.{field}": 1
+        for field in (*_ANNOUNCED_ADVISORY_FIELDS, DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE)
+    },
+}
 
 # Result rows the engine writes itself on every run, as opposed to rows posted by external scanners.
 _ENGINE_RESULT_NAMES = frozenset(analyzer_factories) | POST_PROCESSOR_ANALYZERS | CRYPTO_ANALYZERS
@@ -883,23 +893,10 @@ async def _finalize_scan_and_project(
     return status
 
 
-async def _filter_out_waived_findings(
-    findings: list[dict[str, Any]], scan_id: str, db: Database
-) -> list[dict[str, Any]]:
-    """The records without what this scan's waivers cover, re-read from the DB because waivers are applied only there."""
-    query = {"scan_id": scan_id, "$or": [{"waived": True}, {"details.vulnerabilities.waived": True}]}
-    projection = {"waived": 1, "details.vulnerabilities.waived": 1}
-    stored = {doc["_id"]: doc async for doc in FindingRepository(db).iterate_raw(query, projection)}
-    announced = []
-    for record in findings:
-        doc = stored.get(record["_id"])
-        if doc is None:
-            announced.append(record)
-        elif not doc.get("waived"):
-            flags = [entry.get("waived") for entry in doc["details"]["vulnerabilities"]]
-            live = [a for a, waived in zip(record["details"]["vulnerabilities"], flags, strict=True) if not waived]
-            announced.append({**record, "details": {**record["details"], "vulnerabilities": live}})
-    return announced
+async def _unwaived_findings(scan_id: str, db: Database) -> list[dict[str, Any]]:
+    """The scan's findings no waiver covers, read back from the DB because waivers are applied only there."""
+    query = {"scan_id": scan_id, "waived": {"$ne": True}}
+    return [doc async for doc in FindingRepository(db).iterate_raw(query, _ANNOUNCED_FINDING_PROJECTION)]
 
 
 async def _send_integrations_and_notifications(
@@ -972,7 +969,6 @@ async def _announce_outcome(
     scan_id: str,
     scan_doc: Scan,
     stats: Stats,
-    findings: list[dict[str, Any]],
     analyzer_outcomes: dict[str, str],
     db: Database,
 ) -> None:
@@ -982,7 +978,7 @@ async def _announce_outcome(
         if status == SCAN_STATUS_FAILED:
             await notify_analysis_failed(db, scan_id, project_id, error or status)
             return
-        notify_findings = await _filter_out_waived_findings(findings, scan_id, db)
+        notify_findings = await _unwaived_findings(scan_id, db)
         await _send_integrations_and_notifications(
             project_id,
             scan_id,
@@ -1174,6 +1170,7 @@ async def run_analysis(
     persisted_findings_count = await _persist_findings_and_waivers(
         findings_to_insert, scan_id, project_id, finding_repo, db
     )
+    del findings_to_insert, vulnerability_findings
     stats, ignored_count = await calculate_comprehensive_stats(db, scan_id, component_languages)
 
     # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
@@ -1240,11 +1237,9 @@ async def run_analysis(
         scan_id,
         scan_doc,
         stats,
-        findings_to_insert,
         analyzer_outcomes,
         db,
     )
-    del findings_to_insert, vulnerability_findings
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
     await record_scan_update_delta(db, scan_id)

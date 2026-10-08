@@ -374,7 +374,8 @@ class StatsAccumulator:
                 self._actionable_high += 1
         if is_deprioritized_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
             self._deprioritized += 1
-        if self._component_languages and component and lookup_component(self._component_languages, component):
+        candidates = self._component_languages and component and lookup_component(self._component_languages, component)
+        if candidates and any(langs for _, langs, _ in candidates):
             self._coverable += 1
 
     def _add_secret(self, details: Mapping[str, Any]) -> None:

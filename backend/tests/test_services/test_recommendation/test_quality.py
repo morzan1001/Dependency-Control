@@ -223,7 +223,7 @@ class TestProcessQualityLowScoreWithUnmaintained:
         assert len(unmaintained_recs) == 1
 
     def test_multiple_with_mixed_unmaintained(self):
-        """If ANY finding is unmaintained, low-quality rec is suppressed."""
+        """A package the unmaintained card names is not listed again as low-quality."""
         findings = [
             _quality(
                 overall_score=2.0,
@@ -545,3 +545,13 @@ def test_a_maintainer_risk_finding_without_a_scorecard_is_not_listed_as_low_scor
     finding = {"type": "quality", "severity": "MEDIUM", "component": "pkg", "version": "1.0", "details": {}}
 
     assert process_quality([finding]) == []
+
+
+def test_an_unrelated_unmaintained_package_leaves_the_low_score_card_in_place():
+    low_scores = [_quality(component=f"lowscore-{n}", overall_score=2.0, finding_id=f"q{n}") for n in range(5)]
+    stale = _quality(component="stale-pkg", overall_score=None, has_maintenance_issues=True, finding_id="q-stale")
+
+    recs = {r.title: r for r in process_quality([*low_scores, stale])}
+
+    assert recs["Replace Unmaintained Dependencies"].affected_components == ["stale-pkg"]
+    assert recs["Review Low-Quality Dependencies"].affected_components == [f"lowscore-{n}" for n in range(5)]

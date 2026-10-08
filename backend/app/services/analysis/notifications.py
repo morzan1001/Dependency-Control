@@ -37,6 +37,7 @@ from app.services.notifications.templates import (
     get_analysis_completed_template,
     get_vulnerability_found_template,
 )
+from app.services.recommendation.common import live_advisories
 from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def _categorize_vulnerabilities(
     vulns = [
         _extract_vulnerability_info(entry_details, finding)
         for finding in vulnerability_findings
-        for entry_details in (finding.get("details") or {}).get("vulnerabilities") or []
+        for entry_details in live_advisories(finding.get("details"))
     ]
     return (
         [v for v in vulns if v.in_kev],

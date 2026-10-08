@@ -14,10 +14,10 @@ from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.adhoc import apply_global_waivers_in_memory
 from app.services.analysis.engine import (
-    _filter_out_waived_findings,
     _finalize_scan_and_project,
     _persist_findings_and_waivers,
     _prepare_finding_records,
+    _unwaived_findings,
 )
 from app.services.analysis.notifications import _categorize_vulnerabilities
 from app.services.analysis.stats import calculate_comprehensive_stats
@@ -216,7 +216,7 @@ async def test_the_alert_names_only_the_advisories_no_waiver_covers(db, _databas
     records, _ = _prepare_finding_records(findings, _FEATURE, _PROJECT, datetime.now(timezone.utc))
     await _persist_findings_and_waivers(records, _FEATURE, _PROJECT, FindingRepository(db), db)
 
-    announced = await _filter_out_waived_findings(records, _FEATURE, db)
+    announced = await _unwaived_findings(_FEATURE, db)
 
     assert [vuln.id for vuln in _categorize_vulnerabilities(announced)[2]] == ["CVE-2024-0003"]
 

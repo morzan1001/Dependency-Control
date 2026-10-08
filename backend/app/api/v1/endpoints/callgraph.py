@@ -9,12 +9,7 @@ from fastapi import HTTPException, Request
 
 from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.callgraph import (
-    ParsedCallgraph,
-    detect_format,
-    parse_generic_format,
-    parse_madge_format,
-)
+from app.api.v1.helpers.callgraph import resolve_callgraph_payload
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.request_body import read_json_body
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
@@ -27,7 +22,6 @@ from app.schemas.callgraph import (
     CallgraphUploadResponse,
     DeleteCallgraphResponse,
 )
-from app.services.component_identity import canonical_callgraph_language
 from app.services.gridfs_maintenance import upload_gridfs_json
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
 from app.services.scan_manager import deterministic_scan_id
@@ -36,41 +30,7 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-_FORMAT_LANGUAGE_MAP = {"madge": "javascript"}
-
-_FORMAT_PARSERS = {
-    "madge": parse_madge_format,
-    "generic": parse_generic_format,
-}
-
 _GRAPH_FIELDS = ("module_usage", "analyzed_modules")
-
-
-def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
-    """Resolve the callgraph format, auto-detecting if needed."""
-    if request_format != "auto":
-        return request_format
-    detected = detect_format(data)
-    if detected == "unknown":
-        raise HTTPException(
-            status_code=400,
-            detail="Could not auto-detect callgraph format. Please specify 'format' explicitly.",
-        )
-    return detected
-
-
-def _resolve_language(request_language: str | None, format_type: str) -> str:
-    """Resolve the callgraph language in its canonical spelling; only madge implies one."""
-    language = request_language or _FORMAT_LANGUAGE_MAP.get(format_type)
-    if not language:
-        raise HTTPException(
-            status_code=400,
-            detail=f"'language' is required for '{format_type}' callgraph payloads",
-        )
-    try:
-        return canonical_callgraph_language(language)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 async def _resolve_scan_id(
@@ -100,14 +60,6 @@ def _build_upsert_filter(project_id: str, language: str, scan_id: str | None) ->
     }, f"project-level ({language})"
 
 
-def _parse_callgraph(format_type: str, data: dict[str, Any], language: str) -> ParsedCallgraph:
-    """Parse callgraph data using the appropriate parser for the format."""
-    parser = _FORMAT_PARSERS.get(format_type)
-    if not parser:
-        raise HTTPException(status_code=400, detail=f"Unsupported format: {format_type}")
-    return parser(data, language)
-
-
 @router.post("/{project_id}/callgraph", responses=RESP_AUTH_400)
 async def upload_callgraph(
     project_id: str,
@@ -118,14 +70,14 @@ async def upload_callgraph(
     """Upload call graph data (madge or generic format) for reachability analysis."""
     upload = await read_json_body(request, CallgraphUploadRequest)
     callgraph_repo = CallgraphRepository(db)
-    format_type = _resolve_format(upload.format, upload.data)
-    language = _resolve_language(upload.language, format_type)
+    try:
+        format_type, language, parser = resolve_callgraph_payload(upload.format, upload.language, upload.data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     warnings: list[str] = []
     try:
-        parsed = await asyncio.to_thread(_parse_callgraph, format_type, upload.data, language)
-    except HTTPException:
-        raise
+        parsed = await asyncio.to_thread(parser, upload.data, language)
     except Exception as e:
         logger.exception("Failed to parse callgraph: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e

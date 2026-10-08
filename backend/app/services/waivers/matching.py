@@ -88,9 +88,11 @@ def route_waiver(waiver: Waiver) -> WaiverRoute:
 
 
 def may_bind_signature(waiver: Waiver) -> bool:
-    """A waiver without a signature that names a location finding it could take one from."""
+    """A project waiver without a signature that names a location finding it could take one from; a global waiver
+    spans projects, keeps no signature and goes by its criteria."""
     return (
-        waiver.match is None
+        waiver.project_id is not None
+        and waiver.match is None
         and waiver.scope == WAIVER_SCOPE_FINDING
         and not waiver.vulnerability_id
         and bool(waiver.finding_id)
@@ -99,23 +101,22 @@ def may_bind_signature(waiver: Waiver) -> bool:
 
 
 def bind_legacy_signatures(
-    waivers: Iterable[Waiver], sig_by_finding_id: Mapping[str, MatchSignature]
+    waivers: Iterable[Waiver], signed: Iterable[tuple[str, MatchSignature]]
 ) -> dict[str, MatchSignature]:
-    """Give each unsigned waiver the signature of the finding it names by exact id; returns what each one took."""
+    """Sign each unsigned waiver with the finding its id names, in its named file if any (a secret id spans files)."""
+    sigs = {(finding_id, file_key): sig for finding_id, sig in signed for file_key in (sig.file_key, None)}
     bound = {}
     for waiver in waivers:
-        if may_bind_signature(waiver) and (sig := sig_by_finding_id.get(waiver.finding_id or "")) is not None:
+        key = (waiver.finding_id or "", waiver.package_name)
+        if may_bind_signature(waiver) and (sig := sigs.get(key)) is not None:
             waiver.match = bound[waiver.id] = sig
     return bound
 
 
 def waiver_reach_filter(waiver: Waiver) -> dict[str, Any] | None:
-    """The findings a waiver can stamp, as a MongoDB filter; None when it can stamp none."""
-    route = route_waiver(waiver)
-    if route == "vulnerability" and waiver.vulnerability_id:
+    """The findings a global waiver can stamp, as a MongoDB filter; None when it can stamp none."""
+    if waiver.vulnerability_id:
         return {**waiver_query(waiver), "type": "vulnerability", **advisory_match(waiver.vulnerability_id)}
-    if route == "signature" and waiver.match is not None:
-        return {"type": {"$in": [t.value for t in LOCATION_FINDING_TYPES]}, "component": waiver.match.file_key}
     return waiver_query(waiver) or None
 
 
@@ -280,11 +281,11 @@ def _line_distance(f: MatchFinding, last_line: int | None) -> float:
 
 
 def _pick_unique_nearest(candidates: list[MatchFinding], last_line: int | None) -> MatchFinding | None:
-    """Return the nearest candidate within WINDOW when it beats the runner-up by MARGIN."""
+    """Return the nearest candidate within WINDOW when it beats the runner-up by MARGIN or sits at the exact line."""
     ranked = sorted(candidates, key=lambda f: _line_distance(f, last_line))
     d0 = _line_distance(ranked[0], last_line)
     d1 = _line_distance(ranked[1], last_line) if len(ranked) > 1 else float("inf")
-    if d0 <= REANCHOR_WINDOW and d1 - d0 >= REANCHOR_MARGIN:
+    if d0 <= REANCHOR_WINDOW and (d1 - d0 >= REANCHOR_MARGIN or d0 == 0 < d1):
         return ranked[0]
     return None
 

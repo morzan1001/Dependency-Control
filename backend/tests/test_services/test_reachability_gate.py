@@ -215,6 +215,49 @@ class TestSameNameInTwoEcosystems:
         assert self._verdict("9.9.9")["is_reachable"] is None
 
 
+class TestPositiveEvidenceStaysInItsEcosystem:
+    """An import in one ecosystem's graph is no evidence for a package of the same name in another."""
+
+    _JS_IMPORTS_REDIS = _prepared(
+        language="javascript", module_usage=_usage("redis", locations=("web/cache.js",)), analyzed_modules=["redis"]
+    )
+
+    def _verdict(self, version, deps, graphs):
+        finding = {**_finding(component="redis"), "version": version}
+        _enrich_finding_from_callgraphs(finding, graphs, component_language_map(deps))
+        return finding["details"]["reachability"]
+
+    def test_an_npm_import_leaves_the_pypi_twin_to_the_python_graph(self):
+        python_lists_redis = _prepared(module_usage=_usage("requests"), analyzed_modules=["redis", "requests"])
+        deps = [{"name": "redis", "version": "4.5.1", "type": "pypi", "purl": "pkg:pypi/redis@4.5.1"}]
+
+        reach = self._verdict("4.5.1", deps, [self._JS_IMPORTS_REDIS, python_lists_redis])
+
+        assert (reach["is_reachable"], reach["import_locations"]) == (False, [])
+        assert reach["message"].endswith("(python).")
+
+    def test_an_npm_import_says_nothing_about_an_alpine_package(self):
+        deps = [{"name": "redis", "version": "7.2.4-r0", "type": "apk", "purl": "pkg:apk/alpine/redis@7.2.4-r0"}]
+
+        reach = self._verdict("7.2.4-r0", deps, [self._JS_IMPORTS_REDIS])
+
+        assert reach["is_reachable"] is None
+        assert "ecosystem no callgraph tool supports" in reach["message"]
+
+    def test_a_package_the_inventory_does_not_know_takes_evidence_from_any_graph(self):
+        assert self._verdict("4.5.1", [], [self._JS_IMPORTS_REDIS])["is_reachable"] is True
+
+    def test_a_version_no_row_lists_names_only_the_callgraph_languages_it_lacks(self):
+        deps = [
+            {"name": "redis", "version": "7.2.4-r0", "type": "apk", "purl": "pkg:apk/alpine/redis@7.2.4-r0"},
+            {"name": "redis", "version": "4.6.0", "type": "npm", "purl": "pkg:npm/redis@4.6.0"},
+        ]
+
+        reach = self._verdict("9.9.9", deps, [_prepared(analyzed_modules=["requests"])])
+
+        assert reach["message"].startswith("No javascript/typescript callgraph was uploaded")
+
+
 class TestJvmCoverage:
     """A Java callgraph covers Maven packages, but its missing imports are no evidence of absence."""
 
@@ -344,6 +387,24 @@ class TestEvidenceAcrossGraphs:
         assert reach["import_locations"] == ["src/app.ts", "src/index.js"]
         assert reach["import_location_count"] == 2
         assert finding["details"]["adjusted_risk_score"] == 88.0
+
+
+class TestDefinitelyTypedImports:
+    def test_an_import_resolved_to_its_types_stub_confirms_the_package(self):
+        graph = _stored(
+            parse_madge_format(
+                {"src/index.ts": ["node_modules/@types/express/index.d.ts"], "__analyzed_modules__": ["express"]},
+                "typescript",
+            ),
+            "typescript",
+        )
+        finding = _finding(component="express")
+        deps = component_language_map([{"name": "express", "version": "1.0.0", "type": "npm", "direct": True}])
+
+        enrich_findings_with_reachability([finding], [graph], deps)
+
+        reach = finding["details"]["reachability"]
+        assert (reach["is_reachable"], reach["import_locations"]) == (True, ["src/index.ts"])
 
 
 class TestVerdictShape:

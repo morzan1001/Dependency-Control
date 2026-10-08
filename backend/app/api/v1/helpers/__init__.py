@@ -14,11 +14,6 @@ from app.api.v1.helpers.analytics import (
     process_cve_enrichments,
     require_analytics_permission,
 )
-from app.api.v1.helpers.callgraph import (
-    detect_format,
-    parse_generic_format,
-    parse_madge_format,
-)
 from app.api.v1.helpers.findings import (
     aggregate_stats_by_category,
     get_category_for_type,
@@ -106,12 +101,10 @@ __all__ = [
     "calculate_impact_score",
     # User helpers
     "check_admin_or_self",
-    # Callgraph helpers
     "check_project_access",
     "check_team_access",
     # Webhook helpers
     "check_webhook_permission",
-    "detect_format",
     "enrich_team_with_usernames",
     "ensure_can_manage_target",
     "extract_fix_versions",
@@ -133,8 +126,6 @@ __all__ = [
     "is_write_superuser",
     "last_admin_guard",
     "may_read_projects",
-    "parse_generic_format",
-    "parse_madge_format",
     "parse_sort_direction",
     "process_cve_enrichments",
     # Ingest helpers

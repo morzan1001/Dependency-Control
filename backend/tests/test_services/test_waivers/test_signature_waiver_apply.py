@@ -170,3 +170,48 @@ async def test_a_legacy_waiver_takes_the_recomputed_signature_of_its_unsigned_fi
     assert await waived(db, _SCAN) == {unsigned["_id"]: "reason w"}
     assert waiver_repo.writes["w"]["match"] == waiver.match.model_dump()
     assert (await db.findings.find_one({"_id": unsigned["_id"]}))["match"] == waiver.match.model_dump()
+
+
+_LEAKED_KEY = "SECRET-AWS-aaaa1111"
+
+
+def _secret_doc(component: str) -> dict:
+    """A leaked key keeps one finding id in every file it sits in; each file holds its own finding."""
+    return {
+        "_id": f"secret:{component}",
+        "scan_id": _SCAN,
+        "finding_id": _LEAKED_KEY,
+        "type": "secret",
+        "component": component,
+        "details": {"detector": "AWS"},
+        "match": None,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("files", [("config/a.env", "config/b.env"), ("config/b.env", "config/a.env")])
+async def test_an_unsigned_waiver_naming_a_file_takes_the_signature_of_the_finding_in_that_file(files):
+    waiver = Waiver(
+        id="w",
+        project_id="p",
+        reason="reason w",
+        created_by="u",
+        finding_id=_LEAKED_KEY,
+        finding_type="secret",
+        package_name="config/a.env",
+    )
+
+    db, waiver_repo = await restamp_docs([_secret_doc(file) for file in files], [waiver], _SCAN)
+
+    assert await waived(db, _SCAN) == {"secret:config/a.env": "reason w"}
+    assert waiver_repo.writes["w"]["match"]["file_key"] == "config/a.env"
+
+
+@pytest.mark.asyncio
+async def test_a_global_waiver_goes_by_its_criteria_and_loads_no_location_finding_for_a_signature():
+    waiver = Waiver(id="w", project_id=None, reason="reason w", created_by="u", finding_id=_LEAKED_KEY)
+
+    db, waiver_repo = await restamp_docs([_secret_doc("config/a.env"), _secret_doc("config/b.env")], [waiver], _SCAN)
+
+    assert await waived(db, _SCAN) == {"secret:config/a.env": "reason w", "secret:config/b.env": "reason w"}
+    assert waiver.match is None and waiver_repo.writes == {}

@@ -15,17 +15,16 @@ from app.repositories.base import BaseRepository, find_window
 # What names a CVE, plus the fields a recurrence row reports back.
 _VULNERABILITY_IDENTITY_PROJECTION = {
     "scan_id": 1,
-    "severity": 1,
     "component": 1,
-    "description": 1,
-    "finding_id": 1,
-    "aliases": 1,
     "details.vulnerabilities.id": 1,
     "details.vulnerabilities.resolved_cve": 1,
     "details.vulnerabilities.aliases": 1,
+    "details.vulnerabilities.severity": 1,
 }
 
 FindingIdentity = tuple[Any, Any, Any, Any]
+
+_ADVISORY_PAYLOAD_FIELDS = ("description", "references", "details", "cvss_vector", "ecosystem_specific")
 
 # Every field earliest_detections reads, so it never fetches a document.
 FIRST_DETECTION_INDEX = [
@@ -43,6 +42,11 @@ NEWEST_VULNERABILITY_INDEX = [("project_id", ASCENDING), ("finding_id", ASCENDIN
 VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
 
 _DETECTION_CHUNK = 10_000
+
+# Advisory text and scanner payload no recommendation reads; on large scans they reach hundreds of MB.
+_RECOMMENDATION_EXCLUDED = dict.fromkeys(
+    ("related_findings", *(f"details.vulnerabilities.{field}" for field in _ADVISORY_PAYLOAD_FIELDS)), 0
+)
 
 # What advisory_detections reads of a copy: its component, and each advisory's names and date.
 _COPY_DATES: dict[str, Any] = {
@@ -102,7 +106,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[FindingRecord], int]:
         """Unwaived findings up to ``limit`` and their total; no default ``limit``, so no caller gets a hidden cap."""
-        rows, total = await find_window(self.collection, {"scan_id": scan_id, "waived": {"$ne": True}}, limit)
+        query = {"scan_id": scan_id, "waived": {"$ne": True}}
+        rows, total = await find_window(self.collection, query, limit, projection=_RECOMMENDATION_EXCLUDED)
         return self._to_model_list(rows), total
 
     async def iter_vulnerability_identities(self, scan_ids: Sequence[str]) -> AsyncGenerator[dict[str, Any], None]:

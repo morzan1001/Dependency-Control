@@ -58,11 +58,6 @@ def _process_kics_file(
             version=None,
             description=f"{query_name}: {description}",
             scanners=["kics"],
-            location={
-                "file": file_name,
-                "start_line": line,
-                "end_line": end_line,
-            },
             details=details,
         ),
         source=source,

@@ -163,7 +163,7 @@ class TestEcosystemFromDependencyMap:
         await db.dependencies.insert_one({"scan_id": "s1", "name": "left-pad", "version": "1.3.0", "type": "npm"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "version": "v1.0.0", "type": "golang"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"})
-        await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})  # no callgraph lang
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})
         await db.dependencies.insert_one(
             {
                 "scan_id": "s1",
@@ -179,7 +179,7 @@ class TestEcosystemFromDependencyMap:
         assert m["left-pad"] == [("1.3.0", frozenset({"javascript", "typescript"}), False)]
         assert m["mymod"] == [("v1.0.0", frozenset({"go"}), False)]
         assert m["viapurl"] == [("", frozenset({"python"}), False)]
-        assert "rpmpkg" not in m  # unsupported ecosystem omitted
+        assert m["rpmpkg"] == [("", frozenset(), False)]
         assert m["certifi"] == [("2024.7.4", frozenset({"python"}), True)]
 
 

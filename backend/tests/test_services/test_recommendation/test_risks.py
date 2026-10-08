@@ -11,6 +11,7 @@ from app.services.recommendation.risks import (
     detect_toxic_dependencies,
     roll_up_packages,
 )
+from tests.helpers.findings import stored_vulnerability
 
 
 def _vuln(
@@ -986,3 +987,23 @@ class TestHotspotsReadTheLiveAdvisories:
         assert _hotspots([finding]) == []
         [pkg] = roll_up_packages([finding])
         assert pkg.risk_score == 41.0
+
+
+# One installed version as the aggregator stores it: every CVE an advisory of the same finding.
+_LODASH_CVES = [
+    {"id": f"CVE-2021-{n:05d}", "severity": severity, "fixed_version": "4.17.21"}
+    for n, severity in enumerate(["CRITICAL"] * 2 + ["HIGH"] * 3 + ["MEDIUM"] * 2 + ["LOW"])
+]
+
+
+class TestPackageCardsCountTheCvesOfAnInstalledVersion:
+    def test_one_installed_version_with_three_cves_and_a_critical_is_a_hotspot(self):
+        [rec] = _hotspots([stored_vulnerability("lodash", "4.17.20", _LODASH_CVES)])
+
+        assert "8 vulnerabilities (2 critical, 3 high)" in rec.action["reasons"]
+
+    def test_the_toxic_factor_counts_cves(self):
+        [rec] = _toxic([stored_vulnerability("lodash", "4.17.20", _LODASH_CVES), _eol("lodash")])
+
+        assert "8 vulnerabilities (2 critical, 3 high, 0 KEV)" in rec.description
+        assert (rec.impact["critical"], rec.impact["high"], rec.impact["total"]) == (2, 3, 8)

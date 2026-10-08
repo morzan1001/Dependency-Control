@@ -110,7 +110,7 @@ async def _ensure_waiver_matches_finding(
         return None
 
     finding_query = {**waiver_query(waiver), "scan_id": scan_id}
-    finding = await FindingRepository(db).find_one_raw(finding_query, {"match": 1, "type": 1, "component": 1})
+    finding = await FindingRepository(db).find_one_raw(finding_query, {"match": 1})
     if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
     return finding
@@ -208,16 +208,9 @@ async def list_waivers(
 
     if search:
         search_query = {"$regex": re.escape(search), "$options": "i"}
-        search_or = [
-            {"package_name": search_query},
-            {"reason": search_query},
-            {"finding_id": search_query},
-        ]
-        if "$or" in query:
-            # $and-wrap so an existing $or is preserved.
-            query = {"$and": [query, {"$or": search_or}]}
-        else:
-            query["$or"] = search_or
+        query = and_filters(
+            query, {"$or": [{field: search_query} for field in ("package_name", "reason", "finding_id")]}
+        )
 
     if active or orphaned:
         query = and_filters(query, non_expired_waiver_filter(datetime.now(timezone.utc)))

@@ -1,5 +1,6 @@
-"""The live scanner uploads the same sbom, cbom and callgraph bodies as the frozen 1.2.0 release, and a release mark
-only for an environment the ingest accepts."""
+"""The live scanner uploads the same sbom and cbom bodies as the frozen 1.2.0 release, a release mark only for an
+environment the ingest accepts, and each callgraph to the project the ingest config names; the CI examples reach that
+callgraph upload."""
 
 import json
 import os
@@ -9,28 +10,88 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
-from tests.test_api.test_callgraph_parsers import MADGE_OUTPUT
+from tests.test_api.test_callgraph_parsers import MADGE_TS_OUTPUT
 
 _REPO = Path(__file__).parents[3]
 _SCRIPTS = _REPO / "ci-cd" / "scripts"
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
 
+# Answers with the API's real shapes: /ingest/config names the project, and no route lists projects to a CI token.
 _CURL_STUB = """#!/usr/bin/env bash
 url="${!#}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -d) cp "${2#@}" "$CAPTURE"; shift ;;
-        -T) cp "$2" "$CAPTURE"; shift ;;
+        -d) cp "${2#@}" "$CAPTURE"; echo "$url" >> "$CAPTURE.urls"; shift ;;
+        -T) cp "$2" "$CAPTURE"; echo "$url" >> "$CAPTURE.urls"; shift ;;
     esac
     shift
 done
 case "$url" in
-    */ingest/config) printf '{"active_analyzers": ["reachability"]}\\n200' ;;
-    *"/projects?name="*) printf '[{"_id": "p1"}]' ;;
-    *) printf '{"status": "queued"}\\n202' ;;
+    */ingest/config) printf '{"active_analyzers": ["reachability"], "project_id": "p1"}\\n200' ;;
+    */api/v1/projects/*) printf '{"status": "queued"}\\n202' ;;
+    */api/v1/ingest*) printf '{"status": "queued"}\\n202' ;;
+    *) printf '{"detail": "Not Found"}\\n404' ;;
 esac
 """
+
+# madge 8 walks only the path it is given, reads only the --extensions (['js'] by default) and lists node_modules
+# imports only under --include-npm.
+_MADGE_STUB = r"""#!/usr/bin/env python3
+import json, os, sys
+
+args = sys.argv[1:]
+extensions = args[args.index("--extensions") + 1].split(",") if "--extensions" in args else ["js"]
+root = os.path.relpath(args[-1])
+with open(os.environ["STUB_MADGE_GRAPH"]) as fh:
+    graph = json.load(fh)
+print(json.dumps({
+    path: [dep for dep in deps if "--include-npm" in args or "node_modules" not in dep]
+    for path, deps in graph.items()
+    if (root == "." or path.startswith(root + "/")) and path.rsplit(".", 1)[-1] in extensions
+}))
+"""
+
+# madge 8.0.0 `--json --include-npm --extensions js,jsx,ts,tsx .` over a Vite React checkout.
+_JSX_GRAPH = {
+    "src/App.jsx": [],
+    "src/main.jsx": ["node_modules/react-dom/client.js", "node_modules/react/index.js", "src/App.jsx"],
+    "vite.config.js": ["node_modules/vite/dist/node/index.js"],
+}
+
+_GO_STUB = r"""#!/usr/bin/env python3
+import json, os, sys
+
+args = sys.argv[1:]
+if args[:2] == ["list", "-deps"]:
+    sys.stdout.write(os.environ["STUB_GO_PACKAGES"])
+elif args == ["list", "-m", "-f", "{{if not (or .Main .Indirect)}}{{.Path}}{{end}}", "all"]:
+    for module in json.loads(os.environ["STUB_GO_MODULES"]):
+        print("" if module.get("Main") or module.get("Indirect") else module["Path"])
+else:
+    sys.exit(f"unexpected go invocation: {args}")
+"""
+_GO_PACKAGES = "\n".join(
+    json.dumps(package)
+    for package in (
+        {
+            "Dir": ".",
+            "ImportPath": "example.com/app",
+            "Module": {"Path": "example.com/app", "Main": True},
+            "Imports": ["fmt", "github.com/sirupsen/logrus"],
+        },
+        {"ImportPath": "fmt", "Standard": True},
+        {"ImportPath": "github.com/sirupsen/logrus", "Module": {"Path": "github.com/sirupsen/logrus"}},
+    )
+)
+_GO_MODULES = json.dumps(
+    [
+        {"Path": "example.com/app", "Main": True},
+        {"Path": "github.com/sirupsen/logrus"},
+        {"Path": "golang.org/x/sys", "Indirect": True},
+    ]
+)
 
 
 def _stub(directory: Path, name: str, body: str) -> None:
@@ -39,15 +100,26 @@ def _stub(directory: Path, name: str, body: str) -> None:
     path.chmod(0o755)
 
 
-def _uploaded_body(script: Path, command: str, tmp_path: Path, **extra_env: str) -> Any:
+def _run(
+    script: Path,
+    command: str,
+    tmp_path: Path,
+    files: dict[str, str],
+    madge_graph: dict[str, Any] | None = None,
+    **extra_env: str,
+) -> Path:
+    """Run the scanner in a checkout holding ``files``; returns where the curl stub captured the upload."""
     stubs, workdir = tmp_path / "bin", tmp_path / "repo"
     stubs.mkdir(parents=True)
     workdir.mkdir()
-    (workdir / "package.json").write_text("{}")
-    (tmp_path / "madge.json").write_text(MADGE_OUTPUT)
+    for name, content in files.items():
+        (workdir / name).parent.mkdir(parents=True, exist_ok=True)
+        (workdir / name).write_text(content)
+    (tmp_path / "madge.json").write_text(json.dumps(madge_graph or {}))
     _stub(stubs, "curl", _CURL_STUB)
     _stub(stubs, "syft", f"#!/bin/sh\ncat '{_FIXTURES / 'sbom' / 'mono.syft.json'}'\n")
-    _stub(stubs, "madge", f"#!/bin/sh\ncat '{tmp_path / 'madge.json'}'\n")
+    _stub(stubs, "madge", _MADGE_STUB)
+    _stub(stubs, "go", _GO_STUB)
     capture = tmp_path / "body.json"
     env = {
         "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
@@ -65,13 +137,20 @@ def _uploaded_body(script: Path, command: str, tmp_path: Path, **extra_env: str)
         "COMMIT_MESSAGE": 'fix: quote "this" and\nthat',
         "CBOM_FILE": str(_FIXTURES / "cbom" / "legacy_crypto_mixed.json"),
         "CAPTURE": str(capture),
+        "STUB_GO_PACKAGES": _GO_PACKAGES,
+        "STUB_GO_MODULES": _GO_MODULES,
+        "STUB_MADGE_GRAPH": str(tmp_path / "madge.json"),
         **extra_env,
     }
     subprocess.run(["bash", str(script), command], cwd=workdir, env=env, check=True, timeout=60, capture_output=True)
-    return json.loads(capture.read_text())
+    return capture
 
 
-@pytest.mark.parametrize("command", ["sbom", "cbom", "callgraph"])
+def _uploaded_body(script: Path, command: str, tmp_path: Path, **extra_env: str) -> Any:
+    return json.loads(_run(script, command, tmp_path, {"package.json": "{}"}, **extra_env).read_text())
+
+
+@pytest.mark.parametrize("command", ["sbom", "cbom"])
 def test_the_uploaded_body_matches_the_frozen_1_2_0_release(command, tmp_path):
     assert shutil.which("bash") and shutil.which("jq"), "the scanner needs bash and jq"
 
@@ -92,3 +171,93 @@ def test_an_environment_the_ingest_would_reject_drops_the_whole_release_mark(tmp
     )
 
     assert (body["is_release"], body["release_environment"]) == (False, None)
+
+
+_CALLGRAPH_META = {"pipeline_id": 4711, "branch": "main", "commit_hash": "a" * 40}
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        pytest.param(
+            {"package.json": "{}", **dict.fromkeys(_JSX_GRAPH, "")},
+            {"format": "madge", "language": "javascript", "data": _JSX_GRAPH},
+            id="javascript",
+        ),
+        pytest.param(
+            {"package.json": "{}", "tsconfig.json": "{}"},
+            {"format": "madge", "language": "typescript", "data": json.loads(MADGE_TS_OUTPUT)},
+            id="typescript",
+        ),
+        pytest.param(
+            {"pyproject.toml": "[project]\nname = 'demo'\n", "app/client.py": "import requests\nfrom . import x\n"},
+            {
+                "format": "generic",
+                "language": "python",
+                "data": {
+                    "imports": [{"module": "requests", "file": "app/client.py", "line": 1, "symbols": []}],
+                    "analyzed_modules": [],
+                },
+            },
+            id="python",
+        ),
+        pytest.param(
+            {"go.mod": "module example.com/app\n"},
+            {
+                "format": "generic",
+                "language": "go",
+                "data": {
+                    "imports": [{"module": "github.com/sirupsen/logrus", "file": ".", "line": 0, "symbols": []}],
+                    "analyzed_modules": ["github.com/sirupsen/logrus"],
+                },
+            },
+            id="go",
+        ),
+    ],
+)
+def test_a_callgraph_goes_to_the_project_the_ingest_config_names(files, expected, tmp_path):
+    capture = _run(_SCRIPTS / "scanner.sh", "callgraph", tmp_path, files, expected["data"])
+
+    assert capture.with_name("body.json.urls").read_text().split() == ["http://dc.invalid/api/v1/projects/p1/callgraph"]
+    assert json.loads(capture.read_text()) == {**expected, **_CALLGRAPH_META}
+
+
+# curl downloads a scanner.sh that records the command it runs.
+_DOWNLOAD_STUB = r"""#!/usr/bin/env bash
+while [[ $# -gt 0 ]]; do
+    [[ "$1" == "-o" ]] && printf '#!/bin/sh\necho "$@" >> "$SCANNER_RAN"\n' > "$2"
+    shift
+done
+"""
+
+
+def _callgraph_job_script(example: str) -> str:
+    doc = yaml.safe_load((_REPO / "ci-cd" / example).read_text())
+    if "jobs" in doc:
+        return doc["jobs"]["callgraph-upload"]["steps"][-1]["run"]
+    return "\n".join(doc["callgraph-upload"]["script"])
+
+
+@pytest.mark.parametrize("example", ["github-workflow.example.yaml", "gitlab-ci.example.yaml"])
+def test_a_failed_dependency_install_still_runs_the_callgraph_upload(example, tmp_path):
+    """Both runners stop a job at its first failing command; without node_modules madge still uploads the import graph."""
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    _stub(stubs, "curl", _DOWNLOAD_STUB)
+    _stub(stubs, "sha256sum", "#!/bin/sh\ncat > /dev/null\n")
+    _stub(stubs, "npm", "#!/bin/sh\nexit 1\n")
+    (tmp_path / "package-lock.json").write_text("{}")
+    ran = tmp_path / "scanner-ran"
+    ran.touch()
+
+    job = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", _callgraph_job_script(example)],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}", "SCANNER_RAN": str(ran)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert (job.returncode, ran.read_text().split()) == (0, ["callgraph"]), job.stderr

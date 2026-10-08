@@ -19,6 +19,7 @@ from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     SCAN_DEPENDENCY_READ_LIMIT,
+    SCANS_TIP_SORT,
 )
 from app.core.cve import entry_cves
 from app.core.permissions import Permissions
@@ -27,7 +28,7 @@ from app.models.finding_record import FindingRecord
 from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
@@ -39,7 +40,7 @@ from app.services.enrichment.service import apply_enrichments, vulnerability_enr
 from app.services.recommendation import trends
 from app.services.recommendation.common import live_cves
 from app.services.recommendation.crypto import CRYPTO_ISSUE_FINDING_TYPES, CRYPTO_RECOMMENDATION_TYPES
-from app.services.recommendations import recommendation_engine
+from app.services.recommendations import generate_recommendations
 
 from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
 
@@ -50,7 +51,11 @@ router = CustomAPIRouter()
 # Newest scans the recurrence count is taken over; the recommendation text names the window.
 _RECURRENCE_WINDOW_SCANS = 10
 
-_LICENSE_DRIFT_PROJECTION = {"name": 1, "purl": 1, "license": 1, "license_category": 1}
+# What the generators read of a dependency row, the license-drift comparison of the previous scan included.
+_DEPENDENCY_PROJECTION = dict.fromkeys(
+    ("name", "version", "purl", "type", "group", "scope", "direct", "parent_components", "license", "license_category"),
+    1,
+)
 _JOIN_PROJECTION = dict.fromkeys(
     ("name", "version", "purl", "type", "direct", "direct_inferred", "source_type", "source_target"), 1
 )
@@ -120,7 +125,7 @@ async def get_project_recommendations(
     user_projects = await get_user_projects(current_user, db)
 
     stamped = await scan_repo.find_many_raw(
-        {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1}
+        {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1, "branch": 1}
     )
     stamp = stamped[0] if stamped else {}
     # Keyed by caller scope too, so differing project access never shares an entry; cross-project data may be stale.
@@ -135,8 +140,11 @@ async def get_project_recommendations(
         findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
         threat_intel = await _apply_live_threat_intel(findings)
 
-        dependencies, dependencies_total = await dep_repo.find_by_scan(
-            project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
+        dependencies, dependencies_total = await find_window(
+            dep_repo.collection,
+            {"project_id": project_id, "scan_id": scan_id},
+            SCAN_DEPENDENCY_READ_LIMIT,
+            projection=_DEPENDENCY_PROJECTION,
         )
         # The window above can miss a finding's row; the join reads exactly the rows the findings name.
         names = list({n for f in findings if f.type == "vulnerability" for n in component_name_candidates(f.component)})
@@ -155,15 +163,16 @@ async def get_project_recommendations(
                 dep_repo.collection,
                 {"project_id": project_id, "scan_id": previous_scan.id},
                 SCAN_DEPENDENCY_READ_LIMIT,
-                projection=_LICENSE_DRIFT_PROJECTION,
+                projection=_DEPENDENCY_PROJECTION,
             )
 
         recent_scan_ids = [
-            recent.id
-            for recent in await scan_repo.find_many(
-                {"project_id": project_id},
+            recent["_id"]
+            for recent in await scan_repo.find_many_raw(
+                {**USABLE_BUILD_MATCH, "project_id": project_id, "branch": stamp.get("branch")},
+                sort=SCANS_TIP_SORT,
                 limit=_RECURRENCE_WINDOW_SCANS,
-                sort=[("created_at", -1)],
+                projection={"_id": 1},
             )
         ]
         cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
@@ -171,7 +180,7 @@ async def get_project_recommendations(
         cross_project_data = await gather_cross_project_data(user_projects, project_id, db)
 
         recommendations = await asyncio.to_thread(
-            recommendation_engine.generate_recommendations,
+            generate_recommendations,
             findings=findings,
             dependencies=dependencies,
             join_dependencies=join_dependencies,

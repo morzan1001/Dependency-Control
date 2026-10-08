@@ -1,4 +1,4 @@
-"""Engine resilience: waived-finding filtering and post-processor result exclusion."""
+"""Engine resilience: the unwaived-findings read-back and post-processor result exclusion."""
 
 import asyncio
 from types import SimpleNamespace
@@ -8,60 +8,48 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import (
     _aggregate_external_results,
     _carry_over_external_results,
-    _filter_out_waived_findings,
+    _unwaived_findings,
 )
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary
 from tests.mocks.fake_mongo import FakeDatabase
 
 
-class _AsyncIter:
-    """Minimal async cursor stand-in for motor's find()."""
+class TestUnwaivedFindings:
+    def test_only_the_scans_unwaived_findings_are_read_back(self):
+        db = FakeDatabase()
+        for doc in (
+            {"_id": "R1", "scan_id": "scan-1", "type": "sast", "waived": False},
+            {"_id": "R2", "scan_id": "scan-1", "type": "sast", "waived": True},
+            {"_id": "R3", "scan_id": "scan-1", "type": "secret"},
+            {"_id": "R4", "scan_id": "scan-2", "type": "sast", "waived": False},
+        ):
+            asyncio.run(db.findings.insert_one(doc))
 
-    def __init__(self, docs):
-        self._docs = list(docs)
+        assert sorted(f["_id"] for f in asyncio.run(_unwaived_findings("scan-1", db))) == ["R1", "R3"]
 
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if not self._docs:
-            raise StopAsyncIteration
-        return self._docs.pop(0)
-
-
-class _FakeFindings:
-    def __init__(self, waived_docs):
-        self._waived_docs = waived_docs
-        self.last_query = None
-
-    def find(self, query, projection=None):
-        self.last_query = query
-        return _AsyncIter(self._waived_docs)
-
-
-class TestFilterOutWaivedFindings:
-    def test_waived_record_is_excluded(self):
-        findings = [{"_id": "R1"}, {"_id": "R2"}, {"_id": "R3"}]
-        db = {"findings": _FakeFindings([{"_id": "R2", "waived": True}])}
-
-        result = asyncio.run(_filter_out_waived_findings(findings, "scan-1", db))
-
-        assert [f["_id"] for f in result] == ["R1", "R3"]
-
-    def test_without_waivers_every_record_is_kept(self):
-        findings = [{"_id": "R1"}]
-        db = {"findings": _FakeFindings([])}
-
-        assert asyncio.run(_filter_out_waived_findings(findings, "scan-1", db)) == findings
-
-    def test_query_filters_on_scan_and_waived(self):
-        db = {"findings": _FakeFindings([])}
-        asyncio.run(_filter_out_waived_findings([{"_id": "R1"}], "scan-9", db))
-        assert db["findings"].last_query == {
-            "scan_id": "scan-9",
-            "$or": [{"waived": True}, {"details.vulnerabilities.waived": True}],
+    def test_an_advisory_is_read_back_with_what_an_alert_shows_and_not_its_text(self):
+        db = FakeDatabase()
+        advisory = {
+            "id": "CVE-2021-44228",
+            "aliases": ["GHSA-jfh8-c2jp-5v3q"],
+            "severity": "CRITICAL",
+            "in_kev": True,
+            "kev_due_date": "2021-12-24",
+            "kev_ransomware_use": True,
+            "epss_score": 0.94,
+            "waived": False,
+            "description": "JNDI lookups in log messages",
+            "references": ["https://logging.apache.org/log4j/2.x/security.html"],
         }
+        doc = {"_id": "R1", "scan_id": "scan-1", "type": "vulnerability", "details": {"vulnerabilities": [advisory]}}
+        asyncio.run(db.findings.insert_one(doc))
+
+        [finding] = asyncio.run(_unwaived_findings("scan-1", db))
+
+        assert finding["details"]["vulnerabilities"] == [
+            {k: v for k, v in advisory.items() if k not in ("description", "references")}
+        ]
 
 
 class TestAggregateExternalSkipsEngineRows:

@@ -14,7 +14,7 @@ from app.core.risk_scoring import (
 )
 from app.models.finding import Severity
 from app.services.enrichment.scoring import calculate_secret_severity
-from app.services.recommendation.common import VulnerabilityInfo
+from app.services.recommendation.common import VulnerabilityInfo, summarize_vulns
 
 
 def _vuln(**kwargs) -> VulnerabilityInfo:
@@ -113,9 +113,10 @@ class TestConsumersDelegate:
             (0.9, True, True),
         ],
     )
-    def test_vulnerability_info_matches(self, epss, kev, reachable):
-        v = _vuln(epss_score=epss, is_kev=kev, is_reachable=reachable)
-        assert v.is_actionable == is_actionable_vulnerability(epss_score=epss, is_kev=kev, reachable=reachable)
+    def test_vulnerability_stats_match(self, epss, kev, reachable):
+        advisory = {"id": "CVE-2024-0001", "severity": "HIGH", "epss_score": epss, "in_kev": kev}
+        stats = summarize_vulns([_vuln(advisories=[advisory], is_reachable=reachable)])
+        assert stats.actionable == is_actionable_vulnerability(epss_score=epss, is_kev=kev, reachable=reachable)
 
     @pytest.mark.parametrize(
         ("verified", "in_tree"),

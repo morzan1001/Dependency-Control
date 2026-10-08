@@ -6,6 +6,7 @@ from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import apply_global_waivers_in_memory, run_adhoc_analysis
+from app.services.waivers.signature import compute_match_signature
 from tests.helpers.analyzers import serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -286,32 +287,57 @@ def test_a_scope_that_cannot_be_widened_falls_back_to_the_exact_finding_id():
     assert [record.get("waived") for record in records] == [True, None]
 
 
-def test_signature_waiver_waives_the_location_it_was_taken_from():
+def _secret_record(component: str) -> dict:
+    """A leaked key keeps one finding id in every file it sits in; the aggregator signs each copy."""
+    details = {"detector": "AWS"}
+    match = compute_match_signature(_LEAKED_KEY, details, component)
+    return {
+        "id": _LEAKED_KEY,
+        "finding_id": _LEAKED_KEY,
+        "type": "secret",
+        "component": component,
+        "version": "",
+        "details": details,
+        "match": match.model_dump() if match else None,
+    }
+
+
+_LEAKED_KEY = "SECRET-AWS-aaaa1111"
+
+
+def test_a_global_waiver_naming_a_location_finding_waives_it_by_its_criteria():
     records = [_sast_record(_ANCHOR, _CONTENT_HASH)]
-
-    assert apply_global_waivers_in_memory(records, [_signature_waiver(_ANCHOR, _CONTENT_HASH)]) == 1
-    assert records[0]["waived"] is True
-    assert records[0]["waiver_reason"] == _REASON
-
-
-def test_an_unsigned_location_waiver_binds_one_of_the_records_sharing_its_id():
-    """As in a scan: it takes the signature of the finding it names and waives that location only."""
-    records = [_sast_record(_ANCHOR, _CONTENT_HASH), _sast_record(_MOVED_ANCHOR, _CHANGED_CONTENT_HASH)]
 
     waiver = _waiver(finding_id=records[0]["finding_id"], finding_type=_TYPE_SAST)
 
     assert apply_global_waivers_in_memory(records, [waiver]) == 1
+    assert (records[0]["waived"], records[0]["waiver_reason"]) == (True, _REASON)
 
 
-def test_a_signature_whose_content_changed_lapses_instead_of_waiving():
+def test_a_global_waiver_goes_by_its_criteria_whatever_signature_it_carries():
+    """Global waivers keep no signature, so one that still holds a stale match neither binds nor lapses."""
     records = [_sast_record(_MOVED_ANCHOR, _CHANGED_CONTENT_HASH)]
 
     waiver = _signature_waiver(_ANCHOR, _CONTENT_HASH)
+    waiver.finding_id = records[0]["finding_id"]
 
-    assert apply_global_waivers_in_memory(records, [waiver]) == 0
-    assert records[0].get("waived") is not True
-    assert records[0]["waiver_lapsed"] is True
-    assert records[0]["lapsed_waiver_id"] == waiver.id
+    assert apply_global_waivers_in_memory(records, [waiver]) == 1
+    assert "waiver_lapsed" not in records[0]
+
+
+def test_a_global_waiver_naming_no_file_waives_every_copy_of_its_finding():
+    records = [_secret_record("config/a.env"), _secret_record("config/b.env")]
+
+    assert apply_global_waivers_in_memory(records, [_waiver(finding_id=_LEAKED_KEY, finding_type="secret")]) == 2
+
+
+def test_a_global_waiver_naming_a_file_waives_its_finding_in_that_file_only():
+    records = [_secret_record("config/a.env"), _secret_record("config/b.env")]
+
+    waiver = _waiver(finding_id=_LEAKED_KEY, finding_type="secret", package_name="config/a.env")
+
+    assert apply_global_waivers_in_memory(records, [waiver]) == 1
+    assert [record.get("waived") for record in records] == [True, None]
 
 
 @pytest.mark.asyncio

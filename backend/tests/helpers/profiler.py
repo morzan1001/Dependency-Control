@@ -3,10 +3,14 @@
 from collections.abc import Awaitable
 from typing import Any
 
+_PROFILE_BYTES = 64 * 1024 * 1024
+
 
 async def profiled[T](db, call: Awaitable[T]) -> tuple[T, list[dict[str, Any]]]:
     """The result of ``call`` and every operation the server ran on ``db`` meanwhile."""
     await db["system.profile"].drop()
+    # The server's default 1 MiB profile collection evicts the first operations of a call that writes a lot.
+    await db.create_collection("system.profile", capped=True, size=_PROFILE_BYTES)
     # The level alone: slowms is server-wide and would log every operation of every database.
     await db.command("profile", 2)
     try:

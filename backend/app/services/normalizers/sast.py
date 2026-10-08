@@ -99,13 +99,6 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
         version=None,
         description=description,
         scanners=["opengrep"],
-        location={
-            "file": path,
-            "start_line": start_line,
-            "end_line": end_line,
-            "start_column": start_col,
-            "end_column": end_col,
-        },
         details=details,
     )
 
@@ -177,13 +170,6 @@ def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], sou
                 version=None,
                 description=title,
                 scanners=["bearer"],
-                location={
-                    "file": filename,
-                    "start_line": line_number,
-                    "end_line": end_line,
-                    "start_column": start_col,
-                    "end_column": end_col,
-                },
                 details=details,
             ),
             source=source,

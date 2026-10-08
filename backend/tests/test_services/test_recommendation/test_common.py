@@ -12,7 +12,7 @@ from app.schemas.recommendation import (
 from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
-    calculate_best_fix_version,
+    VulnerabilityInfo,
     calculate_score,
     get_attr,
     label_by_keywords,
@@ -207,10 +207,19 @@ class TestVersionOrdering:
         assert newest_first(["2.3.1b", "2.3.1c"]) == ["2.3.1c", "2.3.1b"]
 
     def test_debian_revisions_are_ordered_numerically(self):
-        assert calculate_best_fix_version(["1.2.3-2", "1.2.3-10"]) == "1.2.3-10"
+        assert _best_fix(["1.2.3-2", "1.2.3-10"]) == "1.2.3-10"
 
 
-class TestCalculateBestFixVersion:
+def _best_fix(fixed_versions):
+    """The target a package card names for findings whose fixes are these stored fixed_version values."""
+    vulns = [
+        VulnerabilityInfo(advisories=[], severity="HIGH", package_name="pkg", current_version="1.0", fixed_version=fix)
+        for fix in fixed_versions
+    ]
+    return summarize_vulns(vulns).best_fix
+
+
+class TestBestFixVersion:
     @pytest.mark.parametrize(
         ("candidates", "expected"),
         [
@@ -230,8 +239,8 @@ class TestCalculateBestFixVersion:
             pytest.param(["1.0.0-alpha", "1.0.0"], "1.0.0", id="release_above_its_prerelease"),
         ],
     )
-    def test_calculate_best_fix_version(self, candidates, expected):
-        assert calculate_best_fix_version(candidates) == expected
+    def test_the_best_fix_is_the_newest_single_version(self, candidates, expected):
+        assert _best_fix(candidates) == expected
 
 
 def _make_recommendation(

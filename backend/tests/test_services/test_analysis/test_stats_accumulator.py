@@ -375,13 +375,15 @@ class TestComponentLanguageMap:
             {"name": "left-pad", "type": "npm"},
             {"name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"},
             {"name": "rpmpkg", "type": "rpm"},
+            {"name": "fabricated", "type": "library", "purl": "pkg:generic/fabricated@1.0"},
             {"type": "npm"},
         ]
         m = component_language_map(deps)
         assert m["requests"] == [("", frozenset({"python"}), False)]
         assert m["left-pad"] == [("", frozenset({"javascript", "typescript"}), False)]
         assert m["viapurl"] == [("", frozenset({"python"}), False)]
-        assert "rpmpkg" not in m
+        assert m["rpmpkg"] == [("", frozenset(), False)]
+        assert "fabricated" not in m
 
     def test_a_name_two_ecosystems_list_keeps_one_candidate_per_ecosystem(self):
         m = component_language_map(

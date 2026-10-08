@@ -1025,6 +1025,23 @@ class TestListFilters:
 
         assert result["total"] == len(db.waivers._docs)
 
+    def test_a_search_matches_package_reason_or_finding_among_the_waivers_a_reader_may_see(self, regular_user):
+        db = FakeDatabase()
+        for waiver in (
+            _make_waiver(id="w-package", package_name="lodash"),
+            _make_waiver(id="w-reason", project_id=None, package_name="axios", reason="Lodash is pinned upstream"),
+            _make_waiver(id="w-finding", finding_id="lodash:4.17.20"),
+            _make_waiver(id="w-other", package_name="axios"),
+            _make_waiver(id="w-foreign", project_id="proj-9", package_name="lodash"),
+        ):
+            db.waivers._docs[waiver.id] = waiver.model_dump(by_alias=True)
+
+        with patch(f"{MODULE}.get_user_project_ids", new_callable=AsyncMock, return_value=["proj-1"]):
+            result = _call_list_waivers(regular_user, db=db, search="LODASH")
+
+        assert sorted(item["id"] for item in result["items"]) == ["w-finding", "w-package", "w-reason"]
+        assert result["total"] == 3
+
     def test_the_evaluation_state_is_exposed_on_each_item(self, admin_user):
         db = self._db()
 

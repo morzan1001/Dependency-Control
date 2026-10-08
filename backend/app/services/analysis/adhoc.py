@@ -21,7 +21,6 @@ from app.core.constants import (
     TOP_PYPI_PACKAGES_URL,
 )
 from app.models.crypto_asset import CryptoAsset
-from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
@@ -42,7 +41,6 @@ from app.services.analysis.types import Database
 from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
-from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
 from app.services.normalizers.sast import bearer_entries
@@ -51,12 +49,9 @@ from app.services.reachability_enrichment import (
     component_language_map,
     enrich_findings_with_reachability,
 )
-from app.services.recommendations import recommendation_engine
+from app.services.recommendations import generate_recommendations
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.waivers.matching import (
-    MatchFinding,
-    apply_waivers_to_findings,
-    bind_legacy_signatures,
     record_matches,
     roll_up_advisories,
     route_waiver,
@@ -186,13 +181,6 @@ _STAGE_NOTES: dict[str, str] = {
 _ADHOC_CRYPTO_RULES = tuple(r for r in load_seed_rules() if r.enabled and r.finding_type in RULE_DRIVEN_FINDING_TYPES)
 
 _NO_CALLGRAPH = "no callgraph supplied"
-_AUTO_FORMAT = "auto"
-_UNDETECTABLE_FORMAT = "could not auto-detect the callgraph format"
-_LANGUAGE_REQUIRED = "'language' is required for '{callgraph_format}' callgraph payloads"
-_UNSUPPORTED_FORMAT = "unsupported callgraph format: {callgraph_format}"
-# The one format that names its own language: madge only ever runs over a JS/TS tree.
-_MADGE_FORMAT = "madge"
-_MADGE_LANGUAGE = "javascript"
 # Identifies the graph within this request only; nothing here is stored or looked up by it.
 _POSTED_CALLGRAPH_ID = "posted"
 
@@ -479,23 +467,13 @@ async def _enrich_vulnerabilities(
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
     """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
-    from app.api.v1.helpers.callgraph import detect_format, parse_generic_format, parse_madge_format
+    from app.api.v1.helpers.callgraph import resolve_callgraph_payload
 
-    raw_format = str(payload.get("format") or _AUTO_FORMAT)
     data = {key: value for key, value in payload.items() if key not in ("format", "language")}
-    resolved_format = detect_format(data) if raw_format == _AUTO_FORMAT else raw_format
-    if resolved_format == "unknown":
-        raise ValueError(_UNDETECTABLE_FORMAT)
-
-    raw_language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
-    if not raw_language:
-        raise ValueError(_LANGUAGE_REQUIRED.format(callgraph_format=resolved_format))
-    language = canonical_callgraph_language(str(raw_language))
-
-    parser = {_MADGE_FORMAT: parse_madge_format, "generic": parse_generic_format}.get(resolved_format)
-    if parser is None:
-        raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
-
+    posted_language = payload.get("language")
+    _, language, parser = resolve_callgraph_payload(
+        str(payload.get("format") or "auto"), str(posted_language) if posted_language else None, data
+    )
     parsed = parser(data, language)
     return CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
@@ -549,43 +527,13 @@ def _apply_field_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
             record["waiver_reason"] = waiver.reason
 
 
-def _apply_signature_waivers(records: list[dict[str, Any]], waivers: list[Waiver]) -> None:
-    """Bind location waivers to the findings they were taken from, re-anchoring across line drift."""
-    # Keyed by position: a record's own id is not guaranteed unique across posted inputs.
-    by_key = {str(index): record for index, record in enumerate(records)}
-    located = [
-        MatchFinding(id=key, sig=MatchSignature(**record["match"]))
-        for key, record in by_key.items()
-        if record.get("match")
-    ]
-    if not located:
-        return
-
-    reasons = {waiver.id: waiver.reason for waiver in waivers}
-    application = apply_waivers_to_findings(located, waivers)
-    for key, waiver_id in application.waived.items():
-        by_key[key]["waived"] = True
-        by_key[key]["waiver_reason"] = reasons.get(waiver_id)
-    for key, waiver_id in application.lapsed.items():
-        by_key[key]["waiver_lapsed"] = True
-        by_key[key]["lapsed_waiver_id"] = waiver_id
-
-
 def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[Waiver]) -> int:
-    """Apply global waivers to in-memory records; returns how many records end up waived."""
-    signed = {record["finding_id"]: MatchSignature(**record["match"]) for record in records if record.get("match")}
-    bind_legacy_signatures(waivers, signed)
-    signature_waivers: list[Waiver] = []
+    """Apply global waivers, which keep no signature and go by their criteria; returns how many records end up waived."""
     for waiver in waivers:
-        route = route_waiver(waiver)
-        if route == "signature":
-            signature_waivers.append(waiver)
-        elif route == "vulnerability":
+        if route_waiver(waiver) == "vulnerability":
             _apply_vulnerability_waiver(records, waiver)
         else:
             _apply_field_waiver(records, waiver)
-
-    _apply_signature_waivers(records, signature_waivers)
     return sum(1 for record in records if record.get("waived") is True)
 
 
@@ -654,7 +602,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # After the waivers, so an accepted risk neither scores nor generates work to do.
     stats = compute_stats(records, languages)
     recommendations = await asyncio.to_thread(
-        recommendation_engine.generate_recommendations,
+        generate_recommendations,
         findings=[record for record in records if not record.get("waived")],
         dependencies=components,
         join_dependencies=components,

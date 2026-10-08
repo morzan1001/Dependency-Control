@@ -9,7 +9,7 @@ from app.core.constants import (
     get_severity_value,
     max_severity,
 )
-from app.core.cve import canonical_cves, counted_cves
+from app.core.cve import counted_cves
 from app.models.finding import FindingType
 from app.schemas.recommendation import (
     Effort,
@@ -26,6 +26,7 @@ from app.services.analytics.findings_delta import (
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
+    cve_severities,
     get_attr,
     live_advisories,
     sample_components,
@@ -140,17 +141,15 @@ class CveRecurrence:
 
 
 async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, Any]]) -> dict[str, CveRecurrence]:
-    """Fold vulnerability findings of a scan window into the scan set each CVE appeared in."""
+    """Fold vulnerability findings of a scan window into the scan set and worst advisory severity of each CVE."""
     recurrence: dict[str, CveRecurrence] = defaultdict(CveRecurrence)
     async for finding in vulnerability_findings:
-        scan_id = finding["scan_id"]
-        fallback = finding.get("finding_id")
-        for cve in canonical_cves([finding.get("details")]) or ([str(fallback)] if fallback else []):
+        for cve, severity in cve_severities((finding.get("details") or {}).get("vulnerabilities") or []).items():
             row = recurrence[cve]
-            row.scans.add(scan_id)
+            row.scans.add(finding["scan_id"])
             if component := finding.get("component"):
                 row.components.add(component)
-            row.severity = row.severity or finding.get("severity")
+            row.severity = max_severity(row.severity, severity)
     return recurrence
 
 
