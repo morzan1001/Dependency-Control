@@ -39,22 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 def _to_response(instance: GitHubInstance) -> GitHubInstanceResponse:
-    return GitHubInstanceResponse(
-        id=str(instance.id),
-        name=instance.name,
-        url=instance.url,
-        github_url=instance.github_url,
-        description=instance.description,
-        is_active=instance.is_active,
-        oidc_audience=instance.oidc_audience,
-        auto_create_projects=instance.auto_create_projects,
-        sync_teams=instance.sync_teams,
-        allowed_owner_ids=instance.allowed_owner_ids,
-        token_configured=bool(instance.access_token),
-        created_at=instance.created_at,
-        created_by=instance.created_by,
-        last_modified_at=instance.last_modified_at,
-    )
+    return GitHubInstanceResponse(**instance.model_dump(), token_configured=bool(instance.access_token))
 
 
 @router.get("/", response_model=Page[GitHubInstanceResponse], responses=RESP_AUTH)
@@ -98,20 +83,7 @@ async def create_instance(
 
     await assert_unique(instance_repo, _LABEL, url=instance_data.url, name=instance_data.name)
 
-    new_instance = GitHubInstance(
-        name=instance_data.name,
-        url=instance_data.url,
-        github_url=instance_data.github_url,
-        description=instance_data.description,
-        is_active=instance_data.is_active,
-        oidc_audience=instance_data.oidc_audience,
-        auto_create_projects=instance_data.auto_create_projects,
-        sync_teams=instance_data.sync_teams,
-        access_token=instance_data.access_token,
-        allowed_owner_ids=instance_data.allowed_owner_ids,
-        created_by=str(current_user.id),
-        created_at=datetime.now(timezone.utc),
-    )
+    new_instance = GitHubInstance(**instance_data.model_dump(), created_by=str(current_user.id))
 
     jwks = await GitHubService(new_instance).get_jwks()
     if not jwks or not jwks.get("keys"):

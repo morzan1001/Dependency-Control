@@ -9,7 +9,6 @@ import logging
 import time
 from datetime import datetime, timezone
 from functools import partial
-from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
@@ -568,21 +567,10 @@ class TestInstanceResponseAllowsNullAudience:
     def test_gitlab_to_response_helper_serializes_legacy_null_audience(self):
         """The GET-endpoint helper for an instance with a null audience must build a Response, not raise (which would 500)."""
         from app.api.v1.endpoints.gitlab_instances import _to_response
+        from app.models.gitlab_instance import GitLabInstance
 
-        legacy = SimpleNamespace(
-            id="abc123",
-            name="Legacy GitLab",
-            url="https://gitlab.com",
-            description=None,
-            is_active=True,
-            oidc_audience=None,
-            auto_create_projects=False,
-            sync_teams=False,
-            allowed_namespaces=[],
-            created_at=datetime.now(timezone.utc),
-            created_by="user-1",
-            last_modified_at=None,
-            access_token=None,
+        legacy = GitLabInstance.model_validate(
+            {"_id": "abc123", "name": "Legacy GitLab", "url": "https://gitlab.com", "created_by": "user-1"}
         )
 
         response = _to_response(legacy)
