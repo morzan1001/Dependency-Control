@@ -132,8 +132,8 @@ export function canDeleteProjectWebhook(
   return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:delete');
 }
 
-/** Test project webhook: project admin OR webhook:update plus membership */
-export function canTestProjectWebhook(
+/** Update or test project webhook: project admin OR webhook:update plus membership */
+export function canUpdateProjectWebhook(
   project: Project,
   userId: string,
   globalPermissions: string[]

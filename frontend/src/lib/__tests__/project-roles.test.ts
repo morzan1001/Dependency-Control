@@ -12,6 +12,7 @@ import {
   canCreateProjectWaiver,
   canCreateProjectWebhook,
   canDeleteProjectWebhook,
+  canUpdateProjectWebhook,
 } from '../project-roles'
 import type { Project } from '@/types/project'
 
@@ -154,6 +155,8 @@ describe('project webhook writes need membership or the global write grant', () 
       expect(canCreateProjectWebhook(project, member, ['webhook:create'])).toBe(true)
       expect(canDeleteProjectWebhook(project, member, ['webhook:create'])).toBe(false)
       expect(canDeleteProjectWebhook(project, member, ['webhook:delete'])).toBe(true)
+      expect(canUpdateProjectWebhook(project, member, ['webhook:delete'])).toBe(false)
+      expect(canUpdateProjectWebhook(project, member, ['webhook:update'])).toBe(true)
     }
   })
 

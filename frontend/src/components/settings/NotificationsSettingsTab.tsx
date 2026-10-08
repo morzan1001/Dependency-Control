@@ -315,7 +315,7 @@ export function NotificationsSettingsTab({
         description="Configure webhooks that trigger on system-wide events."
         createPermission="system:manage"
         deletePermission="system:manage"
-        testPermission="system:manage"
+        updatePermission="system:manage"
       />
     </div>
   )

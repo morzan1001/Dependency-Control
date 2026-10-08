@@ -16,10 +16,10 @@ interface TeamWebhooksDialogProps {
   onClose: () => void;
   canCreate: boolean;
   canDelete: boolean;
-  canTest: boolean;
+  canUpdate: boolean;
 }
 
-export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreate, canDelete, canTest }: Readonly<TeamWebhooksDialogProps>) {
+export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreate, canDelete, canUpdate }: Readonly<TeamWebhooksDialogProps>) {
   const { data: webhooks, isLoading } = useTeamWebhooks(teamId || '');
   const createMutation = useCreateTeamWebhook();
   const deleteMutation = useDeleteWebhook();
@@ -52,7 +52,7 @@ export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreat
             description="Manage webhooks for this team. These webhooks will be triggered for all projects belonging to this team."
             createPermission={canCreate}
             deletePermission={canDelete}
-            testPermission={canTest}
+            updatePermission={canUpdate}
           />
         </div>
       </DialogContent>

@@ -51,7 +51,7 @@ interface WebhookManagerProps {
   readonly description?: string
   readonly createPermission?: string | boolean
   readonly deletePermission?: string | boolean
-  readonly testPermission?: string | boolean
+  readonly updatePermission?: string | boolean
 }
 
 export function WebhookManager({ 
@@ -63,7 +63,7 @@ export function WebhookManager({
   description = "Manage webhooks for event notifications.",
   createPermission = "webhook:create",
   deletePermission = "webhook:delete",
-  testPermission = "webhook:update"
+  updatePermission = "webhook:update"
 }: WebhookManagerProps) {
   const createDialog = useDialogState()
   const { hasPermission } = useAuth()
@@ -73,9 +73,9 @@ export function WebhookManager({
   const canDeleteWh = typeof deletePermission === 'boolean'
     ? deletePermission
     : hasPermission(deletePermission)
-  const canTest = typeof testPermission === 'boolean'
-    ? testPermission
-    : hasPermission(testPermission)
+  const canUpdate = typeof updatePermission === 'boolean'
+    ? updatePermission
+    : hasPermission(updatePermission)
   const [newWebhook, setNewWebhook] = useState<WebhookCreate>({
     url: "",
     events: [],
@@ -319,7 +319,7 @@ export function WebhookManager({
                   <TableCell>{formatDate(webhook.created_at)}</TableCell>
                   <TableCell>
                     <div className="flex">
-                      {canTest && (
+                      {canUpdate && (
                         <Button variant="ghost" size="icon" aria-label="Send test" title="Send test" onClick={() => handleTest(webhook.id)}>
                           <Send className="h-4 w-4" />
                         </Button>

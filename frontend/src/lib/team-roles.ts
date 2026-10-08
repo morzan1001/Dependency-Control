@@ -96,8 +96,8 @@ export function canDeleteTeamWebhooks(
   return canWriteTeamWebhook(team, userId, globalPermissions, 'webhook:delete');
 }
 
-/** Test team webhook: team admin OR webhook:update plus (membership OR global team:update) */
-export function canTestTeamWebhooks(
+/** Update or test team webhook: team admin OR webhook:update plus (membership OR global team:update) */
+export function canUpdateTeamWebhooks(
   team: Team,
   userId: string,
   globalPermissions: string[]

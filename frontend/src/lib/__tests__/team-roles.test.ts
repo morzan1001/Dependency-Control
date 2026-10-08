@@ -8,6 +8,7 @@ import {
   canManageTeamMembers,
   canCreateTeamWebhooks,
   canDeleteTeamWebhooks,
+  canUpdateTeamWebhooks,
 } from '../team-roles'
 import type { Team } from '@/types/team'
 
@@ -133,5 +134,14 @@ describe('canDeleteTeamWebhooks — webhook:delete needs membership or team:upda
 
   it('a team admin deletes without a webhook permission', () => {
     expect(canDeleteTeamWebhooks(team, 'admin-1', [])).toBe(true)
+  })
+})
+
+describe('canUpdateTeamWebhooks — a member needs webhook:update', () => {
+  const team = makeTeam([{ user_id: 'member-1', role: 'member' }])
+
+  it('webhook:update opens it and webhook:delete does not', () => {
+    expect(canUpdateTeamWebhooks(team, 'member-1', ['webhook:update'])).toBe(true)
+    expect(canUpdateTeamWebhooks(team, 'member-1', ['webhook:delete'])).toBe(false)
   })
 })
