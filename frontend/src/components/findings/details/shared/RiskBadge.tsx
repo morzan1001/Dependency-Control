@@ -1,16 +1,10 @@
 import { Badge } from "@/components/ui/badge"
 import { getSeverityBadgeVariant } from "@/lib/finding-utils"
 
-interface RiskBadgeProps {
-    readonly level: string
-    readonly uppercase?: boolean
-}
-
-export function RiskBadge({ level, uppercase = true }: RiskBadgeProps) {
-    const displayValue = uppercase ? level.toUpperCase() : level
+export function RiskBadge({ level }: Readonly<{ level: string }>) {
     return (
         <Badge variant={getSeverityBadgeVariant(level)}>
-            {displayValue}
+            {level.toUpperCase()}
         </Badge>
     )
 }

@@ -1,17 +1,12 @@
 import { ExternalLink } from "lucide-react"
 
-interface ReferencesListProps {
-    readonly urls: string[]
-    readonly compact?: boolean
-}
-
-export function ReferencesList({ urls, compact = false }: ReferencesListProps) {
+export function ReferencesList({ urls }: Readonly<{ urls: string[] }>) {
     if (!urls || urls.length === 0) return null
 
     return (
         <ul className="space-y-1">
             {urls.map((url) => (
-                <li key={url} className={compact ? "text-xs" : "text-sm"}>
+                <li key={url} className="text-sm">
                     <a
                         href={url}
                         target="_blank"

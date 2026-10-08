@@ -11,7 +11,6 @@ import {
 interface SeverityBadgeProps {
   severity: string
   showIcon?: boolean
-  className?: string
 }
 
 interface SeverityConfig {
@@ -31,12 +30,12 @@ function getSeverityConfig(severity: string): SeverityConfig {
   return configs[severity?.toUpperCase()] || { color: 'bg-muted', icon: CircleAlert }
 }
 
-export function SeverityBadge({ severity, showIcon = true, className = '' }: Readonly<SeverityBadgeProps>) {
+export function SeverityBadge({ severity, showIcon = true }: Readonly<SeverityBadgeProps>) {
   const config = getSeverityConfig(severity)
   const Icon = config.icon
 
   return (
-    <Badge className={`${config.color} hover:${config.color} text-white flex items-center gap-1 ${className}`}>
+    <Badge className={`${config.color} hover:${config.color} text-white flex items-center gap-1`}>
       {showIcon && <Icon className="h-3 w-3" />}
       {severity}
     </Badge>

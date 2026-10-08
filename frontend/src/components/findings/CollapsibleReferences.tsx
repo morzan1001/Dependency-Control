@@ -1,12 +1,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 
-interface CollapsibleReferencesProps {
-  references?: string[]
-  title?: string
-}
-
-export function CollapsibleReferences({ references, title = 'References' }: Readonly<CollapsibleReferencesProps>) {
+export function CollapsibleReferences({ references }: Readonly<{ references?: string[] }>) {
   const [isOpen, setIsOpen] = useState(false)
 
   if (!references || references.length === 0) return null
@@ -19,7 +14,7 @@ export function CollapsibleReferences({ references, title = 'References' }: Read
         className="h-auto py-1 px-0 text-xs font-medium hover:bg-transparent hover:underline justify-start text-muted-foreground"
         onClick={() => setIsOpen(!isOpen)}
       >
-        {isOpen ? '▼' : '▶'} {title} ({references.length})
+        {isOpen ? '▼' : '▶'} References ({references.length})
       </Button>
       
       {isOpen && (
