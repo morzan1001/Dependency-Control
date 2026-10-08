@@ -13,7 +13,7 @@ from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.system_settings import SystemSettingsRepository
-from app.services.notifications.base import NotificationProvider
+from app.services.notifications.slack_formatter import _escape_mrkdwn, build_generic_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def _expiring(system_settings: SystemSettings) -> bool:
     return bool(expires_at and expires_at < time.time() + SLACK_TOKEN_EXPIRY_BUFFER_SECONDS)
 
 
-class SlackProvider(NotificationProvider):
+class SlackProvider:
     def __init__(self) -> None:
         # Serialises this pod's refreshes; the distributed lock serialises the pods'.
         self._refresh_lock = asyncio.Lock()
@@ -112,12 +112,10 @@ class SlackProvider(NotificationProvider):
         destination: str,
         subject: str,
         message: str,
-        system_settings: SystemSettings | None = None,
-        **kwargs: Any,
+        *,
+        system_settings: SystemSettings,
+        blocks: list[dict[str, Any]] | None = None,
     ) -> bool:
-        if not system_settings:
-            return False
-
         slack_token = await self._current_token(system_settings)
         if not slack_token:
             logger.warning("SLACK_BOT_TOKEN not configured. Skipping Slack notification.")
@@ -129,17 +127,11 @@ class SlackProvider(NotificationProvider):
             "Content-Type": "application/json",
         }
 
-        from app.services.notifications.slack_formatter import _escape_mrkdwn, build_generic_blocks
-
-        blocks = kwargs.get("blocks")
-        if not blocks:
-            blocks = build_generic_blocks(subject, message)
-
         # text is the fallback for notifications and accessibility
         payload: dict[str, Any] = {
             "channel": destination,
             "text": f"*{_escape_mrkdwn(subject)}*\n{_escape_mrkdwn(message)}",
-            "blocks": blocks,
+            "blocks": blocks or build_generic_blocks(subject, message),
         }
 
         try:

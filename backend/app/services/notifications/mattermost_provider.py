@@ -5,12 +5,12 @@ from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import notifications_failed_total, notifications_sent_total
 from app.models.system import SystemSettings
-from app.services.notifications.base import NotificationProvider
+from app.services.notifications.mattermost_formatter import build_generic_props
 
 logger = logging.getLogger(__name__)
 
 
-class MattermostProvider(NotificationProvider):
+class MattermostProvider:
     async def _get_user_id(
         self, client: InstrumentedAsyncClient, user_path: str, base_url: str, headers: dict
     ) -> str | None:
@@ -49,11 +49,12 @@ class MattermostProvider(NotificationProvider):
         destination: str,
         subject: str,
         message: str,
-        system_settings: SystemSettings | None = None,
-        **kwargs: Any,
+        *,
+        system_settings: SystemSettings,
+        props: dict[str, Any] | None = None,
     ) -> bool:
-        mattermost_url = system_settings.mattermost_url if system_settings else None
-        mattermost_token = system_settings.mattermost_bot_token if system_settings else None
+        mattermost_url = system_settings.mattermost_url
+        mattermost_token = system_settings.mattermost_bot_token
 
         if not mattermost_token or not mattermost_url:
             logger.warning("Mattermost not configured. Skipping notification.")
@@ -81,16 +82,10 @@ class MattermostProvider(NotificationProvider):
                     notifications_failed_total.labels(type="mattermost").inc()
                     return False
 
-                from app.services.notifications.mattermost_formatter import build_generic_props
-
-                props = kwargs.get("props")
-                if not props:
-                    props = build_generic_props(subject, message)
-
                 payload = {
                     "channel_id": channel_id,
                     "message": "",
-                    "props": props,
+                    "props": props or build_generic_props(subject, message),
                 }
 
                 response = await client.post(f"{base_url}/api/v4/posts", headers=headers, json=payload)
