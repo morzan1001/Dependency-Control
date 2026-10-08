@@ -884,8 +884,8 @@ COUNTED_UPDATE_KINDS: tuple[UpdateKind, ...] = ("patch", "minor", "major", "unkn
 # on every request; downgrades rank last.
 UPDATE_SAMPLE_RANK: dict[str, int] = {kind: rank for rank, kind in enumerate(get_args(UpdateKind))}
 
-# Rows of the slowest-to-update table. Both read paths rank by scans outdated and break ties on
-# the package name; without that, packages tied at the cap swap places between requests.
+# Rows of the slowest-to-update table, ranked by scans outdated with ties broken on the package
+# name; without the tie-break, packages tied at the cap swap places between requests.
 SLOWEST_PACKAGES_LIMIT: int = 15
 
 # Bound on the pointer hops a rescan-lineage walk follows, so a cyclic pointer cannot hang a

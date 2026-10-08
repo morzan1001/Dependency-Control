@@ -1,8 +1,4 @@
-"""Upstream release-history analytics: cadence and adoption-latency math.
-
-Pure analysis lives here. HTTP fetching from deps.dev plugs in via the
-``ReleaseHistoryFetcher`` protocol so it can be swapped in tests.
-"""
+"""Upstream release-history analytics: cadence and adoption-latency math, and the cached deps.dev fetcher."""
 
 from __future__ import annotations
 
