@@ -1,12 +1,13 @@
 """The broadcast history badge follows the audience the message was actually sent to."""
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
 from fastapi import BackgroundTasks
 
-from app.api.v1.endpoints.notifications import broadcast_message
+from app.api.v1.endpoints.notifications import broadcast_message, get_broadcast_history
 from app.models.user import User
 from app.schemas.notification import BroadcastRequest
 from tests.mocks.fake_mongo import FakeDatabase
@@ -39,10 +40,6 @@ def test_a_global_or_team_announcement_is_recorded_as_general_whatever_type_the_
 
 
 def test_the_history_names_creators_and_teams_and_keeps_the_ids_it_cannot_resolve():
-    from datetime import datetime, timezone
-
-    from app.api.v1.endpoints.notifications import get_broadcast_history
-
     db = FakeDatabase()
     sent = [datetime(2026, 9, day, tzinfo=timezone.utc) for day in (1, 2, 3)]
     broadcasts = [
@@ -68,3 +65,30 @@ def test_the_history_names_creators_and_teams_and_keeps_the_ids_it_cannot_resolv
         ("b-global", "ada", None),
     ]
     assert [item["created_at"] for item in history] == [at.isoformat() for at in reversed(sent)]
+
+
+def test_the_history_names_a_team_whose_stored_member_role_the_team_model_rejects():
+    db = FakeDatabase()
+
+    async def _run():
+        await db.users.insert_one({"_id": "u-ada", "username": "ada", "email": "ada@test.com"})
+        await db.teams.insert_one(
+            {"_id": "t-legacy", "name": "Legacy", "members": [{"user_id": "u-ada", "role": "owner"}]}
+        )
+        await db.broadcasts.insert_one(
+            {
+                "_id": "b-legacy",
+                "type": "general",
+                "target_type": "teams",
+                "subject": "s",
+                "message": "m",
+                "created_by": "u-ada",
+                "teams": ["t-legacy"],
+                "created_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+            }
+        )
+        return await get_broadcast_history(db=db, current_user=User(id="admin", username="admin", email="a@t.com"))
+
+    [item] = asyncio.run(_run())
+
+    assert (item.created_by, item.teams) == ("ada", ["Legacy"])

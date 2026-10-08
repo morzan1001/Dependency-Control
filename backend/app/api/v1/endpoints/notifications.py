@@ -11,6 +11,7 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import project_admin_ids
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
+from app.api.v1.helpers.teams import resolve_team_names
 from app.core.config import settings
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
@@ -59,12 +60,8 @@ async def get_broadcast_history(
 ) -> list[BroadcastHistoryItem]:
     """Get history of sent broadcasts."""
     history = await BroadcastRepository(db).get_history(limit=50)
-    creator_ids = list({h.created_by for h in history if h.created_by})
-    team_ids = list({team_id for h in history for team_id in h.teams or []})
-    creators = await UserRepository(db).find_many({"_id": {"$in": creator_ids}}, limit=len(creator_ids))
-    teams = await TeamRepository(db).find_many({"_id": {"$in": team_ids}}, limit=len(team_ids))
-    creators_map = {user.id: user.username for user in creators}
-    teams_map = {team.id: team.name for team in teams}
+    creators_map = await UserRepository(db).usernames_by_id(h.created_by for h in history)
+    teams_map = await resolve_team_names(db, (team_id for h in history for team_id in h.teams or []))
 
     return [
         BroadcastHistoryItem(

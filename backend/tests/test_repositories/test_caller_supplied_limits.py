@@ -12,7 +12,6 @@ from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
-from app.repositories.teams import TeamRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOTHING_ASKED_FOR = 0
@@ -81,18 +80,6 @@ async def test_raw_scans_asked_for_nothing_answer_with_nothing():
     repo = await _seeded_scans()
 
     assert await repo.find_many_raw({}, limit=_NOTHING_ASKED_FOR) == []
-
-
-@pytest.mark.asyncio
-async def test_teams_asked_for_nothing_open_no_cursor(monkeypatch):
-    repo = TeamRepository(FakeDatabase())
-
-    def _unbounded_cursor(*_args, **_kwargs):
-        raise AssertionError("limit(0) opens an unbounded cursor")
-
-    monkeypatch.setattr(repo.collection, "find", _unbounded_cursor)
-
-    assert await repo.find_many({}, limit=_NOTHING_ASKED_FOR) == []
 
 
 async def _seeded_results() -> AnalysisResultRepository:

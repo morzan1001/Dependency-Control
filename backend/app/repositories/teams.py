@@ -210,20 +210,6 @@ class TeamRepository:
         result = await self.collection.delete_one({"_id": team_id})
         return result.deleted_count > 0
 
-    async def find_many(
-        self,
-        query: dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "name",
-        sort_order: int = 1,
-    ) -> list[Team]:
-        if limit <= 0:
-            return []
-        cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
-        return [Team(**doc) for doc in docs]
-
     async def count(self, query: dict[str, Any] | None = None) -> int:
         return await self.collection.count_documents(query or {})
 
