@@ -61,7 +61,6 @@ export const setLogoutCallback = (callback: () => void) => {
 };
 
 let refreshPromise: Promise<string | null> | null = null;
-let isRefreshing = false;
 
 export const refreshAccessToken = async (): Promise<string | null> => {
   const refreshToken = localStorage.getItem('refresh_token');
@@ -72,8 +71,6 @@ export const refreshAccessToken = async (): Promise<string | null> => {
   if (refreshPromise) {
     return refreshPromise;
   }
-
-  isRefreshing = true;
 
   refreshPromise = refreshClient
     .post('/login/refresh-token', { refresh_token: refreshToken })
@@ -108,7 +105,6 @@ export const refreshAccessToken = async (): Promise<string | null> => {
     })
     .finally(() => {
       refreshPromise = null;
-      isRefreshing = false;
     });
 
   return refreshPromise;
@@ -184,32 +180,30 @@ api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const originalRequest = error.config;
-    if (error.response?.status === 401 && originalRequest) {
-      const requestUrl = originalRequest.url || '';
-      const isAuthEndpoint =
-        requestUrl.includes('/login/access-token') ||
-        requestUrl.includes('/login/refresh-token');
+    // A 401 from the login form is a wrong password or a pending 2FA step, not an expired session.
+    if (error.response?.status !== 401 || !originalRequest || originalRequest.url?.includes('/login/access-token')) {
+      throw error;
+    }
 
-      if (!originalRequest._retry && !isAuthEndpoint) {
-        originalRequest._retry = true;
+    if (!originalRequest._retry) {
+      originalRequest._retry = true;
 
-        try {
-          const newAccessToken = await refreshAccessToken();
-          if (newAccessToken) {
-            const headers = AxiosHeaders.from(originalRequest.headers);
-            headers.set('Authorization', `Bearer ${newAccessToken}`);
-            originalRequest.headers = headers;
-            return api(originalRequest);
-          }
-        } catch {
-          // Transient refresh failure: keep tokens, reject without forcing logout.
-          throw error;
+      try {
+        const newAccessToken = await refreshAccessToken();
+        if (newAccessToken) {
+          const headers = AxiosHeaders.from(originalRequest.headers);
+          headers.set('Authorization', `Bearer ${newAccessToken}`);
+          originalRequest.headers = headers;
+          return api(originalRequest);
         }
+      } catch {
+        // Transient refresh failure: keep tokens, reject without forcing logout.
+        throw error;
       }
+    }
 
-      if (logoutCallback && !isRefreshing) {
-        logoutCallback();
-      }
+    if (logoutCallback && !refreshPromise) {
+      logoutCallback();
     }
     throw error;
   }

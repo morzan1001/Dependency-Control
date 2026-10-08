@@ -133,6 +133,18 @@ describe('client 401 interceptor + token refresh', () => {
     expect(logout).not.toHaveBeenCalled();
   });
 
+  it('neither refreshes nor logs out on a 401 from the login form (wrong password or pending 2FA)', async () => {
+    const logout = vi.fn();
+    setLogoutCallback(logout);
+    const loginRefusal = { isAxiosError: true, response: { status: 401 }, config: { url: '/login/access-token' } };
+
+    await expect(onRejected(loginRefusal)).rejects.toBe(loginRefusal);
+
+    expect(refreshClient.post).not.toHaveBeenCalled();
+    expect(logout).not.toHaveBeenCalled();
+    expect(localStorage.getItem('refresh_token')).toBe('valid-refresh');
+  });
+
   it('retries the original request with the new token on a successful refresh', async () => {
     const logout = vi.fn();
     setLogoutCallback(logout);
