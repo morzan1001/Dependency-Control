@@ -337,7 +337,7 @@ async def test_a_crypto_control_is_evaluated_over_every_asset_past_the_old_budge
     await db.projects.insert_one(Project(id=_PROJECT, name=_PROJECT, latest_scan_id=_SCAN).model_dump(by_alias=True))
     scan = Scan(id=_SCAN, project_id=_PROJECT, branch="main", status=SCAN_STATUS_COMPLETED)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
-    for parsed in parse_cbom(cbom_of(filler_components(range(_ASSETS_PAST_THE_OLD_BUDGET)))).assets:
+    for parsed in parse_cbom(cbom_of(filler_components(range(_ASSETS_PAST_THE_OLD_BUDGET)))):
         doc = CryptoAsset(project_id=_PROJECT, scan_id=_SCAN, **parsed.model_dump()).model_dump(by_alias=True)
         db.crypto_assets._docs[doc["_id"]] = doc
 

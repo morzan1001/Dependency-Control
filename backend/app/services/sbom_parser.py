@@ -371,10 +371,6 @@ class SBOMParser:
 
         result.dependencies, merged = merge_duplicate_dependencies(result.dependencies)
         result.merged_components += merged
-
-        result.total_components = len(result.dependencies) + result.skipped_components + result.merged_components
-        result.parsed_components = len(result.dependencies)
-
         return result
 
     @staticmethod

@@ -1,4 +1,4 @@
-"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped and counted."""
+"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped."""
 
 import hashlib
 import logging
@@ -6,12 +6,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from app.schemas.cbom import (
-    CryptoAssetType,
-    CryptoPrimitive,
-    ParsedCBOM,
-    ParsedCryptoAsset,
-)
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
 
 logger = logging.getLogger(__name__)
 
@@ -51,46 +46,9 @@ def _count_component_subtree(comp: dict[str, Any]) -> int:
     return count
 
 
-def parse_cbom(raw: dict[str, Any]) -> ParsedCBOM:
+def parse_cbom(raw: dict[str, Any]) -> list[ParsedCryptoAsset]:
     components, _, _ = flatten_cyclonedx_components(raw.get("components"))
-    tool_meta = (raw.get("metadata") or {}).get("tools") or []
-    tool_name, tool_version = _tool_from_metadata(tool_meta)
-
-    total = sum(1 for c in components if c.get("type") == "cryptographic-asset")
-    assets = parse_crypto_components(components)
-
-    return ParsedCBOM(
-        format_version=raw.get("specVersion"),
-        tool_name=tool_name,
-        tool_version=tool_version,
-        created_at=(raw.get("metadata") or {}).get("timestamp"),
-        assets=assets,
-        total_components=total,
-        parsed_components=len(assets),
-        skipped_components=total - len(assets),
-    )
-
-
-def _tool_from_metadata(tools: Any) -> tuple[str | None, str | None]:
-    """CycloneDX allows metadata.tools to be either the modern object form ({"components": [...]}) or the
-    legacy list form ([{...}]). Both carry the tool as a component dict with "name"/"version"."""
-    tool: dict[str, Any] | None = None
-    if isinstance(tools, dict):
-        comps = tools.get("components") or []
-        if comps:
-            tool = comps[0]
-    elif isinstance(tools, list) and tools:
-        tool = tools[0]
-
-    if not isinstance(tool, dict):
-        return None, None
-
-    name = tool.get("name")
-    version = tool.get("version")
-    return (
-        str(name) if name is not None else None,
-        str(version) if version is not None else None,
-    )
+    return parse_crypto_components(components)
 
 
 def parse_crypto_components(
@@ -151,59 +109,19 @@ def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
     return asset
 
 
+_KEY_SIZE_PROPERTY_NAMES = ("cryptography:key_size", "cryptography:keySize", "key_size", "keySize")
+
+
 def _populate_algorithm(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
-    raw_prim = props.get("primitive")
-    asset.primitive = _parse_primitive(raw_prim)
+    asset.primitive = _parse_primitive(props.get("primitive"))
     asset.variant = props.get("variant")
     asset.parameter_set_identifier = props.get("parameterSetIdentifier")
     asset.mode = props.get("mode")
     asset.padding = props.get("padding")
     asset.curve = props.get("curve")
-
-    asset.key_size_bits = _resolve_key_size_bits(asset, props)
-
-
-_KEY_SIZE_PROPERTY_NAMES = (
-    "cryptography:key_size",
-    "cryptography:keySize",
-    "key_size",
-    "keySize",
-)
-
-
-def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: dict[str, Any]) -> int | None:
-    """parameterSetIdentifier is a CycloneDX 1.6 string (e.g. "P-256", "1024"); treat it as a key size only
-    when it's a pure positive integer, else fall back to known custom properties. Unparseable leaves
-    key_size_bits None and the analyzer skips the asset."""
-    asset_label = asset.bom_ref or asset.name or "<unknown>"
-
-    coerced = _coerce_positive_int(props.get("parameterSetIdentifier"))
-    if coerced is not None:
-        return coerced
-    raw = props.get("parameterSetIdentifier")
-    if raw is not None:
-        logger.debug(
-            "cbom_parser: parameterSetIdentifier=%r not a positive integer for asset %s; "
-            "falling back to properties for key size",
-            raw,
-            asset_label,
-        )
-
-    for key in _KEY_SIZE_PROPERTY_NAMES:
-        value = asset.properties.get(key)
-        if value is None:
-            continue
-        coerced = _coerce_positive_int(value)
-        if coerced is not None:
-            return coerced
-        logger.debug(
-            "cbom_parser: property %s=%r not a positive integer for asset %s",
-            key,
-            value,
-            asset_label,
-        )
-
-    return None
+    # parameterSetIdentifier is a string ("P-256", "1024"): only a positive integer is a key size, else a property.
+    candidates = (props.get("parameterSetIdentifier"), *(asset.properties.get(k) for k in _KEY_SIZE_PROPERTY_NAMES))
+    asset.key_size_bits = next((size for raw in candidates if (size := _coerce_positive_int(raw)) is not None), None)
 
 
 def _coerce_positive_int(raw: Any) -> int | None:

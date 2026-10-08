@@ -37,7 +37,7 @@ def cbom_of(components: list[dict[str, Any]]) -> dict[str, Any]:
 
 async def store_cbom(db: Any, project_id: str, scan_id: str, cbom: dict[str, Any]) -> None:
     """Store the parsed assets the way the engine persists an embedded CBOM."""
-    assets = parse_cbom(cbom).assets
+    assets = parse_cbom(cbom)
     await CryptoAssetRepository(db).bulk_upsert(
         project_id, scan_id, [CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in assets]
     )

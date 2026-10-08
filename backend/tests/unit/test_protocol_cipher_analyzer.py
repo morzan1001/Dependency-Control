@@ -102,7 +102,7 @@ async def test_rule_amplifies_with_weakness_match(db):
 
 async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=None, extra_rules=()):
     """A CycloneDX 1.6 protocol asset judged by the seeded policy, with the PFS rule toggled."""
-    parsed = parse_cbom(
+    assets = parse_cbom(
         {
             "specVersion": "1.6",
             "components": [
@@ -120,7 +120,7 @@ async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=
         }
     )
     await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parsed.assets]
+        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets]
     )
     rules = [
         r.model_copy(update={"enabled": pfs_enabled}) if r.rule_id == "cnsa20-require-pfs" else r

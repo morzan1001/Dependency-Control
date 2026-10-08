@@ -213,7 +213,7 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
         "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("legacy_crypto_mixed.json")}, headers=api_key_headers
     )
     scan_id = first.json()["scan_id"]
-    [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json")).assets
+    [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json"))
     await CryptoAssetRepository(db).bulk_upsert(
         "test-project-id",
         scan_id,
@@ -237,7 +237,7 @@ async def test_an_earlier_upload_finishing_last_keeps_the_later_uploads_assets(d
     from app.services.cbom_parser import parse_cbom
 
     repo = CryptoAssetRepository(db)
-    assets = parse_cbom(_load("legacy_crypto_mixed.json")).assets
+    assets = parse_cbom(_load("legacy_crypto_mixed.json"))
     earlier = datetime.now(timezone.utc)
     later = earlier + timedelta(seconds=1)
 
@@ -265,6 +265,21 @@ async def test_a_cbom_is_persisted_before_the_response_returns(client, db, api_k
     body = resp.json()
     assert await db.crypto_assets.count_documents({"scan_id": body["scan_id"]}) == 5
     assert (body["assets_received"], body["assets_stored"]) == (5, 5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "document",
+    [{"specVersion": 1.6}, {"metadata": {"timestamp": 1727000000}}],
+    ids=["numeric-spec-version", "numeric-timestamp"],
+)
+async def test_a_numeric_document_field_does_not_reject_the_upload(client, db, api_key_headers, document):
+    cbom = {**cbom_of(filler_components(range(2))), **document}
+
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom}, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["assets_stored"] == 2
 
 
 @pytest.mark.asyncio

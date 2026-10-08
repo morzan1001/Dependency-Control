@@ -89,8 +89,6 @@ class ParsedSBOM(BaseModel):
     dependencies: list[ParsedDependency] = Field(default_factory=list)
 
     # Statistics
-    total_components: int = 0
-    parsed_components: int = 0
     skipped_components: int = 0
     merged_components: int = 0
     skipped_reasons: dict[str, int] = Field(default_factory=dict)

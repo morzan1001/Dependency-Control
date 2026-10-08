@@ -554,9 +554,9 @@ def _spec_cert_chain(now, signature, key_algorithm, key_size, key_algorithm_prop
 
 
 async def _analyze_spec_cbom(db, components, rules):
-    parsed = parse_cbom({"specVersion": "1.6", "components": components})
+    assets = parse_cbom({"specVersion": "1.6", "components": components})
     await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parsed.assets]
+        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets]
     )
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=rules))
     return await evaluate_crypto("crypto_certificate_lifecycle", db)

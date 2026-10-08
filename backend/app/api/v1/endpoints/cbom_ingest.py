@@ -20,7 +20,7 @@ from app.core.metrics import cbom_ingests_total
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.cbom import ParsedCBOM
+from app.schemas.cbom import ParsedCryptoAsset
 from app.schemas.ingest import BaseIngest
 from app.services.cbom_parser import parse_cbom
 from app.services.notifications.service import safe_notify_project_event
@@ -97,9 +97,9 @@ async def ingest_cbom(
     payload = await read_json_body(request, CBOMIngest)
     manager = ScanManager(db, project)
     scan_id = manager.run_scan_id(payload)
-    parsed = await asyncio.to_thread(parse_cbom, payload.cbom)
+    assets = await asyncio.to_thread(parse_cbom, payload.cbom)
 
-    if parsed.parsed_components == 0:
+    if not assets:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No cryptographic-asset components found in CBOM payload",
@@ -109,7 +109,7 @@ async def ingest_cbom(
 
     try:
         await ScanRepository(db).touch(scan_id)
-        summary = await _store_crypto_assets(db, project_id, scan_id, parsed)
+        summary = await _store_crypto_assets(db, project_id, scan_id, assets)
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
         cbom_ingests_total.labels(status="error").inc()
@@ -144,13 +144,13 @@ async def ingest_cbom(
     return CBOMIngestResponse(
         scan_id=scan_id,
         status="accepted",
-        assets_received=len(parsed.assets),
+        assets_received=len(assets),
         assets_stored=int(summary["total"]),
     )
 
 
 async def _store_crypto_assets(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, parsed: ParsedCBOM
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, assets: list[ParsedCryptoAsset]
 ) -> dict[str, Any]:
     """Bulk-upsert the scan's CryptoAssets and return the summary of what is stored."""
     written_at = datetime.now(timezone.utc)
@@ -162,7 +162,7 @@ async def _store_crypto_assets(
             CryptoAsset(
                 project_id=project_id, scan_id=scan_id, cbom_upload=True, created_at=written_at, **a.model_dump()
             )
-            for a in parsed.assets
+            for a in assets
         ),
     )
     # Deleted after the upsert so a failed write keeps the previous upload's assets.

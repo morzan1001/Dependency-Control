@@ -73,6 +73,10 @@ def _fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())
 
 
+def _accounted(result) -> int:
+    return len(result.dependencies) + result.skipped_components + result.merged_components
+
+
 def _fixture_with(name: str, field: str, entry: object) -> dict:
     sbom = _fixture(name)
     sbom[field] = [*sbom[field], entry]
@@ -538,7 +542,7 @@ class TestCycloneDXParsing:
         result = self.parser.parse(cyclonedx_minimal)
         assert result.format == SBOMFormat.CYCLONEDX
         assert len(result.dependencies) == 2
-        assert result.parsed_components == 2
+        assert len(result.dependencies) == 2
 
     def test_component_names(self, cyclonedx_minimal):
         result = self.parser.parse(cyclonedx_minimal)
@@ -577,9 +581,9 @@ class TestCycloneDXParsing:
             "dependencies": [],
         }
         result = self.parser.parse(sbom)
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_components == 1
-        assert result.total_components == 2
+        assert _accounted(result) == 2
 
     def test_file_component_skipped(self):
         sbom = {
@@ -595,7 +599,7 @@ class TestCycloneDXParsing:
         result = self.parser.parse(sbom)
         assert [d.name for d in result.dependencies] == ["valid"]
         assert result.skipped_components == 1
-        assert result.total_components == 2
+        assert _accounted(result) == 2
 
     def test_purl_constructed_when_missing(self):
         sbom = {
@@ -759,12 +763,6 @@ class TestParseSBOMConvenience:
         assert result.format == SBOMFormat.UNKNOWN
         assert len(result.dependencies) == 0
 
-    def test_total_components_count(self, cyclonedx_minimal):
-        result = parse_sbom(cyclonedx_minimal)
-        assert result.total_components == (
-            result.parsed_components + result.skipped_components + result.merged_components
-        )
-
 
 def _nested_npm_sbom():
     """Mirrors prod cyclonedx-npm 6.0.1 output: sub-dependencies nested in
@@ -846,8 +844,8 @@ class TestCycloneDXNestedComponents:
 
     def test_nested_components_count_toward_total(self):
         result = self.parser.parse(_nested_npm_sbom())
-        assert result.total_components == 3
-        assert result.parsed_components == 3
+        assert _accounted(result) == 3
+        assert len(result.dependencies) == 3
         assert result.skipped_components == 0
 
     def test_nested_component_directness_resolved_from_graph(self):
@@ -901,9 +899,9 @@ class TestCycloneDXNestedComponents:
         }
         result = self.parser.parse(sbom)
         names = {d.name for d in result.dependencies}
-        assert result.parsed_components == 100
+        assert len(result.dependencies) == 100
         assert result.skipped_components == 50
-        assert result.total_components == 150
+        assert _accounted(result) == 150
         assert {"level-0", "level-99"} <= names
         assert "level-100" not in names
 
@@ -913,7 +911,7 @@ class TestCycloneDXNestedComponents:
         result = self.parser.parse(sbom)
         assert "/app/index.js" not in [d.name for d in result.dependencies]
         assert result.skipped_components == 1
-        assert result.total_components == 4
+        assert _accounted(result) == 4
 
 
 def _syft_image_sbom_with_duplicate_package():
@@ -976,10 +974,10 @@ class TestDuplicateComponentMerge:
     def test_duplicates_collapse_to_one_document(self):
         result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
         assert len(result.dependencies) == 1
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.merged_components == 1
         assert result.skipped_components == 0
-        assert result.total_components == 2
+        assert _accounted(result) == 2
 
     def test_merged_locations_are_unioned(self):
         result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
@@ -1591,7 +1589,7 @@ class TestMalformedComponentResilience:
         assert [d.name for d in result.dependencies] == ["first", "third"]
         assert result.skipped_components == 1
         assert result.skipped_reasons.get("parse-error") == 1
-        assert result.total_components == 3
+        assert _accounted(result) == 3
 
     def test_non_dict_component_is_counted(self):
         sbom = _three_component_sbom({"type": "library", "name": "second", "version": "2.0"})
@@ -1599,7 +1597,7 @@ class TestMalformedComponentResilience:
         result = self.parser.parse(sbom)
         assert len(result.dependencies) == 3
         assert result.skipped_components == 1
-        assert result.total_components == 4
+        assert _accounted(result) == 4
 
     def test_null_licenses_and_hashes_are_not_fatal(self):
         sbom = _three_component_sbom(
@@ -1688,7 +1686,7 @@ class TestMalformedComponentResilience:
         result = parse_sbom(sbom)
         assert [d.name for d in result.dependencies] == ["real-pkg"]
         assert result.skipped_components == 0
-        assert result.total_components == 1
+        assert _accounted(result) == 1
 
 
 def _spdx_github_export() -> dict:
@@ -2296,7 +2294,7 @@ class TestSyftArtifactMetadata:
 
 
 class TestComponentAccounting:
-    """Every input element the parser sees must land in total_components with a labelled skip reason."""
+    """Every input element the parser sees is a dependency, a labelled skip or a merge."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -2314,9 +2312,9 @@ class TestComponentAccounting:
                 ]
             )
         )
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_reasons.get("cryptographic-asset") == 1
-        assert result.total_components == 2
+        assert _accounted(result) == 2
         assert len(result.crypto_assets) == 1
 
     def test_syft_files_array_is_counted(self):
@@ -2328,9 +2326,9 @@ class TestComponentAccounting:
             "files": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}, {"id": "f4"}, {"id": "f5"}],
         }
         result = self.parser.parse(sbom)
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_reasons.get("file") == 5
-        assert result.total_components == 6
+        assert _accounted(result) == 6
 
     def test_spdx_files_array_is_counted(self):
         sbom = {
@@ -2341,15 +2339,9 @@ class TestComponentAccounting:
             "relationships": [],
         }
         result = self.parser.parse(sbom)
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_reasons.get("file") == 1
-        assert result.total_components == 2
-
-    def test_total_still_balances_with_merges(self):
-        result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
-        assert result.total_components == (
-            result.parsed_components + result.skipped_components + result.merged_components
-        )
+        assert _accounted(result) == 2
 
 
 class TestDetectFormatMalformed:
