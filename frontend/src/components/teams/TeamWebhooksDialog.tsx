@@ -36,7 +36,7 @@ export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreat
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>Team Webhooks - {teamName}</DialogTitle>
           <DialogDescription>
