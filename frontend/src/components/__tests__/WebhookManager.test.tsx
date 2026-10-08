@@ -69,6 +69,19 @@ describe("WebhookManager", () => {
     expect(onCreate.mock.calls[0][0].webhook_type).toBe(expected);
   });
 
+  it("keeps a create draft across closing and reopening the dialog", () => {
+    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={vi.fn()} onDelete={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+    fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), {
+      target: { value: "https://example.com/draft" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+
+    expect(screen.getByPlaceholderText("https://example.com/webhook")).toHaveValue("https://example.com/draft");
+  });
+
   const slackHook: Webhook = {
     id: "w-slack",
     url: "https://hooks.slack.com/services/T0/B0/x",

@@ -1,38 +1,17 @@
-import { useState } from "react"
 import { Webhook, WebhookCreate, WebhookType } from "@/types/webhook"
 import { webhookApi } from "@/api/webhooks"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { WebhookForm } from "@/components/WebhookForm"
 import { Trash2, Plus, Send } from "lucide-react"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/context/useAuth"
 import { useDialogState } from "@/hooks/use-dialog-state"
 import { formatDate, formatDateTime, getErrorMessage } from "@/lib/utils"
-
-// Mirrors the server's detection, which decides the type when the request names none.
-function detectWebhookType(url: string): WebhookType {
-  let host: string;
-  let path: string;
-  try {
-    const parsed = new URL(url);
-    host = parsed.hostname.toLowerCase();
-    path = parsed.pathname;
-  } catch {
-    return "generic";
-  }
-  if (host === "hooks.slack.com" && path.startsWith("/services/")) return "slack";
-  if (host === "webhook.office.com" || host.endsWith(".webhook.office.com")) return "teams";
-  if ((host === "logic.azure.com" || host.endsWith(".logic.azure.com")) && path.includes("/workflows/")) return "teams";
-  if ((host === "api.powerplatform.com" || host.endsWith(".api.powerplatform.com")) && path.includes("/workflows/")) return "teams";
-  return "generic";
-}
 
 const TYPE_LABELS: Record<WebhookType, string> = { generic: "Generic", teams: "Teams", slack: "Slack" };
 
@@ -76,73 +55,6 @@ export function WebhookManager({
   const canUpdate = typeof updatePermission === 'boolean'
     ? updatePermission
     : hasPermission(updatePermission)
-  const [newWebhook, setNewWebhook] = useState<WebhookCreate>({
-    url: "",
-    events: [],
-    secret: ""
-  })
-
-  const availableEvents = [
-    {
-      id: "scan.completed",
-      label: "Scan completed",
-      description: "Fires when a project scan finishes successfully.",
-    },
-    {
-      id: "vulnerability.found",
-      label: "Vulnerability found",
-      description: "Fires when a scan finds critical, high, KEV or high-EPSS vulnerabilities.",
-    },
-    {
-      id: "analysis.failed",
-      label: "Analysis failed",
-      description: "Fires when a scan or analysis run fails.",
-    },
-    {
-      id: "sbom.ingested",
-      label: "SBOM ingested",
-      description: "Fires when an SBOM is ingested for a project.",
-    },
-    {
-      id: "crypto_asset.ingested",
-      label: "Crypto asset ingested",
-      description: "Fires when crypto assets (CBOM) are imported or updated.",
-    },
-    {
-      id: "crypto_policy.changed",
-      label: "Crypto policy changed",
-      description: "Fires on every create/update/delete/revert of a crypto policy.",
-    },
-    {
-      id: "license_policy.changed",
-      label: "License policy changed",
-      description: "Fires on every create/update/delete/revert of a license policy.",
-    },
-    {
-      id: "compliance_report.generated",
-      label: "Compliance report generated",
-      description: "Fires when a compliance report finishes, completed or failed.",
-    },
-  ]
-
-  const handleCreate = async () => {
-    if (!newWebhook.url || newWebhook.events.length === 0) return
-    try {
-      const payload: WebhookCreate = {
-        url: newWebhook.url,
-        events: newWebhook.events,
-        ...(newWebhook.secret ? { secret: newWebhook.secret } : {}),
-        // The JSON opt-out exists for Teams URLs only; a value left from an edited-away Teams URL must not stick.
-        ...(newWebhook.webhook_type && detectWebhookType(newWebhook.url) === "teams" ? { webhook_type: newWebhook.webhook_type } : {}),
-      }
-      await onCreate(payload)
-      createDialog.closeDialog()
-      setNewWebhook({ url: "", events: [], secret: "" })
-      toast.success("Webhook created")
-    } catch {
-      toast.error("Failed to create webhook")
-    }
-  }
 
   const handleDelete = async (id: string) => {
     try {
@@ -161,15 +73,6 @@ export function WebhookManager({
     } catch (error) {
       toast.error(getErrorMessage(error))
     }
-  }
-
-  const toggleEvent = (eventId: string) => {
-    setNewWebhook(prev => {
-      const events = prev.events.includes(eventId)
-        ? prev.events.filter(e => e !== eventId)
-        : [...prev.events, eventId]
-      return { ...prev, events }
-    })
   }
 
   if (isLoading) {
@@ -202,70 +105,8 @@ export function WebhookManager({
             <DialogTrigger asChild>
               <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Webhook</Button>
             </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add Webhook</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>URL</Label>
-                  <Input
-                    value={newWebhook.url}
-                    onChange={e => setNewWebhook(prev => ({ ...prev, url: e.target.value }))}
-                    placeholder="https://example.com/webhook"
-                  />
-                  {detectWebhookType(newWebhook.url) === "teams" && (
-                    <div className="flex items-start space-x-2">
-                      <Checkbox
-                        id="webhook-send-json"
-                        checked={newWebhook.webhook_type === "generic"}
-                        onCheckedChange={checked =>
-                          setNewWebhook(prev => ({ ...prev, webhook_type: checked === true ? "generic" : undefined }))
-                        }
-                        className="mt-0.5"
-                      />
-                      <Label htmlFor="webhook-send-json" className="text-xs font-normal text-muted-foreground">
-                        Detected as a Microsoft Teams workflow URL, so payloads are sent as Adaptive Cards. Tick to
-                        send the event JSON instead, e.g. for a plain Logic App or Power Automate flow.
-                      </Label>
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label>Secret (Optional)</Label>
-                  <Input 
-                    value={newWebhook.secret} 
-                    onChange={e => setNewWebhook(prev => ({ ...prev, secret: e.target.value }))}
-                    type="password"
-                  />
-                </div>
-              <div className="space-y-2">
-                <Label>Events</Label>
-                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                  {availableEvents.map(event => (
-                    <div key={event.id} className="flex items-start space-x-2">
-                      <Checkbox
-                        id={event.id}
-                        checked={(newWebhook.events || []).includes(event.id)}
-                        onCheckedChange={() => toggleEvent(event.id)}
-                        className="mt-1"
-                      />
-                      <div className="grid gap-0.5 leading-tight">
-                        <Label htmlFor={event.id} className="font-medium">
-                          {event.label}
-                        </Label>
-                        <span className="text-xs text-muted-foreground">
-                          {event.description}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <Button onClick={handleCreate} className="w-full" disabled={!newWebhook.url || newWebhook.events.length === 0}>Create Webhook</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+            <WebhookForm onCreate={onCreate} onSaved={createDialog.closeDialog} />
+          </Dialog>
         )}
       </CardHeader>
       <CardContent>
