@@ -129,6 +129,31 @@ def _required_arguments(tool_name: str) -> dict:
     return {name: _valid_value(parameters["properties"][name]) for name in parameters.get("required", [])}
 
 
+_REQUIRED_PARAMETERS = [
+    (definition["function"]["name"], name)
+    for definition in TOOL_DEFINITIONS
+    for name in definition["function"]["parameters"].get("required", [])
+]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "parameter"), _REQUIRED_PARAMETERS, ids=[f"{tool}.{name}" for tool, name in _REQUIRED_PARAMETERS]
+)
+@pytest.mark.asyncio
+async def test_a_call_missing_a_required_argument_is_refused_before_any_query_runs(
+    tool_name: str, parameter: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    arguments = _required_arguments(tool_name)
+    del arguments[parameter]
+    db = _Tripwire()
+
+    result = await ChatToolRegistry().execute_tool(tool_name, arguments, _caller(), db)
+
+    assert result == {"error": f"Missing required argument(s): {parameter}"}
+    assert db.reached == []
+    assert not [record for record in caplog.records if record.levelname == "ERROR"]
+
+
 @pytest.mark.asyncio
 async def test_an_operator_project_id_does_not_read_another_tenants_webhook_secret() -> None:
     result = await ChatToolRegistry().execute_tool(
@@ -180,7 +205,7 @@ def test_every_declared_parameter_accepts_a_value_of_its_declared_type(
     """A type the check does not know would refuse every call that passes it."""
     value = _valid_value(schema)
 
-    assert checked_arguments(tool_name, {parameter: value})[parameter] == value
+    assert checked_arguments(tool_name, {**_required_arguments(tool_name), parameter: value})[parameter] == value
 
 
 @pytest.mark.parametrize(

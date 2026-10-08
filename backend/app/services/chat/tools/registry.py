@@ -818,7 +818,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_team_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         details = {
             "id": team.id,
             "name": team.name,
@@ -829,7 +829,7 @@ class ChatToolRegistry:
         return {"team": details}
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         query = and_filters(ctx.user_project_query, {"team_ids": team.id})
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
@@ -896,7 +896,7 @@ class ChatToolRegistry:
         return {"waived": False, "expired_waiver": {**_serialize_doc(lapsed), "is_active": False}}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await ctx.db["projects"].find_one({"_id": ctx.args.get("project_id")}, {"_id": 1})
+        project = await ctx.db["projects"].find_one({"_id": ctx.args["project_id"]}, {"_id": 1})
         if not project:
             return {"error": _ERR_PROJECT_NOT_FOUND}
         await _gated(authorize_waiver_read(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
@@ -1217,7 +1217,7 @@ class ChatToolRegistry:
         head, names = await self._heads_in_scope(ctx)
         if not names:
             return {"matches": [], "message": "No accessible projects"}
-        wanted = (ctx.args["component_name"] or "").strip()
+        wanted = ctx.args["component_name"].strip()
         if not wanted:
             return {"matches": [], "count": 0, "matches_total": 0}
         by_name: list[dict[str, Any]] = [{"name": {"$regex": re.escape(wanted), "$options": "i"}}]
@@ -1418,7 +1418,7 @@ class ChatToolRegistry:
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
 
     async def _tool_get_team_risk_overview(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
             and_filters(ctx.user_project_query, {"team_ids": team.id}),
