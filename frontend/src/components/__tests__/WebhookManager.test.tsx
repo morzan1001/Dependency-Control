@@ -110,4 +110,20 @@ describe("WebhookManager", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("HTTP 400: no_text")));
     expect(webhookApi.test).toHaveBeenCalledWith("w-slack");
   });
+
+  it("stores a Slack URL with its detected type after a Teams URL was edited away", async () => {
+    const onCreate = vi.fn().mockResolvedValue({ id: "w-new" });
+    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onDelete={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+    const url = screen.getByPlaceholderText("https://example.com/webhook");
+
+    fireEvent.change(url, { target: { value: "https://contoso.webhook.office.com/webhookb2/abc" } });
+    fireEvent.click(screen.getByLabelText(/send the event JSON instead/i));
+    fireEvent.change(url, { target: { value: "https://hooks.slack.com/services/T0/B0/x" } });
+    fireEvent.click(screen.getByLabelText(/Vulnerability found/i));
+    fireEvent.click(screen.getByRole("button", { name: /Create Webhook/i }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalled());
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty("webhook_type");
+  });
 });

@@ -27,7 +27,7 @@ function detectWebhookType(url: string): WebhookType {
   } catch {
     return "generic";
   }
-  if (host === "hooks.slack.com") return "slack";
+  if (host === "hooks.slack.com" && path.startsWith("/services/")) return "slack";
   if (host === "webhook.office.com" || host.endsWith(".webhook.office.com")) return "teams";
   if ((host === "logic.azure.com" || host.endsWith(".logic.azure.com")) && path.includes("/workflows/")) return "teams";
   if ((host === "api.powerplatform.com" || host.endsWith(".api.powerplatform.com")) && path.includes("/workflows/")) return "teams";
@@ -121,7 +121,7 @@ export function WebhookManager({
     {
       id: "compliance_report.generated",
       label: "Compliance report generated",
-      description: "Fires when a compliance report completes successfully.",
+      description: "Fires when a compliance report finishes, completed or failed.",
     },
   ]
 
@@ -132,7 +132,8 @@ export function WebhookManager({
         url: newWebhook.url,
         events: newWebhook.events,
         ...(newWebhook.secret ? { secret: newWebhook.secret } : {}),
-        ...(newWebhook.webhook_type ? { webhook_type: newWebhook.webhook_type } : {}),
+        // The JSON opt-out exists for Teams URLs only; a value left from an edited-away Teams URL must not stick.
+        ...(newWebhook.webhook_type && detectWebhookType(newWebhook.url) === "teams" ? { webhook_type: newWebhook.webhook_type } : {}),
       }
       await onCreate(payload)
       createDialog.closeDialog()

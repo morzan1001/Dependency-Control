@@ -313,6 +313,9 @@ export function NotificationsSettingsTab({
         onDelete={onDeleteWebhook}
         title="Global Webhooks"
         description="Configure webhooks that trigger on system-wide events."
+        createPermission="system:manage"
+        deletePermission="system:manage"
+        testPermission="system:manage"
       />
     </div>
   )
