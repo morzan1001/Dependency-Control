@@ -133,6 +133,15 @@ describe("WebhookManager", () => {
     expect(webhookApi.test).toHaveBeenCalledWith("w-slack");
   });
 
+  it("deletes a webhook from its named Delete button", async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    render(<WebhookManager webhooks={[slackHook]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={onDelete} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete webhook" }));
+
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith("w-slack"));
+  });
+
   it("stores a Slack URL with its detected type after a Teams URL was edited away", async () => {
     const onCreate = vi.fn().mockResolvedValue({ id: "w-new" });
     render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);

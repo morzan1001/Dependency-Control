@@ -197,7 +197,7 @@ export function WebhookManager({
                         </>
                       )}
                       {canDeleteWh && (
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
+                        <Button variant="ghost" size="icon" aria-label="Delete webhook" title="Delete webhook" onClick={() => handleDelete(webhook.id)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}
