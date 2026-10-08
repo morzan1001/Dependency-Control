@@ -4,8 +4,6 @@ import base64
 import logging
 from typing import Any, ClassVar
 
-import httpx
-
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
 from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
@@ -14,6 +12,7 @@ from app.models.finding import Severity
 from app.schemas.sbom import has_known_version
 
 from .base import Analyzer
+from .deps_dev import fetch_deps_dev_json
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ class HashVerificationAnalyzer(Analyzer):
             if registry in self.REGISTRY_APIS and name and has_known_version(version) and sbom_hashes:
                 checks.append((CacheKeys.package_hash(registry, name, version), registry, name, version, sbom_hashes))
 
-        registry_hashes = await self._registry_hashes(
+        registry_hashes, skipped = await self._registry_hashes(
             {key: (registry, name, version) for key, registry, name, version, _ in checks}
         )
 
@@ -61,7 +60,7 @@ class HashVerificationAnalyzer(Analyzer):
             elif outcome:
                 verified_count += 1
 
-        return {
+        result: dict[str, Any] = {
             "hash_issues": issues,
             "summary": {
                 "verified_count": verified_count,
@@ -69,9 +68,12 @@ class HashVerificationAnalyzer(Analyzer):
                 "mismatch_count": len(issues),
             },
         }
+        if skipped:
+            result["partial_components_skipped"] = skipped
+        return result
 
-    async def _registry_hashes(self, lookups: dict[str, tuple[str, str, str]]) -> dict[str, Any]:
-        """Registry digests per cache key: one batched cache read, then a bounded fetch of the misses."""
+    async def _registry_hashes(self, lookups: dict[str, tuple[str, str, str]]) -> tuple[dict[str, Any], int]:
+        """Registry digests per cache key, and how many lookups failed: one batched cache read, then a bounded fetch."""
         registry_hashes = await cache_service.mget(list(lookups))
         missing = [key for key, value in registry_hashes.items() if value is None]
         timeout = ANALYZER_TIMEOUTS["hash_verification"]
@@ -83,6 +85,7 @@ class HashVerificationAnalyzer(Analyzer):
                     key=key,
                     fetch_fn=lambda: self._fetch_registry_hashes(client, *lookups[key]),
                     ttl_seconds=CacheTTL.PACKAGE_HASH,
+                    reraise_fetch_errors=True,
                 )
 
             fetched = await gather_bounded(missing, fetch, ANALYZER_BATCH_SIZES["hash_verification"])
@@ -90,7 +93,7 @@ class HashVerificationAnalyzer(Analyzer):
         registry_hashes.update(
             (key, value) for key, value in zip(missing, fetched, strict=True) if isinstance(value, dict)
         )
-        return registry_hashes
+        return registry_hashes, sum(isinstance(value, BaseException) for value in fetched)
 
     @staticmethod
     def _compare_hashes(
@@ -128,19 +131,13 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _fetch_registry_hashes(
         self, client: InstrumentedAsyncClient, registry: str, name: str, version: str
-    ) -> dict[str, Any] | None:
-        """Lower-cased digests per algorithm; {} = no such release, None = transient error."""
+    ) -> dict[str, Any]:
+        """Lower-cased digests per algorithm, {} when the registry has no such release; any other failure raises."""
         # npm scopes carry a slash; PyPI names never do.
         url = self.REGISTRY_APIS[registry].format(package=name.replace("/", "%2F"), version=version)
-        try:
-            response = await client.get(url)
-            if response.status_code != 200:
-                return {}
-            data = response.json()
-        except (httpx.HTTPError, ValueError) as e:
-            logger.debug(f"{registry} hash fetch failed for {name}@{version}: {e}")
-            return None
-
+        data = await fetch_deps_dev_json(client, url)
+        if data is None:
+            return {}
         if registry == "npm":
             return self._parse_npm_dist(data.get("dist", {}), name, version)
 

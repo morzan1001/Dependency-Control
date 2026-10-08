@@ -284,6 +284,38 @@ class TestAnalyze:
         assert _risk_types(outage) == ["single_maintainer", "archived_repo"]
         assert _risk_types(recovered) == ["stale_package", "single_maintainer", "archived_repo"]
 
+    @pytest.mark.parametrize(
+        ("registry_url", "component", "answer", "expected"),
+        [
+            (
+                f"{PYPI_API_URL}/oldlib/json",
+                _component("pypi", "oldlib"),
+                _pypi_project(uploaded_days_ago=800),
+                "stale_package",
+            ),
+            (
+                f"{NPM_REGISTRY_URL}/left-pad/latest",
+                _component("npm", "left-pad"),
+                _npm_latest(None, [{"name": "solo", "email": "s@acme.dev"}]),
+                "single_maintainer",
+            ),
+        ],
+        ids=["pypi", "npm"],
+    )
+    @pytest.mark.asyncio
+    async def test_a_registry_outage_skips_the_component_and_is_asked_again_next_scan(
+        self, fake_cache, monkeypatch, registry_url, component, answer, expected
+    ):
+        routes: dict[str, Any] = {registry_url: 503}
+        _serve(monkeypatch, fake_cache, routes)
+
+        outage = await analyze_cyclonedx(MaintainerRiskAnalyzer(), [component])
+        routes[registry_url] = answer
+        recovered = await analyze_cyclonedx(MaintainerRiskAnalyzer(), [component])
+
+        assert outage == {"maintainer_issues": [], "partial_components_skipped": 1}
+        assert expected in _risk_types(recovered)
+
     @pytest.mark.asyncio
     async def test_a_malformed_deps_dev_body_skips_only_its_component(self, fake_cache, monkeypatch):
         _serve(
