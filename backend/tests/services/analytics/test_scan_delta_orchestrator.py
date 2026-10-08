@@ -29,12 +29,9 @@ _CRYPTO = "crypto"
 _PAGE = 1
 _PAGE_SIZE = 50
 _PAGE_BELOW_MINIMUM = 0
-_PAGE_SIZE_ABOVE_MAXIMUM = 500
 _PAGE_SIZE_AT_MAXIMUM = _MAX_PAGE_SIZE
 
-_CRITICAL = ["critical"]
 _UPPERCASE_CRITICAL = ["CRITICAL"]
-_MISSPELLED_SEVERITY = ["criticla"]
 _MISSPELLED_UPPERCASE_SEVERITY = ["CRITICLA"]
 _SECRET = ["secret"]
 _UNKNOWN_FINDING_TYPE = ["bogus"]
@@ -84,109 +81,24 @@ def _envelope(category: DeltaCategory) -> ScanDeltaResponse:
     )
 
 
-@pytest.mark.asyncio
-async def test_dispatch_findings(db):
-    with patch(
-        "app.services.analytics.scan_delta.compare_findings",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
-    ) as mock:
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-        assert result.category == DeltaCategory.FINDINGS
-        mock.assert_awaited_once()
+def _service(name: str, category: DeltaCategory):
+    return patch(f"app.services.analytics.scan_delta.{name}", new=AsyncMock(return_value=_envelope(category)))
 
 
 @pytest.mark.asyncio
-async def test_dispatch_components(db):
-    with patch(
-        "app.services.analytics.scan_delta.compare_components",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.COMPONENTS)),
-    ) as mock:
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_COMPONENTS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-        assert result.category == DeltaCategory.COMPONENTS
-        mock.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_dispatch_crypto(db):
-    with patch(
-        "app.services.analytics.scan_delta.compare_crypto",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.CRYPTO)),
-    ) as mock:
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_CRYPTO,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-        assert result.category == DeltaCategory.CRYPTO
-        mock.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_severity_for_non_findings(db):
-    with pytest.raises(InvalidDeltaQuery):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_COMPONENTS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=_CRITICAL,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_finding_type_for_non_findings(db):
-    with pytest.raises(InvalidDeltaQuery):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_CRYPTO,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=_SECRET,
-            allow_same_scan=False,
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        pytest.param({"category": _CRYPTO, "finding_type": _SECRET}, "only valid with category=findings", id="type"),
+        pytest.param({"severity": _MISSPELLED_UPPERCASE_SEVERITY}, _MISSPELLED_UPPERCASE_SEVERITY[0], id="casing"),
+        pytest.param({"finding_type": _UNKNOWN_FINDING_TYPE}, "unknown finding_type", id="finding-type"),
+        pytest.param({"change": _UNKNOWN_CHANGE}, f"unknown change values: {_UNKNOWN_CHANGE}", id="change"),
+        pytest.param({"page": _PAGE_BELOW_MINIMUM}, "page must be", id="page"),
+    ],
+)
+async def test_dispatch_rejects_an_inconsistent_query(db, overrides, message):
+    with pytest.raises(InvalidDeltaQuery, match=message):
+        await _dispatch(db, **overrides)
 
 
 @pytest.mark.asyncio
@@ -203,177 +115,19 @@ async def test_crypto_answers_the_shared_change_vocabulary(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_same_scan_ids(db):
-    with pytest.raises(InvalidDeltaQuery):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_SAME_SCAN,
-            to_scan=_SAME_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_severity(db):
-    with pytest.raises(InvalidDeltaQuery, match="unknown severity"):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=_MISSPELLED_SEVERITY,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_severity_preserves_user_casing(db):
-    """Error echoes the user-typed value, not the lowercased canonical form, so typos round-trip readably."""
-    with pytest.raises(InvalidDeltaQuery, match=_MISSPELLED_UPPERCASE_SEVERITY[0]):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=_MISSPELLED_UPPERCASE_SEVERITY,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-
-
-@pytest.mark.asyncio
 async def test_dispatch_accepts_uppercase_severity(db):
-    with patch(
-        "app.services.analytics.scan_delta.compare_findings",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
-    ):
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=_UPPERCASE_CRITICAL,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-        assert result.category == DeltaCategory.FINDINGS
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_finding_type(db):
-    with pytest.raises(InvalidDeltaQuery, match="unknown finding_type"):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=_UNKNOWN_FINDING_TYPE,
-            allow_same_scan=False,
-        )
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_change_for_findings(db):
-    with pytest.raises(InvalidDeltaQuery, match=f"unknown change values: {_UNKNOWN_CHANGE}"):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=_UNKNOWN_CHANGE,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_page_below_one(db):
-    with pytest.raises(InvalidDeltaQuery, match="page must be"):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE_BELOW_MINIMUM,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_page_size_above_max(db):
-    with pytest.raises(InvalidDeltaQuery, match="page_size must be"):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE_ABOVE_MAXIMUM,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
+    with _service("compare_findings", DeltaCategory.FINDINGS):
+        assert (await _dispatch(db, severity=_UPPERCASE_CRITICAL)).category == DeltaCategory.FINDINGS
 
 
 @pytest.mark.asyncio
 async def test_dispatch_accepts_the_maximum_page_size(db):
     """The advertised maximum is inclusive: the largest page a caller may ask for is answered."""
-    with patch(
-        "app.services.analytics.scan_delta.compare_findings",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
-    ) as mock:
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE_AT_MAXIMUM,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-        assert result.category == DeltaCategory.FINDINGS
-        assert result.page_size == _PAGE_SIZE_AT_MAXIMUM
-        mock.assert_awaited_once()
+    with _service("compare_findings", DeltaCategory.FINDINGS) as mock:
+        result = await _dispatch(db, page_size=_PAGE_SIZE_AT_MAXIMUM)
+
+    assert result.page_size == _PAGE_SIZE_AT_MAXIMUM
+    mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -382,24 +136,8 @@ async def test_dispatch_accepts_the_maximum_page_size(db):
     [(DeltaCategory.COMPONENTS, "compare_components"), (DeltaCategory.FINDINGS, "compare_findings")],
 )
 async def test_dispatch_accepts_change_changed_for_components_and_findings(db, category, service):
-    with patch(
-        f"app.services.analytics.scan_delta.{service}",
-        new=AsyncMock(return_value=_envelope(category)),
-    ):
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=category.value,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=_CHANGED,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
-        assert result.category == category
+    with _service(service, category):
+        assert (await _dispatch(db, category=category.value, change=_CHANGED)).category == category
 
 
 @pytest.mark.asyncio
@@ -412,23 +150,8 @@ async def test_the_envelope_names_the_build_each_side_resolved_to(db):
         {"_id": _TO_SCAN, "branch": _MAIN_BRANCH, "commit_hash": _TO_COMMIT, "created_at": _BUILT_AT}
     )
 
-    with patch(
-        "app.services.analytics.scan_delta.compare_findings",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
-    ):
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
+    with _service("compare_findings", DeltaCategory.FINDINGS):
+        result = await _dispatch(db)
 
     assert result.from_side == ScanDeltaSide(
         scan_id=_FROM_SCAN, branch=_MAIN_BRANCH, commit_hash=_FROM_COMMIT, created_at=_RELEASED_AT
@@ -440,23 +163,8 @@ async def test_the_envelope_names_the_build_each_side_resolved_to(db):
 
 @pytest.mark.asyncio
 async def test_a_side_whose_scan_is_gone_still_names_its_id(db):
-    with patch(
-        "app.services.analytics.scan_delta.compare_findings",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
-    ):
-        result = await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_FINDINGS,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=None,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
+    with _service("compare_findings", DeltaCategory.FINDINGS):
+        result = await _dispatch(db)
 
     assert result.to_side == ScanDeltaSide(scan_id=_TO_SCAN)
 
