@@ -58,15 +58,6 @@ async def test_update_many_raw_hands_modifiers_through_untouched():
 
 
 @pytest.mark.asyncio
-async def test_update_many_still_wraps_a_field_document_in_set():
-    repo, collection = _spy_repo()
-
-    await repo.update_many({"default_branch": "main"}, {"default_branch": None})
-
-    assert collection.update_many.await_args.args == ({"default_branch": "main"}, {"$set": {"default_branch": None}})
-
-
-@pytest.mark.asyncio
 async def test_update_still_wraps_a_field_document_in_set():
     repo, collection = _spy_repo()
 

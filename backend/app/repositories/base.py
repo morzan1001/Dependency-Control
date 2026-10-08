@@ -169,10 +169,6 @@ class BaseRepository[T: BaseModel]:
         result = await self.collection.update_one({"_id": id, **(guard or {})}, update_ops)
         return bool(result.matched_count)
 
-    async def update_many(self, query: dict[str, Any], update_data: dict[str, Any]) -> int:
-        result = await self.collection.update_many(query, {"$set": update_data})
-        return result.modified_count
-
     async def upsert(self, query: dict[str, Any], data: dict[str, Any]) -> None:
         await self.collection.update_one(query, {"$set": data}, upsert=True)
 

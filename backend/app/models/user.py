@@ -1,13 +1,10 @@
-import logging
 from datetime import datetime
 
-from pydantic import ConfigDict, EmailStr, Field
+from pydantic import EmailStr, Field
 
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.notification_prefs import NotificationPreferences
 from app.models.types import MongoDocument
-
-logger = logging.getLogger(__name__)
 
 
 def is_local_account(auth_provider: str | None) -> bool:
@@ -34,8 +31,6 @@ class User(MongoDocument):
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: NotificationPreferences = Field(default_factory=dict)
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
     def is_local(self) -> bool:

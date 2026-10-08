@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from app.models.base import CreatedAtModel, VcsInstanceModel
 from app.models.types import MongoDocument
@@ -53,8 +53,6 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     # Metadata
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: datetime | None = None
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
     def is_shared_issuer(self) -> bool:

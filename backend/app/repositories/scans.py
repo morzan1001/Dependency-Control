@@ -181,10 +181,6 @@ class ScanRepository:
     async def upsert(self, query: dict[str, Any], update: dict[str, Any]) -> None:
         await self.collection.update_one(query, update, upsert=True)
 
-    async def update(self, scan_id: str, update_data: dict[str, Any]) -> Scan | None:
-        await self.collection.update_one({"_id": scan_id}, {"$set": update_data})
-        return await self.get_by_id(scan_id)
-
     async def touch(self, scan_id: str) -> None:
         await self.collection.update_one({"_id": scan_id}, {"$set": {"updated_at": datetime.now(timezone.utc)}})
 
@@ -271,14 +267,6 @@ class ScanRepository:
             {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0, "stuck_retry_count": 0}},
         )
         return bool(result.modified_count)
-
-    async def delete(self, scan_id: str) -> bool:
-        result = await self.collection.delete_one({"_id": scan_id})
-        return result.deleted_count > 0
-
-    async def delete_many(self, query: dict[str, Any]) -> int:
-        result = await self.collection.delete_many(query)
-        return result.deleted_count
 
     async def find_one(self, query: dict[str, Any], sort: list[tuple] | None = None) -> dict[str, Any] | None:
         if sort:

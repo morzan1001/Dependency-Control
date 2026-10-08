@@ -4,8 +4,6 @@ Webhook model for MongoDB storage.
 
 from datetime import datetime
 
-from pydantic import ConfigDict
-
 from app.core.constants import WebhookType
 from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
@@ -30,5 +28,3 @@ class Webhook(MongoDocument, CreatedAtModel):
     circuit_breaker_until: datetime | None = None
     total_deliveries: int = 0
     total_failures: int = 0
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)

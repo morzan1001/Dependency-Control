@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from app.core.constants import ARCHIVE_GRIDFS_CHUNK_FRAME, SCAN_SCOPED_COLLECTIONS
 from app.models.types import MongoDocument
@@ -37,5 +37,3 @@ class ArchiveMetadata(MongoDocument):
     collections_included: list[str] = Field(
         default_factory=lambda: ["scans", *SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_CHUNK_FRAME]
     )
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
