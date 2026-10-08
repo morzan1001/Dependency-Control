@@ -100,27 +100,13 @@ class _EndOfLifeDate:
         return httpx.Response(404, json={"message": "Product not found"})
 
 
-class _MemoryCache:
-    """cache_service's locked fetch: a stored value wins, a fetch result is stored, None stores the failure marker."""
-
-    def __init__(self) -> None:
-        self.entries: dict[str, Any] = {}
-
-    async def get_or_fetch_with_lock(self, key: str, fetch_fn, ttl_seconds: int | None = None) -> Any:
-        if self.entries.get(key) is not None:
-            return self.entries[key]
-        value = await fetch_fn()
-        self.entries[key] = {} if value is None else value
-        return value
-
-
 @pytest.fixture
-def serve(monkeypatch: pytest.MonkeyPatch):
-    def _serve(cycles: dict[str, Any], **index: Any) -> tuple[_EndOfLifeDate, _MemoryCache]:
-        upstream, cache = _EndOfLifeDate(cycles, **index), _MemoryCache()
+def serve(monkeypatch: pytest.MonkeyPatch, fake_cache):
+    def _serve(cycles: dict[str, Any], **index: Any) -> tuple[_EndOfLifeDate, Any]:
+        upstream = _EndOfLifeDate(cycles, **index)
         monkeypatch.setattr(end_of_life, "InstrumentedAsyncClient", upstream)
-        monkeypatch.setattr(end_of_life, "cache_service", cache)
-        return upstream, cache
+        monkeypatch.setattr(end_of_life, "cache_service", fake_cache)
+        return upstream, fake_cache
 
     return _serve
 
@@ -457,7 +443,7 @@ class TestProductResolution:
 
         assert _cycles_of(issues) == {"openssl": "1.1.1"}
         assert upstream.requested.count("all") == 1
-        assert cache.entries["eol:all"] == _PRODUCT_INDEX
+        assert await cache.get("eol:all") == _PRODUCT_INDEX
 
     @pytest.mark.parametrize(
         "index",
@@ -489,7 +475,7 @@ class TestProductResolution:
         issues = await _issues([_openssl_binary("1.1.1w"), _component("node", "16.20.2", "pkg:generic/node@16.20.2")])
 
         assert _cycles_of(issues) == {"node": "16"}
-        assert cache.entries["eol:openssl"] == []
+        assert await cache.get("eol:openssl") == []
 
 
 class TestDistroBuilds:
@@ -541,8 +527,9 @@ class TestRecommendation:
 
         await _issues([_component("node", "16.20.2", "pkg:generic/node@16.20.2")])
 
-        assert cache.entries["eol:nodejs"] == _NODEJS
-        assert all("recommended_version" not in cycle for cycle in cache.entries["eol:nodejs"])
+        cached = await cache.get("eol:nodejs")
+        assert cached == _NODEJS
+        assert all("recommended_version" not in cycle for cycle in cached)
 
 
 class TestFindings:
