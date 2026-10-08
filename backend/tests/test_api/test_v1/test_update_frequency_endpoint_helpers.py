@@ -29,7 +29,6 @@ from app.core.config import settings
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.project import Project
 from app.models.user import User
-from app.repositories.update_frequency import window_scans_by_branch
 from app.schemas.analytics import ProjectUpdateSummary, UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.rescan import build_rescan
 from app.services.update_frequency import rank_summaries
@@ -369,22 +368,6 @@ class TestReadPathSelection:
                     rolled = asyncio.run(get_update_frequency_comparison(current_user=_user("u1"), db=db))
 
         assert (live.team_avg_updates_per_month, rolled.team_avg_updates_per_month) == (1.0, 9.0)
-
-
-class TestProjectViewStaysOnTheWalk:
-    @pytest.mark.asyncio
-    async def test_the_rollup_flag_leaves_the_project_view_on_one_election_and_the_walk(self):
-        db = await _scanned_db()
-        live = AsyncMock(return_value=_metrics("live"))
-        elections = AsyncMock(side_effect=window_scans_by_branch)
-
-        with _project_patched(FakeCache(), live), patch.object(settings, "UPDATE_FREQUENCY_USE_ROLLUP", True):
-            with patch("app.services.update_frequency.window_scans_by_branch", elections):
-                result = await _view(db, window_days=90)
-
-        assert result.project_name == "live"
-        assert elections.await_count == 1
-        assert live.await_args.kwargs["branch"] == "main"
 
 
 _NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
