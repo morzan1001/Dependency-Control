@@ -363,12 +363,8 @@ class ResultAggregator:
             else:
                 final_findings.append(f)
 
-        merged_ids: set = set()
         for group in vuln_groups.values():
-            for p in self._reduce_vuln_group(group):
-                if p.id not in merged_ids:
-                    final_findings.append(p)
-                    merged_ids.add(p.id)
+            final_findings.extend(self._reduce_vuln_group(group))
 
         final_findings.sort(key=self._finding_sort_key)
         for f in final_findings:
