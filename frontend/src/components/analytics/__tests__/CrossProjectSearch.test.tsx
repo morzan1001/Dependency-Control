@@ -104,3 +104,27 @@ describe("CrossProjectSearch project filter", () => {
     await waitFor(() => expect(getAll).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("CrossProjectSearch source filter", () => {
+  it("offers the image, file and directory sources with their source icons", async () => {
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+    fireEvent.click(screen.getByText("All sources").closest("button")!);
+
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["All sources", "Docker Image", "Source File", "Directory"]);
+    const iconClasses = options.slice(1).map((option) => option.querySelector("svg")!.getAttribute("class"));
+    expect(iconClasses[0]).toContain("lucide-container h-4 w-4 text-blue-500");
+    expect(iconClasses[1]).toContain("lucide-file-code h-4 w-4 text-green-500");
+    expect(iconClasses[2]).toContain("lucide-hard-drive h-4 w-4 text-amber-500");
+  });
+});

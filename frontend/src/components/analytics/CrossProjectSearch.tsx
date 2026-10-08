@@ -20,11 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Search, Package, Filter, X, Container, FileCode, HardDrive, Loader2 } from 'lucide-react'
+import { Search, Package, Filter, X, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
+import { getSourceInfo } from '@/lib/finding-utils'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 interface CrossProjectSearchProps {
@@ -210,24 +211,17 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">All sources</SelectItem>
-                    <SelectItem value="image">
-                      <div className="flex items-center gap-2">
-                        <Container className="h-4 w-4 text-blue-500" />
-                        Docker Image
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="file">
-                      <div className="flex items-center gap-2">
-                        <FileCode className="h-4 w-4 text-green-500" />
-                        Source File
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="directory">
-                      <div className="flex items-center gap-2">
-                        <HardDrive className="h-4 w-4 text-amber-500" />
-                        Directory
-                      </div>
-                    </SelectItem>
+                    {['image', 'file', 'directory'].map((sourceType) => {
+                      const { icon: Icon, label, color } = getSourceInfo(sourceType)!
+                      return (
+                        <SelectItem key={sourceType} value={sourceType}>
+                          <div className="flex items-center gap-2">
+                            <Icon className={`h-4 w-4 ${color}`} />
+                            {label}
+                          </div>
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               </div>
