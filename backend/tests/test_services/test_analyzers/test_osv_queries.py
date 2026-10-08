@@ -9,9 +9,15 @@ import pytest
 from app.core.cache import CacheKeys
 from app.services.analyzers import osv
 from app.services.analyzers.osv import OSVAnalyzer
-from tests.helpers.osv import batch_queries, osv_cache, serve_osv
+from tests.helpers.osv import UBUNTU_OPENSSL, batch_queries, osv_cache, serve_osv
 
 _SBOM: dict[str, Any] = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []}
+_SYFT_OPENSSL_ON_FOCAL = {
+    "name": "openssl",
+    "version": "1.1.1f-1ubuntu2.24",
+    "purl": "pkg:deb/ubuntu/openssl@1.1.1f-1ubuntu2.24?arch=amd64&distro=ubuntu-20.04",
+    "found_by": "dpkg-db-cataloger",
+}
 
 
 def _querybatch(rejected: frozenset[str] = frozenset(), names_index: bool = True):
@@ -27,6 +33,16 @@ def _querybatch(rejected: frozenset[str] = frozenset(), names_index: bool = True
         return httpx.Response(400, text=f'{{"code":3,"message":"{message}"}}')
 
     return handle
+
+
+def _ubuntu_openssl(request: httpx.Request) -> httpx.Response:
+    """Like api.osv.dev: only openssl's purl at focal's version finds this Pro-only fix, whatever the qualifiers."""
+    if request.method == "GET":
+        return httpx.Response(200, json=UBUNTU_OPENSSL)
+    stub = {"id": UBUNTU_OPENSSL["id"], "modified": UBUNTU_OPENSSL["modified"]}
+    purls = [(query["package"].get("purl") or "").partition("?")[0] for query in json.loads(request.content)["queries"]]
+    results = [{"vulns": [stub]} if purl == "pkg:deb/ubuntu/openssl@1.1.1f-1ubuntu2.24" else {} for purl in purls]
+    return httpx.Response(200, json={"results": results})
 
 
 @pytest.fixture
@@ -176,7 +192,7 @@ class TestOperatingSystemPackages:
                     "version": "3.0.2-0ubuntu1.10",
                     "purl": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1.10?arch=amd64&distro=ubuntu-22.04&upstream=openssl",
                 },
-                {"package": {"ecosystem": "Ubuntu:22.04:LTS", "name": "openssl"}, "version": "3.0.2-0ubuntu1.10"},
+                {"package": {"purl": "pkg:deb/ubuntu/openssl@3.0.2-0ubuntu1.10"}},
                 id="syft_ubuntu_lts",
             ),
             pytest.param(
@@ -191,12 +207,17 @@ class TestOperatingSystemPackages:
                         "aquasecurity:trivy:SrcEpoch": "1",
                     },
                 },
-                {"package": {"ecosystem": "Ubuntu:23.04", "name": "zlib"}, "version": "1:1.2.13.dfsg-1ubuntu4"},
+                {"package": {"purl": "pkg:deb/ubuntu/zlib@1%3A1.2.13.dfsg-1ubuntu4"}},
                 id="trivy_ubuntu_interim",
+            ),
+            pytest.param(
+                _SYFT_OPENSSL_ON_FOCAL,
+                {"package": {"purl": "pkg:deb/ubuntu/openssl@1.1.1f-1ubuntu2.24"}},
+                id="syft_ubuntu_source_is_the_binary",
             ),
         ],
     )
-    async def test_the_package_is_asked_for_in_its_release_ecosystem(self, cache, monkeypatch, component, expected):
+    async def test_an_os_package_is_asked_for_as_osv_resolves_it(self, cache, monkeypatch, component, expected):
         queries, _ = await _queries(monkeypatch, [component])
 
         assert queries == [expected]
@@ -218,6 +239,31 @@ class TestOperatingSystemPackages:
         assert queries == []
         assert result["partial_components_skipped"] == 1
         assert cache == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "component",
+        [
+            pytest.param(_SYFT_OPENSSL_ON_FOCAL, id="source_named_binary"),
+            pytest.param(
+                {
+                    "name": "libssl1.1",
+                    "version": "1.1.1f-1ubuntu2.24",
+                    "purl": "pkg:deb/ubuntu/libssl1.1@1.1.1f-1ubuntu2.24?arch=amd64&upstream=openssl&distro=ubuntu-20.04",
+                },
+                id="binary_of_the_source",
+            ),
+        ],
+    )
+    async def test_an_advisory_fixed_only_in_ubuntu_pro_is_found(self, cache, monkeypatch, component):
+        serve_osv(monkeypatch, _ubuntu_openssl)
+
+        result = await OSVAnalyzer().analyze(_SBOM, parsed_components=[component])
+
+        [entry] = result["osv_vulnerabilities"]
+        assert [(vuln["id"], vuln["fixed_version"]) for vuln in entry["vulnerabilities"]] == [
+            ("UBUNTU-CVE-2025-68160", "1.1.1f-1ubuntu2.24+esm2")
+        ]
 
 
 class TestMalformedPurls:
