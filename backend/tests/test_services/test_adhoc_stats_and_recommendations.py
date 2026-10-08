@@ -6,6 +6,7 @@ from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
 from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.osv import FakeOsv
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OSV = "osv"
@@ -72,35 +73,14 @@ _IMAGE_SBOM = {
 }
 
 
-class _FakeOsv:
-    """One fixable critical advisory per parsed component, in the shape ``normalize_osv`` reads."""
-
-    name = _OSV
-
-    async def analyze(self, sbom, settings=None, parsed_components=None):
-        return {
-            "osv_vulnerabilities": [
-                {
-                    "component": component["name"],
-                    "version": component["version"],
-                    "vulnerabilities": [
-                        {
-                            "id": _CVE,
-                            "severity": _SEVERITY_CRITICAL,
-                            "summary": _SUMMARY,
-                            "fixed_version": _FIXED_VERSION,
-                        }
-                    ],
-                }
-                for component in parsed_components or []
-            ]
-        }
-
-
 @pytest.fixture
 def _osv(monkeypatch):
 
-    serve_analyzer(monkeypatch, _OSV, _FakeOsv())
+    serve_analyzer(
+        monkeypatch,
+        _OSV,
+        FakeOsv({"id": _CVE, "severity": _SEVERITY_CRITICAL, "summary": _SUMMARY, "fixed_version": _FIXED_VERSION}),
+    )
 
 
 def _request(**overrides) -> AdhocAnalyzeRequest:

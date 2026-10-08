@@ -8,6 +8,7 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.adhoc import _aggregate_atomically, run_adhoc_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
 from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.osv import FakeOsv
 from tests.mocks.fake_mongo import FakeDatabase
 
 _SECRET_FILE = "app/config.py"
@@ -620,13 +621,6 @@ async def test_opengrep_entries_under_results_are_validated_like_those_under_fin
     ]
 
 
-class _FakeOsv:
-    name = _OSV_NAME
-
-    async def analyze(self, sbom, settings=None, parsed_components=None):
-        return {"osv_vulnerabilities": []}
-
-
 class _BrokenOsv:
     name = _OSV_NAME
 
@@ -635,7 +629,7 @@ class _BrokenOsv:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("analyzer", [_FakeOsv(), _BrokenOsv()])
+@pytest.mark.parametrize("analyzer", [FakeOsv(), _BrokenOsv()])
 async def test_the_stages_that_left_the_process_are_named_whether_or_not_they_succeeded(monkeypatch, analyzer):
     """Storing nothing is not sending nothing, and a failed upstream call still sent the query."""
 
@@ -673,7 +667,7 @@ async def test_an_analyzer_that_never_ran_is_not_named_in_the_notes():
 async def test_every_stage_that_sends_coordinates_upstream_names_its_host(monkeypatch, analyzer_name, upstream):
     """The endpoint promises notes names every stage that sent something; osv is not the only one."""
 
-    serve_analyzer(monkeypatch, analyzer_name, _FakeOsv())
+    serve_analyzer(monkeypatch, analyzer_name, FakeOsv())
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[analyzer_name], apply_global_waivers=False)
 
     response = await run_adhoc_analysis(request, FakeDatabase())
