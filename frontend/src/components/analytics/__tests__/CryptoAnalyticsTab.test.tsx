@@ -49,6 +49,7 @@ vi.mock("@/api/compliance", () => ({
 }));
 
 vi.mock("@/context/useAuth", () => ({ useAuth: () => ({ hasPermission: () => false }) }));
+vi.mock("@/hooks/queries/use-users", () => ({ useCurrentUser: () => ({ data: { id: "u1" } }) }));
 
 function activate(name: RegExp) {
   // Radix activates a tab on mouseDown.

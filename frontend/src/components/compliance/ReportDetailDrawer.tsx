@@ -6,8 +6,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { getServerFile } from "@/api/client";
 import { deleteReport } from "@/api/compliance";
+import { useAuth } from "@/context/useAuth";
+import { useCurrentUser } from "@/hooks/queries/use-users";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { downloadServerFile } from "@/lib/download";
+import { Permissions } from "@/lib/permissions";
 import { formatDateTime, getErrorMessage } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
@@ -41,6 +44,8 @@ function SummaryRow({ label, value }: { readonly label: string; readonly value: 
 export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
+  const { hasPermission } = useAuth();
+  const { data: me } = useCurrentUser();
 
   const del = useMutation({
     mutationFn: (id: string) => deleteReport(id),
@@ -116,16 +121,18 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                   </div>
                 )}
               </div>
-              <DialogFooter className="mt-4">
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={confirm.openDialog}
-                  disabled={del.isPending}
-                >
-                  Delete report
-                </Button>
-              </DialogFooter>
+              {(report.requested_by === me?.id || hasPermission(Permissions.SYSTEM_MANAGE)) && (
+                <DialogFooter className="mt-4">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={confirm.openDialog}
+                    disabled={del.isPending}
+                  >
+                    Delete report
+                  </Button>
+                </DialogFooter>
+              )}
             </>
           )}
         </DialogContent>
