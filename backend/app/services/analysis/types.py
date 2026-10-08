@@ -1,7 +1,6 @@
 """Type definitions for the analysis module."""
 
-from datetime import datetime
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -118,63 +117,3 @@ class ReachabilitySummary(TypedDict):
     reachable_vulnerabilities: list[VulnerabilityInfo]
     unreachable_vulnerabilities: list[VulnerabilityInfo]
     timestamp: str
-
-
-class FindingDict(TypedDict, total=False):
-    """A finding document as stored in the database."""
-
-    _id: str
-    scan_id: str
-    project_id: str | None
-    finding_id: str
-    id: str
-    type: str
-    severity: str
-    component: str
-    version: str | None
-    description: str
-    scanners: list[str]
-    details: dict[str, Any]
-    found_in: list[str]
-    aliases: list[str]
-    related_findings: list[str]
-    related_findings_omitted: int | None
-    waived: bool
-    waiver_reason: str | None
-    reachable: bool | None
-    reachability_level: str | None
-    reachable_functions: list[str]
-
-
-class WaiverDict(TypedDict, total=False):
-    """A waiver document as stored in the database."""
-
-    _id: str
-    project_id: str | None
-    finding_id: str | None
-    package_name: str | None
-    package_version: str | None
-    finding_type: str | None
-    vulnerability_id: str | None
-    reason: str
-    status: str
-    expiration_date: datetime | None
-    created_by: str
-    created_at: datetime
-
-
-class ScanDict(TypedDict, total=False):
-    """A scan document as stored in the database."""
-
-    _id: str
-    project_id: str
-    branch: str
-    commit_hash: str | None
-    pipeline_id: int | None
-    pipeline_iid: int | None
-    status: str
-    is_rescan: bool
-    original_scan_id: str | None
-    latest_rescan_id: str | None
-    last_result_at: datetime | None
-    received_results: list[str]
