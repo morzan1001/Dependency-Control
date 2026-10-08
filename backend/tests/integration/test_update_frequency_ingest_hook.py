@@ -10,7 +10,7 @@ from app.core.init_db import create_indexes
 from app.models.project import Scan
 from app.repositories.update_frequency import ScanUpdateDeltaRepository
 from app.services.analysis.engine import run_analysis
-from tests.helpers.sboms import store_sbom
+from tests.helpers.sboms import sbom_ref, store_sbom
 
 pytestmark = pytest.mark.live_mongo
 
@@ -41,16 +41,6 @@ _SBOM_OLD = _cyclonedx([("requests", "2.31.0"), ("urllib3", "2.1.0")])
 _SBOM_NEW = _cyclonedx([("requests", "2.32.0"), ("urllib3", "2.1.0")])
 
 
-def _gridfs_ref(file_id: str) -> dict:
-    return {
-        "storage": "gridfs",
-        "file_id": file_id,
-        "filename": f"sbom-{file_id}.json",
-        "type": "gridfs_reference",
-        "gridfs_id": file_id,
-    }
-
-
 @pytest_asyncio.fixture
 async def _stored_sboms(db):
     await create_indexes(db)
@@ -60,10 +50,10 @@ async def _stored_sboms(db):
 
 async def _ingest(db, file_id: str) -> str:
     scan = Scan(
-        project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref(file_id)], status="processing", worker_id=_WORKER
+        project_id=_PROJECT_ID, branch="main", sbom_refs=[sbom_ref(file_id)], status="processing", worker_id=_WORKER
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
-    assert await run_analysis(scan.id, [_gridfs_ref(file_id)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await run_analysis(scan.id, [sbom_ref(file_id)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     return scan.id
 
 
@@ -98,7 +88,7 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_del
         {"_id": first}, {"$set": {"status": "processing", "retry_count": ANALYSIS_MAX_RETRIES - 1}}
     )
     assert (
-        await run_analysis(first, [_gridfs_ref("69d5332457c8763c8d8c82df")], [], db, worker_id=_WORKER)
+        await run_analysis(first, [sbom_ref("69d5332457c8763c8d8c82df")], [], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -116,13 +106,13 @@ async def test_scan_still_completes_when_the_delta_write_fails(db, _stored_sboms
     scan = Scan(
         project_id=_PROJECT_ID,
         branch="main",
-        sbom_refs=[_gridfs_ref(_FILE_ID_OLD)],
+        sbom_refs=[sbom_ref(_FILE_ID_OLD)],
         status="processing",
         worker_id=_WORKER,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
 
-    assert await run_analysis(scan.id, [_gridfs_ref(_FILE_ID_OLD)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await run_analysis(scan.id, [sbom_ref(_FILE_ID_OLD)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     failing_write.assert_awaited()
     stored = await db.scans.find_one({"_id": scan.id})
     assert stored["status"] == "completed"

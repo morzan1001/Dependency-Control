@@ -9,7 +9,7 @@ from app.models.dependency import Dependency
 from app.models.project import Scan
 from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
-from tests.helpers.sboms import store_sbom
+from tests.helpers.sboms import sbom_ref, store_sbom
 
 pytestmark = pytest.mark.live_mongo
 
@@ -49,17 +49,6 @@ _SBOM_A = _cyclonedx_sbom(
 _SBOM_B = _cyclonedx_sbom([("flask", "3.0.0", "pkg:pypi/flask@3.0.0")])
 # The parser rejects a non-object metadata.
 _MALFORMED_SBOM = {**_SBOM_B, "metadata": []}
-
-
-def _gridfs_ref(file_id: str) -> dict:
-    # Mirrors the sbom_refs entries stored in prod scans.
-    return {
-        "storage": "gridfs",
-        "file_id": file_id,
-        "filename": f"sbom-{file_id}.json",
-        "type": "gridfs_reference",
-        "gridfs_id": file_id,
-    }
 
 
 async def _store_sboms(db, sbom_a: dict, sbom_b: dict) -> None:
@@ -111,10 +100,10 @@ def _second_file_unreadable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _stored_sboms):
-    scan_id = await _seed_rescan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_rescan(db, [sbom_ref(_FILE_ID_A)])
     await _seed_stored_dependency(db, _ORIGINAL_SCAN_ID, "requests", "2.31.0", "pkg:pypi/requests@2.31.0")
 
-    completed = await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
+    completed = await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
 
     assert completed == SCAN_STATUS_COMPLETED
     docs = await _dependency_docs(db, scan_id)
@@ -131,11 +120,11 @@ async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _stored_sboms
 
 @pytest.mark.asyncio
 async def test_rerunning_the_same_rescan_does_not_duplicate_dependencies(db, _stored_sboms):
-    scan_id = await _seed_rescan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_rescan(db, [sbom_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan_id)
     assert len(docs) == 3, f"a retried run must replace, not append, got {len(docs)}"
@@ -143,7 +132,7 @@ async def test_rerunning_the_same_rescan_does_not_duplicate_dependencies(db, _st
 
 @pytest.mark.asyncio
 async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, _stored_sboms):
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)
 
     assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
@@ -158,7 +147,7 @@ async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, 
 @pytest.mark.asyncio
 async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _stored_sboms, _second_file_unreadable):
     """If any SBOM of the run fails to load, the scan's stored deps must survive untouched."""
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     ingest_stored = [
@@ -182,7 +171,7 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _stored_
 @pytest.mark.asyncio
 async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_scan(db):
     await _store_sboms(db, _SBOM_A, _MALFORMED_SBOM)
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     await _seed_stored_dependency(db, scan.id, "flask", "3.0.0", "pkg:pypi/flask@3.0.0")
@@ -196,7 +185,7 @@ async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_sc
 @pytest.mark.asyncio
 async def test_a_rescan_with_an_unparsable_sbom_fails_and_leaves_the_lineage_on_the_earlier_analysis(db):
     await _store_sboms(db, _SBOM_A, _MALFORMED_SBOM)
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     await db.scans.insert_one(
         {"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed", "latest_rescan_id": "earlier"}
     )
@@ -213,7 +202,7 @@ async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_
     db, _stored_sboms, _second_file_unreadable
 ):
     """A rescan has no stored inventory to keep, so a partial load would make it a head without dependencies."""
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
     scan_id = await _seed_rescan(db, refs)
 
@@ -228,7 +217,7 @@ async def test_ingest_prestored_dependencies_are_not_double_stored(db, _stored_s
     scan = Scan(
         project_id=_PROJECT_ID,
         branch="main",
-        sbom_refs=[_gridfs_ref(_FILE_ID_A)],
+        sbom_refs=[sbom_ref(_FILE_ID_A)],
         status="processing",
         worker_id=_WORKER,
     )
@@ -240,7 +229,7 @@ async def test_ingest_prestored_dependencies_are_not_double_stored(db, _stored_s
     ]:
         await _seed_stored_dependency(db, scan.id, name, version, purl)
 
-    assert await run_analysis(scan.id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await run_analysis(scan.id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan.id)
     assert len(docs) == 3, f"ingest-stored deps must not be stored a second time, got {len(docs)}"
@@ -285,7 +274,7 @@ async def test_cross_sbom_duplicate_is_merged_by_the_analysis_run(db):
     )
     await _store_sboms(db, sbom_app, sbom_base)
 
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)
 
     assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
