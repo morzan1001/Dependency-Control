@@ -78,7 +78,7 @@ callgraph-upload:
   script:
     - *download-scanner
     # madge finds a package import only through node_modules.
-    - if [ -f package-lock.json ]; then npm ci --ignore-scripts; fi
+    - if [ -f package-lock.json ]; then npm ci --ignore-scripts || true; fi
     - ./scanner.sh callgraph
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

@@ -107,5 +107,5 @@ jobs:
           echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
           chmod +x scanner.sh
           # madge finds a package import only through node_modules.
-          if [ -f package-lock.json ]; then npm ci --ignore-scripts; fi
+          if [ -f package-lock.json ]; then npm ci --ignore-scripts || true; fi
           ./scanner.sh callgraph

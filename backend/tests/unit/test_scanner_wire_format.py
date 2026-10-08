@@ -1,5 +1,6 @@
 """The live scanner uploads the same sbom and cbom bodies as the frozen 1.2.0 release, a release mark only for an
-environment the ingest accepts, and each callgraph to the project the ingest config names."""
+environment the ingest accepts, and each callgraph to the project the ingest config names; the CI examples reach that
+callgraph upload."""
 
 import json
 import os
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from tests.test_api.test_callgraph_parsers import MADGE_TS_OUTPUT
 
@@ -218,3 +220,44 @@ def test_a_callgraph_goes_to_the_project_the_ingest_config_names(files, expected
 
     assert capture.with_name("body.json.urls").read_text().split() == ["http://dc.invalid/api/v1/projects/p1/callgraph"]
     assert json.loads(capture.read_text()) == {**expected, **_CALLGRAPH_META}
+
+
+# curl downloads a scanner.sh that records the command it runs.
+_DOWNLOAD_STUB = r"""#!/usr/bin/env bash
+while [[ $# -gt 0 ]]; do
+    [[ "$1" == "-o" ]] && printf '#!/bin/sh\necho "$@" >> "$SCANNER_RAN"\n' > "$2"
+    shift
+done
+"""
+
+
+def _callgraph_job_script(example: str) -> str:
+    doc = yaml.safe_load((_REPO / "ci-cd" / example).read_text())
+    if "jobs" in doc:
+        return doc["jobs"]["callgraph-upload"]["steps"][-1]["run"]
+    return "\n".join(doc["callgraph-upload"]["script"])
+
+
+@pytest.mark.parametrize("example", ["github-workflow.example.yaml", "gitlab-ci.example.yaml"])
+def test_a_failed_dependency_install_still_runs_the_callgraph_upload(example, tmp_path):
+    """Both runners stop a job at its first failing command; without node_modules madge still uploads the import graph."""
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    _stub(stubs, "curl", _DOWNLOAD_STUB)
+    _stub(stubs, "sha256sum", "#!/bin/sh\ncat > /dev/null\n")
+    _stub(stubs, "npm", "#!/bin/sh\nexit 1\n")
+    (tmp_path / "package-lock.json").write_text("{}")
+    ran = tmp_path / "scanner-ran"
+    ran.touch()
+
+    job = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", _callgraph_job_script(example)],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}", "SCANNER_RAN": str(ran)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert (job.returncode, ran.read_text().split()) == (0, ["callgraph"]), job.stderr
