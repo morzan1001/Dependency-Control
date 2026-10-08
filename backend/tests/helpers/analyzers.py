@@ -7,7 +7,7 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.services.analysis import engine, registry
-from app.services.analyzers import Analyzer
+from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 from app.services.sbom_parser import parse_sbom

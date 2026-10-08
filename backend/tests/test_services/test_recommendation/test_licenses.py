@@ -4,7 +4,7 @@ import pytest
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.aggregation import ResultAggregator
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.analyzers.license_compliance.constants import UNDETERMINED_LICENSE_ID
 from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN
 from app.services.recommendation.licenses import _LICENSES_NAMED, detect_license_drift, process_licenses

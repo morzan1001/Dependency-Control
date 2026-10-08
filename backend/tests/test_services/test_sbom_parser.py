@@ -2,6 +2,8 @@
 
 import json
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +19,18 @@ from app.services.sbom_parser import (
     parse_sbom,
 )
 from tests.helpers.comparisons import counted_str_type
+
+
+def test_the_parser_imports_in_a_fresh_interpreter():
+    imported = subprocess.run(
+        [sys.executable, "-c", "import app.services.sbom_parser"],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert imported.returncode == 0, imported.stderr
 
 
 class TestIsUrl:

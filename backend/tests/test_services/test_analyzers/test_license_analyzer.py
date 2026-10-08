@@ -16,7 +16,7 @@ from app.models.license import (
     LicenseCategory,
 )
 from app.schemas.project import LicensePolicySchema
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.analyzers.license_compliance.compatibility import partition_or_groups
 from app.services.analyzers.license_compliance.constants import (
     LICENSE_DATABASE,
@@ -102,7 +102,7 @@ class TestEvaluateLicense:
         self.analyzer = LicenseAnalyzer()
 
     def _get_license_info(self, spdx_id):
-        return self.analyzer.LICENSE_DATABASE[spdx_id]
+        return LICENSE_DATABASE[spdx_id]
 
     def _evaluate(self, spdx_id, allow_strong=False, allow_network=False):
         info = self._get_license_info(spdx_id)
@@ -178,7 +178,7 @@ class TestLicenseDatabase:
     """Spot-check that LICENSE_DATABASE has correct entries and categories."""
 
     def setup_method(self):
-        self.db = LicenseAnalyzer.LICENSE_DATABASE
+        self.db = LICENSE_DATABASE
 
     @pytest.mark.parametrize(
         ("spdx_id", "category"),
@@ -236,7 +236,7 @@ class TestEvaluateLicenseWithContext:
         self.analyzer = LicenseAnalyzer()
 
     def _get_license_info(self, spdx_id):
-        return self.analyzer.LICENSE_DATABASE[spdx_id]
+        return LICENSE_DATABASE[spdx_id]
 
     def _evaluate_with_policy(self, spdx_id, **policy_kwargs):
         info = self._get_license_info(spdx_id)

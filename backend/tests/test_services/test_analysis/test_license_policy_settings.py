@@ -7,7 +7,7 @@ from app.models.project import Project
 from app.models.system import SystemSettings
 from app.repositories.projects import ProjectRepository
 from app.services.analysis.engine import _build_settings_resolver, _load_project_settings_overrides
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.sbom_parser import parse_sbom
 from tests.mocks.fake_mongo import FakeDatabase
 

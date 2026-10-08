@@ -9,7 +9,8 @@ import pytest
 from app.models.finding import Severity
 from app.models.license import LicenseCategory
 from app.services.aggregation.aggregator import ResultAggregator
-from app.services.analyzers.license_compliance import LicenseAnalyzer, normalizer
+from app.services.analyzers.license_compliance import normalizer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.analyzers.license_compliance.compatibility import partition_or_groups
 from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
 from app.services.inventory.licenses import license_ids

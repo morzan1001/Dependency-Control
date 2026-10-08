@@ -39,7 +39,7 @@ from app.services.analysis.engine import _build_settings_resolver, _partial_resu
 from app.services.analysis.registry import CRYPTO_ANALYZERS, POST_PROCESSOR_ANALYZERS, analyzer_factories
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
-from app.services.analyzers import Analyzer
+from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language

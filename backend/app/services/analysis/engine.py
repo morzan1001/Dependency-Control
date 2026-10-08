@@ -77,7 +77,8 @@ from app.services.analysis.registry import (
 )
 from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
-from app.services.analyzers import Analyzer, CLIAnalyzer
+from app.services.analyzers.base import Analyzer
+from app.services.analyzers.cli_base import CLIAnalyzer
 from app.services.analyzers.cli_base import TEMP_SBOM_PREFIX
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load_iana_catalog
 from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy

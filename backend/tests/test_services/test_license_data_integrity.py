@@ -3,7 +3,7 @@
 import pytest
 
 from app.services.aggregation import ResultAggregator
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from tests.helpers.enrichment import enrichment_payload
 
 TZDATA_EXPRESSION = "LicenseRef-Fedora-Public-Domain AND (GPL-2.0-only WITH ClassPath-exception-2.0)"

@@ -26,7 +26,7 @@ from app.schemas.project import LicensePolicySchema
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _prepare_finding_records, _stamp_first_seen
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY

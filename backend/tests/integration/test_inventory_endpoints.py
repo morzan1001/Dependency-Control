@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 
 _PID = "test-project-id"
 _NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)

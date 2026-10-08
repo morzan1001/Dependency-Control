@@ -37,8 +37,6 @@ def classify_license(member: str, license_id: str | None = None) -> LicenseInfo 
 class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
 
-    LICENSE_DATABASE: dict[str, LicenseInfo] = LICENSE_DATABASE
-
     async def analyze(
         self,
         sbom: dict[str, Any],

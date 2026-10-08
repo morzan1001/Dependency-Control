@@ -11,7 +11,7 @@ import pytest
 from app.schemas.sbom import SBOMFormat
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
-from app.services.analyzers import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.sbom_parser import parse_sbom
 from tests.helpers.analyzers import process_sbom_document
 
