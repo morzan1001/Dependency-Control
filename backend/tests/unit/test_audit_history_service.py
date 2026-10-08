@@ -4,6 +4,7 @@ import pytest
 
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity
+from app.models.user import User
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.schemas.policy_audit import PolicyAuditAction
 from app.services.audit.history import record_policy_change
@@ -98,7 +99,7 @@ async def test_record_policy_change_survives_webhook_failure():
 async def test_record_policy_change_denormalises_actor():
     db = MagicMock()
     insert_mock = AsyncMock()
-    actor = MagicMock(id="u42", display_name="alice", email="alice@example.com")
+    actor = User(id="u42", username="alice", email="alice@example.com")
     with (
         patch(
             "app.services.audit.history.PolicyAuditRepository",
