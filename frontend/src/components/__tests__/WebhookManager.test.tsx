@@ -210,6 +210,36 @@ describe("WebhookManager", () => {
       expect(saveButton()).toBeDisabled();
     });
 
+    it.each([
+      ["closed", () => fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })],
+      [
+        "saved",
+        () => {
+          fireEvent.click(screen.getByRole("switch", { name: "Active" }));
+          fireEvent.click(saveButton());
+        },
+      ],
+    ])("returns focus to the Edit button once the dialog is %s", async (_case, close) => {
+      renderEditor(stored);
+
+      close();
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Edit webhook" })).toHaveFocus());
+    });
+
+    it("diffs against the webhook as it was when the dialog opened", async () => {
+      const onUpdate = vi.fn().mockResolvedValue(stored);
+      const props = { isLoading: false, onCreate: vi.fn(), onUpdate, onDelete: vi.fn() };
+      const { rerender } = render(<WebhookManager webhooks={[stored]} {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: "Edit webhook" }));
+
+      rerender(<WebhookManager webhooks={[{ ...stored, events: ["scan.completed"] }]} {...props} />);
+      fireEvent.change(urlInput(), { target: { value: "https://example.com/fixed" } });
+      const [, data] = await saved(onUpdate);
+
+      expect(data).toStrictEqual({ url: "https://example.com/fixed" });
+    });
+
     it("discards unsaved edits when the dialog is closed", () => {
       renderEditor(stored);
       fireEvent.change(urlInput(), { target: { value: "https://example.com/abandoned" } });

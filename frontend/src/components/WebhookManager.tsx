@@ -177,9 +177,20 @@ export function WebhookManager({
                     <div className="flex">
                       {canUpdate && (
                         <>
-                          <Button variant="ghost" size="icon" aria-label="Edit webhook" title="Edit webhook" onClick={() => setEditing(webhook)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
+                          <Dialog open={editing?.id === webhook.id} onOpenChange={open => setEditing(open ? webhook : null)}>
+                            <DialogTrigger asChild>
+                              <Button variant="ghost" size="icon" aria-label="Edit webhook" title="Edit webhook">
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </DialogTrigger>
+                            {editing?.id === webhook.id && (
+                              <WebhookForm
+                                webhook={editing}
+                                onUpdate={data => onUpdate(editing.id, data)}
+                                onSaved={() => setEditing(null)}
+                              />
+                            )}
+                          </Dialog>
                           <Button variant="ghost" size="icon" aria-label="Send test" title="Send test" onClick={() => handleTest(webhook.id)}>
                             <Send className="h-4 w-4" />
                           </Button>
@@ -197,15 +208,6 @@ export function WebhookManager({
             )}
           </TableBody>
         </Table>
-        {editing && (
-          <Dialog open onOpenChange={() => setEditing(null)}>
-            <WebhookForm
-              webhook={editing}
-              onUpdate={data => onUpdate(editing.id, data)}
-              onSaved={() => setEditing(null)}
-            />
-          </Dialog>
-        )}
       </CardContent>
     </Card>
   )
