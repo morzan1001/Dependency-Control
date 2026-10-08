@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 
@@ -19,3 +20,20 @@ def test_liveness_recycles_past_max_pod_uptime(monkeypatch, max_uptime, uptime, 
         assert response == {"status": "alive", "uptime_seconds": uptime}
     else:
         assert response.status_code == status_code
+
+
+@pytest.mark.parametrize(
+    ("cache_status", "component"),
+    [("healthy", "connected"), ("unhealthy", "unavailable (degraded mode)")],
+)
+def test_readiness_reports_the_cache_without_depending_on_it(monkeypatch, cache_status, component):
+    async def health_check():
+        return {"status": cache_status}
+
+    monkeypatch.setattr(health.cache_service, "health_check", health_check)
+    monkeypatch.setattr(health.db, "client", None)
+
+    response = asyncio.run(health.readiness())
+
+    assert response.status_code == 503
+    assert json.loads(response.body)["components"]["cache"] == component

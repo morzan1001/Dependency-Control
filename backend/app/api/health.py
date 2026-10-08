@@ -66,14 +66,8 @@ async def readiness() -> dict[str, Any] | JSONResponse:
             is_ready = False
 
     # Cache is optional; its failure degrades but does not fail readiness.
-    try:
-        cache_health = await cache_service.health_check()
-        if cache_health.get("status") == "healthy":
-            components["cache"] = "connected"
-        else:
-            components["cache"] = "unavailable (degraded mode)"
-    except Exception as e:
-        components["cache"] = f"unavailable: {e!s}"
+    cache_health = await cache_service.health_check()
+    components["cache"] = "connected" if cache_health.get("status") == "healthy" else "unavailable (degraded mode)"
 
     if is_ready:
         return {"status": "ready", "components": components}
@@ -87,11 +81,4 @@ async def readiness() -> dict[str, Any] | JSONResponse:
 @router.get("/cache", summary="Cache Health & Statistics")
 async def cache_health() -> dict[str, Any]:
     """Cache health status and statistics."""
-    try:
-        return await cache_service.health_check()
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e),
-            "available": False,
-        }
+    return await cache_service.health_check()
