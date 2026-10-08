@@ -1017,6 +1017,9 @@ GITLAB_USER_EMAIL_CACHE_TTL = 86400  # 24 hours
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
 GITHUB_TEAM_SYNC_CACHE_TTL = 300  # 5 minutes
 
+# Every job of every pipeline ingests, so a project's GitLab ownership is resolved once per window.
+GITLAB_TEAM_SYNC_WINDOW_SECONDS = 600  # 10 minutes
+
 # Profile emails rarely change, and each is a request per member of every holding team.
 GITHUB_USER_EMAIL_CACHE_TTL = 21600  # 6 hours
 

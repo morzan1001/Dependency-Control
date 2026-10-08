@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.api.deps import _github_team_sync_stages, _gitlab_team_sync_stages
-from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
+from app.core.constants import (
+    GITLAB_TEAM_SYNC_WINDOW_SECONDS,
+    MAX_PROJECT_TEAMS,
+    TEAM_SOURCE_GITHUB,
+    TEAM_SOURCE_GITLAB,
+    team_source,
+)
 from app.models.project import Project
 from app.models.team import TeamSyncResult
 from app.repositories.projects import ProjectRepository
@@ -314,3 +320,26 @@ async def test_a_hand_assigned_owner_the_sync_also_resolves_survives_its_later_l
     assert stages == []
     assert stored["team_ids"] == ["platform"]
     assert stored["team_sources"] == {"platform": "manual"}
+
+
+async def _resolutions(cache, monkeypatch, ingests: int) -> int:
+    monkeypatch.setattr("app.api.deps.cache_service", cache, raising=False)
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB})
+    service = MagicMock()
+    service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(["gl-new"]))
+    for _ in range(ingests):
+        await _gitlab_team_sync_stages(project, _GITLAB_INSTANCE, 100, "grp/proj", service, db)
+    return service.sync_team_from_gitlab.await_count
+
+
+@pytest.mark.asyncio
+async def test_the_ingests_of_one_window_resolve_gitlab_ownership_once(fake_cache, monkeypatch):
+    assert await _resolutions(fake_cache, monkeypatch, ingests=3) == 1
+    window = await fake_cache._client.ttl(fake_cache._make_key(f"gitlab_team_sync:{_GITLAB}:100"))
+    assert 0 < window <= GITLAB_TEAM_SYNC_WINDOW_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_every_ingest_resolves_gitlab_ownership_while_the_cache_is_down(monkeypatch):
+    assert await _resolutions(MagicMock(incr=AsyncMock(return_value=None)), monkeypatch, ingests=2) == 2

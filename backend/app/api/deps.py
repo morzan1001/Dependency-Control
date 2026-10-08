@@ -10,11 +10,13 @@ from fastapi.security import OAuth2PasswordBearer
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import security
+from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.constants import (
     API_KEY_LAST_USED_RESOLUTION_SECONDS,
     API_KEY_SURFACE_ADHOC,
     API_KEY_SURFACE_MCP,
+    GITLAB_TEAM_SYNC_WINDOW_SECONDS,
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
@@ -218,6 +220,9 @@ async def _gitlab_team_sync_stages(
     came from.
     """
     source = team_source(TEAM_SOURCE_GITLAB, instance_id)
+    window = f"gitlab_team_sync:{source}:{gitlab_project_id}"
+    if (await cache_service.incr(window, GITLAB_TEAM_SYNC_WINDOW_SECONDS) or 0) > 1:
+        return []
     resolved = await gitlab_service.sync_team_from_gitlab(
         db, gitlab_project_id, gitlab_project_path, owner_budget=_owner_budget(project, source)
     )
