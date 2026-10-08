@@ -277,7 +277,8 @@ async def _gather(db, resolved, key):
 @pytest.mark.asyncio
 async def test_engine_gather_inputs_builds_evaluation_input(db):
     await seed_crypto_policies(db)
-    await _store_project(db, "p1")
+    scan_id = await _store_project(db, "p1")
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     result = await _gather(db, await _user_scope(db), ReportFramework.NIST_SP_800_131A)
 
@@ -314,7 +315,8 @@ async def test_an_unscanned_project_withholds_a_cve_pass(db):
 )
 async def test_a_failed_analyzer_is_a_gap_only_for_the_framework_it_feeds(db, failed, gap_in, no_gap_in):
     await seed_crypto_policies(db)
-    await _store_project(db, "p1", failed_analyzers=[failed, "end_of_life"])
+    scan_id = await _store_project(db, "p1", failed_analyzers=[failed, "end_of_life"])
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     affected = await _gather(db, _project_scope(), gap_in)
     unaffected = await _gather(db, _project_scope(), no_gap_in)
@@ -432,6 +434,41 @@ def _rsa(pid, scan_id, key_size_bits):
         key_size_bits=key_size_bits,
         occurrence_locations=["src/tls.py"],
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key", [ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT, ReportFramework.NIST_SP_800_131A]
+)
+async def test_an_empty_scope_withholds_every_verdict_its_absence_would_carry(db, key):
+    await seed_crypto_policies(db)
+
+    inputs, evaluation = await ComplianceReportEngine().evaluate(db, await _user_scope(db), FRAMEWORK_REGISTRY[key])
+
+    assert inputs.coverage.gaps == ["the scope has no projects"]
+    assert {control.status for control in evaluation.controls} == {ControlStatus.NOT_EVALUATED.value}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [k for k in ReportFramework if k not in engine_module._NON_CRYPTO_FRAMEWORKS])
+async def test_a_scan_without_crypto_inventory_withholds_all_but_the_policy_disabled_verdicts(db, key):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    framework = FRAMEWORK_REGISTRY[key]
+
+    inputs, evaluation = await ComplianceReportEngine().evaluate(db, _project_scope(), framework)
+
+    disabled = {rule.rule_id for rule in inputs.policy_rules if not rule.enabled}
+    policy_off = {
+        c.control_id for c in framework.controls if c.maps_to_rule_ids and set(c.maps_to_rule_ids) <= disabled
+    }
+    assert inputs.coverage.gaps == ["project 'name-p1' has no crypto assets in scan scan-p1"]
+    assert {c.control_id: c.status for c in evaluation.controls} == {
+        c.control_id: ControlStatus.NOT_APPLICABLE.value
+        if c.control_id in policy_off
+        else ControlStatus.NOT_EVALUATED.value
+        for c in evaluation.controls
+    }
 
 
 @pytest.mark.asyncio

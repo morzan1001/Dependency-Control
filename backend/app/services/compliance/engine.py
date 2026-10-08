@@ -24,6 +24,7 @@ from app.schemas.compliance import (
     ReportStatus,
 )
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
+from app.schemas.projections import ProjectWithScanId
 from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, VULNERABILITY_ANALYZERS
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver, read_scope_projects
 from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VERSION
@@ -142,7 +143,7 @@ class ComplianceReportEngine:
     ) -> EvaluationInput:
         finding_query = self._finding_type_filter(framework)
         clause, fields, producers = finding_query or ({}, (), frozenset())
-        scan_by_project, gaps = await self._pick_scan_ids(db, resolved, producers)
+        scan_by_project, gaps, projects = await self._pick_scan_ids(db, resolved, producers)
         scan_ids = list(scan_by_project.values())
         findings: list[dict] = []
         if finding_query:
@@ -150,6 +151,12 @@ class ComplianceReportEngine:
         assets: list[CryptoAsset] = []
         if framework.key not in _NON_CRYPTO_FRAMEWORKS:
             assets = await self._collect_crypto_assets(db, scan_by_project)
+            inventoried = {asset.scan_id for asset in assets}
+            gaps += [
+                f"project '{project.name}' has no crypto assets in scan {scan_id}"
+                for project in projects
+                if (scan_id := scan_by_project.get(project.id)) and scan_id not in inventoried
+            ]
         project_ids = resolved.project_ids or []
         if resolved.scope == "project" and len(project_ids) == 1:
             effective = await CryptoPolicyResolver(db).resolve(project_ids[0])
@@ -180,8 +187,8 @@ class ComplianceReportEngine:
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
         producers: frozenset[str],
-    ) -> tuple[dict[str, str], list[str]]:
-        """project_id -> evaluated scan, plus the gaps: no usable scan, a failed producing analyzer, or none running."""
+    ) -> tuple[dict[str, str], list[str], list[ProjectWithScanId]]:
+        """project_id -> evaluated scan, the gaps (no project, no usable scan, a failed or no producer), the projects."""
         from app.services.releases import resolve_scan_ids
 
         projects = resolved.projects
@@ -197,7 +204,7 @@ class ComplianceReportEngine:
             ).to_list(length=len(scan_by_project))
             failed_by_scan = {doc["_id"]: sorted(producers.intersection(doc["failed_analyzers"])) for doc in docs}
         switchable = producers & SELECTABLE_ANALYZERS
-        gaps: list[str] = []
+        gaps = [] if projects else ["the scope has no projects"]
         for project in projects:
             scan_id = scan_by_project.get(project.id)
             if scan_id is None:
@@ -206,7 +213,7 @@ class ComplianceReportEngine:
                 gaps.append(f"project '{project.name}': {', '.join(failed)} failed in scan {scan_id}")
             elif switchable and switchable.isdisjoint(project.active_analyzers):
                 gaps.append(f"project '{project.name}' runs none of {', '.join(sorted(switchable))}")
-        return scan_by_project, gaps
+        return scan_by_project, gaps, projects
 
     async def _collect_crypto_assets(
         self,
