@@ -287,25 +287,6 @@ export interface DependencyMetadata {
   enrichment_sources?: string[];
 }
 
-export type RecommendationType = 
-  | 'base_image_update'
-  | 'direct_dependency_update'
-  | 'transitive_fix_via_parent'
-  | 'no_fix_available'
-  | 'rotate_secrets'
-  | 'fix_code_security'
-  | 'fix_infrastructure'
-  | 'license_compliance'
-  | 'supply_chain_risk'
-  | 'version_fragmentation'
-  | 'dev_in_production'
-  | 'recurring_vulnerability'
-  | 'regression_detected'
-  | 'deep_dependency_chain'
-  | 'duplicate_functionality'
-  | 'cross_project_pattern'
-  | 'shared_vulnerability';
-
 export type RecommendationPriority = 'critical' | 'high' | 'medium' | 'low';
 
 // Severity counts are optional; hygiene cards count no findings (total 0).
@@ -351,7 +332,6 @@ export interface RecommendationAction {
     project_count?: number;
   }>;
   new_critical_cves?: string[];
-  delta?: number;
   deepest_chains?: Array<{
     package: string;
     depth: number;
@@ -362,8 +342,6 @@ export interface RecommendationAction {
     found: string[];
     suggestion: string;
   }>;
-  affected_projects?: string[];
-  total_affected?: number;
   priority_projects?: Array<{
     name: string;
     id: string;
@@ -373,7 +351,7 @@ export interface RecommendationAction {
 }
 
 export interface Recommendation {
-  type: RecommendationType;
+  type: string;
   priority: RecommendationPriority;
   title: string;
   description: string;
@@ -385,7 +363,6 @@ export interface Recommendation {
   // generator cut that list.
   rank: number;
   ranked_out_of: number;
-  affected_projects?: Array<{ id: string; name: string }>;
   action: RecommendationAction;
   effort: 'low' | 'medium' | 'high';
 }

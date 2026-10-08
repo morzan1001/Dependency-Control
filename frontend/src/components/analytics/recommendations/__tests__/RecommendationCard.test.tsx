@@ -193,10 +193,7 @@ describe('RecommendationCard type badge', () => {
     render(
       <MemoryRouter>
         <RecommendationCard
-          recommendation={makeRecommendation(
-            { type: 'review_license_drift' },
-            { type: 'license_drift' as Recommendation['type'] },
-          )}
+          recommendation={makeRecommendation({ type: 'review_license_drift' }, { type: 'license_drift' })}
         />
       </MemoryRouter>,
     )

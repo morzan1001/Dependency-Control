@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { Recommendation, RecommendationAction, CrossProjectCve, RecurringCve } from '@/types/analytics'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +24,6 @@ import {
   Globe,
   Layers,
   Lightbulb,
-  Package,
   RefreshCw,
   TrendingDown,
   TrendingUp,
@@ -442,7 +440,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       <div className="text-xs text-muted-foreground mt-1">
                         Versions in use: <span className="font-mono">{pkg.versions?.join(', ') || 'unknown'}</span>
                       </div>
-                      {pkg.suggestion && pkg.suggestion !== 'Use latest stable' && (
+                      {pkg.suggestion && (
                         <div className="text-xs text-success mt-1">
                           Recommended: <span className="font-mono">{pkg.suggestion}</span>
                         </div>
@@ -492,32 +490,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       <Badge key={cve} variant="outline">{cve}</Badge>
                     );
                   })}
-                </div>
-              </div>
-            )}
-            {recommendation.affected_projects && recommendation.affected_projects.length > 0 && (
-              <div className="space-y-2">
-                <h5 className="text-sm font-medium flex items-center gap-2">
-                  <FolderTree className="h-4 w-4" />
-                  Affected Projects
-                </h5>
-                <div className="flex flex-wrap gap-2">
-                  {recommendation.affected_projects.slice(0, 5).map((proj) => (
-                    <Link
-                      key={proj.id}
-                      to={`/projects/${proj.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-muted hover:bg-muted/80 text-sm transition-colors"
-                    >
-                      <Package className="h-3 w-3" />
-                      {proj.name}
-                    </Link>
-                  ))}
-                  {recommendation.affected_projects.length > 5 && (
-                    <Badge variant="secondary">
-                      +{recommendation.affected_projects.length - 5} more
-                    </Badge>
-                  )}
                 </div>
               </div>
             )}
