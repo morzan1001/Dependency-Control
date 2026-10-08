@@ -79,6 +79,12 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
     color: 'text-pink-500',
     bgColor: 'bg-pink-500/10',
   },
+  license_drift: {
+    icon: Scale,
+    label: 'License Drift',
+    color: 'text-pink-500',
+    bgColor: 'bg-pink-500/10',
+  },
   supply_chain_risk: {
     icon: AlertTriangle,
     label: 'Supply Chain Risk',

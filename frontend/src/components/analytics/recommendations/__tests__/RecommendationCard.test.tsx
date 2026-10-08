@@ -119,13 +119,13 @@ describe('RecommendationCard CVE rendering', () => {
     expect(screen.queryByText(/^Ranked /)).not.toBeInTheDocument()
   })
 
-  it('counts the vulnerabilities a card fixes', () => {
+  it('counts the findings a card addresses', () => {
     render(
       <MemoryRouter>
         <RecommendationCard recommendation={makeRecommendation({ type: 'update_dependency' })} />
       </MemoryRouter>,
     )
-    expect(screen.getByText('vulns fixed')).toBeInTheDocument()
+    expect(screen.getByText('addressed')).toBeInTheDocument()
   })
 
   it('breaks the vulnerability count down by severity on focus', async () => {
@@ -134,7 +134,7 @@ describe('RecommendationCard CVE rendering', () => {
         <RecommendationCard recommendation={makeRecommendation({ type: 'update_dependency' })} />
       </MemoryRouter>,
     )
-    fireEvent.focus(screen.getByText('vulns fixed').parentElement!)
+    fireEvent.focus(screen.getByText('addressed').parentElement!)
     expect(await screen.findByRole('tooltip')).toHaveTextContent('High: 1')
   })
 
@@ -149,12 +149,12 @@ describe('RecommendationCard CVE rendering', () => {
         />
       </MemoryRouter>,
     )
-    fireEvent.focus(screen.getByText('vulns fixed').parentElement!)
+    fireEvent.focus(screen.getByText('addressed').parentElement!)
     expect(screen.getByText('3')).toBeInTheDocument()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
-  it('shows no vulnerability count on a hygiene card, which counts no findings', () => {
+  it('shows no count on a hygiene card, which counts no findings', () => {
     render(
       <MemoryRouter>
         <RecommendationCard
@@ -162,7 +162,33 @@ describe('RecommendationCard CVE rendering', () => {
         />
       </MemoryRouter>,
     )
+    expect(screen.queryByText('addressed')).not.toBeInTheDocument()
+  })
+
+  it('badges a license-drift card as such and does not call the drifted components fixed vulnerabilities', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation({ type: 'review_license_drift' }, { type: 'license_drift', impact: { total: 3 } })}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('License Drift')).toBeInTheDocument()
+    expect(screen.queryByText('Dependency Update')).not.toBeInTheDocument()
     expect(screen.queryByText('vulns fixed')).not.toBeInTheDocument()
+    expect(screen.getByText('addressed')).toBeInTheDocument()
+  })
+
+  it('names a card type without its own entry after the type, not as a dependency update', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation({ type: 'replace_algorithm' }, { type: 'replace_weak_algorithm' })}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Replace Weak Algorithm')).toBeInTheDocument()
+    expect(screen.queryByText('Dependency Update')).not.toBeInTheDocument()
   })
 
   it('still renders the generic Related Vulnerabilities block for other action types', () => {

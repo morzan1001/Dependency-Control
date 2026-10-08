@@ -287,25 +287,6 @@ export interface DependencyMetadata {
   enrichment_sources?: string[];
 }
 
-export type RecommendationType = 
-  | 'base_image_update'
-  | 'direct_dependency_update'
-  | 'transitive_fix_via_parent'
-  | 'no_fix_available'
-  | 'rotate_secrets'
-  | 'fix_code_security'
-  | 'fix_infrastructure'
-  | 'license_compliance'
-  | 'supply_chain_risk'
-  | 'version_fragmentation'
-  | 'dev_in_production'
-  | 'recurring_vulnerability'
-  | 'regression_detected'
-  | 'deep_dependency_chain'
-  | 'duplicate_functionality'
-  | 'cross_project_pattern'
-  | 'shared_vulnerability';
-
 export type RecommendationPriority = 'critical' | 'high' | 'medium' | 'low';
 
 // Severity counts are optional; hygiene cards count no findings (total 0).
@@ -373,7 +354,7 @@ export interface RecommendationAction {
 }
 
 export interface Recommendation {
-  type: RecommendationType;
+  type: string;
   priority: RecommendationPriority;
   title: string;
   description: string;

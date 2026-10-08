@@ -58,7 +58,12 @@ function componentsHeading(recommendation: Recommendation): string {
 export function RecommendationCard({ recommendation }: Readonly<{ recommendation: Recommendation }>) {
   const [expanded, setExpanded] = useState(false)
 
-  const typeInfo = typeConfig[recommendation.type] || typeConfig.direct_dependency_update
+  const typeInfo = typeConfig[recommendation.type] ?? {
+    icon: Lightbulb,
+    label: recommendation.type.split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted',
+  }
   const priorityInfo = priorityConfig[recommendation.priority] || priorityConfig.medium
   const effortInfo = effortConfig[recommendation.effort] || effortConfig.medium
   const TypeIcon = typeInfo.icon
@@ -109,7 +114,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       <div className="flex items-center gap-1.5 text-sm">
                         <Zap className="h-4 w-4 text-yellow-500" />
                         <span className="font-medium">{recommendation.impact.total}</span>
-                        <span className="text-muted-foreground">vulns fixed</span>
+                        <span className="text-muted-foreground">addressed</span>
                       </div>
                     </TooltipTrigger>
                     {severityCounts.length > 0 && (
