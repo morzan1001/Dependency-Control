@@ -9,12 +9,8 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.databases import DATABASES
 from tests.helpers.permission_presets import PRESET_ADMIN
-
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 pytestmark = pytest.mark.asyncio
 
@@ -55,7 +51,7 @@ async def _seed(db) -> None:
     )
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_a_chat_finding_link_resolves_through_the_findings_search(db, database, client, admin_auth_headers):
     await _seed(db)
     admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))

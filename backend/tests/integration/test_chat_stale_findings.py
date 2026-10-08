@@ -17,16 +17,11 @@ from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.databases import DATABASES
 from tests.helpers.findings import aggregated_vulnerability
 from tests.helpers.permission_presets import PRESET_ADMIN
 
-# The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
-
-pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", _DATABASES)]
+pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
 
 _PROJECT = "p-stale"
 _HEAD = "scan-head"

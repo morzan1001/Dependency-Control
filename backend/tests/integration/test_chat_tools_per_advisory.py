@@ -8,14 +8,9 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.services.aggregation.versions import aggregate_fixed_version
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
+from tests.helpers.databases import DATABASES
 
-# The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
-
-pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", _DATABASES)]
+pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
 
 _PROJECT = "p-advisory"
 _SCAN = "s-head"

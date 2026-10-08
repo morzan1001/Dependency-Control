@@ -20,6 +20,7 @@ from app.services.analysis.engine import (
 )
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.stats import recalculate_project_stats
+from tests.helpers.databases import DATABASES
 from tests.mocks.fake_mongo import FakeDatabase
 
 pytestmark = pytest.mark.asyncio
@@ -34,11 +35,6 @@ _FIELD_REASON = "accepted component"
 _CVE_REASON = "not reachable"
 _SECRET_FILE = "deploy/values.yaml"
 _WORKER = "pod-a/worker-0"
-
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 
 def _vulnerable_component() -> Finding:
@@ -164,7 +160,7 @@ async def _finalize(db, scan_id: str) -> None:
     )
 
 
-@pytest.mark.parametrize("_database", _DATABASES)
+@pytest.mark.parametrize("_database", DATABASES)
 async def test_a_partial_cve_waiver_does_not_lift_a_whole_finding_waiver_at_ingest(db, _database):
     for waiver in (_field_waiver(), _partial_cve_waiver()):
         await WaiverRepository(db).create(waiver)
@@ -175,7 +171,7 @@ async def test_a_partial_cve_waiver_does_not_lift_a_whole_finding_waiver_at_inge
     assert [entry.get("waived") for entry in doc["details"]["vulnerabilities"]] == [True, None]
 
 
-@pytest.mark.parametrize("_database", _DATABASES)
+@pytest.mark.parametrize("_database", DATABASES)
 @pytest.mark.parametrize("cve_first", [False, True], ids=["whole-finding-first", "cve-first"])
 async def test_the_stored_scan_and_the_adhoc_gate_agree_on_the_same_waivers(db, _database, cve_first):
     waivers = [_field_waiver(None), _partial_cve_waiver(None)]
@@ -346,7 +342,7 @@ async def test_heads_analysis_records_each_waivers_outcome_and_leaves_the_recalc
     assert restamped == []
 
 
-@pytest.mark.parametrize("_database", _DATABASES)
+@pytest.mark.parametrize("_database", DATABASES)
 async def test_a_waiver_reaches_every_run_that_reports_the_restamped_scan(db, _database):
     """The rescan's run sits on the rescan and on its root; the root's own restamp leaves that run alone."""
     await create_indexes(db)

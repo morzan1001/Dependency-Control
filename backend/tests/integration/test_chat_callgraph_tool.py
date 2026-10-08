@@ -7,14 +7,10 @@ import pytest
 from app.models.callgraph import Callgraph, ModuleUsage
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.databases import DATABASES
 from tests.helpers.permission_presets import PRESET_ADMIN
 
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
-
-pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", _DATABASES)]
+pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
 
 _PROJECT = "p-callgraph"
 _JANUARY = datetime(2026, 1, 5, tzinfo=timezone.utc)

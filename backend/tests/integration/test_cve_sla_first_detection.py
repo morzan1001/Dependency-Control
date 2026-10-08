@@ -28,19 +28,13 @@ from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from tests.helpers.compliance import evaluation_input
+from tests.helpers.databases import DATABASES
 from tests.helpers.findings import aggregated_vulnerability
 
 _PROJECT = "sla-project"
 _OTHER_PROJECT = "other-project"
 # Whole seconds, so the server's millisecond precision cannot move the dates the tests compare.
 _NOW = datetime.now(timezone.utc).replace(microsecond=0)
-
-# The value is unread: the marker on the second case is what makes the ``db`` fixture hand out a
-# real server instead of the attrappe.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 
 def _days_ago(days: int) -> datetime:
@@ -113,7 +107,7 @@ def _advisory_first_seen(doc: dict) -> dict[str, datetime | None]:
     return {a["id"]: ensure_utc(a.get("first_seen_at")) for a in doc["details"]["vulnerabilities"]}
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_finding_with_no_history_is_first_seen_by_its_own_scan(db, database):
     docs = await _persist(db, "scan-1", _days_ago(3), _critical_cve())
@@ -121,7 +115,7 @@ async def test_a_finding_with_no_history_is_first_seen_by_its_own_scan(db, datab
     assert _first_seen(docs) == [_days_ago(3)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_second_scan_inherits_first_seen_at_from_the_first(db, database):
     await _persist(db, "scan-1", _days_ago(200), _critical_cve())
@@ -131,7 +125,7 @@ async def test_a_second_scan_inherits_first_seen_at_from_the_first(db, database)
     assert _first_seen(docs) == [_days_ago(200)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_first_detection_outlives_retention_deleting_the_scan_that_made_it(db, database):
     await _persist(db, "scan-1", _days_ago(200), _critical_cve())
@@ -143,7 +137,7 @@ async def test_first_detection_outlives_retention_deleting_the_scan_that_made_it
     assert _first_seen(docs) == [_days_ago(200)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_reanalysing_a_scan_keeps_the_date_it_had_inherited(db, database):
     await _persist(db, "scan-1", _days_ago(200), _critical_cve())
@@ -155,7 +149,7 @@ async def test_reanalysing_a_scan_keeps_the_date_it_had_inherited(db, database):
     assert _first_seen(docs) == [_days_ago(200)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_stored_finding_without_first_seen_at_counts_from_its_scan(db, database):
     await _store_copy(db, "legacy-scan", _days_ago(150), _critical_cve())
@@ -165,7 +159,7 @@ async def test_a_stored_finding_without_first_seen_at_counts_from_its_scan(db, d
     assert _first_seen(docs) == [_days_ago(150)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_another_projects_history_is_not_inherited(db, database):
     await _persist(db, "other-scan", _days_ago(200), _critical_cve(), project_id=_OTHER_PROJECT)
@@ -175,7 +169,7 @@ async def test_another_projects_history_is_not_inherited(db, database):
     assert _first_seen(docs) == [_NOW]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_versionless_finding_inherits_like_any_other(db, database):
     await _persist(db, "scan-1", _days_ago(40), _versionless_sast())
@@ -185,7 +179,7 @@ async def test_a_versionless_finding_inherits_like_any_other(db, database):
     assert _first_seen(docs) == [_days_ago(40)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_scan_persisted_after_a_newer_one_keeps_its_own_earlier_detection(db, database):
     await _persist(db, "newer-scan", _NOW, _critical_cve())
@@ -195,7 +189,7 @@ async def test_a_scan_persisted_after_a_newer_one_keeps_its_own_earlier_detectio
     assert _first_seen(docs) == [_days_ago(10)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database):
     await _persist(db, "scan-1", _days_ago(200), _critical_cve())
@@ -207,7 +201,7 @@ async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database
     assert critical.evidence_finding_ids == [current[0]["_id"]]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_critical_cve_in_a_copy_predating_first_seen_at_fails_its_sla_from_its_scan_date(db, database):
     await _store_copy(db, "legacy-scan", _days_ago(400), _critical_cve())
@@ -217,7 +211,7 @@ async def test_a_critical_cve_in_a_copy_predating_first_seen_at_fails_its_sla_fr
     assert critical.status == ControlStatus.FAILED.value
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_each_cve_of_a_finding_is_held_to_its_own_severitys_sla(db, database):
     [doc] = await _persist(
@@ -235,7 +229,7 @@ async def test_each_cve_of_a_finding_is_held_to_its_own_severitys_sla(db, databa
     assert controls["CVE-SLA-MEDIUM"].status == ControlStatus.PASSED.value
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_waived_cve_leaves_its_severitys_sla_to_the_findings_live_cves(db, database):
     await WaiverRepository(db).create(
@@ -254,7 +248,7 @@ async def test_a_waived_cve_leaves_its_severitys_sla_to_the_findings_live_cves(d
     assert controls["CVE-SLA-HIGH"].status == ControlStatus.PASSED.value
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_finding_waived_cve_by_cve_is_waived_evidence_under_each_cves_severity(db, database):
     for cve in ("CVE-2021-44228", "CVE-2021-45046"):
@@ -275,7 +269,7 @@ _CONTEXT_LOOKUP = ("CVE-2021-45046", Severity.CRITICAL)
 _JDBC_APPENDER = ("CVE-2021-44832", Severity.MEDIUM)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_cve_kept_across_a_version_bump_keeps_its_first_detection(db, database):
     await _persist(db, "scan-1", _days_ago(200), _log4j_advisories(_LOG4SHELL, version="2.14.1"))
@@ -286,7 +280,7 @@ async def test_a_cve_kept_across_a_version_bump_keeps_its_first_detection(db, da
     assert _first_seen([doc]) == [_days_ago(200)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_critical_cve_kept_across_a_version_bump_stays_overdue(db, database):
     await _persist(db, "scan-1", _days_ago(200), _log4j_advisories(_LOG4SHELL, version="2.14.1"))
@@ -298,7 +292,7 @@ async def test_a_critical_cve_kept_across_a_version_bump_stays_overdue(db, datab
     assert critical.evidence_finding_ids == [doc["_id"]]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_cve_new_to_a_component_is_first_seen_by_its_own_scan(db, database):
     await _persist(db, "scan-1", _days_ago(200), _log4j_advisories(("CVE-2021-44228", Severity.HIGH)))
@@ -313,7 +307,7 @@ async def test_a_cve_new_to_a_component_is_first_seen_by_its_own_scan(db, databa
     assert controls["CVE-SLA-CRITICAL"].status == ControlStatus.PASSED.value
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_kept_cve_outlives_retention_deleting_the_version_that_first_had_it(db, database):
     await _persist(db, "scan-1", _days_ago(200), _log4j_advisories(_LOG4SHELL, version="2.14.1"))
@@ -325,7 +319,7 @@ async def test_a_kept_cve_outlives_retention_deleting_the_version_that_first_had
     assert _advisory_first_seen(doc) == {"CVE-2021-44228": _days_ago(200)}
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_version_another_branch_moved_off_keeps_its_own_cve_dates(db, database):
     await _persist(db, "main-1", _days_ago(200), _log4j_advisories(_LOG4SHELL, version="2.14.1"))
@@ -336,7 +330,7 @@ async def test_a_version_another_branch_moved_off_keeps_its_own_cve_dates(db, da
     assert _advisory_first_seen(doc) == {"CVE-2021-44228": _days_ago(200)}
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_cve_one_scan_of_its_version_missed_keeps_its_first_detection(db, database):
     high, low = ("CVE-2021-44228", Severity.HIGH), ("CVE-2021-45046", Severity.LOW)
@@ -351,7 +345,7 @@ async def test_a_cve_one_scan_of_its_version_missed_keeps_its_first_detection(db
     assert (await _sla_controls(db, "scan-3"))["CVE-SLA-HIGH"].status == ControlStatus.FAILED.value
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_an_advisory_stored_without_its_own_date_counts_from_its_findings_first_detection(db, database):
     await _store_copy(
@@ -363,7 +357,7 @@ async def test_an_advisory_stored_without_its_own_date_counts_from_its_findings_
     assert _advisory_first_seen(doc) == {"CVE-2021-44228": _days_ago(150)}
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_undated_copies_of_another_version_do_not_cut_a_cves_earlier_detection(db, database):
     high, low = ("CVE-2021-44228", Severity.HIGH), ("CVE-2021-45046", Severity.LOW)
@@ -377,7 +371,7 @@ async def test_undated_copies_of_another_version_do_not_cut_a_cves_earlier_detec
     assert (await _sla_controls(db, "scan-now"))["CVE-SLA-HIGH"].status == ControlStatus.FAILED.value
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_partial_newest_copy_does_not_hand_a_cve_to_another_versions_undated_copy(db, database):
     high, low = ("CVE-2021-44228", Severity.HIGH), ("CVE-2021-45046", Severity.LOW)
@@ -391,7 +385,7 @@ async def test_a_partial_newest_copy_does_not_hand_a_cve_to_another_versions_und
     assert _advisory_first_seen(doc) == {"CVE-2021-44228": _days_ago(200), "CVE-2021-45046": _days_ago(200)}
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_cve_matches_its_earlier_detection_under_an_alias(db, database):
     ghsa = Finding(
@@ -555,7 +549,7 @@ async def test_the_first_detection_lookup_answers_for_ten_findings_in_each_of_10
     assert {identity[3]: ensure_utc(date) for identity, date in earliest.items()} == {current[-1].id: _days_ago(90)}
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_copies_across_two_lookup_chunks_give_the_single_chunk_dates(db, database):
     await _persist(db, "scan-a", _days_ago(60), _module_outdated(0))
@@ -569,7 +563,7 @@ async def test_copies_across_two_lookup_chunks_give_the_single_chunk_dates(db, d
     assert sorted(ensure_utc(date) for date in two_chunks.values()) == [_days_ago(60), _days_ago(30)]
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_advisories_across_two_lookup_chunks_give_the_single_chunk_dates(db, database, monkeypatch):
     await _persist(db, "scan-a", _days_ago(60), _vulnerable(_module(0), "1.0.0", _LOG4SHELL))

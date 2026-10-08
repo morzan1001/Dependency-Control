@@ -7,12 +7,8 @@ import pytest
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry, _serialize_finding_for_llm
+from tests.helpers.databases import DATABASES
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
-
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 pytestmark = pytest.mark.asyncio
 
@@ -138,7 +134,7 @@ async def _call(db, tool: str, **args) -> dict:
     return await ChatToolRegistry().execute_tool(tool, args, admin, db)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_neglected_projects_list_the_longest_unscanned_first_with_their_total(db, database):
     # Natural order opens with the stale project closest to the threshold.
     await db.projects.insert_many(
@@ -157,7 +153,7 @@ async def test_neglected_projects_list_the_longest_unscanned_first_with_their_to
     assert (result.get("projects_total"), result.get("_bounded_read")) == (4, True)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_neglected_projects_list_only_the_callers_projects(db, database):
     member = "member-1"
     await db.projects.insert_many(
@@ -192,7 +188,7 @@ async def test_a_ranked_read_leaves_the_advisory_text_on_the_server(db):
     assert max(r["responseLength"] for r in reads) < _ADVISORY_TEXT_BYTES
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_ranked_tools_answer_from_the_slim_read_as_from_the_full_finding(db, database):
     await _seed_head(db, [_RICH_FINDING])
 
@@ -208,7 +204,7 @@ async def test_ranked_tools_answer_from_the_slim_read_as_from_the_full_finding(d
     assert fixable_rows[0]["quick_fix_version"] == "2.9.10.8"
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_a_waived_finding_without_advisories_keeps_its_waiver_reason_and_fix_in_the_slim_read(db, database):
     await _seed_head(db, [_WAIVED_OUTDATED])
 

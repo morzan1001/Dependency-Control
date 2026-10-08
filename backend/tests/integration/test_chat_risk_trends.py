@@ -11,15 +11,10 @@ from app.models.user import User
 from app.repositories.scans import ScanRepository
 from app.services.chat.tools import ChatToolRegistry
 from app.services.rescan import build_rescan
+from tests.helpers.databases import DATABASES
 from tests.helpers.permission_presets import PRESET_ADMIN
 
-# The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
-
-pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", _DATABASES)]
+pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
 
 _CHECKOUT = "p-checkout"
 _BILLING = "p-billing"
