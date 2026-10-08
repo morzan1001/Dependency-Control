@@ -38,13 +38,7 @@ def _dedupe_module_usage(module_usage: dict[str, ModuleUsage]) -> None:
 def _get_or_create_module_usage(module_usage: dict[str, ModuleUsage], base_module: str) -> ModuleUsage:
     """Get existing or create new ModuleUsage entry."""
     if base_module not in module_usage:
-        module_usage[base_module] = ModuleUsage(
-            module=base_module,
-            import_count=0,
-            call_count=0,
-            import_locations=[],
-            used_symbols=[],
-        )
+        module_usage[base_module] = ModuleUsage(module=base_module)
     return module_usage[base_module]
 
 
