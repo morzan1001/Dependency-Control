@@ -266,10 +266,13 @@ class GitHubService:
         async with InstrumentedAsyncClient("GitHub API", timeout=_GITHUB_API_TIMEOUT) as client:
             yield client
 
-    async def _api_get(
+    async def _api_request(
         self,
+        method: str,
         endpoint: str,
+        *,
         params: dict[str, Any] | None = None,
+        json_data: dict[str, Any] | None = None,
         accept: str = _DEFAULT_ACCEPT,
     ) -> httpx.Response | None:
         if not self.instance.access_token or self.api_url is None:
@@ -277,44 +280,21 @@ class GitHubService:
 
         try:
             async with self._api_client() as client:
-                return await client.get(
+                return await client.request(
+                    method,
                     f"{self.api_url}{endpoint}",
                     headers=self._get_auth_headers(accept),
                     params=params,
-                )
-        except Exception as e:
-            logger.exception("GitHub API GET %s failed: %s", endpoint, e)
-            return None
-
-    async def _api_post(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
-        if not self.instance.access_token or self.api_url is None:
-            return None
-
-        try:
-            async with self._api_client() as client:
-                return await client.post(
-                    f"{self.api_url}{endpoint}",
-                    headers=self._get_auth_headers(),
                     json=json_data,
                 )
         except Exception as e:
-            logger.exception("GitHub API POST %s failed: %s", endpoint, e)
+            logger.exception("GitHub API %s %s failed: %s", method, endpoint, e)
             return None
 
-    async def _api_patch(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
-        if not self.instance.access_token or self.api_url is None:
-            return None
-
-        try:
-            async with self._api_client() as client:
-                return await client.patch(
-                    f"{self.api_url}{endpoint}",
-                    headers=self._get_auth_headers(),
-                    json=json_data,
-                )
-        except Exception as e:
-            logger.exception("GitHub API PATCH %s failed: %s", endpoint, e)
-            return None
+    async def _api_get(
+        self, endpoint: str, params: dict[str, Any] | None = None, accept: str = _DEFAULT_ACCEPT
+    ) -> httpx.Response | None:
+        return await self._api_request("GET", endpoint, params=params, accept=accept)
 
     async def _iter_pages(
         self, endpoint: str, params: dict[str, Any] | None = None
@@ -1079,9 +1059,8 @@ class GitHubService:
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
         """Post a comment on a pull request."""
-        response = await self._api_post(
-            f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
-            json_data={"body": body},
+        response = await self._api_request(
+            "POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", json_data={"body": body}
         )
         if response:
             if response.status_code == 201:
@@ -1091,9 +1070,8 @@ class GitHubService:
 
     async def update_pull_request_comment(self, owner: str, repo: str, comment_id: int, body: str) -> bool:
         """Update an existing pull-request comment."""
-        response = await self._api_patch(
-            f"/repos/{owner}/{repo}/issues/comments/{comment_id}",
-            json_data={"body": body},
+        response = await self._api_request(
+            "PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", json_data={"body": body}
         )
         if response:
             if response.status_code == 200:

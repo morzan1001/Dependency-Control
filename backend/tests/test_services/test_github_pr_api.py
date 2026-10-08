@@ -270,27 +270,31 @@ class TestGetPullRequestComments:
 class TestWritePullRequestComments:
     def test_post_returns_true_only_on_201(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
-        with patch.object(service, "_api_post", new_callable=AsyncMock, return_value=MagicMock(status_code=201)) as p:
+        with patch.object(
+            service, "_api_request", new_callable=AsyncMock, return_value=MagicMock(status_code=201)
+        ) as p:
             assert asyncio.run(service.post_pull_request_comment("acme", "widget", 7, "body")) is True
-        p.assert_awaited_once_with("/repos/acme/widget/issues/7/comments", json_data={"body": "body"})
+        p.assert_awaited_once_with("POST", "/repos/acme/widget/issues/7/comments", json_data={"body": "body"})
 
     def test_post_returns_false_on_403(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         failed = MagicMock(status_code=403)
         failed.text = "Resource not accessible by integration"
-        with patch.object(service, "_api_post", new_callable=AsyncMock, return_value=failed):
+        with patch.object(service, "_api_request", new_callable=AsyncMock, return_value=failed):
             assert asyncio.run(service.post_pull_request_comment("acme", "widget", 7, "body")) is False
 
     def test_update_patches_the_comment_scoped_endpoint(self):
-        """The update path carries the comment id, not the PR number."""
+        """The update path carries the comment id, not the PR number, and PATCH: a PUT there answers 404."""
         service = GitHubService(make_github_instance(access_token="ghp-x"))
-        with patch.object(service, "_api_patch", new_callable=AsyncMock, return_value=MagicMock(status_code=200)) as p:
+        with patch.object(
+            service, "_api_request", new_callable=AsyncMock, return_value=MagicMock(status_code=200)
+        ) as p:
             assert asyncio.run(service.update_pull_request_comment("acme", "widget", 99, "new")) is True
-        p.assert_awaited_once_with("/repos/acme/widget/issues/comments/99", json_data={"body": "new"})
+        p.assert_awaited_once_with("PATCH", "/repos/acme/widget/issues/comments/99", json_data={"body": "new"})
 
     def test_update_returns_false_when_the_client_returned_nothing(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
-        with patch.object(service, "_api_patch", new_callable=AsyncMock, return_value=None):
+        with patch.object(service, "_api_request", new_callable=AsyncMock, return_value=None):
             assert asyncio.run(service.update_pull_request_comment("acme", "widget", 99, "new")) is False
 
 

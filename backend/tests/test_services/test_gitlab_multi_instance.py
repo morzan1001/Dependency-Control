@@ -4,6 +4,8 @@ import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.core.constants import SCAN_STATUS_COMPLETED, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
@@ -51,14 +53,10 @@ class TestApiMethodTokenGuards:
         result = asyncio.run(service._api_get("/projects/1"))
         assert result is None
 
-    def test_api_post_returns_none_without_token(self):
+    @pytest.mark.parametrize("method", ["POST", "PUT"])
+    def test_a_write_returns_none_without_token(self, method):
         service = GitLabService(make_gitlab_instance(access_token=None))
-        result = asyncio.run(service._api_post("/projects/1/notes", {"body": "x"}))
-        assert result is None
-
-    def test_api_put_returns_none_without_token(self):
-        service = GitLabService(make_gitlab_instance(access_token=None))
-        result = asyncio.run(service._api_put("/test", {"body": "x"}))
+        result = asyncio.run(service._api_request(method, "/projects/1/notes", json_data={"body": "x"}))
         assert result is None
 
     def test_api_get_paginated_returns_none_without_token(self):

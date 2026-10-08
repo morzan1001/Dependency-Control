@@ -148,6 +148,10 @@ class _GitHubApi:
     async def client(self):
         yield self
 
+    async def request(self, method, url, headers=None, params=None, json=None):
+        assert (method, json) == ("GET", None)
+        return await self.get(url, headers=headers, params=params)
+
     async def get(self, url, headers=None, params=None):
         path = url.removeprefix(GITHUB_API_URL)
         self.requests.append((path, dict(params or {})))
@@ -182,7 +186,7 @@ class TestTeamRepositoryCheck:
         """Without it GitHub answers 204, and holding the repository stops looking like a 200."""
         service = _service()
         client = MagicMock()
-        client.get = AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))
+        client.request = AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))
 
         class _ClientContext:
             async def __aenter__(self):
@@ -194,7 +198,7 @@ class TestTeamRepositoryCheck:
         with patch.object(service, "_api_client", return_value=_ClientContext()):
             await service.team_writes_to_repository("acme", "payments", 4711, "widgets")
 
-        assert client.get.await_args.kwargs["headers"]["Accept"] == _REPOSITORY_ACCEPT
+        assert client.request.await_args.kwargs["headers"]["Accept"] == _REPOSITORY_ACCEPT
 
     @pytest.mark.asyncio
     async def test_read_only_access_is_not_holding_it(self, fake_cache):

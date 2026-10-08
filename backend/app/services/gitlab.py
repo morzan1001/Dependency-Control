@@ -124,50 +124,28 @@ class GitLabService:
         async with InstrumentedAsyncClient("GitLab API", timeout=_GITLAB_API_TIMEOUT) as client:
             yield client
 
+    async def _api_request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_data: dict[str, Any] | None = None,
+    ) -> httpx.Response | None:
+        if not self.instance.access_token:
+            return None
+
+        try:
+            async with self._api_client() as client:
+                return await client.request(
+                    method, f"{self.api_url}{endpoint}", headers=self._get_auth_headers(), params=params, json=json_data
+                )
+        except Exception as e:
+            logger.exception("GitLab API %s %s failed: %s: %s", method, endpoint, type(e).__name__, e)
+            return None
+
     async def _api_get(self, endpoint: str, params: dict[str, Any] | None = None) -> httpx.Response | None:
-        if not self.instance.access_token:
-            return None
-
-        try:
-            async with self._api_client() as client:
-                return await client.get(
-                    f"{self.api_url}{endpoint}",
-                    headers=self._get_auth_headers(),
-                    params=params,
-                )
-        except Exception as e:
-            logger.exception("GitLab API GET %s failed: %s: %s", endpoint, type(e).__name__, e)
-            return None
-
-    async def _api_post(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
-        if not self.instance.access_token:
-            return None
-
-        try:
-            async with self._api_client() as client:
-                return await client.post(
-                    f"{self.api_url}{endpoint}",
-                    headers=self._get_auth_headers(),
-                    json=json_data,
-                )
-        except Exception as e:
-            logger.exception("GitLab API POST %s failed: %s: %s", endpoint, type(e).__name__, e)
-            return None
-
-    async def _api_put(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
-        if not self.instance.access_token:
-            return None
-
-        try:
-            async with self._api_client() as client:
-                return await client.put(
-                    f"{self.api_url}{endpoint}",
-                    headers=self._get_auth_headers(),
-                    json=json_data,
-                )
-        except Exception as e:
-            logger.exception("GitLab API PUT %s failed: %s: %s", endpoint, type(e).__name__, e)
-            return None
+        return await self._api_request("GET", endpoint, params=params)
 
     async def _api_get_paginated(
         self,
@@ -292,9 +270,8 @@ class GitLabService:
 
     async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
         """Posts a comment to a merge request."""
-        response = await self._api_post(
-            f"/projects/{project_id}/merge_requests/{mr_iid}/notes",
-            json_data={"body": body},
+        response = await self._api_request(
+            "POST", f"/projects/{project_id}/merge_requests/{mr_iid}/notes", json_data={"body": body}
         )
         if response:
             if response.status_code == 201:
@@ -309,9 +286,8 @@ class GitLabService:
 
     async def update_merge_request_comment(self, project_id: int, mr_iid: int, note_id: int, body: str) -> bool:
         """Updates an existing comment on a merge request."""
-        response = await self._api_put(
-            f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}",
-            json_data={"body": body},
+        response = await self._api_request(
+            "PUT", f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}", json_data={"body": body}
         )
         if response:
             if response.status_code == 200:
