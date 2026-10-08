@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Annotated, Any, cast
 
-import httpx
 from fastapi import HTTPException, Query, Request
 
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -24,7 +23,6 @@ from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
 from app.core.constants import SLOWEST_PACKAGES_LIMIT
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
 from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -45,10 +43,7 @@ from app.schemas.analytics import (
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
-from app.services.release_history import (
-    DepsDevReleaseHistoryFetcher,
-    ReleaseHistoryFetcher,
-)
+from app.services.release_history import DepsDevReleaseHistoryFetcher
 from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
@@ -157,38 +152,6 @@ async def _branch_scan_token(db: DatabaseDep, project_id: str, branch: str | Non
     return f"{rows[0]['scans']}@{rows[0]['completed_at']}" if rows else "0"
 
 
-def _build_release_fetcher() -> ReleaseHistoryFetcher:
-    """Production deps.dev fetcher wired to Redis + httpx, built per request."""
-
-    async def cache_get(key: str) -> Any | None:
-        return await cache_service.get(key)
-
-    async def cache_set(key: str, value: Any, ttl_seconds: int) -> None:
-        await cache_service.set(key, value, ttl_seconds=ttl_seconds)
-
-    async def http_fetch(url: str) -> dict[str, Any] | None:
-        try:
-            async with InstrumentedAsyncClient("deps.dev API", timeout=10.0) as client:
-                response = await client.get(url, follow_redirects=True)
-                if response.status_code == 200:
-                    payload: dict[str, Any] = response.json()
-                    return payload
-                return None
-        except (httpx.TimeoutException, httpx.ConnectError):
-            return None
-        except Exception:
-            logger.debug("deps.dev release-history fetch failed", exc_info=True)
-            return None
-
-    return DepsDevReleaseHistoryFetcher(
-        cache_get=cache_get,
-        cache_set=cache_set,
-        http_fetch=http_fetch,
-        cache_key_builder=CacheKeys.release_history,
-        cache_ttl_seconds=CacheTTL.RELEASE_HISTORY,
-    )
-
-
 @router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
 async def get_project_update_frequency(
     project_id: str,
@@ -240,7 +203,7 @@ async def get_project_update_frequency(
                 analysis_repo=AnalysisResultRepository(db),
                 max_scans=max_scans,
                 window_days=window_days,
-                release_fetcher=_build_release_fetcher(),
+                release_fetcher=DepsDevReleaseHistoryFetcher(),
                 branch=analyzed_branch,
             )
         return metrics.model_dump()

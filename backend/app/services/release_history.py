@@ -6,10 +6,9 @@ Pure analysis lives here. HTTP fetching from deps.dev plugs in via the
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import median
@@ -19,14 +18,16 @@ from urllib.parse import quote
 from packaging.version import InvalidVersion, Version
 
 from app.core import ensure_utc
+from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import DEPS_DEV_API_URL
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.services.analyzers.deps_dev import fetch_deps_dev_json
 
 logger = logging.getLogger(__name__)
 
-# Bounded concurrency for per-package release-history fetches: high enough
-# that the Redis cache hot-path is effectively a single round-trip across
-# all packages, low enough that a cold cache doesn't blast deps.dev.
+# Low enough that a cold cache doesn't blast deps.dev.
 _FETCH_CONCURRENCY = 16
+_FETCH_TIMEOUT_SECONDS = 10.0
 
 # Matched by token, not by any "-" suffix, because Maven qualifiers like Guava's 33.0.0-jre are releases.
 _PRERELEASE_TAG = re.compile(
@@ -210,59 +211,35 @@ def parse_deps_dev_response(payload: dict[str, Any]) -> list[ReleaseInfo]:
     return out
 
 
-CacheGet = Callable[[str], Awaitable[Any | None]]
-CacheSet = Callable[..., Awaitable[None]]
-HttpFetch = Callable[[str], Awaitable[dict[str, Any] | None]]
-
-
 class DepsDevReleaseHistoryFetcher:
-    """Per-package release histories from deps.dev, cached. Hooks injected for testability."""
-
-    def __init__(
-        self,
-        cache_get: CacheGet,
-        cache_set: CacheSet,
-        http_fetch: HttpFetch,
-        cache_key_builder: Callable[[str, str], str],
-        cache_ttl_seconds: int,
-    ) -> None:
-        self._cache_get = cache_get
-        self._cache_set = cache_set
-        self._http_fetch = http_fetch
-        self._cache_key_builder = cache_key_builder
-        self._cache_ttl = cache_ttl_seconds
+    """Per-package release histories from deps.dev, read through the Redis cache in one round trip."""
 
     async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
-        if not packages:
-            return {}
-
-        semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
-
-        async def _bounded(system: str, name: str) -> tuple[tuple[str, str], list[ReleaseInfo] | None]:
-            async with semaphore:
-                # Key by (system, name): two packages sharing a bare name across
-                # ecosystems must not overwrite each other in the result dict.
-                return (system, name), await self._load_one(system, name)
-
-        pairs = await asyncio.gather(*(_bounded(s, n) for s, n in packages))
-        return {key: releases for key, releases in pairs if releases}
-
-    async def _load_one(self, system: str, name: str) -> list[ReleaseInfo] | None:
-        key = self._cache_key_builder(system, name)
-        cached = await self._cache_get(key)
-        if cached is not None:
-            return _release_list_from_cache(cached)
-
-        payload = await self._http_fetch(_build_deps_dev_url(system, name))
-        if payload is None:
-            return None
-
-        releases = parse_deps_dev_response(payload)
-        try:
-            await self._cache_set(key, _release_list_to_cache(releases), ttl_seconds=self._cache_ttl)
-        except Exception:
-            logger.debug("Cache set failed for release history (%s/%s)", system, name, exc_info=True)
-        return releases
+        keys = {package: CacheKeys.release_history(*package) for package in packages}
+        cached = await cache_service.mget(list(keys.values()))
+        history = {
+            package: _release_list_from_cache(cached[key]) for package, key in keys.items() if cached[key] is not None
+        }
+        missing = [package for package in keys if package not in history]
+        if missing:
+            async with InstrumentedAsyncClient("deps.dev API", timeout=_FETCH_TIMEOUT_SECONDS) as client:
+                payloads = await gather_bounded(
+                    missing,
+                    lambda package: fetch_deps_dev_json(client, _build_deps_dev_url(*package)),
+                    _FETCH_CONCURRENCY,
+                )
+            # A failed lookup stays uncached; a package deps.dev does not know is remembered as empty.
+            fetched = {
+                package: parse_deps_dev_response(payload or {})
+                for package, payload in zip(missing, payloads, strict=True)
+                if not isinstance(payload, BaseException)
+            }
+            await cache_service.mset(
+                {keys[package]: _release_list_to_cache(releases) for package, releases in fetched.items()},
+                ttl_seconds=CacheTTL.RELEASE_HISTORY,
+            )
+            history.update(fetched)
+        return {package: releases for package, releases in history.items() if releases}
 
 
 def _build_deps_dev_url(system: str, name: str) -> str:
