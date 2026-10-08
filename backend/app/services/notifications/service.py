@@ -81,10 +81,9 @@ class NotificationService:
                     )
                 )
             if NOTIFICATION_CHANNEL_MATTERMOST in channels and user.mattermost_username:
-                # A username, which the provider resolves to the direct-message channel only with a leading '@'.
                 sends.append(
                     self.mattermost_provider.send(
-                        "@" + user.mattermost_username.lstrip("@"),
+                        user.mattermost_username.lstrip("@"),
                         subject,
                         message,
                         system_settings=system_settings,

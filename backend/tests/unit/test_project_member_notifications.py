@@ -47,7 +47,7 @@ async def _notify(db, project: Project) -> set[tuple[str, str]]:
 
 
 def _on_every_channel(uid: str) -> set[tuple[str, str]]:
-    return {("email", f"{uid}@test.com"), ("slack", uid), ("mattermost", f"@{uid}")}
+    return {("email", f"{uid}@test.com"), ("slack", uid), ("mattermost", uid)}
 
 
 @pytest.mark.asyncio
@@ -113,7 +113,7 @@ async def test_the_projects_enforced_preferences_reach_every_member_whatever_the
         ],
     )
 
-    assert await _notify(db, project) == {("mattermost", f"@{uid}") for uid in ("u-admin", "u-member", "u-team")}
+    assert await _notify(db, project) == {("mattermost", uid) for uid in ("u-admin", "u-member", "u-team")}
 
 
 @pytest.mark.parametrize("enforced", [{}, _MUTED, {"analysis_completed": ["email"]}], ids=["unset", "muted", "other"])

@@ -44,35 +44,6 @@ class MattermostProvider(NotificationProvider):
             logger.exception("Error creating Mattermost DM channel: %s", e)
             return None
 
-    async def _get_channel_id_by_name(
-        self, client: InstrumentedAsyncClient, channel_name: str, base_url: str, headers: dict
-    ) -> str | None:
-        channel_name = channel_name.lstrip("#")
-
-        try:
-            response = await client.get(f"{base_url}/api/v4/users/me/teams", headers=headers)
-            if response.status_code != 200:
-                logger.warning(f"Failed to get Mattermost teams: {response.text}")
-                return None
-
-            teams = response.json()
-            for team in teams:
-                team_id = team["id"]
-                chan_response = await client.get(
-                    f"{base_url}/api/v4/teams/{team_id}/channels/name/{channel_name}",
-                    headers=headers,
-                )
-                if chan_response.status_code == 200:
-                    channel_id: str | None = chan_response.json()["id"]
-                    return channel_id
-
-            logger.warning(f"Mattermost channel '{channel_name}' not found in any team.")
-            return None
-
-        except Exception as e:
-            logger.exception("Error resolving Mattermost channel %s: %s", channel_name, e)
-            return None
-
     async def send(
         self,
         destination: str,
@@ -98,34 +69,17 @@ class MattermostProvider(NotificationProvider):
             async with InstrumentedAsyncClient(
                 "Mattermost API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
             ) as client:
-                channel_id = destination
+                user_id = await self._get_user_id(client, f"username/{destination}", base_url, headers)
+                if not user_id:
+                    logger.error(f"Cannot send Mattermost DM: User {destination} not found")
+                    notifications_failed_total.labels(type="mattermost").inc()
+                    return False
 
-                if destination.startswith("@"):
-                    user_id = await self._get_user_id(client, f"username/{destination.lstrip('@')}", base_url, headers)
-                    if not user_id:
-                        logger.error(f"Cannot send Mattermost DM: User {destination} not found")
-                        notifications_failed_total.labels(type="mattermost").inc()
-                        return False
-
-                    dm_channel_id = await self._create_dm_channel(client, user_id, base_url, headers)
-                    if not dm_channel_id:
-                        logger.error(f"Cannot send Mattermost DM: Failed to create channel for {destination}")
-                        notifications_failed_total.labels(type="mattermost").inc()
-                        return False
-
-                    channel_id = dm_channel_id
-                elif destination.startswith("#"):
-                    resolved_id = await self._get_channel_id_by_name(client, destination, base_url, headers)
-                    if not resolved_id:
-                        logger.error(f"Cannot send Mattermost message: Channel {destination} not found")
-                        notifications_failed_total.labels(type="mattermost").inc()
-                        return False
-                    channel_id = resolved_id
-                elif destination.count("-") != 4:
-                    # UUIDs have exactly 4 dashes; anything else is treated as a channel name.
-                    resolved_id = await self._get_channel_id_by_name(client, destination, base_url, headers)
-                    if resolved_id:
-                        channel_id = resolved_id
+                channel_id = await self._create_dm_channel(client, user_id, base_url, headers)
+                if not channel_id:
+                    logger.error(f"Cannot send Mattermost DM: Failed to create channel for {destination}")
+                    notifications_failed_total.labels(type="mattermost").inc()
+                    return False
 
                 from app.services.notifications.mattermost_formatter import build_generic_props
 
