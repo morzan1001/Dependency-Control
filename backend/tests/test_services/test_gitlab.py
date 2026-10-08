@@ -285,7 +285,7 @@ class TestGroupLookup:
 
     _REFS: ClassVar = {
         "by id": (lambda service: service.get_group(77), "/groups/77"),
-        "by path": (lambda service: service._lookup_group("mo/edge"), "/groups/mo%2Fedge"),
+        "by path": (lambda service: service.get_group("mo/edge"), "/groups/mo%2Fedge"),
     }
 
     @pytest.mark.parametrize("ref", ["by id", "by path"])

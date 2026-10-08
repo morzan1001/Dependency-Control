@@ -64,11 +64,6 @@ class TestApiMethodTokenGuards:
         result = asyncio.run(service._api_get_paginated("/test"))
         assert result is None
 
-    def test_get_project_members_returns_none_without_token(self):
-        service = GitLabService(make_gitlab_instance(access_token=None))
-        result = asyncio.run(service.get_project_members(123))
-        assert result is None
-
     def test_get_group_members_returns_none_without_token(self):
         service = GitLabService(make_gitlab_instance(access_token=None))
         result = asyncio.run(service.get_group_members(456))
@@ -659,7 +654,7 @@ class TestTeamSyncGroupMembers:
 
         with (
             patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members,
-            patch.object(service, "_lookup_group", new_callable=AsyncMock) as mock_resolve,
+            patch.object(service, "get_group", new_callable=AsyncMock) as mock_resolve,
         ):
             mock_members.return_value = members
             mock_resolve.return_value = GitLabGroupLookup(reachable=True, group={"id": 10})
@@ -841,7 +836,7 @@ class TestTeamSyncResolveGroupFallback:
         with (
             make_repositories(user_doc={"_id": "uid", "username": "dev"}) as (team_repo, _),
             patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
-            patch.object(service, "_lookup_group", new=AsyncMock(return_value=lookup)),
+            patch.object(service, "get_group", new=AsyncMock(return_value=lookup)),
         ):
             result = asyncio.run(
                 sync_team(

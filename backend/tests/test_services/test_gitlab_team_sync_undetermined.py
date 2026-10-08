@@ -128,7 +128,7 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_lookup_group",
+                "get_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=False, group=None)),
             ),
         ):
@@ -158,7 +158,7 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_lookup_group",
+                "get_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=True, group=None)),
             ),
         ):
@@ -379,17 +379,6 @@ class TestTheMemberFetchKeepsEmptyAndFailureApart:
 
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=paginated)):
             assert asyncio.run(service.get_group_members(42)) == expected
-
-    @pytest.mark.parametrize(
-        ("paginated", "expected"),
-        [([], []), (None, None)],
-        ids=["an empty project stays an empty list", "a failed fetch stays None"],
-    )
-    def test_project_members(self, paginated, expected):
-        service = _service()
-
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=paginated)):
-            assert asyncio.run(service.get_project_members(42)) == expected
 
 
 class TestTheOwnerBudget:

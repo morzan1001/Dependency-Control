@@ -295,23 +295,8 @@ class GitLabService:
             logger.error(f"Failed to update MR comment: {response.status_code} - {response.text}")
         return False
 
-    async def get_project_members(self, project_id: int) -> list[GitLabMember] | None:
-        """Fetch all project members (including group-inherited) via the system token."""
-        if not self.instance.access_token:
-            logger.warning("Cannot fetch project members: No system GitLab Access Token configured.")
-            return None
-
-        # /members/all includes inherited members; uncapped so large projects aren't truncated.
-        members = await self._api_get_paginated(f"/projects/{project_id}/members/all", max_pages=None)
-        # An empty list is a project nobody is left in, and stays a list; only None is a failure.
-        return None if members is None else [GitLabMember(**m) for m in members]
-
     async def get_group_members(self, group_id: int) -> list[GitLabMember] | None:
         """Fetch all group members via the system token."""
-        if not self.instance.access_token:
-            logger.warning("Cannot fetch group members: No system GitLab Access Token configured.")
-            return None
-
         # Uncapped so large groups aren't silently truncated.
         members = await self._api_get_paginated(f"/groups/{group_id}/members/all", max_pages=None)
         # An empty list is a group nobody is left in, and stays a list; only None is a failure.
@@ -360,13 +345,9 @@ class GitLabService:
             params["search"] = search
         return await self._api_get_paginated("/groups", params=params)
 
-    async def get_group(self, group_id: int) -> GitLabGroupLookup:
-        """One group by its numeric id."""
-        return await self._lookup_group(str(group_id))
-
-    async def _lookup_group(self, ref: str) -> GitLabGroupLookup:
+    async def get_group(self, ref: int | str) -> GitLabGroupLookup:
         """One group by its numeric id or its full path."""
-        endpoint = f"/groups/{urllib.parse.quote(ref, safe='')}"
+        endpoint = f"/groups/{urllib.parse.quote(str(ref), safe='')}"
         response = await self._api_get(endpoint, params={"with_projects": "false"})
         # 404 is also what GitLab answers for a group the token may not see: this instance cannot resolve it.
         if response is not None and response.status_code == 404:
@@ -404,7 +385,7 @@ class GitLabService:
 
         # team_sync_depth sets team granularity: depth=1 "mo/edge/k8s" -> "mo",
         # depth=2 -> "mo/edge", depth=0 -> full path.
-        depth = getattr(self.instance, "team_sync_depth", 1)
+        depth = self.instance.team_sync_depth
         if depth <= 0:
             return GitLabSyncTarget(_OwningGroup(group_id, group_path))
 
@@ -413,7 +394,7 @@ class GitLabService:
         if len(parts) <= depth:
             return GitLabSyncTarget(_OwningGroup(group_id, truncated_path))
 
-        parent = await self._lookup_group(truncated_path)
+        parent = await self.get_group(truncated_path)
         if parent.group:
             return GitLabSyncTarget(_OwningGroup(parent.group["id"], truncated_path))
 
