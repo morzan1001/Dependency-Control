@@ -902,6 +902,10 @@ class SBOMParser:
                 parsed_by_id[artifact.get("id")] = parsed
         _resolve_parent_refs(parsed_by_id, forward, contains)
 
+        distro = sbom.get("distro")
+        if isinstance(distro, dict):
+            self._append_distro(result, distro.get("id"), distro.get("versionID"), distro.get("prettyName"))
+
     @staticmethod
     def _extract_syft_locations(
         location_entries: list[dict[str, Any]],

@@ -295,6 +295,23 @@ class TestDirectnessOfRealGraphs:
         ] == [("alpine", "3.20.10", "image", "alpine:3.20")]
         assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
 
+    @pytest.mark.parametrize("fixture", ["alpine.syft.json", "alpine.syft.cdx.json", "alpine.syft.spdx.json"])
+    def test_every_syft_format_of_one_image_hands_its_distro_to_end_of_life(self, fixture):
+        result = parse_sbom(_fixture(fixture))
+        components = [dep.to_dict() for dep in result.dependencies]
+
+        assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
+
+    @pytest.mark.parametrize("distro", [{"id": 5, "versionID": ["3.20"], "prettyName": 7}, "alpine", {}])
+    def test_a_syft_distro_without_an_id_and_version_adds_no_operating_system(self, distro):
+        sbom = _fixture("alpine.syft.json")
+        sbom["distro"] = distro
+
+        result = parse_sbom(sbom)
+
+        assert len(result.dependencies) == 14
+        assert not [dep for dep in result.dependencies if dep.type == "operating-system"]
+
     def test_an_spdx_operating_system_package_is_not_doubled_by_the_purl_distro(self):
         sbom = _fixture("alpine.syft.spdx.json")
         sbom["packages"].append(
