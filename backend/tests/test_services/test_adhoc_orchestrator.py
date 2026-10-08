@@ -695,9 +695,12 @@ async def test_os_malware_without_its_api_key_errors_and_is_not_named_as_sending
 def test_every_registered_analyzer_is_classified_as_sending_or_not():
     """A new analyzer must be placed on one side of the contract before it can quietly break it."""
 
-    from app.services.analysis.adhoc import _SENDS_NOTHING, _STAGE_NOTES
+    from app.services.analysis.adhoc import _STAGE_NOTES
 
-    unclassified = set(analyzer_factories) - set(_STAGE_NOTES) - _SENDS_NOTHING
+    # The licence database ships with the image; the CLI scanners fetch their own vulnerability database.
+    sends_nothing = {"license_compliance", "trivy", "grype"}
+
+    unclassified = set(analyzer_factories) - set(_STAGE_NOTES) - sends_nothing
     assert unclassified == set()
 
 

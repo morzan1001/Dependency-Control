@@ -45,6 +45,7 @@ from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
+from app.services.normalizers.sast import bearer_entries
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     component_language_map,
@@ -182,12 +183,6 @@ _STAGE_NOTES: dict[str, str] = {
     _CRYPTO_RULES: "graded against the shipped seed rules, not against this installation's crypto policy",
 }
 
-# Analyzers that put nothing the caller posted on the wire: the licence database ships with the
-# image, and the two CLI scanners match the SBOM against a vulnerability database they fetch for
-# themselves. Named rather than inferred so a new analyzer has to be placed on one side of the
-# contract before it can quietly break it.
-_SENDS_NOTHING: frozenset[str] = frozenset({"license_compliance", "trivy", "grype"})
-
 _ADHOC_CRYPTO_RULES = tuple(r for r in load_seed_rules() if r.enabled and r.finding_type in RULE_DRIVEN_FINDING_TYPES)
 
 _NO_CALLGRAPH = "no callgraph supplied"
@@ -206,16 +201,11 @@ _WAIVERS_NONE = "none"
 
 
 def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] | None:
-    """The entry list under `key`, or None when the payload carries no readable list there.
-
-    Bearer groups its findings under a severity key, so the normalizer's own flattening has to
-    be mirrored here or its entries would be neither counted nor validated."""
+    """The entry list under `key`, or None when the payload carries no readable list there."""
     container = payload.get(key)
-    if isinstance(container, list):
-        return container
-    if name == _BEARER and isinstance(container, dict):
-        return [entry for items in container.values() if isinstance(items, list) for entry in items]
-    return None
+    if name == _BEARER:
+        return bearer_entries(container)
+    return container if isinstance(container, list) else None
 
 
 @dataclass(frozen=True)
