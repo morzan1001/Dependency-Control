@@ -29,8 +29,8 @@ vi.mock('@/hooks/queries/use-projects', () => ({
   useUpdateProjectNotifications: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 vi.mock('@/hooks/queries/use-webhooks', () => ({
-  useProjectWebhooks: () => ({ data: [], isLoading: false, refetch: vi.fn() }),
-  useCreateProjectWebhook: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useProjectWebhooks: () => ({ data: [], isLoading: false }),
+  useCreateProjectWebhook: () => ({ mutateAsync: vi.fn() }),
   useUpdateWebhook: () => ({ mutateAsync: vi.fn() }),
   useDeleteWebhook: () => ({ mutateAsync: vi.fn() }),
 }))
