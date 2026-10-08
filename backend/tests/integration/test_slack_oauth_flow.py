@@ -151,3 +151,28 @@ async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack, monk
     stored = await SystemSettingsRepository(db).get()
     assert (stored.slack_bot_token, stored.slack_refresh_token) == ("xoxb-new", "xoxe-new")
     assert before + _TOKEN_LIFETIME <= stored.slack_token_expires_at <= time.time() + _TOKEN_LIFETIME
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_install_without_rotation_drops_the_rotation_fields_of_the_last_one(client, db, slack, monkeypatch):
+    rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-old", "slack_token_expires_at": time.time() - 60}
+    await SystemSettingsRepository(db).update(rotating)
+    monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": True, "access_token": "xoxb-static"})
+
+    async def _get_database():
+        return db
+
+    monkeypatch.setattr(slack_provider, "get_database", _get_database)
+    _, query = await _install_url(client)
+    await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
+    stored = await SystemSettingsRepository(db).get()
+
+    assert await SlackProvider().send("#alerts", "Subject", "Body", system_settings=stored)
+
+    assert (stored.slack_bot_token, stored.slack_refresh_token, stored.slack_token_expires_at) == (
+        "xoxb-static",
+        None,
+        None,
+    )
+    assert [request["url"] for request in slack] == [_OAUTH_ACCESS, _POST_MESSAGE]

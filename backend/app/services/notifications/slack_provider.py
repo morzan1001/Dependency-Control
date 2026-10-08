@@ -38,12 +38,12 @@ async def request_slack_tokens(client_id: str, client_secret: str, **grant: str)
     if not result.get("ok"):
         raise SlackOAuthError(f"Slack API error: {result.get('error', 'unknown_error')}")
 
-    tokens: dict[str, Any] = {"slack_bot_token": result.get("access_token")}
-    if result.get("refresh_token"):
-        tokens["slack_refresh_token"] = result["refresh_token"]
-    if result.get("expires_in"):
-        tokens["slack_token_expires_at"] = time.time() + result["expires_in"]
-    return tokens
+    expires_in = result.get("expires_in")
+    return {
+        "slack_bot_token": result.get("access_token"),
+        "slack_refresh_token": result.get("refresh_token"),
+        "slack_token_expires_at": time.time() + expires_in if expires_in else None,
+    }
 
 
 class SlackProvider(NotificationProvider):
