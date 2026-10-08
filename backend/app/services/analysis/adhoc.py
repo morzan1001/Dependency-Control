@@ -50,7 +50,7 @@ from app.services.reachability_enrichment import (
     component_language_map,
     enrich_findings_with_reachability,
 )
-from app.services.recommendations import recommendation_engine
+from app.services.recommendations import generate_recommendations
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.waivers.matching import (
     MatchFinding,
@@ -664,7 +664,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # After the waivers, so an accepted risk neither scores nor generates work to do.
     stats = compute_stats(records, languages)
     recommendations = await asyncio.to_thread(
-        recommendation_engine.generate_recommendations,
+        generate_recommendations,
         findings=[record for record in records if not record.get("waived")],
         dependencies=components,
         join_dependencies=components,

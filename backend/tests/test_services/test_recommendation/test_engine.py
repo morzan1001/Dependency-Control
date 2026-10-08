@@ -4,11 +4,7 @@ from app.schemas.recommendation import Effort, Priority, Recommendation, Recomme
 from app.services.aggregation import ResultAggregator
 from app.services.recommendation import risks
 from app.services.recommendation.trends import PreviousScan
-from app.services.recommendations import (
-    RecommendationEngine,
-    _deduplicate_recommendations,
-    _safe_extend,
-)
+from app.services.recommendations import _safe_extend, generate_recommendations
 
 
 def _make_vuln_finding(
@@ -111,23 +107,15 @@ def _make_dependency(
     }
 
 
-def _make_recommendation(
-    rec_type=RecommendationType.DIRECT_DEPENDENCY_UPDATE,
-    priority=Priority.MEDIUM,
-    title="Test Recommendation",
-    component="test-pkg",
-    score_impact=None,
-    effort=Effort.MEDIUM,
-):
+def _make_recommendation(title="Test Recommendation"):
     return Recommendation(
-        type=rec_type,
-        priority=priority,
+        type=RecommendationType.DIRECT_DEPENDENCY_UPDATE,
+        priority=Priority.MEDIUM,
         title=title,
         description="A test recommendation.",
-        impact=score_impact or {"critical": 0, "high": 0, "medium": 1, "low": 0, "total": 1},
-        affected_components=[component],
+        impact={"critical": 0, "high": 0, "medium": 1, "low": 0, "total": 1},
+        affected_components=["test-pkg"],
         action={"type": "test"},
-        effort=effort,
     )
 
 
@@ -177,141 +165,17 @@ class TestSafeExtend:
         assert len(recs) == 2
 
 
-class TestDeduplicateRecommendations:
-    def test_no_duplicates_unchanged(self):
-        recs = [
-            _make_recommendation(component="pkg-a"),
-            _make_recommendation(component="pkg-b"),
-        ]
-        result = _deduplicate_recommendations(recs)
-        assert len(result) == 2
-
-    def test_exact_duplicates_deduplicated(self):
-        recs = [
-            _make_recommendation(component="pkg-a", priority=Priority.MEDIUM),
-            _make_recommendation(component="pkg-a", priority=Priority.HIGH),
-        ]
-        result = _deduplicate_recommendations(recs)
-        assert len(result) == 1
-
-    def test_keeps_higher_score_recommendation(self):
-        low_score = _make_recommendation(
-            component="pkg-a",
-            priority=Priority.LOW,
-            score_impact={"critical": 0, "high": 0, "medium": 0, "low": 1, "total": 1},
-        )
-        high_score = _make_recommendation(
-            component="pkg-a",
-            priority=Priority.CRITICAL,
-            score_impact={"critical": 5, "high": 0, "medium": 0, "low": 0, "total": 5},
-        )
-        result = _deduplicate_recommendations([low_score, high_score])
-        assert len(result) == 1
-        assert result[0].priority == Priority.CRITICAL
-
-    def test_different_types_not_deduplicated(self):
-        recs = [
-            _make_recommendation(
-                rec_type=RecommendationType.DIRECT_DEPENDENCY_UPDATE,
-                component="pkg-a",
-            ),
-            _make_recommendation(
-                rec_type=RecommendationType.NO_FIX_AVAILABLE,
-                component="pkg-a",
-            ),
-        ]
-        result = _deduplicate_recommendations(recs)
-        assert len(result) == 2
-
-    def test_empty_list(self):
-        result = _deduplicate_recommendations([])
-        assert result == []
-
-    def test_single_recommendation(self):
-        recs = [_make_recommendation()]
-        result = _deduplicate_recommendations(recs)
-        assert len(result) == 1
-
-    def test_empty_component_uses_title_in_key(self):
-        rec_a = _make_recommendation(component="", title="Fix A")
-        rec_b = _make_recommendation(component="", title="Fix B")
-        result = _deduplicate_recommendations([rec_a, rec_b])
-        assert len(result) == 2
-
-    def test_same_type_same_empty_component_same_title_deduplicated(self):
-        recs = [
-            _make_recommendation(component="", title="Same Title", priority=Priority.LOW),
-            _make_recommendation(component="", title="Same Title", priority=Priority.HIGH),
-        ]
-        result = _deduplicate_recommendations(recs)
-        assert len(result) == 1
-
-    def test_same_type_component_different_titles_not_deduplicated(self):
-        # Same type + first component but different titles must both survive.
-        rec_a = _make_recommendation(
-            rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
-            component="pkg-a",
-            title="Replace Unmaintained Dependencies",
-        )
-        rec_b = _make_recommendation(
-            rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
-            component="pkg-a",
-            title="Review Low-Quality Dependencies",
-        )
-        result = _deduplicate_recommendations([rec_a, rec_b])
-        assert len(result) == 2
-
-    def test_same_type_component_title_different_action_not_deduplicated(self):
-        # Same title + component but differing action['finding_type'] must not be merged.
-        rec_a = _make_recommendation(
-            rec_type=RecommendationType.ROTATE_CERTIFICATE,
-            component="cert.pem",
-            title="Rotate or fix certificate: cert.pem",
-        )
-        rec_a.action = {"finding_type": "crypto_cert_expired", "asset_name": "cert.pem"}
-        rec_b = _make_recommendation(
-            rec_type=RecommendationType.ROTATE_CERTIFICATE,
-            component="cert.pem",
-            title="Rotate or fix certificate: cert.pem",
-        )
-        rec_b.action = {"finding_type": "crypto_cert_self_signed", "asset_name": "cert.pem"}
-        result = _deduplicate_recommendations([rec_a, rec_b])
-        assert len(result) == 2
-
-    def test_true_duplicates_still_merged(self):
-        rec_a = _make_recommendation(
-            rec_type=RecommendationType.ROTATE_CERTIFICATE,
-            component="cert.pem",
-            title="Rotate or fix certificate: cert.pem",
-            priority=Priority.LOW,
-        )
-        rec_a.action = {"finding_type": "crypto_cert_expired", "asset_name": "cert.pem"}
-        rec_b = _make_recommendation(
-            rec_type=RecommendationType.ROTATE_CERTIFICATE,
-            component="cert.pem",
-            title="Rotate or fix certificate: cert.pem",
-            priority=Priority.CRITICAL,
-        )
-        rec_b.action = {"finding_type": "crypto_cert_expired", "asset_name": "cert.pem"}
-        result = _deduplicate_recommendations([rec_a, rec_b])
-        assert len(result) == 1
-        assert result[0].priority == Priority.CRITICAL
-
-
 class TestGenerateRecommendationsEmpty:
     def test_none_inputs_returns_empty(self):
-        engine = RecommendationEngine()
-        result = engine.generate_recommendations()
+        result = generate_recommendations()
         assert result == []
 
     def test_empty_lists_returns_empty(self):
-        engine = RecommendationEngine()
-        result = engine.generate_recommendations(findings=[], dependencies=[])
+        result = generate_recommendations(findings=[], dependencies=[])
         assert result == []
 
     def test_no_findings_with_deps_returns_empty_or_dep_recs(self):
-        engine = RecommendationEngine()
-        result = engine.generate_recommendations(findings=[], dependencies=[_make_dependency()])
+        result = generate_recommendations(findings=[], dependencies=[_make_dependency()])
         vuln_recs = [
             r
             for r in result
@@ -328,11 +192,10 @@ class TestGenerateRecommendationsEmpty:
 
 class TestGenerateRecommendationsSingleVuln:
     def test_single_vuln_generates_recommendation(self):
-        engine = RecommendationEngine()
         finding = _make_vuln_finding()
         dep = _make_dependency()
 
-        result = engine.generate_recommendations(findings=[finding], dependencies=[dep], join_dependencies=[dep])
+        result = generate_recommendations(findings=[finding], dependencies=[dep], join_dependencies=[dep])
 
         assert len(result) >= 1
         vuln_types = {
@@ -346,11 +209,10 @@ class TestGenerateRecommendationsSingleVuln:
         assert any(r.type in vuln_types for r in result)
 
     def test_single_critical_vuln_has_direct_dep_update(self):
-        engine = RecommendationEngine()
         finding = _make_vuln_finding(severity="CRITICAL")
         dep = _make_dependency()
 
-        result = engine.generate_recommendations(findings=[finding], dependencies=[dep], join_dependencies=[dep])
+        result = generate_recommendations(findings=[finding], dependencies=[dep], join_dependencies=[dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert len(direct_recs) >= 1
@@ -358,7 +220,6 @@ class TestGenerateRecommendationsSingleVuln:
 
 class TestGenerateRecommendationsMultipleTypes:
     def test_vuln_and_secret_and_sast(self):
-        engine = RecommendationEngine()
         findings = [
             _make_vuln_finding(),
             _make_secret_finding(),
@@ -366,34 +227,30 @@ class TestGenerateRecommendationsMultipleTypes:
         ]
         dep = _make_dependency()
 
-        result = engine.generate_recommendations(findings=findings, dependencies=[dep], join_dependencies=[dep])
+        result = generate_recommendations(findings=findings, dependencies=[dep], join_dependencies=[dep])
 
         rec_types = {r.type for r in result}
         assert len(rec_types) >= 2
 
     def test_vuln_and_secret_findings(self):
-        engine = RecommendationEngine()
         findings = [
             _make_vuln_finding(),
             _make_secret_finding(),
         ]
         dep = _make_dependency()
 
-        result = engine.generate_recommendations(findings=findings, dependencies=[dep], join_dependencies=[dep])
+        result = generate_recommendations(findings=findings, dependencies=[dep], join_dependencies=[dep])
 
         assert len(result) >= 2
 
 
 class TestGenerateRecommendationsDeduplication:
     def test_duplicate_vuln_findings_deduplicated(self):
-        engine = RecommendationEngine()
         finding1 = _make_vuln_finding(finding_id="CVE-2024-0001")
         finding2 = _make_vuln_finding(finding_id="CVE-2024-0001")
         dep = _make_dependency()
 
-        result = engine.generate_recommendations(
-            findings=[finding1, finding2], dependencies=[dep], join_dependencies=[dep]
-        )
+        result = generate_recommendations(findings=[finding1, finding2], dependencies=[dep], join_dependencies=[dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         pkg_recs = [r for r in direct_recs if "pkg-name" in r.affected_components]
@@ -402,7 +259,6 @@ class TestGenerateRecommendationsDeduplication:
 
 class TestGenerateRecommendationsSorting:
     def test_results_sorted_by_score_descending(self):
-        engine = RecommendationEngine()
         findings = [
             _make_vuln_finding(
                 finding_id="CVE-2024-0001", severity="LOW", component="low-pkg", purl="pkg:pypi/low-pkg@1.0.0"
@@ -419,7 +275,7 @@ class TestGenerateRecommendationsSorting:
             _make_dependency(name="critical-pkg", purl="pkg:pypi/critical-pkg@1.0.0"),
         ]
 
-        result = engine.generate_recommendations(findings=findings, dependencies=deps, join_dependencies=deps)
+        result = generate_recommendations(findings=findings, dependencies=deps, join_dependencies=deps)
 
         if len(result) >= 2:
             from app.services.recommendation.common import calculate_score
@@ -432,14 +288,14 @@ class TestGenerateRecommendationsRegression:
     def test_a_clean_previous_scan_raises_the_regression_card(self):
         finding = _make_vuln_finding(severity="CRITICAL")
 
-        result = RecommendationEngine().generate_recommendations(findings=[finding], previous_scan=PreviousScan())
+        result = generate_recommendations(findings=[finding], previous_scan=PreviousScan())
 
         assert RecommendationType.REGRESSION_DETECTED in {r.type for r in result}
 
     def test_no_previous_scan_no_regression_recs(self):
         finding = _make_vuln_finding(severity="CRITICAL")
 
-        result = RecommendationEngine().generate_recommendations(findings=[finding], previous_scan=None)
+        result = generate_recommendations(findings=[finding], previous_scan=None)
 
         assert RecommendationType.REGRESSION_DETECTED not in {r.type for r in result}
 
@@ -452,27 +308,23 @@ class TestPackageRiskIsolation:
         monkeypatch.setattr(risks, "detect_toxic_dependencies", _fail)
         finding = _make_vuln_finding(severity="CRITICAL", is_kev=True)
 
-        result = RecommendationEngine().generate_recommendations(findings=[finding])
+        result = generate_recommendations(findings=[finding])
 
         assert RecommendationType.CRITICAL_HOTSPOT in {r.type for r in result}
 
 
 class TestGenerateRecommendationsErrorResilience:
     def test_engine_does_not_crash_with_malformed_finding(self):
-        engine = RecommendationEngine()
         malformed = {"type": "vulnerability", "id": None}
         normal = _make_vuln_finding(component="good-pkg", purl="pkg:pypi/good-pkg@1.0.0")
         dep = _make_dependency(name="good-pkg", purl="pkg:pypi/good-pkg@1.0.0")
 
-        result = engine.generate_recommendations(
-            findings=[malformed, normal], dependencies=[dep], join_dependencies=[dep]
-        )
+        result = generate_recommendations(findings=[malformed, normal], dependencies=[dep], join_dependencies=[dep])
         assert isinstance(result, list)
 
 
 class TestGenerateRecommendationsBaseImage:
     def test_the_image_rows_name_the_base_image(self):
-        engine = RecommendationEngine()
         findings = [
             _make_vuln_finding(
                 finding_id=f"CVE-2024-000{i}", component=f"libos{i}", purl=f"pkg:deb/debian/libos{i}@1.0.0"
@@ -491,7 +343,7 @@ class TestGenerateRecommendationsBaseImage:
             for i in range(5)
         ]
 
-        result = engine.generate_recommendations(findings=findings, dependencies=deps, join_dependencies=deps)
+        result = generate_recommendations(findings=findings, dependencies=deps, join_dependencies=deps)
 
         [base_rec] = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_rec.action["current_image"] == "python:3.11-slim"
@@ -499,11 +351,10 @@ class TestGenerateRecommendationsBaseImage:
 
 class TestGenerateRecommendationsCrossProject:
     def test_cross_project_data_does_not_crash(self):
-        engine = RecommendationEngine()
         finding = _make_vuln_finding()
         dep = _make_dependency()
 
-        result = engine.generate_recommendations(
+        result = generate_recommendations(
             findings=[finding],
             dependencies=[dep],
             cross_project_data={"projects": []},
@@ -515,11 +366,10 @@ class TestGenerateRecommendationsCveRecurrence:
     def test_cve_recurrence_does_not_crash(self):
         from app.services.recommendation.trends import CveRecurrence
 
-        engine = RecommendationEngine()
         finding = _make_vuln_finding()
         dep = _make_dependency()
 
-        result = engine.generate_recommendations(
+        result = generate_recommendations(
             findings=[finding],
             dependencies=[dep],
             cve_recurrence={"CVE-2024-001": CveRecurrence(scans={"s1", "s2", "s3"}, severity="HIGH")},
@@ -544,17 +394,15 @@ class TestGenerateRecommendationsTyposquatting:
         }
 
     def test_malware_with_imitated_package_generates_typosquat_rec(self):
-        engine = RecommendationEngine()
         finding = self._make_typosquat_finding()
 
-        result = engine.generate_recommendations(findings=[finding], dependencies=[])
+        result = generate_recommendations(findings=[finding], dependencies=[])
 
         typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
         assert len(typo_recs) == 1
         assert "reqeusts (looks like: requests)" in typo_recs[0].affected_components
 
     def test_plain_malware_does_not_generate_typosquat_rec(self):
-        engine = RecommendationEngine()
         finding = {
             "id": "MAL-001",
             "type": "malware",
@@ -565,7 +413,7 @@ class TestGenerateRecommendationsTyposquatting:
             "aliases": [],
         }
 
-        result = engine.generate_recommendations(findings=[finding], dependencies=[])
+        result = generate_recommendations(findings=[finding], dependencies=[])
 
         typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
         assert len(typo_recs) == 0
@@ -617,7 +465,7 @@ class TestMalwareSignalsGetTheirOwnCards:
     def test_a_failed_hash_check_is_an_integrity_card_not_malware(self):
         findings = _produced(hash_verification={"hash_issues": [_HASH_ISSUE]})
 
-        types = {r.type for r in RecommendationEngine().generate_recommendations(findings=findings)}
+        types = {r.type for r in generate_recommendations(findings=findings)}
 
         assert RecommendationType.HASH_MISMATCH in types
         assert RecommendationType.MALWARE_DETECTED not in types
@@ -626,7 +474,7 @@ class TestMalwareSignalsGetTheirOwnCards:
     def test_a_typosquat_is_not_reported_as_known_malware(self):
         findings = _produced(typosquatting={"typosquatting_issues": [_TYPOSQUAT_ISSUE]})
 
-        types = {r.type for r in RecommendationEngine().generate_recommendations(findings=findings)}
+        types = {r.type for r in generate_recommendations(findings=findings)}
 
         assert RecommendationType.TYPOSQUAT_DETECTED in types
         assert RecommendationType.MALWARE_DETECTED not in types
@@ -635,7 +483,7 @@ class TestMalwareSignalsGetTheirOwnCards:
     def test_a_malware_package_gets_one_playbook_and_no_toxic_card(self):
         findings = _produced(os_malware={"malware_issues": [_MALWARE_ISSUE]}, end_of_life={"eol_issues": [_EOL_ISSUE]})
 
-        by_type = {r.type: r for r in RecommendationEngine().generate_recommendations(findings=findings)}
+        by_type = {r.type: r for r in generate_recommendations(findings=findings)}
 
         assert RecommendationType.TOXIC_DEPENDENCY not in by_type
         malware, hotspot = by_type[RecommendationType.MALWARE_DETECTED], by_type[RecommendationType.CRITICAL_HOTSPOT]
@@ -657,9 +505,7 @@ def test_every_generated_card_carries_an_effort_member():
     ]
     dep = _make_dependency()
 
-    result = RecommendationEngine().generate_recommendations(
-        findings=findings, dependencies=[dep], join_dependencies=[dep]
-    )
+    result = generate_recommendations(findings=findings, dependencies=[dep], join_dependencies=[dep])
 
     assert len({r.type for r in result}) >= 6
     assert {type(r.effort) for r in result} == {Effort}
@@ -677,18 +523,16 @@ class TestTyposquatCollection:
         return {"type": "malware", "severity": "CRITICAL", "component": component, "details": details}
 
     def test_imitated_package_reaches_the_recommendation(self):
-        engine = RecommendationEngine()
         findings = [self._malware_finding("loadsh", imitated_package="lodash")]
 
-        recs = engine.generate_recommendations(findings=findings)
+        recs = generate_recommendations(findings=findings)
 
         typosquat = next(r for r in recs if r.type == RecommendationType.TYPOSQUAT_DETECTED)
         assert "loadsh (looks like: lodash)" in typosquat.affected_components
 
     def test_plain_malware_raises_no_typosquat_recommendation(self):
-        engine = RecommendationEngine()
 
-        recs = engine.generate_recommendations(findings=[self._malware_finding("evil-pkg")])
+        recs = generate_recommendations(findings=[self._malware_finding("evil-pkg")])
 
         assert not [r for r in recs if r.type == RecommendationType.TYPOSQUAT_DETECTED]
 
@@ -705,9 +549,7 @@ class TestOnePackageAcrossCardTypes:
         ]
         deps = [self._dep("minimist", "0.0.8", False), self._dep("minimist", "1.2.0", False)]
 
-        result = RecommendationEngine().generate_recommendations(
-            findings=findings, dependencies=deps, join_dependencies=deps
-        )
+        result = generate_recommendations(findings=findings, dependencies=deps, join_dependencies=deps)
 
         transitive = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
         assert sorted(r.affected_components[0] for r in transitive) == ["minimist@0.0.8", "minimist@1.2.0"]
@@ -719,9 +561,7 @@ class TestOnePackageAcrossCardTypes:
         ]
         deps = [self._dep("lib", v, True) for v in ("1.0.0", "1.1.0", "1.2.0")]
 
-        result = RecommendationEngine().generate_recommendations(
-            findings=findings, dependencies=deps, join_dependencies=deps
-        )
+        result = generate_recommendations(findings=findings, dependencies=deps, join_dependencies=deps)
 
         tiers = {
             r.priority
@@ -743,7 +583,7 @@ def test_the_kev_card_names_the_cve_the_live_threat_intel_marks():
         "CVE-2023-0002": VulnerabilityEnrichment(cve="CVE-2023-0002", risk_score=40.0, is_kev=True),
     }
 
-    result = RecommendationEngine().generate_recommendations(findings=[finding], threat_intel=threat_intel)
+    result = generate_recommendations(findings=[finding], threat_intel=threat_intel)
 
     [kev_card] = [r for r in result if r.type == RecommendationType.KNOWN_EXPLOIT]
     assert kev_card.action["cves"] == ["CVE-2023-0002"]

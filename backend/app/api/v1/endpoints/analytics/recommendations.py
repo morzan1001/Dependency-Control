@@ -40,7 +40,7 @@ from app.services.enrichment.service import apply_enrichments, vulnerability_enr
 from app.services.recommendation import trends
 from app.services.recommendation.common import live_cves
 from app.services.recommendation.crypto import CRYPTO_ISSUE_FINDING_TYPES, CRYPTO_RECOMMENDATION_TYPES
-from app.services.recommendations import recommendation_engine
+from app.services.recommendations import generate_recommendations
 
 from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
 
@@ -180,7 +180,7 @@ async def get_project_recommendations(
         cross_project_data = await gather_cross_project_data(user_projects, project_id, db)
 
         recommendations = await asyncio.to_thread(
-            recommendation_engine.generate_recommendations,
+            generate_recommendations,
             findings=findings,
             dependencies=dependencies,
             join_dependencies=join_dependencies,

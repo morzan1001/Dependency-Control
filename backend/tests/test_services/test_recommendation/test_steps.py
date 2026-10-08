@@ -10,7 +10,7 @@ from app.services.recommendation.insights import (
     correlate_scorecard_with_vulnerabilities,
 )
 from app.services.recommendation.trends import CveRecurrence, analyze_recurring_issues
-from app.services.recommendations import RecommendationEngine
+from app.services.recommendations import generate_recommendations
 from tests.test_services.test_normalizers.test_secret import _FILESYSTEM_FINDING
 from tests.test_services.test_recommendation.test_engine import _EOL_ISSUE, _MALWARE_ISSUE, _produced
 from tests.test_services.test_recommendation.test_graph import _chain, _dep
@@ -31,7 +31,7 @@ def _engine_cards():
         end_of_life={"eol_issues": [_EOL_ISSUE]},
         trufflehog={"findings": [_FILESYSTEM_FINDING]},
     )
-    return RecommendationEngine().generate_recommendations(findings=findings)
+    return generate_recommendations(findings=findings)
 
 
 def _graph_cards():

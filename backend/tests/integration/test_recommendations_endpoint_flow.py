@@ -83,7 +83,7 @@ def _engine_returning(recommendations: list[Recommendation], seen: dict):
 
 
 def _counting_engine(runs: list[int]):
-    generate = rec_module.recommendation_engine.generate_recommendations
+    generate = rec_module.generate_recommendations
 
     def _generate(**kwargs):
         runs.append(len(kwargs["findings"]))
@@ -135,7 +135,7 @@ async def test_a_reanalysed_scan_is_not_served_its_earlier_recommendations(
     await _insert_scan(db, "s")
     await db.findings.insert_one(_finding("f1", "vulnerability"))
     runs: list[int] = []
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _counting_engine(runs))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _counting_engine(runs))
 
     first = await client.get(_path("p"), headers=owner_auth_headers_proj)
     repeat = await client.get(_path("p"), headers=owner_auth_headers_proj)
@@ -188,7 +188,7 @@ async def test_concurrent_views_of_one_scan_share_one_computation(
     await _insert_scan(db, "s")
     await db.findings.insert_one(_finding("f1", "vulnerability"))
     runs: list[int] = []
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _counting_engine(runs))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _counting_engine(runs))
 
     responses = await asyncio.gather(*(client.get(_path("p"), headers=owner_auth_headers_proj) for _ in range(3)))
 
@@ -288,7 +288,7 @@ async def test_the_live_per_cve_threat_intel_reaches_the_engine(client, db, owne
 
     monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _enrich)
     seen: dict = {}
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
@@ -354,9 +354,7 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         for rec_type, n in impacts
     ]
     recommendations.append(_rec(t.BASE_IMAGE_UPDATE, {}))
-    monkeypatch.setattr(
-        rec_module.recommendation_engine, "generate_recommendations", _engine_returning(recommendations, {})
-    )
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning(recommendations, {}))
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
@@ -399,7 +397,7 @@ async def test_a_saturated_findings_read_reports_what_the_scan_holds(client, db,
     for index in range(3):
         await db.findings.insert_one(_finding(f"f{index}", "vulnerability"))
     monkeypatch.setattr(rec_module, "ANALYTICS_MAX_QUERY_LIMIT", 2)
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], {}))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], {}))
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
@@ -415,7 +413,7 @@ async def test_waived_findings_do_not_reach_the_engine(client, db, owner_auth_he
     waived = _finding("f-waived", "secret") | {"waived": True}
     await db.findings.insert_many([_finding("f-live", "secret"), waived])
     seen: dict = {}
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
@@ -446,7 +444,7 @@ async def test_cross_project_cards_compare_the_viewed_project_first_among_projec
     await _insert_scan(db, "s")
     await db.projects.update_one({"_id": "p"}, {"$set": {"latest_scan_id": "s"}})
     seen: dict = {}
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
@@ -546,7 +544,7 @@ async def test_a_cve_the_live_refresh_has_no_data_for_keeps_its_stored_scores(
     advisory = {"id": "CVE-2024-0001", "severity": "HIGH", "cvss_score": 7.5, "epss_score": 0.42, "risk_score": 71.5}
     await db.findings.insert_many(_vulnerability_records("s", "lib", "1.0", [advisory]))
     seen: dict = {}
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
@@ -597,7 +595,7 @@ async def test_the_engine_gets_findings_and_dependencies_without_the_payload_no_
         }
     )
     seen: dict = {}
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 

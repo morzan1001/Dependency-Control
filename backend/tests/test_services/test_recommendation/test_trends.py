@@ -15,7 +15,7 @@ from app.services.recommendation.trends import (
     analyze_regressions,
     build_cve_recurrence,
 )
-from app.services.recommendations import RecommendationEngine
+from app.services.recommendations import generate_recommendations
 from tests.helpers.findings import stored_vulnerability
 
 _SEV_CRITICAL = "CRITICAL"
@@ -495,9 +495,7 @@ _LODASH_SIBLING_CVE = "CVE-2020-8203"
 
 
 def _recurring_cards(findings, recurrence):
-    recs = RecommendationEngine().generate_recommendations(
-        findings=findings, cve_recurrence=recurrence, recurrence_window_scans=8
-    )
+    recs = generate_recommendations(findings=findings, cve_recurrence=recurrence, recurrence_window_scans=8)
     return [r for r in recs if r.type == RecommendationType.RECURRING_VULNERABILITY]
 
 
