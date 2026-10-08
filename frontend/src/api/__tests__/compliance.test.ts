@@ -1,96 +1,46 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { downloadReport } from "@/api/compliance";
-import { api } from "@/api/client";
+import { getServerFile } from "@/api/client";
 
 vi.mock("@/api/client", () => ({
-  api: { get: vi.fn() },
+  api: {},
+  getServerFile: vi.fn(),
 }));
 
-const mockedGet = api.get as unknown as ReturnType<typeof vi.fn>;
-
 describe("downloadReport", () => {
-  let createObjectURL: ReturnType<typeof vi.fn>;
   let revokeObjectURL: ReturnType<typeof vi.fn>;
-  let clickSpy: Mock<() => void>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    createObjectURL = vi.fn(() => "blob:mock-url");
     revokeObjectURL = vi.fn();
     // jsdom does not implement the object-URL APIs.
-    window.URL.createObjectURL = createObjectURL as unknown as typeof window.URL.createObjectURL;
+    window.URL.createObjectURL = vi.fn(() => "blob:mock-url") as unknown as typeof window.URL.createObjectURL;
     window.URL.revokeObjectURL = revokeObjectURL as unknown as typeof window.URL.revokeObjectURL;
-    clickSpy = vi.fn<() => void>();
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(clickSpy);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("fetches the artifact through the authenticated client as a blob", async () => {
+  it("fetches the artifact through the authenticated client and saves it under the given name", async () => {
     const blob = new Blob(["pdf-bytes"], { type: "application/pdf" });
-    mockedGet.mockResolvedValue({ data: blob, headers: {} });
-
-    await downloadReport("r1");
-
-    // Must use the authenticated client with a blob responseType, not a bare anchor href.
-    expect(mockedGet).toHaveBeenCalledWith("/compliance/reports/r1/download", {
-      responseType: "blob",
-    });
-    expect(createObjectURL).toHaveBeenCalledWith(blob);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
-  });
-
-  it("uses the explicit filename argument for the download attribute", async () => {
-    const blob = new Blob(["x"]);
-    mockedGet.mockResolvedValue({ data: blob, headers: {} });
-
+    vi.mocked(getServerFile).mockResolvedValue({ blob, filename: "server-name.pdf" });
     let downloadedName: string | undefined;
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       downloadedName = this.download;
     });
 
     await downloadReport("r1", "audit.pdf");
 
+    expect(getServerFile).toHaveBeenCalledWith("/compliance/reports/r1/download");
+    expect(window.URL.createObjectURL).toHaveBeenCalledWith(blob);
     expect(downloadedName).toBe("audit.pdf");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
   });
 
-  it("derives the filename from Content-Disposition when no name is given", async () => {
-    const blob = new Blob(["x"]);
-    mockedGet.mockResolvedValue({
-      data: blob,
-      headers: { "content-disposition": 'attachment; filename="report-2026.pdf"' },
-    });
+  it("lets a failed fetch reach the caller's error handling", async () => {
+    vi.mocked(getServerFile).mockRejectedValue(new Error("Request failed with status code 404"));
 
-    let downloadedName: string | undefined;
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
-      downloadedName = this.download;
-    });
-
-    await downloadReport("r1");
-
-    expect(downloadedName).toBe("report-2026.pdf");
-  });
-
-  it("falls back to a report-id filename when nothing else is available", async () => {
-    const blob = new Blob(["x"]);
-    mockedGet.mockResolvedValue({ data: blob, headers: {} });
-
-    let downloadedName: string | undefined;
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
-      downloadedName = this.download;
-    });
-
-    await downloadReport("abc");
-
-    expect(downloadedName).toBe("compliance-report-abc");
+    await expect(downloadReport("r1", "audit.pdf")).rejects.toThrow("404");
   });
 });

@@ -1,6 +1,6 @@
 import { toast } from 'sonner'
 
-function triggerBrowserDownload(blob: Blob, filename: string) {
+export function triggerBrowserDownload(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
