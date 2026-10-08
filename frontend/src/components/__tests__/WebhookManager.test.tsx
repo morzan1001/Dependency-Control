@@ -114,6 +114,13 @@ describe("WebhookManager", () => {
     expect(screen.getAllByText("Failing")).toHaveLength(1);
   });
 
+  it("shows a paused webhook as Paused, not by its last delivery", () => {
+    renderWith([{ ...slackHook, is_active: false }]);
+
+    expect(screen.getByText("Paused")).toBeInTheDocument();
+    expect(screen.queryByText("Failing")).not.toBeInTheDocument();
+  });
+
   it("shows why a test delivery failed", async () => {
     vi.mocked(webhookApi.test).mockResolvedValue({ success: false, status_code: 400, error: "HTTP 400: no_text" });
     renderWith([slackHook]);

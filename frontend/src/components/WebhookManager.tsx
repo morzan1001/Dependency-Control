@@ -21,6 +21,27 @@ function isFailing(webhook: Webhook): boolean {
   return !webhook.last_triggered_at || Date.parse(webhook.last_failure_at) > Date.parse(webhook.last_triggered_at);
 }
 
+function DeliveryState({ webhook }: { readonly webhook: Webhook }) {
+  if (!webhook.is_active) {
+    return <Badge variant="secondary" title="Receives no deliveries while paused">Paused</Badge>
+  }
+  if (isFailing(webhook)) {
+    return (
+      <Badge variant="destructive" title={`Last failed delivery: ${formatDateTime(webhook.last_failure_at)}`}>
+        Failing
+      </Badge>
+    )
+  }
+  if (webhook.last_triggered_at) {
+    return (
+      <Badge variant="outline" title={`Last delivery: ${formatDateTime(webhook.last_triggered_at)}`}>
+        Delivered
+      </Badge>
+    )
+  }
+  return <span className="text-xs text-muted-foreground">No deliveries yet</span>
+}
+
 interface WebhookManagerProps {
   readonly webhooks: Webhook[]
   readonly isLoading: boolean
@@ -138,17 +159,7 @@ export function WebhookManager({
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {isFailing(webhook) ? (
-                      <Badge variant="destructive" title={`Last failed delivery: ${formatDateTime(webhook.last_failure_at)}`}>
-                        Failing
-                      </Badge>
-                    ) : webhook.last_triggered_at ? (
-                      <Badge variant="outline" title={`Last delivery: ${formatDateTime(webhook.last_triggered_at)}`}>
-                        Delivered
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No deliveries yet</span>
-                    )}
+                    <DeliveryState webhook={webhook} />
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
