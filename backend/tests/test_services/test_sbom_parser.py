@@ -302,7 +302,7 @@ class TestDirectnessOfRealGraphs:
 
     def test_the_spdx_image_root_is_skipped_and_its_distro_becomes_the_operating_system(self):
         result = parse_sbom(_fixture("alpine.syft.spdx.json"))
-        components = [dep.to_dict() for dep in result.dependencies]
+        components = [dep.model_dump() for dep in result.dependencies]
 
         assert [dep.purl for dep in result.dependencies if dep.type == "oci"] == []
         assert result.skipped_reasons["root-component"] == 1
@@ -316,7 +316,7 @@ class TestDirectnessOfRealGraphs:
     @pytest.mark.parametrize("fixture", ["alpine.syft.json", "alpine.syft.cdx.json", "alpine.syft.spdx.json"])
     def test_every_syft_format_of_one_image_hands_its_distro_to_end_of_life(self, fixture):
         result = parse_sbom(_fixture(fixture))
-        components = [dep.to_dict() for dep in result.dependencies]
+        components = [dep.model_dump() for dep in result.dependencies]
 
         assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
 
@@ -2779,7 +2779,7 @@ class TestCycloneDXParentRefs:
                 {"ref": ref["p3"], "dependsOn": [ref["p2"]]},
             ],
         }
-        dependencies = [d.to_dict() for d in parse_sbom(sbom).dependencies]
+        dependencies = [d.model_dump() for d in parse_sbom(sbom).dependencies]
 
         titles = sorted(r.title for r in analyze_deep_dependency_chains(dependencies, max_dependency_depth=3))
 

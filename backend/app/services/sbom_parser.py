@@ -980,11 +980,8 @@ class SBOMParser:
         """Extract a dedicated license URL from a syft license dict ('url'/'urls')."""
         for url_key in ("url", "urls"):
             url_val = lic.get(url_key)
-            if not url_val:
-                continue
-            if isinstance(url_val, list):
-                return str(url_val[0]) if url_val else None
-            return str(url_val) if url_val else None
+            if url_val:
+                return str(url_val[0] if isinstance(url_val, list) else url_val)
         return None
 
     def _handle_syft_license_dict(self, lic: dict[str, Any]) -> tuple[str | None, str | None]:

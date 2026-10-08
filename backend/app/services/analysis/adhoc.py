@@ -407,7 +407,7 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
                 position=position,
                 sbom=sbom,
                 parsed=parsed,
-                components=[dep.to_dict() for dep in parsed.dependencies],
+                components=[dep.model_dump() for dep in parsed.dependencies],
             )
         )
     return parsed_inputs
@@ -649,7 +649,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
     merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
-    components = [dep.to_dict() for dep in merged]
+    components = [dep.model_dump() for dep in merged]
     languages = component_language_map(components)
     reachability_summary = await asyncio.to_thread(_run_reachability, records, request.callgraph, languages, report)
 

@@ -30,7 +30,7 @@ async def analyze_cyclonedx(
     """Run the analyzer as the engine does: on the parser's reading of a CycloneDX document with these components."""
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
     return await analyzer.analyze(
-        sbom, settings, [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
+        sbom, settings, [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
     )
 
 

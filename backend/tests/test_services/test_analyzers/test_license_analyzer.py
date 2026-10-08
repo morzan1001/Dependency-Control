@@ -692,7 +692,7 @@ class TestTransitiveDirectness:
         self.analyzer = LicenseAnalyzer()
 
     def _gpl_component(self, name, *, direct):
-        """A GPL-3.0 component in ParsedDependency.to_dict() shape."""
+        """A GPL-3.0 component in ParsedDependency.model_dump() shape."""
         return {
             "name": name,
             "version": "1.0.0",

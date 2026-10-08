@@ -60,7 +60,7 @@ async def test_an_unparseable_sbom_runs_only_the_scanners_that_read_the_raw_docu
 @pytest.mark.asyncio
 async def test_components_the_parser_skipped_produce_no_license_findings():
     sbom = json.loads(_CBOM_FIXTURE.read_text())
-    parsed = [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
+    parsed = [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
 
     result = await LicenseAnalyzer().analyze(sbom, parsed_components=parsed)
 
@@ -98,7 +98,7 @@ async def test_a_stored_sbom_is_decoded_and_parsed_off_the_event_loop(monkeypatc
     path, (_, components, source, sbom_format) = await engine._load_sbom(None, "69d5332257c8763c8d8c82d7", False)
 
     assert path is None
-    assert components == [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
+    assert components == [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
     assert (source, sbom_format) == (sbom["metadata"]["component"]["name"], SBOMFormat.CYCLONEDX)
     assert threads["loads"]
     assert threads["parse"]

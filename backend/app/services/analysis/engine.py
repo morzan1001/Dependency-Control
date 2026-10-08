@@ -363,7 +363,7 @@ def _parse_and_track_sbom(document: Any) -> _ParsedDocument:
     try:
         source, sbom_format = _sbom_source(document), sbom_parser.detect_format(document)
         parsed_sbom = parse_sbom(document)
-        parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
+        parsed_components = [dep.model_dump() for dep in parsed_sbom.dependencies]
         logger.info(
             f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}, "
             f"skipped={parsed_sbom.skipped_components}, merged={parsed_sbom.merged_components}, "

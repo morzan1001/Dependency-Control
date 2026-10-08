@@ -252,7 +252,7 @@ async def test_the_base_image_card_names_the_scanned_image_rather_than_an_applic
 ):
     fixtures = Path(__file__).parents[1] / "fixtures" / "sbom"
     app_rows, image_rows = (
-        [d.to_dict() for d in parse_sbom(json.loads((fixtures / name).read_text())).dependencies]
+        [d.model_dump() for d in parse_sbom(json.loads((fixtures / name).read_text())).dependencies]
         for name in ("mono.trivy.cdx.json", "alpine.syft.spdx.json")
     )
     await _insert_scan(db, "s")
@@ -460,7 +460,7 @@ async def test_an_os_package_outside_the_inventory_window_still_joins_its_row(
     client, db, owner_auth_headers_proj, monkeypatch, no_live_intel
 ):
     sbom = json.loads((Path(__file__).parents[1] / "fixtures" / "sbom" / "rootfs.trivy.cdx.json").read_text())
-    libssl = next(d.to_dict() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
+    libssl = next(d.model_dump() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
     await _insert_scan(db, "s")
     filler = {"_id": "d-filler", "project_id": "p", "scan_id": "s", "name": "aaa-filler", "version": "1.0"}
     await db.dependencies.insert_many([filler, libssl | {"_id": "d-libssl", "project_id": "p", "scan_id": "s"}])
