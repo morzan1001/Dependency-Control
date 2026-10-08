@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 
 import { ReportDetailDrawer } from "../ReportDetailDrawer";
 import type { ComplianceReportMeta } from "@/types/compliance";
@@ -9,6 +9,9 @@ vi.mock("@/api/compliance", () => ({
   deleteReport: vi.fn().mockResolvedValue(undefined),
   downloadReport: vi.fn().mockResolvedValue(undefined),
 }));
+const permissionSet = new Set<string>();
+vi.mock("@/context/useAuth", () => ({ useAuth: () => ({ hasPermission: (p: string) => permissionSet.has(p) }) }));
+vi.mock("@/hooks/queries/use-users", () => ({ useCurrentUser: () => ({ data: { id: "u-me" } }) }));
 
 function withClient(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -22,7 +25,7 @@ const sampleReport: ComplianceReportMeta = {
   framework: "nist-sp-800-131a",
   format: "pdf",
   status: "completed",
-  requested_by: "user@example.com",
+  requested_by: "u-me",
   requested_at: "2026-04-20T10:00:00Z",
   completed_at: "2026-04-20T10:05:00Z",
   artifact_filename: "report.pdf",
@@ -36,6 +39,8 @@ const PARTIAL_WARNING = /rested on finding no match in a capped input/i;
 const WITHHELD = 3;
 
 describe("ReportDetailDrawer", () => {
+  beforeEach(() => permissionSet.clear());
+
   it("warns that the verdicts resting on a capped plan were withheld", () => {
     const partial: ComplianceReportMeta = {
       ...sampleReport,
@@ -115,6 +120,21 @@ describe("ReportDetailDrawer", () => {
     expect(deleteBtn).toBeInTheDocument();
     fireEvent.click(deleteBtn);
     expect(await screen.findByText(/Delete this report\?/i)).toBeInTheDocument();
+  });
+
+  it("offers no delete on a report someone else requested", () => {
+    const colleagues: ComplianceReportMeta = { ...sampleReport, scope: "project", scope_id: "p1", requested_by: "u-colleague" };
+    withClient(<ReportDetailDrawer report={colleagues} onClose={() => {}} />);
+
+    expect(screen.queryByRole("button", { name: /Delete report/i })).not.toBeInTheDocument();
+  });
+
+  it("lets a system manager delete a report someone else requested", () => {
+    permissionSet.add("system:manage");
+    const colleagues: ComplianceReportMeta = { ...sampleReport, scope: "project", scope_id: "p1", requested_by: "u-colleague" };
+    withClient(<ReportDetailDrawer report={colleagues} onClose={() => {}} />);
+
+    expect(screen.getByRole("button", { name: /Delete report/i })).toBeInTheDocument();
   });
 
   it("calls downloadReport with the report id when the download button is clicked", async () => {

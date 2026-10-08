@@ -15,6 +15,7 @@ vi.mock('@/api/compliance', () => ({
   downloadReport: vi.fn(),
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: () => false }) }))
+vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'lena' } }) }))
 
 function report(status: ReportStatus): ComplianceReportMeta {
   return {

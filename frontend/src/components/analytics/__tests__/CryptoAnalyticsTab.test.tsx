@@ -32,6 +32,7 @@ vi.mock("@/api/pqcMigration", () => ({
 }));
 vi.mock("@/api/compliance", () => ({ listReports: vi.fn().mockResolvedValue({ reports: [] }), createReport: vi.fn() }));
 vi.mock("@/context/useAuth", () => ({ useAuth: () => ({ hasPermission: () => false }) }));
+vi.mock("@/hooks/queries/use-users", () => ({ useCurrentUser: () => ({ data: { id: "u-me" } }) }));
 
 function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

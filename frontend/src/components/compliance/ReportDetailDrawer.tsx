@@ -5,6 +5,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { deleteReport, downloadReport } from "@/api/compliance";
+import { useAuth } from "@/context/useAuth";
+import { useCurrentUser } from "@/hooks/queries/use-users";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { formatDateTime, getErrorMessage } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
@@ -74,6 +76,9 @@ function SummaryRow({ label, value }: { readonly label: string; readonly value: 
 export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
+  const { hasPermission } = useAuth();
+  const { data: currentUser } = useCurrentUser();
+  const canDelete = !!report && (report.requested_by === currentUser?.id || hasPermission("system:manage"));
 
   const del = useMutation({
     mutationFn: (id: string) => deleteReport(id),
@@ -148,16 +153,18 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                   </div>
                 )}
               </div>
-              <DialogFooter className="mt-4">
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={confirm.openDialog}
-                  disabled={del.isPending}
-                >
-                  Delete report
-                </Button>
-              </DialogFooter>
+              {canDelete && (
+                <DialogFooter className="mt-4">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={confirm.openDialog}
+                    disabled={del.isPending}
+                  >
+                    Delete report
+                  </Button>
+                </DialogFooter>
+              )}
             </>
           )}
         </DialogContent>
