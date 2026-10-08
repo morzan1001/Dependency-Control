@@ -986,6 +986,18 @@ class TestUnmeasuredScans:
         assert [e.outdated_count for e in m.scan_timeline] == [3, None]
 
     @pytest.mark.asyncio
+    async def test_a_partial_analysis_is_not_a_measured_backlog(self):
+        # deps.dev failed for pkg-b, so the analyzer could not flag it: that is no resolution.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
+        partial = _backlog_outdated("s2", ["pkg-a", "pkg-c"])
+        partial["result"]["partial_components_skipped"] = 1
+        m = await self._compute(scans, deps, [_backlog_outdated("s1"), partial])
+        assert m.outdated_resolved == 0
+        assert m.update_coverage_pct == 0.0
+        assert [e.outdated_count for e in m.scan_timeline] == [3, None]
+
+    @pytest.mark.asyncio
     async def test_coverage_is_none_when_no_scan_measured_a_backlog(self):
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}

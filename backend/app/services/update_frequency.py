@@ -172,7 +172,9 @@ async def load_outdated_entries(analysis_repo: AnalysisResultRepository, scan_id
 
     An analyzer that raised leaves no document behind and one that failed stores a
     result without ``outdated_dependencies``; reading either as an empty backlog
-    would report the whole backlog of the previous scan as brought up to date.
+    would report the whole backlog of the previous scan as brought up to date. A
+    result whose lookups partly failed leaves those packages unflagged, so one
+    such row leaves the whole scan unmeasured.
 
     One row is stored per SBOM of the scan and the caller folds them into a set, so the
     cursor is walked whole: a bounded read would drop an arbitrary SBOM's backlog.
@@ -182,9 +184,12 @@ async def load_outdated_entries(analysis_repo: AnalysisResultRepository, scan_id
     async for doc in analysis_repo.iterate_raw(
         {"scan_id": scan_id, "analyzer_name": "outdated_packages"}, projection=RESULT_PROJECTION
     ):
-        found = (await analysis_repo.load_result(doc) or {}).get("outdated_dependencies")
+        result = await analysis_repo.load_result(doc) or {}
+        found = result.get("outdated_dependencies")
         if not isinstance(found, list):
             continue
+        if result.get("partial_components_skipped"):
+            return None
         measured = True
         entries.extend(found)
     return entries if measured else None
