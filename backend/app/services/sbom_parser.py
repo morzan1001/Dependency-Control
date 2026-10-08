@@ -586,47 +586,15 @@ class SBOMParser:
     _FOUND_BY_PROP = "syft:package:foundBy"
     _CPE_PROPS = ("syft:cpe23", "syft:cpe22")
     # syft:location:<N>:<field> — the layerID field is a digest, not a file path.
-    _SYFT_LOCATION_PROP_PREFIX = "syft:location:"
     _SYFT_LOCATION_PROP_RE = re.compile(r"^syft:location:\d+:(\w+)$")
-
-    @classmethod
-    def _classify_cyclonedx_property(
-        cls,
-        prop_name: str,
-        prop_value: str,
-        current_layer: str | None,
-    ) -> tuple[str | None, str | None, str | None]:
-        """Return (layer_digest_update, found_by_update, location_update) for a single property.
-
-        Each item is either None (no update) or the new value to record.
-        Caller is responsible for honouring "first wins" semantics where applicable.
-        """
-        if prop_name in cls._LAYER_DIGEST_PROPS:
-            return prop_value, None, None
-        if prop_name == cls._LAYER_DIFFID_PROP:
-            return (prop_value if not current_layer else None), None, None
-        if prop_name == cls._FOUND_BY_PROP:
-            return None, prop_value, None
-        if prop_name.startswith(cls._SYFT_LOCATION_PROP_PREFIX):
-            syft_location = cls._SYFT_LOCATION_PROP_RE.match(prop_name)
-            field = syft_location.group(1) if syft_location else None
-            if field == "layerID":
-                return (prop_value if not current_layer else None), None, None
-            if field == "path" and prop_value:
-                return None, None, prop_value
-            # Anything else (accessPath, annotations:evidence etc.) is no canonical path.
-            return None, None, None
-        lower = prop_name.lower()
-        if ("location" in lower or "path" in lower) and prop_value and not prop_name.startswith("syft:"):
-            return None, None, prop_value
-        return None, None, None
+    _PATH_NAME = re.compile("location|path")
 
     @classmethod
     def _extract_cyclonedx_properties(
         cls,
         comp: dict[str, Any],
     ) -> tuple[str | None, str | None, list[str], dict[str, str], list[str]]:
-        """Extract (layer_digest, found_by, locations, properties, cpes) from comp."""
+        """(layer_digest, found_by, locations, properties, cpes) of comp; a layer digest wins over a diff id."""
         layer_digest: str | None = None
         found_by: str | None = None
         locations: list[str] = []
@@ -637,26 +605,25 @@ class SBOMParser:
         for prop in raw_props if isinstance(raw_props, list) else []:
             if not isinstance(prop, dict):
                 continue
-            prop_name = prop.get("name", "")
-            prop_value = prop.get("value", "")
-            if prop_name and prop_value:
-                properties[prop_name] = prop_value
-
-            # Repeated syft:cpe23 properties collapse in the dict above, so CPEs
-            # must be collected while iterating.
-            if prop_name in cls._CPE_PROPS and prop_value:
-                cpes.append(prop_value)
+            name, value = prop.get("name", ""), prop.get("value", "")
+            if name and value:
+                properties[name] = value
+            # Repeated syft:cpe23 properties collapse in the dict above, so CPEs must be collected while iterating.
+            if name in cls._CPE_PROPS and value:
+                cpes.append(value)
                 continue
-
-            new_layer, new_found_by, new_location = cls._classify_cyclonedx_property(
-                prop_name, prop_value, layer_digest
-            )
-            if new_layer is not None:
-                layer_digest = new_layer
-            if new_found_by is not None:
-                found_by = new_found_by
-            if new_location is not None:
-                locations.append(new_location)
+            syft_location = cls._SYFT_LOCATION_PROP_RE.match(name)
+            field = syft_location.group(1) if syft_location else None
+            if value is None:
+                continue
+            if name in cls._LAYER_DIGEST_PROPS:
+                layer_digest = value
+            elif name == cls._LAYER_DIFFID_PROP or field == "layerID":
+                layer_digest = layer_digest or value
+            elif name == cls._FOUND_BY_PROP:
+                found_by = value
+            elif value and (field == "path" or (not name.startswith("syft:") and cls._PATH_NAME.search(name.lower()))):
+                locations.append(value)
 
         locations.extend(occurrence_locations(comp))
         return layer_digest, found_by, list(dict.fromkeys(locations)), properties, cpes
