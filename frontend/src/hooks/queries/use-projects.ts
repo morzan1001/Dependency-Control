@@ -122,7 +122,6 @@ export const useRestoreArchive = () => {
             projectApi.restoreArchive(projectId, scanId),
         onSuccess: (_, { projectId }) => {
             queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
-            queryClient.invalidateQueries({ queryKey: [...projectKeys.detail(projectId), 'archives'] });
         },
     });
 };

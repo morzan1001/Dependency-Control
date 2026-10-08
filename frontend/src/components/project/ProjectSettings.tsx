@@ -179,8 +179,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
   
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
-    if (!project || !user) return {};
-
     if (project.enforce_notification_settings) {
       return enforcedPreferences(project) || {};
     }

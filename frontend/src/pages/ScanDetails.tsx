@@ -33,12 +33,6 @@ import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-interface ScanHistoryItem {
-  id: string;
-  is_rescan?: boolean;
-  created_at: string;
-}
-
 // Pretty-printing a larger file into the DOM stalls the tab, so those stay download-only.
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024
 
@@ -272,7 +266,7 @@ export default function ScanDetails() {
                         <SelectValue placeholder="Select version" />
                     </SelectTrigger>
                     <SelectContent>
-                        {scanHistory.runs.map((h: ScanHistoryItem) => (
+                        {scanHistory.runs.map((h) => (
                             <SelectItem key={h.id} value={h.id}>
                                 {h.is_rescan ? 'Re-scan' : 'Original'} - {formatDateTime(h.created_at)}
                             </SelectItem>

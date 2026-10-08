@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { projectApi } from "@/api/projects";
-import { useProjectsDropdown } from "../use-projects";
+import { useProjectArchives, useProjectsDropdown, useRestoreArchive } from "../use-projects";
 import { DROPDOWN_PAGE_SIZE } from "@/lib/constants";
 import type { ProjectsResponse } from "@/types/project";
 
 vi.mock("@/api/projects", () => ({
   projectApi: {
     getAll: vi.fn(),
+    getArchives: vi.fn(),
+    restoreArchive: vi.fn(),
   },
 }));
 
@@ -87,3 +89,22 @@ describe("useProjectsDropdown", () => {
     expect(mock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useRestoreArchive", () => {
+  it("refetches the project's archive list once a restore succeeds", async () => {
+    vi.mocked(projectApi.getArchives).mockResolvedValue({ items: [], total: 0, page: 1, size: 20, pages: 1 });
+    vi.mocked(projectApi.restoreArchive).mockResolvedValue({
+      scan_id: "s1", project_id: "p1", message: "Restored", collections_restored: [],
+    });
+
+    const { result } = renderHook(
+      () => ({ archives: useProjectArchives("p1"), restore: useRestoreArchive() }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.archives.isSuccess).toBe(true));
+    await act(() => result.current.restore.mutateAsync({ projectId: "p1", scanId: "s1" }));
+
+    await waitFor(() => expect(projectApi.getArchives).toHaveBeenCalledTimes(2));
+  });
+});
+

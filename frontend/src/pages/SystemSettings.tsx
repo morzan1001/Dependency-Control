@@ -15,8 +15,8 @@ import {
   NotificationsSettingsTab,
   IntegrationsSettingsTab,
   ChatSettingsTab,
-  CryptoPolicySettingsTab,
 } from "@/components/settings"
+import { CryptoPolicyPage } from "@/pages/admin/CryptoPolicyPage"
 
 function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsType }>) {
   const { data: appConfig } = useAppConfig();
@@ -125,7 +125,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
         </TabsContent>
 
         <TabsContent value="crypto-policy">
-          <CryptoPolicySettingsTab />
+          <CryptoPolicyPage />
         </TabsContent>
 
         {chatEnabled && (

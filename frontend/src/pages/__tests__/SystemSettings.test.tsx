@@ -53,9 +53,9 @@ vi.mock('@/components/settings', () => {
     NotificationsSettingsTab: Tab,
     IntegrationsSettingsTab: Tab,
     ChatSettingsTab: Tab,
-    CryptoPolicySettingsTab: () => null,
   }
 })
+vi.mock('@/pages/admin/CryptoPolicyPage', () => ({ CryptoPolicyPage: () => null }))
 
 function makeSettings(overrides: Partial<SystemSettingsType> = {}): SystemSettingsType {
   return {
