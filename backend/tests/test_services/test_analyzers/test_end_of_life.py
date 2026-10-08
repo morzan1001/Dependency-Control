@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from app.core.constants import EOL_API_URL
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers import end_of_life
@@ -93,15 +94,16 @@ class _EndOfLifeDate:
     async def get(self, url: str) -> httpx.Response:
         slug = url.removeprefix(f"{EOL_API_URL}/").removesuffix(".json")
         self.requested.append(slug)
+        request = httpx.Request("GET", url)
         if slug == "all":
-            return httpx.Response(self.index_status, json=self.index)
+            return httpx.Response(self.index_status, json=self.index, request=request)
         if slug in self.cycles:
-            return httpx.Response(200, json=self.cycles[slug])
-        return httpx.Response(404, json={"message": "Product not found"})
+            return httpx.Response(200, json=self.cycles[slug], request=request)
+        return httpx.Response(404, json={"message": "Product not found"}, request=request)
 
 
 class _MemoryCache:
-    """cache_service's locked fetch: a stored value wins, a fetch result is stored, None stores the failure marker."""
+    """cache_service's locked fetch: a stored value wins, a fetch result is stored, a failed fetch reads as None."""
 
     def __init__(self) -> None:
         self.entries: dict[str, Any] = {}
@@ -109,8 +111,11 @@ class _MemoryCache:
     async def get_or_fetch_with_lock(self, key: str, fetch_fn, ttl_seconds: int | None = None) -> Any:
         if self.entries.get(key) is not None:
             return self.entries[key]
-        value = await fetch_fn()
-        self.entries[key] = {} if value is None else value
+        try:
+            value = await fetch_fn()
+        except Exception:
+            return None
+        self.entries[key] = value
         return value
 
 
@@ -474,6 +479,38 @@ class TestProductResolution:
 
         assert _cycles_of(issues) == {"openssl": "1.1.1"}
         assert upstream.requested.count("all") == 1
+
+    @pytest.mark.parametrize("status", [429, 503])
+    @pytest.mark.asyncio
+    async def test_a_failed_cycle_lookup_skips_its_components_and_is_asked_again_next_scan(
+        self, fake_cache, monkeypatch, status
+    ):
+        routes: dict[str, Any] = {"all": _PRODUCT_INDEX, "nodejs": status}
+
+        def answer(request: httpx.Request) -> httpx.Response:
+            body = routes.get(request.url.path.removeprefix("/api/").removesuffix(".json"), 404)
+            return httpx.Response(body) if isinstance(body, int) else httpx.Response(200, json=body)
+
+        transport = httpx.MockTransport(answer)
+        monkeypatch.setattr(
+            end_of_life,
+            "InstrumentedAsyncClient",
+            lambda service, **kwargs: InstrumentedAsyncClient(service, transport=transport, **kwargs),
+        )
+        monkeypatch.setattr(end_of_life, "cache_service", fake_cache)
+        components = [
+            _component("node", "14.21.3", "pkg:generic/node@14.21.3"),
+            _component("nodejs", "14.17.0", "pkg:generic/nodejs@14.17.0"),
+        ]
+
+        outage = await analyze_cyclonedx(EndOfLifeAnalyzer(), components)
+        cached = await fake_cache.get("eol:nodejs")
+        routes["nodejs"] = [_cycle("14", "2023-04-30", "14.21.3", lts=True)]
+        recovered = await analyze_cyclonedx(EndOfLifeAnalyzer(), components)
+
+        assert outage == {"eol_issues": [], "partial_components_skipped": 2}
+        assert cached is None
+        assert _cycles_of(recovered["eol_issues"]) == {"node": "14", "nodejs": "14"}
 
     @pytest.mark.parametrize(
         "payload",
