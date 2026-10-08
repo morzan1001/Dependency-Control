@@ -23,7 +23,6 @@ const MCP_KEY_ID = "k-mcp";
 const ADHOC_KEY_ID = "k-adhoc";
 const REVOKED_KEY_ID = "k-revoked";
 const EXPIRED_KEY_ID = "k-expired";
-const DAMAGED_KEY_ID = "k-damaged";
 const MCP_KEY_NAME = "claude desktop";
 const ADHOC_KEY_NAME = "release pipeline";
 const REVOKED_KEY_NAME = "retired laptop";
@@ -37,7 +36,6 @@ const MCP_REVOKE_LABEL = `Revoke ${MCP_KEY_NAME}`;
 const ADHOC_REVOKE_LABEL = `Revoke ${ADHOC_KEY_NAME}`;
 const REVOKED_REVOKE_LABEL = `Revoke ${REVOKED_KEY_NAME}`;
 const EXPIRED_REVOKE_LABEL = `Revoke ${EXPIRED_KEY_NAME}`;
-const DAMAGED_REVOKE_LABEL = "Revoke unnamed key";
 const SURFACE_REFUSED =
   "Permission 'mcp:access' is required for the 'mcp' surface";
 const DEFAULT_EXPIRY_DAYS = 90;
@@ -120,18 +118,6 @@ const expiredKey: ApiKey = {
   surfaces: ["mcp"],
   created_at: LAPSED_CREATED_AT,
   expires_at: LAPSED_AT,
-  revoked_at: null,
-  last_used_at: null,
-};
-
-/** What the listing renders for a stored key the backend found damaged. */
-const damagedKey: ApiKey = {
-  id: DAMAGED_KEY_ID,
-  name: "",
-  prefix: "",
-  surfaces: [],
-  created_at: null,
-  expires_at: null,
   revoked_at: null,
   last_used_at: null,
 };
@@ -374,13 +360,11 @@ describe("ApiKeysCard", () => {
     expect(screen.getByText("last used 3 days ago")).toBeInTheDocument();
   });
 
-  it("calls a live key active and one stored without an expiry unusable", async () => {
-    renderCard([mcpKey, damagedKey]);
+  it("calls a live key active", async () => {
+    renderCard([mcpKey]);
     await screen.findByText(MCP_KEY_NAME);
 
     expect(screen.getByText("Active")).toBeInTheDocument();
-    expect(screen.getByText("Unusable")).toBeInTheDocument();
-    expect(screen.getByText("never used")).toBeInTheDocument();
   });
 
   it("calls a revoked key revoked and stops offering to revoke it", async () => {
@@ -404,25 +388,6 @@ describe("ApiKeysCard", () => {
     ).toBeInTheDocument();
   });
 
-  it("names every missing field of a damaged key and still offers to revoke it", async () => {
-    const confirmed = vi.spyOn(window, "confirm").mockReturnValue(true);
-    renderCard([damagedKey]);
-
-    // The row is listed at all so its owner can revoke a key nothing else can identify, which
-    // takes a placeholder wherever the stored key has nothing to show.
-    expect(await screen.findByText(/Unnamed key/i)).toBeInTheDocument();
-    expect(screen.getByText("no surfaces stored")).toBeInTheDocument();
-    expect(screen.getByText("prefix not recorded")).toBeInTheDocument();
-    expect(screen.getByText("creation date not recorded")).toBeInTheDocument();
-    expect(screen.getByText("no expiry stored")).toBeInTheDocument();
-    expect(screen.getByText("never used")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: DAMAGED_REVOKE_LABEL }));
-
-    expect(confirmed).toHaveBeenCalledTimes(CALLED_ONCE);
-    await waitFor(() => expect(revokeKey).toHaveBeenCalledWith(DAMAGED_KEY_ID));
-  });
-
   it("lists and offers to revoke keys for a user holding neither surface permission", async () => {
     granted.current = [];
     renderCard([mcpKey]);
@@ -437,7 +402,7 @@ describe("ApiKeysCard", () => {
   });
 
   it("names each row's revoke button after the key it destroys", async () => {
-    renderCard([mcpKey, adhocKey, damagedKey]);
+    renderCard([mcpKey, adhocKey]);
     await screen.findByText(MCP_KEY_NAME);
 
     expect(
@@ -445,9 +410,6 @@ describe("ApiKeysCard", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: ADHOC_REVOKE_LABEL }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: DAMAGED_REVOKE_LABEL }),
     ).toBeInTheDocument();
   });
 

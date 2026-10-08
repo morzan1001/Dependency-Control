@@ -9,10 +9,8 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import API_KEY_SURFACES
 from app.repositories.base import find_window
 
 logger = logging.getLogger(__name__)
@@ -25,8 +23,6 @@ _TOKEN_ALPHABET = string.ascii_letters + string.digits
 _TOKEN_BODY_CHARS = 64
 _PREFIX_BODY_CHARS = 8
 
-_MIN_EXPIRY_DAYS = 1
-_MAX_EXPIRY_DAYS = 365
 LIST_LIMIT = 100
 
 
@@ -38,16 +34,6 @@ def generate_plaintext_token() -> str:
 
 def hash_token(plaintext: str) -> str:
     return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
-
-
-def _stored_ids(key_id: str) -> list[Any]:
-    """Both stored forms the API's string id can stand for.
-
-    ``create`` writes a string ``_id``, but a document inserted by anything else carries the
-    ``ObjectId`` Mongo assigns by default, and the listing renders that as its hex. Matching only
-    the string would leave such a key visible and unkillable.
-    """
-    return [key_id, ObjectId(key_id)] if ObjectId.is_valid(key_id) else [key_id]
 
 
 class ApiKeyRepository:
@@ -63,23 +49,17 @@ class ApiKeyRepository:
         expires_in_days: int,
     ) -> tuple[dict[str, Any], str]:
         """Returns (stored_document, plaintext_token); the plaintext is shown once and never persisted."""
-        requested = list(dict.fromkeys(surfaces))
-        unknown = [surface for surface in requested if surface not in API_KEY_SURFACES]
-        if unknown or not requested:
-            raise ValueError(f"surfaces must be a non-empty subset of {sorted(API_KEY_SURFACES)}")
-
         token = generate_plaintext_token()
-        clamped_days = max(_MIN_EXPIRY_DAYS, min(expires_in_days, _MAX_EXPIRY_DAYS))
         now = datetime.now(timezone.utc)
         doc: dict[str, Any] = {
             "_id": str(uuid.uuid4()),
             "user_id": user_id,
             "name": name,
-            "surfaces": requested,
+            "surfaces": list(surfaces),
             "prefix": token[: len(_TOKEN_PREFIX) + _PREFIX_BODY_CHARS],
             "token_hash": hash_token(token),
             "created_at": now,
-            "expires_at": now + timedelta(days=clamped_days),
+            "expires_at": now + timedelta(days=expires_in_days),
             "last_used_at": None,
             "revoked_at": None,
         }
@@ -104,9 +84,9 @@ class ApiKeyRepository:
         return doc
 
     async def revoke(self, key_id: str, user_id: str) -> bool:
-        """Idempotent revoke of a key the user owns, identified as the listing rendered it."""
+        """Idempotent revoke of a key the user owns."""
         result = await self.collection.update_one(
-            {"_id": {"$in": _stored_ids(key_id)}, "user_id": user_id, "revoked_at": None},
+            {"_id": key_id, "user_id": user_id, "revoked_at": None},
             {"$set": {"revoked_at": datetime.now(timezone.utc)}},
         )
         return bool(result.modified_count > 0)

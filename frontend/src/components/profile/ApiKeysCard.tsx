@@ -73,8 +73,6 @@ const SURFACE_PERMISSIONS: Record<ApiKeySurface, string> = {
 
 function statusLabel(key: ApiKey): { text: string; tone: string } {
   if (key.revoked_at) return { text: 'Revoked', tone: MUTED_TONE };
-  // Authentication demands a future expires_at, so a key stored without one is already refused.
-  if (!key.expires_at) return { text: 'Unusable', tone: MUTED_TONE };
   if (new Date(key.expires_at).getTime() < Date.now()) {
     return { text: 'Expired', tone: MUTED_TONE };
   }
@@ -82,19 +80,15 @@ function statusLabel(key: ApiKey): { text: string; tone: string } {
 }
 
 // One button per row, so the label has to name the key a screen-reader user is about to kill.
-// A damaged row carries neither name nor prefix and falls through to the placeholder the row shows.
 function revokeLabel(key: ApiKey): string {
-  return `Revoke ${key.name || key.prefix || 'unnamed key'}`;
+  return `Revoke ${key.name}`;
 }
 
 function createdText(key: ApiKey): string {
-  return key.created_at
-    ? `created ${format(new Date(key.created_at), 'yyyy-MM-dd')}`
-    : 'creation date not recorded';
+  return `created ${format(new Date(key.created_at), 'yyyy-MM-dd')}`;
 }
 
 function expiryText(key: ApiKey): string {
-  if (!key.expires_at) return 'no expiry stored';
   const distance = formatDistanceToNow(new Date(key.expires_at), { addSuffix: true });
   return new Date(key.expires_at).getTime() < Date.now()
     ? `expired ${distance}`
@@ -194,29 +188,20 @@ export function ApiKeysCard() {
           return (
             <li key={key.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
               <div className="min-w-[12rem] flex-1">
-                <div className="font-medium">
-                  {key.name || <span className="italic text-muted-foreground">Unnamed key</span>}
-                </div>
+                <div className="font-medium">{key.name}</div>
                 <div className="mt-1 flex flex-wrap items-center gap-1">
-                  {key.surfaces.length === 0 ? (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      no surfaces stored
+                  {key.surfaces.map((surface) => (
+                    <span
+                      key={surface}
+                      className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium"
+                    >
+                      {SURFACE_LABELS[surface]}
                     </span>
-                  ) : (
-                    key.surfaces.map((surface) => (
-                      <span
-                        key={surface}
-                        className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium"
-                      >
-                        {/* The listing filters surfaces to strings, not to the set this card knows. */}
-                        {SURFACE_LABELS[surface] ?? surface}
-                      </span>
-                    ))
-                  )}
+                  ))}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
-                    {key.prefix ? `${key.prefix}…` : 'prefix not recorded'}
+                    {`${key.prefix}…`}
                   </code>
                   {' · '}
                   <span>{createdText(key)}</span>
@@ -227,7 +212,7 @@ export function ApiKeysCard() {
                 </div>
               </div>
               <span className={`text-xs font-medium ${status.tone}`}>{status.text}</span>
-              {/* Expiry and stored damage stop a key authenticating but do not clear it away. */}
+              {/* Expiry stops a key authenticating but does not clear it away. */}
               {!key.revoked_at && (
                 <Button
                   variant="ghost"

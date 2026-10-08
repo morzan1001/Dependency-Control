@@ -1,9 +1,6 @@
 """User-facing endpoints for minting, listing and revoking unified API keys."""
 
-import logging
 from collections.abc import Sequence
-from datetime import datetime
-from typing import Any
 
 from fastapi import HTTPException, status
 
@@ -21,8 +18,6 @@ from app.schemas.api_keys import (
     ApiKeyResponse,
     key_list_truncation,
 )
-
-logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
@@ -42,48 +37,6 @@ def _authorize_surfaces(user: User, surfaces: Sequence[ApiKeySurface]) -> None:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission '{permission}' is required for the '{surface}' surface",
             )
-
-
-def _to_response(doc: dict[str, Any]) -> ApiKeyResponse:
-    """Damaged fields get placeholders: a key auth still accepts must stay listed to stay revocable."""
-    key_id = str(doc["_id"])
-    damaged: list[str] = []
-
-    def text(field: str) -> str:
-        value = doc.get(field)
-        rendered = value if isinstance(value, str) else ""
-        if rendered != value:
-            damaged.append(field)
-        return rendered
-
-    def surfaces() -> list[str]:
-        value = doc.get("surfaces")
-        rendered = [entry for entry in value if isinstance(entry, str)] if isinstance(value, list) else []
-        if rendered != value:
-            damaged.append("surfaces")
-        return rendered
-
-    def moment(field: str, *, nullable: bool = False) -> datetime | None:
-        value = doc.get(field)
-        rendered = value if isinstance(value, datetime) else None
-        if rendered is None and not (nullable and value is None):
-            damaged.append(field)
-        return rendered
-
-    response = ApiKeyResponse(
-        id=key_id,
-        name=text("name"),
-        prefix=text("prefix"),
-        surfaces=surfaces(),
-        created_at=moment("created_at"),
-        expires_at=moment("expires_at"),
-        revoked_at=moment("revoked_at", nullable=True),
-        last_used_at=moment("last_used_at", nullable=True),
-    )
-    if damaged:
-        # Without this the only signal a stored key is damaged is a user noticing a blank row.
-        logger.warning("API key %s stored no usable %s; listing it with placeholders", key_id, ", ".join(damaged))
-    return response
 
 
 @router.post(
@@ -106,7 +59,7 @@ async def create_api_key(
         surfaces=body.surfaces,
         expires_in_days=body.expires_in_days,
     )
-    return ApiKeyCreateResponse(**_to_response(doc).model_dump(), token=plaintext)
+    return ApiKeyCreateResponse.model_validate({**doc, "id": doc["_id"], "token": plaintext})
 
 
 @router.get(
@@ -123,7 +76,7 @@ async def list_api_keys(
     repo = ApiKeyRepository(db)
     keys, total = await repo.list_for_user(str(current_user.id))
     return ApiKeyListResponse(
-        keys=[_to_response(key) for key in keys],
+        keys=[ApiKeyResponse.model_validate({**key, "id": key["_id"]}) for key in keys],
         truncated=key_list_truncation(returned=len(keys), total=total, limit=LIST_LIMIT),
     )
 

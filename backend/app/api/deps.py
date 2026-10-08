@@ -579,8 +579,7 @@ def _bearer_token(authorization: str, surface: str) -> str:
 
 
 async def _key_owner(db: AsyncIOMotorDatabase, key_doc: dict[str, Any]) -> User:
-    # A document missing user_id resolves to no user, which the next line turns into a 401.
-    user = await UserRepository(db).get_by_id(key_doc.get("user_id", ""))
+    user = await UserRepository(db).get_by_id(key_doc["user_id"])
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
     return user
@@ -599,18 +598,15 @@ async def _admit_unified_key(
     token: str,
     surface: str,
     permission: str,
-) -> tuple[User, dict[str, Any]] | None:
-    """The (owner, key document) pair behind a unified token, or None when no unified key answers."""
+) -> tuple[User, dict[str, Any]]:
+    """The (owner, key document) pair behind a unified token."""
     key_repo = ApiKeyRepository(db)
     key_doc = await key_repo.get_by_plaintext(token)
     if not key_doc:
-        return None
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_MSG_UNRESOLVED_KEY)
 
     user = await _key_owner(db, key_doc)
-    # A write from outside ApiKeyRepository.create can leave surfaces absent or a non-list, and
-    # a bare membership test against those admits substrings and dict keys.
-    surfaces = key_doc.get("surfaces")
-    if not isinstance(surfaces, list) or surface not in surfaces:
+    if surface not in key_doc["surfaces"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"API key does not grant the {surface} surface",
@@ -618,12 +614,12 @@ async def _admit_unified_key(
     # Answered second: a key that never named the surface must not learn what its owner holds.
     _require_permission(user, surface, permission)
 
-    last_used_at = key_doc.get("last_used_at")
+    last_used_at = key_doc["last_used_at"]
     if (
-        not isinstance(last_used_at, datetime)
+        last_used_at is None
         or (datetime.now(timezone.utc) - last_used_at).total_seconds() >= API_KEY_LAST_USED_RESOLUTION_SECONDS
     ):
-        await key_repo.touch_last_used(key_doc.get("_id", ""))
+        await key_repo.touch_last_used(key_doc["_id"])
     return user, key_doc
 
 
@@ -637,11 +633,7 @@ def require_api_key(surface: str) -> Callable[..., Awaitable[tuple[User, dict[st
         authorization: str = Header(default=""),
         db: AsyncIOMotorDatabase = Depends(get_database),
     ) -> tuple[User, dict[str, Any]]:
-        token = _bearer_token(authorization, surface)
-        admitted = await _admit_unified_key(db, token, surface, permission)
-        if admitted is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_MSG_UNRESOLVED_KEY)
-        return admitted
+        return await _admit_unified_key(db, _bearer_token(authorization, surface), surface, permission)
 
     return dependency
 

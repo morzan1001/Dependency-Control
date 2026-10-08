@@ -12,15 +12,13 @@ export interface ApiKey {
   name: string;
   prefix: string;
   surfaces: ApiKeySurface[];
-  created_at: string | null;
-  expires_at: string | null;
+  created_at: string;
+  expires_at: string;
   revoked_at: string | null;
   last_used_at: string | null;
 }
 
 export interface ApiKeyCreateResponse extends ApiKey {
-  created_at: string;
-  expires_at: string;
   /** Plaintext token; the server returns it only once. */
   token: string;
 }
