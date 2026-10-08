@@ -206,6 +206,7 @@ export interface FindingDetails {
   file?: string;
   rule_id?: string;
   check_id?: string;
+  sast_findings?: Array<{ id: string }>;
   start?: { line?: number; column?: number };
   end?: { line?: number; column?: number };
   metadata?: FindingMetadata;

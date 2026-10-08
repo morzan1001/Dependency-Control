@@ -19,7 +19,8 @@ import { getFindingId, getFindingPackage, getFindingVersion } from './finding-de
 const SCOPE_TYPES = new Set(['sast', 'iac'])
 
 function extractRuleId(finding: Finding): string | undefined {
-  return finding.details?.rule_id || finding.details?.check_id || undefined
+  const details = finding.details
+  return details?.sast_findings?.[0]?.id || details?.rule_id || details?.check_id || undefined
 }
 
 // Normalize an ISO timestamp or yyyy-mm-dd string to the yyyy-mm-dd value an `<input type="date">` expects; '' if empty/invalid.
