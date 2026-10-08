@@ -500,5 +500,19 @@ class WebhookService:
             "response_time_ms": None if status_code is None else round((time.monotonic() - start_time) * 1000, 2),
         }
 
+    async def record_test(self, db: AsyncIOMotorDatabase, webhook: Webhook, result: Mapping[str, Any]) -> None:
+        """A test answers for the receiver as a delivery does, so the row's state and the delivery log show it."""
+        logger.info("Test of webhook %s: status %s, error %s", webhook.id, result["status_code"], result["error"])
+        await self._update_webhook_status(db, webhook, success=result["success"])
+        await self._log_webhook_delivery(
+            db,
+            webhook.id,
+            "test",
+            {},
+            success=result["success"],
+            status_code=result["status_code"],
+            error=result["error"],
+        )
+
 
 webhook_service = WebhookService()

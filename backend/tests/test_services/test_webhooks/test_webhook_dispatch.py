@@ -22,6 +22,7 @@ import pytest
 from app.core.config import settings
 from app.core.constants import WEBHOOK_USER_AGENT_VALUE
 from app.core.metrics import webhooks_failed_total
+from app.models.webhook import Webhook
 from tests.mocks.fake_mongo import FakeDatabase
 
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
@@ -331,3 +332,25 @@ class TestDeliveryHeaders:
 
         assert (delivered, len(sent), sleeps) == (False, 0, [])
         assert (logged["status_code"], logged["error"], logged["retry_count"]) == (None, "Invalid header value", 0)
+
+
+class TestTestDeliveryIsRecorded:
+    """A test tells the row and the delivery log what the receiver answered."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("status", "stamped"), [(200, "last_triggered_at"), (400, "last_failure_at")])
+    async def test_the_receivers_answer_lands_on_the_webhook_and_in_the_log(self, status, stamped):
+        db = FakeDatabase()
+        await _seed_hook(db, "hook")
+        webhook = Webhook(**await db.webhooks.find_one({"_id": "hook"}))
+        transport = httpx.MockTransport(lambda request: httpx.Response(status, content=_streamed(b"no_text")))
+        service = ws_module.WebhookService(timeout=1.0)
+
+        with patch.object(ws_module, "build_pinned_transport", new=AsyncMock(return_value=transport)):
+            result = await service.test_webhook(webhook)
+        await service.record_test(db, webhook, result)
+
+        stored = await db.webhooks.find_one({"_id": "hook"})
+        assert stored.get(stamped) is not None
+        [entry] = await db.webhook_deliveries.find({"webhook_id": "hook"}).to_list(None)
+        assert (entry["event_type"], entry["status_code"], entry["success"]) == ("test", status, status == 200)

@@ -347,13 +347,16 @@ class TestTestWebhook:
                 with patch(f"{MODULE}.check_webhook_permission", new_callable=AsyncMock):
                     with patch(f"{MODULE}.webhook_service") as mock_svc:
                         mock_svc.test_webhook = AsyncMock(return_value=test_result)
+                        mock_svc.record_test = AsyncMock()
+                        db = MagicMock()
                         result = asyncio.run(
                             test_webhook(
                                 webhook_id="wh-1",
                                 current_user=regular_user,
-                                db=MagicMock(),
+                                db=db,
                             )
                         )
 
         assert result.success is True
         assert result.status_code == 200
+        mock_svc.record_test.assert_awaited_once_with(db, webhook, test_result)

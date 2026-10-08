@@ -200,5 +200,6 @@ async def test_webhook(
     )
 
     result = await webhook_service.test_webhook(webhook, test_request.event_type)
+    await webhook_service.record_test(db, webhook, result)
 
     return WebhookTestResponse(**result)
