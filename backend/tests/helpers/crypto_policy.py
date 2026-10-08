@@ -1,5 +1,4 @@
 def rule_dict(rule_id: str) -> dict:
-    """A custom crypto rule in the shape the policy endpoints accept."""
     return {
         "rule_id": rule_id,
         "name": rule_id,

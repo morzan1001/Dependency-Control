@@ -13,7 +13,6 @@ _FILENAME = "sbom.json"
 
 
 def sbom_ref(file_id: str) -> dict[str, Any]:
-    """The scan ref of the SBOM stored under ``file_id``."""
     return make_gridfs_ref(file_id, _FILENAME)
 
 

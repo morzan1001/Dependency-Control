@@ -67,6 +67,5 @@ def grype_findings(matches: Iterable[tuple[str, str, str | None]], *, severity: 
 async def persist_findings(
     db: Any, scan_id: str, project_id: str, findings: Iterable[Finding], created_at: datetime
 ) -> None:
-    """Store the findings the way an analysis run of that scan writes them."""
     records, _ = _prepare_finding_records(list(findings), scan_id, project_id, created_at)
     await _persist_findings_and_waivers(records, scan_id, project_id, FindingRepository(db), db)
