@@ -42,7 +42,6 @@ from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
-from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
 from app.services.reachability_enrichment import (
@@ -191,13 +190,6 @@ _SENDS_NOTHING: frozenset[str] = frozenset({"license_compliance", "trivy", "gryp
 _ADHOC_CRYPTO_RULES = tuple(r for r in load_seed_rules() if r.enabled and r.finding_type in RULE_DRIVEN_FINDING_TYPES)
 
 _NO_CALLGRAPH = "no callgraph supplied"
-_AUTO_FORMAT = "auto"
-_UNDETECTABLE_FORMAT = "could not auto-detect the callgraph format"
-_LANGUAGE_REQUIRED = "'language' is required for '{callgraph_format}' callgraph payloads"
-_UNSUPPORTED_FORMAT = "unsupported callgraph format: {callgraph_format}"
-# The one format that names its own language: madge only ever runs over a JS/TS tree.
-_MADGE_FORMAT = "madge"
-_MADGE_LANGUAGE = "javascript"
 # Identifies the graph within this request only; nothing here is stored or looked up by it.
 _POSTED_CALLGRAPH_ID = "posted"
 
@@ -489,23 +481,13 @@ async def _enrich_vulnerabilities(
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
     """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
-    from app.api.v1.helpers.callgraph import detect_format, parse_generic_format, parse_madge_format
+    from app.api.v1.helpers.callgraph import resolve_callgraph_payload
 
-    raw_format = str(payload.get("format") or _AUTO_FORMAT)
     data = {key: value for key, value in payload.items() if key not in ("format", "language")}
-    resolved_format = detect_format(data) if raw_format == _AUTO_FORMAT else raw_format
-    if resolved_format == "unknown":
-        raise ValueError(_UNDETECTABLE_FORMAT)
-
-    raw_language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
-    if not raw_language:
-        raise ValueError(_LANGUAGE_REQUIRED.format(callgraph_format=resolved_format))
-    language = canonical_callgraph_language(str(raw_language))
-
-    parser = {_MADGE_FORMAT: parse_madge_format, "generic": parse_generic_format}.get(resolved_format)
-    if parser is None:
-        raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
-
+    posted_language = payload.get("language")
+    _, language, parser = resolve_callgraph_payload(
+        str(payload.get("format") or "auto"), str(posted_language) if posted_language else None, data
+    )
     parsed = parser(data, language)
     return CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,

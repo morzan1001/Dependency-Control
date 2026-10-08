@@ -4,13 +4,11 @@ import json
 
 import pytest
 from bson import ObjectId
-from fastapi import HTTPException
-
-from app.api.v1.endpoints.callgraph import _parse_callgraph, _resolve_format
 from app.api.v1.helpers.callgraph import (
     detect_format,
     parse_generic_format,
     parse_madge_format,
+    resolve_callgraph_payload,
 )
 from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
 from app.schemas.projections import CallgraphMinimal
@@ -101,7 +99,8 @@ PATH_ARTEFACTS = {"src", "lib", "utils", "utils.js", "index.js", "node_modules",
 def _parse(payload: str, language: str):
     """Detect the format of a captured payload and run the parser the endpoint would pick."""
     data = json.loads(payload)
-    return _parse_callgraph(detect_format(data), data, language)
+    _, canonical, parser = resolve_callgraph_payload("auto", language, data)
+    return parser(data, canonical)
 
 
 class TestMadgeGoldenFixture:
@@ -333,16 +332,13 @@ class TestFormatDetectionRegressions:
             pytest.param(NODE_EDGE_PAYLOAD, id="node_edge_payload"),
         ],
     )
-    def test_payload_is_rejected_with_400(self, payload):
-        with pytest.raises(HTTPException) as exc:
-            _resolve_format("auto", payload)
-        assert exc.value.status_code == 400
+    def test_payload_is_rejected(self, payload):
+        with pytest.raises(ValueError, match="auto-detect"):
+            resolve_callgraph_payload("auto", "python", payload)
 
     def test_pyan_format_is_no_longer_parseable(self):
-        with pytest.raises(HTTPException) as exc:
-            _parse_callgraph("pyan", {}, "python")
-        assert exc.value.status_code == 400
-        assert "pyan" in exc.value.detail
+        with pytest.raises(ValueError, match="pyan"):
+            resolve_callgraph_payload("pyan", "python", {})
 
     def test_madge_without_dependencies_is_valid_alongside_a_universe(self):
         data = {"src/index.ts": [], "__analyzed_modules__": ["lodash"]}

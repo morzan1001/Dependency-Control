@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from app.api.v1.endpoints import callgraph as callgraph_endpoint
+from app.api.v1.helpers import callgraph as callgraph_helpers
 from app.core.permissions import Permissions
 from app.models.project import Project
 from app.repositories.callgraphs import CallgraphRepository
@@ -360,13 +360,13 @@ class TestPayloadValidation:
     @pytest.mark.asyncio
     async def test_the_parse_runs_off_the_event_loop(self, client, db, monkeypatch):
         threads = []
-        real_parse = callgraph_endpoint._parse_callgraph
+        real_parse = callgraph_helpers.parse_generic_format
 
         def _recording_parse(*args):
             threads.append(threading.current_thread())
             return real_parse(*args)
 
-        monkeypatch.setattr("app.api.v1.endpoints.callgraph._parse_callgraph", _recording_parse)
+        monkeypatch.setitem(callgraph_helpers._FORMAT_PARSERS, "generic", _recording_parse)
 
         response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 

@@ -1,9 +1,10 @@
 """Helper functions for callgraph endpoints."""
 
+from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from app.models.callgraph import ModuleUsage
-from app.services.component_identity import canonical_module_key, npm_package_key
+from app.services.component_identity import canonical_callgraph_language, canonical_module_key, npm_package_key
 
 _NODE_MODULES = "node_modules/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"
@@ -166,3 +167,27 @@ def detect_format(data: dict[str, Any]) -> str:
         return "madge"
 
     return "unknown"
+
+
+Parser = Callable[[dict[str, Any], str], ParsedCallgraph]
+
+_FORMAT_PARSERS: dict[str, Parser] = {"madge": parse_madge_format, "generic": parse_generic_format}
+# The one format that names its own language: madge only ever runs over a JS/TS tree.
+_FORMAT_LANGUAGES = {"madge": "javascript"}
+
+
+def resolve_callgraph_payload(
+    request_format: str, language: str | None, data: dict[str, Any]
+) -> tuple[str, str, Parser]:
+    """(format, canonical language, parser) of a posted callgraph; ValueError for what it lacks or nothing supports."""
+    format_type = detect_format(data) if request_format == "auto" else request_format
+    if format_type == "unknown":
+        raise ValueError("Could not auto-detect callgraph format. Please specify 'format' explicitly.")
+    language = language or _FORMAT_LANGUAGES.get(format_type)
+    if not language:
+        raise ValueError(f"'language' is required for '{format_type}' callgraph payloads")
+    canonical = canonical_callgraph_language(language)
+    parser = _FORMAT_PARSERS.get(format_type)
+    if parser is None:
+        raise ValueError(f"Unsupported format: {format_type}")
+    return format_type, canonical, parser
