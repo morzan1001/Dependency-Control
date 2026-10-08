@@ -1,7 +1,7 @@
 """Repository for user database operations."""
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -74,6 +74,11 @@ class UserRepository(BaseRepository[User]):
         patterns = [re.compile(f"^{re.escape(email)}$", re.IGNORECASE) for email in emails]
         cursor = self.collection.find({"email": {"$in": patterns}, "is_verified": True})
         return await cursor.to_list(None)
+
+    async def usernames_by_id(self, user_ids: Iterable[str]) -> dict[str, str]:
+        """Id -> username of every account among ``user_ids``, in one read; a deleted account is absent."""
+        cursor = self.collection.find({"_id": {"$in": sorted(set(user_ids))}}, {"username": 1})
+        return {doc["_id"]: doc["username"] async for doc in cursor}
 
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         cursor = self.collection.find({"_id": {"$in": user_ids}})

@@ -22,6 +22,7 @@ from app.models.user import User
 from app.repositories.projects import ProjectRepository, surviving_admin_filter
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.services.analysis.registry import SELECTABLE_ANALYZERS
 from app.services.crypto_policy.resolver import project_overrides_locked
 
@@ -207,28 +208,13 @@ async def authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOM
         await check_project_access(project_id, user, db)
 
 
-# Flattened: a path across two array levels yields one array per team, which $in never matches an id against.
-_OWNING_TEAM_MEMBER_IDS = {
-    "$reduce": {
-        "input": {"$ifNull": ["$team_data", []]},
-        "initialValue": [],
-        "in": {
-            "$setUnion": [
-                "$$value",
-                {"$map": {"input": {"$ifNull": ["$$this.members", []]}, "as": "m", "in": "$$m.user_id"}},
-            ]
-        },
-    }
-}
-
-
-def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
+def _merge_team_members(data: dict[str, Any], teams: list[dict[str, Any]], usernames: dict[str, str]) -> None:
     """Add the owning teams' members, named with each owner, and set every row's ``effective_role``; direct rows win."""
     team_roles: dict[str, ProjectRole | None] = {}
     owners: dict[str, set[str]] = {}
 
-    # Sorted, so the answer does not depend on the order the join returned the teams in.
-    for team in sorted(data.get("team_data") or [], key=lambda team: str(team.get("_id"))):
+    # Sorted, so the answer does not depend on the order the read returned the teams in.
+    for team in sorted(teams, key=lambda team: str(team.get("_id"))):
         for tm in team.get("members", []):
             uid = tm["user_id"]
             team_roles[uid] = max_project_role(team_roles.get(uid), team_grant_role(tm.get("role")))
@@ -244,7 +230,7 @@ def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
             "user_id": uid,
             "role": role,
             "effective_role": role,
-            "username": t_users.get(uid),
+            "username": usernames.get(uid),
             "inherited_from": "Team: " + ", ".join(sorted(owners[uid])),
             "notification_preferences": overrides.get(uid) or {},
         }
@@ -254,43 +240,17 @@ def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
 
 async def load_project_with_members(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, Any] | None:
     """The raw project with every member named: its own, then each owning team's at the role it grants."""
-    # The owning teams stay an array: unwinding them would answer one copy of the project per owner.
-    pipeline: list[dict[str, Any]] = [
-        {"$match": {"_id": project_id}},
-        {"$lookup": {"from": "teams", "localField": "team_ids", "foreignField": "_id", "as": "team_data"}},
-        {
-            "$lookup": {
-                "from": "users",
-                "let": {"member_ids": "$members.user_id"},
-                "pipeline": [
-                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
-                    {"$project": {"_id": 1, "username": 1}},
-                ],
-                "as": "project_users",
-            }
-        },
-        {
-            "$lookup": {
-                "from": "users",
-                "let": {"team_member_ids": _OWNING_TEAM_MEMBER_IDS},
-                "pipeline": [
-                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$team_member_ids"]}}},
-                    {"$project": {"_id": 1, "username": 1}},
-                ],
-                "as": "team_users",
-            }
-        },
-    ]
-    result = await ProjectRepository(db).aggregate(pipeline)
-    if not result:
+    data = await ProjectRepository(db).get_raw_by_id(project_id)
+    if data is None:
         return None
-    data = result[0]
-    p_users = {str(u["_id"]): u["username"] for u in data.pop("project_users", [])}
-    t_users = {str(u["_id"]): u["username"] for u in data.pop("team_users", [])}
-    for m in data.get("members", []):
-        m["username"] = p_users.get(m["user_id"])
-    _merge_team_members(data, t_users)
-    data.pop("team_data", None)
+    teams = await TeamRepository(db).find_many_raw({"_id": {"$in": data.get("team_ids") or []}})
+    members = data.get("members", [])
+    usernames = await UserRepository(db).usernames_by_id(
+        [m["user_id"] for m in members] + [tm["user_id"] for team in teams for tm in team.get("members", [])]
+    )
+    for member in members:
+        member["username"] = usernames.get(member["user_id"])
+    _merge_team_members(data, teams, usernames)
     return data
 
 

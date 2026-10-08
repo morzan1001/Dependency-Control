@@ -300,5 +300,7 @@ class TeamRepository:
         )
         return bool(result.matched_count)
 
-    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-        return await self.collection.aggregate(pipeline).to_list(limit)
+    async def find_many_raw(
+        self, query: dict[str, Any], sort_by: str = "name", sort_order: int = 1, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        return await self.collection.find(query).sort(sort_by, sort_order).to_list(limit)

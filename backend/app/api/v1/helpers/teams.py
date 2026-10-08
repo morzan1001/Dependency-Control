@@ -20,70 +20,6 @@ from app.schemas.team import TeamRef, TeamResponse
 _MSG_TEAM_NOT_FOUND = "Team not found"
 
 
-def build_team_enrichment_pipeline(
-    match_query: dict[str, Any],
-    sort_by: str = "name",
-    sort_direction: int = 1,
-) -> list[dict[str, Any]]:
-    """Build a MongoDB aggregation pipeline that enriches teams with member usernames."""
-    return [
-        {"$match": match_query},
-        {"$sort": {sort_by: sort_direction}},
-        {
-            "$lookup": {
-                "from": "users",
-                "let": {"member_ids": "$members.user_id"},
-                "pipeline": [
-                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
-                    {"$project": {"_id": 1, "username": 1}},
-                ],
-                "as": "users_info",
-            }
-        },
-        {
-            "$addFields": {
-                "members": {
-                    "$map": {
-                        "input": "$members",
-                        "as": "m",
-                        "in": {
-                            "$mergeObjects": [
-                                "$$m",
-                                {
-                                    "username": {
-                                        "$let": {
-                                            "vars": {
-                                                "u": {
-                                                    "$arrayElemAt": [
-                                                        {
-                                                            "$filter": {
-                                                                "input": "$users_info",
-                                                                "cond": {
-                                                                    "$eq": [
-                                                                        {"$toString": "$$this._id"},
-                                                                        "$$m.user_id",
-                                                                    ]
-                                                                },
-                                                            }
-                                                        },
-                                                        0,
-                                                    ]
-                                                }
-                                            },
-                                            "in": "$$u.username",
-                                        }
-                                    }
-                                },
-                            ]
-                        },
-                    }
-                }
-            }
-        },
-        {"$project": {"users_info": 0}},
-    ]
-
-
 async def resolve_team_names(db: AsyncIOMotorDatabase, team_ids: Iterable[str]) -> dict[str, str]:
     """Name every team in ``team_ids`` in one read, so a page of co-owned projects is still one query."""
     wanted = sorted(set(team_ids))
@@ -141,20 +77,14 @@ async def check_team_access(
     return team
 
 
-async def enrich_team_with_usernames(team_data: dict[str, Any], db: AsyncIOMotorDatabase) -> None:
-    """Enrich a raw team document with member usernames, mutating it in place."""
-    user_repo = UserRepository(db)
-    members = team_data.get("members", [])
-    user_ids = [m["user_id"] for m in members if "user_id" in m]
-
-    if not user_ids:
-        return
-
-    users = await user_repo.find_by_ids(user_ids)
-    user_map = {u["_id"]: u["username"] for u in users}
-
-    for member in members:
-        member["username"] = user_map.get(member["user_id"])
+async def enrich_teams_with_usernames(teams: list[dict[str, Any]], db: AsyncIOMotorDatabase) -> None:
+    """Name every member of the raw teams in place, in one read; a deleted account's username is None."""
+    usernames = await UserRepository(db).usernames_by_id(
+        m["user_id"] for team in teams for m in team.get("members", [])
+    )
+    for team in teams:
+        for member in team.get("members", []):
+            member["username"] = usernames.get(member["user_id"])
 
 
 async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamResponse:
@@ -165,7 +95,7 @@ async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamR
     if not team_data:
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    await enrich_team_with_usernames(team_data, db)
+    await enrich_teams_with_usernames([team_data], db)
     return TeamResponse(**team_data)
 
 

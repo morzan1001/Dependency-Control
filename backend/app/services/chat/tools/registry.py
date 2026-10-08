@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query, load_project_with_members
 from app.api.v1.helpers.teams import (
     check_team_access,
-    enrich_team_with_usernames,
+    enrich_teams_with_usernames,
     resolve_team_names,
     team_refs,
     visible_teams_filter,
@@ -825,7 +825,7 @@ class ChatToolRegistry:
             "description": team.description,
             "members": [m.model_dump() for m in team.members],
         }
-        await enrich_team_with_usernames(details, ctx.db)
+        await enrich_teams_with_usernames([details], ctx.db)
         return {"team": details}
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:

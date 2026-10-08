@@ -16,7 +16,6 @@ from app.api.v1.helpers.projects import (
 from app.api.v1.helpers.sorting import get_sort_field, parse_sort_direction
 from app.api.v1.helpers.system import get_available_channels
 from app.api.v1.helpers.teams import (
-    build_team_enrichment_pipeline,
     check_team_access,
     fetch_and_enrich_team,
     get_team_with_access,
@@ -36,7 +35,6 @@ __all__ = [
     "apply_system_settings_enforcement",
     "authorize_waiver_read",
     "build_pagination_response",
-    "build_team_enrichment_pipeline",
     "build_user_project_query",
     "check_admin_or_self",
     "check_project_access",

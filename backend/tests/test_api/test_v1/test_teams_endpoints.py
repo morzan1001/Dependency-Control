@@ -88,78 +88,24 @@ class TestCreateTeam:
 
 
 class TestReadTeams:
-    def test_admin_sees_all_teams(self, admin_user):
+    def test_the_search_matches_the_team_name_whatever_the_case(self, admin_user):
         from app.api.v1.endpoints.teams import read_teams
 
-        mock_repo = MagicMock()
-        mock_repo.aggregate = AsyncMock(
-            return_value=[
-                {"_id": "t1", "name": "Team A", "members": [], "created_at": "2024-01-01", "updated_at": "2024-01-01"},
-            ]
+        db = FakeDatabase()
+        for team_id, name in (("t-front", "Frontend"), ("t-back", "Backend")):
+            db.teams._docs[team_id] = {
+                "_id": team_id,
+                "name": name,
+                "members": [],
+                "created_at": _TEAM_TIMESTAMP,
+                "updated_at": _TEAM_TIMESTAMP,
+            }
+
+        teams = asyncio.run(
+            read_teams(search="FRONT", sort_by="name", sort_order="asc", current_user=admin_user, db=db)
         )
 
-        with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.build_team_enrichment_pipeline") as mock_pipeline:
-                mock_pipeline.return_value = [{"$match": {}}]
-                result = asyncio.run(
-                    read_teams(
-                        search=None,
-                        sort_by="name",
-                        sort_order="asc",
-                        current_user=admin_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        assert len(result) == 1
-        # Admin has team:read_all, so query should not filter by membership
-        pipeline_query = mock_pipeline.call_args[0][0]
-        assert "members.user_id" not in pipeline_query
-
-    def test_regular_user_sees_only_own_teams(self, regular_user):
-        from app.api.v1.endpoints.teams import read_teams
-
-        mock_repo = MagicMock()
-        mock_repo.aggregate = AsyncMock(return_value=[])
-
-        with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.build_team_enrichment_pipeline") as mock_pipeline:
-                mock_pipeline.return_value = [{"$match": {}}]
-                asyncio.run(
-                    read_teams(
-                        search=None,
-                        sort_by="name",
-                        sort_order="asc",
-                        current_user=regular_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        pipeline_query = mock_pipeline.call_args[0][0]
-        assert "members.user_id" in pipeline_query
-
-    def test_search_filter(self, admin_user):
-        from app.api.v1.endpoints.teams import read_teams
-
-        mock_repo = MagicMock()
-        mock_repo.aggregate = AsyncMock(return_value=[])
-
-        with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.build_team_enrichment_pipeline") as mock_pipeline:
-                mock_pipeline.return_value = [{"$match": {}}]
-                asyncio.run(
-                    read_teams(
-                        search="frontend",
-                        sort_by="name",
-                        sort_order="asc",
-                        current_user=admin_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        pipeline_query = mock_pipeline.call_args[0][0]
-        assert "name" in pipeline_query
-        assert "$regex" in pipeline_query["name"]
+        assert [team["_id"] for team in teams] == ["t-front"]
 
     def test_viewer_without_read_perm_raises_403(self, viewer_user):
         from app.api.v1.endpoints.teams import read_teams
@@ -180,52 +126,23 @@ class TestReadTeams:
 
 
 class TestReadTeam:
-    def test_returns_enriched_team(self, admin_user):
+    def test_returns_the_team_with_its_members_named(self, admin_user):
         from app.api.v1.endpoints.teams import read_team
 
-        enriched = [
-            {
-                "_id": "team-1",
-                "name": "My Team",
-                "members": [{"user_id": "u1", "role": "owner", "username": "admin"}],
-                "created_at": "2024-01-01T00:00:00",
-                "updated_at": "2024-01-01T00:00:00",
-            }
-        ]
-
-        mock_repo = MagicMock()
-        mock_repo.aggregate = AsyncMock(return_value=enriched)
+        db = _fake_db_with_team([("u1", TEAM_ROLE_ADMIN)])
 
         with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.build_team_enrichment_pipeline", return_value=[]):
-                    result = asyncio.run(
-                        read_team(
-                            team_id="team-1",
-                            current_user=admin_user,
-                            db=MagicMock(),
-                        )
-                    )
+            result = asyncio.run(read_team(team_id="team-1", current_user=admin_user, db=db))
 
-        assert result["name"] == "My Team"
+        assert result.name == "Test Team"
+        assert [(member.user_id, member.username) for member in result.members] == [("u1", "u1")]
 
     def test_raises_404_when_not_found(self, admin_user):
         from app.api.v1.endpoints.teams import read_team
 
-        mock_repo = MagicMock()
-        mock_repo.aggregate = AsyncMock(return_value=[])
-
         with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.build_team_enrichment_pipeline", return_value=[]):
-                    with pytest.raises(HTTPException) as exc_info:
-                        asyncio.run(
-                            read_team(
-                                team_id="missing",
-                                current_user=admin_user,
-                                db=MagicMock(),
-                            )
-                        )
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(read_team(team_id="missing", current_user=admin_user, db=FakeDatabase()))
         assert exc_info.value.status_code == 404
 
 
@@ -578,6 +495,25 @@ class TestTeamScopingAndRolePersistence:
         teams = await read_teams(search=None, sort_by="name", sort_order="asc", current_user=admin_user, db=db)
 
         assert sorted(team["_id"] for team in teams) == ["t-mine", "t-theirs"]
+
+    @pytest.mark.asyncio
+    async def test_the_listing_and_the_detail_name_every_member_and_none_for_a_deleted_account(self, admin_user):
+        from app.api.v1.endpoints.teams import read_team, read_teams
+        from app.schemas.team import TeamResponse
+
+        db = await self._seeded(
+            teams=[self._team_doc("t-1", "One", ["u-ada", "u-gone"]), self._team_doc("t-2", "Two", ["u-bob"])],
+            users=[{"_id": "u-ada", "username": "ada"}, {"_id": "u-bob", "username": "bob"}],
+        )
+
+        listed = await read_teams(search=None, sort_by="name", sort_order="asc", current_user=admin_user, db=db)
+        detail = await read_team(team_id="t-1", current_user=admin_user, db=db)
+
+        def names(team):
+            return [(member.user_id, member.username) for member in TeamResponse.model_validate(team).members]
+
+        assert [names(team) for team in listed] == [[("u-ada", "ada"), ("u-gone", None)], [("u-bob", "bob")]]
+        assert names(detail) == [("u-ada", "ada"), ("u-gone", None)]
 
     @pytest.mark.asyncio
     async def test_the_requested_role_is_the_one_persisted(self, admin_user):
