@@ -191,8 +191,9 @@ export function WebhookForm(props: WebhookFormProps) {
           </div>
         )}
         <div className="space-y-2">
-          <Label>URL</Label>
+          <Label htmlFor="webhook-url">URL</Label>
           <Input
+            id="webhook-url"
             value={form.url}
             onChange={e => patchForm({ url: e.target.value })}
             placeholder="https://example.com/webhook"
@@ -236,8 +237,8 @@ export function WebhookForm(props: WebhookFormProps) {
           )}
         </div>
         <div className="space-y-2">
-          <Label>Events</Label>
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          <Label id="webhook-events-label">Events</Label>
+          <div role="group" aria-labelledby="webhook-events-label" className="space-y-2 max-h-64 overflow-y-auto pr-1">
             {AVAILABLE_EVENTS.map(event => (
               <div key={event.id} className="flex items-start space-x-2">
                 <Checkbox

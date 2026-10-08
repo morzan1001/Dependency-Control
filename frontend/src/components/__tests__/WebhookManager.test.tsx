@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 
 import { toast } from "sonner";
@@ -47,7 +47,7 @@ describe("WebhookManager", () => {
     expect(
       screen.getByLabelText(/Compliance report generated/i),
     ).toBeInTheDocument();
-    expect(screen.getAllByRole("checkbox")).toHaveLength(8);
+    expect(within(screen.getByRole("group", { name: "Events" })).getAllByRole("checkbox")).toHaveLength(8);
   });
 
   it.each([
@@ -59,7 +59,7 @@ describe("WebhookManager", () => {
       <WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
-    fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), {
+    fireEvent.change(screen.getByLabelText("URL"), {
       target: { value: "https://prod-1.westeurope.logic.azure.com/workflows/abc/triggers/manual" },
     });
     if (optOut) fireEvent.click(screen.getByLabelText(/event JSON instead/i));
@@ -73,14 +73,14 @@ describe("WebhookManager", () => {
   it("keeps a create draft across closing and reopening the dialog", () => {
     render(<WebhookManager webhooks={[]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
-    fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), {
+    fireEvent.change(screen.getByLabelText("URL"), {
       target: { value: "https://example.com/draft" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
 
-    expect(screen.getByPlaceholderText("https://example.com/webhook")).toHaveValue("https://example.com/draft");
+    expect(screen.getByLabelText("URL")).toHaveValue("https://example.com/draft");
   });
 
   const slackHook: Webhook = {
@@ -137,7 +137,7 @@ describe("WebhookManager", () => {
     const onCreate = vi.fn().mockResolvedValue({ id: "w-new" });
     render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
-    const url = screen.getByPlaceholderText("https://example.com/webhook");
+    const url = screen.getByLabelText("URL");
 
     fireEvent.change(url, { target: { value: "https://contoso.webhook.office.com/webhookb2/abc" } });
     fireEvent.click(screen.getByLabelText(/send the event JSON instead/i));
@@ -152,7 +152,7 @@ describe("WebhookManager", () => {
     const onCreate = vi.fn().mockRejectedValue({ response: { data: { detail: "Plain HTTP is only allowed for loopback hosts" } } });
     render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
-    fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), { target: { value: "http://example.com/hook" } });
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "http://example.com/hook" } });
     fireEvent.click(screen.getByLabelText(/Scan completed/i));
     fireEvent.click(screen.getByRole("button", { name: /Create Webhook/i }));
 
@@ -188,7 +188,7 @@ describe("WebhookManager", () => {
       fireEvent.click(screen.getByRole("button", { name: "Edit webhook" }));
       return onUpdate;
     };
-    const urlInput = () => screen.getByPlaceholderText("https://example.com/webhook");
+    const urlInput = () => screen.getByLabelText("URL");
     const optOut = () => screen.queryByLabelText(/send the event JSON instead/i);
     const saveButton = () => screen.getByRole("button", { name: "Save changes" });
 
