@@ -162,7 +162,7 @@ class CryptoHotspotService:
     ) -> list[HotspotEntry]:
         """Aggregate hotspots whose grouping dimension lives on findings (severity/weakness_tag).
 
-        asset_count is the count of distinct bom_refs; finding_count the raw match count.
+        asset_count is the count of distinct (scan_id, bom_ref) assets; finding_count the raw match count.
         """
         # Exclude waived findings (a risk decision, not current posture) so hotspots
         # agree with crypto_trends. Empty scan_ids matches nothing ($in: []).
@@ -190,7 +190,7 @@ class CryptoHotspotService:
                 "$group": {
                     "_id": {"key": group_field, "severity": "$severity"},
                     "finding_count": {"$sum": 1},
-                    "bom_refs": {"$addToSet": "$details.bom_ref"},
+                    "bom_refs": {"$addToSet": {"scan_id": "$scan_id", "bom_ref": "$details.bom_ref"}},
                     "project_ids": {"$addToSet": "$project_id"},
                     "first_seen": {"$min": "$scan_created_at"},
                     "last_seen": {"$max": "$scan_created_at"},
@@ -216,7 +216,7 @@ class CryptoHotspotService:
                 },
             )
             entry["finding_count"] += row["finding_count"]
-            entry["bom_refs"].update(b for b in row.get("bom_refs", []) if b)
+            entry["bom_refs"].update((b["scan_id"], b["bom_ref"]) for b in row.get("bom_refs", []) if b.get("bom_ref"))
             entry["project_ids"].update(row.get("project_ids", []))
             entry["severity_mix"][sev] = entry["severity_mix"].get(sev, 0) + row["finding_count"]
             for field in ("first_seen", "last_seen"):

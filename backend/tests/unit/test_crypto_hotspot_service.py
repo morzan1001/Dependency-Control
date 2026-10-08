@@ -172,16 +172,18 @@ def _variant_asset(bom_ref, name, variant, *, project_id, scan_id, locations=Non
     )
 
 
-def _crypto_finding(_id, *, asset_name, project_id, scan_id, severity="HIGH", waived=False):
+def _crypto_finding(
+    _id, *, project_id, scan_id, severity="HIGH", waived=False, finding_type="crypto_weak_key", **details
+):
     return {
         "_id": _id,
         "finding_id": _id,
-        "type": "crypto_weak_key",
+        "type": finding_type,
         "project_id": project_id,
         "scan_id": scan_id,
         "severity": severity,
         "waived": waived,
-        "details": {"asset_name": asset_name},
+        "details": details,
     }
 
 
@@ -262,6 +264,34 @@ async def test_group_by_severity_excludes_waived_findings(db):
     by_key = {e.key: e for e in result.items}
     assert by_key["HIGH"].finding_count == 1
     assert by_key["LOW"].finding_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_finding_dimension_counts_each_scans_asset_where_two_projects_share_a_ref(db):
+    """Refs derive from asset content, so the same certificate layout repeats them across projects."""
+    for project_id in ("pa", "pb"):
+        await db.projects.insert_one({"_id": project_id, "name": project_id, "latest_scan_id": f"s{project_id}"})
+        await db.scans.insert_one(
+            {
+                "_id": f"s{project_id}",
+                "project_id": project_id,
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+    shared = {"asset_name": "RSA", "severity": "MEDIUM", "bom_ref": "sha-same"}
+    for f in [
+        _crypto_finding("fa1", project_id="pa", scan_id="spa", **shared),
+        _crypto_finding("fa2", project_id="pa", scan_id="spa", finding_type="crypto_quantum_vulnerable", **shared),
+        _crypto_finding("fb1", project_id="pb", scan_id="spb", **shared),
+    ]:
+        await db.findings.insert_one(f)
+
+    resolved = ResolvedScope(scope="user", scope_id=None, project_ids=["pa", "pb"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", limit=10)
+
+    medium = next(e for e in result.items if e.key == "MEDIUM")
+    assert (medium.asset_count, medium.finding_count) == (2, 3)
 
 
 @pytest.mark.asyncio
