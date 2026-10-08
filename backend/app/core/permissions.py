@@ -14,7 +14,6 @@ class Permissions:
     SYSTEM_MANAGE = "system:manage"
 
     USER_CREATE = "user:create"
-    USER_READ = "user:read"
     USER_READ_ALL = "user:read_all"
     USER_UPDATE = "user:update"
     USER_DELETE = "user:delete"

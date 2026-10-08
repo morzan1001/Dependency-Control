@@ -19,8 +19,6 @@ PRESET_ADMIN: list[str] = list(ALL_PERMISSIONS)
 # use chat + MCP. Mirrors frontend PRESET_USER exactly.
 # Analytics stays own-projects-only (no analytics:global / project:read_all).
 PRESET_USER: list[str] = [
-    # User - can view own profile
-    Permissions.USER_READ,
     # Team - can create and view teams
     Permissions.TEAM_CREATE,
     Permissions.TEAM_READ,
@@ -50,8 +48,6 @@ PRESET_USER: list[str] = [
 
 # Viewer: Read-only access (mirrors frontend PRESET_VIEWER).
 PRESET_VIEWER: list[str] = [
-    # User - can view own profile
-    Permissions.USER_READ,
     # Team - can view teams they belong to
     Permissions.TEAM_READ,
     # Project - can view projects they have access to

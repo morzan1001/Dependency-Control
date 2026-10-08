@@ -38,13 +38,13 @@ class TestHasPermission:
         )
 
     def test_empty_user_permissions(self):
-        assert has_permission([], Permissions.USER_READ) is False
+        assert has_permission([], Permissions.TEAM_READ) is False
 
     def test_string_required_auto_wrapped(self):
-        assert has_permission([Permissions.USER_READ], "user:read") is True
+        assert has_permission([Permissions.TEAM_READ], "team:read") is True
 
     def test_empty_required_list_returns_false(self):
-        assert has_permission([Permissions.USER_READ], []) is False
+        assert has_permission([Permissions.TEAM_READ], []) is False
 
 
 class TestPresets:

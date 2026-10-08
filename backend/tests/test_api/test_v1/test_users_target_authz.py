@@ -23,7 +23,6 @@ DELEGATED_ADMIN = [
 ]
 SYSTEM_MANAGER = [
     Permissions.SYSTEM_MANAGE,
-    Permissions.USER_READ,
     Permissions.USER_UPDATE,
     Permissions.USER_DELETE,
     Permissions.USER_MANAGE_PERMISSIONS,
@@ -139,7 +138,7 @@ class TestPermissionChanges:
 
     def test_submitting_an_empty_list_cannot_strip_permissions_the_caller_lacks(self):
         error, repo = _change_permissions(
-            _caller(SYSTEM_MANAGER), [Permissions.ANALYZE_ADHOC, Permissions.USER_READ], []
+            _caller(SYSTEM_MANAGER), [Permissions.ANALYZE_ADHOC, Permissions.USER_UPDATE], []
         )
 
         assert error is not None
@@ -156,7 +155,7 @@ class TestPermissionChanges:
         repo.update.assert_not_awaited()
 
     def test_keeping_a_permission_the_caller_lacks_is_not_a_grant(self):
-        requested = [Permissions.ANALYZE_ADHOC, Permissions.USER_READ]
+        requested = [Permissions.ANALYZE_ADHOC, Permissions.USER_UPDATE]
 
         error, repo = _change_permissions(_caller(SYSTEM_MANAGER), [Permissions.ANALYZE_ADHOC], requested)
 

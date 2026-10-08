@@ -64,8 +64,8 @@ def _bearer(user_id):
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_user_read_opens_only_the_own_account(api, db):
-    await _add_user(db, _BOB_ID, "bob", [Permissions.USER_READ])
+async def test_without_user_read_all_only_the_own_account_opens(api, db):
+    await _add_user(db, _BOB_ID, "bob", [])
     await _add_user(db, _ALICE_ID, "alice", [])
 
     other = await api.get(f"{_API}/users/{_ALICE_ID}", headers=_bearer(_BOB_ID))

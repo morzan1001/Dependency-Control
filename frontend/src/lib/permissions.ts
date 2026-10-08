@@ -4,7 +4,6 @@ export const Permissions = {
 
   // User Management
   USER_CREATE: "user:create",
-  USER_READ: "user:read",
   USER_READ_ALL: "user:read_all",
   USER_UPDATE: "user:update",
   USER_DELETE: "user:delete",
@@ -76,7 +75,6 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.SYSTEM_MANAGE,
   // User
   Permissions.USER_CREATE,
-  Permissions.USER_READ,
   Permissions.USER_READ_ALL,
   Permissions.USER_UPDATE,
   Permissions.USER_DELETE,
@@ -135,8 +133,6 @@ export const PRESET_ADMIN: Permission[] = [...ALL_PERMISSIONS];
 
 // Regular User: Can create/manage own projects and teams, view analytics
 export const PRESET_USER: Permission[] = [
-  // User - can view own profile
-  Permissions.USER_READ,
   // Team - can create and view teams
   Permissions.TEAM_CREATE,
   Permissions.TEAM_READ,
@@ -167,8 +163,6 @@ export const PRESET_USER: Permission[] = [
 
 // Viewer: Read-only access
 export const PRESET_VIEWER: Permission[] = [
-  // User - can view own profile
-  Permissions.USER_READ,
   // Team - can view teams they belong to
   Permissions.TEAM_READ,
   // Project - can view projects they have access to
@@ -217,11 +211,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         id: Permissions.USER_CREATE,
         label: "Create Users",
         description: "Create new user accounts",
-      },
-      {
-        id: Permissions.USER_READ,
-        label: "Read User Details",
-        description: "View own user profile",
       },
       {
         id: Permissions.USER_READ_ALL,
