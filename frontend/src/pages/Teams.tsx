@@ -28,7 +28,7 @@ export default function TeamsPage() {
   const { hasPermission, permissions } = useAuth();
   const { data: currentUser } = useCurrentUser();
 
-  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editTeamId, setEditTeamId] = useState<string | null>(null);
   const [isManageMembersOpen, setIsManageMembersOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -46,11 +46,9 @@ export default function TeamsPage() {
   // Derive team objects from fresh query data instead of stale state snapshots
   const selectedTeam = teams?.find(t => t.id === selectedTeamId) ?? null;
   const webhookTeam = teams?.find(t => t.id === webhookTeamId) ?? null;
+  const editTeam = teams?.find(t => t.id === editTeamId);
 
-  const openEditDialog = (team: Team) => {
-    setSelectedTeamId(team.id);
-    setIsEditOpen(true);
-  };
+  const openEditDialog = (team: Team) => setEditTeamId(team.id);
 
   const openManageMembersDialog = (team: Team) => {
     setSelectedTeamId(team.id);
@@ -145,9 +143,7 @@ export default function TeamsPage() {
         ))}
       </div>
 
-      {isEditOpen && selectedTeam && (
-        <TeamFormDialog team={selectedTeam} onClose={() => setIsEditOpen(false)} />
-      )}
+      {editTeam && <TeamFormDialog team={editTeam} onClose={() => setEditTeamId(null)} />}
 
       <TeamBindingDialog
         key={`binding-${selectedTeam?.id}`}
