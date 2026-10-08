@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { getScanDelta, type GetScanDeltaArgs } from "@/api/scanDelta";
 import type { DeltaCategory, ScanDeltaResponse } from "@/types/scanDelta";
@@ -11,22 +11,13 @@ export interface DeltaTabProps {
   readonly onLoaded: (delta: ScanDeltaResponse) => void;
 }
 
-interface UseDeltaTabQueryArgs {
+interface UseDeltaTabQueryArgs extends DeltaTabProps {
   category: DeltaCategory;
-  projectId: string;
-  fromScanId: string;
-  toScanId: string;
-  extra?: Omit<
-    GetScanDeltaArgs,
-    "projectId" | "fromScanId" | "toScanId" | "category" | "page" | "pageSize"
-  >;
-  /** Entries join the queryKey so the cache splits per filter combo. */
-  filterKey?: ReadonlyArray<unknown>;
+  filters: Omit<GetScanDeltaArgs, "projectId" | "fromScanId" | "toScanId" | "category" | "page" | "pageSize">;
 }
 
 interface UseDeltaTabQueryResult {
   query: UseQueryResult<ScanDeltaResponse>;
-  page: number;
   setPage: (page: number) => void;
 }
 
@@ -37,13 +28,19 @@ export function useDeltaTabQuery({
   projectId,
   fromScanId,
   toScanId,
-  extra,
-  filterKey = [],
+  onLoaded,
+  filters,
 }: UseDeltaTabQueryArgs): UseDeltaTabQueryResult {
   const [page, setPage] = useState(1);
+  const filterKey = JSON.stringify(filters);
+  const [pageFilterKey, setPageFilterKey] = useState(filterKey);
+  if (pageFilterKey !== filterKey) {
+    setPageFilterKey(filterKey);
+    setPage(1);
+  }
 
   const query = useQuery({
-    queryKey: ["scan-delta", category, projectId, fromScanId, toScanId, page, ...filterKey],
+    queryKey: ["scan-delta", category, projectId, fromScanId, toScanId, page, filters],
     queryFn: () =>
       getScanDelta({
         projectId,
@@ -52,10 +49,15 @@ export function useDeltaTabQuery({
         category,
         page,
         pageSize: PAGE_SIZE,
-        ...extra,
+        ...filters,
       }),
     enabled: !!(projectId && fromScanId && toScanId),
   });
 
-  return { query, page, setPage };
+  const { data } = query;
+  useEffect(() => {
+    if (data) onLoaded(data);
+  }, [data, onLoaded]);
+
+  return { query, setPage };
 }

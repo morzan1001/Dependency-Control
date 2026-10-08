@@ -97,6 +97,17 @@ describe('ScanDelta page', () => {
     })
   })
 
+  it('counts the changes on the badge of each tab that answered', async () => {
+    vi.mocked(deltaApi.getScanDelta).mockResolvedValue(emptyDelta('findings'))
+    vi.mocked(scansApi.scanApi.getOne).mockImplementation((id: string) => Promise.resolve(scan(id)))
+    vi.mocked(releaseApi.list).mockResolvedValue(noReleases)
+
+    renderPage()
+
+    expect(await screen.findByRole('tab', { name: 'Findings 3' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Components —' })).toBeInTheDocument()
+  })
+
   // The page rejects the pair before it renders the header, so nothing asks for a release here.
   it('shows an error card for an invalid scan pair', () => {
     renderPage(`/projects/${PROJECT_ID}/delta?from=${FROM_SCAN_ID}&to=${FROM_SCAN_ID}`)

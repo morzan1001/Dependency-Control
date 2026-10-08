@@ -1,7 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { CryptoDeltaItem } from "@/types/scanDelta";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -14,27 +12,17 @@ import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
 import { Pagination } from "@/components/ui/pagination";
 import { DeltaSummaryCards } from "../shared/DeltaSummaryCards";
+import { DeltaFilterBar, DeltaFilterGroup, DeltaStatusRows } from "../shared/DeltaTableParts";
 import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 const CHANGES = ["all", "added", "removed"] as const;
 type CryptoChangeFilter = (typeof CHANGES)[number];
 
-export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onLoaded }: DeltaTabProps) {
+export function CryptoDeltaTab(props: DeltaTabProps) {
   const [change, setChange] = useState<CryptoChangeFilter>("all");
 
-  const { query, setPage } = useDeltaTabQuery({
-    category: "crypto",
-    projectId,
-    fromScanId,
-    toScanId,
-    extra: { change },
-    filterKey: [change],
-  });
+  const { query, setPage } = useDeltaTabQuery({ ...props, category: "crypto", filters: { change } });
   const { data, isLoading, isError } = query;
-
-  useEffect(() => {
-    if (data) onLoaded(data);
-  }, [data, onLoaded]);
 
   if (isError) return <DeltaError category="crypto" />;
 
@@ -45,24 +33,9 @@ export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onLoaded }: De
         removed={data?.totals.removed ?? 0}
         unchanged={data?.totals.unchanged ?? 0}
       />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-muted/30 p-2 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">Change:</span>
-          {CHANGES.map((c) => (
-            <Button
-              key={c}
-              size="sm"
-              variant={change === c ? "default" : "outline"}
-              onClick={() => {
-                setPage(1);
-                setChange(c);
-              }}
-            >
-              {c}
-            </Button>
-          ))}
-        </div>
-      </div>
+      <DeltaFilterBar>
+        <DeltaFilterGroup label="Change" options={CHANGES} isActive={(c) => change === c} onSelect={setChange} />
+      </DeltaFilterBar>
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -75,16 +48,6 @@ export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onLoaded }: De
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading &&
-              ["s1", "s2", "s3"].map((id) => (
-                <TableRow key={id}>
-                  {["c1", "c2", "c3", "c4", "c5"].map((c) => (
-                    <TableCell key={c}>
-                      <Skeleton className="h-5 w-20" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
             {(data?.items as CryptoDeltaItem[] | undefined)?.map((item, i) => (
               <TableRow key={`${item.change}-${item.name}-${i}`}>
                 <TableCell><ChangeBadge change={item.change} /></TableCell>
@@ -97,13 +60,7 @@ export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onLoaded }: De
                 </TableCell>
               </TableRow>
             ))}
-            {!isLoading && (data?.items.length ?? 0) === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  No crypto changes
-                </TableCell>
-              </TableRow>
-            )}
+            <DeltaStatusRows isLoading={isLoading} rows={data?.items.length ?? 0} columns={5} emptyText="No crypto changes" />
           </TableBody>
         </Table>
       </div>

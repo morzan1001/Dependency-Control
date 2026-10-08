@@ -63,4 +63,15 @@ describe("ComponentsDeltaTab", () => {
     const table = screen.getByRole("table");
     expect(within(table).getAllByRole("row")).toHaveLength(1 + 3); // header + 3 skeleton rows
   });
+
+  it("says so when nothing changed", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      category: "components", from_scan_id: "a", to_scan_id: "b", project_id: "p1",
+      totals: { added: 0, removed: 0, unchanged: 4, changed: 0, by_severity: {}, by_type: {} },
+      page: 1, page_size: 50, total_pages: 1, items: [],
+    });
+    renderTab();
+
+    expect(await screen.findByText("No component changes")).toBeInTheDocument();
+  });
 });
