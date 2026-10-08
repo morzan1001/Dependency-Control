@@ -180,7 +180,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     const openedDeepLinkRef = useRef<string | null>(null)
 
     useEffect(() => {
-        if (!deepLinkFindingId) {
+        // The active table's unfiltered search also opens waived findings; a second opener stacks a modal.
+        if (!deepLinkFindingId || waivedFilter === 'waived') {
             openedDeepLinkRef.current = null
             return
         }
@@ -204,7 +205,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
             }
         })()
         return () => { cancelled = true }
-    }, [deepLinkFindingId, scanId])
+    }, [deepLinkFindingId, scanId, waivedFilter])
 
     // Strip the ?finding=… param once the user closes the drawer so the
     // deep-link doesn't immediately reopen it.
