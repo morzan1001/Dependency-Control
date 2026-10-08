@@ -6,7 +6,6 @@ import { useScan, useScanHistory, useTriggerRescan, useScanResult, useScanResult
 import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
 import { useAuth } from '@/context/useAuth'
-import { hasPermission } from '@/lib/permissions'
 import { isProjectAdmin, isProjectEditor } from '@/lib/project-roles'
 import { FindingsTable } from '@/components/findings/FindingsTable'
 import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSection'
@@ -215,7 +214,7 @@ export default function ScanDetails() {
   }
 
   const canWrite = !!currentUser && isProjectEditor(project, currentUser.id, permissions)
-  const canUnpin = !!currentUser && isProjectAdmin(project, currentUser.id, permissions) && hasPermission(permissions, 'archive:restore')
+  const canUnpin = !!currentUser && isProjectAdmin(project, currentUser.id, permissions) && permissions.includes('archive:restore')
 
   const scanContext: ScanContext = {
     projectUrl: scan.project_url,

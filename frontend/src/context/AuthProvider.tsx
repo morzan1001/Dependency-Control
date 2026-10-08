@@ -8,7 +8,6 @@ import { setLogoutCallback } from '@/api/client'
 import { userApi } from '@/api/users'
 import { LOGIN_RETURN_KEY } from '@/lib/constants'
 import { logger } from '@/lib/logger'
-import { hasPermission as checkPermission } from '@/lib/permissions'
 
 import { AuthContext } from './auth-context'
 
@@ -43,7 +42,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
   }, [navigate, queryClient])
 
   const hasPermission = useCallback((permission: string) => {
-    return checkPermission(permissions, permission)
+    return permissions.includes(permission)
   }, [permissions])
 
   // Ref keeps the latest logout so the mount-only init effect stays stable across navigation.
