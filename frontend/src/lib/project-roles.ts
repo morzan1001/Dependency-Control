@@ -57,33 +57,6 @@ export function isProjectEditor(
   return hasProjectRole(project, userId, PROJECT_ROLE_EDITOR, globalPermissions);
 }
 
-/** Project update (name, settings, etc.): project admin OR global project:update */
-export function canUpdateProject(
-  project: Project,
-  userId: string,
-  globalPermissions: string[]
-): boolean {
-  return isProjectAdmin(project, userId, globalPermissions);
-}
-
-/** Rotate API key: project admin OR global project:update */
-export function canRotateApiKey(
-  project: Project,
-  userId: string,
-  globalPermissions: string[]
-): boolean {
-  return isProjectAdmin(project, userId, globalPermissions);
-}
-
-/** Invite / update / remove members: project admin */
-export function canManageProjectMembers(
-  project: Project,
-  userId: string,
-  globalPermissions: string[]
-): boolean {
-  return isProjectAdmin(project, userId, globalPermissions);
-}
-
 /** Delete project: project admin by role OR global project:delete (project:update does not delete) */
 export function canDeleteProject(
   project: Project,
@@ -91,15 +64,6 @@ export function canDeleteProject(
   globalPermissions: string[]
 ): boolean {
   return isProjectAdmin(project, userId) || globalPermissions.includes('project:delete');
-}
-
-/** Toggle enforce notification settings: project admin OR global project:update */
-export function canEnforceNotifications(
-  project: Project,
-  userId: string,
-  globalPermissions: string[]
-): boolean {
-  return isProjectAdmin(project, userId, globalPermissions);
 }
 
 // The project admin gate already opens for the global write grant, so a webhook permission only

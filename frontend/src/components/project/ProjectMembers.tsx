@@ -6,7 +6,7 @@ import { getErrorMessage } from '@/lib/utils'
 import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
 import { useCurrentUser } from '@/hooks/queries/use-users'
-import { canManageProjectMembers } from '@/lib/project-roles'
+import { isProjectAdmin } from '@/lib/project-roles'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,7 +48,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
   const { permissions } = useAuth()
   const { data: currentUser } = useCurrentUser()
   const canManageMembers = currentUser
-    ? canManageProjectMembers(project, currentUser.id, permissions)
+    ? isProjectAdmin(project, currentUser.id, permissions)
     : false
   const [isInviteMemberOpen, setIsInviteMemberOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState("")

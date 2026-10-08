@@ -17,10 +17,7 @@ import { memberPreferences, enforcedPreferences } from '@/lib/notification-prefe
 import { useAuth } from '@/context/useAuth'
 import {
   isProjectAdmin,
-  canUpdateProject,
   canDeleteProject,
-  canRotateApiKey,
-  canEnforceNotifications,
   canCreateProjectWebhook,
   canDeleteProjectWebhook, canUpdateProjectWebhook,
 } from '@/lib/project-roles'
@@ -134,14 +131,11 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const navigate = useNavigate()
 
   const userId = user.id
-  const canUpdate = canUpdateProject(project, userId, permissions)
+  const isAdmin = isProjectAdmin(project, userId, permissions)
   const canDelete = canDeleteProject(project, userId, permissions)
-  const canRotateKey = canRotateApiKey(project, userId, permissions)
-  const canEnforce = canEnforceNotifications(project, userId, permissions)
   const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
   const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
   const canUpdateWh = canUpdateProjectWebhook(project, userId, permissions)
-  const canEditCryptoPolicy = isProjectAdmin(project, userId, permissions)
   const isSystemManager = permissions.includes('system:manage')
   const isMember = !!project.members?.some(m => m.user_id === userId)
   
@@ -529,7 +523,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                     <p className="text-xs text-muted-foreground pt-2">
                                         Only administrators can change this link.
                                     </p>
-                                    {canUpdate && (
+                                    {isAdmin && (
                                         <Button type="button" variant="outline" size="sm" onClick={clearGitlabBinding}>
                                             Remove GitLab link
                                         </Button>
@@ -613,7 +607,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         selected={analyzers}
                         onToggle={toggleAnalyzer}
                         className="max-h-[300px]"
-                        renderAction={(analyzerId) => hasSettingsSchema(analyzerId) && analyzers.includes(analyzerId) && canUpdate && (
+                        renderAction={(analyzerId) => hasSettingsSchema(analyzerId) && analyzers.includes(analyzerId) && isAdmin && (
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -627,7 +621,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         )}
                     />
                 </div>
-                {canUpdate && (
+                {isAdmin && (
                     <Button type="submit" disabled={updateProjectMutation.isPending}>
                         {updateProjectMutation.isPending ? "Saving..." : "Save Changes"}
                     </Button>
@@ -650,12 +644,12 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             currentValues={currentValues}
             onSave={(values) => saveAnalyzerSettings(openSettingsAnalyzer, values)}
             isSaving={updateProjectMutation.isPending}
-            canEdit={canUpdate}
+            canEdit={isAdmin}
           />
         )
       })()}
 
-      <CryptoPolicyOverridePage projectId={projectId} canEdit={canEditCryptoPolicy} />
+      <CryptoPolicyOverridePage projectId={projectId} canEdit={isAdmin} />
 
       <Card>
         <CardHeader>
@@ -663,7 +657,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             <CardDescription>Configure how you want to be notified about project events.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-            {canEnforce && (
+            {isAdmin && (
                 <div className="flex flex-row items-center justify-between rounded-lg border p-4">
                     <div className="space-y-0.5">
                         <Label className="text-base">Enforce Notification Settings</Label>
@@ -678,7 +672,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 </div>
             )}
 
-            {enforceNotificationSettings && !canEnforce && (
+            {enforceNotificationSettings && !isAdmin && (
                 <div className="flex items-center gap-2 p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-900">
                     <Info className="h-4 w-4" />
                     <p>Notification settings are currently enforced by the project administrator. You cannot modify them.</p>
@@ -710,7 +704,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     </TableHeader>
                     <TableBody>
                         {NOTIFICATION_EVENTS.map(event => (
-                            <TableRow key={event.id} className={enforceNotificationSettings && !canEnforce ? 'opacity-60' : ''}>
+                            <TableRow key={event.id} className={enforceNotificationSettings && !isAdmin ? 'opacity-60' : ''}>
                                 <TableCell>
                                     <div className="font-medium">{event.label}</div>
                                     <div className="text-xs text-muted-foreground">{event.description}</div>
@@ -722,7 +716,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                                 id={`${event.id}-${channel.id}`}
                                                 checked={(notificationPrefs[event.id] || []).includes(channel.id)}
                                                 onCheckedChange={() => toggleNotification(event.id, channel.id)}
-                                                disabled={enforceNotificationSettings && !canEnforce}
+                                                disabled={enforceNotificationSettings && !isAdmin}
                                             />
                                         </div>
                                     </TableCell>
@@ -732,7 +726,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     </TableBody>
                 </Table>
             </div>
-            {(isMember || canEnforce) && (
+            {(isMember || isAdmin) && (
                 <Button
                     onClick={() => updateNotificationSettingsMutation.mutate({
                         id: project.id,
@@ -767,7 +761,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
         updatePermission={canUpdateWh}
       />
 
-      {(canUpdate || canDelete || canRotateKey) && (
+      {(isAdmin || canDelete) && (
         <Card className="border-destructive">
             <CardHeader>
                 <CardTitle className="text-destructive flex items-center gap-2">
@@ -779,7 +773,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {canRotateKey && (
+                {isAdmin && (
                     <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
                         <div>
                             <div className="font-medium">Rotate API Key</div>

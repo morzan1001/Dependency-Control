@@ -5,10 +5,7 @@ import {
   hasProjectRole,
   isProjectAdmin,
   isProjectEditor,
-  canUpdateProject,
   canDeleteProject,
-  canRotateApiKey,
-  canManageProjectMembers,
   canCreateProjectWaiver,
   canCreateProjectWebhook,
   canDeleteProjectWebhook,
@@ -49,11 +46,8 @@ describe('hasProjectRole — project:read_all is READ-ONLY (audit #1)', () => {
     expect(isProjectEditor(project, AUDITOR, readAll)).toBe(false)
   })
 
-  it('an auditor with only read_all cannot delete / rotate / manage members', () => {
+  it('an auditor with only read_all can neither delete nor waive', () => {
     expect(canDeleteProject(project, AUDITOR, readAll)).toBe(false)
-    expect(canRotateApiKey(project, AUDITOR, readAll)).toBe(false)
-    expect(canManageProjectMembers(project, AUDITOR, readAll)).toBe(false)
-    expect(canUpdateProject(project, AUDITOR, readAll)).toBe(false)
     expect(canCreateProjectWaiver(project, AUDITOR, readAll)).toBe(false)
   })
 
@@ -71,8 +65,6 @@ describe('hasProjectRole — WRITE superuser (project:update); project:delete de
     expect(hasProjectRole(project, STRANGER, 'editor', perms)).toBe(true)
     expect(hasProjectRole(project, STRANGER, 'admin', perms)).toBe(true)
     expect(isProjectAdmin(project, STRANGER, perms)).toBe(true)
-    // member management gate (admin-only) must open for the write superuser
-    expect(canManageProjectMembers(project, STRANGER, perms)).toBe(true)
   })
 
   it('project:update does not open the deletion', () => {
@@ -83,8 +75,6 @@ describe('hasProjectRole — WRITE superuser (project:update); project:delete de
     const perms = ['project:delete']
     expect(canDeleteProject(project, STRANGER, perms)).toBe(true)
     expect(isProjectAdmin(project, STRANGER, perms)).toBe(false)
-    expect(canManageProjectMembers(project, STRANGER, perms)).toBe(false)
-    expect(canRotateApiKey(project, STRANGER, perms)).toBe(false)
   })
 })
 
@@ -119,7 +109,7 @@ describe('getUserProjectRole / role hierarchy', () => {
   it('a direct viewer the API reports as effective admin is gated as admin', () => {
     const project = makeProject([{ user_id: 'v', role: 'viewer', effective_role: 'admin' }])
     expect(getUserProjectRole(project, 'v')).toBe('admin')
-    expect(canManageProjectMembers(project, 'v', [])).toBe(true)
+    expect(isProjectAdmin(project, 'v', [])).toBe(true)
     expect(canDeleteProject(project, 'v', ['project:update'])).toBe(true)
   })
 
@@ -128,7 +118,7 @@ describe('getUserProjectRole / role hierarchy', () => {
       { user_id: 'team-admin', role: 'admin', inherited_from: 'Team: DevOps' },
     ])
     expect(getUserProjectRole(project, 'team-admin')).toBe('admin')
-    expect(canManageProjectMembers(project, 'team-admin', [])).toBe(true)
+    expect(isProjectAdmin(project, 'team-admin', [])).toBe(true)
   })
 })
 
