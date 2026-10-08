@@ -1,7 +1,9 @@
 """Tests for waiver API endpoints."""
 
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,63 +57,58 @@ def _call_list_waivers(current_user, db=None, **overrides):
     return asyncio.run(list_waivers(**kwargs))
 
 
-class TestCreateWaiver:
-    def test_admin_can_create_global_waiver(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.request_waiver_recalc") as mock_request:
-                result = asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(project_id=None, package_name="requests", reason="Global waiver"),
-                        background_tasks=bg_tasks,
-                        current_user=admin_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        assert result.project_id is None
-        assert result.created_by == admin_user.username
-        mock_repo.create.assert_called_once()
-        assert mock_request.await_args.args[1] is result
-        assert [t.func for t in bg_tasks.tasks] == [run_waiver_recalc]
-
-    def test_created_by_is_set_to_username(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        # Project has no scan to head it → finding-match validation short-circuits.
-        db = MagicMock()
-        db.projects.find_one = AsyncMock(return_value={"_id": "proj-1", "latest_scan_id": None})
-        db.scans.find_one = AsyncMock(return_value=None)
-
-        with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    result = asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(project_id="proj-1", package_name="requests", reason="Test"),
-                            background_tasks=bg_tasks,
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
-
-        assert result.created_by == "admin"
-
-
 def _project_access(db):
     """check_project_access answering with the project the fake database holds."""
     return AsyncMock(return_value=Project(**db.projects._docs[_PROJECT]))
+
+
+def _run_create(user, db, fields) -> SimpleNamespace:
+    from app.api.v1.endpoints.waivers import create_waiver
+    from app.schemas.waiver import WaiverCreate
+
+    db = MagicMock() if db is None else db
+    repo = MagicMock(create=AsyncMock())
+    access = _project_access(db) if isinstance(db, FakeDatabase) else AsyncMock()
+    bg = BackgroundTasks()
+    gate = patch(f"{MODULE}.check_project_access", access) if fields.get("project_id") else nullcontext()
+    with (
+        gate,
+        patch(f"{MODULE}.WaiverRepository", return_value=repo),
+        patch(f"{MODULE}.request_waiver_recalc") as recalc,
+    ):
+        try:
+            outcome = asyncio.run(
+                create_waiver(waiver_in=WaiverCreate(**fields), background_tasks=bg, current_user=user, db=db)
+            )
+        except HTTPException as exc:
+            outcome = exc
+    return SimpleNamespace(outcome=outcome, repo=repo, recalc=recalc, access=access, bg=bg)
+
+
+def _create(user, db=None, **fields) -> SimpleNamespace:
+    """create_waiver with a recording repository, asserting it stored the waiver once."""
+    run = _run_create(user, db, fields)
+    assert not isinstance(run.outcome, HTTPException), run.outcome.detail
+    run.repo.create.assert_called_once()
+    return run
+
+
+def _refused(user, db=None, **fields) -> HTTPException:
+    """create_waiver's refusal, asserting nothing was stored."""
+    run = _run_create(user, db, fields)
+    assert isinstance(run.outcome, HTTPException), run.outcome
+    run.repo.create.assert_not_called()
+    return run.outcome
+
+
+class TestCreateWaiver:
+    def test_admin_can_create_global_waiver(self, admin_user):
+        run = _create(admin_user, project_id=None, package_name="requests", reason="Global waiver")
+
+        assert run.outcome.project_id is None
+        assert run.outcome.created_by == admin_user.username
+        assert run.recalc.await_args.args[1] is run.outcome
+        assert [t.func for t in run.bg.tasks] == [run_waiver_recalc]
 
 
 class TestCreateWaiverValidatesFindingMatch:
@@ -141,78 +138,39 @@ class TestCreateWaiverValidatesFindingMatch:
         return db
 
     def test_finding_scope_waiver_with_no_match_raises_422(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
+        exc = _refused(
+            admin_user,
+            self._db_with_head_scan(),
+            project_id="proj-1",
+            finding_id="artemis-server:2.40.0",
+            finding_type="vulnerability",
+            package_name="artemis-server",
+            package_version="2.40.0",
+            scope="finding",
+            reason="test",
+        )
 
-        db = self._db_with_head_scan()
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    with pytest.raises(HTTPException) as exc_info:
-                        asyncio.run(
-                            create_waiver(
-                                waiver_in=WaiverCreate(
-                                    project_id="proj-1",
-                                    finding_id="artemis-server:2.40.0",
-                                    finding_type="vulnerability",
-                                    package_name="artemis-server",
-                                    package_version="2.40.0",
-                                    scope="finding",
-                                    reason="test",
-                                ),
-                                background_tasks=bg_tasks,
-                                current_user=admin_user,
-                                db=db,
-                            )
-                        )
-
-        assert exc_info.value.status_code == 422
-        assert "finding_id" in exc_info.value.detail or "match" in exc_info.value.detail.lower()
-        mock_repo.create.assert_not_called()
+        assert exc.status_code == 422
+        assert "finding_id" in exc.detail or "match" in exc.detail.lower()
 
     def test_finding_scope_waiver_with_match_succeeds(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = self._db_with_head_scan(
             findings=[{"finding_id": "QUALITY:artemis-commons:2.43.0", "type": "quality", "component": None}]
         )
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                finding_id="QUALITY:artemis-commons:2.43.0",
-                                finding_type="quality",
-                                scope="finding",
-                                reason="ok",
-                            ),
-                            background_tasks=bg_tasks,
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
-
-        mock_repo.create.assert_called_once()
+        _create(
+            admin_user,
+            db,
+            project_id="proj-1",
+            finding_id="QUALITY:artemis-commons:2.43.0",
+            finding_type="quality",
+            scope="finding",
+            reason="ok",
+        )
 
     def test_validation_reads_the_head_build_not_the_queued_scan_the_pointer_names(self, admin_user):
         """A queued scan holds no findings, so validating against the pointer would reject a waiver
         for a finding the head build really reports."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = self._db_with_head_scan(
             findings=[{"finding_id": "QUALITY:artemis-commons:2.43.0", "type": "quality", "component": None}]
         )
@@ -225,289 +183,129 @@ class TestCreateWaiverValidatesFindingMatch:
         }
         db.projects._docs[_PROJECT]["latest_scan_id"] = _QUEUED_SCAN
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id=_PROJECT,
-                                finding_id="QUALITY:artemis-commons:2.43.0",
-                                finding_type="quality",
-                                scope="finding",
-                                reason="ok",
-                            ),
-                            background_tasks=BackgroundTasks(),
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
-
-        mock_repo.create.assert_called_once()
+        _create(
+            admin_user,
+            db,
+            project_id=_PROJECT,
+            finding_id="QUALITY:artemis-commons:2.43.0",
+            finding_type="quality",
+            scope="finding",
+            reason="ok",
+        )
 
     def test_rule_scope_waiver_skips_match_check(self, admin_user):
         """rule-scope is preventive — covers future matches — so no current-scan match is required."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = self._db_with_head_scan()
         db.findings._docs["elsewhere"] = _stored_bearer_finding("BEARER-rule_x-src/file.js-1", "rule_x", "other-scan")
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                finding_id="BEARER-rule_x-src/file.js-1",
-                                finding_type="sast",
-                                package_name="src/file.js",
-                                scope="rule",
-                                reason="future",
-                            ),
-                            background_tasks=bg_tasks,
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
-
-        mock_repo.create.assert_called_once()
+        _create(
+            admin_user,
+            db,
+            project_id="proj-1",
+            finding_id="BEARER-rule_x-src/file.js-1",
+            finding_type="sast",
+            package_name="src/file.js",
+            scope="rule",
+            reason="future",
+        )
 
     @pytest.mark.parametrize("scope", ["file", "rule"])
     def test_a_widened_scope_takes_its_rule_from_the_finding_it_was_taken_from(self, admin_user, scope):
         """A merged SAST id names no rule; the finding's own details do."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = self._db_with_head_scan()
         db.findings._docs["merged"] = _stored_bearer_finding(
             "SAST-AGG-src/file.rb-12", "ruby_lang_weak-hash", _HEAD_SCAN
         )
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    created = asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                finding_id="SAST-AGG-src/file.rb-12",
-                                finding_type="sast",
-                                package_name="src/file.rb",
-                                scope=scope,
-                                reason="future",
-                            ),
-                            background_tasks=BackgroundTasks(),
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
+        created = _create(
+            admin_user,
+            db,
+            project_id="proj-1",
+            finding_id="SAST-AGG-src/file.rb-12",
+            finding_type="sast",
+            package_name="src/file.rb",
+            scope=scope,
+            reason="future",
+        ).outcome
 
         assert created.rule_id == "ruby_lang_weak-hash"
 
     def test_file_scope_waiver_skips_match_check(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = self._db_with_head_scan()
         db.findings._docs["elsewhere"] = _stored_bearer_finding("BEARER-rule_x-src/file.js-1", "rule_x", "other-scan")
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                finding_id="BEARER-rule_x-src/file.js-1",
-                                finding_type="sast",
-                                package_name="src/file.js",
-                                scope="file",
-                                reason="file scope",
-                            ),
-                            background_tasks=bg_tasks,
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
-
-        mock_repo.create.assert_called_once()
+        _create(
+            admin_user,
+            db,
+            project_id="proj-1",
+            finding_id="BEARER-rule_x-src/file.js-1",
+            finding_type="sast",
+            package_name="src/file.js",
+            scope="file",
+            reason="file scope",
+        )
 
     def test_global_waiver_skips_match_check(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = MagicMock()
         # If the validator wrongly tried to look up findings, this AsyncMock would be hit.
         db.findings.find_one = AsyncMock(return_value=None)
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
+        _create(
+            admin_user,
+            db,
+            project_id=None,
+            finding_id="CVE-9999-9",
+            finding_type="vulnerability",
+            scope="finding",
+            reason="global",
+        )
 
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.request_waiver_recalc"):
-                asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(
-                            project_id=None,
-                            finding_id="CVE-9999-9",
-                            finding_type="vulnerability",
-                            scope="finding",
-                            reason="global",
-                        ),
-                        background_tasks=bg_tasks,
-                        current_user=admin_user,
-                        db=db,
-                    )
-                )
-
-        mock_repo.create.assert_called_once()
         db.findings.count_documents.assert_not_called()
 
     def test_unscoped_license_waiver_is_rejected(self, admin_user):
         """finding_id is not unique per scan for license/eol; prod scan fe02e2bf has 115
         documents under LIC-GPL-2.0-only, so an unscoped waiver would blanket all of them."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
+        exc = _refused(
+            admin_user,
+            project_id=None,
+            finding_id="LIC-GPL-2.0-only",
+            finding_type="license",
+            scope="finding",
+            reason="approved",
+        )
 
-        db = MagicMock()
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with pytest.raises(HTTPException) as exc:
-                asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(
-                            project_id=None,
-                            finding_id="LIC-GPL-2.0-only",
-                            finding_type="license",
-                            scope="finding",
-                            reason="approved",
-                        ),
-                        background_tasks=BackgroundTasks(),
-                        current_user=admin_user,
-                        db=db,
-                    )
-                )
-
-        assert exc.value.status_code == 422
-        assert "package_name" in exc.value.detail
-        mock_repo.create.assert_not_called()
+        assert exc.status_code == 422
+        assert "package_name" in exc.detail
 
     @pytest.mark.parametrize("project_id", [None, _PROJECT])
     def test_a_waiver_naming_nothing_to_match_is_rejected(self, admin_user, project_id):
         """It would match no finding, or every one; the restamp skips it and it sits orphaned."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
-                with pytest.raises(HTTPException) as exc:
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(project_id=project_id, package_name="Unknown", reason="r"),
-                            background_tasks=BackgroundTasks(),
-                            current_user=admin_user,
-                            db=MagicMock(),
-                        )
-                    )
-
-        assert exc.value.status_code == 422
-        mock_repo.create.assert_not_called()
+        assert _refused(admin_user, project_id=project_id, package_name="Unknown", reason="r").status_code == 422
 
     @pytest.mark.parametrize("finding_id", ["LIC-GPL-2.0-only", "EOL-python-3.8"])
     def test_an_unscoped_shared_id_is_rejected_without_its_type(self, admin_user, finding_id):
         """The id names the type the caller left out, and a global waiver never reaches the head-build check."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with pytest.raises(HTTPException) as exc:
-                asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(project_id=None, finding_id=finding_id, reason="approved"),
-                        background_tasks=BackgroundTasks(),
-                        current_user=admin_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        assert exc.value.status_code == 422
-        mock_repo.create.assert_not_called()
+        assert _refused(admin_user, project_id=None, finding_id=finding_id, reason="approved").status_code == 422
 
     def test_unknown_placeholder_does_not_count_as_a_package_scope(self, admin_user):
         """The waiver form sends 'Unknown' when it cannot resolve a package, which is no package scope."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
+        exc = _refused(
+            admin_user,
+            project_id=None,
+            finding_id="LIC-GPL-2.0-only",
+            finding_type="license",
+            package_name="Unknown",
+            scope="finding",
+            reason="approved",
+        )
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with pytest.raises(HTTPException) as exc:
-                asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(
-                            project_id=None,
-                            finding_id="LIC-GPL-2.0-only",
-                            finding_type="license",
-                            package_name="Unknown",
-                            scope="finding",
-                            reason="approved",
-                        ),
-                        background_tasks=BackgroundTasks(),
-                        current_user=admin_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        assert exc.value.status_code == 422
-        mock_repo.create.assert_not_called()
+        assert exc.status_code == 422
 
     @pytest.mark.parametrize("scope", ["file", "rule"])
     def test_a_widened_scope_needs_a_finding_or_a_rule_to_widen(self, admin_user, scope):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
+        exc = _refused(admin_user, project_id=None, finding_type="sast", scope=scope, reason="approved")
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with pytest.raises(HTTPException) as exc:
-                asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(project_id=None, finding_type="sast", scope=scope, reason="approved"),
-                        background_tasks=BackgroundTasks(),
-                        current_user=admin_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        assert exc.value.status_code == 422
-        mock_repo.create.assert_not_called()
+        assert exc.status_code == 422
 
     @pytest.mark.parametrize(
         "fields",
@@ -524,122 +322,46 @@ class TestCreateWaiverValidatesFindingMatch:
         ],
     )
     def test_a_widened_scope_that_cannot_name_its_rule_and_place_is_rejected(self, admin_user, fields):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with pytest.raises(HTTPException) as exc:
-                asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(project_id=None, reason="approved", **fields),
-                        background_tasks=BackgroundTasks(),
-                        current_user=admin_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        assert exc.value.status_code == 422
-        mock_repo.create.assert_not_called()
+        assert _refused(admin_user, project_id=None, reason="approved", **fields).status_code == 422
 
     def test_scoped_license_waiver_is_accepted(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        db = MagicMock()
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.request_waiver_recalc"):
-                asyncio.run(
-                    create_waiver(
-                        waiver_in=WaiverCreate(
-                            project_id=None,
-                            finding_id="LIC-GPL-2.0-only",
-                            finding_type="license",
-                            package_name="spring-core",
-                            scope="finding",
-                            reason="approved",
-                        ),
-                        background_tasks=BackgroundTasks(),
-                        current_user=admin_user,
-                        db=db,
-                    )
-                )
-
-        mock_repo.create.assert_called_once()
+        _create(
+            admin_user,
+            project_id=None,
+            finding_id="LIC-GPL-2.0-only",
+            finding_type="license",
+            package_name="spring-core",
+            scope="finding",
+            reason="approved",
+        )
 
     def test_unscanned_project_skips_match_check(self, admin_user):
         """If the project has no latest_scan_id yet, accept the waiver — no scan to validate against."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        db = self._db_with_head_scan(scans=False)
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                finding_id="QUALITY:foo:1.0",
-                                finding_type="quality",
-                                scope="finding",
-                                reason="early",
-                            ),
-                            background_tasks=bg_tasks,
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
-
-        mock_repo.create.assert_called_once()
+        _create(
+            admin_user,
+            self._db_with_head_scan(scans=False),
+            project_id="proj-1",
+            finding_id="QUALITY:foo:1.0",
+            finding_type="quality",
+            scope="finding",
+            reason="early",
+        )
 
     def test_vulnerability_id_scoped_waiver_skips_finding_id_check(self, admin_user):
         """CVE-targeted waivers match by vulnerability_id, not finding_id, so the finding_id format mismatch must not 422."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        db = self._db_with_head_scan()
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                vulnerability_id="CVE-2024-1234",
-                                package_name="lodash",
-                                package_version="4.17.0",
-                                scope="finding",
-                                reason="cve waived globally for this package",
-                            ),
-                            background_tasks=bg_tasks,
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
-
-        mock_repo.create.assert_called_once()
+        _create(
+            admin_user,
+            self._db_with_head_scan(),
+            project_id="proj-1",
+            vulnerability_id="CVE-2024-1234",
+            package_name="lodash",
+            package_version="4.17.0",
+            scope="finding",
+            reason="cve waived globally for this package",
+        )
 
     def test_create_waiver_copies_match_signature(self, admin_user):
         """A finding-scope project waiver snapshots the matched finding's MatchSignature for later line-drift matching."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         finding_doc = {
             "finding_id": "OPENGREP-r-a.py-10",
             "type": "sast",
@@ -654,30 +376,16 @@ class TestCreateWaiverValidatesFindingMatch:
             },
         }
 
-        db = self._db_with_head_scan(findings=[finding_doc])
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    created = asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                finding_id="OPENGREP-r-a.py-10",
-                                finding_type="sast",
-                                package_name="a.py",
-                                scope="finding",
-                                reason="test match snapshot",
-                            ),
-                            background_tasks=bg_tasks,
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
+        created = _create(
+            admin_user,
+            self._db_with_head_scan(findings=[finding_doc]),
+            project_id="proj-1",
+            finding_id="OPENGREP-r-a.py-10",
+            finding_type="sast",
+            package_name="a.py",
+            scope="finding",
+            reason="test match snapshot",
+        ).outcome
 
         assert created.match is not None
         assert created.match.anchor == "fp1"
@@ -686,44 +394,21 @@ class TestCreateWaiverValidatesFindingMatch:
         assert created.match.anchor_kind == "scanner_fp"
         assert created.match.content_hash == "c1"
         assert created.match.last_line == 10
-        mock_repo.create.assert_called_once()
 
     def test_a_waiver_naming_no_finding_is_not_pinned_to_the_one_the_check_found(self, admin_user):
         """Type and file describe every secret in the file; one signature would narrow that to a single one."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         signature = {"rule_key": "AWS", "file_key": "values.yaml", "anchor": "aaaa", "anchor_kind": "secret_hash"}
         secret = {"type": "secret", "component": "values.yaml", "match": signature}
         db = self._db_with_head_scan(findings=[{**secret, "finding_id": "SECRET-AWS-aaaa"}])
 
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    created = asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id="proj-1",
-                                finding_type="secret",
-                                package_name="values.yaml",
-                                reason="fixtures",
-                            ),
-                            background_tasks=BackgroundTasks(),
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
+        created = _create(
+            admin_user, db, project_id="proj-1", finding_type="secret", package_name="values.yaml", reason="fixtures"
+        ).outcome
 
         assert created.match is None
 
     def test_a_finding_only_the_waived_scan_reports_is_validated_on_that_scan(self, admin_user):
         """A waiver written from a feature-branch scan names a finding the default branch does not have yet."""
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = self._db_with_head_scan()
         db.scans._docs[_BRANCH_SCAN] = {
             "_id": _BRANCH_SCAN,
@@ -740,67 +425,43 @@ class TestCreateWaiverValidatesFindingMatch:
             "component": "a.py",
             "match": {"rule_key": "opengrep:r", "file_key": "a.py", "anchor": "fp-branch", "anchor_kind": "scanner_fp"},
         }
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
 
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc") as recalc:
-                    created = asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id=_PROJECT,
-                                scan_id=_BRANCH_SCAN,
-                                finding_id="OPENGREP-r-a.py-10",
-                                finding_type="sast",
-                                package_name="a.py",
-                                scope="finding",
-                                reason="branch only",
-                            ),
-                            background_tasks=BackgroundTasks(),
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
+        run = _create(
+            admin_user,
+            db,
+            project_id=_PROJECT,
+            scan_id=_BRANCH_SCAN,
+            finding_id="OPENGREP-r-a.py-10",
+            finding_type="sast",
+            package_name="a.py",
+            scope="finding",
+            reason="branch only",
+        )
 
-        assert created.match is not None and created.match.anchor == "fp-branch"
-        assert "scan_id" not in created.model_dump()
-        assert recalc.call_args.kwargs == {"restamp": [_BRANCH_SCAN]}
+        assert run.outcome.match is not None and run.outcome.match.anchor == "fp-branch"
+        assert "scan_id" not in run.outcome.model_dump()
+        assert run.recalc.call_args.kwargs == {"restamp": [_BRANCH_SCAN]}
 
     def test_a_scan_of_another_project_is_refused(self, admin_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
         db = self._db_with_head_scan()
         db.scans._docs["scan-foreign"] = {
             "_id": "scan-foreign",
             "project_id": "proj-2",
             "status": SCAN_STATUS_COMPLETED,
         }
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
 
-        with patch(f"{MODULE}.check_project_access", _project_access(db)):
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(
-                                project_id=_PROJECT,
-                                scan_id="scan-foreign",
-                                finding_id="QUALITY:foo:1.0",
-                                finding_type="quality",
-                                scope="rule",
-                                reason="r",
-                            ),
-                            background_tasks=BackgroundTasks(),
-                            current_user=admin_user,
-                            db=db,
-                        )
-                    )
+        exc = _refused(
+            admin_user,
+            db,
+            project_id=_PROJECT,
+            scan_id="scan-foreign",
+            finding_id="QUALITY:foo:1.0",
+            finding_type="quality",
+            scope="rule",
+            reason="r",
+        )
 
-        assert exc_info.value.status_code == 404
-        mock_repo.create.assert_not_called()
+        assert exc.status_code == 404
 
 
 class TestGetWaiver:
@@ -1083,50 +744,20 @@ class TestCreateWaiverPermissions:
     """create_waiver checks editor access for project, waiver:manage for global."""
 
     def test_project_waiver_requires_editor_role(self, regular_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
-
         db = MagicMock()
         db.projects.find_one = AsyncMock(return_value={"_id": "proj-1", "latest_scan_id": None})
         db.scans.find_one = AsyncMock(return_value=None)
 
-        with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock) as mock_access:
-            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.request_waiver_recalc"):
-                    asyncio.run(
-                        create_waiver(
-                            waiver_in=WaiverCreate(project_id="proj-1", package_name="requests", reason="Test"),
-                            background_tasks=bg_tasks,
-                            current_user=regular_user,
-                            db=db,
-                        )
-                    )
+        run = _create(regular_user, db, project_id="proj-1", package_name="requests", reason="Test")
 
-        mock_access.assert_called_once()
-        call_kwargs = mock_access.call_args
-        assert call_kwargs.kwargs["required_role"] == "editor"
+        run.access.assert_called_once()
+        assert run.access.call_args.kwargs["required_role"] == "editor"
 
     def test_global_waiver_requires_manage_permission(self, regular_user):
-        from app.api.v1.endpoints.waivers import create_waiver
-        from app.schemas.waiver import WaiverCreate
+        exc = _refused(regular_user, project_id=None, package_name="requests", reason="Global waiver")
 
-        bg_tasks = BackgroundTasks()
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                create_waiver(
-                    waiver_in=WaiverCreate(project_id=None, package_name="requests", reason="Global waiver"),
-                    background_tasks=bg_tasks,
-                    current_user=regular_user,
-                    db=MagicMock(),
-                )
-            )
-        assert exc_info.value.status_code == 403
-        assert "admin" in exc_info.value.detail.lower()
+        assert exc.status_code == 403
+        assert "admin" in exc.detail.lower()
 
 
 class TestDeleteWaiverPermissions:
