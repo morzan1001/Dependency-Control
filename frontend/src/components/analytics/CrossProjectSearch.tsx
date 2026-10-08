@@ -5,7 +5,6 @@ import { analyticsApi } from '@/api/analytics'
 import { AdvancedSearchResult } from '@/types/analytics'
 import { analyticsKeys, useDependencyTypes } from '@/hooks/queries/use-analytics'
 import { useAnalyticsMode } from '@/context/analytics-mode'
-import { useProjectsDropdown } from '@/hooks/queries/use-projects'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -13,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { ProjectCombobox } from '@/components/ui/project-combobox'
 import {
   Select,
   SelectContent,
@@ -39,7 +39,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
   const [selectedType, setSelectedType] = useState<string>('__all__')
   const [selectedSourceType, setSelectedSourceType] = useState<string>('__all__')
   const [hasVulnerabilities, setHasVulnerabilities] = useState<string>('__all__')
-  const [selectedProject, setSelectedProject] = useState<string>('__all__')
+  const [selectedProject, setSelectedProject] = useState('')
   const [showFilters, setShowFilters] = useState(false)
 
   const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
@@ -48,7 +48,6 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
 
   const releaseEnvironment = useAnalyticsMode()
   const { data: types } = useDependencyTypes(releaseEnvironment)
-  const { data: projectsData } = useProjectsDropdown()
 
   const filters = {
     query: debouncedQuery,
@@ -75,7 +74,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
         type: selectedType === '__all__' ? undefined : selectedType,
         source_type: selectedSourceType === '__all__' ? undefined : selectedSourceType,
         has_vulnerabilities: hasVulnerabilities === '__all__' ? undefined : hasVulnerabilities === 'true',
-        project_ids: selectedProject === '__all__' ? undefined : [selectedProject],
+        project_ids: selectedProject ? [selectedProject] : undefined,
         skip: pageParam,
         limit: DEFAULT_PAGE_SIZE,
         release_environment: releaseEnvironment,
@@ -121,17 +120,15 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     }
   }, [hasNextPage, fetchNextPage, allResults.length, isFetchingNextPage, lastItemIndex])
 
-  const projects = projectsData?.items || []
-
   const clearFilters = () => {
     setVersion('')
     setSelectedType('__all__')
     setSelectedSourceType('__all__')
     setHasVulnerabilities('__all__')
-    setSelectedProject('__all__')
+    setSelectedProject('')
   }
 
-  const hasActiveFilters = version || selectedType !== '__all__' || selectedSourceType !== '__all__' || hasVulnerabilities !== '__all__' || selectedProject !== '__all__'
+  const hasActiveFilters = version || selectedType !== '__all__' || selectedSourceType !== '__all__' || hasVulnerabilities !== '__all__' || selectedProject !== ''
 
   return (
     <Card>
@@ -254,20 +251,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
 
               <div className="space-y-2">
                 <Label>Projects</Label>
-                <Select 
-                  value={selectedProject}
-                  onValueChange={setSelectedProject}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All projects" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All projects</SelectItem>
-                    {projects.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ProjectCombobox value={selectedProject} onValueChange={setSelectedProject} />
               </div>
             </div>
           </div>

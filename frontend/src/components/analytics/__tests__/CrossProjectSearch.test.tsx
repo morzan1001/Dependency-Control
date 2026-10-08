@@ -11,11 +11,12 @@ vi.mock("@/api/analytics", () => ({
     getDependencyTypes: vi.fn(),
   },
 }));
-vi.mock("@/hooks/queries/use-projects", () => ({
-  useProjectsDropdown: () => ({ data: { items: [] } }),
+vi.mock("@/api/projects", () => ({
+  projectApi: { getAll: vi.fn(async () => ({ items: [], total: 0, page: 1, size: 50, pages: 0 })), getOne: vi.fn() },
 }));
 
 import { analyticsApi } from "@/api/analytics";
+import { projectApi } from "@/api/projects";
 
 const search = vi.mocked(analyticsApi.searchDependenciesAdvanced);
 
@@ -76,5 +77,30 @@ describe("CrossProjectSearch load error", () => {
     expect(screen.queryByText(/No packages found/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("CrossProjectSearch project filter", () => {
+  it("reads no project list until the filter panel opens, and then a single page", async () => {
+    const getAll = vi.mocked(projectApi.getAll);
+    getAll.mockClear();
+    getAll.mockResolvedValue({ items: [], total: 801, page: 1, size: 100, pages: 9 });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(getAll).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+    await waitFor(() => expect(getAll).toHaveBeenCalledTimes(1));
   });
 });
