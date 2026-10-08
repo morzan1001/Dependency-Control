@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.gitlab_api import (
-    GitLabMember,
     GitLabMergeRequest,
     GitLabNamespace,
     GitLabNote,
@@ -87,13 +86,6 @@ def make_note(author_id=BOT_USER_ID, **kwargs):
     defaults = {"id": 1, "body": "", "system": False, "author": {"id": author_id, "username": f"user{author_id}"}}
     defaults.update(kwargs)
     return GitLabNote.model_validate(defaults)
-
-
-def make_member(**kwargs):
-    """Create a GitLabMember with sensible defaults."""
-    defaults = {"username": "user", "email": "user@test.com", "access_level": 30}
-    defaults.update(kwargs)
-    return GitLabMember(**defaults)
 
 
 def make_project_details(namespace_kind="group", namespace_id=42, namespace_path="group"):

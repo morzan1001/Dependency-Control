@@ -138,17 +138,10 @@ async def client(db, _project):
         except Exception as e:
             raise HTTPException(status_code=401, detail=str(e)) from e
 
-    async def _fake_get_current_active_user(current_user: User = Depends(_fake_get_current_user)) -> User:
-        if not current_user.is_active:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=400, detail="Inactive user")
-        return current_user
-
     app.dependency_overrides[get_project_for_ingest] = _fake_project_for_ingest
     app.dependency_overrides[get_database] = _fake_get_database
     app.dependency_overrides[get_current_user] = _fake_get_current_user
-    app.dependency_overrides[get_current_active_user] = _fake_get_current_active_user
+    app.dependency_overrides[get_current_active_user] = _fake_get_current_user
 
     project_doc = _project.model_dump(by_alias=True)
     await db.projects.update_one(
@@ -202,20 +195,6 @@ async def member_auth_headers(_project, db):
     )
 
     return bearer_headers(user.username, user.permissions)
-
-
-@pytest.fixture
-def regular_user_no_access():
-    from app.models.user import User
-    from tests.helpers.permission_presets import PRESET_USER
-
-    return User(
-        id="test-user-no-access",
-        username="noaccess",
-        email="noaccess@example.com",
-        permissions=list(PRESET_USER),
-        is_active=True,
-    )
 
 
 @pytest.fixture
