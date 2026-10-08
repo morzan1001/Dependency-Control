@@ -553,3 +553,58 @@ async def test_a_cve_the_live_refresh_has_no_data_for_keeps_its_stored_scores(
     assert resp.status_code == 200, resp.text
     [entry] = seen["findings"][0].details["vulnerabilities"]
     assert (entry["epss_score"], entry["risk_score"]) == (0.42, 71.5)
+
+
+_ADVISORY_PAYLOAD = ("description", "references", "details", "cvss_vector", "ecosystem_specific")
+_DEPENDENCY_PAYLOAD = ("description", "hashes", "properties", "cpes", "locations", "homepage")
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_engine_gets_findings_and_dependencies_without_the_payload_no_card_reads(
+    client, db, owner_auth_headers_proj, monkeypatch, no_live_intel
+):
+    await _insert_scan(db, "s")
+    advisory = {
+        "id": "CVE-2021-23337",
+        "severity": "HIGH",
+        "fixed_version": "4.17.21",
+        "description": "Command injection via template",
+        "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-23337"],
+        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+        "ecosystem_specific": {"symbols": ["template"]},
+    }
+    [record] = _vulnerability_records("s", "lodash", "4.17.20", [advisory])
+    record["related_findings"] = ["other-finding"]
+    await db.findings.insert_one(record)
+    await db.dependencies.insert_one(
+        {
+            "_id": "d1",
+            "project_id": "p",
+            "scan_id": "s",
+            "name": "lodash",
+            "version": "4.17.20",
+            "purl": "pkg:npm/lodash@4.17.20",
+            "type": "npm",
+            "direct": True,
+            "license": "MIT",
+            "description": "Lodash modular utilities.",
+            "hashes": {"sha512": "abc"},
+            "properties": {"syft:package:foundBy": "javascript-lock-cataloger"},
+            "cpes": ["cpe:2.3:a:lodash:lodash:4.17.20:*:*:*:*:*:*:*"],
+            "locations": ["/package-lock.json"],
+            "homepage": "https://lodash.com/",
+        }
+    )
+    seen: dict = {}
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    [finding], [dependency] = seen["findings"], seen["dependencies"]
+    [stored_advisory] = finding.details["vulnerabilities"]
+    assert (stored_advisory["id"], finding.related_findings) == ("CVE-2021-23337", [])
+    assert not set(_ADVISORY_PAYLOAD) & set(stored_advisory)
+    assert (dependency["name"], dependency["license"]) == ("lodash", "MIT")
+    assert not set(_DEPENDENCY_PAYLOAD) & set(dependency)

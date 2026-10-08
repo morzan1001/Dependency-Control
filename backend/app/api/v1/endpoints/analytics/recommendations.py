@@ -51,7 +51,11 @@ router = CustomAPIRouter()
 # Newest scans the recurrence count is taken over; the recommendation text names the window.
 _RECURRENCE_WINDOW_SCANS = 10
 
-_LICENSE_DRIFT_PROJECTION = {"name": 1, "purl": 1, "license": 1, "license_category": 1}
+# What the generators read of a dependency row, the license-drift comparison of the previous scan included.
+_DEPENDENCY_PROJECTION = dict.fromkeys(
+    ("name", "version", "purl", "type", "group", "scope", "direct", "parent_components", "license", "license_category"),
+    1,
+)
 _JOIN_PROJECTION = dict.fromkeys(
     ("name", "version", "purl", "type", "direct", "direct_inferred", "source_type", "source_target"), 1
 )
@@ -136,8 +140,11 @@ async def get_project_recommendations(
         findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
         threat_intel = await _apply_live_threat_intel(findings)
 
-        dependencies, dependencies_total = await dep_repo.find_by_scan(
-            project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
+        dependencies, dependencies_total = await find_window(
+            dep_repo.collection,
+            {"project_id": project_id, "scan_id": scan_id},
+            SCAN_DEPENDENCY_READ_LIMIT,
+            projection=_DEPENDENCY_PROJECTION,
         )
         # The window above can miss a finding's row; the join reads exactly the rows the findings name.
         names = list({n for f in findings if f.type == "vulnerability" for n in component_name_candidates(f.component)})
@@ -156,7 +163,7 @@ async def get_project_recommendations(
                 dep_repo.collection,
                 {"project_id": project_id, "scan_id": previous_scan.id},
                 SCAN_DEPENDENCY_READ_LIMIT,
-                projection=_LICENSE_DRIFT_PROJECTION,
+                projection=_DEPENDENCY_PROJECTION,
             )
 
         recent_scan_ids = [
