@@ -8,12 +8,11 @@ from fastapi import BackgroundTasks
 
 from app.api.v1.endpoints.waivers import create_waiver
 from app.core.init_db import create_indexes
-from app.models.user import User
 from app.models.waiver import Waiver
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.waiver import WaiverCreate
 from app.services.stats import run_waiver_recalc
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.auth import make_admin
 
 pytestmark = [pytest.mark.live_mongo, pytest.mark.asyncio]
 
@@ -76,7 +75,7 @@ async def _waive_from_the_feature_scan(db, background: BackgroundTasks) -> None:
         ),
         background_tasks=background,
         db=db,
-        current_user=User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN)),
+        current_user=make_admin(),
     )
 
 

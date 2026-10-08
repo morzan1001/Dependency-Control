@@ -9,13 +9,12 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Scan
-from app.models.user import User
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.cbom import CryptoAssetType
 from app.services.analysis.engine import _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.auth import make_admin
 
 pytestmark = pytest.mark.asyncio
 
@@ -66,7 +65,7 @@ async def seeded(db):
 
 
 async def _compare(db, **args) -> dict:
-    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
+    admin = make_admin()
     return await ChatToolRegistry().execute_tool(
         "compare_scans", {"project_id": _PROJECT, "from_scan_id": _FROM, "to_scan_id": _TO, **args}, admin, db
     )

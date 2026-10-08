@@ -11,12 +11,11 @@ from app.core.housekeeping import run_housekeeping
 from app.core.init_db import create_indexes
 from app.models.callgraph import Callgraph
 from app.models.project import Project
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._helpers import MAX_TOOL_RESULT_BYTES
 from app.services.reachability_enrichment import fetch_callgraphs
 from app.services.scan_manager import deterministic_scan_id
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.auth import make_admin
 
 _PROJECT_ID = "test-project-id"
 _PIPELINE_ID = 1
@@ -24,7 +23,6 @@ _COMMIT = "e" * 40
 _SCAN_ID = deterministic_scan_id(_PROJECT_ID, _PIPELINE_ID, _COMMIT)
 _DEPENDENCIES_PER_FILE = 10
 _MONGO_DOCUMENT_LIMIT = 16 * 1024 * 1024
-_ADMIN = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 def _madge(files: int, path_length: int, packages: int) -> dict[str, list[str]]:
@@ -118,7 +116,7 @@ async def test_a_callgraph_over_16_mib_and_200k_entries_is_stored_and_enriches_t
     [callgraph] = await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db)
     assert len(callgraph.module_usage) == 2_000
     assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
-    chat = await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT_ID}, _ADMIN, db)
+    chat = await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT_ID}, make_admin(), db)
     [chat_graph] = chat["callgraphs"]
     assert (chat_graph["module_usage_total"], len(chat_graph["module_usage"])) == (2_000, 25)
     assert len(json.dumps(chat).encode()) <= MAX_TOOL_RESULT_BYTES
@@ -130,7 +128,7 @@ async def test_a_legacy_inline_callgraph_is_read_by_reachability_and_chat(client
     await db.callgraphs.insert_one(_legacy_inline(_madge(3, 40, 2)))
 
     [callgraph] = await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db)
-    chat = await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT_ID}, _ADMIN, db)
+    chat = await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT_ID}, make_admin(), db)
 
     [chat_graph] = chat["callgraphs"]
     assert set(callgraph.module_usage) == set(chat_graph["module_usage"]) == {"pkg-0", "pkg-1"}
