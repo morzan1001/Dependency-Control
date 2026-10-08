@@ -97,7 +97,7 @@ def _client_host(request: Request) -> str:
 
 async def _within_email_budget(scope: str, email: str) -> bool:
     """Counted for every request, known address or not, so the budget reveals nothing."""
-    return await _within_rate_limit(f"{scope}_email:{email.strip().lower()}", max_attempts=3, window_seconds=3600)
+    return await _within_rate_limit(f"{scope}_email:{email.strip().casefold()}", max_attempts=3, window_seconds=3600)
 
 
 async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> dict | None:
@@ -176,7 +176,7 @@ async def login_access_token(
     otp: Annotated[str | None, Form()] = None,
 ) -> Any:
     """OAuth2-compatible token login; accepts username/email, password, and otp when 2FA is enabled."""
-    await _check_rate_limit(f"login:{form_data.username}")
+    await _check_rate_limit(f"login:{form_data.username.strip().casefold()}")
     user_repo = UserRepository(db)
     user = await _lookup_user_for_login(user_repo, form_data.username)
 

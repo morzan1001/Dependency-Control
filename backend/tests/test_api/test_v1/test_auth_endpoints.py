@@ -418,6 +418,33 @@ class TestLoginRateLimit:
 
         assert sum(results) == 5
 
+    @pytest.mark.asyncio
+    async def test_the_spellings_mongo_resolves_to_one_address_share_its_budget(self, fake_cache):
+        from fastapi.security import OAuth2PasswordRequestForm
+
+        from app.api.v1.endpoints.auth import login_access_token
+
+        db = FakeDatabase()
+        hashed = security.get_password_hash("Correct-Horse-1")
+        await db.users.insert_one(
+            {"_id": "u-kim", "username": "kim", "email": "kim.sato@example.com", "hashed_password": hashed}
+        )
+
+        async def attempt(username: str) -> int:
+            form = OAuth2PasswordRequestForm(username=username, password="wrong")
+            try:
+                await login_access_token(form_data=form, db=db, otp=None)
+            except HTTPException as exc:
+                return exc.status_code
+            return 200
+
+        with patch(f"{MODULE}.cache_service", fake_cache):
+            spent = [await attempt("kim.sato@example.com") for _ in range(5)]
+            variants = [await attempt(name) for name in ("KIM.SATO@example.com", "\u212aim.\u017fato@example.com")]
+
+        assert spent == [_UNAUTHORIZED] * 5
+        assert variants == [429, 429]
+
 
 class TestForgotPasswordConstantTime:
     def test_an_unknown_address_takes_as_long_to_answer_as_a_registered_one(self):
@@ -475,6 +502,15 @@ class TestResendVerificationThrottle:
 
         assert send.call_count == 3
         assert response.message.startswith("If an account with this email exists")
+
+    def test_a_spelling_mongo_matches_to_the_same_address_shares_its_budget(self, fake_cache):
+        send = MagicMock()
+
+        for host in ("1.1.1.1", "2.2.2.2", "3.3.3.3"):
+            _run_resend_verification(fake_cache, host=host, send_mock=send)
+        _run_resend_verification(fake_cache, email="u\u017fer@te\u017ft.com", host="4.4.4.4", send_mock=send)
+
+        assert send.call_count == 3
 
     def test_a_client_gets_ten_requests_before_being_rejected(self, fake_cache):
         for i in range(10):
