@@ -142,11 +142,13 @@ type WebhookFormProps = { readonly onSaved: () => void } & (
 export function WebhookForm(props: WebhookFormProps) {
   const { webhook, onSaved } = props
   const [form, setForm] = useState<WebhookFormState>(() => (webhook ? formFor(webhook) : EMPTY_FORM))
+  const [saving, setSaving] = useState(false)
   const patchForm = (patch: Partial<WebhookFormState>) => setForm(prev => ({ ...prev, ...patch }))
   const isTeamsUrl = detectWebhookType(form.url) === "teams"
   const unchanged = webhook !== undefined && Object.keys(changedFields(webhook, form)).length === 0
 
   const handleSubmit = async () => {
+    setSaving(true)
     try {
       if (props.webhook) {
         await props.onUpdate(changedFields(props.webhook, form))
@@ -161,6 +163,8 @@ export function WebhookForm(props: WebhookFormProps) {
       toast.error(webhook ? "Failed to update webhook" : "Failed to create webhook", {
         description: getErrorMessage(error),
       })
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -243,7 +247,7 @@ export function WebhookForm(props: WebhookFormProps) {
             ))}
           </div>
         </div>
-        <Button onClick={handleSubmit} className="w-full" disabled={!form.url || form.events.length === 0 || unchanged}>
+        <Button onClick={handleSubmit} className="w-full" disabled={saving || !form.url || form.events.length === 0 || unchanged}>
           {webhook ? "Save changes" : "Create Webhook"}
         </Button>
       </div>
