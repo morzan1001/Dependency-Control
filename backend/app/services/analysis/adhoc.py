@@ -36,7 +36,7 @@ from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason, _sbom_source
-from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
+from app.services.analysis.registry import CRYPTO_ANALYZERS, POST_PROCESSOR_ANALYZERS, analyzer_factories
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
@@ -419,7 +419,7 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
 
     resolved: list[str] = []
     for name in selected:
-        if name in post_processor_factories or name in CRYPTO_ANALYZERS:
+        if name in POST_PROCESSOR_ANALYZERS or name in CRYPTO_ANALYZERS:
             # Post-processors are stages that report their own outcome; every crypto name gets its note below.
             continue
         if name not in analyzer_factories:

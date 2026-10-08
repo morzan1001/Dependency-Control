@@ -69,6 +69,7 @@ from app.services.analysis.integrations import decorate_github_pr, decorate_gitl
 from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
 from app.services.analysis.registry import (
     CRYPTO_ANALYZERS,
+    POST_PROCESSOR_ANALYZERS,
     RAW_SBOM_ANALYZERS,
     VULNERABILITY_ANALYZERS,
     analyzer_factories,
@@ -101,11 +102,8 @@ _BULK_CHUNK_SIZE = 500
 _MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 _SLIMMED_ADVISORY_FIELDS = frozenset({"description", "references", "details"})
 
-# Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
-_POST_PROCESSOR_ANALYZERS = frozenset({"epss_kev", "reachability"})
-
 # Result rows the engine writes itself on every run, as opposed to rows posted by external scanners.
-_ENGINE_RESULT_NAMES = frozenset(analyzer_factories) | _POST_PROCESSOR_ANALYZERS | CRYPTO_ANALYZERS
+_ENGINE_RESULT_NAMES = frozenset(analyzer_factories) | POST_PROCESSOR_ANALYZERS | CRYPTO_ANALYZERS
 
 # Crypto findings span the whole scan, so none is credited to one SBOM.
 _CRYPTO_SOURCE = "CBOM"
@@ -294,8 +292,8 @@ def _failed_analyzer_names(outcomes: dict[str, str]) -> tuple[list[str], list[st
     """(analyzers, enrichments) that failed or ran partially; a failed enrichment loses metadata, not findings."""
     failed = sorted(name for name, status in outcomes.items() if _outcome_rank(status))
     return (
-        [name for name in failed if name not in _POST_PROCESSOR_ANALYZERS],
-        [name for name in failed if name in _POST_PROCESSOR_ANALYZERS],
+        [name for name in failed if name not in POST_PROCESSOR_ANALYZERS],
+        [name for name in failed if name in POST_PROCESSOR_ANALYZERS],
     )
 
 
@@ -953,7 +951,7 @@ async def _send_integrations_and_notifications(
         status,
         failed_analyzers,
         analyzer_outcomes,
-        analyzer_count=sum(1 for name in analyzer_outcomes if name not in _POST_PROCESSOR_ANALYZERS),
+        analyzer_count=sum(1 for name in analyzer_outcomes if name not in POST_PROCESSOR_ANALYZERS),
         db=db,
     )
 
