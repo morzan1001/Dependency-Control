@@ -102,45 +102,46 @@ function scanPage(size: number): ScanWithReleases[] {
   }));
 }
 
-function renderWindow(client: QueryClient, pages: number) {
+function renderWindow(client: QueryClient) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return renderHook(() => useProjectScanWindow(PROJECT_ID, pages), { wrapper });
+  return renderHook(() => useProjectScanWindow(PROJECT_ID), { wrapper });
 }
 
 describe("useProjectScanWindow", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("reports the window as incomplete while a full page came back", async () => {
+  it("offers an older page while a full page came back", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.mocked(scanApi.getProjectScans).mockResolvedValue(scanPage(SCAN_WINDOW_PAGE_SIZE));
 
-    const { result } = renderWindow(client, 1);
+    const { result } = renderWindow(client);
 
     await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(result.current.data?.complete).toBe(false);
-    expect(result.current.data?.scans).toHaveLength(SCAN_WINDOW_PAGE_SIZE);
+    expect(result.current.hasNextPage).toBe(true);
+    expect(result.current.data?.pages.flat()).toHaveLength(SCAN_WINDOW_PAGE_SIZE);
   });
 
-  it("reports the window as complete once a short page ends it", async () => {
+  it("offers nothing older once a short page ends the window", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.mocked(scanApi.getProjectScans).mockResolvedValue(scanPage(SCAN_WINDOW_PAGE_SIZE - 1));
 
-    const { result } = renderWindow(client, 1);
+    const { result } = renderWindow(client);
 
     await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(result.current.data?.complete).toBe(true);
+    expect(result.current.hasNextPage).toBe(false);
   });
 
-  it("reads one page per requested page and skips past the ones already read", async () => {
+  it("reads the next page past the ones already read", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.mocked(scanApi.getProjectScans).mockResolvedValue(scanPage(SCAN_WINDOW_PAGE_SIZE));
 
-    const { result } = renderWindow(client, 2);
-
+    const { result } = renderWindow(client);
     await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(result.current.data?.scans).toHaveLength(SCAN_WINDOW_PAGE_SIZE * 2);
+    await act(() => result.current.fetchNextPage());
+
+    await waitFor(() => expect(result.current.data?.pages.flat()).toHaveLength(SCAN_WINDOW_PAGE_SIZE * 2));
     const skips = vi.mocked(scanApi.getProjectScans).mock.calls.map((call) => call[1]?.skip);
     expect(skips).toEqual([0, SCAN_WINDOW_PAGE_SIZE]);
   });

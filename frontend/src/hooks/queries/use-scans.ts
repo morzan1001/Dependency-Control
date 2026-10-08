@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
 import { scanApi } from '@/api/scans';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
 import { isScanInProgress } from '@/lib/scan-status';
-import { Scan, ScanWithReleases } from '@/types/scan';
+import { Scan } from '@/types/scan';
 
 export interface ScanListFilters {
     page: number;
@@ -33,7 +33,7 @@ export const scanKeys = {
     stats: (scanId: string) => [...scanKeys.detail(scanId), 'stats'] as const,
     sboms: (scanId: string) => [...scanKeys.detail(scanId), 'sboms'] as const,
     sbom: (scanId: string, index: number) => [...scanKeys.sboms(scanId), index] as const,
-    window: (projectId: string, pages: number) => [...scanKeys.project(projectId), 'window', pages] as const,
+    window: (projectId: string) => [...scanKeys.project(projectId), 'window'] as const,
 }
 
 const SCAN_POLL_INTERVAL_MS = 5000
@@ -70,29 +70,16 @@ export const useProjectScans = (
 /** Scans a picker offers per page; a picker asks for another page rather than stopping silently. */
 export const SCAN_WINDOW_PAGE_SIZE = 50
 
-export interface ScanWindow {
-    scans: ScanWithReleases[]
-    /** The window reached the project's oldest scan, so nothing older exists to offer. */
-    complete: boolean
-}
-
-// A picker cannot say "no older scan" from one page, so the window reports whether it read to the end.
-export const useProjectScanWindow = (projectId: string, pages: number) => {
-    return useQuery<ScanWindow>({
-        queryKey: scanKeys.window(projectId, pages),
-        queryFn: async () => {
-            const scans: ScanWithReleases[] = []
-            for (let page = 0; page < pages; page++) {
-                const batch = await scanApi.getProjectScans(projectId, {
-                    skip: page * SCAN_WINDOW_PAGE_SIZE, limit: SCAN_WINDOW_PAGE_SIZE, excludeRescans: true,
-                })
-                scans.push(...batch)
-                if (batch.length < SCAN_WINDOW_PAGE_SIZE) return { scans, complete: true }
-            }
-            return { scans, complete: false }
-        },
+export const useProjectScanWindow = (projectId: string) => {
+    return useInfiniteQuery({
+        queryKey: scanKeys.window(projectId),
+        queryFn: ({ pageParam }) => scanApi.getProjectScans(projectId, {
+            skip: pageParam, limit: SCAN_WINDOW_PAGE_SIZE, excludeRescans: true,
+        }),
+        initialPageParam: 0,
+        getNextPageParam: (lastPage, pages) =>
+            lastPage.length < SCAN_WINDOW_PAGE_SIZE ? undefined : pages.length * SCAN_WINDOW_PAGE_SIZE,
         enabled: !!projectId,
-        placeholderData: keepPreviousData,
     });
 }
 

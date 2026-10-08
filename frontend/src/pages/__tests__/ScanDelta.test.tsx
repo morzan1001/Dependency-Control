@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ScanDelta from '../ScanDelta'
 import * as deltaApi from '@/api/scanDelta'
 import * as scansApi from '@/api/scans'
@@ -80,6 +80,7 @@ function renderPage(url = `/projects/${PROJECT_ID}/delta?from=${FROM_SCAN_ID}&to
 }
 
 describe('ScanDelta page', () => {
+  beforeEach(() => { vi.mocked(scansApi.scanApi.getProjectScans).mockResolvedValue([]) })
   afterEach(() => { cleanup(); vi.clearAllMocks() })
 
   it('loads the findings delta for the scan pair from the URL', async () => {
