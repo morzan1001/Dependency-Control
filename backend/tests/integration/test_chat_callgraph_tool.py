@@ -93,3 +93,31 @@ async def test_a_language_without_callgraph_support_is_refused(db, database):
     result = await _call(db, language="cobol")
 
     assert "unsupported callgraph language" in result["error"]
+
+
+async def test_a_graph_past_the_answer_budget_is_summarised_by_its_busiest_modules(db, database):
+    usage = {
+        f"pkg-{i}": ModuleUsage(
+            module=f"pkg-{i}",
+            import_count=i,
+            call_count=i,
+            import_locations=[f"src/module_{i}/file_{j}.py" for j in range(5)],
+            used_symbols=[f"symbol_{j}" for j in range(5)],
+        )
+        for i in range(60)
+    }
+    stored = Callgraph(
+        project_id=_PROJECT,
+        language="python",
+        tool="generic",
+        module_usage=usage,
+        analyzed_modules=sorted(usage),
+        created_at=_MARCH,
+    ).model_dump(by_alias=True)
+    await _seed(db, {**stored, "updated_at": _MARCH})
+
+    [graph] = (await _call(db))["callgraphs"]
+
+    assert graph["module_usage_total"] == 60
+    assert list(graph["module_usage"])[:2] == ["pkg-59", "pkg-58"]
+    assert graph["module_usage"]["pkg-59"] == {"import_count": 59, "call_count": 59}

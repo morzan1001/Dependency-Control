@@ -220,6 +220,22 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
     "total_imports": 1,
     "total_calls": 1,
 }
+_CALLGRAPH_MODULES_SHOWN = 25
+
+
+def _callgraph_summary(graph: dict[str, Any]) -> dict[str, Any]:
+    """The busiest modules' import and call counts; their file and symbol lists outgrow the answer cap."""
+    usage = graph.get("module_usage") or {}
+    busiest = sorted(
+        usage.items(), key=lambda m: (m[1].get("call_count", 0), m[1].get("import_count", 0)), reverse=True
+    )
+    graph["module_usage"] = {
+        name: {"import_count": u.get("import_count", 0), "call_count": u.get("call_count", 0)}
+        for name, u in busiest[:_CALLGRAPH_MODULES_SHOWN]
+    }
+    graph["module_usage_total"] = len(usage)
+    graph["analyzed_modules"] = _clip_value(graph.get("analyzed_modules") or [])
+    return graph
 
 
 def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
@@ -1482,7 +1498,7 @@ class ChatToolRegistry:
         ]
         newest = await ctx.db["callgraphs"].aggregate(pipeline).to_list(length=None)
         repo = CallgraphRepository(ctx.db)
-        return {"callgraphs": [_serialize_doc(await repo.load_graph(doc)) for doc in newest]}
+        return {"callgraphs": [_serialize_doc(_callgraph_summary(await repo.load_graph(doc))) for doc in newest]}
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
         finding = await self._require_finding(ctx, await self._require_project(ctx))
