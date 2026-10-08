@@ -61,7 +61,6 @@ export interface ImpactAnalysisResult {
   affected_projects: number;
   total_findings: number;
   findings_by_severity: SeverityBreakdown;
-  recommended_version?: string;
   fix_impact_score: number;
   affected_project_names: string[];
   max_epss_score?: number;

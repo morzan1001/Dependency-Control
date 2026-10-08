@@ -14,6 +14,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatEpssScore } from '@/lib/finding-utils'
+import { withRemainder } from '@/lib/sampled-list'
 import { EpssCell, KevCell } from '@/components/findings/enrichment-cells'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
@@ -173,7 +174,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               </Badge>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Fix versions: {r.fix_versions?.join(', ') || 'Available'}</p>
+                              <p>Fix versions: {withRemainder(r.fix_versions, r.fix_version_count)}</p>
                             </TooltipContent>
                           </Tooltip>
                       )}
@@ -304,7 +305,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               </div>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Fix versions: {r.fix_versions?.join(', ') || r.recommended_version || 'Available'}</p>
+                              <p>Fix versions: {withRemainder(r.fix_versions, r.fix_version_count)}</p>
                             </TooltipContent>
                           </Tooltip>
                       ) : (
