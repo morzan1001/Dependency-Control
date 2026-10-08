@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { webhookApi } from '@/api/webhooks';
-import { Webhook, WebhookCreate, WebhookUpdate } from '@/types/webhook';
+import { Webhook, WebhookCreate, WebhookTestResult, WebhookUpdate } from '@/types/webhook';
 
 export const webhookKeys = {
   all: ['webhooks'] as const,
@@ -70,6 +70,17 @@ export const useUpdateWebhook = () => {
   return useMutation<Webhook, Error, { id: string; data: WebhookUpdate }>({
     mutationFn: ({ id, data }) => webhookApi.update(id, data),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: webhookKeys.all });
+    },
+  });
+};
+
+// The server records a test's answer on the webhook either way, so every list refreshes after it.
+export const useTestWebhook = () => {
+  const queryClient = useQueryClient();
+  return useMutation<WebhookTestResult, Error, string>({
+    mutationFn: (id: string) => webhookApi.test(id),
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: webhookKeys.all });
     },
   });

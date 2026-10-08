@@ -1,4 +1,6 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render as rtlRender, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 
 import { toast } from "sonner";
@@ -9,6 +11,13 @@ import type { Webhook } from "@/types/webhook";
 import { WebhookManager } from "../WebhookManager";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+let queryClient: QueryClient;
+beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+});
+const render = (ui: ReactElement) =>
+  rtlRender(ui, { wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider> });
 vi.mock("@/api/webhooks", () => ({ webhookApi: { test: vi.fn() } }));
 
 vi.mock("@/context/useAuth", () => ({
@@ -416,5 +425,15 @@ describe("WebhookManager", () => {
 
       expect(screen.queryByRole("button", { name: "Edit webhook" })).not.toBeInTheDocument();
     });
+  });
+
+  it("refreshes the webhook lists after a test, so the row shows the recorded answer", async () => {
+    vi.mocked(webhookApi.test).mockResolvedValue({ success: true, status_code: 200, error: null });
+    renderWith([slackHook]);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    fireEvent.click(screen.getByRole("button", { name: /Send test/i }));
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["webhooks"] }));
   });
 });

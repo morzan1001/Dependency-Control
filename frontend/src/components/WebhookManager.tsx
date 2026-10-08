@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { Webhook, WebhookCreate, WebhookType, WebhookUpdate } from "@/types/webhook"
-import { webhookApi } from "@/api/webhooks"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -12,6 +11,7 @@ import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/context/useAuth"
 import { useDialogState } from "@/hooks/use-dialog-state"
+import { useTestWebhook } from "@/hooks/queries/use-webhooks"
 import { formatDate, formatDateTime, getErrorMessage } from "@/lib/utils"
 
 const TYPE_LABELS: Record<WebhookType, string> = { generic: "Generic", teams: "Teams", slack: "Slack" };
@@ -90,9 +90,11 @@ export function WebhookManager({
     }
   }
 
+  const testWebhook = useTestWebhook()
+
   const handleTest = async (id: string) => {
     try {
-      const result = await webhookApi.test(id)
+      const result = await testWebhook.mutateAsync(id)
       if (result.success) toast.success(`Test delivered (HTTP ${result.status_code})`)
       else toast.error(`Test failed: ${result.error}`)
     } catch (error) {
