@@ -25,11 +25,7 @@ def _team_source_entries(cond: dict[str, Any]) -> dict[str, Any]:
 
 
 def _owned_by(source: str) -> dict[str, Any]:
-    """The team_sources entries this source wrote, as an array of ``{k, v}`` documents.
-
-    Equality against the whole value and not a provider prefix: ``source`` names one instance, and
-    a prefix match would hand every instance of a provider the owners of all the others.
-    """
+    """The ``{k, v}`` entries ``source`` wrote, matched whole: a provider prefix would match every instance."""
     return _team_source_entries({"$eq": ["$$entry.v", source]})
 
 
@@ -39,12 +35,7 @@ def _sources_except(source: str) -> dict[str, Any]:
 
 
 def _retired_by(source: str) -> dict[str, Any]:
-    """The owners a ``source`` write replaces — the ones its own provenance entries name.
-
-    An owner no entry names is therefore never retired by a sync: nothing shows that instance set
-    it, and the picker is the only writer that may take it away. A second instance of the same
-    provider is as foreign here as the other provider is.
-    """
+    """The owners a ``source`` write replaces: those its entries name, so a sync never retires a hand assignment."""
     return {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}}
 
 
@@ -54,21 +45,9 @@ def owners_replaced_by(project: Project, source: str) -> set[str]:
 
 
 def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[str, Any]]:
-    """A pipeline update replacing exactly the owners ``source`` set, leaving the others alone.
-
-    ``source`` is ``team_source(provider, instance_id)``, so "the owners it set" is per instance:
-    two GitLab instances resolving different teams onto one project each keep the other's owner,
-    where a provider-wide source has them retire each other's on every CI run in turn.
-
-    A pipeline and not two modifiers: ``$pull`` plus ``$addToSet`` on ``team_ids`` in one classic
-    update is rejected with code 40, and splitting it into two writes exposes an empty ``team_ids``
-    to concurrent readers, which is indistinguishable from an unassigned project.
-
-    Both stored fields are read through ``$ifNull`` because a document missing either one would
-    otherwise be written ``team_ids: null`` — a value that matches neither ``{"$size": 0}`` nor an
-    element equality, so the project would drop out of the unassigned view and every ownership
-    view at once.
-    """
+    """Replace exactly the owners one instance's ``source`` set, as one pipeline: ``$pull`` beside ``$addToSet``
+    is rejected with code 40, and two writes would show readers an empty, unassigned-looking ``team_ids``."""
+    # A missing field read as null would be written back as team_ids: null, which no ownership filter matches.
     held_elsewhere = {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]}
     return [
         {
@@ -100,16 +79,7 @@ def _sources_kept(team_ids: list[str]) -> dict[str, Any]:
 
 
 def set_owners_pipeline(team_ids: list[str]) -> list[dict[str, Any]]:
-    """A pipeline update making ``team_ids`` the project's entire owner set.
-
-    An owner that stays keeps the provenance it had. Restamping one a provider established as a
-    hand assignment would exempt it from that provider's next sync for good, so the new map takes
-    the stored entry wherever there is one and reads the rest as hand-assigned. An owner left out
-    goes whatever set it, and returns only when its provider still resolves it.
-
-    A pipeline because the map is a function of the stored one, which no classic modifier can
-    read — and ``$set`` beside ``$pull`` on ``team_ids`` is rejected with code 40 in any case.
-    """
+    """Make ``team_ids`` the whole owner set; a kept owner keeps its stored provenance, so it stays its provider's."""
     owners = sorted(set(team_ids))
     return [
         {
@@ -127,10 +97,7 @@ def remove_team_ops(team_id: str) -> dict[str, Any]:
 
 
 def _literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
-    """A ``$set`` stage writing stored values, for a pipeline that also computes some.
-
-    ``$literal`` because a stage reads a bare string beginning with ``$`` as a field path.
-    """
+    """A ``$set`` stage of stored values, ``$literal`` so a string starting with ``$`` is not read as a field path."""
     return {"$set": {name: {"$literal": value} for name, value in fields.items()}}
 
 
@@ -195,8 +162,7 @@ class ProjectRepository(BaseRepository[Project]):
         query: dict[str, Any],
         limit: int,
     ) -> list[ProjectWithScanId]:
-        # Callers derive the limit from the id list they are asking about, and Mongo reads
-        # limit(0) as unbounded, so an empty list has to answer before the query is built.
+        # Mongo reads limit(0) as unbounded, and the limit is the length of an id list that may be empty.
         if limit <= 0:
             return []
         cursor = self.collection.find(
@@ -226,18 +192,12 @@ class ProjectRepository(BaseRepository[Project]):
         ownership_stages: list[dict[str, Any]],
         guard: dict[str, Any] | None = None,
     ) -> bool:
-        """Stored fields and computed ownership as one pipeline, so the project is written once.
-
-        True without a write when there is nothing to write; otherwise whether ``guard`` still held.
-        """
+        """Fields and ownership as one pipeline write; True when nothing is to write, else whether ``guard`` held."""
         stages = ([_literal_set_stage(fields)] if fields else []) + ownership_stages
         return not stages or await self.update_raw(project_id, stages, guard)
 
     async def update_many_raw(self, query: dict[str, Any], update_ops: UpdateOps) -> int:
-        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
-
-        Counts modified, not matched: a pipeline that recomputes the value already stored reports 0.
-        """
+        """Modifiers or a pipeline, verbatim; counts modified, so a pipeline rewriting the stored value reports 0."""
         result = await self.collection.update_many(query, update_ops)
         return result.modified_count
 
@@ -267,11 +227,8 @@ class ProjectRepository(BaseRepository[Project]):
         member_fields: dict[str, Any],
         guard: dict[str, Any] | None = None,
     ) -> bool:
-        """member_fields are plain member field names, e.g. {'role': 'admin'}.
-
-        The member is addressed by identity because a concurrent $pull shifts array indices.
-        False when ``guard`` no longer holds.
-        """
+        """Set plain member fields such as ``{'role': 'admin'}``; False when ``guard`` no longer holds."""
+        # By identity, not position: a concurrent $pull shifts array indices.
         result = await self.collection.update_one(
             {"_id": project_id, **(guard or {})},
             {"$set": {f"members.$[m].{field}": value for field, value in member_fields.items()}},

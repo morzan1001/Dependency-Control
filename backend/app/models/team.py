@@ -11,13 +11,8 @@ from app.models.types import MongoDocument
 class TeamMember(BaseModel):
     user_id: str
     role: TeamRole = TEAM_ROLE_MEMBER
-    # Who put the member here: "manual", or "<provider>:<instance id>" naming the sync that
-    # resolved them. A sync replaces only the entries naming its own instance, so a hand-added
-    # member, another provider's and another instance of the same provider's all survive it. Any
-    # other value belongs to no sync and is replaced by none, which is what an entry written before
-    # the instance ids degrades to.
-    # Unconstrained on purpose: rejecting an unmigrated value here would 500 every read of every
-    # team the member belongs to rather than leave the member in place.
+    # "manual" or the "<provider>:<instance id>" of the sync that may replace it; unconstrained, as an
+    # unmigrated value rejected here would fail every read of the team instead of staying in place.
     source: str = TEAM_SOURCE_MANUAL
 
 
@@ -30,8 +25,7 @@ class _ProviderBinding(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def key(self) -> str:
-        """Stored, and the unique index is on it. Derived rather than accepted from the caller so
-        it cannot name a binding other than the one it sits in."""
+        """Stored under the unique index; derived, so it cannot name another binding than its own."""
         return team_binding_key(self.provider, self.instance_id, self.external_id)
 
 

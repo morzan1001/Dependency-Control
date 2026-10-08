@@ -150,12 +150,7 @@ async def _resolve_initial_member_id(user_repo: UserRepository, email: str | Non
 
 
 def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
-    """Whether the owners a sync would leave behind stay inside the cap.
-
-    The cap bounds the project, not one provider's answer, so it is measured against the whole
-    result. Refused rather than truncated: which owner to drop — this provider's, the other's, or
-    one assigned by hand — is not a question a sync can answer.
-    """
+    """Whether the project's whole owner set fits the cap; refused, not truncated, as no sync can pick whom to drop."""
     if len(would_own) <= MAX_PROJECT_TEAMS:
         return True
     logger.warning(
@@ -169,28 +164,19 @@ def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
 
 
 def _owner_budget(project: Project, source: str) -> int:
-    """How many owners this provider's answer may leave behind.
-
-    Handed to the provider rather than only checked here, so a resolution past the cap is refused
-    before it creates the teams for a write that is then refused.
-    """
+    """How many owners this provider may leave; handed to it, so it creates no teams for a write the cap refuses."""
     return MAX_PROJECT_TEAMS - len(set(project.team_ids) - owners_replaced_by(project, source))
 
 
 def _team_subset_stages(project: Project, source: str, resolved: list[str] | None, repository_path: str) -> list[dict]:
-    """The ownership stages this provider contributes, empty when there is nothing for it to write.
-
-    ``None`` from the provider is "it could not be asked", which must never read as "no team holds
-    this repository": the first leaves the owners it set alone, the second drops every one of them.
-    """
+    """This provider's ownership stages; ``None`` (not asked) writes nothing, unlike ``[]`` (no holder)."""
     if resolved is None:
         return []
     owners = sorted(set(resolved))
     owned_here = owners_replaced_by(project, source)
     if not _within_cap(source, (set(project.team_ids) - owned_here) | set(owners), repository_path):
         return []
-    # Every CI job of every pipeline arrives here, so an unchanged owner set writes nothing. The
-    # second half catches a document whose provenance names an owner the list never gained.
+    # Every CI job lands here; an unchanged set writes nothing unless provenance names an owner the list lacks.
     stamped = set(owners) - (set(project.team_ids) - owned_here)
     if owned_here == stamped and owned_here <= set(project.team_ids):
         return []
@@ -205,12 +191,7 @@ async def _gitlab_team_sync_stages(
     gitlab_service: GitLabService,
     db: AsyncIOMotorDatabase,
 ) -> list[dict]:
-    """The ownership stages GitLab sync contributes to this ingest's update.
-
-    ``instance_id`` is the instance whose OIDC token authenticated this ingest — the one that
-    resolved these teams — and not ``project.gitlab_instance_id``, which says where the project
-    came from.
-    """
+    """GitLab's ownership stages; ``instance_id`` is the instance that authenticated this ingest, not the project's."""
     source = team_source(TEAM_SOURCE_GITLAB, instance_id)
     window = f"gitlab_team_sync:{source}:{gitlab_project_id}"
     if (await cache_service.incr(window, GITLAB_TEAM_SYNC_WINDOW_SECONDS) or 0) > 1:
@@ -247,11 +228,7 @@ async def _apply_ingest_project_update(
     path_field: str,
     ownership_stages: list[dict],
 ) -> Project:
-    """Apply the rename and the resolved ownership as one update.
-
-    The ownership half is a pipeline, which cannot be merged into the ``$set`` document the rename
-    is: both become stages of one pipeline instead, so an ingest still writes the project once.
-    """
+    """Apply the rename and the resolved ownership as stages of one pipeline, so an ingest writes the project once."""
     renamed: dict = {}
     current_path = getattr(project, path_field, None)
     if current_path and current_path != new_path:
@@ -545,16 +522,14 @@ async def authorize_project_write(
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
-# A key names the doors it may open; the owner's permission decides whether a named door is still
-# theirs to walk through. Both are checked on every request, so the pairing is stated once here.
+# A key names its surfaces; the owner's permission decides on every request whether each is still theirs.
 SURFACE_PERMISSIONS: dict[str, str] = {
     API_KEY_SURFACE_MCP: Permissions.MCP_ACCESS,
     API_KEY_SURFACE_ADHOC: Permissions.ANALYZE_ADHOC,
 }
 
 
-# Unknown, revoked and expired share one message: telling them apart would confirm to the holder
-# of a rejected token that it once existed.
+# One message for unknown, revoked and expired, so a rejected token does not learn it once existed.
 _MSG_UNRESOLVED_KEY = "Invalid, revoked, or expired API key"
 
 
@@ -614,9 +589,7 @@ async def _admit_unified_key(
 
 
 def require_api_key(surface: str) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
-    """Build the dependency guarding one key-authenticated surface: it resolves the Bearer token to
-    its (owner, key document) pair, admits the caller only when the key names the surface and the
-    owner still holds that surface's permission, and stamps the key's last use."""
+    """The dependency admitting a Bearer key that names ``surface`` and whose owner still holds its permission."""
     permission = SURFACE_PERMISSIONS[surface]
 
     async def dependency(

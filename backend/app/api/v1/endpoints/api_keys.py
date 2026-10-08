@@ -23,13 +23,7 @@ router = CustomAPIRouter()
 
 
 def _authorize_surfaces(user: User, surfaces: Sequence[ApiKeySurface]) -> None:
-    """Refuse to mint a key that outranks its holder, naming the first surface they cannot reach.
-
-    The pairing comes from the auth dependency's own table so a key can never be issued for a
-    surface the dependency would then refuse it. Typed on the surface literal rather than on
-    ``str``: a bare string is itself a ``Sequence[str]``, and iterating one indexes that table
-    with single characters.
-    """
+    """Refuse to mint a key that outranks its holder, naming the first surface they cannot reach."""
     for surface in surfaces:
         permission = SURFACE_PERMISSIONS[surface]
         if not has_permission(user.permissions, permission):
@@ -71,8 +65,7 @@ async def list_api_keys(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ApiKeyListResponse:
-    """List every key the caller owns, gated on ownership alone: withdrawing a surface permission
-    leaves the keys it minted live, and a key its owner cannot see is a key they cannot revoke."""
+    """List every key the caller owns, on ownership alone, so a key stays visible after its permission is withdrawn."""
     repo = ApiKeyRepository(db)
     keys, total = await repo.list_for_user(str(current_user.id))
     return ApiKeyListResponse(
@@ -91,8 +84,7 @@ async def revoke_api_key(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, str]:
-    """Revoke one of the caller's own keys, gated on ownership alone for the same reason the
-    listing is: a credential has to stay killable by the person it belongs to."""
+    """Revoke one of the caller's own keys, on ownership alone, so a credential stays killable by its owner."""
     repo = ApiKeyRepository(db)
     revoked = await repo.revoke(key_id, user_id=str(current_user.id))
     if not revoked:

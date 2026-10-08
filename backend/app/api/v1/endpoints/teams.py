@@ -160,11 +160,7 @@ async def delete_team(
 
 
 async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDatabase) -> GitHubTeamBinding:
-    """The binding to store, with the slug the organisation reports for the bound team number.
-
-    Reading the slug here rather than taking it from the caller is also what proves the team
-    exists: a binding to a number no organisation carries would resolve nothing, silently, forever.
-    """
+    """The binding to store, with the slug the organisation reports, which also proves the team number exists."""
     instance = await GitHubInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail=f"GitHub instance with ID {request.instance_id} not found")
@@ -194,11 +190,7 @@ async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDat
 
 
 async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDatabase) -> GitLabGroupBinding:
-    """The binding to store, with the full path the instance reports for the bound group number.
-
-    Reading the path here rather than taking it from the caller is also what proves the group
-    exists: a binding to a number no instance carries would resolve nothing, silently, forever.
-    """
+    """The binding to store, with the full path the instance reports, which also proves the group number exists."""
     instance = await GitLabInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail=f"GitLab instance with ID {request.instance_id} not found")
@@ -246,12 +238,7 @@ async def set_team_binding(
     current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """Bind a team to a group on one instance, which is what makes it resolvable from that
-    instance's ingests. A team holds one binding per instance and any number of instances.
-
-    Gated on system:manage rather than team administration: a binding decides which projects
-    of the whole estate land in this team, and team membership grants access to them.
-    """
+    """Bind a team to a group on one instance; system:manage, as a binding decides which projects land in the team."""
     team_repo = TeamRepository(db)
     if not await team_repo.get_raw_by_id(team_id):
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)

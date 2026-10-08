@@ -28,8 +28,7 @@ from app.services.crypto_policy.resolver import project_overrides_locked
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
-# The filter for "no project at all". An empty dict already means the opposite here — the whole
-# collection — so a refusal has to be spelled as a filter nothing matches.
+# An empty dict means the whole collection here, so "no project" has to be a filter nothing matches.
 NO_PROJECTS: dict[str, Any] = {"_id": {"$in": []}}
 
 
@@ -64,12 +63,7 @@ def is_write_superuser(user: User) -> bool:
 
 
 def may_read_projects(user: User) -> bool:
-    """Whether the user holds a project-read permission at all.
-
-    A project role says which projects, this says whether the user reads projects; every resource
-    gate wants both, and one that settles for the role alone hands a member with no project
-    permission the resource anyway.
-    """
+    """Whether the user holds a project-read permission at all, which every resource gate needs beside the role."""
     return has_permission(user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL])
 
 
@@ -171,15 +165,7 @@ async def check_project_access(
     write: bool = False,
     global_permission: str = Permissions.PROJECT_UPDATE,
 ) -> Project:
-    """Resolve project access and return the project, or raise 403/404.
-
-    The single resource gate composing global permissions and project roles:
-    None/viewer required_role is READ, editor/admin is WRITE; project:read_all is a
-    READ-ONLY superuser (does not satisfy WRITE); ``global_permission`` (project:update,
-    or project:delete for a deletion) bypasses membership; effective role = MAX(direct,
-    team-derived); members must also hold project:read (or read_all). ``write`` makes the
-    request WRITE without demanding a role, so membership in any role suffices.
-    """
+    """Return the project or raise 403/404; read_all opens reads only, and ``write`` asks WRITE without a role."""
     project = await ProjectRepository(db).get_by_id(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
