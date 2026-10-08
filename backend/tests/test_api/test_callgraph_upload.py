@@ -591,7 +591,6 @@ class TestReachabilityVerdicts:
     async def test_findings_beyond_the_per_run_cap_are_reported(self, client, db, monkeypatch):
         await _seed_scan_with_findings(db)
         monkeypatch.setattr("app.services.reachability_enrichment._MAX_FINDINGS_PER_RUN", 1)
-        monkeypatch.setattr("app.services.reachability_enrichment._FINDINGS_PAGE_SIZE", 1)
 
         response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 

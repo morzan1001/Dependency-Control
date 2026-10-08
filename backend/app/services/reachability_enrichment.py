@@ -45,9 +45,15 @@ from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
 
-_FINDINGS_PAGE_SIZE = 1000
 # Upper bound on findings held in memory for one enrichment run; the upload reports what it cuts off.
 _MAX_FINDINGS_PER_RUN = 100_000
+# What the verdict and the scan summary read of a stored finding; reachability_set_fields writes dotted paths.
+_STORED_FINDING_PROJECTION = {
+    **dict.fromkeys(
+        ("type", "component", "version", "severity", "details.risk_score", f"details.{DETAILS_KEY_IN_KEV}"), 1
+    ),
+    **{f"details.vulnerabilities.{field}": 1 for field in ("id", "aliases", "resolved_cve", "ecosystem_specific")},
+}
 # The holder never renews, so this outlasts a pass over _MAX_FINDINGS_PER_RUN findings plus the stats refresh.
 _LOCK_TTL_SECONDS = 600
 # An analysis in flight replaces the findings, so it applies the callgraphs itself once final.
@@ -485,17 +491,17 @@ async def apply_reachability(
     return component_languages, enriched
 
 
-async def _load_vulnerability_findings(finding_repo: FindingRepository, scan_id: str) -> tuple[list[Any], int]:
-    """Page through a scan's vulnerability findings; second element is how many the cap left behind."""
+async def _load_vulnerability_findings(
+    finding_repo: FindingRepository, scan_id: str
+) -> tuple[list[dict[str, Any]], int]:
+    """A scan's vulnerability findings up to the cap, in one cursor; second element is how many the cap left behind."""
     query = {"scan_id": scan_id, "type": "vulnerability"}
-    findings: list[Any] = []
-    while len(findings) < _MAX_FINDINGS_PER_RUN:
-        page = await finding_repo.find_many(query, skip=len(findings), limit=_FINDINGS_PAGE_SIZE, sort_by="_id")
-        findings.extend(page)
-        if len(page) < _FINDINGS_PAGE_SIZE:
-            return findings, 0
-    total = await finding_repo.count(query)
-    return findings, max(total - len(findings), 0)
+    findings = await finding_repo.find_many_raw(
+        query, limit=_MAX_FINDINGS_PER_RUN, projection=_STORED_FINDING_PROJECTION
+    )
+    if len(findings) < _MAX_FINDINGS_PER_RUN:
+        return findings, 0
+    return findings, max(await finding_repo.count(query) - len(findings), 0)
 
 
 async def _apply_to_stored_findings(
@@ -514,9 +520,8 @@ async def _apply_to_stored_findings(
             dropped,
         )
     if findings:
-        findings_dicts = [f.model_dump(by_alias=True) for f in findings]
-        component_languages, _enriched = await apply_reachability(db, scan_id, findings_dicts, callgraphs)
-        judged = {fd["_id"]: reachability_set_fields(fd) for fd in findings_dicts if "reachability" in fd["details"]}
+        component_languages, _enriched = await apply_reachability(db, scan_id, findings, callgraphs)
+        judged = {f["_id"]: reachability_set_fields(f) for f in findings if "reachability" in f.get("details", {})}
         await finding_repo.set_fields(scan_id, judged)
         # Tells a retention batch that archived the scan before these verdicts to keep it and archive it anew.
         await ScanRepository(db).touch(scan_id)

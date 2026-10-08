@@ -20,6 +20,7 @@ from app.services.reachability_enrichment import (
     fetch_callgraphs,
     run_pending_reachability_for_scan,
 )
+from tests.helpers.profiler import profiled
 
 _PROJECT_ID = "proj-reach"
 _SCAN_ID = "scan-reach"
@@ -185,6 +186,27 @@ async def test_a_deferred_run_reads_the_dependency_inventory_once(db, monkeypatc
 
     assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
     assert reads == [{"scan_id": _SCAN_ID}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_deferred_run_reads_each_vulnerability_finding_once_through_one_projected_cursor(db):
+    """Paging with skip over a sort no index serves re-sorts every finding of the scan per page."""
+    await create_indexes(db)
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    findings = [_finding(f"CVE-{n}", ("requests", "urllib3")[n % 2]) for n in range(2500)]
+    await db.findings.insert_many(findings)
+    await _pending_scan(db)
+    pass_filter = {"scan_id": _SCAN_ID, "type": "vulnerability"}
+
+    _, operations = await profiled(db, run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db))
+
+    finds = [op for op in operations if op["op"] == "query" and op["command"].get("filter") == pass_filter]
+    more = [op for op in operations if op["op"] == "getmore" and op["originatingCommand"].get("filter") == pass_filter]
+    assert [("projection" in op["command"], "sort" in op["command"]) for op in finds] == [(True, False)]
+    assert sum(op["docsExamined"] for op in finds + more) == len(findings)
+    assert await db.findings.count_documents({"scan_id": _SCAN_ID, "reachable": {"$ne": None}}) == len(findings)
 
 
 @pytest.mark.asyncio
