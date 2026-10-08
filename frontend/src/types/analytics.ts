@@ -140,7 +140,6 @@ export interface AdvancedSearchResult {
   license?: string;
   license_url?: string;
   direct: boolean;
-  direct_inferred?: boolean;
   purl?: string;
   source_type?: string;
   source_target?: string;
@@ -157,40 +156,6 @@ export interface AdvancedSearchResult {
   hashes?: Record<string, string>;
   properties?: Record<string, string>;
   found_by?: string;
-  license_category?: string; 
-  licenses_detailed?: Array<{
-    spdx_id: string;
-    source: string;
-    category?: string;
-    explanation?: string;
-  }>;
-  license_risks?: string[];
-  license_obligations?: string[];
-  enrichment_sources?: string[];
-  deps_dev?: {
-    stars?: number;
-    forks?: number;
-    open_issues?: number;
-    project_url?: string;
-    project_description?: string;
-    project_license?: string;
-    dependents?: {
-      total?: number;
-      direct?: number;
-      indirect?: number;
-    };
-    scorecard?: {
-      overall_score?: number;
-      date?: string;
-      checks_count?: number;
-    };
-    links?: Record<string, string>;
-    published_at?: string;
-    is_deprecated?: boolean;
-    known_advisories?: string[];
-    has_attestations?: boolean;
-    has_slsa_provenance?: boolean;
-  };
 }
 
 export interface HotspotsQueryParams {
@@ -271,7 +236,6 @@ export interface DependencyMetadata {
     is_deprecated?: boolean;
     known_advisories?: string[];
     published_at?: string;
-    project_description?: string;
     project_url?: string;
     dependents?: { total?: number };
     scorecard?: {

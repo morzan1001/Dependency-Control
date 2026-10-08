@@ -30,7 +30,6 @@ export interface ReachabilityInfo {
   is_reachable?: boolean | null;
   analysis_level?: string;
   confidence_score?: number;
-  call_path?: string[];
   matched_symbols?: string[];
   message?: string;
   // import_locations is a sample; import_location_count is the total it was cut from.
@@ -73,8 +72,6 @@ export interface NestedVulnerability {
 }
 
 export interface QualityIssueDetails {
-  check_name?: string;
-  check_score?: number;
   reason?: string;
   documentation_url?: string;
   [key: string]: string | number | boolean | undefined;
@@ -131,10 +128,6 @@ export interface ScorecardContext {
 }
 
 export interface FindingMetadata {
-  scanner_version?: string;
-  scan_timestamp?: string;
-  source_file?: string;
-  source_line?: number;
   category?: string;
   tags?: string[];
   [key: string]: string | number | boolean | string[] | undefined;
@@ -153,11 +146,8 @@ export interface ScorecardData {
 }
 
 export interface MaintainerRiskData {
-  risk_level?: 'low' | 'medium' | 'high' | 'critical';
   factors?: string[];
-  last_commit_date?: string;
   maintainer_count?: number;
-  is_abandoned?: boolean;
   [key: string]: string | string[] | number | boolean | null | undefined;
 }
 
@@ -217,8 +207,6 @@ export interface FindingDetails {
   category_groups?: string[];
   code_extract?: string;
   fingerprint?: string;
-  parent_line?: number;
-  sink_content?: string;
   owasp?: string[];
   source_rule_url?: string;
   confidence?: string;
@@ -260,7 +248,6 @@ export interface FindingDetails {
   maintainer_info?: {
     name?: string;
     email?: string;
-    packages_maintained?: number;
   };
   scorecard?: ScorecardData;
   maintainer_risk?: MaintainerRiskData;
@@ -305,8 +292,6 @@ export interface ThreatIntelligenceStats {
   max_epss_score: number | null;
   weaponized_count: number;
   active_exploitation_count: number;
-  exploitable_count?: number;
-  total_enriched?: number;
 }
 
 export interface ReachabilityStats {
