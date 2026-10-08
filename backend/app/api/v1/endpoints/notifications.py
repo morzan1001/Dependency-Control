@@ -1,7 +1,6 @@
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
@@ -59,33 +58,21 @@ async def get_broadcast_history(
     ],
 ) -> list[BroadcastHistoryItem]:
     """Get history of sent broadcasts."""
-    broadcast_repo = BroadcastRepository(db)
-    user_repo = UserRepository(db)
-    history = await broadcast_repo.get_history(limit=50)
-
+    history = await BroadcastRepository(db).get_history(limit=50)
     creator_ids = list({h.created_by for h in history if h.created_by})
-    creators_map: dict[str, str] = {}
-    if creator_ids:
-        creator_users = await user_repo.find_many({"_id": {"$in": creator_ids}}, limit=len(creator_ids))
-        creators_map = {str(u.id): u.username for u in creator_users}
-
-    all_team_ids: list[str] = []
-    for h in history:
-        if h.teams:
-            all_team_ids.extend(h.teams)
-    teams_map: dict[str, str] = {}
-    if all_team_ids:
-        unique_team_ids = list(set(all_team_ids))
-        found_teams = await TeamRepository(db).find_many({"_id": {"$in": unique_team_ids}}, limit=len(unique_team_ids))
-        teams_map = {str(t.id): t.name for t in found_teams}
+    team_ids = list({team_id for h in history for team_id in h.teams or []})
+    creators = await UserRepository(db).find_many({"_id": {"$in": creator_ids}}, limit=len(creator_ids))
+    teams = await TeamRepository(db).find_many({"_id": {"$in": team_ids}}, limit=len(team_ids))
+    creators_map = {user.id: user.username for user in creators}
+    teams_map = {team.id: team.name for team in teams}
 
     return [
         BroadcastHistoryItem(
-            id=str(h.id),
+            id=h.id,
             type=h.type,
             target_type=h.target_type,
             subject=h.subject,
-            created_at=(h.created_at.isoformat() if isinstance(h.created_at, datetime) else str(h.created_at)),
+            created_at=h.created_at.isoformat(),
             created_by=creators_map.get(h.created_by, h.created_by),
             recipient_count=h.recipient_count,
             project_count=h.project_count,
