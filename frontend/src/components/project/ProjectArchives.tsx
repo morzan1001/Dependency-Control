@@ -54,7 +54,7 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
   const filters: ArchiveFilters | undefined = useMemo(() => {
     const f: ArchiveFilters = {}
     if (branchFilter) f.branch = branchFilter
-    if (dateFrom) f.date_from = new Date(dateFrom).toISOString()
+    if (dateFrom) f.date_from = new Date(dateFrom + 'T00:00:00').toISOString()
     if (dateTo) f.date_to = new Date(dateTo + 'T23:59:59').toISOString()
     return Object.keys(f).length > 0 ? f : undefined
   }, [branchFilter, dateFrom, dateTo])
