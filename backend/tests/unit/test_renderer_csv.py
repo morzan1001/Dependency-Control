@@ -13,10 +13,7 @@ def test_csv_renderer_outputs_rows_per_control():
     r = CsvRenderer()
     rep = _report()
     rep.format = ReportFormat.CSV
-    out, filename, mime = r.render(_evaluation(), rep)
-    assert mime == "text/csv"
-    assert filename.endswith(".csv")
-    rows = list(csv.DictReader(_table(out)))
+    rows = list(csv.DictReader(_table(r.render(_evaluation(), rep))))
     assert len(rows) == 1
     assert rows[0]["control_id"] == "NIST-131A-01"
     assert rows[0]["status"] == "failed"
@@ -33,7 +30,7 @@ def test_csv_marks_a_waived_control_in_the_waived_column():
     evaluation.controls = [*evaluation.controls, waived]
     rep = _report()
     rep.format = ReportFormat.CSV
-    out, _, _ = CsvRenderer().render(evaluation, rep)
+    out = CsvRenderer().render(evaluation, rep)
     rows = list(csv.DictReader(_table(out)))
     assert [r["status"] for r in rows] == ["failed", "waived"]
     assert [r["waived"] for r in rows] == ["false", "true"]
@@ -43,7 +40,7 @@ def test_csv_header_present():
     r = CsvRenderer()
     rep = _report()
     rep.format = ReportFormat.CSV
-    out, _, _ = r.render(_evaluation(), rep)
+    out = r.render(_evaluation(), rep)
     first_line = _table(out)[0]
     assert "control_id" in first_line
     assert "title" in first_line
@@ -58,7 +55,7 @@ def test_csv_renderer_includes_disclaimer_comment():
     disclaimer = (
         "Algorithm-level conformance only. Module-level CMVP (FIPS 140-3) validation is out of scope of this tool."
     )
-    out, _, _ = r.render(_evaluation(), rep, disclaimer=disclaimer)
+    out = r.render(_evaluation(), rep, disclaimer=disclaimer)
     text = out.decode("utf-8")
     lines = text.splitlines()
     assert lines[0].startswith("# Disclaimer:")
@@ -75,5 +72,5 @@ def test_csv_renderer_omits_disclaimer_when_none():
     r = CsvRenderer()
     rep = _report()
     rep.format = ReportFormat.CSV
-    out, _, _ = r.render(_evaluation(), rep, disclaimer=None)
+    out = r.render(_evaluation(), rep, disclaimer=None)
     assert "# Disclaimer:" not in out.decode("utf-8")

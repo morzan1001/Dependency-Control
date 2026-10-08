@@ -34,6 +34,7 @@ from app.services.compliance.frameworks.cve_remediation_sla import SLA_DAYS
 from app.services.compliance.frameworks.fips_140_3 import AlgorithmConformanceFramework
 from app.services.compliance.frameworks.license_audit import LICENSE_AUDIT_CATEGORIES
 from app.services.compliance.renderers import RENDERER_REGISTRY
+from app.services.compliance.renderers.base import build_filename
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
@@ -287,7 +288,9 @@ class ComplianceReportEngine:
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
     ) -> tuple[bytes, str, str]:
-        return RENDERER_REGISTRY[fmt].render(evaluation, report, disclaimer=framework.disclaimer)
+        renderer = RENDERER_REGISTRY[fmt]
+        body = renderer.render(evaluation, report, disclaimer=framework.disclaimer)
+        return body, build_filename(report, renderer.extension), renderer.mime_type
 
     async def _store_artifact(
         self,

@@ -36,6 +36,7 @@ from app.services.normalizers.license import normalize_license
 from tests.helpers.analyzers import analyze_cyclonedx
 from tests.helpers.compliance import evaluation_input
 from tests.helpers.findings import aggregated_vulnerability
+from tests.unit.test_renderer_json import _evaluation
 
 
 def _report(**overrides):
@@ -500,6 +501,24 @@ async def test_a_stored_rsa_key_size_reaches_the_key_size_control(db):
 
     rsa = next(c for c in evaluation.controls if c.control_id == "NIST-131A-nist-131a-rsa-min-2048")
     assert rsa.status == ControlStatus.PASSED.value
+
+
+@pytest.mark.parametrize(
+    ("fmt", "suffix", "mime"),
+    [
+        (ReportFormat.JSON, "json", "application/json"),
+        (ReportFormat.CSV, "csv", "text/csv"),
+        (ReportFormat.SARIF, "sarif.json", "application/sarif+json"),
+    ],
+)
+def test_the_artifact_is_named_after_the_report_and_typed_by_its_format(fmt, suffix, mime):
+    report = _report(scope="team", scope_id="t/1 a", requested_at=datetime(2026, 4, 20, 10, 5, tzinfo=timezone.utc))
+    framework = FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A]
+
+    body, filename, mime_type = ComplianceReportEngine()._render(fmt, framework, _evaluation(), report)
+
+    assert body
+    assert (filename, mime_type) == (f"nist-sp-800-131a_team-t_1_a_20260420T100500Z.{suffix}", mime)
 
 
 @pytest.mark.asyncio

@@ -60,5 +60,5 @@ async def test_a_cve_sla_report_evaluates_every_overdue_finding(db):
         requested_by="u",
         requested_at=datetime.now(timezone.utc),
     )
-    body, _, _ = JsonRenderer().render(evaluation, report)
+    body = JsonRenderer().render(evaluation, report)
     assert "findings" not in json.loads(body)["coverage"]

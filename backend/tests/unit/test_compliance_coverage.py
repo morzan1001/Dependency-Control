@@ -163,7 +163,7 @@ def test_the_statement_names_the_plan_items_left_out():
 
 
 def test_json_carries_the_statement_and_the_numbers():
-    body, _, _ = JsonRenderer().render(_evaluation_with(_partial()), _report())
+    body = JsonRenderer().render(_evaluation_with(_partial()), _report())
     payload = json.loads(body)
 
     assert payload["coverage"]["complete"] is False
@@ -174,13 +174,13 @@ def test_json_carries_the_statement_and_the_numbers():
 
 def test_csv_states_coverage_even_without_a_disclaimer():
     """The '#' header block used to be written only when a disclaimer existed."""
-    body, _, _ = CsvRenderer().render(_evaluation_with(_partial()), _report())
+    body = CsvRenderer().render(_evaluation_with(_partial()), _report())
 
     assert f"# Coverage: {coverage_statement(_partial())}" in body.decode()
 
 
 def test_sarif_carries_the_statement_on_the_run():
-    body, _, _ = SarifRenderer().render(_evaluation_with(_partial()), _report())
+    body = SarifRenderer().render(_evaluation_with(_partial()), _report())
     payload = json.loads(body)
 
     assert _WITHHELD_STATEMENT in payload["runs"][0]["properties"]["coverage"]
@@ -353,7 +353,7 @@ async def test_a_crypto_control_is_evaluated_over_every_asset_past_the_old_budge
 async def test_sarif_reports_a_withheld_verdict_as_open_rather_than_pass():
     evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
-    body, _, _ = SarifRenderer().render(evaluation, _report())
+    body = SarifRenderer().render(evaluation, _report())
     results = json.loads(body)["runs"][0]["results"]
 
     assert {r["kind"] for r in results} == {"open"}
@@ -364,8 +364,8 @@ async def test_sarif_reports_a_withheld_verdict_as_open_rather_than_pass():
 async def test_csv_and_json_carry_the_reason_beside_the_withheld_status():
     evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
-    csv_body, _, _ = CsvRenderer().render(evaluation, _report())
-    json_body, _, _ = JsonRenderer().render(evaluation, _report())
+    csv_body = CsvRenderer().render(evaluation, _report())
+    json_body = JsonRenderer().render(evaluation, _report())
 
     assert "status_reason" in csv_body.decode().splitlines()[1]
     assert _GAP in csv_body.decode()
@@ -440,7 +440,7 @@ def test_the_statement_names_five_gaps_and_counts_the_rest():
 
 
 def test_json_carries_the_gaps():
-    body, _, _ = JsonRenderer().render(_evaluation_with(_with_gaps(_GAP)), _report())
+    body = JsonRenderer().render(_evaluation_with(_with_gaps(_GAP)), _report())
 
     assert json.loads(body)["coverage"]["gaps"] == [_GAP]
 

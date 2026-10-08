@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import ControlStatus, FrameworkEvaluation
-from app.services.compliance.renderers.base import build_filename, coverage_statement
+from app.services.compliance.renderers.base import coverage_statement
 
 
 class CsvRenderer:
@@ -24,28 +24,18 @@ class CsvRenderer:
         "remediation",
     ]
 
-    @staticmethod
-    def _framework_header(evaluation: FrameworkEvaluation) -> str:
-        name = evaluation.framework_name or ""
-        version = evaluation.framework_version or ""
-        if name and version:
-            return f"{name} ({version})"
-        return name or version
-
     def render(
         self,
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
         *,
         disclaimer: str | None = None,
-    ) -> tuple[bytes, str, str]:
+    ) -> bytes:
         buf = io.StringIO()
         # Prepend disclaimers as '#' comment lines so a bare CSV export cannot be mistaken for a full pass.
         if disclaimer:
             buf.write(f"# Disclaimer: {disclaimer}\n")
-            fw_header = self._framework_header(evaluation)
-            if fw_header:
-                buf.write(f"# Framework: {fw_header}\n")
+            buf.write(f"# Framework: {evaluation.framework_name} ({evaluation.framework_version})\n")
             buf.write(f"# Generated: {evaluation.generated_at.isoformat()}\n")
         buf.write(f"# Coverage: {coverage_statement(evaluation.coverage)}\n")
         writer = csv.DictWriter(buf, fieldnames=self.FIELDS)
@@ -64,12 +54,4 @@ class CsvRenderer:
                     "remediation": c.remediation,
                 }
             )
-        body = buf.getvalue().encode("utf-8")
-        filename = build_filename(
-            evaluation.framework_key,
-            report.scope,
-            report.scope_id,
-            report.requested_at,
-            self.extension,
-        )
-        return body, filename, self.mime_type
+        return buf.getvalue().encode("utf-8")

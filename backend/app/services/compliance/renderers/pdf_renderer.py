@@ -5,7 +5,7 @@ from typing import Any
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation
-from app.services.compliance.renderers.base import build_filename, coverage_statement
+from app.services.compliance.renderers.base import coverage_statement
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -28,29 +28,8 @@ def build_template_context(
         "coverage_statement": coverage_statement(evaluation.coverage),
         "coverage_complete": evaluation.coverage.complete,
         "summary": evaluation.summary,
-        "controls": [
-            {
-                "control_id": c.control_id,
-                "title": c.title,
-                "description": c.description,
-                "status": c.status,
-                "severity": c.severity,
-                "evidence_finding_ids": c.evidence_finding_ids,
-                "evidence_asset_bom_refs": c.evidence_asset_bom_refs,
-                "waiver_reasons": c.waiver_reasons,
-                "remediation": c.remediation,
-                "status_reason": c.status_reason,
-            }
-            for c in evaluation.controls
-        ],
-        "residual_risks": [
-            {
-                "control_id": r.control_id,
-                "title": r.title,
-                "severity": r.severity,
-            }
-            for r in evaluation.residual_risks
-        ],
+        "controls": evaluation.controls,
+        "residual_risks": evaluation.residual_risks,
     }
 
 
@@ -64,7 +43,7 @@ class PdfRenderer:
         report: ComplianceReport,
         *,
         disclaimer: str | None = None,
-    ) -> tuple[bytes, str, str]:
+    ) -> bytes:
         # Lazy imports so module import never fails on missing native libs.
         from jinja2 import Environment, FileSystemLoader, select_autoescape
         from weasyprint import CSS, HTML
@@ -76,15 +55,5 @@ class PdfRenderer:
         tpl = env.get_template("base_report.html")
         html = tpl.render(**build_template_context(evaluation, report, disclaimer))
         stylesheets = [CSS(filename=str(_TEMPLATE_DIR / "styles.css"))]
-        pdf_bytes = HTML(
-            string=html,
-            base_url=str(_TEMPLATE_DIR),
-        ).write_pdf(stylesheets=stylesheets)
-        filename = build_filename(
-            evaluation.framework_key,
-            report.scope,
-            report.scope_id,
-            report.requested_at,
-            self.extension,
-        )
-        return pdf_bytes, filename, self.mime_type
+        pdf_bytes: bytes = HTML(string=html, base_url=str(_TEMPLATE_DIR)).write_pdf(stylesheets=stylesheets)
+        return pdf_bytes
