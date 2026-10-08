@@ -55,14 +55,6 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: s
     ft = lead.finding_type
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
 
-    aggregated_references: list[str] = []
-    seen_refs: set = set()
-    for r in rules:
-        for ref in r.references:
-            if ref not in seen_refs:
-                seen_refs.add(ref)
-                aggregated_references.append(ref)
-
     return {
         # Addressable, not a nonce: findings are keyed by ``finding_id`` everywhere the API
         # exposes them, so a random id would make each run report new findings and leave every
@@ -85,7 +77,7 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: s
             asset_type=asset.asset_type,
             key_size_bits=asset.key_size_bits,
             primitive=asset.primitive,
-            references=aggregated_references,
+            references=list(dict.fromkeys(ref for r in rules for ref in r.references)),
             occurrence_count=len(asset.occurrence_locations),
         ).model_dump(exclude_none=True),
         "found_in": asset.occurrence_locations[:MAX_FINDING_LOCATIONS],

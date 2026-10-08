@@ -4,6 +4,7 @@ import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
+from tests.helpers.cbom import content_ref
 from tests.mocks.fake_mongo import FakeDatabase
 
 _CRYPTO_RULES = "crypto_rules"
@@ -109,7 +110,7 @@ async def test_a_weak_key_in_the_posted_cbom_becomes_one_finding_per_violated_ty
 
     crypto = _crypto_findings(response)
     assert sorted(finding["type"] for finding in crypto) == [_TYPE_QUANTUM_VULNERABLE, _TYPE_WEAK_KEY]
-    assert {finding["details"]["bom_ref"] for finding in crypto} == {_RSA_REF}
+    assert {finding["details"]["bom_ref"] for finding in crypto} == {content_ref(_RSA_1024)}
     assert _CRYPTO_RULES in response.analyzers.ran
 
 
@@ -168,12 +169,12 @@ async def test_two_distinct_crypto_assets_keep_distinct_ids():
 
 @pytest.mark.asyncio
 async def test_two_assets_sharing_a_name_keep_distinct_ids():
-    """A CBOM names the same algorithm once per use site, so only the bom-ref tells the two uses apart."""
+    """A CBOM names the same algorithm once per use site, so two identical entries stay two assets."""
     second_rsa = dict(_RSA_1024, **{"bom-ref": _SECOND_RSA_REF})
 
     crypto = _crypto_findings(await _run([_cbom(_RSA_1024, second_rsa)]))
 
-    assert {finding["details"]["bom_ref"] for finding in crypto} == {_RSA_REF, _SECOND_RSA_REF}
+    assert len({finding["details"]["bom_ref"] for finding in crypto}) == 2
     assert len({finding["id"] for finding in crypto}) == len(crypto) == 4
 
 
@@ -191,7 +192,7 @@ async def test_a_rule_another_analyzer_grades_is_left_to_that_analyzer():
 
     crypto = _crypto_findings(response)
     # The compliant asset is the one a certificate rule would have blanketed.
-    assert {finding["details"]["bom_ref"] for finding in crypto} == {_RSA_REF}
+    assert {finding["details"]["bom_ref"] for finding in crypto} == {content_ref(_RSA_1024)}
     assert not any(_CERTIFICATE_RULE in _matched_rule_ids(finding) for finding in crypto)
 
 
@@ -218,7 +219,7 @@ async def test_a_crypto_finding_names_the_sbom_it_was_read_from():
     response = await _run([_cbom(_MD5, metadata_name=_FIRST_SBOM_NAME), _cbom(_RSA_1024)])
 
     attribution = {finding["details"]["bom_ref"]: finding["found_in"] for finding in _crypto_findings(response)}
-    assert attribution == {_MD5_REF: [_FIRST_SBOM_NAME], _RSA_REF: [_SECOND_SBOM_SOURCE]}
+    assert attribution == {content_ref(_MD5): [_FIRST_SBOM_NAME], content_ref(_RSA_1024): [_SECOND_SBOM_SOURCE]}
 
 
 @pytest.mark.asyncio
@@ -241,11 +242,8 @@ async def test_the_stage_reports_the_finding_type_each_rule_declares():
     response = await _run([_cbom(_MD5, _RSA_1024)])
 
     graded = {(finding["details"]["bom_ref"], finding["type"]) for finding in _crypto_findings(response)}
-    assert graded == {
-        (_MD5_REF, _TYPE_WEAK_ALGORITHM),
-        (_RSA_REF, _TYPE_WEAK_KEY),
-        (_RSA_REF, _TYPE_QUANTUM_VULNERABLE),
-    }
+    md5, rsa = content_ref(_MD5), content_ref(_RSA_1024)
+    assert graded == {(md5, _TYPE_WEAK_ALGORITHM), (rsa, _TYPE_WEAK_KEY), (rsa, _TYPE_QUANTUM_VULNERABLE)}
 
 
 @pytest.mark.asyncio

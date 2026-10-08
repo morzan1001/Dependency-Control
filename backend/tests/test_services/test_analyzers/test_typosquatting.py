@@ -513,7 +513,7 @@ class TestALargeSbomDoesNotStallTheLoop:
         swapped = (name[:2] + name[3] + name[2] + name[4:] for name in popular[::50] if len(name) >= 8)
         planted = [name for name in swapped if name not in popular][:_PLANTED]
         clean = _names(rng, "nopqrstuvwxyz", _SCANNED_COMPONENTS - _PLANTED)
-        parsed = [dep.to_dict() for dep in parse_sbom(_cyclonedx_of(clean + planted)).dependencies]
+        parsed = [dep.model_dump() for dep in parse_sbom(_cyclonedx_of(clean + planted)).dependencies]
         analyzer = TyposquattingAnalyzer()
         ranking = popular[::-1]
         payload = {"rows": [{"project": name} for name in ranking]}

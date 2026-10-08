@@ -66,9 +66,6 @@ class CryptoAsset(MongoDocument):
     )
     detection_context: str | None = Field(None, description="Where detection happened (e.g. source, binary, config)")
     confidence: float | None = Field(None, description="Detection confidence 0.0-1.0 as reported by the scanner")
-    related_dependency_purls: list[str] = Field(
-        default_factory=list, description="PURLs of software components linked to this crypto asset"
-    )
 
     properties: dict[str, str] = Field(
         default_factory=dict, description="Passthrough of additional CycloneDX properties"

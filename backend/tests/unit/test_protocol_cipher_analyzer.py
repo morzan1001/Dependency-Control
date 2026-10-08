@@ -10,6 +10,7 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.cbom_parser import parse_cbom
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.analyzers import evaluate_crypto
+from tests.helpers.cbom import content_ref
 
 
 def _protocol(suite_list, bom_ref="p1", project_id="p", scan_id="s"):
@@ -100,27 +101,24 @@ async def test_rule_amplifies_with_weakness_match(db):
     assert [m["rule_id"] for m in finding["details"]["matched_rules"]] == ["cnsa20-require-pfs"]
 
 
+def _spec_protocol(cipher_suites, evidence=None):
+    return {
+        "type": "cryptographic-asset",
+        "bom-ref": "proto",
+        "name": "TLS",
+        "cryptoProperties": {
+            "assetType": "protocol",
+            "protocolProperties": {"type": "tls", "version": "1.2", "cipherSuites": cipher_suites},
+        },
+        "evidence": evidence or {},
+    }
+
+
 async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=None, extra_rules=()):
     """A CycloneDX 1.6 protocol asset judged by the seeded policy, with the PFS rule toggled."""
-    parsed = parse_cbom(
-        {
-            "specVersion": "1.6",
-            "components": [
-                {
-                    "type": "cryptographic-asset",
-                    "bom-ref": "proto",
-                    "name": "TLS",
-                    "cryptoProperties": {
-                        "assetType": "protocol",
-                        "protocolProperties": {"type": "tls", "version": "1.2", "cipherSuites": cipher_suites},
-                    },
-                    "evidence": evidence or {},
-                }
-            ],
-        }
-    )
+    assets = parse_cbom({"specVersion": "1.6", "components": [_spec_protocol(cipher_suites, evidence)]})
     await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parsed.assets]
+        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets]
     )
     rules = [
         r.model_copy(update={"enabled": pfs_enabled}) if r.rule_id == "cnsa20-require-pfs" else r
@@ -195,7 +193,9 @@ async def test_one_suite_under_two_spellings_is_one_finding_with_a_stable_id(db)
     suites = [{"name": "TLS_RSA_WITH_RC4_128_MD5"}, {"name": "SSL_RSA_WITH_RC4_128_MD5"}]
     first = await _analyze_spec_protocol(db, suites)
     second = await evaluate_crypto("crypto_protocol_cipher", db)
-    assert [f["id"] for f in first["findings"]] == ["CRYPTO-crypto_weak_protocol-proto-TLS_RSA_WITH_RC4_128_MD5"]
+    assert [f["id"] for f in first["findings"]] == [
+        f"CRYPTO-crypto_weak_protocol-{content_ref(_spec_protocol(suites))}-TLS_RSA_WITH_RC4_128_MD5"
+    ]
     assert [f["id"] for f in second["findings"]] == [f["id"] for f in first["findings"]]
 
 

@@ -43,7 +43,7 @@ class _FakeFindings:
 class TestFilterOutWaivedFindings:
     def test_waived_record_is_excluded(self):
         findings = [{"_id": "R1"}, {"_id": "R2"}, {"_id": "R3"}]
-        db = {"findings": _FakeFindings([{"_id": "R2"}])}
+        db = {"findings": _FakeFindings([{"_id": "R2", "waived": True}])}
 
         result = asyncio.run(_filter_out_waived_findings(findings, "scan-1", db))
 
@@ -58,7 +58,10 @@ class TestFilterOutWaivedFindings:
     def test_query_filters_on_scan_and_waived(self):
         db = {"findings": _FakeFindings([])}
         asyncio.run(_filter_out_waived_findings([{"_id": "R1"}], "scan-9", db))
-        assert db["findings"].last_query == {"scan_id": "scan-9", "waived": True}
+        assert db["findings"].last_query == {
+            "scan_id": "scan-9",
+            "$or": [{"waived": True}, {"details.vulnerabilities.waived": True}],
+        }
 
 
 class TestAggregateExternalSkipsEngineRows:

@@ -120,22 +120,23 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: dict[str, Any], s
         aggregator.add_finding(_parse_opengrep_item(item), source=source)
 
 
+def bearer_entries(container: Any) -> list[Any] | None:
+    """Bearer's findings as one list: a flat list as posted, or each severity group's entries with the group as default
+    severity; None for any other shape."""
+    if isinstance(container, list):
+        return container
+    if isinstance(container, dict):
+        return [
+            {"severity": key.lower(), **item} if isinstance(item, dict) else item
+            for key, items in container.items()
+            if isinstance(items, list)
+            for item in items
+        ]
+    return None
+
+
 def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
-    findings_container = result.get("findings") or {}
-
-    # Bearer emits either a flat list or a dict keyed by severity.
-    all_findings = []
-    if isinstance(findings_container, list):
-        all_findings = findings_container
-    elif isinstance(findings_container, dict):
-        for sev_key, items in findings_container.items():
-            if isinstance(items, list):
-                for item in items:
-                    if "severity" not in item:
-                        item["severity"] = sev_key.lower()
-                    all_findings.append(item)
-
-    for item in all_findings:
+    for item in bearer_entries(result.get("findings")) or []:
         title = item.get("title") or "Unknown data risk"
         sev_str = (item.get("severity") or "info").upper()
         severity = safe_severity(_BEARER_OVERRIDES.get(sev_str, sev_str))

@@ -254,7 +254,7 @@ _SBOM_FIXTURES = Path(__file__).parent.parent / "fixtures" / "sbom"
 def _inventory(*fixtures):
     """The language map of the dependencies the real SBOM parser extracts from these fixtures."""
     return component_language_map(
-        dep.to_dict()
+        dep.model_dump()
         for name in fixtures
         for dep in parse_sbom(json.loads((_SBOM_FIXTURES / name).read_text())).dependencies
     )

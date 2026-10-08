@@ -1,10 +1,8 @@
 """Helper functions for ingest endpoints."""
 
-from typing import Any
-
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.ingest import BaseIngest
+from app.schemas.ingest import BaseIngest, FindingsIngestResponse, ScanStatsResponse
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.stats import StatsAccumulator, compute_stats
 from app.services.scan_manager import ScanManager
@@ -12,7 +10,7 @@ from app.services.scan_manager import ScanManager
 _STATS_FIELDS = {path.split(".", 1)[0] for path in StatsAccumulator.REQUIRED_PATHS}
 
 
-async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data: BaseIngest) -> dict[str, Any]:
+async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data: BaseIngest) -> FindingsIngestResponse:
     """Common processing for findings-based ingests (TruffleHog, OpenGrep, KICS, Bearer).
 
     Does NOT trigger aggregation, so a fast scanner can't mark the scan
@@ -35,9 +33,9 @@ async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data
 
     await manager.register_result(scan_id, analyzer_name, trigger_analysis=False)
 
-    return {
-        "scan_id": scan_id,
-        "findings_count": len(final_findings),
-        "waived_count": waived_count,
-        "stats": stats.model_dump(),
-    }
+    return FindingsIngestResponse(
+        scan_id=scan_id,
+        findings_count=len(final_findings),
+        waived_count=waived_count,
+        stats=ScanStatsResponse(**stats.model_dump()),
+    )

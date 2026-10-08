@@ -3,24 +3,17 @@
 import asyncio
 from typing import Any, Self
 
+import httpx
 import pytest
 
 from app.core.cache import CacheKeys
 from app.core.constants import ANALYZER_BATCH_SIZES, NPM_REGISTRY_URL
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers import hash_verification
 from app.services.analyzers.hash_verification import HashVerificationAnalyzer, normalize_hash_algorithm
 from tests.helpers.analyzers import analyze_cyclonedx
-
-
-class _FakeResponse:
-    def __init__(self, payload: dict[str, Any], status_code: int = 200):
-        self._payload = payload
-        self.status_code = status_code
-
-    def json(self) -> dict[str, Any]:
-        return self._payload
 
 
 class _FakeClient:
@@ -35,27 +28,9 @@ class _FakeClient:
     async def __aexit__(self, *_exc: object) -> bool:
         return False
 
-    async def get(self, url: str) -> _FakeResponse:
+    async def get(self, url: str, **_kwargs: Any) -> httpx.Response:
         self.urls.append(url)
-        return _FakeResponse(self._payload, self._status_code)
-
-
-class _HtmlErrorResponse:
-    """A registry error page is HTML, so decoding its body raises."""
-
-    def __init__(self, status_code: int):
-        self.status_code = status_code
-
-    def json(self) -> dict[str, Any]:
-        raise ValueError("Expecting value: line 1 column 1 (char 0)")
-
-
-class _HtmlErrorClient:
-    def __init__(self, status_code: int):
-        self._status_code = status_code
-
-    async def get(self, _url: str) -> _HtmlErrorResponse:
-        return _HtmlErrorResponse(self._status_code)
+        return httpx.Response(self._status_code, json=self._payload, request=httpx.Request("GET", url))
 
 
 class _MemoryCache:
@@ -69,7 +44,9 @@ class _MemoryCache:
         self.mget_calls.append(list(keys))
         return {key: self.entries.get(key) for key in keys}
 
-    async def get_or_fetch_with_lock(self, key: str, fetch_fn, ttl_seconds: int | None = None) -> Any:
+    async def get_or_fetch_with_lock(
+        self, key: str, fetch_fn, ttl_seconds: int | None = None, reraise_fetch_errors: bool = False
+    ) -> Any:
         if self.entries.get(key) is not None:
             return self.entries[key]
         value = await fetch_fn()
@@ -167,12 +144,34 @@ async def test_uppercase_registry_digest_verifies_against_the_sbom_hash(monkeypa
 
 @pytest.mark.asyncio
 async def test_a_404_from_pypi_is_a_negative_result_not_a_transient_error():
-    """{} and None are cached differently: the package is genuinely absent, not momentarily unreachable."""
+    """{} is cached as the release being absent; a transient failure raises and is cached nowhere."""
     result = await HashVerificationAnalyzer()._fetch_registry_hashes(
-        _HtmlErrorClient(404), "pypi", "nonexistent-pkg", "1.0.0"
+        _FakeClient({}, status_code=404), "pypi", "nonexistent-pkg", "1.0.0"
     )
 
     assert result == {}
+
+
+@pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.asyncio
+async def test_a_registry_outage_skips_the_component_and_is_asked_again_next_scan(fake_cache, monkeypatch, status):
+    answers = [httpx.Response(status), httpx.Response(200, json={"dist": {"shasum": "e" * 40}})]
+    transport = httpx.MockTransport(lambda _request: answers.pop(0))
+    monkeypatch.setattr(
+        hash_verification,
+        "InstrumentedAsyncClient",
+        lambda service, **kwargs: InstrumentedAsyncClient(service, transport=transport, **kwargs),
+    )
+    monkeypatch.setattr(hash_verification, "cache_service", fake_cache)
+    component = _left_pad(("SHA-1", "f" * 40))
+
+    outage = await analyze_cyclonedx(HashVerificationAnalyzer(), [component])
+    cached = await fake_cache.get(CacheKeys.package_hash("npm", "left-pad", "1.0.0"))
+    recovered = await analyze_cyclonedx(HashVerificationAnalyzer(), [component])
+
+    assert outage["partial_components_skipped"] == 1
+    assert cached is None
+    assert [issue["severity"] for issue in recovered["hash_issues"]] == [Severity.CRITICAL.value]
 
 
 @pytest.mark.asyncio
@@ -252,12 +251,12 @@ class _ConcurrencyProbe:
     async def __aexit__(self, *_exc: object) -> bool:
         return False
 
-    async def get(self, _url: str) -> _FakeResponse:
+    async def get(self, _url: str, **_kwargs: Any) -> httpx.Response:
         self.live += 1
         self.peak = max(self.peak, self.live)
         await asyncio.sleep(0)
         self.live -= 1
-        return _FakeResponse({}, status_code=404)
+        return httpx.Response(404)
 
 
 @pytest.mark.asyncio

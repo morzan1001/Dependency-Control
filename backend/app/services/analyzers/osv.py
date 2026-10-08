@@ -114,7 +114,14 @@ def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
     parsed = parse_purl(purl)
     if parsed is None or not parsed.name or not _PURL_TYPE.fullmatch(parsed.type) or _INVALID_ESCAPE.search(purl):
         return None
-    rule = _OS_ECOSYSTEMS.get((parsed.type, (parsed.namespace or "").lower()))
+    distro = (parsed.namespace or "").lower()
+    if (parsed.type, distro) == ("deb", "ubuntu"):
+        source = _os_source_package(parsed, component)
+        if source:
+            # A source purl matches its exact version in every archive, Ubuntu Pro included; Ubuntu:<release> would not.
+            purl = f"pkg:deb/ubuntu/{quote(source[0])}@{quote(source[1] or '', safe='')}"
+        return {"package": {"purl": purl}}
+    rule = _OS_ECOSYSTEMS.get((parsed.type, distro))
     if rule is None:
         return {"package": {"purl": purl}}
     release_pattern, ecosystem = rule
@@ -180,14 +187,18 @@ def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, s
     return package_identity(purl, "", None, None) if purl else None
 
 
-def _affected_entries(record: dict[str, Any], query: dict[str, Any]) -> list[dict[str, Any]]:
-    """The record's ``affected`` entries for the queried package; OS releases share a purl and match by ecosystem."""
+def _affected_entries(record: dict[str, Any], query: dict[str, Any], installed: str) -> list[dict[str, Any]]:
+    """The record's ``affected`` entries for the queried package, narrowed to those listing the installed version.
+
+    Ubuntu's releases and Pro archives share a purl; only the listed versions tell them apart.
+    """
     parsed = parse_purl(query["package"].get("purl") or "")
     purl_type = parsed.type if parsed else None
     key = _package_key(query["package"], purl_type)
-    return [
+    entries = [
         entry for entry in record.get("affected") or [] if _package_key(entry.get("package") or {}, purl_type) == key
     ]
+    return [entry for entry in entries if installed in (entry.get("versions") or [])] or entries
 
 
 def _installed_version(query: dict[str, Any]) -> str:
@@ -512,7 +523,7 @@ class OSVAnalyzer(Analyzer):
         for vuln in vulns:
             if vuln.get("withdrawn"):
                 continue
-            entries = _affected_entries(vuln, query)
+            entries = _affected_entries(vuln, query, installed)
             cvss = self._select_cvss(vuln.get("severity") or [])
             entry: dict[str, Any] = {
                 "id": vuln.get("id", ""),
@@ -540,7 +551,7 @@ class OSVAnalyzer(Analyzer):
         return normalized
 
     # CVSS-type preference order — newest standard wins.
-    _CVSS_TYPE_PREFERENCE = ("CVSS_V4", "CVSS_V3", "CVSS_V3.1", "CVSS_V3.0", "CVSS_V2")
+    _CVSS_TYPE_PREFERENCE = ("CVSS_V4", "CVSS_V3", "CVSS_V2")
 
     @staticmethod
     def _cvss_to_severity(cvss_score: float, cvss_type: str = "CVSS_V3") -> str:

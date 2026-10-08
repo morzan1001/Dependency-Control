@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   ALL_PERMISSIONS,
   PERMISSION_GROUPS,
+  PRESET_ADMIN,
   PRESET_USER,
   PRESET_VIEWER,
   Permissions,
@@ -17,6 +18,10 @@ describe("ANALYZE_ADHOC permission", () => {
     expect(ALL_PERMISSIONS).toContain(Permissions.ANALYZE_ADHOC);
     const rendered = PERMISSION_GROUPS.flatMap((g) => g.permissions).map((p) => p.id);
     expect(rendered).toContain(Permissions.ANALYZE_ADHOC);
+  });
+
+  it("is part of the admin preset", () => {
+    expect(PRESET_ADMIN).toContain(Permissions.ANALYZE_ADHOC);
   });
 
   it("stays out of the non-admin presets", () => {

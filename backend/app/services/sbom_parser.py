@@ -154,6 +154,8 @@ def _resolve_parent_refs(parsed_by_ref: dict[Any, ParsedDependency], *edge_maps:
 
 
 def _image_reference(name: Any, version: Any) -> str | None:
+    if not isinstance(name, str):
+        return None
     # An OCI tag never contains ':', so a version that does is a digest.
     separator = "@" if ":" in str(version) else ":"
     return f"{name}{separator}{version}" if version else name
@@ -369,10 +371,6 @@ class SBOMParser:
 
         result.dependencies, merged = merge_duplicate_dependencies(result.dependencies)
         result.merged_components += merged
-
-        result.total_components = len(result.dependencies) + result.skipped_components + result.merged_components
-        result.parsed_components = len(result.dependencies)
-
         return result
 
     @staticmethod
@@ -381,6 +379,24 @@ class SBOMParser:
             return
         result.skipped_components += count
         result.skipped_reasons[reason] = result.skipped_reasons.get(reason, 0) + count
+
+    @staticmethod
+    def _append_distro(result: ParsedSBOM, distro_id: Any, version: Any, description: Any = None) -> None:
+        """The scanned operating system, shaped like the CycloneDX row base-image end-of-life detection reads."""
+        if not (isinstance(distro_id, str) and distro_id and isinstance(version, str) and version):
+            return
+        result.dependencies.append(
+            ParsedDependency(
+                name=distro_id,
+                version=version,
+                type="operating-system",
+                direct=True,
+                direct_inferred=True,
+                source_type=result.source_type,
+                source_target=result.source_target,
+                description=description if isinstance(description, str) else None,
+            )
+        )
 
     # Placeholder tokens generators emit when they could not determine a version.
     _PLACEHOLDER_VERSIONS = frozenset({"", "unknown", "noassertion", "none"})
@@ -421,7 +437,9 @@ class SBOMParser:
             ref, comp_type = comp.get("bom-ref") or comp.get("purl"), comp.get("type")
             if not isinstance(ref, str) or comp_type in cls._NON_PACKAGE_COMPONENT_TYPES:
                 continue
-            props = [(p.get("name"), p.get("value")) for p in comp.get("properties") or [] if isinstance(p, dict)]
+            raw_props = comp.get("properties")
+            entries = raw_props if isinstance(raw_props, list) else []
+            props = [(p.get("name"), p.get("value")) for p in entries if isinstance(p, dict)]
             # Trivy groups each lock file's packages under a purl-less application node.
             if comp_type == "application" and not comp.get("purl"):
                 children = forward.get(ref, [])
@@ -450,7 +468,7 @@ class SBOMParser:
             ref for ref in (main_component.get("bom-ref"), main_component.get("purl")) if isinstance(ref, str) and ref
         }
         result.source_type, result.source_target = self._extract_cyclonedx_source(
-            main_component, metadata.get("properties") or []
+            main_component, metadata.get("properties")
         )
 
         # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
@@ -521,7 +539,7 @@ class SBOMParser:
         source_type = None
         source_target = None
         comp_type = component.get("type")
-        comp_name = component.get("name")
+        comp_name = name if isinstance(name := component.get("name"), str) else None
         if comp_type == "container":
             source_type = SOURCE_TYPE_IMAGE
             source_target = _image_reference(comp_name, component.get("version"))
@@ -532,7 +550,7 @@ class SBOMParser:
             source_type = SOURCE_TYPE_FILE
             source_target = comp_name
 
-        for prop in properties:
+        for prop in properties if isinstance(properties, list) else []:
             if not isinstance(prop, dict):
                 continue
             name = prop.get("name", "")
@@ -568,47 +586,15 @@ class SBOMParser:
     _FOUND_BY_PROP = "syft:package:foundBy"
     _CPE_PROPS = ("syft:cpe23", "syft:cpe22")
     # syft:location:<N>:<field> — the layerID field is a digest, not a file path.
-    _SYFT_LOCATION_PROP_PREFIX = "syft:location:"
     _SYFT_LOCATION_PROP_RE = re.compile(r"^syft:location:\d+:(\w+)$")
-
-    @classmethod
-    def _classify_cyclonedx_property(
-        cls,
-        prop_name: str,
-        prop_value: str,
-        current_layer: str | None,
-    ) -> tuple[str | None, str | None, str | None]:
-        """Return (layer_digest_update, found_by_update, location_update) for a single property.
-
-        Each item is either None (no update) or the new value to record.
-        Caller is responsible for honouring "first wins" semantics where applicable.
-        """
-        if prop_name in cls._LAYER_DIGEST_PROPS:
-            return prop_value, None, None
-        if prop_name == cls._LAYER_DIFFID_PROP:
-            return (prop_value if not current_layer else None), None, None
-        if prop_name == cls._FOUND_BY_PROP:
-            return None, prop_value, None
-        if prop_name.startswith(cls._SYFT_LOCATION_PROP_PREFIX):
-            syft_location = cls._SYFT_LOCATION_PROP_RE.match(prop_name)
-            field = syft_location.group(1) if syft_location else None
-            if field == "layerID":
-                return (prop_value if not current_layer else None), None, None
-            if field == "path" and prop_value:
-                return None, None, prop_value
-            # Anything else (accessPath, annotations:evidence etc.) is no canonical path.
-            return None, None, None
-        lower = prop_name.lower()
-        if ("location" in lower or "path" in lower) and prop_value and not prop_name.startswith("syft:"):
-            return None, None, prop_value
-        return None, None, None
+    _PATH_NAME = re.compile("location|path")
 
     @classmethod
     def _extract_cyclonedx_properties(
         cls,
         comp: dict[str, Any],
     ) -> tuple[str | None, str | None, list[str], dict[str, str], list[str]]:
-        """Extract (layer_digest, found_by, locations, properties, cpes) from comp."""
+        """(layer_digest, found_by, locations, properties, cpes) of comp; a layer digest wins over a diff id."""
         layer_digest: str | None = None
         found_by: str | None = None
         locations: list[str] = []
@@ -619,26 +605,25 @@ class SBOMParser:
         for prop in raw_props if isinstance(raw_props, list) else []:
             if not isinstance(prop, dict):
                 continue
-            prop_name = prop.get("name", "")
-            prop_value = prop.get("value", "")
-            if prop_name and prop_value:
-                properties[prop_name] = prop_value
-
-            # Repeated syft:cpe23 properties collapse in the dict above, so CPEs
-            # must be collected while iterating.
-            if prop_name in cls._CPE_PROPS and prop_value:
-                cpes.append(prop_value)
+            name, value = prop.get("name", ""), prop.get("value", "")
+            if name and value:
+                properties[name] = value
+            # Repeated syft:cpe23 properties collapse in the dict above, so CPEs must be collected while iterating.
+            if name in cls._CPE_PROPS and value:
+                cpes.append(value)
                 continue
-
-            new_layer, new_found_by, new_location = cls._classify_cyclonedx_property(
-                prop_name, prop_value, layer_digest
-            )
-            if new_layer is not None:
-                layer_digest = new_layer
-            if new_found_by is not None:
-                found_by = new_found_by
-            if new_location is not None:
-                locations.append(new_location)
+            syft_location = cls._SYFT_LOCATION_PROP_RE.match(name)
+            field = syft_location.group(1) if syft_location else None
+            if value is None:
+                continue
+            if name in cls._LAYER_DIGEST_PROPS:
+                layer_digest = value
+            elif name == cls._LAYER_DIFFID_PROP or field == "layerID":
+                layer_digest = layer_digest or value
+            elif name == cls._FOUND_BY_PROP:
+                found_by = value
+            elif value and (field == "path" or (not name.startswith("syft:") and cls._PATH_NAME.search(name.lower()))):
+                locations.append(value)
 
         locations.extend(occurrence_locations(comp))
         return layer_digest, found_by, list(dict.fromkeys(locations)), properties, cpes
@@ -880,6 +865,10 @@ class SBOMParser:
                 parsed_by_id[artifact.get("id")] = parsed
         _resolve_parent_refs(parsed_by_id, forward, contains)
 
+        distro = sbom.get("distro")
+        if isinstance(distro, dict):
+            self._append_distro(result, distro.get("id"), distro.get("versionID"), distro.get("prettyName"))
+
     @staticmethod
     def _extract_syft_locations(
         location_entries: list[dict[str, Any]],
@@ -991,11 +980,8 @@ class SBOMParser:
         """Extract a dedicated license URL from a syft license dict ('url'/'urls')."""
         for url_key in ("url", "urls"):
             url_val = lic.get(url_key)
-            if not url_val:
-                continue
-            if isinstance(url_val, list):
-                return str(url_val[0]) if url_val else None
-            return str(url_val) if url_val else None
+            if url_val:
+                return str(url_val[0] if isinstance(url_val, list) else url_val)
         return None
 
     def _handle_syft_license_dict(self, lic: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -1049,22 +1035,24 @@ class SBOMParser:
         license_refs = self._spdx_license_refs(sbom)
         self._count_skipped(result, "file", len(sbom.get("files") or []))
 
+        roots = set(subjects)
         for pkg in packages:
             if not isinstance(pkg, dict) or pkg.get("SPDXID") not in described:
                 continue
             if pkg.get("primaryPackagePurpose") == "CONTAINER":
                 result.source_type = SOURCE_TYPE_IMAGE
-                result.source_target = _image_reference(pkg.get("name"), _spdx_value(pkg, "versionInfo"))
+                result.source_target = _image_reference(_spdx_value(pkg, "name"), _spdx_value(pkg, "versionInfo"))
+                roots.add(pkg["SPDXID"])
                 break
             if pkg.get("SPDXID") in subjects:
-                result.source_type, result.source_target = SOURCE_TYPE_APPLICATION, pkg.get("name")
+                result.source_type, result.source_target = SOURCE_TYPE_APPLICATION, _spdx_value(pkg, "name")
                 break
 
         parsed_by_id: dict[Any, ParsedDependency] = {}
         for pkg in packages:
             if not isinstance(pkg, dict):
                 self._count_skipped(result, "malformed")
-            elif pkg.get("SPDXID") in subjects:
+            elif pkg.get("SPDXID") in roots:
                 self._count_skipped(result, "root-component")
             elif parsed := self._append_parsed(
                 result,
@@ -1082,6 +1070,17 @@ class SBOMParser:
             ):
                 parsed_by_id[pkg.get("SPDXID")] = parsed
         _resolve_parent_refs(parsed_by_id, forward)
+
+        if not any(
+            isinstance(pkg, dict) and pkg.get("primaryPackagePurpose") == "OPERATING-SYSTEM" for pkg in packages
+        ):
+            # Syft's SPDX names the distro only in the purl qualifiers of its packages.
+            distro_purls = (parse_purl(dep.purl or "") for dep in result.dependencies if dep.type in OS_PACKAGE_TYPES)
+            distro = next(
+                (purl.qualifiers["distro"] for purl in distro_purls if purl and "distro" in purl.qualifiers), ""
+            )
+            distro_id, _, version = distro.rpartition("-")
+            self._append_distro(result, distro_id, version)
 
     _SPDX_DOWNLOAD_LOC_TYPE_MAP = (
         (("npmjs.org", "registry.npmjs"), "npm"),

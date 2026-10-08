@@ -795,6 +795,29 @@ class TestGetFindings:
     def test_empty_aggregator_returns_empty(self):
         assert self.agg.get_findings() == []
 
+    @pytest.mark.parametrize(
+        "packages",
+        [(("x:v1", "2"), ("x", "v1:2")), (("x", None), ("x", "None"))],
+        ids=["colon-in-name-and-version", "missing-and-literal-none-version"],
+    )
+    def test_two_packages_whose_finding_ids_coincide_are_both_kept(self, packages):
+        for component, version in packages:
+            self.agg.add_finding(
+                Finding(
+                    id="CVE-2024-0001",
+                    type=FindingType.VULNERABILITY,
+                    severity=Severity.HIGH,
+                    component=component,
+                    version=version,
+                    description="",
+                    scanners=["trivy"],
+                )
+            )
+
+        assert sorted((f.component, str(f.version)) for f in self.agg.get_findings()) == sorted(
+            (component, str(version)) for component, version in packages
+        )
+
     def test_single_finding_returned(self):
         self.agg.add_finding(
             Finding(

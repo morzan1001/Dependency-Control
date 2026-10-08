@@ -13,6 +13,7 @@ from tests.helpers.osv import (
     LOG4SHELL,
     MALWARE_COMBINEZONE,
     REQUEST_SSRF,
+    UBUNTU_OPENSSL,
     URLLIB3_CRLF,
 )
 
@@ -26,6 +27,7 @@ _DJANGO_4_2_0 = _purl("pkg:pypi/django@4.2.0")
 _LOG4J_CORE_2_14_1 = _purl("pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1")
 _OPENSSL_ON_ALPINE_3_17 = {"package": {"ecosystem": "Alpine:v3.17", "name": "openssl"}, "version": "3.0.8-r0"}
 _OPENSSL_ON_DEBIAN_12 = {"package": {"ecosystem": "Debian:12", "name": "openssl"}, "version": "3.0.9-1"}
+_OPENSSL_ON_UBUNTU_20_04 = _purl("pkg:deb/ubuntu/openssl@1.1.1f-1ubuntu2.24")
 
 
 def _normalized(record: dict[str, Any], query: dict[str, Any]) -> dict[str, Any]:
@@ -158,6 +160,9 @@ class TestFixedVersion:
             pytest.param(LOG4SHELL, _LOG4J_CORE_2_14_1, "2.15.0", id="maven"),
             pytest.param(ALPINE_OPENSSL, _OPENSSL_ON_ALPINE_3_17, "3.0.12-r1", id="os-release-of-the-query"),
             pytest.param(DEBIAN_OPENSSL, _OPENSSL_ON_DEBIAN_12, "3.0.13-1~deb12u1", id="debian-revision"),
+            pytest.param(
+                UBUNTU_OPENSSL, _OPENSSL_ON_UBUNTU_20_04, "1.1.1f-1ubuntu2.24+esm2", id="ubuntu-listing-entry"
+            ),
         ],
     )
     def test_the_fix_is_the_one_for_the_installed_version(self, record, query, expected):

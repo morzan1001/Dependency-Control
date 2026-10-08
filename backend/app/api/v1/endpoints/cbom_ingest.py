@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
@@ -20,7 +20,7 @@ from app.core.metrics import cbom_ingests_total
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.cbom import ParsedCBOM
+from app.schemas.cbom import ParsedCryptoAsset
 from app.schemas.ingest import BaseIngest
 from app.services.cbom_parser import parse_cbom
 from app.services.notifications.service import safe_notify_project_event
@@ -33,46 +33,14 @@ router = CustomAPIRouter()
 
 
 class CBOMIngest(BaseIngest):
-    """CBOM ingest payload; flat shape aligned with SBOMIngest, also accepting a legacy scan_metadata envelope."""
+    """CBOM ingest payload, flat like SBOMIngest."""
 
     cbom: dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")
 
-    # Optional so legacy payloads without pipeline_id/commit_hash/branch can still ingest.
+    # Optional so a manual upload without pipeline data can still ingest.
     pipeline_id: int | None = Field(None, description="Unique ID of the pipeline run")  # type: ignore[assignment]
     commit_hash: str | None = Field(None, description="Git commit hash")  # type: ignore[assignment]
     branch: str | None = Field(None, description="Git branch name")  # type: ignore[assignment]
-
-    # Accept unknown keys so the pre-validator can fold a legacy scan_metadata envelope.
-    model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fold_legacy_scan_metadata(cls, values: Any) -> Any:
-        """Fold a legacy scan_metadata envelope onto the top-level payload for canonical validation."""
-        if not isinstance(values, dict):
-            return values
-        meta = values.get("scan_metadata")
-        if not isinstance(meta, dict):
-            return values
-        # Only fill fields that are not already present on the envelope.
-        mappings = {
-            "branch": meta.get("git_ref") or meta.get("branch"),
-            "commit_hash": meta.get("commit_sha") or meta.get("commit_hash"),
-            "pipeline_id": meta.get("pipeline_id"),
-            "pipeline_iid": meta.get("pipeline_iid"),
-            "project_url": meta.get("project_url"),
-            "pipeline_url": meta.get("pipeline_url"),
-            "job_id": meta.get("job_id"),
-            "job_started_at": meta.get("job_started_at"),
-            "commit_message": meta.get("commit_message"),
-            "commit_tag": meta.get("commit_tag"),
-            "project_name": meta.get("project_name"),
-            "pipeline_user": meta.get("pipeline_user"),
-        }
-        for key, value in mappings.items():
-            if value is not None and values.get(key) is None:
-                values[key] = value
-        return values
 
 
 class CBOMIngestResponse(BaseModel):
@@ -97,9 +65,9 @@ async def ingest_cbom(
     payload = await read_json_body(request, CBOMIngest)
     manager = ScanManager(db, project)
     scan_id = manager.run_scan_id(payload)
-    parsed = await asyncio.to_thread(parse_cbom, payload.cbom)
+    assets = await asyncio.to_thread(parse_cbom, payload.cbom)
 
-    if parsed.parsed_components == 0:
+    if not assets:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No cryptographic-asset components found in CBOM payload",
@@ -109,7 +77,7 @@ async def ingest_cbom(
 
     try:
         await ScanRepository(db).touch(scan_id)
-        summary = await _store_crypto_assets(db, project_id, scan_id, parsed)
+        summary = await _store_crypto_assets(db, project_id, scan_id, assets)
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
         cbom_ingests_total.labels(status="error").inc()
@@ -144,13 +112,13 @@ async def ingest_cbom(
     return CBOMIngestResponse(
         scan_id=scan_id,
         status="accepted",
-        assets_received=len(parsed.assets),
+        assets_received=len(assets),
         assets_stored=int(summary["total"]),
     )
 
 
 async def _store_crypto_assets(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, parsed: ParsedCBOM
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, assets: list[ParsedCryptoAsset]
 ) -> dict[str, Any]:
     """Bulk-upsert the scan's CryptoAssets and return the summary of what is stored."""
     written_at = datetime.now(timezone.utc)
@@ -162,7 +130,7 @@ async def _store_crypto_assets(
             CryptoAsset(
                 project_id=project_id, scan_id=scan_id, cbom_upload=True, created_at=written_at, **a.model_dump()
             )
-            for a in parsed.assets
+            for a in assets
         ),
     )
     # Deleted after the upsert so a failed write keeps the previous upload's assets.

@@ -50,7 +50,12 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
                         "scan_id": scan_id,
                         "bom_ref": a.bom_ref,
                     },
-                    {"$set": a.model_dump(by_alias=True, exclude={"id"}), "$setOnInsert": {"_id": a.id}},
+                    # $max: an overlapping earlier upload must not age the rows a later one's cleanup keeps.
+                    {
+                        "$set": a.model_dump(by_alias=True, exclude={"id", "created_at"}),
+                        "$max": {"created_at": a.created_at},
+                        "$setOnInsert": {"_id": a.id},
+                    },
                     upsert=True,
                 )
                 for a in chunk

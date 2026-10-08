@@ -1,0 +1,206 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.6",
+ "serialNumber": "urn:uuid:6d6ba341-945b-451f-b4d9-edb289e32ef3",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-10-08T17:04:53Z",
+  "tools": {
+   "services": [
+    {
+     "provider": {
+      "name": "IBM"
+     },
+     "name": "cbomkit-theia",
+     "version": "edge",
+     "services": [
+      {
+       "name": "Certificate File Plugin"
+      },
+      {
+       "name": "Secret Detection Plugin"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "bdfdcf99-72b4-4d3f-9d47-227301b06231",
+   "type": "cryptographic-asset",
+   "name": "RSA",
+   "evidence": {
+    "occurrences": [
+     {
+      "location": "cert.pem"
+     }
+    ]
+   },
+   "cryptoProperties": {
+    "assetType": "algorithm",
+    "algorithmProperties": {
+     "primitive": "pke",
+     "cryptoFunctions": [
+      "sign"
+     ]
+    }
+   }
+  },
+  {
+   "bom-ref": "61139a09-dbd2-49e0-9300-2d257dae545e",
+   "type": "cryptographic-asset",
+   "name": "SHA256",
+   "evidence": {
+    "occurrences": [
+     {
+      "location": "cert.pem"
+     }
+    ]
+   },
+   "cryptoProperties": {
+    "assetType": "algorithm",
+    "algorithmProperties": {
+     "primitive": "hash",
+     "parameterSetIdentifier": "256",
+     "cryptoFunctions": [
+      "digest"
+     ]
+    }
+   }
+  },
+  {
+   "bom-ref": "d5634ae7-b53e-4df0-8283-e2e26e3b7810",
+   "type": "cryptographic-asset",
+   "name": "SHA256-RSA",
+   "evidence": {
+    "occurrences": [
+     {
+      "location": "cert.pem"
+     }
+    ]
+   },
+   "cryptoProperties": {
+    "assetType": "algorithm",
+    "algorithmProperties": {
+     "primitive": "signature",
+     "parameterSetIdentifier": "256",
+     "padding": "pkcs1v15",
+     "cryptoFunctions": [
+      "sign"
+     ]
+    },
+    "oid": "1.2.840.113549.1.1.11"
+   }
+  },
+  {
+   "bom-ref": "0a99cb4c-8b4d-4a1e-bd35-07b7e2aca205",
+   "type": "cryptographic-asset",
+   "name": "RSA",
+   "evidence": {
+    "occurrences": [
+     {
+      "location": "cert.pem"
+     }
+    ]
+   },
+   "cryptoProperties": {
+    "assetType": "algorithm",
+    "algorithmProperties": {
+     "primitive": "pke",
+     "executionEnvironment": "unknown",
+     "implementationPlatform": "unknown",
+     "certificationLevel": [
+      "unknown"
+     ],
+     "cryptoFunctions": [
+      "encapsulate",
+      "decapsulate"
+     ]
+    },
+    "oid": "1.2.840.113549.1.1.1"
+   }
+  },
+  {
+   "bom-ref": "6ed52fe1-0225-4628-b512-b6ce3e32a6e9",
+   "type": "cryptographic-asset",
+   "name": "RSA-2048",
+   "evidence": {
+    "occurrences": [
+     {
+      "location": "cert.pem"
+     }
+    ]
+   },
+   "cryptoProperties": {
+    "assetType": "related-crypto-material",
+    "relatedCryptoMaterialProperties": {
+     "type": "public-key",
+     "algorithmRef": "0a99cb4c-8b4d-4a1e-bd35-07b7e2aca205",
+     "value": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxEuVkPNcjqhHxwP2XTcCNlSF4shrcpCIfa8pao/mLPro5SZ2eDqFo8wNfLDFtNyQS9NdrsrLj1jPhU4iTawLtoja+Q67cdXFUyZXQm7pAxphMa0pN0LHyoueiBwXPp6VTsc3p0t74MbVKBOepukheBzyNkgXb3RiC8bQq5YpW2PiCI8jd5/QJS4PG69WxxSMINyG2dqWH1Arv857o+W0aa9WVRAwYYTXOVERHNByVcVFWjMTf2RzCo/tTns0cVdQmWX33aMu3riuAAH5b7Jxi9X5c4dN/gqoYHZpD5d9Mv3leVSHVtJyClKFiFFCWteTheG5z6+8cZM+qH914POeYQIDAQAB",
+     "size": 2048,
+     "format": "PEM"
+    },
+    "oid": "1.2.840.113549.1.1.1"
+   }
+  },
+  {
+   "bom-ref": "55ed0313-6ec2-4313-8563-57b62e44cabc",
+   "type": "cryptographic-asset",
+   "name": "b1-test",
+   "evidence": {
+    "occurrences": [
+     {
+      "location": "cert.pem"
+     }
+    ]
+   },
+   "cryptoProperties": {
+    "assetType": "certificate",
+    "certificateProperties": {
+     "subjectName": "b1-test",
+     "issuerName": "b1-test",
+     "notValidBefore": "2026-10-08T17:04:26Z",
+     "notValidAfter": "2026-11-07T17:04:26Z",
+     "signatureAlgorithmRef": "d5634ae7-b53e-4df0-8283-e2e26e3b7810",
+     "subjectPublicKeyRef": "6ed52fe1-0225-4628-b512-b6ce3e32a6e9",
+     "certificateFormat": "X.509",
+     "certificateExtension": ".pem"
+    }
+   }
+  },
+  {
+   "bom-ref": "63884cfc-aa8b-4331-bf6e-fcd1b948b8e7",
+   "type": "cryptographic-asset",
+   "name": "RSA-2048",
+   "description": "Identified a Private Key, which may compromise cryptographic security and sensitive data encryption.",
+   "evidence": {
+    "occurrences": [
+     {
+      "location": "key.pem",
+      "line": 0
+     }
+    ]
+   },
+   "cryptoProperties": {
+    "assetType": "related-crypto-material",
+    "relatedCryptoMaterialProperties": {
+     "type": "private-key",
+     "size": 2048,
+     "format": "PEM"
+    },
+    "oid": "1.2.840.113549.1.1.1"
+   }
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "d5634ae7-b53e-4df0-8283-e2e26e3b7810",
+   "dependsOn": [
+    "bdfdcf99-72b4-4d3f-9d47-227301b06231",
+    "61139a09-dbd2-49e0-9300-2d257dae545e"
+   ]
+  }
+ ]
+}

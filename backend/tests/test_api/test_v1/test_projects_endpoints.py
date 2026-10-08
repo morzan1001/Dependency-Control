@@ -671,6 +671,22 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
         assert exc.value.status_code == 422
         assert (await db.projects.find_one({"_id": "proj-1"}))["active_analyzers"] == project.active_analyzers
 
+    @pytest.mark.asyncio
+    async def test_the_cbom_template_switch_can_be_turned_on_and_reaches_the_pipeline_config(self):
+        from app.api.v1.endpoints.ingest import get_project_config
+        from app.api.v1.endpoints.projects import update_project
+        from app.schemas.project import ProjectUpdate
+
+        user = _make_admin_user()
+        project = _make_project(admin_id=user.id)
+        db = await TestWritesReadTheProjectBackOnce._seeded_db(project)
+
+        with patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)):
+            await update_project("proj-1", ProjectUpdate(active_analyzers=["osv", "cbomkit"]), user, db)
+        config = await get_project_config(Project.model_validate(await db.projects.find_one({"_id": "proj-1"})))
+
+        assert config.active_analyzers == ["osv", "cbomkit"]
+
     def test_every_name_the_project_settings_offer_is_selectable(self):
         """Mirrors AVAILABLE_ANALYZERS in frontend/src/lib/constants.ts."""
         from app.services.analysis.registry import SELECTABLE_ANALYZERS
@@ -678,7 +694,7 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
         assert {
             "trivy", "grype", "osv", "deps_dev", "epss_kev", "reachability", "end_of_life", "license_compliance",
             "os_malware", "typosquatting", "hash_verification", "maintainer_risk", "outdated_packages",
-            "opengrep", "kics", "bearer", "trufflehog",
+            "opengrep", "kics", "bearer", "trufflehog", "cbomkit",
         } == SELECTABLE_ANALYZERS  # fmt: skip
 
 

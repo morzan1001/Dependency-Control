@@ -236,6 +236,26 @@ Dependency Control exposes its tool suite over [Model Context Protocol](https://
 }
 ```
 
+## 🔬 Ad-hoc Analysis
+
+`POST /api/v1/analyze` analyses SBOMs (and optionally scanner output) without a project or a stored scan, for example from a laptop or the pipeline of a repository that is not onboarded. It needs the `analyze:adhoc` permission, which the **Admin** preset in the user permission editor includes. Create a key under **Profile → API Keys** with the **Ad-hoc analysis** surface ticked, then queue the job and fetch its result:
+
+```bash
+# 202 with a job_id
+JOB_ID=$(jq -n --slurpfile sboms sbom.cdx.json '{sboms: $sboms}' \
+  | curl -sS -X POST "$DEP_CONTROL_URL/api/v1/analyze" \
+      -H "Authorization: Bearer dck_YOUR_TOKEN_HERE" -H "Content-Type: application/json" --data-binary @- \
+  | jq -r .job_id)
+
+# 202 while queued or running, then 200 with findings, stats, dependencies and recommendations
+curl -sS "$DEP_CONTROL_URL/api/v1/analyze/$JOB_ID" -H "Authorization: Bearer dck_YOUR_TOKEN_HERE"
+
+# the same result as a standalone HTML report
+curl -sS "$DEP_CONTROL_URL/api/v1/analyze/$JOB_ID?format=html" -H "Authorization: Bearer dck_YOUR_TOKEN_HERE" -o report.html
+```
+
+Input and result are kept for 24 hours and only the key's owner can read them. The request also takes `scanners`, `analyzers`, `callgraph` and `license_policy` (schema in `/api/v1/openapi.json`). The default `osv` analyzer sends the SBOM's package coordinates to api.osv.dev and the enrichment queries EPSS, GitHub's advisory API and the CISA KEV catalog; an explicit `analyzers` list decides what leaves the instance, and `analyzers.notes` in the result names each host that was reached.
+
 ## ☸️ Kubernetes Deployment
 
 A Helm chart is available for production deployments.

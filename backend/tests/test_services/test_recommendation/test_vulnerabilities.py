@@ -129,7 +129,7 @@ class TestDirectDependencyUpdate:
 
     def test_a_group_qualified_finding_joins_the_bare_inventory_name(self):
         sbom = json.loads((Path(__file__).parents[2] / "fixtures" / "sbom" / "maven.trivy.cdx.json").read_text())
-        dep = next(d.to_dict() for d in parse_sbom(sbom).dependencies if d.name == "logback-core")
+        dep = next(d.model_dump() for d in parse_sbom(sbom).dependencies if d.name == "logback-core")
         finding = stored_vulnerability(
             "ch.qos.logback:logback-core", "1.5.6", [{"id": "CVE-2024-0007", "fixed_version": "1.5.13"}]
         )
@@ -273,7 +273,7 @@ class TestBaseImageUpdate:
     def test_os_packages_of_an_application_rooted_sbom_count_as_image(self):
         # trivy rootfs names the scanned tree an application, so its apk rows inherit that label.
         sbom = json.loads((Path(__file__).parents[2] / "fixtures" / "sbom" / "rootfs.trivy.cdx.json").read_text())
-        dep = next(d.to_dict() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
+        dep = next(d.model_dump() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
         finding = _make_finding(severity="CRITICAL", component="libssl3", version=dep["version"])
 
         [card] = process_vulnerabilities([finding], [dep])

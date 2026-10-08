@@ -1,6 +1,7 @@
 """Integration tests for POST /api/v1/ingest/cbom."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from unittest.mock import AsyncMock, patch
@@ -17,7 +18,7 @@ from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.scans import ScanRepository
 from app.services.analysis import engine
 from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, fixture_component
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, content_ref, filler_components, fixture_component
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -33,10 +34,7 @@ def _ingests(status: str) -> float:
 
 @pytest.mark.asyncio
 async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
-    payload = {
-        "scan_metadata": {"git_ref": "main", "commit_sha": "abc123"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
+    payload = {"branch": "main", "commit_hash": "abc123", "cbom": _load("legacy_crypto_mixed.json")}
     resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
     assert resp.status_code == 202, resp.text
     body = resp.json()
@@ -85,37 +83,15 @@ async def test_ingest_cbom_rejects_unauthenticated(db):
 
 
 @pytest.mark.asyncio
-async def test_legacy_git_ref_becomes_the_scan_branch(client, db, api_key_headers):
-    """The GitLab-shaped envelope spells the branch ``git_ref``; scan identity and lineage key on it."""
-    payload = {
-        "scan_metadata": {"git_ref": "release/7.2", "commit_sha": "abc123"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
+async def test_the_posted_branch_and_commit_become_the_scans(client, db, api_key_headers):
+    payload = {"branch": "release/7.2", "commit_hash": "feedface", "cbom": _load("legacy_crypto_mixed.json")}
 
     resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
 
     assert resp.status_code == 202, resp.text
     scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
     assert scan is not None
-    assert scan["branch"] == "release/7.2"
-
-
-@pytest.mark.asyncio
-async def test_top_level_fields_win_over_the_legacy_envelope(client, db, api_key_headers):
-    payload = {
-        "branch": "feature/explicit",
-        "commit_hash": "feedface",
-        "scan_metadata": {"git_ref": "stale-main", "commit_sha": "0000000"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
-
-    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
-
-    assert resp.status_code == 202, resp.text
-    scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
-    assert scan is not None
-    assert scan["branch"] == "feature/explicit"
-    assert scan["commit_hash"] == "feedface"
+    assert (scan["branch"], scan["commit_hash"]) == ("release/7.2", "feedface")
 
 
 @pytest.mark.asyncio
@@ -212,7 +188,7 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
         "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("legacy_crypto_mixed.json")}, headers=api_key_headers
     )
     scan_id = first.json()["scan_id"]
-    [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json")).assets
+    [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json"))
     await CryptoAssetRepository(db).bulk_upsert(
         "test-project-id",
         scan_id,
@@ -225,8 +201,36 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
 
     assert (retry.status_code, retry.json()["scan_id"]) == (202, scan_id)
     stored = await db.crypto_assets.find({"scan_id": scan_id}).to_list(None)
-    assert sorted(a["bom_ref"] for a in stored) == sorted(["algo-aes", "algo-rsa4096", "proto-tls13", embedded.bom_ref])
+    retried = [
+        content_ref(fixture_component("modern_crypto.json", ref)) for ref in ("algo-aes", "algo-rsa4096", "proto-tls13")
+    ]
+    assert sorted(a["bom_ref"] for a in stored) == sorted([*retried, embedded.bom_ref])
     assert retry.json()["assets_stored"] == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_earlier_upload_finishing_last_keeps_the_later_uploads_assets(db):
+    from app.models.crypto_asset import CryptoAsset
+    from app.services.cbom_parser import parse_cbom
+
+    repo = CryptoAssetRepository(db)
+    assets = parse_cbom(_load("legacy_crypto_mixed.json"))
+    earlier = datetime.now(timezone.utc)
+    later = earlier + timedelta(seconds=1)
+
+    async def upsert(written_at: datetime) -> None:
+        rows = [
+            CryptoAsset(project_id="p", scan_id="s", cbom_upload=True, created_at=written_at, **a.model_dump())
+            for a in assets
+        ]
+        await repo.bulk_upsert("p", "s", rows)
+
+    await upsert(later)
+    await upsert(earlier)
+    await repo.delete_older_writes({"project_id": "p", "scan_id": "s", "cbom_upload": True}, later)
+
+    assert await repo.count_by_scan("p", "s") == 3
 
 
 @pytest.mark.asyncio
@@ -242,6 +246,21 @@ async def test_a_cbom_is_persisted_before_the_response_returns(client, db, api_k
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "document",
+    [{"specVersion": 1.6}, {"metadata": {"timestamp": 1727000000}}],
+    ids=["numeric-spec-version", "numeric-timestamp"],
+)
+async def test_a_numeric_document_field_does_not_reject_the_upload(client, db, api_key_headers, document):
+    cbom = {**cbom_of(filler_components(range(2))), **document}
+
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom}, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["assets_stored"] == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_crypto_assets_nested_under_a_component_are_stored(client, db, api_key_headers):
     library = {"type": "library", "name": "app-crypto", "bom-ref": "lib", "components": filler_components(range(2))}
@@ -252,12 +271,11 @@ async def test_crypto_assets_nested_under_a_component_are_stored(client, db, api
 
     assert resp.status_code == 202, resp.text
     stored = await db.crypto_assets.find({"scan_id": resp.json()["scan_id"]}).to_list(None)
-    assert sorted(asset["bom_ref"] for asset in stored) == ["hash-000000", "hash-000001", "hash-000002"]
+    assert sorted(asset["bom_ref"] for asset in stored) == sorted(map(content_ref, filler_components(range(3))))
 
 
 @pytest.mark.asyncio
-async def test_duplicate_bom_refs_report_the_actually_stored_count(client, db, api_key_headers):
-    """Upserts keyed on bom_ref collapse in-payload duplicates; assets_stored must say so."""
+async def test_two_assets_sharing_a_bom_ref_are_both_stored(client, db, api_key_headers):
     cbom = cbom_of(filler_components(range(3)))
     cbom["components"][1]["bom-ref"] = cbom["components"][0]["bom-ref"]
 
@@ -265,8 +283,8 @@ async def test_duplicate_bom_refs_report_the_actually_stored_count(client, db, a
 
     assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert await db.crypto_assets.count_documents({"scan_id": body["scan_id"]}) == 2
-    assert body["assets_stored"] == 2, "assets_stored must reflect persisted docs, not submitted ops"
+    assert await db.crypto_assets.count_documents({"scan_id": body["scan_id"]}) == 3
+    assert (body["assets_received"], body["assets_stored"]) == (3, 3)
 
 
 @pytest.mark.asyncio
@@ -319,7 +337,9 @@ async def test_a_cbom_past_the_old_asset_cap_is_stored_and_evaluated_whole(clien
     )
     assert status == SCAN_STATUS_COMPLETED
     findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
-    assert [(f["type"], f["component"]) for f in findings] == [("crypto_weak_algorithm", "MD5 [bom-ref:algo-md5]")]
+    assert [(f["type"], f["component"]) for f in findings] == [
+        ("crypto_weak_algorithm", f"MD5 [bom-ref:{content_ref(md5)}]")
+    ]
     repo = AnalysisResultRepository(db)
     results = [
         await repo.load_result(row) for row in await db.analysis_results.find({"scan_id": scan_id}).to_list(None)

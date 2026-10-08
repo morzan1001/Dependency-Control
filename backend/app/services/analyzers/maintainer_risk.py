@@ -23,6 +23,7 @@ from app.models.finding import Severity
 from app.services.github import github_api_headers
 
 from .base import Analyzer
+from .deps_dev import fetch_deps_dev_json
 from .outdated import fetch_package_info
 from app.core.purl import parse_purl
 
@@ -128,6 +129,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                         self._check_pypi(client, name) if registry == "pypi" else self._check_npm(client, name)
                     ),
                     ttl_seconds=CacheTTL.MAINTAINER_INFO,
+                    reraise_fetch_errors=True,
                 )
                 or {}
             )
@@ -190,9 +192,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
     def _calculate_overall_severity(self, risks: list[dict[str, Any]]) -> str:
         """Calculate overall severity from individual risk scores."""
-        if not risks:
-            return Severity.LOW.value
-        max_severity = max(r.get("severity_score", 1) for r in risks)
+        max_severity = max(r["severity_score"] for r in risks)
         if max_severity >= 4:
             return Severity.CRITICAL.value
         if max_severity >= 3:
@@ -202,60 +202,48 @@ class MaintainerRiskAnalyzer(Analyzer):
         return Severity.LOW.value
 
     async def _check_pypi(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
-        """Fetch maintainer info from PyPI."""
-        try:
-            response = await client.get(f"{PYPI_API_URL}/{name}/json")
-            if response.status_code != 200:
-                return None
-
-            data = response.json()
-            info = data.get("info", {})
-            releases = data.get("releases", {})
-
-            latest_release_date = None
-            for files in releases.values():
-                for f in files:
-                    upload_time = f.get("upload_time_iso_8601") or f.get("upload_time")
-                    dt = self._parse_iso_datetime(upload_time)
-                    if dt and (latest_release_date is None or dt > latest_release_date):
-                        latest_release_date = dt
-
-            return {
-                "author": info.get("author"),
-                "author_email": info.get("author_email"),
-                "maintainer": info.get("maintainer"),
-                "maintainer_email": info.get("maintainer_email"),
-                "latest_release_date": (latest_release_date.isoformat() if latest_release_date else None),
-                "days_since_release": (
-                    (datetime.now(timezone.utc) - latest_release_date).days if latest_release_date else None
-                ),
-                "release_count": len(releases),
-                "home_page": info.get("home_page"),
-                "project_urls": info.get("project_urls", {}),
-            }
-        except Exception as e:
-            logger.debug(f"PyPI check failed for {name}: {e}")
+        """Maintainer info from PyPI, or None when PyPI has no such project; any other failure raises."""
+        data = await fetch_deps_dev_json(client, f"{PYPI_API_URL}/{name}/json")
+        if data is None:
             return None
+        info = data.get("info", {})
+        releases = data.get("releases", {})
+
+        latest_release_date = None
+        for files in releases.values():
+            for f in files:
+                upload_time = f.get("upload_time_iso_8601") or f.get("upload_time")
+                dt = self._parse_iso_datetime(upload_time)
+                if dt and (latest_release_date is None or dt > latest_release_date):
+                    latest_release_date = dt
+
+        return {
+            "author": info.get("author"),
+            "author_email": info.get("author_email"),
+            "maintainer": info.get("maintainer"),
+            "maintainer_email": info.get("maintainer_email"),
+            "latest_release_date": (latest_release_date.isoformat() if latest_release_date else None),
+            "days_since_release": (
+                (datetime.now(timezone.utc) - latest_release_date).days if latest_release_date else None
+            ),
+            "release_count": len(releases),
+            "home_page": info.get("home_page"),
+            "project_urls": info.get("project_urls", {}),
+        }
 
     async def _check_npm(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
-        """Maintainers and repository of the latest npm release."""
-        try:
-            response = await client.get(f"{NPM_REGISTRY_URL}/{name.replace('/', '%2F')}/latest")
-            if response.status_code != 200:
-                return None
-
-            data = response.json()
-            maintainers = data.get("maintainers") or []
-            repository = data.get("repository")
-            return {
-                "maintainer": ", ".join(m.get("name", "") for m in maintainers),
-                "maintainer_email": ", ".join(m["email"] for m in maintainers if m.get("email")),
-                "maintainer_count": len(maintainers),
-                "repository": repository.get("url") if isinstance(repository, dict) else repository,
-            }
-        except Exception as e:
-            logger.debug(f"npm check failed for {name}: {e}")
+        """Maintainers and repository of the latest npm release, or None when npm has no such package."""
+        data = await fetch_deps_dev_json(client, f"{NPM_REGISTRY_URL}/{name.replace('/', '%2F')}/latest")
+        if data is None:
             return None
+        maintainers = data.get("maintainers") or []
+        repository = data.get("repository")
+        return {
+            "maintainer": ", ".join(m.get("name", "") for m in maintainers),
+            "maintainer_email": ", ".join(m["email"] for m in maintainers if m.get("email")),
+            "maintainer_count": len(maintainers),
+            "repository": repository.get("url") if isinstance(repository, dict) else repository,
+        }
 
     async def _check_github(
         self, client: InstrumentedAsyncClient, repo: str, github_token: str | None

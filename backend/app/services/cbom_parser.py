@@ -1,17 +1,14 @@
-"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped and counted."""
+"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped."""
 
 import hashlib
+import json
 import logging
 import re
+from collections import Counter
 from datetime import datetime
 from typing import Any
 
-from app.schemas.cbom import (
-    CryptoAssetType,
-    CryptoPrimitive,
-    ParsedCBOM,
-    ParsedCryptoAsset,
-)
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
 
 logger = logging.getLogger(__name__)
 
@@ -51,57 +48,52 @@ def _count_component_subtree(comp: dict[str, Any]) -> int:
     return count
 
 
-def parse_cbom(raw: dict[str, Any]) -> ParsedCBOM:
+def parse_cbom(raw: dict[str, Any]) -> list[ParsedCryptoAsset]:
     components, _, _ = flatten_cyclonedx_components(raw.get("components"))
-    tool_meta = (raw.get("metadata") or {}).get("tools") or []
-    tool_name, tool_version = _tool_from_metadata(tool_meta)
-
-    total = sum(1 for c in components if c.get("type") == "cryptographic-asset")
-    assets = parse_crypto_components(components)
-
-    return ParsedCBOM(
-        format_version=raw.get("specVersion"),
-        tool_name=tool_name,
-        tool_version=tool_version,
-        created_at=(raw.get("metadata") or {}).get("timestamp"),
-        assets=assets,
-        total_components=total,
-        parsed_components=len(assets),
-        skipped_components=total - len(assets),
-    )
+    return parse_crypto_components(components)
 
 
-def _tool_from_metadata(tools: Any) -> tuple[str | None, str | None]:
-    """CycloneDX allows metadata.tools to be either the modern object form ({"components": [...]}) or the
-    legacy list form ([{...}]). Both carry the tool as a component dict with "name"/"version"."""
-    tool: dict[str, Any] | None = None
-    if isinstance(tools, dict):
-        comps = tools.get("components") or []
-        if comps:
-            tool = comps[0]
-    elif isinstance(tools, list) and tools:
-        tool = tools[0]
+# CycloneDX 1.6 fields naming another component by bom-ref; generators such as cbomkit-theia draw those at random.
+_REF_FIELDS = frozenset(
+    {"bom-ref", "signatureAlgorithmRef", "subjectPublicKeyRef", "algorithmRef", "algorithms", "cryptoRefArray"}
+    | {"encr", "prf", "integ", "ke", "auth"}
+)
 
-    if not isinstance(tool, dict):
-        return None, None
 
-    name = tool.get("name")
-    version = tool.get("version")
-    return (
-        str(name) if name is not None else None,
-        str(version) if version is not None else None,
-    )
+def _without_refs(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _without_refs(item) for key, item in value.items() if key not in _REF_FIELDS}
+    if isinstance(value, list):
+        return [_without_refs(item) for item in value]
+    return value
+
+
+def _content_ref(comp: dict[str, Any]) -> str:
+    """The asset's ref from its content, so a rerun keeps its finding ids, waivers and first-seen dates."""
+    return "sha-" + hashlib.sha256(json.dumps(_without_refs(comp), sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _remapped(raw: Any, refs: dict[str, str]) -> Any:
+    """A reference to another asset of the document, by that asset's content ref when it is there."""
+    return refs.get(raw, raw)
 
 
 def parse_crypto_components(
     components: list[dict[str, Any]],
 ) -> list[ParsedCryptoAsset]:
+    crypto: list[tuple[dict[str, Any], str]] = []
+    seen: Counter[str] = Counter()
+    for comp in components:
+        if comp.get("type") == "cryptographic-asset":
+            content_ref = _content_ref(comp)
+            seen[content_ref] += 1
+            # Identical assets stay apart; which of them takes the suffix does not matter.
+            crypto.append((comp, content_ref if seen[content_ref] == 1 else f"{content_ref}-{seen[content_ref]}"))
+    refs = {ref: content_ref for comp, content_ref in crypto if isinstance(ref := comp.get("bom-ref"), str)}
     out: list[ParsedCryptoAsset] = []
-    for idx, comp in enumerate(components):
-        if comp.get("type") != "cryptographic-asset":
-            continue
+    for comp, content_ref in crypto:
         try:
-            asset = _parse_one(comp, idx)
+            asset = _parse_one(comp, content_ref, refs)
             if asset is not None:
                 out.append(asset)
         except Exception as e:
@@ -109,7 +101,7 @@ def parse_crypto_components(
     return out
 
 
-def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
+def _parse_one(comp: dict[str, Any], content_ref: str, refs: dict[str, str]) -> ParsedCryptoAsset | None:
     name = comp.get("name")
     if not name:
         return None
@@ -126,10 +118,8 @@ def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
         logger.debug("cbom_parser: unknown assetType %r on %s, skipping", asset_type_raw, name)
         return None
 
-    bom_ref = comp.get("bom-ref") or _synthesize_bom_ref(comp, idx)
-
     asset = ParsedCryptoAsset(
-        bom_ref=bom_ref,
+        bom_ref=content_ref,
         name=name,
         asset_type=asset_type,
         properties=component_properties(comp),
@@ -139,71 +129,31 @@ def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
     if asset_type == CryptoAssetType.ALGORITHM:
         _populate_algorithm(asset, crypto_props.get("algorithmProperties") or {})
     elif asset_type == CryptoAssetType.CERTIFICATE:
-        _populate_certificate(asset, crypto_props.get("certificateProperties") or {})
+        _populate_certificate(asset, crypto_props.get("certificateProperties") or {}, refs)
     elif asset_type == CryptoAssetType.PROTOCOL:
         _populate_protocol(asset, crypto_props.get("protocolProperties") or {})
     elif asset_type == CryptoAssetType.RELATED_CRYPTO_MATERIAL:
         material = crypto_props.get("relatedCryptoMaterialProperties") or {}
         asset.key_size_bits = _coerce_positive_int(material.get("size"))
-        asset.algorithm_ref = material.get("algorithmRef")
+        asset.algorithm_ref = _remapped(material.get("algorithmRef"), refs)
 
     _populate_evidence(asset, comp.get("evidence") or {})
     return asset
 
 
+_KEY_SIZE_PROPERTY_NAMES = ("cryptography:key_size", "cryptography:keySize", "key_size", "keySize")
+
+
 def _populate_algorithm(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
-    raw_prim = props.get("primitive")
-    asset.primitive = _parse_primitive(raw_prim)
+    asset.primitive = _parse_primitive(props.get("primitive"))
     asset.variant = props.get("variant")
     asset.parameter_set_identifier = props.get("parameterSetIdentifier")
     asset.mode = props.get("mode")
     asset.padding = props.get("padding")
     asset.curve = props.get("curve")
-
-    asset.key_size_bits = _resolve_key_size_bits(asset, props)
-
-
-_KEY_SIZE_PROPERTY_NAMES = (
-    "cryptography:key_size",
-    "cryptography:keySize",
-    "key_size",
-    "keySize",
-)
-
-
-def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: dict[str, Any]) -> int | None:
-    """parameterSetIdentifier is a CycloneDX 1.6 string (e.g. "P-256", "1024"); treat it as a key size only
-    when it's a pure positive integer, else fall back to known custom properties. Unparseable leaves
-    key_size_bits None and the analyzer skips the asset."""
-    asset_label = asset.bom_ref or asset.name or "<unknown>"
-
-    coerced = _coerce_positive_int(props.get("parameterSetIdentifier"))
-    if coerced is not None:
-        return coerced
-    raw = props.get("parameterSetIdentifier")
-    if raw is not None:
-        logger.debug(
-            "cbom_parser: parameterSetIdentifier=%r not a positive integer for asset %s; "
-            "falling back to properties for key size",
-            raw,
-            asset_label,
-        )
-
-    for key in _KEY_SIZE_PROPERTY_NAMES:
-        value = asset.properties.get(key)
-        if value is None:
-            continue
-        coerced = _coerce_positive_int(value)
-        if coerced is not None:
-            return coerced
-        logger.debug(
-            "cbom_parser: property %s=%r not a positive integer for asset %s",
-            key,
-            value,
-            asset_label,
-        )
-
-    return None
+    # parameterSetIdentifier is a string ("P-256", "1024"): only a positive integer is a key size, else a property.
+    candidates = (props.get("parameterSetIdentifier"), *(asset.properties.get(k) for k in _KEY_SIZE_PROPERTY_NAMES))
+    asset.key_size_bits = next((size for raw in candidates if (size := _coerce_positive_int(raw)) is not None), None)
 
 
 def _coerce_positive_int(raw: Any) -> int | None:
@@ -226,13 +176,13 @@ def _parse_primitive(raw: Any) -> CryptoPrimitive | None:
         return CryptoPrimitive.OTHER
 
 
-def _populate_certificate(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
+def _populate_certificate(asset: ParsedCryptoAsset, props: dict[str, Any], refs: dict[str, str]) -> None:
     asset.subject_name = props.get("subjectName")
     asset.issuer_name = props.get("issuerName")
     asset.not_valid_before = _parse_iso_date(props.get("notValidBefore"))
     asset.not_valid_after = _parse_iso_date(props.get("notValidAfter"))
-    asset.signature_algorithm_ref = props.get("signatureAlgorithmRef")
-    asset.subject_public_key_ref = props.get("subjectPublicKeyRef")
+    asset.signature_algorithm_ref = _remapped(props.get("signatureAlgorithmRef"), refs)
+    asset.subject_public_key_ref = _remapped(props.get("subjectPublicKeyRef"), refs)
     asset.certificate_format = props.get("certificateFormat")
 
 
@@ -291,8 +241,3 @@ def _parse_iso_date(raw: Any) -> datetime | None:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
-
-
-def _synthesize_bom_ref(comp: dict[str, Any], idx: int) -> str:
-    basis = f"{comp.get('name', '')}|{idx}|{comp.get('cryptoProperties', {})}"
-    return "synth-" + hashlib.sha256(basis.encode()).hexdigest()[:16]

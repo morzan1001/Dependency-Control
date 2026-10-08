@@ -2,12 +2,15 @@
 
 import json
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from app.schemas.sbom import ParsedDependency, SBOMFormat
+from app.services.analyzers.end_of_life import collect_products_to_check
 from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.sbom_parser import (
     SBOMParser,
@@ -16,6 +19,18 @@ from app.services.sbom_parser import (
     parse_sbom,
 )
 from tests.helpers.comparisons import counted_str_type
+
+
+def test_the_parser_imports_in_a_fresh_interpreter():
+    imported = subprocess.run(
+        [sys.executable, "-c", "import app.services.sbom_parser"],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert imported.returncode == 0, imported.stderr
 
 
 class TestIsUrl:
@@ -70,6 +85,10 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "sbom"
 
 def _fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())
+
+
+def _accounted(result) -> int:
+    return len(result.dependencies) + result.skipped_components + result.merged_components
 
 
 def _fixture_with(name: str, field: str, entry: object) -> dict:
@@ -281,6 +300,53 @@ class TestDirectnessOfRealGraphs:
             "ssl_client",
         }
 
+    def test_the_spdx_image_root_is_skipped_and_its_distro_becomes_the_operating_system(self):
+        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+        components = [dep.model_dump() for dep in result.dependencies]
+
+        assert [dep.purl for dep in result.dependencies if dep.type == "oci"] == []
+        assert result.skipped_reasons["root-component"] == 1
+        assert [
+            (dep.name, dep.version, dep.source_type, dep.source_target)
+            for dep in result.dependencies
+            if dep.type == "operating-system"
+        ] == [("alpine", "3.20.10", "image", "alpine:3.20")]
+        assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
+
+    @pytest.mark.parametrize("fixture", ["alpine.syft.json", "alpine.syft.cdx.json", "alpine.syft.spdx.json"])
+    def test_every_syft_format_of_one_image_hands_its_distro_to_end_of_life(self, fixture):
+        result = parse_sbom(_fixture(fixture))
+        components = [dep.model_dump() for dep in result.dependencies]
+
+        assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
+
+    @pytest.mark.parametrize("distro", [{"id": 5, "versionID": ["3.20"], "prettyName": 7}, "alpine", {}])
+    def test_a_syft_distro_without_an_id_and_version_adds_no_operating_system(self, distro):
+        sbom = _fixture("alpine.syft.json")
+        sbom["distro"] = distro
+
+        result = parse_sbom(sbom)
+
+        assert len(result.dependencies) == 14
+        assert not [dep for dep in result.dependencies if dep.type == "operating-system"]
+
+    def test_an_spdx_operating_system_package_is_not_doubled_by_the_purl_distro(self):
+        sbom = _fixture("alpine.syft.spdx.json")
+        sbom["packages"].append(
+            {
+                "SPDXID": "SPDXRef-OperatingSystem-alpine",
+                "name": "alpine",
+                "versionInfo": "3.20.9",
+                "primaryPackagePurpose": "OPERATING-SYSTEM",
+            }
+        )
+
+        result = parse_sbom(sbom)
+
+        assert [(dep.name, dep.version) for dep in result.dependencies if dep.name == "alpine"] == [
+            ("alpine", "3.20.9")
+        ]
+
 
 class TestMalformedDependencyGraph:
     """A graph entry of the wrong shape fails the document in every format instead of silently dropping an edge."""
@@ -490,7 +556,6 @@ class TestCycloneDXParsing:
         result = self.parser.parse(cyclonedx_minimal)
         assert result.format == SBOMFormat.CYCLONEDX
         assert len(result.dependencies) == 2
-        assert result.parsed_components == 2
 
     def test_component_names(self, cyclonedx_minimal):
         result = self.parser.parse(cyclonedx_minimal)
@@ -529,9 +594,9 @@ class TestCycloneDXParsing:
             "dependencies": [],
         }
         result = self.parser.parse(sbom)
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_components == 1
-        assert result.total_components == 2
+        assert _accounted(result) == 2
 
     def test_file_component_skipped(self):
         sbom = {
@@ -547,7 +612,7 @@ class TestCycloneDXParsing:
         result = self.parser.parse(sbom)
         assert [d.name for d in result.dependencies] == ["valid"]
         assert result.skipped_components == 1
-        assert result.total_components == 2
+        assert _accounted(result) == 2
 
     def test_purl_constructed_when_missing(self):
         sbom = {
@@ -711,12 +776,6 @@ class TestParseSBOMConvenience:
         assert result.format == SBOMFormat.UNKNOWN
         assert len(result.dependencies) == 0
 
-    def test_total_components_count(self, cyclonedx_minimal):
-        result = parse_sbom(cyclonedx_minimal)
-        assert result.total_components == (
-            result.parsed_components + result.skipped_components + result.merged_components
-        )
-
 
 def _nested_npm_sbom():
     """Mirrors prod cyclonedx-npm 6.0.1 output: sub-dependencies nested in
@@ -798,8 +857,8 @@ class TestCycloneDXNestedComponents:
 
     def test_nested_components_count_toward_total(self):
         result = self.parser.parse(_nested_npm_sbom())
-        assert result.total_components == 3
-        assert result.parsed_components == 3
+        assert _accounted(result) == 3
+        assert len(result.dependencies) == 3
         assert result.skipped_components == 0
 
     def test_nested_component_directness_resolved_from_graph(self):
@@ -853,9 +912,9 @@ class TestCycloneDXNestedComponents:
         }
         result = self.parser.parse(sbom)
         names = {d.name for d in result.dependencies}
-        assert result.parsed_components == 100
+        assert len(result.dependencies) == 100
         assert result.skipped_components == 50
-        assert result.total_components == 150
+        assert _accounted(result) == 150
         assert {"level-0", "level-99"} <= names
         assert "level-100" not in names
 
@@ -865,7 +924,7 @@ class TestCycloneDXNestedComponents:
         result = self.parser.parse(sbom)
         assert "/app/index.js" not in [d.name for d in result.dependencies]
         assert result.skipped_components == 1
-        assert result.total_components == 4
+        assert _accounted(result) == 4
 
 
 def _syft_image_sbom_with_duplicate_package():
@@ -928,10 +987,8 @@ class TestDuplicateComponentMerge:
     def test_duplicates_collapse_to_one_document(self):
         result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
         assert len(result.dependencies) == 1
-        assert result.parsed_components == 1
         assert result.merged_components == 1
         assert result.skipped_components == 0
-        assert result.total_components == 2
 
     def test_merged_locations_are_unioned(self):
         result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
@@ -1507,6 +1564,34 @@ class TestMalformedComponentResilience:
         result = self.parser.parse(sbom)
         assert [d.name for d in result.dependencies] == ["first", "second", "third"]
 
+    @pytest.mark.parametrize(
+        "malform",
+        [
+            pytest.param(lambda sbom: sbom["components"][0].update(properties=5), id="component-properties"),
+            pytest.param(lambda sbom: sbom["metadata"].update(properties=5), id="metadata-properties"),
+            pytest.param(lambda sbom: sbom["metadata"]["component"].update(name=2024), id="application-name"),
+            pytest.param(
+                lambda sbom: sbom["metadata"]["component"].update(name=2024, type="container"), id="container-name"
+            ),
+        ],
+    )
+    def test_one_malformed_document_field_keeps_every_component(self, malform):
+        sbom = _fixture("mono.trivy.cdx.json")
+        malform(sbom)
+
+        result = self.parser.parse(sbom)
+
+        assert len(result.dependencies) == 9
+
+    def test_a_numeric_spdx_root_name_keeps_every_package(self):
+        sbom = _spdx_github_export()
+        sbom["packages"][0]["name"] = 2024
+
+        result = self.parser.parse(sbom)
+
+        assert len(result.dependencies) == 3
+        assert result.source_target is None
+
     def test_crashing_component_is_skipped_and_counted_others_survive(self):
         sbom = _three_component_sbom(
             {"type": "library", "name": "second", "version": "2.0", "purl": "pkg:pypi/second@2.0", "licenses": 5}
@@ -1515,7 +1600,7 @@ class TestMalformedComponentResilience:
         assert [d.name for d in result.dependencies] == ["first", "third"]
         assert result.skipped_components == 1
         assert result.skipped_reasons.get("parse-error") == 1
-        assert result.total_components == 3
+        assert _accounted(result) == 3
 
     def test_non_dict_component_is_counted(self):
         sbom = _three_component_sbom({"type": "library", "name": "second", "version": "2.0"})
@@ -1523,7 +1608,7 @@ class TestMalformedComponentResilience:
         result = self.parser.parse(sbom)
         assert len(result.dependencies) == 3
         assert result.skipped_components == 1
-        assert result.total_components == 4
+        assert _accounted(result) == 4
 
     def test_null_licenses_and_hashes_are_not_fatal(self):
         sbom = _three_component_sbom(
@@ -1612,7 +1697,7 @@ class TestMalformedComponentResilience:
         result = parse_sbom(sbom)
         assert [d.name for d in result.dependencies] == ["real-pkg"]
         assert result.skipped_components == 0
-        assert result.total_components == 1
+        assert _accounted(result) == 1
 
 
 def _spdx_github_export() -> dict:
@@ -2220,7 +2305,7 @@ class TestSyftArtifactMetadata:
 
 
 class TestComponentAccounting:
-    """Every input element the parser sees must land in total_components with a labelled skip reason."""
+    """Every input element the parser sees is a dependency, a labelled skip or a merge."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -2238,9 +2323,9 @@ class TestComponentAccounting:
                 ]
             )
         )
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_reasons.get("cryptographic-asset") == 1
-        assert result.total_components == 2
+        assert _accounted(result) == 2
         assert len(result.crypto_assets) == 1
 
     def test_syft_files_array_is_counted(self):
@@ -2252,9 +2337,9 @@ class TestComponentAccounting:
             "files": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}, {"id": "f4"}, {"id": "f5"}],
         }
         result = self.parser.parse(sbom)
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_reasons.get("file") == 5
-        assert result.total_components == 6
+        assert _accounted(result) == 6
 
     def test_spdx_files_array_is_counted(self):
         sbom = {
@@ -2265,15 +2350,9 @@ class TestComponentAccounting:
             "relationships": [],
         }
         result = self.parser.parse(sbom)
-        assert result.parsed_components == 1
+        assert len(result.dependencies) == 1
         assert result.skipped_reasons.get("file") == 1
-        assert result.total_components == 2
-
-    def test_total_still_balances_with_merges(self):
-        result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
-        assert result.total_components == (
-            result.parsed_components + result.skipped_components + result.merged_components
-        )
+        assert _accounted(result) == 2
 
 
 class TestDetectFormatMalformed:
@@ -2644,6 +2723,38 @@ class TestCycloneDXParentRefs:
         assert nodes["express"].child_ids == [nodes["body-parser"].id]
         assert graph.roots == [nodes["express"].id]
 
+    def test_a_stored_dependency_keeps_every_parsed_field_and_clips_the_free_text(self):
+        from app.services.dependency_store import _parsed_dep_to_dependency
+
+        long_text = "x" * 3000
+        clipped = ("license", "license_url", "description", "author", "publisher", "homepage", "repository_url")
+        parsed = ParsedDependency(
+            name="lib",
+            version="1.0",
+            purl="pkg:npm/lib@1.0",
+            type="npm",
+            scope="required",
+            direct=True,
+            parent_components=["pkg:npm/app@1.0"],
+            source_type="application",
+            source_target="app",
+            layer_digest="sha256:abc",
+            found_by="javascript-lock-cataloger",
+            locations=["package-lock.json"],
+            cpes=["cpe:2.3:a:lib:lib:1.0:*:*:*:*:*:*:*"],
+            group="@scope",
+            hashes={"sha256": "a" * 64},
+            properties={"aquasecurity:trivy:SrcName": "lib"},
+            download_url=long_text,
+            **dict.fromkeys(clipped, long_text),
+        )
+        now = datetime.now(timezone.utc)
+
+        stored = _parsed_dep_to_dependency(parsed, "p", "s", now).model_dump(exclude={"id"})
+
+        expected = {**parsed.model_dump(), **dict.fromkeys((*clipped, "download_url"), "x" * 2048)}
+        assert stored == {**expected, "project_id": "p", "scan_id": "s", "created_at": now, "license_category": None}
+
     def test_chain_and_cycle_analysis_read_a_syft_cyclonedx_graph(self):
         import itertools
 
@@ -2665,7 +2776,7 @@ class TestCycloneDXParentRefs:
                 {"ref": ref["p3"], "dependsOn": [ref["p2"]]},
             ],
         }
-        dependencies = [d.to_dict() for d in parse_sbom(sbom).dependencies]
+        dependencies = [d.model_dump() for d in parse_sbom(sbom).dependencies]
 
         titles = sorted(r.title for r in analyze_deep_dependency_chains(dependencies, max_dependency_depth=3))
 

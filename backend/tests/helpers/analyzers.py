@@ -7,7 +7,7 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.services.analysis import engine, registry
-from app.services.analyzers import Analyzer
+from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 from app.services.sbom_parser import parse_sbom
@@ -30,7 +30,7 @@ async def analyze_cyclonedx(
     """Run the analyzer as the engine does: on the parser's reading of a CycloneDX document with these components."""
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
     return await analyzer.analyze(
-        sbom, settings, [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
+        sbom, settings, [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
     )
 
 

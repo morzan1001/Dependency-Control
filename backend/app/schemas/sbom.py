@@ -1,7 +1,6 @@
 """Pydantic models for normalized SBOM representations (CycloneDX, SPDX, Syft)."""
 
 from enum import Enum
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -72,9 +71,6 @@ class ParsedDependency(BaseModel):
     # Additional properties from SBOM
     properties: dict[str, str] = Field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
-        return self.model_dump()
-
 
 class ParsedSBOM(BaseModel):
     """Normalized SBOM representation."""
@@ -89,8 +85,6 @@ class ParsedSBOM(BaseModel):
     dependencies: list[ParsedDependency] = Field(default_factory=list)
 
     # Statistics
-    total_components: int = 0
-    parsed_components: int = 0
     skipped_components: int = 0
     merged_components: int = 0
     skipped_reasons: dict[str, int] = Field(default_factory=dict)

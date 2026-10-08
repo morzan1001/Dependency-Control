@@ -13,7 +13,7 @@ from app.schemas.compliance import ControlStatus, ReportFramework
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.scopes import ResolvedScope
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.crypto_policy.seeder import seed_crypto_policies

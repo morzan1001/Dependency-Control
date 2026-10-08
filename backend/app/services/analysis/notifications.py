@@ -168,24 +168,15 @@ async def send_scan_notifications(
             )
 
             results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
-            slack_blocks = build_analysis_completed_blocks(
-                project_name=project.name,
-                scan_id=scan_id,
-                total_findings=len(findings),
-                severity_counts=severity_counts,
-                results_summary=results_summary,
-                analyzer_count=analyzer_count,
-                scan_link=link,
-            )
-            mm_props = mm_analysis_props(
-                project_name=project.name,
-                scan_id=scan_id,
-                total_findings=len(findings),
-                severity_counts=severity_counts,
-                results_summary=results_summary,
-                analyzer_count=analyzer_count,
-                scan_link=link,
-            )
+            completed_card: dict[str, Any] = {
+                "project_name": project.name,
+                "scan_id": scan_id,
+                "total_findings": len(findings),
+                "severity_counts": severity_counts,
+                "results_summary": results_summary,
+                "analyzer_count": analyzer_count,
+                "scan_link": link,
+            }
             await notification_service.notify_project_members(
                 project=project,
                 event_type=NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
@@ -193,8 +184,8 @@ async def send_scan_notifications(
                 message=f"Scan {scan_id} completed.\nFound {len(findings)} issues.\nResults:\n{results_text}",
                 db=db,
                 html_message=html_content,
-                slack_blocks=slack_blocks,
-                mattermost_props=mm_props,
+                slack_blocks=build_analysis_completed_blocks(**completed_card),
+                mattermost_props=mm_analysis_props(**completed_card),
             )
         except Exception as e:
             logger.exception("Failed to send analysis_completed notification: %s", e)
@@ -251,24 +242,15 @@ async def send_scan_notifications(
             high_epss_count=len(high_epss_vulns),
         )
 
-        vuln_slack_blocks = build_vulnerability_found_blocks(
-            project_name=project.name,
-            kev_count=len(kev_vulns),
-            high_epss_count=len(high_epss_vulns),
-            priority_count=len(priority_vulns),
-            critical_count=critical_count,
-            top_vulns=top_vulns,
-            scan_link=link,
-        )
-        vuln_mm_props = mm_vulnerability_props(
-            project_name=project.name,
-            kev_count=len(kev_vulns),
-            high_epss_count=len(high_epss_vulns),
-            priority_count=len(priority_vulns),
-            critical_count=critical_count,
-            top_vulns=top_vulns,
-            scan_link=link,
-        )
+        vulnerability_card: dict[str, Any] = {
+            "project_name": project.name,
+            "kev_count": len(kev_vulns),
+            "high_epss_count": len(high_epss_vulns),
+            "priority_count": len(priority_vulns),
+            "critical_count": critical_count,
+            "top_vulns": top_vulns,
+            "scan_link": link,
+        }
         await notification_service.notify_project_members(
             project=project,
             event_type=NOTIFICATION_EVENT_VULNERABILITY_FOUND,
@@ -276,8 +258,8 @@ async def send_scan_notifications(
             message=message,
             db=db,
             html_message=vuln_html,
-            slack_blocks=vuln_slack_blocks,
-            mattermost_props=vuln_mm_props,
+            slack_blocks=build_vulnerability_found_blocks(**vulnerability_card),
+            mattermost_props=mm_vulnerability_props(**vulnerability_card),
         )
 
         logger.info(

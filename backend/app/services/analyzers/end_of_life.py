@@ -119,13 +119,12 @@ def _find_active_cycle(cycles: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
-async def _fetch_list(client: InstrumentedAsyncClient, product: str, item_type: type) -> list[Any] | None:
+async def _fetch_list(client: InstrumentedAsyncClient, product: str, item_type: type) -> list[Any]:
     """``/api/<product>.json`` when it is a list of ``item_type``; [] for an unknown product or another shape."""
     response = await client.get(f"{EOL_API_URL}/{quote(product, safe='')}.json")
     if response.status_code == 404:
         return []
-    if response.status_code != 200:
-        return None
+    response.raise_for_status()
     data = response.json()
     return data if isinstance(data, list) and all(isinstance(item, item_type) for item in data) else []
 
@@ -167,8 +166,10 @@ class EndOfLifeAnalyzer(Analyzer):
             )
 
         results = []
+        skipped: set[str] = set()
         for product, cycles in zip(products, cycle_lists, strict=True):
             if not isinstance(cycles, list):
+                skipped.update(component for component, _, _ in products_to_check[product])
                 continue
             recommended = _find_active_cycle(cycles)
             for component, version, distro_build in products_to_check[product]:
@@ -176,7 +177,10 @@ class EndOfLifeAnalyzer(Analyzer):
                     results.append(
                         self._create_eol_issue(component, version, product, cycle, recommended, distro_build)
                     )
-        return {"eol_issues": results}
+        output: dict[str, Any] = {"eol_issues": results}
+        if skipped:
+            output["partial_components_skipped"] = len(skipped)
+        return output
 
     def _apply_settings(self, settings: dict[str, Any] | None) -> None:
         """Bind this project's thresholds to this run's instance."""

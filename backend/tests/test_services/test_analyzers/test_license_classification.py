@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
 
 

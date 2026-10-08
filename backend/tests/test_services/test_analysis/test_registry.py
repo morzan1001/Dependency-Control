@@ -2,7 +2,8 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES, CryptoPolicySource, CryptoRule
-from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, crypto_evaluators
+from app.services.analysis import engine
+from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, analyzer_factories, crypto_evaluators
 from app.services.crypto_policy.resolver import EffectivePolicy
 
 
@@ -39,3 +40,11 @@ def test_the_crypto_analyzers_are_exactly_the_evaluators_and_a_project_cannot_se
     assert frozenset(crypto_evaluators({})) == CRYPTO_ANALYZERS
     assert {ft.value for ft in RULE_DRIVEN_FINDING_TYPES} <= CRYPTO_ANALYZERS
     assert not CRYPTO_ANALYZERS & SELECTABLE_ANALYZERS
+
+
+def test_the_enrichments_are_selectable_engine_rows_that_no_analyzer_builds():
+    enrichments = {"epss_kev", "reachability"}
+
+    assert enrichments <= SELECTABLE_ANALYZERS
+    assert enrichments <= engine._ENGINE_RESULT_NAMES
+    assert not enrichments & set(analyzer_factories)

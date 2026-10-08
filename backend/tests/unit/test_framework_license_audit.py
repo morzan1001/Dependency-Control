@@ -119,7 +119,7 @@ async def test_waived_finding_produces_waived_control():
 async def test_analyzer_output_reaches_the_identified_control():
     """The analyzer counts unlicensed components; the control has to see them as findings."""
     from app.services.aggregation import ResultAggregator
-    from app.services.analyzers.license_compliance import LicenseAnalyzer
+    from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
     from app.services.normalizers.license import normalize_license
 
     components = [
@@ -149,7 +149,7 @@ _RESTRICTED_LICENSES = [
 
 async def _analyzer_statuses(policy: dict) -> dict[str, str]:
     from app.services.aggregation import ResultAggregator
-    from app.services.analyzers.license_compliance import LicenseAnalyzer
+    from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
     from app.services.normalizers.license import normalize_license
 
     result = await analyze_cyclonedx(LicenseAnalyzer(), _RESTRICTED_LICENSES, policy)
