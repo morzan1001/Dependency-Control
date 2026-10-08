@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -23,6 +23,27 @@ vi.mock("@/api/cryptoAnalytics", () => ({
   getCryptoHotspots: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
   getCryptoTrends: vi.fn().mockResolvedValue({ points: [] }),
 }));
+
+vi.mock("@/api/pqcMigration", () => ({
+  getPQCMigrationPlan: vi.fn().mockResolvedValue({
+    scope: "user",
+    scope_id: null,
+    generated_at: "2026-01-01T00:00:00Z",
+    items: [],
+    mappings_version: 3,
+    summary: {
+      total_items: 0,
+      items_returned: 0,
+      status_counts: { migrate_now: 1, migrate_soon: 0, plan_migration: 0, monitor: 0 },
+      earliest_deadline: null,
+    },
+  }),
+}));
+vi.mock("@/api/compliance", () => ({
+  listReports: vi.fn().mockResolvedValue({ reports: [] }),
+  createReport: vi.fn(),
+}));
+vi.mock("@/context/useAuth", () => ({ useAuth: () => ({ hasPermission: () => false }) }));
 
 function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -68,5 +89,33 @@ describe("CryptoAnalyticsTab trends range", () => {
     // Day-boundary normalized: no millisecond precision leaks into the query key.
     expect(last.end).toMatch(/:00:00\.000Z$/);
     expect(last.start).toMatch(/:00:00\.000Z$/);
+  });
+});
+
+describe("CryptoAnalyticsTab compliance export", () => {
+  // Radix activates a tab on mouseDown.
+  function openTab(name: RegExp) {
+    const tab = screen.getByRole("tab", { name });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+  }
+
+  it("lands on the compliance view with a PQC migration report prefilled, once", async () => {
+    renderTab();
+
+    openTab(/PQC Migration/);
+    fireEvent.click(await screen.findByRole("button", { name: /Export as Compliance Report/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    // The open dialog hides the rest of the page from the accessibility tree.
+    expect(screen.getByRole("tab", { name: /Compliance Reports/, hidden: true })).toHaveAttribute("data-state", "active");
+    expect(within(dialog).getByText("PQC Migration Plan")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    openTab(/Hotspots/);
+    openTab(/Compliance Reports/);
+
+    expect(await screen.findByText("No reports yet")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

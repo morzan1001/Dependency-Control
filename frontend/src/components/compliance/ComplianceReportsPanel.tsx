@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
@@ -9,10 +9,11 @@ import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
 
-export function ComplianceReportsPanel() {
-  const newReportDialog = useDialogState();
+// The tab mounts this panel on activation, so an export's prefill opens the dialog at mount.
+export function ComplianceReportsPanel({ prefillFramework }: Readonly<{ prefillFramework?: ReportFramework }>) {
+  const newReportDialog = useDialogState(prefillFramework !== undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [prefillFramework, setPrefillFramework] = useState<ReportFramework | undefined>();
+  const [framework, setFramework] = useState(prefillFramework);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["compliance-reports"],
@@ -24,19 +25,6 @@ export function ComplianceReportsPanel() {
     },
   });
 
-  useEffect(() => {
-    const onPrefill = () => {
-      const stored = localStorage.getItem("prefill_compliance_framework") as ReportFramework | null;
-      if (stored) {
-        setPrefillFramework(stored);
-        newReportDialog.openDialog();
-        localStorage.removeItem("prefill_compliance_framework");
-      }
-    };
-    globalThis.addEventListener("goto-compliance-reports-tab", onPrefill);
-    return () => globalThis.removeEventListener("goto-compliance-reports-tab", onPrefill);
-  }, [newReportDialog]);
-
   const reports = data?.reports ?? [];
   const selected = reports.find((r) => r._id === selectedId) ?? null;
 
@@ -46,7 +34,7 @@ export function ComplianceReportsPanel() {
         <div className="text-sm text-muted-foreground">
           {reports.length} report(s)
         </div>
-        <Button onClick={() => { setPrefillFramework(undefined); newReportDialog.openDialog(); }}>
+        <Button onClick={() => { setFramework(undefined); newReportDialog.openDialog(); }}>
           Generate report
         </Button>
       </div>
@@ -98,7 +86,7 @@ export function ComplianceReportsPanel() {
       </div>
 
       {newReportDialog.open && (
-        <NewReportDialog onClose={newReportDialog.closeDialog} defaultFramework={prefillFramework} />
+        <NewReportDialog onClose={newReportDialog.closeDialog} defaultFramework={framework} />
       )}
       <ReportDetailDrawer report={selected} onClose={() => setSelectedId(null)} />
     </div>

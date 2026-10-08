@@ -8,7 +8,7 @@ import { MigrationItemDetailDrawer } from "./MigrationItemDetailDrawer";
 import { formatDate } from "@/lib/utils";
 import type { MigrationItem } from "@/types/pqcMigration";
 
-export function PQCMigrationPanel() {
+export function PQCMigrationPanel({ onExportReport }: Readonly<{ onExportReport: () => void }>) {
   const [selected, setSelected] = useState<MigrationItem | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["pqc-migration", "user"],
@@ -41,7 +41,9 @@ export function PQCMigrationPanel() {
           • mappings v{data.mappings_version}
         </div>
         <div className="ml-auto">
-          <ExportAsReportButton />
+          <Button variant="outline" size="sm" onClick={onExportReport}>
+            Export as Compliance Report
+          </Button>
         </div>
       </div>
       <MigrationPlanTable items={data.items} onSelect={setSelected} />
@@ -58,49 +60,5 @@ function SummaryCard({ label, value, color }: Readonly<{ label: string; value: n
         {value}
       </div>
     </Card>
-  );
-}
-
-// The compliance panel and its "goto-compliance-reports-tab" listener are unmounted until this tab is active, so activate the tab before dispatching the prefill event.
-const COMPLIANCE_TAB_VALUE = "compliance-reports";
-
-function activateComplianceTab(): boolean {
-  // Radix trigger ids end with `-trigger-${value}`; the value suffix is stable though the baseId is opaque.
-  const trigger = document.querySelector<HTMLElement>(
-    `[role="tab"][id$="-trigger-${COMPLIANCE_TAB_VALUE}"]`,
-  );
-  if (trigger) {
-    // Radix activates a tab on mousedown/focus, not a bare click().
-    trigger.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }),
-    );
-    trigger.focus();
-    trigger.click();
-    return true;
-  }
-  return false;
-}
-
-function ExportAsReportButton() {
-  const handleClick = () => {
-    localStorage.setItem("prefill_compliance_framework", "pqc-migration-plan");
-    activateComplianceTab();
-    // The panel attaches its listener in a mount effect (after paint), so retry until it consumes the intent (clears the key) or we give up.
-    let attempts = 0;
-    const fire = () => {
-      window.dispatchEvent(new CustomEvent("goto-compliance-reports-tab"));
-      if (
-        ++attempts < 10 &&
-        localStorage.getItem("prefill_compliance_framework")
-      ) {
-        setTimeout(fire, 50);
-      }
-    };
-    setTimeout(fire, 0);
-  };
-  return (
-    <Button variant="outline" size="sm" onClick={handleClick}>
-      Export as Compliance Report
-    </Button>
   );
 }

@@ -13,6 +13,7 @@ import { TrendsTimeSeriesChart } from "@/components/crypto/analytics/TrendsTimeS
 import { PQCMigrationPanel } from "@/components/pqc/PQCMigrationPanel";
 import { ComplianceReportsPanel } from "@/components/compliance/ComplianceReportsPanel";
 import type { GroupingDimension, TrendBucket, TrendMetric } from "@/types/cryptoAnalytics";
+import type { ReportFramework } from "@/types/compliance";
 
 const GROUPINGS: GroupingDimension[] = [
   "name", "primitive", "asset_type", "weakness_tag", "severity",
@@ -62,8 +63,19 @@ function autoBucket(days: number): TrendBucket {
 }
 
 export function CryptoAnalyticsTab() {
+  const [tab, setTab] = useState("hotspots");
+  const [reportPrefill, setReportPrefill] = useState<ReportFramework>();
+
   return (
-    <Tabs defaultValue="hotspots" className="space-y-4">
+    <Tabs
+      value={tab}
+      // A manual visit to Compliance Reports must not reopen an export's prefilled dialog.
+      onValueChange={(value) => {
+        setReportPrefill(undefined);
+        setTab(value);
+      }}
+      className="space-y-4"
+    >
       <TabsList className="bg-transparent border-b border-border rounded-none w-full justify-start h-9 p-0 gap-6">
         <TabsTrigger value="hotspots" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Hotspots</TabsTrigger>
         <TabsTrigger value="trends" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Trends</TabsTrigger>
@@ -86,10 +98,15 @@ export function CryptoAnalyticsTab() {
         <FindingsSection />
       </TabsContent>
       <TabsContent value="pqc-migration">
-        <PQCMigrationPanel />
+        <PQCMigrationPanel
+          onExportReport={() => {
+            setReportPrefill("pqc-migration-plan");
+            setTab("compliance-reports");
+          }}
+        />
       </TabsContent>
       <TabsContent value="compliance-reports">
-        <ComplianceReportsPanel />
+        <ComplianceReportsPanel prefillFramework={reportPrefill} />
       </TabsContent>
     </Tabs>
   );
