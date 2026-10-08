@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from app.schemas.cbom import (
     CryptoAssetType,
     CryptoPrimitive,
-    ParsedCBOM,
     ParsedCryptoAsset,
 )
 
@@ -40,18 +39,3 @@ def test_parsed_crypto_asset_certificate():
         not_valid_after=datetime(2025, 6, 1, tzinfo=timezone.utc),
     )
     assert asset.subject_name == "CN=example.com"
-
-
-def test_parsed_cbom_empty_defaults():
-    cbom = ParsedCBOM()
-    assert cbom.assets == []
-    assert cbom.parsed_components == 0
-    assert cbom.skipped_components == 0
-
-
-def test_parsed_cbom_with_assets():
-    cbom = ParsedCBOM(
-        assets=[ParsedCryptoAsset(bom_ref="a", name="MD5", asset_type=CryptoAssetType.ALGORITHM)],
-        parsed_components=1,
-    )
-    assert len(cbom.assets) == 1

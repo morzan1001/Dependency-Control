@@ -173,7 +173,7 @@ async def test_an_algorithm_whose_cbom_names_no_primitive_is_not_judged():
             }
         ]
     }
-    [md5] = [CryptoAsset(project_id="p", scan_id="s1", **a.model_dump()) for a in parse_cbom(cbom).assets]
+    [md5] = [CryptoAsset(project_id="p", scan_id="s1", **a.model_dump()) for a in parse_cbom(cbom)]
 
     assert md5.primitive is None
     assert (await _statuses([md5]))["FIPS-140-3-HASH_FUNCTIONS"] == ControlStatus.NOT_APPLICABLE

@@ -80,18 +80,3 @@ class ParsedCryptoAsset(BaseModel):
     related_dependency_purls: list[str] = Field(default_factory=list)
 
     properties: dict[str, str] = Field(default_factory=dict)
-
-
-class ParsedCBOM(BaseModel):
-    """Normalized CBOM representation produced by parse_cbom()."""
-
-    format_version: str | None = None
-    tool_name: str | None = None
-    tool_version: str | None = None
-    created_at: str | None = None
-
-    assets: list[ParsedCryptoAsset] = Field(default_factory=list)
-
-    total_components: int = 0
-    parsed_components: int = 0
-    skipped_components: int = 0

@@ -120,7 +120,7 @@ async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=
         }
     )
     await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parsed.assets]
+        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parsed]
     )
     rules = [
         r.model_copy(update={"enabled": pfs_enabled}) if r.rule_id == "cnsa20-require-pfs" else r

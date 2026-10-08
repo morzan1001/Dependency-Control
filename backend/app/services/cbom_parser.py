@@ -1,4 +1,4 @@
-"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped and counted."""
+"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped."""
 
 import hashlib
 import logging
@@ -9,7 +9,6 @@ from typing import Any
 from app.schemas.cbom import (
     CryptoAssetType,
     CryptoPrimitive,
-    ParsedCBOM,
     ParsedCryptoAsset,
 )
 
@@ -51,46 +50,8 @@ def _count_component_subtree(comp: dict[str, Any]) -> int:
     return count
 
 
-def parse_cbom(raw: dict[str, Any]) -> ParsedCBOM:
-    components, _, _ = flatten_cyclonedx_components(raw.get("components"))
-    tool_meta = (raw.get("metadata") or {}).get("tools") or []
-    tool_name, tool_version = _tool_from_metadata(tool_meta)
-
-    total = sum(1 for c in components if c.get("type") == "cryptographic-asset")
-    assets = parse_crypto_components(components)
-
-    return ParsedCBOM(
-        format_version=raw.get("specVersion"),
-        tool_name=tool_name,
-        tool_version=tool_version,
-        created_at=(raw.get("metadata") or {}).get("timestamp"),
-        assets=assets,
-        total_components=total,
-        parsed_components=len(assets),
-        skipped_components=total - len(assets),
-    )
-
-
-def _tool_from_metadata(tools: Any) -> tuple[str | None, str | None]:
-    """CycloneDX allows metadata.tools to be either the modern object form ({"components": [...]}) or the
-    legacy list form ([{...}]). Both carry the tool as a component dict with "name"/"version"."""
-    tool: dict[str, Any] | None = None
-    if isinstance(tools, dict):
-        comps = tools.get("components") or []
-        if comps:
-            tool = comps[0]
-    elif isinstance(tools, list) and tools:
-        tool = tools[0]
-
-    if not isinstance(tool, dict):
-        return None, None
-
-    name = tool.get("name")
-    version = tool.get("version")
-    return (
-        str(name) if name is not None else None,
-        str(version) if version is not None else None,
-    )
+def parse_cbom(raw: dict[str, Any]) -> list[ParsedCryptoAsset]:
+    return parse_crypto_components(flatten_cyclonedx_components(raw.get("components"))[0])
 
 
 def parse_crypto_components(

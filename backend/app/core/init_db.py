@@ -470,8 +470,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
 
     # Crypto Assets (CBOM)
-    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
-    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index(

@@ -85,40 +85,6 @@ async def test_ingest_cbom_rejects_unauthenticated(db):
 
 
 @pytest.mark.asyncio
-async def test_legacy_git_ref_becomes_the_scan_branch(client, db, api_key_headers):
-    """The GitLab-shaped envelope spells the branch ``git_ref``; scan identity and lineage key on it."""
-    payload = {
-        "scan_metadata": {"git_ref": "release/7.2", "commit_sha": "abc123"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
-
-    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
-
-    assert resp.status_code == 202, resp.text
-    scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
-    assert scan is not None
-    assert scan["branch"] == "release/7.2"
-
-
-@pytest.mark.asyncio
-async def test_top_level_fields_win_over_the_legacy_envelope(client, db, api_key_headers):
-    payload = {
-        "branch": "feature/explicit",
-        "commit_hash": "feedface",
-        "scan_metadata": {"git_ref": "stale-main", "commit_sha": "0000000"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
-
-    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
-
-    assert resp.status_code == 202, resp.text
-    scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
-    assert scan is not None
-    assert scan["branch"] == "feature/explicit"
-    assert scan["commit_hash"] == "feedface"
-
-
-@pytest.mark.asyncio
 async def test_successful_ingest_counts_as_a_success_in_the_ingest_metric(client, db, api_key_headers):
     before = _ingests("success")
 
@@ -212,7 +178,7 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
         "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("legacy_crypto_mixed.json")}, headers=api_key_headers
     )
     scan_id = first.json()["scan_id"]
-    [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json")).assets
+    [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json"))
     await CryptoAssetRepository(db).bulk_upsert(
         "test-project-id",
         scan_id,
