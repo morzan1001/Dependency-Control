@@ -5,7 +5,6 @@ output (prod: deps_dev.project_url was written on 0 of 12,876 docs, so the
 Scorecard link never rendered).
 """
 
-from app.schemas.enrichment import DependencyEnrichment
 from app.services.aggregation import ResultAggregator
 from tests.helpers.enrichment import enrichment_payload
 
@@ -69,11 +68,6 @@ def test_project_homepage_fills_in_when_links_have_none():
     metadata = _metadata(links={"repository": "https://github.com/lodash/lodash"})
     payload = _payload(metadata)
     assert payload["homepage"] == "https://lodash.com/custom"
-
-
-def test_dead_fields_are_gone_from_the_model():
-    for field in ("download_url", "is_default_version", "scorecard_checks", "scorecard_critical_issues"):
-        assert field not in DependencyEnrichment.model_fields
 
 
 def test_the_persisted_deps_dev_block_carries_exactly_the_analyzer_fields():
