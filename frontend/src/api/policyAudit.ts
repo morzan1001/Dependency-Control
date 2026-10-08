@@ -1,5 +1,5 @@
 import { api } from "@/api/client";
-import type { PolicyAuditEntry, PolicyAuditListResponse } from "@/types/policyAudit";
+import type { PolicyAuditListResponse } from "@/types/policyAudit";
 
 export interface ListAuditParams {
   skip?: number;
@@ -10,13 +10,6 @@ export async function listSystemAudit(p: ListAuditParams = {}): Promise<PolicyAu
   const { data } = await api.get<PolicyAuditListResponse>(
     "/crypto-policies/system/audit",
     { params: p },
-  );
-  return data;
-}
-
-export async function getSystemAuditEntry(version: number): Promise<PolicyAuditEntry> {
-  const { data } = await api.get<PolicyAuditEntry>(
-    `/crypto-policies/system/audit/${version}`,
   );
   return data;
 }
@@ -41,15 +34,6 @@ export async function listProjectAudit(
   const { data } = await api.get<PolicyAuditListResponse>(
     `/projects/${project_id}/crypto-policy/audit`,
     { params: p },
-  );
-  return data;
-}
-
-export async function getProjectAuditEntry(
-  project_id: string, version: number,
-): Promise<PolicyAuditEntry> {
-  const { data } = await api.get<PolicyAuditEntry>(
-    `/projects/${project_id}/crypto-policy/audit/${version}`,
   );
   return data;
 }

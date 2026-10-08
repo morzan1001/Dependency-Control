@@ -18,13 +18,6 @@ export async function putSystemPolicy(rules: CryptoRule[]): Promise<CryptoPolicy
   return data;
 }
 
-export async function getProjectPolicy(projectId: string): Promise<CryptoPolicyDoc> {
-  const { data } = await api.get<CryptoPolicyDoc>(
-    `/projects/${projectId}/crypto-policy`
-  );
-  return data;
-}
-
 export async function putProjectPolicy(
   projectId: string, rules: CryptoRule[]
 ): Promise<CryptoPolicyDoc> {

@@ -71,11 +71,6 @@ export const userApi = {
     await api.delete(`/invitations/system/${invitationId}`);
   },
 
-  validateInvitation: async (token: string): Promise<{ email: string }> => {
-    const response = await api.get<{ email: string }>(`/invitations/system/${token}`);
-    return response.data;
-  },
-
   delete: async (userId: string): Promise<void> => {
     await api.delete(`/users/${userId}`);
   }

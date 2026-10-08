@@ -105,11 +105,6 @@ export const projectApi = {
     return response.data;
   },
 
-  pinScan: async (projectId: string, scanId: string): Promise<{ scan_id: string; pinned: boolean }> => {
-    const response = await api.post<{ scan_id: string; pinned: boolean }>(`/projects/${projectId}/scans/${scanId}/pin`);
-    return response.data;
-  },
-
   unpinScan: async (projectId: string, scanId: string): Promise<{ scan_id: string; pinned: boolean }> => {
     const response = await api.post<{ scan_id: string; pinned: boolean }>(`/projects/${projectId}/scans/${scanId}/unpin`);
     return response.data;

@@ -26,8 +26,6 @@ vi.mock("@/api/policyAudit", () => {
   return {
     listSystemAudit: vi.fn().mockResolvedValue({ entries }),
     listProjectAudit: vi.fn(),
-    getSystemAuditEntry: vi.fn(),
-    getProjectAuditEntry: vi.fn(),
     revertSystemPolicy: vi.fn(),
     revertProjectPolicy: vi.fn(),
     pruneSystemAudit: vi.fn(),
