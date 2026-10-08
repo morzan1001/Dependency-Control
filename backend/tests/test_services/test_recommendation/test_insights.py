@@ -477,3 +477,16 @@ def test_scorecard_correlation_counts_each_live_critical_and_high_cve_of_a_packa
         "total": 3,
     }
     assert rec.action["packages"][0]["cves_total"] == 3
+
+
+def test_scorecard_correlation_counts_a_cve_on_two_installed_versions_once():
+    copies = [
+        stored_vulnerability("semver", version, [{"id": "CVE-2022-25883", "severity": "HIGH"}])
+        for version in ("5.7.1", "7.3.5")
+    ]
+
+    [rec] = correlate_scorecard_with_vulnerabilities(copies, [_quality_finding(component="semver")])
+
+    assert rec.description.startswith("Found 1 critical/high vulnerabilities")
+    assert rec.impact["high"] == rec.impact["total"] == 1
+    assert [p["version"] for p in rec.action["packages"]] == ["5.7.1", "7.3.5"]

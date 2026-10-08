@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Any
 
-from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES
+from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES, max_severity
 from app.schemas.recommendation import (
     Effort,
     Priority,
@@ -54,6 +54,8 @@ def correlate_scorecard_with_vulnerabilities(
     scorecard_index = build_component_index(scorecard_by_component)
 
     high_risk_vulns: list[dict[str, Any]] = []
+    risky_cves: dict[str, str | None] = {}
+    unmaintained_cves: set[str] = set()
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
@@ -68,11 +70,14 @@ def correlate_scorecard_with_vulnerabilities(
 
         # A score exists only where deps_dev flagged it under the project's own threshold.
         if risky and (is_unmaintained or score is not None):
+            for cve, severity in risky.items():
+                risky_cves[cve] = max_severity(risky_cves.get(cve), severity)
+            if is_unmaintained:
+                unmaintained_cves |= risky.keys()
             high_risk_vulns.append(
                 {
                     "component": component,
                     "version": get_attr(vf, "version"),
-                    "cve_severities": list(risky.values()),
                     "scorecard_score": score,
                     "unmaintained": is_unmaintained,
                     **sampled("cves", list(risky), _RISKY_PACKAGE_CVES_SAMPLED),
@@ -92,8 +97,6 @@ def correlate_scorecard_with_vulnerabilities(
             for v in high_risk_vulns
         )
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
-        cve_count = sum(v["cves_total"] for v in high_risk_vulns)
-        unmaintained_cves = sum(v["cves_total"] for v in high_risk_vulns if v["unmaintained"])
 
         recommendations.append(
             Recommendation(
@@ -101,14 +104,14 @@ def correlate_scorecard_with_vulnerabilities(
                 priority=Priority.CRITICAL,
                 title="Critical Vulnerabilities in Poorly Maintained Packages",
                 description=(
-                    f"Found {cve_count} critical/high vulnerabilities in packages "
+                    f"Found {len(risky_cves)} critical/high vulnerabilities in packages "
                     f"with concerning OpenSSF Scorecard ratings. "
-                    f"{unmaintained_cves} are in unmaintained packages, "
-                    f"{cve_count - unmaintained_cves} are in packages flagged by OpenSSF Scorecard. "
+                    f"{len(unmaintained_cves)} are in unmaintained packages, "
+                    f"{len(risky_cves) - len(unmaintained_cves)} are in packages flagged by OpenSSF Scorecard. "
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={
-                    **severity_impact(severity for v in high_risk_vulns for severity in v["cve_severities"]),
+                    **severity_impact(risky_cves.values()),
                     "unmaintained_count": unmaintained_count,
                 },
                 affected_components=risky_shown,
