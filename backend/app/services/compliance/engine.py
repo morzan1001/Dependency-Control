@@ -16,6 +16,7 @@ from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.scans import HAS_SBOM_MATCH
 from app.schemas.compliance import (
     EvaluationCoverage,
     FrameworkEvaluation,
@@ -148,7 +149,11 @@ class ComplianceReportEngine:
         if finding_query:
             findings = await self._collect_findings(db, scan_ids, clause, fields)
         assets: list[CryptoAsset] = []
-        if framework.key not in _NON_CRYPTO_FRAMEWORKS:
+        if framework.key in _NON_CRYPTO_FRAMEWORKS:
+            inventory = "SBOM"
+            inventoried = set(await db.scans.distinct("_id", {"_id": {"$in": scan_ids}, **HAS_SBOM_MATCH}))
+        else:
+            inventory = "crypto assets"
             asset_query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": scan_ids}}
             if framework.key == ReportFramework.PQC_MIGRATION_PLAN:
                 # The plan generator reads its own assets; the gap needs only the scans holding one.
@@ -156,11 +161,11 @@ class ComplianceReportEngine:
             else:
                 assets = await self._collect_crypto_assets(db, asset_query)
                 inventoried = {asset.scan_id for asset in assets}
-            gaps += [
-                f"project '{project.name}' has no crypto assets in scan {scan_id}"
-                for project in projects
-                if (scan_id := scan_by_project.get(project.id)) and scan_id not in inventoried
-            ]
+        gaps += [
+            f"project '{project.name}' has no {inventory} in scan {scan_id}"
+            for project in projects
+            if (scan_id := scan_by_project.get(project.id)) and scan_id not in inventoried
+        ]
         project_ids = resolved.project_ids or []
         if resolved.scope == "project" and len(project_ids) == 1:
             effective = await CryptoPolicyResolver(db).resolve(project_ids[0])

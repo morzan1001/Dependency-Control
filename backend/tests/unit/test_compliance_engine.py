@@ -32,6 +32,7 @@ from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.normalizers.license import normalize_license
 from tests.helpers.analyzers import analyze_cyclonedx
 from tests.helpers.compliance import evaluation_input
@@ -227,14 +228,21 @@ async def test_engine_counts_a_crashed_report_under_the_error_status():
     assert _reports_counted("error") == before + 1
 
 
-async def _store_project(db, pid, *, scanned=True, failed_analyzers=None, **fields):
+async def _store_project(db, pid, *, scanned=True, sbom=True, failed_analyzers=None, **fields):
     """The project and its head scan as ingest and the analysis engine leave them."""
     scan_id = f"scan-{pid}" if scanned else None
     project = Project(id=pid, name=f"name-{pid}", latest_scan_id=scan_id, members=[{"user_id": "u1"}], **fields)
     await db.projects.insert_one(project.model_dump(by_alias=True))
     if scanned:
         status = SCAN_STATUS_COMPLETED_WITH_ERRORS if failed_analyzers else SCAN_STATUS_COMPLETED
-        scan = Scan(id=scan_id, project_id=pid, branch="main", status=status, failed_analyzers=failed_analyzers)
+        scan = Scan(
+            id=scan_id,
+            project_id=pid,
+            branch="main",
+            status=status,
+            failed_analyzers=failed_analyzers,
+            sbom_refs=[make_gridfs_ref(f"sbom-{pid}", "sbom.json")] if sbom else [],
+        )
         await db.scans.insert_one(scan.model_dump(by_alias=True))
     return scan_id
 
@@ -477,6 +485,20 @@ async def test_an_empty_scope_withholds_every_verdict_its_absence_would_carry(db
     inputs, evaluation = await ComplianceReportEngine().evaluate(db, await _user_scope(db), FRAMEWORK_REGISTRY[key])
 
     assert inputs.coverage.gaps == ["the scope has no projects"]
+    assert {control.status for control in evaluation.controls} == {ControlStatus.NOT_EVALUATED.value}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", sorted(engine_module._NON_CRYPTO_FRAMEWORKS))
+async def test_a_scan_without_an_sbom_withholds_every_verdict_its_absence_would_carry(db, key):
+    """A CBOM-only head scan: no vulnerability or license analyzer ever read a dependency of it."""
+    await seed_crypto_policies(db)
+    scan_id = await _store_project(db, "p1", sbom=False)
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
+
+    inputs, evaluation = await ComplianceReportEngine().evaluate(db, _project_scope(), FRAMEWORK_REGISTRY[key])
+
+    assert inputs.coverage.gaps == ["project 'name-p1' has no SBOM in scan scan-p1"]
     assert {control.status for control in evaluation.controls} == {ControlStatus.NOT_EVALUATED.value}
 
 

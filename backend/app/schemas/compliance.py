@@ -102,7 +102,7 @@ class EvaluationCoverage(BaseModel):
 
     # Set only by a framework that builds one control per row of a bounded plan.
     plan_items: InputCoverage | None = None
-    # Parts of the scope no input covers, e.g. no projects, an unscanned project, a failed analyzer, no crypto assets.
+    # Parts of the scope no input covers, e.g. no projects, no usable scan, a failed analyzer, no SBOM or crypto assets.
     gaps: list[str] = Field(default_factory=list)
 
     @property
