@@ -1,3 +1,11 @@
+# Release 1.9.52
+
+## 📦 Build & CI
+
+- chore(release): 1.9.52 edits webhooks in the UI and records each test send (#0)
+
+
+
 # Release 1.9.51
 
 ## 📦 Build & CI
