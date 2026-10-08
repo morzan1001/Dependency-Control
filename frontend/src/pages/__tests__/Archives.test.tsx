@@ -67,6 +67,21 @@ describe('ArchivesPage - formatBytes', () => {
   })
 })
 
+describe('ArchivesPage pager', () => {
+  it('names the archive total and asks for the next page', () => {
+    mockUseAdminArchives.mockReturnValue({
+      data: { items: [makeArchive()], total: 40, page: 1, size: 20, pages: 2 },
+      isLoading: false,
+    })
+
+    renderPage()
+    expect(screen.getByText('Page 1 of 2 (40 total)')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /next/i }))
+
+    expect(mockUseAdminArchives).toHaveBeenLastCalledWith(2, 20, undefined)
+  })
+})
+
 describe('ArchivesPage - date filters', () => {
   it('builds date_from with the same local-time convention as date_to', () => {
     renderPage()

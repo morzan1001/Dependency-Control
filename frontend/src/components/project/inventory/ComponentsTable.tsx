@@ -8,8 +8,9 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Pagination } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download } from 'lucide-react'
 import { useInventoryComponents } from '@/hooks/queries/use-inventory'
 import { usePaginationState } from '@/hooks/use-pagination-state'
 import { inventoryApi } from '@/api/inventory'
@@ -153,17 +154,7 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
             </TableBody>
           </Table>
         </div>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-end gap-2 py-4 text-sm text-muted-foreground">
-            Page {data?.page ?? 1} of {totalPages}
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
-              <ChevronLeft className="h-4 w-4" /> Previous
-            </Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages || isPlaceholderData} onClick={() => setPage(p => p + 1)}>
-              Next <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />
       </CardContent>
     </Card>
   )

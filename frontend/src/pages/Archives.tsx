@@ -4,11 +4,12 @@ import { useAdminArchives } from '@/hooks/queries/use-archives'
 import { useDebounce } from '@/hooks/use-debounce'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Pagination } from '@/components/ui/pagination'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ChevronLeft, ChevronRight, Archive, GitBranch, GitCommit, Package, FileText } from 'lucide-react'
+import { Archive, GitBranch, GitCommit, Package, FileText } from 'lucide-react'
 import { formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
 import {
   Tooltip,
@@ -176,31 +177,7 @@ export default function ArchivesPage() {
           </TableBody>
         </Table>
 
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between pt-4">
-            <p className="text-sm text-muted-foreground">
-              Page {page} of {data?.pages} ({data?.total} total)
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={page <= 1}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
+        <Pagination page={page} totalPages={totalPages} total={data?.total} onChange={setPage} />
       </>
     )
   }

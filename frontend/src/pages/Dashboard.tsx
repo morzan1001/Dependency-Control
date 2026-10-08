@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useMemo, useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { Pagination } from '@/components/ui/pagination'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 import { formatDate } from '@/lib/utils'
@@ -348,27 +348,7 @@ export default function Dashboard() {
                     </tbody>
                 </table>
             </div>
-            <div className="flex items-center justify-end space-x-2 py-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-              >
-                Previous
-              </Button>
-              <div className="text-sm text-muted-foreground">
-                Page {page} of {totalPages || 1}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages || totalPages === 0}
-              >
-                Next
-              </Button>
-            </div>
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </CardContent>
       </Card>
     </div>

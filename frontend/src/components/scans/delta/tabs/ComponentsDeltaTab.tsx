@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
-import { DeltaPagination } from "../shared/DeltaPagination";
+import { Pagination } from "@/components/ui/pagination";
 import { DeltaSummaryCards } from "../shared/DeltaSummaryCards";
 import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
@@ -116,7 +116,7 @@ export function ComponentsDeltaTab({
           </TableBody>
         </Table>
       </div>
-      <DeltaPagination
+      <Pagination
         page={data?.page ?? 1}
         totalPages={data?.total_pages ?? 1}
         onChange={setPage}
