@@ -20,7 +20,7 @@ def _no_live_enrichment(monkeypatch):
 
 
 async def _seed_groups(db, count: int) -> None:
-    """``count`` component@version groups that tie on every sort key but the component name."""
+    """``count`` component@version groups, two versions per component, tied on every other sort key."""
     now = datetime.now(timezone.utc)
     await db.scans.insert_one(
         {"_id": _HEAD, "project_id": _PROJECT, "branch": "main", "status": "completed", "created_at": now}
@@ -59,7 +59,8 @@ async def test_a_sort_field_hotspots_cannot_order_by_is_refused(client, db, owne
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sort_by", ["finding_count", "component", "first_seen"])
 async def test_infinite_scroll_shows_every_group_exactly_once(client, db, owner_auth_headers_proj, sort_by):
-    groups, page = 300, 100
+    # Odd, so many page boundaries split a component's two versions.
+    groups, page = 300, 13
     await _seed_groups(db, groups)
 
     seen: list[tuple[str, str]] = []
