@@ -92,6 +92,7 @@ export const useProjectWaivers = (
             return nextSkip < lastPage.total ? nextSkip : undefined;
         },
         enabled: !!projectId,
+        placeholderData: keepPreviousData,
     });
 }
 
