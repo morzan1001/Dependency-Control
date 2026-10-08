@@ -1,6 +1,7 @@
 """Integration tests for POST /api/v1/ingest/cbom."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from unittest.mock import AsyncMock, patch
@@ -227,6 +228,31 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
     stored = await db.crypto_assets.find({"scan_id": scan_id}).to_list(None)
     assert sorted(a["bom_ref"] for a in stored) == sorted(["algo-aes", "algo-rsa4096", "proto-tls13", embedded.bom_ref])
     assert retry.json()["assets_stored"] == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_earlier_upload_finishing_last_keeps_the_later_uploads_assets(db):
+    from app.models.crypto_asset import CryptoAsset
+    from app.services.cbom_parser import parse_cbom
+
+    repo = CryptoAssetRepository(db)
+    assets = parse_cbom(_load("legacy_crypto_mixed.json")).assets
+    earlier = datetime.now(timezone.utc)
+    later = earlier + timedelta(seconds=1)
+
+    async def upsert(written_at: datetime) -> None:
+        rows = [
+            CryptoAsset(project_id="p", scan_id="s", cbom_upload=True, created_at=written_at, **a.model_dump())
+            for a in assets
+        ]
+        await repo.bulk_upsert("p", "s", rows)
+
+    await upsert(later)
+    await upsert(earlier)
+    await repo.delete_older_writes({"project_id": "p", "scan_id": "s", "cbom_upload": True}, later)
+
+    assert await repo.count_by_scan("p", "s") == 3
 
 
 @pytest.mark.asyncio
