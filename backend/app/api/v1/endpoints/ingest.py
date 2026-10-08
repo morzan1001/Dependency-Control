@@ -21,6 +21,7 @@ from app.core.constants import (
 from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
+    BaseIngest,
     FindingsIngestResponse,
     ProjectConfigResponse,
     SBOMIngest,
@@ -59,66 +60,35 @@ async def ingest_trufflehog(
     response = await process_findings_ingest(ScanManager(db, project), "trufflehog", data)
 
     # Any secret found fails the pipeline.
-    failed = response["findings_count"] > 0
-
     return SecretScanResponse(
-        status="failed" if failed else "success",
-        scan_id=response["scan_id"],
-        findings_count=response["findings_count"],
-        waived_count=response["waived_count"],
-        message=f"Found {response['findings_count']} secrets (Waived: {response['waived_count']})",
+        status="failed" if response.findings_count else "success",
+        scan_id=response.scan_id,
+        findings_count=response.findings_count,
+        waived_count=response.waived_count,
+        message=f"Found {response.findings_count} secrets (Waived: {response.waived_count})",
     )
 
 
-@router.post(
-    "/ingest/opengrep",
-    summary="Ingest OpenGrep Results",
-    status_code=200,
-    responses=RESP_AUTH,
-)
-async def ingest_opengrep(
-    request: Request,
-    project: ProjectIngestDep,
-    db: DatabaseDep,
-) -> FindingsIngestResponse:
-    """Ingest OpenGrep SAST scan results; returns a findings summary."""
-    data = await read_json_body(request, OpenGrepIngest)
-    response = await process_findings_ingest(ScanManager(db, project), "opengrep", data)
-    return FindingsIngestResponse(**response)
+def _route_findings_ingest(analyzer: str, label: str, model: type[BaseIngest], description: str) -> None:
+    async def ingest(request: Request, project: ProjectIngestDep, db: DatabaseDep) -> FindingsIngestResponse:
+        return await process_findings_ingest(ScanManager(db, project), analyzer, await read_json_body(request, model))
+
+    router.post(
+        f"/ingest/{analyzer}",
+        summary=f"Ingest {label} Results",
+        description=description,
+        status_code=200,
+        responses=RESP_AUTH,
+        name=f"ingest_{analyzer}",
+    )(ingest)
 
 
-@router.post(
-    "/ingest/kics",
-    summary="Ingest KICS Results",
-    status_code=200,
-    responses=RESP_AUTH,
-)
-async def ingest_kics(
-    request: Request,
-    project: ProjectIngestDep,
-    db: DatabaseDep,
-) -> FindingsIngestResponse:
-    """Ingest KICS IaC scan results."""
-    data = await read_json_body(request, KicsIngest)
-    response = await process_findings_ingest(ScanManager(db, project), "kics", data)
-    return FindingsIngestResponse(**response)
-
-
-@router.post(
-    "/ingest/bearer",
-    summary="Ingest Bearer Results",
-    status_code=200,
-    responses=RESP_AUTH,
-)
-async def ingest_bearer(
-    request: Request,
-    project: ProjectIngestDep,
-    db: DatabaseDep,
-) -> FindingsIngestResponse:
-    """Ingest Bearer SAST/Data Security scan results."""
-    data = await read_json_body(request, BearerIngest)
-    response = await process_findings_ingest(ScanManager(db, project), "bearer", data)
-    return FindingsIngestResponse(**response)
+for _route in (
+    ("opengrep", "OpenGrep", OpenGrepIngest, "Ingest OpenGrep SAST scan results; returns a findings summary."),
+    ("kics", "KICS", KicsIngest, "Ingest KICS IaC scan results."),
+    ("bearer", "Bearer", BearerIngest, "Ingest Bearer SAST/Data Security scan results."),
+):
+    _route_findings_ingest(*_route)
 
 
 async def _upload_recognized_sboms(sboms: list[Any], db: Any, scan_id: str) -> list[dict[str, Any]]:
