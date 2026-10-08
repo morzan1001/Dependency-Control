@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label"
 import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
+import { SecretInput } from "@/components/settings/SecretInput"
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
@@ -73,8 +74,7 @@ const AVAILABLE_EVENTS = [
 interface WebhookFormState {
   url: string
   events: string[]
-  secret: string
-  removeSecret: boolean
+  secret: string | null
   sendJson: boolean
   isActive: boolean
 }
@@ -83,7 +83,6 @@ const EMPTY_FORM: WebhookFormState = {
   url: "",
   events: [],
   secret: "",
-  removeSecret: false,
   sendJson: false,
   isActive: true,
 }
@@ -119,8 +118,7 @@ function changedFields(webhook: Webhook, form: WebhookFormState): WebhookUpdate 
   if (form.events.length !== webhook.events.length || form.events.some(e => !webhook.events.includes(e))) {
     changes.events = form.events
   }
-  if (form.removeSecret) changes.secret = null
-  else if (form.secret) changes.secret = form.secret
+  if (form.secret !== "") changes.secret = form.secret
   if (form.isActive !== webhook.is_active) changes.is_active = form.isActive
   // The server detects the type of a new URL sent without one, so only the Teams opt-out and a type set over the API need naming.
   const mustNameType = urlChanged ? form.sendJson : form.sendJson !== sendsJsonToTeams(webhook)
@@ -214,27 +212,13 @@ export function WebhookForm(props: WebhookFormProps) {
           )}
         </div>
         <div className="space-y-2">
-          <Label htmlFor="webhook-secret">{webhook ? "Secret" : "Secret (Optional)"}</Label>
-          <Input
+          <Label htmlFor="webhook-secret">Secret (Optional)</Label>
+          <SecretInput
             id="webhook-secret"
             value={form.secret}
-            onChange={e => patchForm({ secret: e.target.value })}
-            type="password"
-            disabled={form.removeSecret}
-            placeholder={webhook ? "Leave empty to keep the stored secret" : undefined}
+            configured={webhook?.secret_configured ?? false}
+            onChange={secret => patchForm({ secret })}
           />
-          {webhook && (
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="webhook-remove-secret"
-                checked={form.removeSecret}
-                onCheckedChange={removeSecret => patchForm({ removeSecret })}
-              />
-              <Label htmlFor="webhook-remove-secret" className="text-xs font-normal text-muted-foreground">
-                Remove the stored secret
-              </Label>
-            </div>
-          )}
         </div>
         <div className="space-y-2">
           <Label id="webhook-events-label">Events</Label>

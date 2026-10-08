@@ -91,6 +91,7 @@ describe("WebhookManager", () => {
     created_at: "2026-10-07T07:26:42Z",
     webhook_type: "slack",
     last_failure_at: "2026-10-07T09:25:42Z",
+    secret_configured: false,
   };
 
   const renderWith = (webhooks: Webhook[]) =>
@@ -183,6 +184,7 @@ describe("WebhookManager", () => {
       is_active: true,
       created_at: "2026-10-01T08:00:00Z",
       webhook_type: "generic",
+      secret_configured: true,
     };
     const teamsCards: Webhook = { ...stored, url: TEAMS_URL, webhook_type: "teams" };
     const teamsJson: Webhook = { ...stored, url: TEAMS_URL, webhook_type: "generic" };
@@ -249,6 +251,20 @@ describe("WebhookManager", () => {
       expect(data).toStrictEqual({ url: "https://example.com/fixed" });
     });
 
+    it("claims no stored secret for a webhook without one", () => {
+      renderEditor({ ...stored, secret_configured: false });
+
+      expect(screen.getByLabelText(/^Secret/)).not.toHaveAttribute("placeholder");
+      expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    });
+
+    it("offers to replace or remove a stored secret", () => {
+      renderEditor(stored);
+
+      expect(screen.getByLabelText(/^Secret/)).toHaveAttribute("placeholder", "Configured — enter a new value to replace");
+      expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    });
+
     it("discards unsaved edits when the dialog is closed", () => {
       renderEditor(stored);
       fireEvent.change(urlInput(), { target: { value: "https://example.com/abandoned" } });
@@ -276,7 +292,7 @@ describe("WebhookManager", () => {
         { events: ["scan.completed", "analysis.failed", "vulnerability.found"] },
       ],
       ["a newly entered secret", () => fireEvent.change(screen.getByLabelText(/^Secret/), { target: { value: "rotated" } }), { secret: "rotated" }],
-      ["a null secret to remove the stored one", () => fireEvent.click(screen.getByLabelText(/Remove the stored secret/i)), { secret: null }],
+      ["a null secret to remove the stored one", () => fireEvent.click(screen.getByRole("button", { name: "Remove" })), { secret: null }],
       ["is_active false to pause it", () => fireEvent.click(screen.getByRole("switch", { name: "Active" })), { is_active: false }],
     ])("sends only %s", async (_change, edit, expected) => {
       const onUpdate = renderEditor(stored);
@@ -292,8 +308,8 @@ describe("WebhookManager", () => {
       const onUpdate = renderEditor(stored);
 
       fireEvent.change(screen.getByLabelText(/^Secret/), { target: { value: "rotated" } });
-      fireEvent.click(screen.getByLabelText(/Remove the stored secret/i));
-      expect(screen.getByLabelText(/^Secret/)).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+      expect(screen.getByLabelText(/^Secret/)).toHaveAttribute("placeholder", "Removed when you save");
       const [, data] = await saved(onUpdate);
 
       expect(data).toStrictEqual({ secret: null });

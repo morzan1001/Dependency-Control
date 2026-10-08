@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, computed_field, field_validator
 
 from app.core.config import settings
 from app.core.constants import (
@@ -183,7 +183,7 @@ class WebhookUpdate(BaseModel):
 
 
 class WebhookResponse(BaseModel):
-    """Schema for webhook response (excludes secret for security)."""
+    """Withholds the HMAC signing secret and reports only whether one is set."""
 
     id: str
     project_id: str | None = None
@@ -196,8 +196,14 @@ class WebhookResponse(BaseModel):
     last_triggered_at: datetime | None = None
     last_failure_at: datetime | None = None
     webhook_type: WebhookType
+    secret: str | None = Field(default=None, exclude=True)
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def secret_configured(self) -> bool:
+        return bool(self.secret)
 
 
 class WebhookTestRequest(BaseModel):

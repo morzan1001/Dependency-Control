@@ -80,12 +80,12 @@ class TestCreateWebhook:
 
 class TestListWebhooks:
     @pytest.mark.parametrize("scope", list(_SCOPE_IDS))
-    def test_lists_only_its_scope_newest_first_and_withholds_the_secret(self, admin_user, scope):
+    def test_lists_only_its_scope_newest_first_and_tells_only_whether_a_secret_is_set(self, admin_user, scope):
         db = FakeDatabase()
         for name, (project_id, team_id) in _SCOPE_IDS.items():
-            for age, created_at in (
-                ("old", datetime(2026, 1, 1, tzinfo=timezone.utc)),
-                ("new", datetime(2026, 2, 1, tzinfo=timezone.utc)),
+            for age, created_at, secret in (
+                ("old", datetime(2026, 1, 1, tzinfo=timezone.utc), None),
+                ("new", datetime(2026, 2, 1, tzinfo=timezone.utc), _SECRET),
             ):
                 asyncio.run(
                     db.webhooks.insert_one(
@@ -95,7 +95,7 @@ class TestListWebhooks:
                             "events": ["scan.completed"],
                             "project_id": project_id,
                             "team_id": team_id,
-                            "secret": _SECRET,
+                            "secret": secret,
                             "created_at": created_at,
                         }
                     )
@@ -104,7 +104,8 @@ class TestListWebhooks:
         with patch(f"{MODULE}.check_webhook_permission", new_callable=AsyncMock):
             result = asyncio.run(_list(scope, db, admin_user))
 
-        assert (result["total"], [item["id"] for item in result["items"]]) == (2, [f"{scope}-new", f"{scope}-old"])
+        listed = [(item["id"], item["secret_configured"]) for item in result["items"]]
+        assert (result["total"], listed) == (2, [(f"{scope}-new", True), (f"{scope}-old", False)])
         assert _SECRET not in json.dumps(result, default=str)
 
 

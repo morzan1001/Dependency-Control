@@ -16,6 +16,7 @@ describe("webhookApi.update", () => {
       is_active: false,
       created_at: "2026-10-08T08:00:00Z",
       webhook_type: "generic",
+      secret_configured: false,
     };
     mocked(api.patch).mockResolvedValue({ data: stored });
 

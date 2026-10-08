@@ -11,6 +11,7 @@ export interface Webhook {
   last_triggered_at?: string;
   last_failure_at?: string;
   webhook_type?: WebhookType;
+  secret_configured: boolean;
 }
 
 export interface WebhookCreate {
