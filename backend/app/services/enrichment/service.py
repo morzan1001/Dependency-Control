@@ -131,19 +131,18 @@ def _enrichment_fields(enrichment: VulnerabilityEnrichment) -> dict[str, Any]:
 def advisory_enrichment(
     vuln: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]
 ) -> VulnerabilityEnrichment:
-    """The advisory's CVEs folded, each scored on the advisory's own CVSS."""
+    """The advisory's CVEs folded, each scored on the advisory's own CVSS, or on its severity without one."""
     cvss = vuln.get("cvss_score")
+    if cvss is None:
+        cvss = CVSS_SEVERITY_SCORES.get(vuln.get("severity") or "UNKNOWN")
     matched = [enrichments[cve] for cve in entry_cves(vuln) if cve in enrichments]
     folded = fold_enrichments(
         e.model_copy(update={"risk_score": calculate_risk_score(cvss, e.epss_score, e.is_kev, e.kev_ransomware_use)})
         for e in matched
     )
-    if folded:
-        return folded
-    # GHSA-only, RUSTSEC, GO advisories rank by their CVSS, or by their severity without one.
-    if cvss is None:
-        cvss = CVSS_SEVERITY_SCORES.get(vuln.get("severity") or "UNKNOWN")
-    return VulnerabilityEnrichment(cve=str(vuln.get("id")), risk_score=calculate_risk_score(cvss, None, False, False))
+    return folded or VulnerabilityEnrichment(
+        cve=str(vuln.get("id")), risk_score=calculate_risk_score(cvss, None, False, False)
+    )
 
 
 def apply_enrichments(details: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]) -> None:

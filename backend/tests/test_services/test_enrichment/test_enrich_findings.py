@@ -167,6 +167,22 @@ async def test_an_advisory_without_a_cve_or_cvss_is_ranked_by_its_severity(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("severity", "risk_score"),
+    [("CRITICAL", 40.0), ("HIGH", 30.0), ("LOW", 4.0), ("NEGLIGIBLE", 0.0), ("UNKNOWN", 20.0)],
+)
+async def test_a_cve_without_cvss_is_ranked_by_its_severity_like_an_advisory_without_a_cve(
+    monkeypatch, severity, risk_score
+):
+    service = _service(monkeypatch)
+    finding = _vuln_finding("pkg", {"id": "CVE-2024-9", "severity": severity})
+
+    await service.enrich_findings([finding])
+
+    assert finding["details"]["risk_score"] == pytest.approx(risk_score)
+
+
+@pytest.mark.asyncio
 async def test_the_advisory_url_stays_on_its_own_advisory(monkeypatch):
     service = _service(
         monkeypatch,
