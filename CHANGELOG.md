@@ -1,3 +1,11 @@
+# Release 1.9.51
+
+## 📦 Build & CI
+
+- chore(release): 1.9.51 delivers Slack webhooks as Slack messages and shows each webhook's delivery state (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.50. Run mongosh commands in-pod against the application database.
