@@ -21,7 +21,7 @@ _ATTACKER_URL = "https://attacker.example.com/x"
 _TIMESTAMP = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _WEBHOOK_WRITE = (Permissions.WEBHOOK_CREATE, Permissions.WEBHOOK_UPDATE, Permissions.WEBHOOK_DELETE)
 _FIRE = "app.api.v1.endpoints.webhooks.webhook_service.test_webhook"
-_FIRED = {"success": True, "status_code": 200}
+_FIRED = {"success": True, "status_code": 200, "error": None, "response_time_ms": 12.0}
 
 
 def _user(user_id: str, *permissions: str) -> User:
