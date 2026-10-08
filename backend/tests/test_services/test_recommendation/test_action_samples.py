@@ -92,8 +92,8 @@ def test_the_fix_code_action_names_how_many_rules_it_sampled():
     recs = process_sast([_sast_finding(f"rule-{index:03d}") for index in range(population)])
 
     action = recs[0].action
-    assert len(action["rules"]) == _RULES_SAMPLED
-    assert action["rules_total"] == population
+    assert len(action["rule_ids"]) == _RULES_SAMPLED
+    assert action["rule_ids_total"] == population
 
 
 def _crypto_finding(index):

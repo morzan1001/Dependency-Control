@@ -87,7 +87,7 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "category": category,
                     "files": files_shown,
                     "files_total": files_total,
-                    **sampled("rules", rule_ids, _RULES_SAMPLED),
+                    **sampled("rule_ids", rule_ids, _RULES_SAMPLED),
                 },
                 effort=Effort.MEDIUM if len(cat_findings) < 10 else Effort.HIGH,
             )
