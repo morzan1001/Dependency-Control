@@ -24,17 +24,16 @@ function report(status: ReportStatus): ComplianceReportMeta {
   }
 }
 
-function renderPanel() {
+function renderPanel(props: Parameters<typeof ComplianceReportsPanel>[0] = {}) {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ComplianceReportsPanel />
+      <ComplianceReportsPanel {...props} />
     </QueryClientProvider>,
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  localStorage.clear()
   vi.mocked(createReport).mockResolvedValue({ report_id: 'r2', status: 'pending' })
 })
 
@@ -55,18 +54,15 @@ describe('ComplianceReportsPanel', () => {
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByText('Completed')).toBeInTheDocument())
   })
 
-  it('queues the framework another tab asked for', async () => {
+  it('queues the framework another tab handed over, and lets go of it once used', async () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [] })
-    renderPanel()
-    await screen.findByText('No reports yet')
+    const onPrefillUsed = vi.fn()
+    renderPanel({ prefillFramework: 'pqc-migration-plan', onPrefillUsed })
 
-    localStorage.setItem('prefill_compliance_framework', 'pqc-migration-plan')
-    act(() => {
-      globalThis.dispatchEvent(new CustomEvent('goto-compliance-reports-tab'))
-    })
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
 
     await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ framework: 'pqc-migration-plan' })))
+    await waitFor(() => expect(onPrefillUsed).toHaveBeenCalled())
   })
 
   it('lists project, team and global reports too, not only personal ones', async () => {

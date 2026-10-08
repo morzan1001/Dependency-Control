@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -20,9 +20,18 @@ vi.mock("@/components/crypto/analytics/TrendsTimeSeriesChart", () => ({
 
 // Keep the default (hotspots) tab from hitting the network.
 vi.mock("@/api/cryptoAnalytics", () => ({
-  getCryptoHotspots: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+  getCryptoHotspots: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   getCryptoTrends: vi.fn().mockResolvedValue({ points: [] }),
 }));
+
+vi.mock("@/api/pqcMigration", () => ({
+  getPQCMigrationPlan: vi.fn().mockResolvedValue({
+    scope: "user", scope_id: null, generated_at: "2026-01-01T00:00:00Z", items: [], mappings_version: 3,
+    summary: { total_items: 0, items_returned: 0, status_counts: {}, earliest_deadline: null },
+  }),
+}));
+vi.mock("@/api/compliance", () => ({ listReports: vi.fn().mockResolvedValue({ reports: [] }), createReport: vi.fn() }));
+vi.mock("@/context/useAuth", () => ({ useAuth: () => ({ hasPermission: () => false }) }));
 
 function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -68,5 +77,22 @@ describe("CryptoAnalyticsTab trends range", () => {
     // Day-boundary normalized: no millisecond precision leaks into the query key.
     expect(last.end).toMatch(/:00:00\.000Z$/);
     expect(last.start).toMatch(/:00:00\.000Z$/);
+  });
+});
+
+describe("CryptoAnalyticsTab PQC export", () => {
+  it("opens the compliance tab with a PQC migration report prefilled, and a later report starts from the default", async () => {
+    renderTab();
+    const pqcTab = screen.getByRole("tab", { name: "PQC Migration" });
+    fireEvent.mouseDown(pqcTab);
+    fireEvent.click(pqcTab);
+    fireEvent.click(await screen.findByRole("button", { name: "Export as Compliance Report" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("PQC Migration Plan");
+    expect(screen.getByRole("tab", { name: "Compliance Reports", hidden: true })).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate report" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("NIST SP 800-131A");
   });
 });
