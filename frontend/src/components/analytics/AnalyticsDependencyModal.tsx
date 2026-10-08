@@ -57,6 +57,7 @@ import {
   Check,
 } from "lucide-react"
 import { getDisplayId, getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 // Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
@@ -506,7 +507,7 @@ export function AnalyticsDependencyModal({
   const { data: metadata, isLoading: isLoadingMetadata } = useDependencyMetadata(
     enabledComponent, version, type, releaseEnvironment,
   )
-  const { data: findingsPage, isLoading: isLoadingFindings } = useComponentFindings(
+  const { data: findingsPage, isLoading: isLoadingFindings, error: findingsError, refetch: refetchFindings } = useComponentFindings(
     enabledComponent, version, releaseEnvironment,
   )
   const totalFindings = findingsPage?.total ?? 0
@@ -595,6 +596,9 @@ export function AnalyticsDependencyModal({
                 ))}
               </div>
             )}
+            {findingsError && (
+              <AnalyticsErrorCard title="Failed to load findings" error={findingsError} onRetry={() => refetchFindings()} />
+            )}
             {!isLoadingFindings && sortedFindings.length > 0 && (
               <Table className="table-fixed">
                 <TableHeader>
@@ -664,7 +668,7 @@ export function AnalyticsDependencyModal({
                 </TableBody>
               </Table>
             )}
-            {!isLoadingFindings && sortedFindings.length === 0 && (
+            {!isLoadingFindings && !findingsError && sortedFindings.length === 0 && (
               <div className="flex flex-col items-center justify-center py-8 text-muted-foreground bg-muted/30 rounded-lg">
                 <Shield className="h-8 w-8 mb-2" />
                 <p>No findings for this dependency</p>

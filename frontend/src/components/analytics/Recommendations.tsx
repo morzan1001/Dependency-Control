@@ -3,7 +3,8 @@ import { useProjectRecommendations } from '@/hooks/queries/use-analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ProjectCombobox } from '@/components/ui/project-combobox'
-import { Lightbulb, Shield, ShieldAlert } from 'lucide-react'
+import { Lightbulb, Shield } from 'lucide-react'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { RecommendationCard } from './recommendations/RecommendationCard'
 import { SummaryCard } from './recommendations/SummaryCard'
 
@@ -15,7 +16,7 @@ interface RecommendationsProps {
 export function Recommendations({ projectId: initialProjectId, scanId }: Readonly<RecommendationsProps>) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
 
-  const { data, isLoading, error } = useProjectRecommendations(selectedProjectId, scanId)
+  const { data, isLoading, error, refetch } = useProjectRecommendations(selectedProjectId, scanId)
 
   return (
     <div className="space-y-6">
@@ -47,16 +48,7 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Readonl
         </div>
       )}
 
-      {error && (
-        <Card>
-          <CardContent className="py-8">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <ShieldAlert className="h-12 w-12" />
-              <p>Failed to load recommendations</p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {error && <AnalyticsErrorCard title="Failed to load recommendations" error={error} onRetry={() => refetch()} />}
 
       {!selectedProjectId && !initialProjectId && (
         <Card>

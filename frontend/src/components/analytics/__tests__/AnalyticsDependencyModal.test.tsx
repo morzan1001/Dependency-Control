@@ -241,6 +241,23 @@ describe("AnalyticsDependencyModal findings list", () => {
     expect(screen.getByText("Showing the 2 most severe of 130 findings.")).toBeInTheDocument();
   });
 
+  it("says the findings failed to load instead of reporting none, and retries them", () => {
+    const refetch = vi.fn();
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: Object.assign(new Error("Request failed"), { response: { status: 403, data: { detail: "Not enough permissions" } } }),
+      refetch,
+    });
+
+    renderFindings();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Not enough permissions");
+    expect(screen.queryByText("No findings for this dependency")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
+  });
+
   it("names a vulnerability row by its advisory, not by the package it aggregates on", () => {
     const single = { ...finding("pkg:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-1" }] } };
     const several = {

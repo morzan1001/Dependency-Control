@@ -25,6 +25,7 @@ import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 interface CrossProjectSearchProps {
   onSelectResult?: (result: AdvancedSearchResult) => void;
@@ -63,7 +64,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-    isLoading
+    isLoading,
+    error,
+    refetch,
   } = useInfiniteQuery({
     queryKey: analyticsKeys.advancedSearch(filters, releaseEnvironment),
     queryFn: async ({ pageParam = 0 }) => {
@@ -288,6 +291,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                   ))}
                 </div>
               )
+            }
+            if (error) {
+              return <AnalyticsErrorCard title="Failed to search dependencies" error={error} onRetry={() => refetch()} />
             }
             if (allResults.length > 0) {
               return (

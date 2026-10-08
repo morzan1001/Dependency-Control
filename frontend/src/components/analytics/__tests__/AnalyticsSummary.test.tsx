@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
-import { AnalyticsSummaryCards } from '../AnalyticsSummary'
+import { AnalyticsSummaryCards, DependencyTypesChart } from '../AnalyticsSummary'
 import { AnalyticsModeContext } from '@/context/analytics-mode'
 import type { AnalyticsSummary } from '@/types/analytics'
 
@@ -72,5 +72,38 @@ describe('AnalyticsSummaryCards', () => {
     renderCards(base, false, PRODUCTION)
 
     expect(mockUseAnalyticsSummary).toHaveBeenCalledWith(PRODUCTION)
+  })
+})
+
+describe('analytics summary load error', () => {
+  const error = Object.assign(new Error('Request failed'), {
+    response: { status: 403, data: { detail: 'Not enough permissions' } },
+  })
+  const refetch = vi.fn()
+
+  afterEach(() => vi.clearAllMocks())
+
+  it('says the summary failed instead of showing zero tiles, and retries it', () => {
+    mockUseAnalyticsSummary.mockReturnValue({ data: undefined, isLoading: false, error, refetch })
+    render(<AnalyticsSummaryCards />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Not enough permissions')
+    expect(screen.queryByText(DEPENDENCIES_TILE)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(refetch).toHaveBeenCalled()
+  })
+
+  it('draws no dependency-type chart for a summary that failed to load', () => {
+    mockUseAnalyticsSummary.mockReturnValue({ data: undefined, isLoading: false, error, refetch })
+    const { container } = render(<DependencyTypesChart />)
+
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('still says no dependencies were found for a summary without any', () => {
+    mockUseAnalyticsSummary.mockReturnValue({ data: base, isLoading: false, error: null, refetch })
+    render(<DependencyTypesChart />)
+
+    expect(screen.getByText('No dependencies found')).toBeInTheDocument()
   })
 })
