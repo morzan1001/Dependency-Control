@@ -9,10 +9,10 @@ import datetime as dt
 import hashlib
 import json
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, NamedTuple
 
-from bson import ObjectId, json_util
+from bson import json_util
 
 from app.core.constants import ARCHIVE_BUNDLE_VERSION
 
@@ -29,23 +29,6 @@ class BundleStats:
     crypto_assets: int = 0
     critical_findings: int = 0
     high_findings: int = 0
-
-
-def _serialize(obj: Any) -> Any:
-    """Recursively normalize to plain JSON types (ObjectId->str, datetime->ISO).
-
-    Lossy and NOT round-trippable; used only for the header's plain-string scan_id/project_id.
-    Restorable document bodies go through json_line (Extended JSON, BSON-preserving).
-    """
-    if isinstance(obj, ObjectId):
-        return str(obj)
-    if isinstance(obj, dt.datetime):
-        return obj.isoformat()
-    if isinstance(obj, dict):
-        return {k: _serialize(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_serialize(v) for v in obj]
-    return obj
 
 
 def json_line(obj: Any) -> bytes:
@@ -73,10 +56,8 @@ class BundleFrames:
         header = {
             "version": ARCHIVE_BUNDLE_VERSION,
             "archived_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            # scan_id/project_id are plain-string identifiers; the full "scan" doc keeps
-            # its BSON types so restore inserts real datetimes/ObjectIds.
-            "scan_id": _serialize(scan_doc.get("_id")),
-            "project_id": _serialize(scan_doc.get("project_id")),
+            "scan_id": scan_doc.get("_id"),
+            "project_id": scan_doc.get("project_id"),
             "scan": scan_doc,
         }
         yield emit(json_line(header))
@@ -95,20 +76,7 @@ class BundleFrames:
                 if hasattr(stats, coll_name):
                     setattr(stats, coll_name, getattr(stats, coll_name) + 1)
 
-        footer = {
-            "footer": True,
-            "stats": {
-                "findings": stats.findings,
-                "finding_records": stats.finding_records,
-                "dependencies": stats.dependencies,
-                "analysis_results": stats.analysis_results,
-                "callgraphs": stats.callgraphs,
-                "crypto_assets": stats.crypto_assets,
-                "critical_findings": stats.critical_findings,
-                "high_findings": stats.high_findings,
-            },
-            "sha256": sha.hexdigest(),
-        }
+        footer = {"footer": True, "stats": asdict(stats), "sha256": sha.hexdigest()}
         # Footer carries the digest, so it is not itself part of the digest.
         yield json_line(footer)
 
