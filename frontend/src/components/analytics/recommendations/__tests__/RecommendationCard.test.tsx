@@ -213,3 +213,72 @@ describe('RecommendationCard steps', () => {
     expect(Array.from(list!.querySelectorAll('li'), (li) => li.textContent)).toEqual(steps)
   })
 })
+
+describe("RecommendationCard action sections", () => {
+  // The action box sits right below its heading.
+  function actionBox(title: string): HTMLElement {
+    return screen.getByText(title).nextElementSibling as HTMLElement;
+  }
+  const classesOf = (element: Element) => new Set(element.className.split(" "));
+
+  it.each([
+    [{ type: "update_dependency", package: "lodash", current_version: "1", target_version: "2" }, "Recommended Action", "bg-muted rounded-lg p-3 font-mono text-sm"],
+    [{ type: "update_base_image", current_image: "node:18" }, "Base Image", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "update_transitive", package: "lodash", target_version: "2" }, "How to Fix", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "fix_code", files: ["a.py"] }, "Code Security Issues", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "deduplicate_versions", packages: [{ name: "lodash", versions: ["1", "2"] }] }, "Version Fragmentation", "bg-muted rounded-lg p-3 text-sm space-y-3 max-h-[300px] overflow-y-auto"],
+    [{ type: "investigate_regression", suggestion: "Look" }, "Regression Details", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "address_recurring", cves: [] }, "Recurring Issues", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "reduce_chain_depth", deepest_chains: [{ package: "a", depth: 9 }] }, "Deep Dependency Chains", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "consolidate_packages", duplicates: [{ category: "http", found: ["a", "b"], suggestion: "pick one" }] }, "Duplicate Functionality", "bg-muted rounded-lg p-3 text-sm space-y-3"],
+    [{ type: "fix_cross_project_vuln", cves: [] }, "Cross-Project Vulnerabilities", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "prioritize_projects", priority_projects: [{ name: "p", id: "p", critical: 1, high: 2 }] }, "Priority Projects", "bg-muted rounded-lg p-3 text-sm space-y-2"],
+    [{ type: "standardize_versions", packages: [{ name: "lodash", versions: ["1", "2"] }] }, "Version Standardization Across Projects", "bg-muted rounded-lg p-3 text-sm space-y-3"],
+  ] as [RecommendationAction, string, string][])("boxes the %o action under its heading", (action, title, boxClasses) => {
+    renderExpanded(makeRecommendation(action));
+
+    const heading = screen.getByText(title);
+    expect(heading.className).toBe("text-sm font-medium flex items-center gap-2");
+    expect(heading.parentElement!.className).toBe("space-y-2");
+    expect(classesOf(actionBox(title))).toEqual(new Set(boxClasses.split(" ")));
+  });
+
+  it("marks a regression's heading icon as destructive", () => {
+    renderExpanded(makeRecommendation({ type: "investigate_regression", suggestion: "Look" }));
+
+    expect(screen.getByText("Regression Details").querySelector("svg")!.classList).toContain("text-destructive");
+  });
+
+  it("lists the deduplication commands below the package box", () => {
+    renderExpanded(
+      makeRecommendation({ type: "deduplicate_versions", packages: [{ name: "lodash", versions: ["1"] }], commands: ["npm dedupe"] }),
+    );
+
+    const commands = screen.getByText("npm dedupe").parentElement!;
+    expect(actionBox("Version Fragmentation").nextElementSibling).toBe(commands);
+    expect(classesOf(commands)).toEqual(new Set("mt-3 p-2 bg-muted/50 rounded font-mono text-xs text-muted-foreground".split(" ")));
+  });
+});
+
+describe("RecommendationCard copy button", () => {
+  it("swallows a rejected clipboard write instead of leaving an unhandled rejection", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    const written: string[] = [];
+    // A plain function: a vi.fn spy attaches its own handler to the promise it returns.
+    const writeText = (text: string) => {
+      written.push(text);
+      return Promise.reject(new Error("denied"));
+    };
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    renderExpanded(makeRecommendation({ type: "update_dependency", package: "lodash", target_version: "2" }));
+    fireEvent.click(screen.getByText("Recommended Action").nextElementSibling!.querySelector("button")!);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    process.off("unhandledRejection", onRejection);
+
+    expect(written).toEqual(["lodash@2"]);
+    expect(rejections).toEqual([]);
+  });
+});
