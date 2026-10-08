@@ -190,6 +190,19 @@ async def test_a_read_all_caller_lists_project_reports_past_the_analytics_projec
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_member_lists_its_projects_reports_unless_it_asks_for_personal_ones(
+    client, db, member_auth_headers, _project
+):
+    report = await _insert_report(db, requested_by=_OTHER_USER_ID, scope="project", scope_id=str(_project.id))
+
+    assert report in await _listed_ids(client, member_auth_headers)
+    personal = await client.get("/api/v1/compliance/reports?scope=user", headers=member_auth_headers)
+    assert personal.status_code == 200, personal.text
+    assert report not in [r["_id"] for r in personal.json()["reports"]]
+
+
+@pytest.mark.asyncio
 async def test_listing_personal_reports_reads_none_of_the_callers_projects(client, db, member_auth_headers):
     await db.projects.insert_one(
         {"_id": "p-2", "name": "p-2", "members": [{"user_id": _MEMBER_USER_ID, "role": "viewer"}]}

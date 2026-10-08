@@ -1,7 +1,7 @@
 import { api } from "@/api/client";
 import type {
   ReportAck, ReportFormat, ReportFramework,
-  ReportListResponse, ReportStatus,
+  ReportListResponse,
 } from "@/types/compliance";
 
 export interface CreateReportPayload {
@@ -17,19 +17,8 @@ export async function createReport(p: CreateReportPayload): Promise<ReportAck> {
   return data;
 }
 
-export interface ListReportsParams {
-  scope?: "project" | "team" | "global" | "user";
-  scope_id?: string | null;
-  framework?: ReportFramework;
-  status?: ReportStatus;
-  skip?: number;
-  limit?: number;
-}
-
-export async function listReports(p: ListReportsParams = {}): Promise<ReportListResponse> {
-  const { data } = await api.get<ReportListResponse>("/compliance/reports", {
-    params: p,
-  });
+export async function listReports(params: { limit: number }): Promise<ReportListResponse> {
+  const { data } = await api.get<ReportListResponse>("/compliance/reports", { params });
   return data;
 }
 

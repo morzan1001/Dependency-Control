@@ -69,6 +69,14 @@ describe('ComplianceReportsPanel', () => {
     await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ framework: 'pqc-migration-plan' })))
   })
 
+  it('lists project, team and global reports too, not only personal ones', async () => {
+    vi.mocked(listReports).mockResolvedValue({ reports: [] })
+    renderPanel()
+    await screen.findByText('No reports yet')
+
+    expect(listReports).toHaveBeenCalledWith({ limit: 50 })
+  })
+
   it('opens an empty form again after a cancelled draft', async () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [] })
     renderPanel()
