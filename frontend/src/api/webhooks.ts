@@ -1,5 +1,5 @@
 import { api } from '@/api/client';
-import { Webhook, WebhookCreate, WebhookTestResult } from '@/types/webhook';
+import { Webhook, WebhookCreate, WebhookTestResult, WebhookUpdate } from '@/types/webhook';
 
 export const webhookApi = {
   getGlobal: async (): Promise<Webhook[]> => {
@@ -29,6 +29,11 @@ export const webhookApi = {
 
   createTeam: async (teamId: string, data: WebhookCreate): Promise<Webhook> => {
     const response = await api.post<Webhook>(`/webhooks/team/${teamId}`, data);
+    return response.data;
+  },
+
+  update: async (id: string, data: WebhookUpdate): Promise<Webhook> => {
+    const response = await api.patch<Webhook>(`/webhooks/${id}`, data);
     return response.data;
   },
 

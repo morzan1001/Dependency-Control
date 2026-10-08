@@ -20,6 +20,15 @@ export interface WebhookCreate {
   webhook_type?: WebhookType;
 }
 
+// Only the sent fields change; a null secret removes the stored one.
+export interface WebhookUpdate {
+  url?: string;
+  events?: string[];
+  is_active?: boolean;
+  secret?: string | null;
+  webhook_type?: WebhookType;
+}
+
 export interface WebhookTestResult {
   success: boolean;
   status_code: number | null;

@@ -1,4 +1,4 @@
-import { useTeamWebhooks, useCreateTeamWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks';
+import { useTeamWebhooks, useCreateTeamWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks';
 import { WebhookManager } from '@/components/WebhookManager';
 import { Webhook, WebhookCreate } from '@/types/webhook';
 import {
@@ -22,6 +22,7 @@ interface TeamWebhooksDialogProps {
 export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreate, canDelete, canUpdate }: Readonly<TeamWebhooksDialogProps>) {
   const { data: webhooks, isLoading } = useTeamWebhooks(teamId || '');
   const createMutation = useCreateTeamWebhook();
+  const updateMutation = useUpdateWebhook();
   const deleteMutation = useDeleteWebhook();
 
   const handleCreate = async (data: WebhookCreate) => {
@@ -47,6 +48,7 @@ export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreat
             webhooks={webhooks || []}
             isLoading={isLoading}
             onCreate={handleCreate}
+            onUpdate={(id, data) => updateMutation.mutateAsync({ id, data })}
             onDelete={handleDelete}
             title="Webhooks"
             description="Manage webhooks for this team. These webhooks will be triggered for all projects belonging to this team."

@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { SettingsTabProps, SystemSettings } from "@/types/system"
-import { Webhook, WebhookCreate } from "@/types/webhook"
+import { Webhook, WebhookCreate, WebhookUpdate } from "@/types/webhook"
 
 interface NotificationsSettingsTabProps extends SettingsTabProps {
   slackAuthMode: string
@@ -27,6 +27,7 @@ interface NotificationsSettingsTabProps extends SettingsTabProps {
   webhooks: Webhook[]
   isLoadingWebhooks: boolean
   onCreateWebhook: (data: WebhookCreate) => Promise<Webhook>
+  onUpdateWebhook: (id: string, data: WebhookUpdate) => Promise<Webhook>
   onDeleteWebhook: (id: string) => Promise<void>
 }
 
@@ -42,6 +43,7 @@ export function NotificationsSettingsTab({
   webhooks,
   isLoadingWebhooks,
   onCreateWebhook,
+  onUpdateWebhook,
   onDeleteWebhook,
 }: Readonly<NotificationsSettingsTabProps>) {
   return (
@@ -310,6 +312,7 @@ export function NotificationsSettingsTab({
         webhooks={webhooks || []}
         isLoading={isLoadingWebhooks}
         onCreate={onCreateWebhook}
+        onUpdate={onUpdateWebhook}
         onDelete={onDeleteWebhook}
         title="Global Webhooks"
         description="Configure webhooks that trigger on system-wide events."

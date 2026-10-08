@@ -1,11 +1,13 @@
 import { useState } from "react"
-import { WebhookCreate, WebhookType } from "@/types/webhook"
+import { Webhook, WebhookCreate, WebhookType, WebhookUpdate } from "@/types/webhook"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
+import { getErrorMessage } from "@/lib/utils"
 
 // Mirrors the server's detection, which decides the type when the request names none.
 function detectWebhookType(url: string): WebhookType {
@@ -72,35 +74,90 @@ interface WebhookFormState {
   url: string
   events: string[]
   secret: string
+  removeSecret: boolean
   sendJson: boolean
+  isActive: boolean
 }
 
-const EMPTY_FORM: WebhookFormState = { url: "", events: [], secret: "", sendJson: false }
-
-interface WebhookFormProps {
-  readonly onCreate: (data: WebhookCreate) => Promise<unknown>
-  readonly onSaved: () => void
+const EMPTY_FORM: WebhookFormState = {
+  url: "",
+  events: [],
+  secret: "",
+  removeSecret: false,
+  sendJson: false,
+  isActive: true,
 }
+
+function sendsJsonToTeams(webhook: Webhook): boolean {
+  return detectWebhookType(webhook.url) === "teams" && webhook.webhook_type === "generic"
+}
+
+function formFor(webhook: Webhook): WebhookFormState {
+  return {
+    ...EMPTY_FORM,
+    url: webhook.url,
+    events: webhook.events,
+    sendJson: sendsJsonToTeams(webhook),
+    isActive: webhook.is_active,
+  }
+}
+
+function createPayload(form: WebhookFormState): WebhookCreate {
+  return {
+    url: form.url,
+    events: form.events,
+    ...(form.secret ? { secret: form.secret } : {}),
+    // The JSON opt-out exists for Teams URLs only; a value left from an edited-away Teams URL must not stick.
+    ...(form.sendJson && detectWebhookType(form.url) === "teams" ? { webhook_type: "generic" as const } : {}),
+  }
+}
+
+function changedFields(webhook: Webhook, form: WebhookFormState): WebhookUpdate {
+  const changes: WebhookUpdate = {}
+  const urlChanged = form.url !== webhook.url
+  if (urlChanged) changes.url = form.url
+  if (form.events.length !== webhook.events.length || form.events.some(e => !webhook.events.includes(e))) {
+    changes.events = form.events
+  }
+  if (form.removeSecret) changes.secret = null
+  else if (form.secret) changes.secret = form.secret
+  if (form.isActive !== webhook.is_active) changes.is_active = form.isActive
+  // The server detects the type of a new URL sent without one, so only the Teams opt-out needs naming.
+  const mustNameType = urlChanged ? form.sendJson : form.sendJson !== sendsJsonToTeams(webhook)
+  if (mustNameType && detectWebhookType(form.url) === "teams") {
+    changes.webhook_type = form.sendJson ? "generic" : "teams"
+  }
+  return changes
+}
+
+type WebhookFormProps = { readonly onSaved: () => void } & (
+  | { readonly webhook?: undefined; readonly onCreate: (data: WebhookCreate) => Promise<unknown> }
+  | { readonly webhook: Webhook; readonly onUpdate: (data: WebhookUpdate) => Promise<unknown> }
+)
 
 // Owns the DialogContent rather than living inside it, so a create draft survives closing the dialog.
-export function WebhookForm({ onCreate, onSaved }: WebhookFormProps) {
-  const [form, setForm] = useState<WebhookFormState>(EMPTY_FORM)
+export function WebhookForm(props: WebhookFormProps) {
+  const { webhook, onSaved } = props
+  const [form, setForm] = useState<WebhookFormState>(() => (webhook ? formFor(webhook) : EMPTY_FORM))
+  const patchForm = (patch: Partial<WebhookFormState>) => setForm(prev => ({ ...prev, ...patch }))
   const isTeamsUrl = detectWebhookType(form.url) === "teams"
+  const unchanged = webhook !== undefined && Object.keys(changedFields(webhook, form)).length === 0
 
   const handleSubmit = async () => {
     try {
-      await onCreate({
-        url: form.url,
-        events: form.events,
-        ...(form.secret ? { secret: form.secret } : {}),
-        // The JSON opt-out exists for Teams URLs only; a value left from an edited-away Teams URL must not stick.
-        ...(form.sendJson && isTeamsUrl ? { webhook_type: "generic" as const } : {}),
-      })
+      if (props.webhook) {
+        await props.onUpdate(changedFields(props.webhook, form))
+        toast.success("Webhook updated")
+      } else {
+        await props.onCreate(createPayload(form))
+        setForm(EMPTY_FORM)
+        toast.success("Webhook created")
+      }
       onSaved()
-      setForm(EMPTY_FORM)
-      toast.success("Webhook created")
-    } catch {
-      toast.error("Failed to create webhook")
+    } catch (error) {
+      toast.error(webhook ? "Failed to update webhook" : "Failed to create webhook", {
+        description: getErrorMessage(error),
+      })
     }
   }
 
@@ -116,14 +173,23 @@ export function WebhookForm({ onCreate, onSaved }: WebhookFormProps) {
   return (
     <DialogContent>
       <DialogHeader>
-        <DialogTitle>Add Webhook</DialogTitle>
+        <DialogTitle>{webhook ? "Edit Webhook" : "Add Webhook"}</DialogTitle>
       </DialogHeader>
       <div className="space-y-4 py-4">
+        {webhook && (
+          <div className="flex items-center justify-between">
+            <div className="grid gap-0.5 leading-tight">
+              <Label htmlFor="webhook-active">Active</Label>
+              <span className="text-xs text-muted-foreground">A paused webhook receives no deliveries.</span>
+            </div>
+            <Switch id="webhook-active" checked={form.isActive} onCheckedChange={isActive => patchForm({ isActive })} />
+          </div>
+        )}
         <div className="space-y-2">
           <Label>URL</Label>
           <Input
             value={form.url}
-            onChange={e => setForm(prev => ({ ...prev, url: e.target.value }))}
+            onChange={e => patchForm({ url: e.target.value })}
             placeholder="https://example.com/webhook"
           />
           {isTeamsUrl && (
@@ -131,7 +197,7 @@ export function WebhookForm({ onCreate, onSaved }: WebhookFormProps) {
               <Checkbox
                 id="webhook-send-json"
                 checked={form.sendJson}
-                onCheckedChange={checked => setForm(prev => ({ ...prev, sendJson: checked }))}
+                onCheckedChange={sendJson => patchForm({ sendJson })}
                 className="mt-0.5"
               />
               <Label htmlFor="webhook-send-json" className="text-xs font-normal text-muted-foreground">
@@ -142,12 +208,27 @@ export function WebhookForm({ onCreate, onSaved }: WebhookFormProps) {
           )}
         </div>
         <div className="space-y-2">
-          <Label>Secret (Optional)</Label>
+          <Label htmlFor="webhook-secret">{webhook ? "Secret" : "Secret (Optional)"}</Label>
           <Input
+            id="webhook-secret"
             value={form.secret}
-            onChange={e => setForm(prev => ({ ...prev, secret: e.target.value }))}
+            onChange={e => patchForm({ secret: e.target.value })}
             type="password"
+            disabled={form.removeSecret}
+            placeholder={webhook ? "Leave empty to keep the stored secret" : undefined}
           />
+          {webhook && (
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="webhook-remove-secret"
+                checked={form.removeSecret}
+                onCheckedChange={removeSecret => patchForm({ removeSecret })}
+              />
+              <Label htmlFor="webhook-remove-secret" className="text-xs font-normal text-muted-foreground">
+                Remove the stored secret
+              </Label>
+            </div>
+          )}
         </div>
         <div className="space-y-2">
           <Label>Events</Label>
@@ -172,7 +253,9 @@ export function WebhookForm({ onCreate, onSaved }: WebhookFormProps) {
             ))}
           </div>
         </div>
-        <Button onClick={handleSubmit} className="w-full" disabled={!form.url || form.events.length === 0}>Create Webhook</Button>
+        <Button onClick={handleSubmit} className="w-full" disabled={!form.url || form.events.length === 0 || unchanged}>
+          {webhook ? "Save changes" : "Create Webhook"}
+        </Button>
       </div>
     </DialogContent>
   )

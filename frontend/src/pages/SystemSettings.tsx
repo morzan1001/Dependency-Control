@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { useSystemSettings, useUpdateSystemSettings, useAppConfig, systemKeys } from "@/hooks/queries/use-system"
-import { useGlobalWebhooks, useCreateGlobalWebhook, useDeleteWebhook } from "@/hooks/queries/use-webhooks"
+import { useGlobalWebhooks, useCreateGlobalWebhook, useUpdateWebhook, useDeleteWebhook } from "@/hooks/queries/use-webhooks"
 import { SystemSettings as SystemSettingsType } from "@/types/system"
 import { useAuth } from "@/context/useAuth"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -68,6 +68,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
   const { data: webhooks, isLoading: isLoadingWebhooks } = useGlobalWebhooks();
 
   const createWebhookMutation = useCreateGlobalWebhook();
+  const updateWebhookMutation = useUpdateWebhook();
   const deleteWebhookMutation = useDeleteWebhook();
 
   const tabProps = {
@@ -114,6 +115,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
             webhooks={webhooks || []}
             isLoadingWebhooks={isLoadingWebhooks}
             onCreateWebhook={(data) => createWebhookMutation.mutateAsync(data)}
+            onUpdateWebhook={(id, data) => updateWebhookMutation.mutateAsync({ id, data })}
             onDeleteWebhook={(id) => deleteWebhookMutation.mutateAsync(id)}
           />
         </TabsContent>

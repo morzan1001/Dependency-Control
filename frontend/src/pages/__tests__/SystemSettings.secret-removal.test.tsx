@@ -15,6 +15,7 @@ vi.mock('@/components/settings/CICDInstancesManagement', () => ({ CICDInstancesM
 vi.mock('@/hooks/queries/use-webhooks', () => ({
   useGlobalWebhooks: () => ({ data: [], isLoading: false }),
   useCreateGlobalWebhook: () => ({ mutateAsync: vi.fn() }),
+  useUpdateWebhook: () => ({ mutateAsync: vi.fn() }),
   useDeleteWebhook: () => ({ mutateAsync: vi.fn() }),
 }))
 

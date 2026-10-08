@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 
 import { toast } from "sonner";
 
@@ -30,6 +30,7 @@ describe("WebhookManager", () => {
         webhooks={[]}
         isLoading={false}
         onCreate={vi.fn().mockResolvedValue({ id: "w1" })}
+        onUpdate={vi.fn()}
         onDelete={vi.fn().mockResolvedValue(undefined)}
       />,
     );
@@ -55,7 +56,7 @@ describe("WebhookManager", () => {
   ])("sends webhook_type generic for a workflow URL only when the JSON opt-out is ticked (%s)", async (optOut, expected) => {
     const onCreate = vi.fn().mockResolvedValue({ id: "w1" });
     render(
-      <WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onDelete={vi.fn()} />,
+      <WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
     fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), {
@@ -70,7 +71,7 @@ describe("WebhookManager", () => {
   });
 
   it("keeps a create draft across closing and reopening the dialog", () => {
-    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={vi.fn()} onDelete={vi.fn()} />);
+    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
     fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), {
       target: { value: "https://example.com/draft" },
@@ -98,6 +99,7 @@ describe("WebhookManager", () => {
         webhooks={webhooks}
         isLoading={false}
         onCreate={vi.fn()}
+        onUpdate={vi.fn()}
         onDelete={vi.fn().mockResolvedValue(undefined)}
       />,
     );
@@ -133,7 +135,7 @@ describe("WebhookManager", () => {
 
   it("stores a Slack URL with its detected type after a Teams URL was edited away", async () => {
     const onCreate = vi.fn().mockResolvedValue({ id: "w-new" });
-    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onDelete={vi.fn()} />);
+    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
     const url = screen.getByPlaceholderText("https://example.com/webhook");
 
@@ -145,5 +147,200 @@ describe("WebhookManager", () => {
 
     await waitFor(() => expect(onCreate).toHaveBeenCalled());
     expect(onCreate.mock.calls[0][0]).not.toHaveProperty("webhook_type");
+  });
+  it("shows the API error when creating a webhook fails", async () => {
+    const onCreate = vi.fn().mockRejectedValue({ response: { data: { detail: "Plain HTTP is only allowed for loopback hosts" } } });
+    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+    fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), { target: { value: "http://example.com/hook" } });
+    fireEvent.click(screen.getByLabelText(/Scan completed/i));
+    fireEvent.click(screen.getByRole("button", { name: /Create Webhook/i }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Failed to create webhook", {
+        description: "Plain HTTP is only allowed for loopback hosts",
+      }),
+    );
+  });
+
+  describe("editing a webhook", () => {
+    const TEAMS_URL = "https://contoso.webhook.office.com/webhookb2/abc";
+    const SLACK_URL = "https://hooks.slack.com/services/T0/B0/x";
+
+    const stored: Webhook = {
+      id: "w-edit",
+      url: "https://example.com/hook",
+      events: ["scan.completed", "analysis.failed"],
+      is_active: true,
+      created_at: "2026-10-01T08:00:00Z",
+      webhook_type: "generic",
+    };
+    const teamsCards: Webhook = { ...stored, url: TEAMS_URL, webhook_type: "teams" };
+    const teamsJson: Webhook = { ...stored, url: TEAMS_URL, webhook_type: "generic" };
+
+    beforeEach(() => vi.clearAllMocks());
+
+    const renderEditor = (webhook: Webhook, onUpdate = vi.fn().mockResolvedValue(webhook)) => {
+      render(
+        <WebhookManager webhooks={[webhook]} isLoading={false} onCreate={vi.fn()} onUpdate={onUpdate} onDelete={vi.fn()} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Edit webhook" }));
+      return onUpdate;
+    };
+    const urlInput = () => screen.getByPlaceholderText("https://example.com/webhook");
+    const optOut = () => screen.queryByLabelText(/send the event JSON instead/i);
+    const saveButton = () => screen.getByRole("button", { name: "Save changes" });
+
+    const saved = async (onUpdate: ReturnType<typeof vi.fn>) => {
+      fireEvent.click(saveButton());
+      await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+      return onUpdate.mock.calls[0];
+    };
+
+    it("opens prefilled with the webhook and offers Save only after a change", () => {
+      renderEditor(stored);
+
+      expect(urlInput()).toHaveValue("https://example.com/hook");
+      expect(screen.getByLabelText(/Scan completed/i)).toBeChecked();
+      expect(screen.getByLabelText(/Analysis failed/i)).toBeChecked();
+      expect(screen.getByLabelText(/Vulnerability found/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/^Secret/)).toHaveValue("");
+      expect(screen.getByRole("switch", { name: "Active" })).toBeChecked();
+      expect(saveButton()).toBeDisabled();
+    });
+
+    it("discards unsaved edits when the dialog is closed", () => {
+      renderEditor(stored);
+      fireEvent.change(urlInput(), { target: { value: "https://example.com/abandoned" } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      fireEvent.click(screen.getByRole("button", { name: "Edit webhook" }));
+
+      expect(urlInput()).toHaveValue("https://example.com/hook");
+    });
+
+    it("treats an event unticked and ticked again as unchanged", () => {
+      renderEditor(stored);
+
+      fireEvent.click(screen.getByLabelText(/Scan completed/i));
+      fireEvent.click(screen.getByLabelText(/Scan completed/i));
+
+      expect(saveButton()).toBeDisabled();
+    });
+
+    it.each([
+      ["the new URL", () => fireEvent.change(urlInput(), { target: { value: "https://example.com/fixed" } }), { url: "https://example.com/fixed" }],
+      [
+        "the new event list",
+        () => fireEvent.click(screen.getByLabelText(/Vulnerability found/i)),
+        { events: ["scan.completed", "analysis.failed", "vulnerability.found"] },
+      ],
+      ["a newly entered secret", () => fireEvent.change(screen.getByLabelText(/^Secret/), { target: { value: "rotated" } }), { secret: "rotated" }],
+      ["a null secret to remove the stored one", () => fireEvent.click(screen.getByLabelText(/Remove the stored secret/i)), { secret: null }],
+      ["is_active false to pause it", () => fireEvent.click(screen.getByRole("switch", { name: "Active" })), { is_active: false }],
+    ])("sends only %s", async (_change, edit, expected) => {
+      const onUpdate = renderEditor(stored);
+
+      edit();
+      const [id, data] = await saved(onUpdate);
+
+      expect(id).toBe("w-edit");
+      expect(data).toStrictEqual(expected);
+    });
+
+    it("removes the stored secret even when a new one was typed first", async () => {
+      const onUpdate = renderEditor(stored);
+
+      fireEvent.change(screen.getByLabelText(/^Secret/), { target: { value: "rotated" } });
+      fireEvent.click(screen.getByLabelText(/Remove the stored secret/i));
+      expect(screen.getByLabelText(/^Secret/)).toBeDisabled();
+      const [, data] = await saved(onUpdate);
+
+      expect(data).toStrictEqual({ secret: null });
+    });
+
+    it("offers the JSON opt-out only while the URL is a Teams URL", () => {
+      renderEditor(stored);
+      expect(optOut()).not.toBeInTheDocument();
+
+      fireEvent.change(urlInput(), { target: { value: TEAMS_URL } });
+
+      expect(optOut()).toBeInTheDocument();
+    });
+
+    it("shows the stored JSON opt-out of a Teams webhook ticked", () => {
+      renderEditor(teamsJson);
+
+      expect(optOut()).toBeChecked();
+    });
+
+    it.each([
+      ["ticking the opt-out sends the generic type", teamsCards, () => fireEvent.click(optOut()!), { webhook_type: "generic" }],
+      ["unticking the opt-out sends the Teams type", teamsJson, () => fireEvent.click(optOut()!), { webhook_type: "teams" }],
+      [
+        "a new Teams URL keeps a ticked opt-out",
+        teamsJson,
+        () => fireEvent.change(urlInput(), { target: { value: "https://contoso.webhook.office.com/webhookb2/def" } }),
+        { url: "https://contoso.webhook.office.com/webhookb2/def", webhook_type: "generic" },
+      ],
+      [
+        "a Slack URL leaves the type to the server",
+        teamsJson,
+        () => fireEvent.change(urlInput(), { target: { value: SLACK_URL } }),
+        { url: SLACK_URL },
+      ],
+    ])("%s", async (_case, webhook, edit, expected) => {
+      const onUpdate = renderEditor(webhook);
+
+      edit();
+      const [, data] = await saved(onUpdate);
+
+      expect(data).toStrictEqual(expected);
+    });
+
+    it("closes once the change is saved", async () => {
+      const onUpdate = renderEditor(stored);
+
+      fireEvent.click(screen.getByRole("switch", { name: "Active" }));
+      await saved(onUpdate);
+
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument());
+      expect(toast.success).toHaveBeenCalledWith("Webhook updated");
+    });
+
+    it("shows the API error and stays open when saving fails", async () => {
+      const onUpdate = renderEditor(
+        stored,
+        vi.fn().mockRejectedValue({ response: { data: { detail: "Plain HTTP is only allowed for loopback hosts" } } }),
+      );
+
+      fireEvent.change(urlInput(), { target: { value: "http://example.com/hook" } });
+      await saved(onUpdate);
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("Failed to update webhook", {
+          description: "Plain HTTP is only allowed for loopback hosts",
+        }),
+      );
+      expect(saveButton()).toBeInTheDocument();
+    });
+
+    it.each([
+      ["a false update permission", false],
+      ["an update permission the user lacks", "system:manage"],
+    ])("offers no Edit for %s", (_case, updatePermission) => {
+      render(
+        <WebhookManager
+          webhooks={[stored]}
+          isLoading={false}
+          onCreate={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          updatePermission={updatePermission}
+        />,
+      );
+
+      expect(screen.queryByRole("button", { name: "Edit webhook" })).not.toBeInTheDocument();
+    });
   });
 });

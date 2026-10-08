@@ -1,4 +1,5 @@
-import { Webhook, WebhookCreate, WebhookType } from "@/types/webhook"
+import { useState } from "react"
+import { Webhook, WebhookCreate, WebhookType, WebhookUpdate } from "@/types/webhook"
 import { webhookApi } from "@/api/webhooks"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -6,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { WebhookForm } from "@/components/WebhookForm"
-import { Trash2, Plus, Send } from "lucide-react"
+import { Trash2, Plus, Send, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/context/useAuth"
@@ -46,6 +47,7 @@ interface WebhookManagerProps {
   readonly webhooks: Webhook[]
   readonly isLoading: boolean
   readonly onCreate: (data: WebhookCreate) => Promise<Webhook>
+  readonly onUpdate: (id: string, data: WebhookUpdate) => Promise<Webhook>
   readonly onDelete: (id: string) => Promise<void>
   readonly title?: string
   readonly description?: string
@@ -58,6 +60,7 @@ export function WebhookManager({
   webhooks, 
   isLoading, 
   onCreate, 
+  onUpdate,
   onDelete, 
   title = "Webhooks", 
   description = "Manage webhooks for event notifications.",
@@ -66,6 +69,7 @@ export function WebhookManager({
   updatePermission = "webhook:update"
 }: WebhookManagerProps) {
   const createDialog = useDialogState()
+  const [editing, setEditing] = useState<Webhook | null>(null)
   const { hasPermission } = useAuth()
   const canCreate = typeof createPermission === 'boolean'
     ? createPermission
@@ -139,7 +143,7 @@ export function WebhookManager({
               <TableHead className="w-[100px]">Status</TableHead>
               <TableHead className="w-[200px]">Events</TableHead>
               <TableHead className="w-[150px]">Created At</TableHead>
-              <TableHead className="w-[90px]"></TableHead>
+              <TableHead className="w-[140px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -172,9 +176,14 @@ export function WebhookManager({
                   <TableCell>
                     <div className="flex">
                       {canUpdate && (
-                        <Button variant="ghost" size="icon" aria-label="Send test" title="Send test" onClick={() => handleTest(webhook.id)}>
-                          <Send className="h-4 w-4" />
-                        </Button>
+                        <>
+                          <Button variant="ghost" size="icon" aria-label="Edit webhook" title="Edit webhook" onClick={() => setEditing(webhook)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" aria-label="Send test" title="Send test" onClick={() => handleTest(webhook.id)}>
+                            <Send className="h-4 w-4" />
+                          </Button>
+                        </>
                       )}
                       {canDeleteWh && (
                         <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
@@ -188,6 +197,15 @@ export function WebhookManager({
             )}
           </TableBody>
         </Table>
+        {editing && (
+          <Dialog open onOpenChange={() => setEditing(null)}>
+            <WebhookForm
+              webhook={editing}
+              onUpdate={data => onUpdate(editing.id, data)}
+              onSaved={() => setEditing(null)}
+            />
+          </Dialog>
+        )}
       </CardContent>
     </Card>
   )

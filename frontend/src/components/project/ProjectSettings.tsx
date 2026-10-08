@@ -5,7 +5,7 @@ import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useClickOutside } from '@/hooks/use-click-outside'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
-import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
+import { useProjectWebhooks, useCreateProjectWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
@@ -255,6 +255,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
 
 
   const createProjectWebhookMutation = useCreateProjectWebhook()
+  const updateWebhookMutation = useUpdateWebhook()
   const deleteWebhookMutation = useDeleteWebhook()
 
   const createWebhookMutation = {
@@ -774,6 +775,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
         webhooks={webhooks || []} 
         isLoading={isLoadingWebhooks}
         onCreate={createWebhookMutation.mutateAsync}
+        onUpdate={(id, data) => updateWebhookMutation.mutateAsync({ id, data })}
         onDelete={handleDeleteWebhook}
         createPermission={canCreateWh}
         deletePermission={canDeleteWh}

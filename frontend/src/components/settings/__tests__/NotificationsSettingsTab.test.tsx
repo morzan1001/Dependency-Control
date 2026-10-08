@@ -31,6 +31,7 @@ function renderTab(formData: Partial<SystemSettings> = SLACK_APP) {
       webhooks={[]}
       isLoadingWebhooks={false}
       onCreateWebhook={vi.fn()}
+      onUpdateWebhook={vi.fn()}
       onDeleteWebhook={vi.fn()}
     />,
   )

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { webhookApi } from '@/api/webhooks';
-import { Webhook, WebhookCreate } from '@/types/webhook';
+import { Webhook, WebhookCreate, WebhookUpdate } from '@/types/webhook';
 
 export const webhookKeys = {
   all: ['webhooks'] as const,
@@ -64,12 +64,22 @@ export const useCreateTeamWebhook = () => {
   });
 };
 
+// The id alone does not tell the scope, so updates and deletes refresh every webhook list.
+export const useUpdateWebhook = () => {
+  const queryClient = useQueryClient();
+  return useMutation<Webhook, Error, { id: string; data: WebhookUpdate }>({
+    mutationFn: ({ id, data }) => webhookApi.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: webhookKeys.all });
+    },
+  });
+};
+
 export const useDeleteWebhook = () => {
   const queryClient = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (id: string) => webhookApi.delete(id),
     onSuccess: () => {
-      // Scope is unknown from the id, so invalidate all webhooks.
       queryClient.invalidateQueries({ queryKey: webhookKeys.all });
     },
   });

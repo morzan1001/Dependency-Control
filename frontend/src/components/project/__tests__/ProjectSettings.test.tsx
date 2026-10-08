@@ -31,6 +31,7 @@ vi.mock('@/hooks/queries/use-projects', () => ({
 vi.mock('@/hooks/queries/use-webhooks', () => ({
   useProjectWebhooks: () => ({ data: [], isLoading: false, refetch: vi.fn() }),
   useCreateProjectWebhook: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateWebhook: () => ({ mutateAsync: vi.fn() }),
   useDeleteWebhook: () => ({ mutateAsync: vi.fn() }),
 }))
 vi.mock('@/api/gitlab-instances', () => ({
