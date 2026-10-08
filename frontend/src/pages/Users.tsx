@@ -49,8 +49,7 @@ export default function UsersPage() {
   }));
 
   const activeUsers: User[] = (users || []).map(u => ({ ...u, status: 'active' as const }));
-  const selectedUser = [...invitationUsers, ...activeUsers].find(u => u.id === selectedUserId) ?? null;
-  const selectUser = (user: User) => setSelectedUserId(user.id);
+  const selectedUser = activeUsers.find(u => u.id === selectedUserId) ?? null;
 
   const showInvitations = page === 1 && invitationUsers.length > 0;
 
@@ -116,7 +115,6 @@ export default function UsersPage() {
                   page={0}
                   limit={limit}
                   onPageChange={() => {}}
-                  onSelectUser={selectUser}
                 />
               </CardContent>
             </Card>
@@ -131,7 +129,7 @@ export default function UsersPage() {
                 page={page - 1}
                 limit={limit}
                 onPageChange={(p) => setPage(p + 1)}
-                onSelectUser={selectUser}
+                onSelectUser={(user) => setSelectedUserId(user.id)}
                 sortBy={sortBy}
                 sortOrder={sortOrder}
                 onSort={(column) => {
