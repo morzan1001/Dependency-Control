@@ -49,7 +49,7 @@ def _days_ago(days: float) -> datetime:
     return NOW - timedelta(days=days)
 
 
-def _dep(scan_id: str, name: str, version: str, ecosystem: str = "pypi") -> dict[str, Any]:
+def _dep(scan_id: str, name: str, version: str) -> dict[str, Any]:
     return {
         "_id": f"{scan_id}:{name}",
         "scan_id": scan_id,
@@ -57,7 +57,7 @@ def _dep(scan_id: str, name: str, version: str, ecosystem: str = "pypi") -> dict
         "name": name,
         "version": version,
         "type": "library",
-        "purl": f"pkg:{ecosystem}/{name}@{version}",
+        "purl": f"pkg:pypi/{name}@{version}",
     }
 
 
@@ -71,7 +71,6 @@ async def _seed_scan(
     branch: str = BRANCH,
     commit_hash: str | None = None,
     project_id: str = PROJECT,
-    ecosystem: str = "pypi",
 ) -> None:
     """``outdated=None`` seeds no outdated analysis at all; ``()`` seeds one that found nothing."""
     await db.scans.insert_one(
@@ -86,7 +85,7 @@ async def _seed_scan(
         }
     )
     for name, version in packages.items():
-        await db.dependencies.insert_one(_dep(scan_id, name, version, ecosystem) | {"project_id": project_id})
+        await db.dependencies.insert_one(_dep(scan_id, name, version) | {"project_id": project_id})
     if outdated is not None:
         await db.analysis_results.insert_one(
             {
@@ -166,7 +165,6 @@ _SHARED_FIELDS = (
     "trend_direction",
     "trend_detail",
     "scan_timeline",
-    "dominant_ecosystem",
 )
 
 
@@ -210,19 +208,6 @@ class TestDifferentialNormalHistory:
         _assert_same_metrics(live, rolled)
         assert live.downgrade_updates == 1
         assert live.total_updates == 1
-
-    @pytest.mark.asyncio
-    async def test_a_migrated_project_reports_its_new_ecosystem_on_both_paths(self):
-        db = FakeDatabase()
-        await _seed_scan(db, "s1", _days_ago(60), {f"js{i}": "1.0.0" for i in range(4)}, (), ecosystem="npm")
-        await _seed_scan(db, "s2", _days_ago(50), {f"py{i}": "1.0.0" for i in range(4)}, ())
-        await _build_ledger(db)
-
-        live = await _live(db)
-        rolled = await _rollup(db)
-
-        _assert_same_metrics(live, rolled)
-        assert live.dominant_ecosystem == "pypi"
 
     @pytest.mark.asyncio
     async def test_same_commit_retries_share_one_bar_in_both_paths(self):
@@ -606,7 +591,6 @@ def _fake_deltas(branch: str, count: int, newest_days_ago: float, retries: int =
             "outdated_count": 0,
             "outdated_added": [],
             "outdated_resolved": [],
-            "eco": {"pypi": 1},
             "error": None,
         }
         for i, scan_id in enumerate(ids)

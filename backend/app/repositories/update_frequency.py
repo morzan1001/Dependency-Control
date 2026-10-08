@@ -13,8 +13,7 @@ from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 
 _NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
 
-# Everything the pure fold needs for a comparison row. updates_sample and
-# prev_created_at are left behind: only the single-project timeline reads them.
+# Everything the pure fold needs for a comparison row.
 _WINDOW_PROJECTION = {
     "_id": 1,
     "project_id": 1,
@@ -27,7 +26,6 @@ _WINDOW_PROJECTION = {
     "outdated_count": 1,
     "outdated_added": 1,
     "outdated_resolved": 1,
-    "eco": 1,
     "error": 1,
 }
 

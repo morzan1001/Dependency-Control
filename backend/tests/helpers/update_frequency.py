@@ -33,5 +33,7 @@ async def rollup_metrics(db: Any, project: dict[str, Any], window_days: int) -> 
 
 
 def ledger_view(metrics: UpdateFrequencyMetrics) -> UpdateFrequencyMetrics:
-    """The walk's metrics without what only the walk derives from the scans: the slowest table and recent updates."""
-    return metrics.model_copy(update={"slowest_packages": [], "recent_updates": [], "outdated_backlog": 0})
+    """The walk's metrics without what only the walk derives: slowest table, recent updates, dominant ecosystem."""
+    return metrics.model_copy(
+        update={"slowest_packages": [], "recent_updates": [], "outdated_backlog": 0, "dominant_ecosystem": None}
+    )

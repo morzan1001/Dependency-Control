@@ -230,7 +230,7 @@ def _measured_count(outdated: set[str] | None) -> int | None:
 
 
 def _update_sample_order(event: DependencyUpdateEvent) -> tuple[int, str, str]:
-    """The order the delta writer sorts its samples in, so both paths cut a scan the same way."""
+    """Mongo document order is unstable, so the cut of a busy scan needs a total order of its own."""
     return (UPDATE_SAMPLE_RANK[event.update_type], event.package_name, event.new_version)
 
 
@@ -653,8 +653,6 @@ class _AccumulatorState:
     """Streaming-loop state, bundled so each helper takes a single argument."""
 
     type_counter: Counter = field(default_factory=Counter)
-    # One rank-ordered list per scan that produced changes, so the newest-first read below
-    # keeps the same events out of a busy scan as the delta writer's samples do.
     recent_events_by_scan: deque[list[DependencyUpdateEvent]] = field(
         default_factory=lambda: deque(maxlen=RECENT_UPDATES_LIMIT)
     )
@@ -720,7 +718,7 @@ class _AccumulatorState:
             self.recent_events_by_scan.append(ranked[:RECENT_UPDATES_LIMIT])
 
     def recent_events(self) -> list[DependencyUpdateEvent]:
-        """Newest scan first, rank-ordered within a scan, cut at the shared limit."""
+        """Newest scan first, rank-ordered within a scan, cut at the limit."""
         return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
 
 

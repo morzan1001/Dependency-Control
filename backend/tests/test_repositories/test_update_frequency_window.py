@@ -33,8 +33,6 @@ def _delta(scan_id: str, project_id: str, branch: str, minutes: int, **overrides
         "outdated_count": 0,
         "outdated_added": [],
         "outdated_resolved": [],
-        "eco": {"pypi": 1},
-        "updates_sample": [],
         "error": None,
         "schema_version": 1,
     } | overrides

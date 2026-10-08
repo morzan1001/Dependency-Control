@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from app.core.constants import COUNTED_UPDATE_KINDS, RECENT_UPDATES_LIMIT
+from app.core.constants import COUNTED_UPDATE_KINDS
 from app.core.metrics import update_frequency_delta_writes_total
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
@@ -115,7 +115,6 @@ class TestBaseline:
         assert doc["outdated_count"] == 1
         assert doc["outdated_added"] == []
         assert doc["outdated_resolved"] == []
-        assert doc["eco"] == {"pypi": 2}
         assert doc["error"] is None
         assert doc["schema_version"] == 1
         assert doc["project_id"] == PROJECT
@@ -148,12 +147,11 @@ class TestBaseline:
         assert doc is not None
         assert doc["dep_count"] == 0
         assert doc["is_baseline"] is True
-        assert doc["eco"] == {}
 
 
 class TestDiff:
     @pytest.mark.asyncio
-    async def test_counts_and_sample_of_a_normal_diff(self):
+    async def test_counts_of_a_normal_diff(self):
         db = FakeDatabase()
         await _seed_scan(
             db,
@@ -194,14 +192,6 @@ class TestDiff:
         # "left" disappeared instead of being updated, so it is not resolved.
         assert doc["outdated_added"] == ["click"]
         assert doc["outdated_resolved"] == ["requests"]
-        sample = {entry["n"]: entry for entry in doc["updates_sample"]}
-        assert sample["click"]["k"] == "major"
-        assert sample["click"]["ov"] == "8.1.0"
-        assert sample["click"]["nv"] == "9.0.0"
-        assert sample["click"]["p"] == "pkg:pypi/click@9.0.0"
-        assert sample["click"]["t"] == "pypi"
-        assert sample["requests"]["wo"] is True
-        assert sample["flask"]["wo"] is False
 
     @pytest.mark.asyncio
     async def test_downgrade_is_recorded_but_not_counted_as_an_update(self):
@@ -217,8 +207,6 @@ class TestDiff:
         assert doc["updates"]["downgrade"] == 1
         assert doc["updates"]["patch"] == 1
         assert _counted(doc) == 1
-        kinds = {entry["n"]: entry["k"] for entry in doc["updates_sample"]}
-        assert kinds == {"requests": "downgrade", "flask": "patch"}
 
     @pytest.mark.asyncio
     async def test_unchanged_versions_produce_no_updates(self):
@@ -232,7 +220,6 @@ class TestDiff:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert _counted(doc) == 0
-        assert doc["updates_sample"] == []
 
     @pytest.mark.asyncio
     async def test_same_name_in_two_ecosystems_is_not_an_update(self):
@@ -246,7 +233,6 @@ class TestDiff:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert _counted(doc) == 0
-        assert doc["eco"] == {"pypi": 1}
 
     @pytest.mark.asyncio
     async def test_duplicate_versions_in_one_scan_fold_to_the_highest(self):
@@ -266,30 +252,6 @@ class TestDiff:
         assert doc is not None
         assert doc["dep_count"] == 1
         assert doc["updates"]["minor"] == 1
-
-    @pytest.mark.asyncio
-    async def test_sample_is_capped_at_the_shared_limit_deterministically(self):
-        changed = RECENT_UPDATES_LIMIT + 10
-        db = FakeDatabase()
-        old = [_dep("s1", f"pkg{i:03d}", "1.0.0") for i in range(changed)]
-        new = [_dep("s2", f"pkg{i:03d}", "1.0.1") for i in range(changed)]
-        new[7]["version"] = "2.0.0"
-        new[7]["purl"] = "pkg:pypi/pkg007@2.0.0"
-        await _seed_scan(db, "s1", _at(0), old)
-        await _seed_scan(db, "s2", _at(1), new)
-
-        await record_scan_update_delta(db, "s1")
-        await record_scan_update_delta(db, "s2")
-
-        doc = await _delta(db, "s2")
-        assert doc is not None
-        assert _counted(doc) == changed
-        # The writer keeps exactly what the readers show, so one busy scan can fill their list.
-        assert len(doc["updates_sample"]) == RECENT_UPDATES_LIMIT
-        # Biggest jump first, then by name, so a recomputation keeps the same entries.
-        assert doc["updates_sample"][0]["n"] == "pkg007"
-        expected = [f"pkg{i:03d}" for i in range(RECENT_UPDATES_LIMIT) if i != 7]
-        assert [entry["n"] for entry in doc["updates_sample"][1:]] == expected
 
 
 class TestOutdatedMeasurement:
@@ -373,7 +335,6 @@ class TestOutdatedMeasurement:
         assert doc["outdated_added"] == ["flask", "requests"]
         # Whether the predecessor considered them outdated is unknown.
         assert doc["outdated_resolved"] == []
-        assert doc["updates_sample"][0]["wo"] is False
 
     @pytest.mark.asyncio
     async def test_no_resolution_is_recorded_across_an_unmeasured_predecessor(self):
@@ -690,8 +651,6 @@ class TestReIngest:
         assert doc["prev_scan_id"] == "s1"
         assert _counted(doc) == 0
         assert doc["updates"]["major"] == 0
-        # 1.0.0 -> 2.0.0 is a transition that never took place.
-        assert doc["updates_sample"] == []
 
     @pytest.mark.asyncio
     async def test_only_the_direct_successor_is_recomputed(self):

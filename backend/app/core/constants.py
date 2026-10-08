@@ -875,15 +875,13 @@ FINDINGS_SCAN_TYPE_INDEX: dict[str, int] = {"scan_id": 1, "type": 1}
 FINDINGS_SCAN_COMPONENT_INDEX: dict[str, int] = {"scan_id": 1, "component": 1, "version": 1}
 DEPENDENCIES_SCAN_PACKAGE_INDEX: dict[str, int] = {"scan_id": 1, "name": 1, "version": 1, "purl": 1}
 
-# Version changes the "recent updates" list answers with, and the samples the delta writer keeps
-# per scan. One number for both: a writer keeping fewer than the readers show leaves a busy scan
-# unable to fill the list on its own, and the two read paths then answer with different events.
+# Version changes the "recent updates" list answers with.
 RECENT_UPDATES_LIMIT: int = 30
 UpdateKind = Literal["major", "minor", "patch", "unknown", "downgrade"]
 # Downgrades are recorded but are not update activity.
 COUNTED_UPDATE_KINDS: tuple[UpdateKind, ...] = ("patch", "minor", "major", "unknown")
 # The order the cut is taken in, so a scan with more changes than the limit loses the same ones
-# on every path; downgrades rank last.
+# on every request; downgrades rank last.
 UPDATE_SAMPLE_RANK: dict[str, int] = {kind: rank for rank, kind in enumerate(get_args(UpdateKind))}
 
 # Rows of the slowest-to-update table. Both read paths rank by scans outdated and break ties on

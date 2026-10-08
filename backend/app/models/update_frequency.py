@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
-from app.core.constants import UpdateKind
 from app.models.types import MongoDocument, PyObjectId
 
 UPDATE_DELTA_SCHEMA_VERSION = 1
@@ -20,18 +19,6 @@ class UpdateCounts(BaseModel):
     major: int = 0
     unknown: int = 0
     downgrade: int = 0
-
-
-class UpdateSample(BaseModel):
-    """One update event, field names kept short because the array is stored per scan."""
-
-    n: str  # display name
-    t: str  # package type
-    p: str | None = None  # purl
-    ov: str  # old version
-    nv: str  # new version
-    k: UpdateKind
-    wo: bool  # was flagged outdated in the previous scan
 
 
 class ScanUpdateDelta(MongoDocument):
@@ -54,8 +41,6 @@ class ScanUpdateDelta(MongoDocument):
     # or the whole set when the predecessor carried no outdated analysis.
     outdated_added: list[str] = Field(default_factory=list)
     outdated_resolved: list[str] = Field(default_factory=list)
-    eco: dict[str, int] = Field(default_factory=dict)
-    updates_sample: list[UpdateSample] = Field(default_factory=list)
     # Set when the computation failed; the document still exists so that
     # count(deltas) == count(usable scans) stays a reconcile invariant.
     error: str | None = None

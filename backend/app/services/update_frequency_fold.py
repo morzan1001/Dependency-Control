@@ -13,7 +13,6 @@ from app.core.constants import COUNTED_UPDATE_KINDS, UpdateKind
 from app.schemas.analytics import ScanTimelineEntry
 from app.services.update_frequency import (
     FoldedWindow,
-    dominant_ecosystem,
     fold_runs_into_bars,
     same_commit_runs,
     short_window,
@@ -110,7 +109,8 @@ def fold_window(
     ``baseline_outdated`` is the full outdated set of ``window[0]``, or None
     when that scan carried no outdated analysis. ``window_days`` is the
     calendar span the caller selected on, or None when it asked for a fixed
-    number of scans instead.
+    number of scans instead. A comparison row shows no ecosystem, so the ledger
+    keeps none and the window names no dominant one.
     """
     per_scan = [_timeline_entry(window[0], baseline=True)] if window else []
     per_scan.extend(_timeline_entry(delta, baseline=False) for delta in window[1:])
@@ -125,9 +125,7 @@ def fold_window(
             kinds[kind] += int(updates.get(kind, 0))
 
     ever_outdated, ever_resolved = _outdated_movement(window, baseline_outdated)
-    return summarise_window(
-        timeline, kinds, ever_outdated, ever_resolved, window_days, dominant_ecosystem(window[-1].get("eco") or {})
-    )
+    return summarise_window(timeline, kinds, ever_outdated, ever_resolved, window_days, ecosystem=None)
 
 
 def _contiguous_tail(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:

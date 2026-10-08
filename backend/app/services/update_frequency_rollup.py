@@ -11,20 +11,14 @@ from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import RECENT_UPDATES_LIMIT, UPDATE_SAMPLE_RANK
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import update_frequency_delta_writes_total
-from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts, UpdateSample
+from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
-from app.services.update_frequency import (
-    ecosystem_counts,
-    load_scan_deps,
-    load_outdated_entries,
-    version_changes,
-)
+from app.services.update_frequency import load_outdated_entries, load_scan_deps, version_changes
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +50,6 @@ class _ScanRef:
 @dataclass
 class _Diff:
     counts: Counter = field(default_factory=Counter)
-    samples: list[UpdateSample] = field(default_factory=list)
     outdated_added: list[str] = field(default_factory=list)
     outdated_resolved: list[str] = field(default_factory=list)
 
@@ -158,8 +151,6 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         outdated_count=len(outdated) if outdated is not None else None,
         outdated_added=diff.outdated_added,
         outdated_resolved=diff.outdated_resolved,
-        eco=ecosystem_counts(deps),
-        updates_sample=diff.samples,
     )
     return delta, outdated
 
@@ -226,25 +217,7 @@ def _diff_scans(
     curr_outdated: set[str] | None,
     curr_failed: set[str],
 ) -> _Diff:
-    counts: Counter = Counter()
-    samples: list[UpdateSample] = []
-    for _identity, prev, curr, kind in version_changes(prev_deps, curr_deps):
-        counts[kind] += 1
-        samples.append(
-            UpdateSample(
-                n=curr["display"],
-                t=curr["type"],
-                p=curr["purl"] or None,
-                ov=prev["version"],
-                nv=curr["version"],
-                k=kind,
-                wo=prev_outdated is not None and prev["name"] in prev_outdated,
-            )
-        )
-
-    # Mongo document order is unstable, so the cap needs a total order of its own.
-    samples.sort(key=lambda sample: (UPDATE_SAMPLE_RANK[sample.k], sample.n, sample.nv))
-    diff = _Diff(counts=counts, samples=samples[:RECENT_UPDATES_LIMIT])
+    diff = _Diff(counts=Counter(kind for *_, kind in version_changes(prev_deps, curr_deps)))
     # Without a measurement of this scan any outdated movement would be invented.
     if curr_outdated is None:
         return diff

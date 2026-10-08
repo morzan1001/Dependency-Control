@@ -9,7 +9,7 @@ import pytest
 from app.schemas.analytics import ScanTimelineEntry
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
-from app.services.update_frequency import DAYS_PER_MONTH, compute_trend
+from app.services.update_frequency import DAYS_PER_MONTH, compute_trend, dominant_ecosystem
 from app.services.update_frequency import FoldedWindow
 from app.services.update_frequency_fold import (
     commit_coverage,
@@ -23,10 +23,6 @@ BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 def _at(days: float) -> datetime:
     return BASE + timedelta(days=days)
-
-
-def _sample(name: str, kind: str = "patch", old: str = "1.0.0", new: str = "1.0.1") -> dict[str, Any]:
-    return {"n": name, "t": "npm", "p": f"pkg:npm/{name}@{new}", "ov": old, "nv": new, "k": kind, "wo": True}
 
 
 def _delta(
@@ -43,8 +39,6 @@ def _delta(
     resolved: Sequence[str] = (),
     dep_count: int = 100,
     commit_hash: str | None = None,
-    eco: dict[str, int] | None = None,
-    samples: Sequence[dict[str, Any]] = (),
     error: str | None = None,
     project_id: str = "p1",
     branch: str = "main",
@@ -74,8 +68,6 @@ def _delta(
         "outdated_count": outdated_count,
         "outdated_added": list(added),
         "outdated_resolved": list(resolved),
-        "eco": eco if eco is not None else {"npm": dep_count},
-        "updates_sample": list(samples),
         "error": error,
         "schema_version": 1,
         "computed_at": BASE,
@@ -150,7 +142,6 @@ class TestGoldenWindow:
             # 4 / 7
             ("update_coverage_pct", 57.1),
             ("trend_direction", "deteriorating"),
-            ("dominant_ecosystem", "npm"),
         ],
     )
     def test_scalar_fields(self, field: str, expected: Any) -> None:
@@ -588,9 +579,8 @@ class TestDominantEcosystem:
             ({"npm": 0, "pypi": 0}, None),
         ],
     )
-    def test_from_the_newest_scan(self, eco: dict[str, int], expected: str | None) -> None:
-        deltas = _chain([_delta("s0", 0, eco={"maven": 999}), _delta("s1", 10, eco=eco)])
-        assert _fold(deltas).dominant_ecosystem == expected
+    def test_the_ecosystem_owning_most_classified_deps(self, eco: dict[str, int], expected: str | None) -> None:
+        assert dominant_ecosystem(eco) == expected
 
 
 def _timeline(updates: Sequence[int], outdated: Sequence[int | None]) -> list[ScanTimelineEntry]:
@@ -691,7 +681,7 @@ class TestModelConstruction:
         assert metrics.update_coverage_pct == 57.1
         assert metrics.trend_direction == "deteriorating"
         assert metrics.trend_detail == folded.trend_detail
-        assert metrics.dominant_ecosystem == "npm"
+        assert metrics.dominant_ecosystem is None
         assert metrics.scan_timeline == folded.scan_timeline
         assert metrics.recent_updates == []
         assert metrics.slowest_packages == []
