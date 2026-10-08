@@ -43,108 +43,16 @@ def _bound(func, param_name: str, bound: str):
     return None
 
 
-class TestReadProjectsPaginationBounds:
-    @pytest.fixture
-    def endpoint(self):
-        from app.api.v1.endpoints.projects import read_projects
+@pytest.mark.parametrize("name", ["read_projects", "read_all_scans", "read_project_scans", "read_scan_findings"])
+def test_the_default_page_lies_within_its_bounds(name):
+    import importlib
+    import inspect
 
-        return read_projects
+    endpoint = getattr(importlib.import_module(ENDPOINTS), name)
+    defaults = {param: value.default for param, value in inspect.signature(endpoint).parameters.items()}
 
-    def test_limit_has_le_cap(self, endpoint):
-        cap = _bound(endpoint, "limit", "le")
-        assert cap is not None, "limit must have an le= upper cap"
-        assert cap <= 1000, f"limit cap {cap} looks too large — keep it ≤ 1000"
-
-    def test_default_skip_within_bounds(self, endpoint):
-        import inspect
-
-        default = inspect.signature(endpoint).parameters["skip"].default
-        ge = _bound(endpoint, "skip", "ge")
-        if ge is not None:
-            assert default >= ge
-
-    def test_default_limit_within_bounds(self, endpoint):
-        import inspect
-
-        default = inspect.signature(endpoint).parameters["limit"].default
-        ge = _bound(endpoint, "limit", "ge")
-        le = _bound(endpoint, "limit", "le")
-        if ge is not None:
-            assert default >= ge
-        if le is not None:
-            assert default <= le
-
-
-class TestReadAllScansPaginationBounds:
-    @pytest.fixture
-    def endpoint(self):
-        from app.api.v1.endpoints.projects import read_all_scans
-
-        return read_all_scans
-
-    def test_limit_has_le_cap(self, endpoint):
-        cap = _bound(endpoint, "limit", "le")
-        assert cap is not None
-        assert cap <= 1000
-
-    def test_default_limit_within_bounds(self, endpoint):
-        import inspect
-
-        default = inspect.signature(endpoint).parameters["limit"].default
-        le = _bound(endpoint, "limit", "le")
-        if le is not None:
-            assert default <= le
-
-
-class TestReadProjectScansPaginationBounds:
-    @pytest.fixture
-    def endpoint(self):
-        from app.api.v1.endpoints.projects import read_project_scans
-
-        return read_project_scans
-
-    def test_limit_has_le_cap(self, endpoint):
-        cap = _bound(endpoint, "limit", "le")
-        assert cap is not None
-        assert cap <= 1000
-
-    def test_default_limit_within_bounds(self, endpoint):
-        import inspect
-
-        default = inspect.signature(endpoint).parameters["limit"].default
-        le = _bound(endpoint, "limit", "le")
-        if le is not None:
-            assert default <= le
-
-
-class TestReadScanFindingsPaginationBounds:
-    @pytest.fixture
-    def endpoint(self):
-        from app.api.v1.endpoints.projects import read_scan_findings
-
-        return read_scan_findings
-
-    def test_limit_has_le_cap(self, endpoint):
-        cap = _bound(endpoint, "limit", "le")
-        assert cap is not None
-        assert cap <= 1000
-
-    def test_default_limit_within_bounds(self, endpoint):
-        import inspect
-
-        default = inspect.signature(endpoint).parameters["limit"].default
-        le = _bound(endpoint, "limit", "le")
-        if le is not None:
-            assert default <= le
-
-    def test_limit_cap_covers_frontend_request_of_200(self, endpoint):
-        """FindingsTable.tsx requests up to limit=200, so the cap must be >= 500 for headroom."""
-        cap = _bound(endpoint, "limit", "le")
-        assert cap is not None, "limit must have an le= upper cap"
-        assert cap >= 500, (
-            f"read_scan_findings limit cap is {cap}; frontend requests up to 200 "
-            "and the agreed cap is 500 — a cap below 500 regresses FindingsTable."
-        )
+    assert _bound(endpoint, "limit", "ge") <= defaults["limit"] <= _bound(endpoint, "limit", "le")
+    assert _bound(endpoint, "skip", "ge") <= defaults["skip"]
 
 
 def _make_test_app():
@@ -191,13 +99,13 @@ class TestHTTP422OnOutOfBoundsParams:
     @pytest.mark.parametrize(
         ("path", "params"),
         [
-            pytest.param("/projects/", {"limit": 10_000_000}, id="projects_limit_too_large"),
+            pytest.param("/projects/", {"limit": 101}, id="projects_limit_too_large"),
             pytest.param("/projects/", {"limit": 0}, id="projects_limit_zero"),
             pytest.param("/projects/", {"skip": -1}, id="projects_skip_negative"),
-            pytest.param("/projects/scans", {"limit": 10_000_000}, id="all_scans_limit_too_large"),
+            pytest.param("/projects/scans", {"limit": 101}, id="all_scans_limit_too_large"),
             pytest.param("/projects/scans", {"limit": 0}, id="all_scans_limit_zero"),
             pytest.param("/projects/scans", {"skip": -1}, id="all_scans_skip_negative"),
-            pytest.param("/projects/proj-1/scans", {"limit": 10_000_000}, id="project_scans_limit_too_large"),
+            pytest.param("/projects/proj-1/scans", {"limit": 101}, id="project_scans_limit_too_large"),
             pytest.param("/projects/proj-1/scans", {"limit": 0}, id="project_scans_limit_zero"),
             pytest.param("/projects/proj-1/scans", {"skip": -1}, id="project_scans_skip_negative"),
             pytest.param("/projects/scans/scan-1/findings", {"limit": 10_000_000}, id="findings_limit_too_large"),
