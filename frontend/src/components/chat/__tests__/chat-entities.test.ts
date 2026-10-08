@@ -10,7 +10,6 @@ const toolCall = (result: Record<string, unknown>): ToolCall => ({
   tool_name: 'test',
   arguments: {},
   result,
-  duration_ms: 1,
 });
 
 describe('linkifyAssistantMarkdown', () => {

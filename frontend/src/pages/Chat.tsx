@@ -21,6 +21,7 @@ import {
   useDeleteConversation,
 } from '@/hooks/queries/use-chat';
 import { useChatStream } from '@/hooks/useChatStream';
+import { getErrorMessage } from '@/lib/utils';
 import type { Message } from '@/types/chat';
 
 const PROMPT_SUGGESTIONS: ReadonlyArray<{
@@ -49,15 +50,6 @@ const PROMPT_SUGGESTIONS: ReadonlyArray<{
     prompt: 'Which projects use log4j, and are any of them reachable?',
   },
 ];
-
-function getErrorMessage(err: unknown): string {
-  const axiosDetail = (
-    err as { response?: { data?: { detail?: unknown } } } | null
-  )?.response?.data?.detail;
-  if (typeof axiosDetail === 'string' && axiosDetail.trim()) return axiosDetail;
-  if (err instanceof Error && err.message) return err.message;
-  return 'Please try again in a moment.';
-}
 
 export default function Chat() {
   const { hasPermission } = useAuth();

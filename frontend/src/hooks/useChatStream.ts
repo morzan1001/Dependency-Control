@@ -54,7 +54,6 @@ export function useChatStream(
                   tool_name: event.tool_name,
                   arguments: event.arguments,
                   result: event.result,
-                  duration_ms: 0,
                 },
               ]);
               setStreamState((prev) => ({ ...prev, activeToolCall: null }));
