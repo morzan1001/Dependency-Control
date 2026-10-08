@@ -19,7 +19,6 @@ from app.core.security import get_password_hash
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.repositories.findings import FIRST_DETECTION_INDEX, NEWEST_VULNERABILITY_INDEX, VULNERABILITIES_ONLY
-from app.repositories.projects import UNSHAPED_OWNERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
 logger = logging.getLogger(__name__)
@@ -123,17 +122,6 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
         )
 
 
-async def _normalise_unowned_projects(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Give every project an owner array, so unassigned has one spelling instead of three.
-
-    Idempotent: the filter never matches a document that already carries an array.
-    """
-    result = await database["projects"].update_many(UNSHAPED_OWNERS, {"$set": {"team_ids": []}})
-    normalised = getattr(result, "modified_count", 0) or 0
-    if normalised:
-        logger.info("Owner normalisation: gave %d project(s) with no team_ids an empty owner list", normalised)
-
-
 TEAM_BINDING_KEY_FIELD = "bindings.key"
 # Partial, not sparse: a unique index over a path inside a missing array indexes the document
 # under the key null, so the second team holding no binding collides — measured, not inferred.
@@ -176,7 +164,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     logger.info("Creating database indexes...")
 
     await _backfill_member_and_team_provenance(database)
-    await _normalise_unowned_projects(database)
 
     # Users
     await database["users"].create_index("username", unique=True)
@@ -184,8 +171,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # Projects
     await database["projects"].create_index("owner_id")
-    # Multikey: serves the element equality every ownership filter is, the $in a member's visible
-    # scope is, and the $in [None] the normaliser above is. The project list sorts after filtering
+    # Multikey: serves the element equality every ownership filter is and the $in a member's visible
+    # scope is. The project list sorts after filtering
     # and this index cannot supply that order, so it blocking-sorts the matched set; a compound
     # {team_ids, <sort key>} would remove it (measured), but only one sort key can be picked and the
     # list offers six, so at this collection size the sort is left to run in memory.
