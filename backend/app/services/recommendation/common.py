@@ -199,12 +199,6 @@ def cve_severities(advisories: Iterable[dict[str, Any]]) -> dict[str, str | None
 ACTION_VERSION_SAMPLE = 5
 
 
-def calculate_best_fix_version(versions: list[str]) -> str:
-    """The highest single version among stored fixed_version values."""
-    parts = [part for v in versions for part in split_fixed_versions(v)]
-    return newest_first(parts)[0] if parts else "unknown"
-
-
 def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
     """A vulnerability finding in the shape every per-package roll-up counts, marked by its worst live advisory."""
     details = get_attr(f, "details", {})
@@ -302,6 +296,7 @@ def summarize_vulns(
     unreachable = [cve for cve, r in reachability.items() if r is False]
     epss_buckets = Counter(bucket_epss(score) for score in epss.values())
     fixes = [v.fixed_version for v in vulns if v.fixed_version]
+    fixed_versions = newest_first({part for fix in fixes for part in split_fixed_versions(fix)})
     return VulnStats(
         total=len(severity),
         severity=Counter(severity.values()),
@@ -320,8 +315,8 @@ def summarize_vulns(
             for cve in severity
         ),
         versions=newest_first({v.current_version for v in vulns if v.current_version}),
-        fixed_versions=newest_first({part for fix in fixes for part in split_fixed_versions(fix)}),
-        best_fix=calculate_best_fix_version(fixes),
+        fixed_versions=fixed_versions,
+        best_fix=fixed_versions[0] if fixed_versions else "unknown",
     )
 
 

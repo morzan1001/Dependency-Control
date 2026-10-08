@@ -311,7 +311,6 @@ class TestIdentifyQuickWinsBestFixVersion:
         ]
         deps = [_dep("pkg")]
         result = identify_quick_wins(vulns, deps)
-        # calculate_best_fix_version picks the highest version
         assert result[0].action["target_version"] == "3.0"
 
 
