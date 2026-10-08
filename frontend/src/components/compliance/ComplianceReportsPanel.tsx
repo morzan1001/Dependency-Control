@@ -16,7 +16,7 @@ export function ComplianceReportsPanel() {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["compliance-reports"],
-    queryFn: () => listReports({ scope: "user", limit: 50 }),
+    queryFn: () => listReports({ limit: 50 }),
     refetchInterval: (q) => {
       const reports = q.state.data?.reports ?? [];
       const hasInFlight = reports.some((r) => r.status === "pending" || r.status === "generating");
