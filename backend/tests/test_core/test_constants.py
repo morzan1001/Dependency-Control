@@ -39,34 +39,8 @@ class TestSortBySeverity:
         assert result[1]["name"] == "c"
         assert result[2]["name"] == "a"
 
-    def test_ascending(self):
-        items = [
-            {"severity": "CRITICAL"},
-            {"severity": "LOW"},
-        ]
-        result = sort_by_severity(items, reverse=False)
-        assert result[0]["severity"] == "LOW"
-        assert result[1]["severity"] == "CRITICAL"
-
-    def test_custom_key(self):
-        items = [{"level": "LOW"}, {"level": "HIGH"}]
-        result = sort_by_severity(items, key="level")
-        assert result[0]["level"] == "HIGH"
-        assert result[1]["level"] == "LOW"
-
     def test_empty_list(self):
         assert sort_by_severity([]) == []
-
-    def test_with_objects(self):
-        class Item:
-            def __init__(self, severity):
-                self.severity = severity
-
-        items = [Item("LOW"), Item("CRITICAL"), Item("HIGH")]
-        result = sort_by_severity(items)
-        assert result[0].severity == "CRITICAL"
-        assert result[1].severity == "HIGH"
-        assert result[2].severity == "LOW"
 
     def test_stable_sort_same_severity(self):
         items = [

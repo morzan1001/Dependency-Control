@@ -243,12 +243,8 @@ def build_reachability_summary(
     summary["unreachable_total"] = len(summary["unreachable_vulnerabilities"])
     summary["analyzed"] = summary["reachable_total"] + summary["unreachable_total"]
 
-    summary["reachable_vulnerabilities"] = sort_by_severity(
-        summary["reachable_vulnerabilities"], key="severity", reverse=True
-    )[:_VULNERABILITY_SAMPLE_CAP]
-    summary["unreachable_vulnerabilities"] = sort_by_severity(
-        summary["unreachable_vulnerabilities"], key="severity", reverse=True
-    )[:_VULNERABILITY_SAMPLE_CAP]
+    for sample in ("reachable_vulnerabilities", "unreachable_vulnerabilities"):
+        summary[sample] = sort_by_severity(summary[sample])[:_VULNERABILITY_SAMPLE_CAP]
 
     return summary
 

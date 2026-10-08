@@ -414,7 +414,7 @@ class TestLoginRateLimit:
             with patch(f"{MODULE}.cache_service", cache):
                 results = await asyncio.gather(*(admitted() for _ in range(20)))
         finally:
-            await cache.close()
+            await cache._client.aclose(close_connection_pool=True)
 
         assert sum(results) == 5
 
