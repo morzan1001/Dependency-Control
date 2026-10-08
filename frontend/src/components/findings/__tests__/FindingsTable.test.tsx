@@ -127,6 +127,35 @@ describe("related findings whose id other packages share", () => {
   });
 });
 
+// Trivy keeps the Maven coordinate on the vulnerability; the license finding carries the SBOM's bare name.
+describe("related findings of a package its findings spell differently", () => {
+  const jettyVuln = makeFinding({
+    id: "org.eclipse.jetty:jetty-server:9.4.50",
+    type: "vulnerability",
+    component: "org.eclipse.jetty:jetty-server",
+    version: "9.4.50",
+  });
+  const logback = makeFinding({ id: "LIC-EPL-2.0", type: "license", component: "logback-core", version: "1.2.3" });
+  const jetty = makeFinding({ id: "LIC-EPL-2.0", type: "license", component: "jetty-server", version: "9.4.50" });
+
+  it("opens the license finding of the package's bare name", () => {
+    expect(resolveRelatedFindingInRows([logback, jetty], "LIC-EPL-2.0", jettyVuln)).toBe(jetty);
+  });
+
+  it("finds the bare-named license finding through the findings search", async () => {
+    // The scan-findings search: type filter, case-insensitive substring of component, id or description.
+    getFindingsMock.mockImplementation(async (_scanId, { type, search }) => {
+      const needle = search.toLowerCase();
+      const items = [jettyVuln, logback, jetty].filter(
+        (f) => f.type === type && [f.component, f.id, f.description].some((field) => field.toLowerCase().includes(needle)),
+      );
+      return { items, total: items.length, page: 1, size: items.length, pages: 1 };
+    });
+
+    expect(await fetchRelatedFinding("scan1", "LIC-EPL-2.0", jettyVuln)).toEqual({ status: "found", finding: jetty });
+  });
+});
+
 describe("fetchRelatedFinding", () => {
   it("resolves a LIC- id by its exact id among the search hits", async () => {
     getFindingsMock.mockResolvedValue({

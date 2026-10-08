@@ -41,10 +41,22 @@ function parseRelatedFindingId(id: string): ParsedRelatedId {
     return { kind: 'exact' }
 }
 
+// The backend's extract_artifact_name, under which it links one package's spellings (group:artifact, artifact).
+function artifactName(component: string | undefined): string {
+    const name = (component ?? '').trim().toLowerCase()
+    if (name.includes(':')) return name.slice(name.lastIndexOf(':') + 1)
+    return /^@[^/]*\/[^/]*$/.test(name) ? name : name.slice(name.lastIndexOf('/') + 1)
+}
+
 // Ids are not unique per scan (a license id names only the license); cross-links join one package's findings.
 function preferSamePackage<T extends Finding>(matches: readonly T[], from: Finding): T | undefined {
-    const samePackage = matches.filter(f => f.component?.toLowerCase() === from.component?.toLowerCase())
-    return samePackage.find(f => f.version === from.version) ?? samePackage[0] ?? matches[0]
+    const pick = (samePackage: (f: T) => boolean) => {
+        const found = matches.filter(samePackage)
+        return found.find(f => f.version === from.version) ?? found[0]
+    }
+    return pick(f => f.component?.toLowerCase() === from.component?.toLowerCase())
+        ?? pick(f => artifactName(f.component) === artifactName(from.component))
+        ?? matches[0]
 }
 
 /** Resolve a reference `from` holds: exact id first, then format-specific match; undefined for LIC-/unknown. */
@@ -94,9 +106,9 @@ export function lookupOutcome(finding: Finding | undefined, matched: number): Re
     return { status: 'missing' }
 }
 
-// Every package with that license shares a license id, so the search names the package and keeps its row in the window.
+// Every package with that license shares a license id, so the search names the package by the artifact each spelling holds.
 function searchTerm(parsed: ParsedRelatedId, id: string, from: Finding): string | undefined {
-    if (parsed.kind === 'license') return from.component
+    if (parsed.kind === 'license') return artifactName(from.component)
     return parsed.kind === 'exact' ? id : parsed.component
 }
 
