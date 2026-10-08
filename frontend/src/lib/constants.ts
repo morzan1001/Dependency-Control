@@ -15,6 +15,7 @@ export const AVAILABLE_ANALYZERS = [
   { id: 'opengrep', label: 'OpenGrep (SAST)', description: 'Static Application Security Testing (SAST) tool to find security flaws in code.', category: 'sast' },
   { id: 'kics', label: 'KICS (IaC)', description: 'Finds security vulnerabilities, compliance issues, and infrastructure misconfigurations in IaC.', category: 'sast' },
   { id: 'bearer', label: 'Bearer (SAST/Data)', description: 'Static Application Security Testing (SAST) and Data Security tool.', category: 'sast' },
+  { id: 'cbomkit', label: 'CBOMkit (Crypto inventory)', description: 'Inventories the cryptography in the code as a CBOM for the crypto findings, PQC migration plan and crypto compliance reports.', category: 'sast' },
   { id: 'trufflehog', label: 'TruffleHog (Secrets)', description: 'Scans for hardcoded secrets, passwords, and keys in the codebase.', category: 'secrets' },
 ];
 

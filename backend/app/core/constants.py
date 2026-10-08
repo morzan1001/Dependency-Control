@@ -429,7 +429,7 @@ DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
 )
 
 # Scanners that run in the CI pipeline; the pipeline reads their switch from the project's analyzers.
-CI_SCANNER_ANALYZERS: frozenset[str] = frozenset({"trufflehog", "opengrep", "kics", "bearer"})
+CI_SCANNER_ANALYZERS: frozenset[str] = frozenset({"trufflehog", "opengrep", "kics", "bearer", "cbomkit"})
 
 # Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: dict[str, int] = {
