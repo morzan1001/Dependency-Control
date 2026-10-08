@@ -7,11 +7,6 @@ from app.models.user import User
 
 
 class TestUserModel:
-    def test_minimal_valid_user(self):
-        user = User(username="testuser", email="test@example.com")
-        assert user.username == "testuser"
-        assert user.email == "test@example.com"
-
     def test_invalid_email_rejected(self):
         with pytest.raises(ValidationError):
             User(username="testuser", email="not-an-email")

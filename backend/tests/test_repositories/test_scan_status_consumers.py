@@ -5,14 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.repositories.scans import ScanRepository
-from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime.now(timezone.utc)
-
-
-@pytest.fixture
-def db():
-    return FakeDatabase()
 
 
 async def _seed_scans(db):

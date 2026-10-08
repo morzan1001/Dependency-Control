@@ -17,6 +17,7 @@ from app.api.v1.endpoints.projects import read_project
 from app.core.permissions import Permissions
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.databases import DATABASES
 
 _PROJECT = "p-merge"
 
@@ -37,13 +38,6 @@ _USER_IDS = ["u-both", "u-alpha", "u-bravo", "u-direct", "u-zulu"]
 
 _TEAM_ORDERS = [(_ALPHA, _BRAVO), (_BRAVO, _ALPHA)]
 _ORDER_IDS = ["alpha-first", "bravo-first"]
-
-# The value is unread: the marker on the second case is what makes the ``db`` fixture hand out a
-# real server instead of the attrappe.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 # The live shape the report came from: two owners with the same two members, admin in both. The ids
 # run against the names so a walk in join or id order spells the owners in the other order.
@@ -99,7 +93,7 @@ def _roles(project) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _TEAM_ORDERS, ids=_ORDER_IDS)
 async def test_the_stronger_of_two_owning_teams_wins(db, database, team_order):
     """A user one owner calls a plain member and another calls an admin is an admin here. Both
@@ -113,7 +107,7 @@ async def test_the_stronger_of_two_owning_teams_wins(db, database, team_order):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_every_owner_brings_its_members_and_no_one_else(db, database):
     await _seed(db)
 
@@ -128,7 +122,7 @@ async def test_every_owner_brings_its_members_and_no_one_else(db, database):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_the_project_is_answered_once(db, database):
     """One project, however many owners: a join that fans out and is then read at index zero
     answers from a single owner and drops the rest."""
@@ -141,7 +135,7 @@ async def test_the_project_is_answered_once(db, database):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_a_member_of_either_owner_may_read(db, database):
     await _seed(db)
 
@@ -150,7 +144,7 @@ async def test_a_member_of_either_owner_may_read(db, database):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_a_stranger_is_refused(db, database):
     await _seed(db)
 
@@ -161,7 +155,7 @@ async def test_a_stranger_is_refused(db, database):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _TEAM_ORDERS, ids=_ORDER_IDS)
 async def test_an_inherited_member_names_every_owner_it_comes_from(db, database, team_order):
     """Both insertion orders spell the same string, so the names are sorted and not appended in
@@ -178,7 +172,7 @@ async def test_an_inherited_member_names_every_owner_it_comes_from(db, database,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _PROD_TEAM_ORDERS, ids=_PROD_ORDER_IDS)
 async def test_both_owners_of_the_same_two_members_are_named(db, database, team_order):
     """The reported project: co-owners with identical membership, and one of them went unnamed."""
@@ -237,7 +231,7 @@ async def test_read_all_reads_a_project_it_owns_no_part_of(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_the_chat_member_list_matches_the_project_page(db, database):
     """Chat and MCP answer "who has access" from the same merge, named, without per-user preferences."""
     await _seed(db)

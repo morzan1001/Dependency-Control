@@ -8,13 +8,9 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.core.init_db import create_indexes
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
-
-# The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
+from tests.helpers.auth import make_admin
+from tests.helpers.databases import DATABASES
+from tests.helpers.permission_presets import PRESET_USER
 
 pytestmark = pytest.mark.asyncio
 
@@ -106,8 +102,7 @@ async def _seed_foreign_project(db) -> None:
 
 
 async def _call(db, tool: str, **args) -> dict:
-    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
-    return await ChatToolRegistry().execute_tool(tool, args, admin, db)
+    return await ChatToolRegistry().execute_tool(tool, args, make_admin(), db)
 
 
 async def _call_as_member(db, tool: str, **args) -> dict:
@@ -115,7 +110,7 @@ async def _call_as_member(db, tool: str, **args) -> dict:
     return await ChatToolRegistry().execute_tool(tool, args, member, db)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_a_search_lists_only_the_head_builds_findings(db, database):
     await _seed(db)
 
@@ -125,7 +120,7 @@ async def test_a_search_lists_only_the_head_builds_findings(db, database):
     assert result["findings_total"] == 1
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_cve_details_agree_with_findings_by_cve_on_a_cve_fixed_since(db, database):
     await _seed(db)
 
@@ -136,7 +131,7 @@ async def test_cve_details_agree_with_findings_by_cve_on_a_cve_fixed_since(db, d
     assert details == {"error": f"{_FIXED_CVE} not found in any of your projects' scan data"}
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_a_member_reads_no_head_build_of_a_project_outside_their_scope(db, database):
     await _seed(db)
     await _seed_foreign_project(db)

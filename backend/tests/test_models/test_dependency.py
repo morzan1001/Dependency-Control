@@ -19,20 +19,6 @@ class TestDependencyModel:
         defaults.update(overrides)
         return Dependency(**defaults)
 
-    def test_minimal_valid(self):
-        dep = self._make_dependency()
-        assert dep.project_id == "proj-1"
-        assert dep.scan_id == "scan-1"
-        assert dep.name == "requests"
-        assert dep.version == "2.31.0"
-
-    def test_id_auto_generated(self):
-        a = self._make_dependency()
-        b = self._make_dependency()
-        assert a.id is not None
-        assert len(a.id) > 0
-        assert a.id != b.id
-
     def test_type_defaults_to_unknown(self):
         dep = self._make_dependency()
         assert dep.type == "unknown"
@@ -130,22 +116,6 @@ class TestDependencyIdAlias:
         }
         defaults.update(overrides)
         return Dependency(**defaults)
-
-    def test_model_dump_by_alias_contains_id(self):
-        dep = self._make_dependency()
-        dumped = dep.model_dump(by_alias=True)
-        assert "_id" in dumped
-        assert dumped["_id"] == dep.id
-
-    def test_accepts_id_from_mongo(self):
-        dep = Dependency(
-            _id="dep-custom-id",
-            project_id="p1",
-            scan_id="s1",
-            name="pkg",
-            version="1.0",
-        )
-        assert dep.id == "dep-custom-id"
 
     def test_roundtrip_via_model_dump(self):
         original = self._make_dependency(

@@ -45,19 +45,3 @@ def test_action_enum_values():
     assert PolicyAuditAction.DELETE.value == "delete"
     assert PolicyAuditAction.REVERT.value == "revert"
     assert PolicyAuditAction.SEED.value == "seed"
-
-
-def test_audit_entry_populate_by_name_alias():
-    data = {
-        "_id": "abc",
-        "policy_scope": "system",
-        "version": 1,
-        "action": "seed",
-        "timestamp": datetime.now(timezone.utc),
-        "snapshot": {},
-        "change_summary": "x",
-    }
-    entry = PolicyAuditEntry.model_validate(data)
-    assert entry.id == "abc"
-    dumped = entry.model_dump(by_alias=True)
-    assert dumped["_id"] == "abc"

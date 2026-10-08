@@ -1,10 +1,16 @@
 from collections.abc import Iterable
 
 from app.core.security import create_access_token
+from app.models.user import User
+from tests.helpers.permission_presets import PRESET_ADMIN
 
 
 def bearer_headers(user_id: str, permissions: Iterable[str]) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(user_id, permissions=list(permissions))}"}
+
+
+def make_admin() -> User:
+    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 # Minted by python-jose 3.5.0 with the test SECRET_KEY; tokens issued before the PyJWT switch must still decode.

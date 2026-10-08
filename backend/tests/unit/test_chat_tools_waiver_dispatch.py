@@ -5,21 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 _BRANCH = "main"
-
-
-@pytest.fixture
-def admin_user():
-    return User(
-        id="admin-1",
-        username="admin",
-        email="admin@test.com",
-        permissions=list(PRESET_ADMIN),
-    )
 
 
 def _seed_project(db, project_id: str = "proj-1") -> None:

@@ -8,6 +8,7 @@ from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import apply_global_waivers_in_memory, run_adhoc_analysis
 from app.services.waivers.signature import compute_match_signature
 from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.osv import FakeOsv
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OSV = "osv"
@@ -70,25 +71,10 @@ _SBOM = {
 }
 
 
-class _FakeOsv:
-    name = _OSV
-
-    async def analyze(self, sbom, settings=None, parsed_components=None):
-        return {
-            "osv_vulnerabilities": [
-                {
-                    "component": _COMPONENT,
-                    "version": _VERSION,
-                    "vulnerabilities": [{"id": _FIRST_CVE, "severity": "HIGH", "summary": "demo"}],
-                }
-            ]
-        }
-
-
 @pytest.fixture
 def _osv(monkeypatch):
 
-    serve_analyzer(monkeypatch, _OSV, _FakeOsv())
+    serve_analyzer(monkeypatch, _OSV, FakeOsv({"id": _FIRST_CVE, "severity": "HIGH", "summary": "demo"}))
 
 
 def _waiver(**fields) -> Waiver:

@@ -7,19 +7,13 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
 from app.models.project import Project, Scan
 from app.models.stats import Stats
-from app.models.user import User
 from app.repositories.scans import ScanRepository
 from app.services.chat.tools import ChatToolRegistry
 from app.services.rescan import build_rescan
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.auth import make_admin
+from tests.helpers.databases import DATABASES
 
-# The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
-
-pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", _DATABASES)]
+pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
 
 _CHECKOUT = "p-checkout"
 _BILLING = "p-billing"
@@ -54,8 +48,7 @@ async def _build(db, scan_id: str, project_id: str, created_at: datetime, *, bra
 
 
 async def _trend(db, **args) -> dict:
-    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
-    return await ChatToolRegistry().execute_tool("get_risk_trends", args, admin, db)
+    return await ChatToolRegistry().execute_tool("get_risk_trends", args, make_admin(), db)
 
 
 async def _two_projects(db) -> None:

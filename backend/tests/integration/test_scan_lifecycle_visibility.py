@@ -13,7 +13,7 @@ from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import serve_analyzer
-from tests.helpers.sboms import store_sbom
+from tests.helpers.sboms import sbom_ref, store_sbom
 
 _PROJECT_ID = "test-project-id"
 _WORKER = "pod-a/worker-0"
@@ -48,17 +48,6 @@ _SBOM_B = {
         }
     ],
 }
-
-
-def _gridfs_ref(file_id: str) -> dict:
-    # Mirrors the sbom_refs entries stored in prod scans.
-    return {
-        "storage": "gridfs",
-        "file_id": file_id,
-        "filename": f"sbom-{file_id}.json",
-        "type": "gridfs_reference",
-        "gridfs_id": file_id,
-    }
 
 
 @pytest_asyncio.fixture
@@ -145,10 +134,10 @@ class _PartialResultAnalyzer:
 async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "boom", _FailingAnalyzer())
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -168,10 +157,10 @@ async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _stored
     """CLI analyzers (grype/trivy) report timeouts as error dicts, not exceptions — 95% of prod failures."""
     serve_analyzer(monkeypatch, "grype", _CliTimeoutAnalyzer())
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["grype"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -186,7 +175,7 @@ async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _stored
 @pytest.mark.live_mongo
 async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors(db, _stored_sboms):
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
     await db.analysis_results.insert_one(
         {
             "_id": "res-1",
@@ -197,7 +186,7 @@ async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors
     )
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -235,7 +224,7 @@ async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcom
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     serve_analyzer(monkeypatch, "osv", _PartialOnTheSecondSbom())
     await _seed_project(db)
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
 
     assert await run_analysis(scan_id, refs, ["osv"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
@@ -257,10 +246,10 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _stored_sboms, mon
     )
     serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED
     )
 
@@ -276,10 +265,10 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _stored_sboms, mon
 async def test_a_clean_scan_records_no_enrichment_failures(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED
     )
 
@@ -292,10 +281,10 @@ async def test_a_clean_scan_records_no_enrichment_failures(db, _stored_sboms, mo
 async def test_w12_scan_with_errors_still_becomes_project_latest(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "boom", _FailingAnalyzer())
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -308,10 +297,10 @@ async def test_w12_scan_with_errors_still_becomes_project_latest(db, _stored_sbo
 async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
     serve_analyzer(monkeypatch, "osv", _PartialResultAnalyzer())
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["osv"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["osv"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -359,7 +348,7 @@ async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _s
 
     monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_second_file)
     await _seed_project(db)
-    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
 
     assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
@@ -377,9 +366,9 @@ async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _stored_sboms, 
 
     monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_all)
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
+    assert await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "failed"
@@ -395,10 +384,10 @@ async def test_k8_partial_findings_persistence_is_surfaced(db, _stored_sboms, mo
 
     monkeypatch.setattr(FindingRepository, "replace_many_raw", _drop_all_docs)
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["stub"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["stub"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -416,7 +405,7 @@ async def test_k10_sast_only_scan_does_not_replace_project_latest(db, _no_gridfs
         project_id=_PROJECT_ID,
         branch="main",
         status="completed",
-        sbom_refs=[_gridfs_ref(_FILE_ID_A)],
+        sbom_refs=[sbom_ref(_FILE_ID_A)],
         created_at=datetime.now(timezone.utc) - timedelta(hours=1),
     )
     await db.scans.insert_one(previous.model_dump(by_alias=True))

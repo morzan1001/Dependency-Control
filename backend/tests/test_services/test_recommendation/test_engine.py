@@ -125,21 +125,12 @@ class TestSafeExtend:
         _safe_extend(recs, lambda: [_make_recommendation()], "test_module")
         assert len(recs) == 1
 
-    def test_exception_does_not_crash(self):
-        recs = []
-
-        def raise_error():
-            raise ValueError("Boom!")
-
-        _safe_extend(recs, raise_error, "failing_module")
-        assert len(recs) == 0
-
     def test_existing_recs_preserved_on_error(self):
         existing_rec = _make_recommendation(title="Existing")
         recs = [existing_rec]
 
         def raise_error():
-            raise RuntimeError("Crash!")
+            raise ValueError("Crash!")
 
         _safe_extend(recs, raise_error, "failing_module")
         assert len(recs) == 1
@@ -320,7 +311,9 @@ class TestGenerateRecommendationsErrorResilience:
         dep = _make_dependency(name="good-pkg", purl="pkg:pypi/good-pkg@1.0.0")
 
         result = generate_recommendations(findings=[malformed, normal], dependencies=[dep], join_dependencies=[dep])
-        assert isinstance(result, list)
+        assert (RecommendationType.DIRECT_DEPENDENCY_UPDATE, ["good-pkg@1.0.0"]) in [
+            (r.type, r.affected_components) for r in result
+        ]
 
 
 class TestGenerateRecommendationsBaseImage:
@@ -347,35 +340,6 @@ class TestGenerateRecommendationsBaseImage:
 
         [base_rec] = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_rec.action["current_image"] == "python:3.11-slim"
-
-
-class TestGenerateRecommendationsCrossProject:
-    def test_cross_project_data_does_not_crash(self):
-        finding = _make_vuln_finding()
-        dep = _make_dependency()
-
-        result = generate_recommendations(
-            findings=[finding],
-            dependencies=[dep],
-            cross_project_data={"projects": []},
-        )
-        assert isinstance(result, list)
-
-
-class TestGenerateRecommendationsCveRecurrence:
-    def test_cve_recurrence_does_not_crash(self):
-        from app.services.recommendation.trends import CveRecurrence
-
-        finding = _make_vuln_finding()
-        dep = _make_dependency()
-
-        result = generate_recommendations(
-            findings=[finding],
-            dependencies=[dep],
-            cve_recurrence={"CVE-2024-001": CveRecurrence(scans={"s1", "s2", "s3"}, severity="HIGH")},
-            recurrence_window_scans=10,
-        )
-        assert isinstance(result, list)
 
 
 class TestGenerateRecommendationsTyposquatting:

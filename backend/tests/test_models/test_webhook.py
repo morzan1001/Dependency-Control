@@ -14,14 +14,6 @@ from app.schemas.webhook import WebhookCreate, WebhookResponse, WebhookUpdate
 
 
 class TestWebhookModel:
-    def test_minimal_valid(self):
-        webhook = Webhook(
-            url="https://example.com/hook",
-            events=["scan_completed"],
-        )
-        assert webhook.url == "https://example.com/hook"
-        assert "scan_completed" in webhook.events
-
     def test_defaults(self):
         webhook = Webhook(
             url="https://example.com/hook",
@@ -43,11 +35,6 @@ class TestWebhookModel:
             events=["scan_completed"],
         )
         assert webhook.project_id == "proj-1"
-
-    def test_id_auto_generated(self):
-        a = Webhook(url="https://a.com/hook", events=["scan_completed"])
-        b = Webhook(url="https://b.com/hook", events=["scan_completed"])
-        assert a.id != b.id
 
     def test_with_secret(self):
         webhook = Webhook(
@@ -79,16 +66,6 @@ class TestWebhookModel:
             events=["scan_completed"],
         )
         assert "localhost" in webhook.url
-
-
-class TestWebhookSerialization:
-    def test_id_alias(self):
-        webhook = Webhook(
-            url="https://example.com/hook",
-            events=["scan_completed"],
-        )
-        dumped = webhook.model_dump(by_alias=True)
-        assert "_id" in dumped
 
 
 class TestWebhookTypeField:

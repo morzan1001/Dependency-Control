@@ -25,6 +25,10 @@ os.environ["DATABASE_NAME"] = "test_dependency_control"
 import pytest
 from bson import ObjectId
 
+from app.models.user import User
+from tests.helpers.auth import make_admin
+from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER, PRESET_VIEWER
+from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
 
@@ -67,6 +71,11 @@ def _isolate_analytics_cache():
     yield
     get_analytics_cache().clear()
     get_delta_cache().clear()
+
+
+@pytest.fixture
+def db():
+    return FakeDatabase()
 
 
 @pytest.fixture
@@ -204,23 +213,37 @@ def tcp_redis(monkeypatch):
 
 
 @pytest.fixture
-def admin_permissions():
-    from tests.helpers.permission_presets import PRESET_ADMIN
+def admin_user():
+    return make_admin()
 
+
+@pytest.fixture
+def regular_user():
+    return User(id="user-1", username="user", email="user@test.com", permissions=list(PRESET_USER))
+
+
+@pytest.fixture
+def viewer_user():
+    return User(id="viewer-1", username="viewer", email="viewer@test.com", permissions=list(PRESET_VIEWER))
+
+
+@pytest.fixture
+def no_perms_user():
+    return User(id="noperm-1", username="noperm", email="noperm@test.com", permissions=[])
+
+
+@pytest.fixture
+def admin_permissions():
     return PRESET_ADMIN.copy()
 
 
 @pytest.fixture
 def user_permissions():
-    from tests.helpers.permission_presets import PRESET_USER
-
     return PRESET_USER.copy()
 
 
 @pytest.fixture
 def viewer_permissions():
-    from tests.helpers.permission_presets import PRESET_VIEWER
-
     return PRESET_VIEWER.copy()
 
 

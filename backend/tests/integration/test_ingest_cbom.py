@@ -79,7 +79,7 @@ async def test_ingest_cbom_rejects_unauthenticated(db):
         app.dependency_overrides.clear()
         app.dependency_overrides.update(saved)
 
-    assert resp.status_code in (401, 403), resp.text
+    assert resp.status_code == 401, resp.text
 
 
 @pytest.mark.asyncio

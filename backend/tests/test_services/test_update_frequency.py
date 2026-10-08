@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import Counter
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -39,7 +39,7 @@ from app.services.update_frequency import (
 )
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.helpers.update_frequency import rollup_metrics
-from tests.mocks.fake_mongo import FakeDatabase, _bson_sort_key
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 def _make_timeline_entry(idx: int, updates: int = 0, outdated: int = 0) -> ScanTimelineEntry:
@@ -222,124 +222,61 @@ class TestSummariseWindowCoverage:
         assert m.outdated_resolved == 1
 
 
-# --- Fake repos for streaming-orchestrator tests ---
+def _seeded(collection: str, docs: list[dict[str, Any]]) -> FakeDatabase:
+    """A database holding ``docs`` as given; insert_one would truncate their datetimes to milliseconds."""
+    db = FakeDatabase()
+    db[collection]._docs.update({doc["_id"]: doc for doc in docs})
+    return db
 
 
-def _apply_projection(doc: dict[str, Any], projection: dict[str, int] | None) -> dict[str, Any]:
-    """Mongo inclusion projection: only the named fields survive, plus _id unless excluded."""
-    if not projection:
-        return dict(doc)
-    keep = {field for field, include in projection.items() if include}
-    if projection.get("_id", 1):
-        keep.add("_id")
-    else:
-        keep.discard("_id")
-    return {k: v for k, v in doc.items() if k in keep}
-
-
-def _matches_scan_query(scan: dict[str, Any], query: dict[str, Any]) -> bool:
-    for field, cond in query.items():
-        value = scan.get(field)
-        if isinstance(cond, dict):
-            if "$ne" in cond and value == cond["$ne"]:
-                return False
-            if "$nin" in cond and value in cond["$nin"]:
-                return False
-            if "$in" in cond and value not in cond["$in"]:
-                return False
-            # Mongo compares only within one BSON type, so a string date never passes a datetime bound.
-            if "$gte" in cond and not (isinstance(value, type(cond["$gte"])) and value >= cond["$gte"]):
-                return False
-        elif value != cond:
-            return False
-    return True
-
-
-class FakeScanRepo:
+class FakeScanRepo(ScanRepository):
     def __init__(self, scans: list[dict[str, Any]]):
-        # scans must include _id, created_at, status, project_id, branch
-        self._scans = scans
-
-    def _filtered(self, query: dict[str, Any], sort: list[tuple[str, int]] | None) -> list[dict[str, Any]]:
-        matched = [s for s in self._scans if _matches_scan_query(s, query)]
-        if sort:
-            for field, order in reversed(sort):
-                matched.sort(key=lambda s, f=field: _bson_sort_key(s.get(f)), reverse=(order == -1))
-        return matched
-
-    async def find_many_raw(
-        self,
-        query: dict[str, Any],
-        sort: list[tuple[str, int]] | None = None,
-        skip: int = 0,
-        limit: int | None = None,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        # Mirrors ScanRepository.find_many_raw: filter by the query (incl. status),
-        # sort, then apply the limit — status is filtered BEFORE the limit.
-        matched = self._filtered(query, sort)
-        matched = matched[skip : skip + limit] if limit is not None else matched[skip:]
-        return [_apply_projection(s, projection) for s in matched]
-
-    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-        # Run the real pipeline through the fake Mongo engine rather than
-        # reimplementing it: a pipeline that would not answer in Mongo must not
-        # answer here either, down to the UTC datetimes it stores.
-        db = FakeDatabase()
-        for scan in self._scans:
-            await db.scans.insert_one(dict(scan))
-        return await db.scans.aggregate(pipeline).to_list(limit)
+        super().__init__(_seeded("scans", scans))
 
 
-class FakeDepRepo:
+class FakeDepRepo(DependencyRepository):
     def __init__(self, deps_by_scan: dict[str, list[dict[str, Any]]]):
-        self._deps_by_scan = deps_by_scan
-        self.calls: list[str] = []
+        docs = [
+            {**dep, "_id": f"{scan_id}:{index}", "scan_id": scan_id}
+            for scan_id, deps in deps_by_scan.items()
+            for index, dep in enumerate(deps)
+        ]
+        super().__init__(_seeded(self.collection_name, docs))
 
-    async def find_all_raw(self, query: dict[str, Any], projection: dict[str, int]) -> list[dict[str, Any]]:
-        self.calls.append(query["scan_id"])
-        return [_apply_projection(d, projection) for d in self._deps_by_scan.get(query["scan_id"], [])]
 
-
-class FakeAnalysisRepo:
-    load_result = AnalysisResultRepository.load_result
-
+class FakeAnalysisRepo(AnalysisResultRepository):
     def __init__(self, results: list[dict[str, Any]]):
-        self._results = results
+        docs = [{"_id": f"result-{index}", **result} for index, result in enumerate(results)]
+        super().__init__(_seeded(self.collection_name, docs))
         self.queries: list[dict[str, Any]] = []
+        find = self.collection.find
 
-    def _matching(self, query: dict[str, Any], projection: dict[str, int] | None) -> list[dict[str, Any]]:
-        self.queries.append(query)
-        scan_filter = query.get("scan_id")
-        analyzer = query.get("analyzer_name")
-        out = []
-        for r in self._results:
-            if isinstance(scan_filter, dict):
-                ids = scan_filter.get("$in", [])
-                if r["scan_id"] not in ids:
-                    continue
-            elif scan_filter is not None and r["scan_id"] != scan_filter:
-                continue
-            if analyzer is not None and r["analyzer_name"] != analyzer:
-                continue
-            out.append(_apply_projection(r, projection))
-        return out
+        # Hooked on the collection so a read through any inherited repository method is recorded too.
+        def recording_find(query: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Any:
+            self.queries.append(query or {})
+            return find(query, *args, **kwargs)
 
-    async def find_many_raw(
-        self,
-        query: dict[str, Any],
-        limit: int = 1000,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        return self._matching(query, projection)[:limit]
+        self.collection.find = recording_find
 
-    async def iterate_raw(
-        self,
-        query: dict[str, Any] | None = None,
-        projection: dict[str, int] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
-        for doc in self._matching(query or {}, projection):
-            yield doc
+
+async def _compute(scans, deps, results=(), **kwargs: Any) -> UpdateFrequencyMetrics:
+    return await compute_update_frequency(
+        **{
+            "project_id": "proj-1",
+            "project_name": "Project",
+            "branch": "main",
+            "scan_repo": FakeScanRepo(scans),
+            "dep_repo": FakeDepRepo(deps),
+            "analysis_repo": FakeAnalysisRepo(list(results)),
+        }
+        | kwargs
+    )
+
+
+async def _compare(projects, scans, deps, results=(), **kwargs: Any):
+    return await compute_update_frequency_comparison(
+        projects, FakeScanRepo(scans), FakeDepRepo(deps), FakeAnalysisRepo(list(results)), **kwargs
+    )
 
 
 _BASE_SCAN_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -362,6 +299,10 @@ def _make_scan(
         "is_rescan": is_rescan,
         "commit_hash": commit_hash,
     }
+
+
+def _two_scans() -> list[dict[str, Any]]:
+    return [_make_scan("s1", 0), _make_scan("s2", 30)]
 
 
 def _scan_days_ago(scan_id: str, days: float, **overrides: Any) -> dict[str, Any]:
@@ -475,19 +416,12 @@ class TestBranchScopedScanSelection:
     """The timeline must cover exactly one branch and exclude rescans/storms."""
 
     @staticmethod
-    async def _compute(scans, deps, *, default_branch=None, deleted_branches=None, **kwargs):
+    async def _compute_elected(scans, deps, *, default_branch=None, deleted_branches=None, **kwargs):
         scan_repo = FakeScanRepo(scans)
         if "branch" not in kwargs:
             since = window_cutoff(kwargs.get("window_days"))
             kwargs["branch"] = await elect_primary_branch(scan_repo, "proj-1", since, default_branch, deleted_branches)
-        return await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            **kwargs,
-        )
+        return await _compute(scans, deps, scan_repo=scan_repo, **kwargs)
 
     @pytest.mark.asyncio
     async def test_mixed_branch_history_analyzes_only_primary_branch(self):
@@ -507,7 +441,7 @@ class TestBranchScopedScanSelection:
             "f2": [_make_dep("f2", "pkg-a", "2.0.0")],
             "m3": [_make_dep("m3", "pkg-a", "1.0.0")],
         }
-        m = await self._compute(scans, deps)
+        m = await self._compute_elected(scans, deps)
         assert m.branch == "main"
         assert m.scan_count == 3
         assert m.total_updates == 0
@@ -528,7 +462,7 @@ class TestBranchScopedScanSelection:
             "m3": [_make_dep("m3", "pkg-a", "1.2.0")],
             "f1": [_make_dep("f1", "pkg-a", "9.0.0")],
         }
-        m = await self._compute(scans, deps, default_branch="main")
+        m = await self._compute_elected(scans, deps, default_branch="main")
         assert m.branch == "main"
         assert m.scan_count == 3
 
@@ -545,7 +479,7 @@ class TestBranchScopedScanSelection:
             "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
             "f1": [_make_dep("f1", "pkg-a", "9.0.0")],
         }
-        m = await self._compute(scans, deps, default_branch="main")
+        m = await self._compute_elected(scans, deps, default_branch="main")
         assert m.branch == "main"
         assert m.scan_count == 2
         assert m.total_updates == 1
@@ -562,7 +496,7 @@ class TestBranchScopedScanSelection:
             "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
             "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
         }
-        m = await self._compute(scans, deps, default_branch="release")
+        m = await self._compute_elected(scans, deps, default_branch="release")
         assert m.branch == "main"
         assert m.scan_count == 2
 
@@ -579,7 +513,7 @@ class TestBranchScopedScanSelection:
             "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
             "r1": [_make_dep("r1", "pkg-a", "0.5.0")],
         }
-        m = await self._compute(scans, deps, branch="main")
+        m = await self._compute_elected(scans, deps, branch="main")
         assert m.scan_count == 2
         assert all(e.new_version != "0.5.0" for e in m.recent_updates)
 
@@ -594,7 +528,7 @@ class TestBranchScopedScanSelection:
             deps[f"h{i}"] = [_make_dep(f"h{i}", "pkg-a", "2.0.0")]
         for i in range(5):
             deps[f"c{i}"] = [_make_dep(f"c{i}", "pkg-a", f"1.0.{i}")]
-        m = await self._compute(scans, deps, branch="main", max_scans=5)
+        m = await self._compute_elected(scans, deps, branch="main", max_scans=5)
         # max_scans counts bars, so the storm takes one of the five and leaves four commits.
         assert m.scan_count == 5
         assert m.total_updates == 4
@@ -611,7 +545,7 @@ class TestBranchScopedScanSelection:
             "f1": [_make_dep("f1", "pkg-a", "1.0.0")],
             "f2": [_make_dep("f2", "pkg-a", "1.1.0")],
         }
-        m = await self._compute(scans, deps, branch="feature")
+        m = await self._compute_elected(scans, deps, branch="feature")
         assert m.branch == "feature"
         assert m.scan_count == 2
         assert m.minor_updates == 1
@@ -630,7 +564,7 @@ class TestBranchScopedScanSelection:
             "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
             "r1": [_make_dep("r1", "pkg-a", "0.9.0")],
         }
-        m = await self._compute(scans, deps)
+        m = await self._compute_elected(scans, deps)
         assert m.branch == "main"
         assert m.scan_count == 2
         assert m.total_updates == 1
@@ -643,7 +577,7 @@ class TestBranchScopedScanSelection:
         scans += [_scan_days_ago(f"n{i}", 20 - i * 10, branch="new") for i in range(2)]
         deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
 
-        m = await self._compute(scans, deps, window_days=90)
+        m = await self._compute_elected(scans, deps, window_days=90)
 
         assert m.branch == "old"
         assert m.scan_count == 3
@@ -657,7 +591,7 @@ class TestBranchScopedScanSelection:
         scans += [_scan_days_ago(f"m{i}", 60 - i * 10, branch="main") for i in range(3)]
         deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
 
-        m = await self._compute(scans, deps, window_days=90, default_branch="release")
+        m = await self._compute_elected(scans, deps, window_days=90, default_branch="release")
 
         assert m.branch == "main"
         assert m.scan_count == 3
@@ -673,7 +607,7 @@ class TestBranchScopedScanSelection:
             "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
             "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
         }
-        m = await self._compute(scans, deps, deleted_branches=["gone"])
+        m = await self._compute_elected(scans, deps, deleted_branches=["gone"])
         assert m.branch == "main"
         assert m.scan_count == 2
 
@@ -695,7 +629,7 @@ class TestBranchScopedScanSelection:
             "s3": [_make_dep("s3", "pkg-a", "2.0.0")],
             "s4": [_make_dep("s4", "pkg-a", "2.0.1")],
         }
-        m = await self._compute(scans, deps)
+        m = await self._compute_elected(scans, deps)
         assert m.scan_count == 2
         assert [e.scan_id for e in m.scan_timeline] == ["s3", "s4"]
         assert m.total_updates == 1
@@ -712,7 +646,7 @@ class TestBranchScopedScanSelection:
         for i in range(1, 6):
             deps[f"s{i}"] = [_make_dep(f"s{i}", "pkg-a", "1.0.1")]
         deps["s6"] = [_make_dep("s6", "pkg-a", "1.1.0")]
-        m = await self._compute(scans, deps)
+        m = await self._compute_elected(scans, deps)
         assert m.scan_count == 3
         assert [e.scan_id for e in m.scan_timeline] == ["s0", "s5", "s6"]
         # The storm's own bump lands on the bar its run named, not on the run's first try.
@@ -726,17 +660,6 @@ class TestIdentityKeying:
     @staticmethod
     def _raw_dep(scan_id: str, name: str, version: str, purl: str, ptype: str = "library") -> dict[str, Any]:
         return {"scan_id": scan_id, "name": name, "version": version, "type": ptype, "purl": purl}
-
-    async def _compute(self, deps: dict[str, list[dict[str, Any]]]):
-        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
-        return await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-        )
 
     @pytest.mark.asyncio
     async def test_same_name_different_namespaces_do_not_collide(self):
@@ -752,7 +675,7 @@ class TestIdentityKeying:
                 {**old_core, "scan_id": "s2"},
             ],
         }
-        m = await self._compute(deps)
+        m = await _compute(_two_scans(), deps)
         assert m.total_updates == 0
 
     @pytest.mark.asyncio
@@ -764,7 +687,7 @@ class TestIdentityKeying:
             "s1": [v1, v2],
             "s2": [{**v2, "scan_id": "s2"}, {**v1, "scan_id": "s2"}],
         }
-        m = await self._compute(deps)
+        m = await _compute(_two_scans(), deps)
         assert m.total_updates == 0
 
     @pytest.mark.asyncio
@@ -774,7 +697,7 @@ class TestIdentityKeying:
             "s1": [self._raw_dep("s1", "My_Package", "1.0.0", "pkg:pypi/My_Package@1.0.0")],
             "s2": [self._raw_dep("s2", "my-package", "1.1.0", "pkg:pypi/my-package@1.1.0")],
         }
-        m = await self._compute(deps)
+        m = await _compute(_two_scans(), deps)
         assert m.total_updates == 1
         assert m.recent_updates[0].update_type == "minor"
 
@@ -792,7 +715,7 @@ class TestIdentityKeying:
         def dep(scan_id: str, purl: str) -> dict[str, Any]:
             return self._raw_dep(scan_id, parse_purl(purl).name, parse_purl(purl).version, purl)
 
-        m = await self._compute({"s1": [dep("s1", before)], "s2": [dep("s2", after)]})
+        m = await _compute(_two_scans(), {"s1": [dep("s1", before)], "s2": [dep("s2", after)]})
 
         assert m.total_updates == updates
 
@@ -803,7 +726,7 @@ class TestIdentityKeying:
             "s1": [{"scan_id": "s1", "name": "internal-lib", "version": "1.0.0", "type": "internal", "purl": ""}],
             "s2": [{"scan_id": "s2", "name": "internal-lib", "version": "1.0.1", "type": "internal", "purl": ""}],
         }
-        m = await self._compute(deps)
+        m = await _compute(_two_scans(), deps)
         assert m.total_updates == 1
         assert m.recent_updates[0].package_name == "internal-lib"
         assert m.recent_updates[0].update_type == "patch"
@@ -823,7 +746,7 @@ class TestIdentityKeying:
                 self._raw_dep("s2", "core", "7.0.0", "pkg:npm/%40babel/core@7.0.0"),
             ],
         }
-        m = await self._compute(deps)
+        m = await _compute(_two_scans(), deps)
         assert m.total_updates == 1
         assert m.recent_updates[0].package_name == "@angular/cdk"
         assert m.recent_updates[0].update_type == "minor"
@@ -831,18 +754,6 @@ class TestIdentityKeying:
 
 class TestOutdatedTracking:
     """Outdated results union across SBOMs; resolution means leaving the outdated set."""
-
-    @staticmethod
-    async def _compute(deps, analysis_results):
-        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
-        return await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo(analysis_results),
-            branch="main",
-        )
 
     @pytest.mark.asyncio
     async def test_multi_sbom_outdated_results_are_unioned(self):
@@ -855,7 +766,7 @@ class TestOutdatedTracking:
             _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "2.0.0"}]),
             _outdated_result("s1", [{"component": "pkg-b", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
         ]
-        m = await self._compute(deps, results)
+        m = await _compute(_two_scans(), deps, results)
         assert m.total_outdated_detected == 2
         assert m.scan_timeline[0].outdated_count == 2
 
@@ -869,7 +780,7 @@ class TestOutdatedTracking:
             _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
             _outdated_result("s2", [{"component": "pkg-a", "current_version": "1.1.0", "latest_version": "3.0.0"}]),
         ]
-        m = await self._compute(deps, results)
+        m = await _compute(_two_scans(), deps, results)
         assert m.outdated_resolved == 0
         assert m.update_coverage_pct == 0.0
 
@@ -883,7 +794,7 @@ class TestOutdatedTracking:
             _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
             _outdated_result("s2", []),
         ]
-        m = await self._compute(deps, results)
+        m = await _compute(_two_scans(), deps, results)
         assert m.outdated_resolved == 1
         assert m.update_coverage_pct == 100.0
 
@@ -897,7 +808,7 @@ class TestOutdatedTracking:
             _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
             _outdated_result("s2", []),
         ]
-        m = await self._compute(deps, results)
+        m = await _compute(_two_scans(), deps, results)
         assert m.outdated_resolved == 0
         assert m.update_coverage_pct == 0.0
 
@@ -923,24 +834,13 @@ class TestUnmeasuredScans:
     analysis, so every metric derived from the backlog has to survive the gap.
     """
 
-    @staticmethod
-    async def _compute(scans, deps, analysis_results):
-        return await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo(analysis_results),
-            branch="main",
-        )
-
     @pytest.mark.asyncio
     async def test_missing_final_analysis_is_not_a_cleared_backlog(self):
         # Identical dependency sets: nothing was updated, so nothing can have
         # been resolved either.
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
-        m = await self._compute(scans, deps, [_backlog_outdated("s1")])
+        m = await _compute(scans, deps, [_backlog_outdated("s1")])
         assert m.total_updates == 0
         assert m.total_outdated_detected == 3
         assert m.outdated_resolved == 0
@@ -951,7 +851,7 @@ class TestUnmeasuredScans:
     async def test_coverage_is_none_when_no_scan_measured_a_backlog(self):
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
-        m = await self._compute(scans, deps, [])
+        m = await _compute(scans, deps, [])
         assert m.update_coverage_pct is None
         assert m.total_outdated_detected == 0
         assert [e.outdated_count for e in m.scan_timeline] == [None, None]
@@ -967,7 +867,7 @@ class TestUnmeasuredScans:
             "s3": [*_backlog_deps("s3"), _make_dep("s3", "churn", "1.1.0")],
         }
         results = [_backlog_outdated("s1"), _backlog_outdated("s3", ["pkg-a"])]
-        m = await self._compute(scans, deps, results)
+        m = await _compute(scans, deps, results)
         assert m.total_outdated_detected == 3
         assert m.outdated_resolved == 0
         assert m.update_coverage_pct == 0.0
@@ -980,7 +880,7 @@ class TestUnmeasuredScans:
     async def test_backlog_stays_listed_when_the_newest_scan_is_unmeasured(self):
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
-        m = await self._compute(scans, deps, [_backlog_outdated("s1")])
+        m = await _compute(scans, deps, [_backlog_outdated("s1")])
         assert sorted(p.name for p in m.slowest_packages) == list(_BACKLOG)
         assert {p.latest_version for p in m.slowest_packages} == {"9.0.0"}
 
@@ -994,7 +894,7 @@ class TestUnmeasuredScans:
         }
         # The newest scan ran without the analyzer; the backlog never moved.
         results = [_backlog_outdated(f"s{i}", backlog) for i in range(5)]
-        m = await self._compute(scans, deps, results)
+        m = await _compute(scans, deps, results)
         assert [e.outdated_count for e in m.scan_timeline] == [10, 10, 10, 10, 10, None]
         assert m.trend_direction == "stable"
         assert "~10 outdated" in m.trend_detail
@@ -1065,14 +965,7 @@ class TestAggregationAccuracy:
             "s1": [_make_dep("s1", "pkg-a", "2.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.0")],
         }
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-        )
+        m = await _compute(scans, deps)
         assert m.total_updates == 0
         assert m.downgrade_updates == 1
         assert m.scan_timeline[1].updates_count == 0
@@ -1091,14 +984,7 @@ class TestAggregationAccuracy:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
         }
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-        )
+        m = await _compute(scans, deps)
         assert m.time_range_days == pytest.approx(1.5)
 
     @staticmethod
@@ -1112,16 +998,7 @@ class TestAggregationAccuracy:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
         }
-        return await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            window_days=window_days,
-            hard_limit=10,
-        )
+        return await _compute(scans, deps, window_days=window_days, hard_limit=10)
 
     @pytest.mark.asyncio
     async def test_the_monthly_rate_measures_the_window_not_the_scan_cadence(self):
@@ -1160,14 +1037,7 @@ class TestAggregationAccuracy:
                 [{"component": "pkg-b", "current_version": "1.0.0", "latest_version": "9.9.9"}],
             ),
         ]
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo(results),
-            branch="main",
-        )
+        m = await _compute(scans, deps, results)
         names = [p.name for p in m.slowest_packages]
         assert names == ["pkg-b"]  # pkg-a was resolved; only remaining backlog is listed
         assert m.slowest_packages[0].current_version == "1.2.0"  # from the final scan, not stale analyzer data
@@ -1182,14 +1052,7 @@ class TestAggregationAccuracy:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
         }
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-        )
+        m = await _compute(scans, deps)
         assert m.avg_days_between_scans == 0.5
 
     @pytest.mark.asyncio
@@ -1213,14 +1076,7 @@ class TestAggregationAccuracy:
             _outdated_result("s1", [{"component": "core", "current_version": "7.0.0", "latest_version": "7.5.0"}]),
             _outdated_result("s2", [{"component": "core", "current_version": "7.0.0", "latest_version": "7.5.0"}]),
         ]
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo([_make_scan("s1", 0), _make_scan("s2", 30)]),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo(results),
-            branch="main",
-        )
+        m = await _compute(_two_scans(), deps, results)
         assert m.slowest_packages[0].name == "core"
         assert m.slowest_packages[0].current_version == "7.0.0"
 
@@ -1248,14 +1104,7 @@ class TestAggregationAccuracy:
                 }
             ],
         }
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-        )
+        m = await _compute(scans, deps)
         assert m.dominant_ecosystem == "maven"
         assert m.recent_updates[0].package_type == "maven"
 
@@ -1286,18 +1135,7 @@ class TestStreamingOrchestrator:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0"), _make_dep("s1", "pkg-b", "2.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1"), _make_dep("s2", "pkg-b", "3.0.0")],
         }
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
-
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-            branch="main",
-        )
+        m = await _compute(scans, deps)
 
         assert m.scan_count == 2
         assert m.total_updates == 2
@@ -1310,19 +1148,7 @@ class TestStreamingOrchestrator:
         # The streaming buffer must keep only the last 30 in `recent_updates`.
         scans = [_make_scan(f"s{i}", i) for i in range(50)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(50)}
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
-
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-            branch="main",
-            max_scans=100,
-        )
+        m = await _compute(scans, deps, max_scans=100)
 
         assert m.scan_count == 50
         assert m.total_updates == 49  # 50 scans -> 49 transitions
@@ -1335,19 +1161,7 @@ class TestStreamingOrchestrator:
         # 30 scans, max_scans=5 — analysis must use the newest 5, not the oldest 5.
         scans = [_make_scan(f"s{i}", i) for i in range(30)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
-
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-            branch="main",
-            max_scans=5,
-        )
+        m = await _compute(scans, deps, max_scans=5)
 
         assert m.scan_count == 5
         # The newest 5 scans must drive recent_updates (1.0.26..1.0.29), not the oldest 5 (1.0.1..1.0.4).
@@ -1361,15 +1175,7 @@ class TestStreamingOrchestrator:
         scans = _recent_scans(20, spacing_days=2)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(20)}
 
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            window_days=11,
-        )
+        m = await _compute(scans, deps, window_days=11)
 
         assert m.scan_count == 6
         assert m.total_updates == 5
@@ -1381,19 +1187,7 @@ class TestStreamingOrchestrator:
         deps: dict[str, list[dict[str, Any]]] = {}
         for i in range(200):
             deps[f"s{i}"] = [_make_dep(f"s{i}", f"pkg-{p}", f"1.{i}.{p}") for p in range(5)]
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
-
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-            branch="main",
-            max_scans=200,
-        )
+        m = await _compute(scans, deps, max_scans=200)
         # Headline: it returns at all and reports 200 scans plus the
         # right number of update events (199 transitions x 5 packages).
         assert m.scan_count == 200
@@ -1420,14 +1214,7 @@ class TestStreamingOrchestrator:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
         }
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-        )
+        m = await _compute(scans, deps)
         assert m.upstream_releases_last_12m_median is None
         assert m.upstream_days_between_releases_median is None
         assert m.upstream_days_since_latest_release_median is None
@@ -1488,15 +1275,7 @@ class TestStreamingOrchestrator:
                 return self._h
 
         fetcher = FakeFetcher(history)
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            release_fetcher=fetcher,
-        )
+        m = await _compute(scans, deps, release_fetcher=fetcher)
 
         # Adoption latency: 1.0.1 published 20d before scan 1 -> latency 20.
         # Older 1.0.0 was already in scan 0 (we don't observe its first appearance).
@@ -1517,16 +1296,7 @@ class TestStreamingOrchestrator:
         scans = _recent_scans(30)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
 
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            max_scans=5,
-            window_days=40,
-        )
+        m = await _compute(scans, deps, max_scans=5, window_days=40)
         assert m.scan_count == 30, "the calendar window should trump max_scans when it contains more scans"
 
     @pytest.mark.asyncio
@@ -1536,17 +1306,7 @@ class TestStreamingOrchestrator:
         scans = _recent_scans(2500)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(2500)}
 
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            max_scans=5,
-            window_days=3000,
-            hard_limit=100,
-        )
+        m = await _compute(scans, deps, max_scans=5, window_days=3000, hard_limit=100)
         # Only the newest 100 scans should be analysed under the safety cap.
         assert m.scan_count == 100
         # And the response says so: every number above covers 100 of the branch's 2500 scans.
@@ -1557,17 +1317,7 @@ class TestStreamingOrchestrator:
         scans = _recent_scans(30)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
 
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            max_scans=5,
-            window_days=3000,
-            hard_limit=100,
-        )
+        m = await _compute(scans, deps, max_scans=5, window_days=3000, hard_limit=100)
 
         assert m.window_scan_cap is None
 
@@ -1597,11 +1347,11 @@ class TestStreamingOrchestrator:
             ),
         ]
 
-        result = await compute_update_frequency_comparison(
-            projects=[{"_id": "proj-b", "name": "Unmeasured"}, {"_id": "proj-a", "name": "Measured"}],
-            scan_repo=FakeScanRepo(scans_a + scans_b),
-            dep_repo=FakeDepRepo({**deps_a, **deps_b}),
-            analysis_repo=FakeAnalysisRepo(results),
+        result = await _compare(
+            [{"_id": "proj-b", "name": "Unmeasured"}, {"_id": "proj-a", "name": "Measured"}],
+            scans_a + scans_b,
+            {**deps_a, **deps_b},
+            results,
         )
 
         assert [p.project_name for p in result.projects] == ["Measured", "Unmeasured"]
@@ -1615,11 +1365,8 @@ class TestStreamingOrchestrator:
         scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
         scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("1.0.0", "1.0.1"))
 
-        result = await compute_update_frequency_comparison(
-            projects=[{"_id": "proj-a", "name": "A"}, {"_id": "proj-b", "name": "B"}],
-            scan_repo=FakeScanRepo(scans_a + scans_b),
-            dep_repo=FakeDepRepo({**deps_a, **deps_b}),
-            analysis_repo=FakeAnalysisRepo([]),
+        result = await _compare(
+            [{"_id": "proj-a", "name": "A"}, {"_id": "proj-b", "name": "B"}], scans_a + scans_b, {**deps_a, **deps_b}
         )
 
         assert result.best_project is None
@@ -1632,11 +1379,8 @@ class TestStreamingOrchestrator:
         single_scan = [_make_scan("proj-c-s1", 0, project_id="proj-c")]
         single_scan[0]["created_at"] = datetime.now(tz=timezone.utc)
 
-        result = await compute_update_frequency_comparison(
-            projects=[{"_id": "proj-a", "name": "A"}, {"_id": "proj-c", "name": "C"}],
-            scan_repo=FakeScanRepo(scans_a + single_scan),
-            dep_repo=FakeDepRepo(deps_a),
-            analysis_repo=FakeAnalysisRepo([]),
+        result = await _compare(
+            [{"_id": "proj-a", "name": "A"}, {"_id": "proj-c", "name": "C"}], scans_a + single_scan, deps_a
         )
 
         assert [(p.project_name, p.data_status) for p in result.projects] == [
@@ -1665,42 +1409,23 @@ class TestStreamingOrchestrator:
             return metrics
 
         with patch.object(update_frequency_module, "compute_update_frequency", _bad_ratio_for_b):
-            result = await compute_update_frequency_comparison(
-                projects=projects,
-                scan_repo=FakeScanRepo(scans_a + scans_b),
-                dep_repo=FakeDepRepo({**deps_a, **deps_b}),
-                analysis_repo=FakeAnalysisRepo([]),
-            )
+            result = await _compare(projects, scans_a + scans_b, {**deps_a, **deps_b})
 
         assert {p.project_name for p in result.projects} == {"A", "B"}
         assert result.skipped_error == 1
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
-        # Must NOT issue a single bulk find_many across all scan_ids.
+        # Must NOT issue a single bulk read across all scan_ids.
         scans = [_make_scan(f"s{i}", i) for i in range(5)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", "1.0.0")] for i in range(5)}
         results = [_outdated_result(f"s{i}", []) for i in range(5)]
 
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
         analysis_repo = FakeAnalysisRepo(results)
 
-        await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-            branch="main",
-        )
+        await _compute(scans, deps, analysis_repo=analysis_repo)
 
-        # No call should use {"$in": [...all scan ids...]}; calls are per-scan.
-        for q in analysis_repo.queries:
-            scan_filter = q.get("scan_id")
-            assert not isinstance(scan_filter, dict), (
-                f"analysis results loaded with bulk scan filter {scan_filter}; expected per-scan loading"
-            )
+        assert [q.get("scan_id") for q in analysis_repo.queries] == [f"s{i}" for i in range(5)]
 
     @pytest.mark.asyncio
     async def test_completed_filter_applied_before_limit(self):
@@ -1711,19 +1436,7 @@ class TestStreamingOrchestrator:
         ]  # days 10..29, failed -> these are the newest 20
         scans = completed + failed
         deps = {f"c{i}": [_make_dep(f"c{i}", "pkg-a", f"1.0.{i}")] for i in range(6)}
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
-
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-            branch="main",
-            max_scans=20,
-        )
+        m = await _compute(scans, deps, max_scans=20)
 
         assert m.scan_count == 6, "completed scans must survive the fetch limit even when the newest scans failed"
         assert m.total_updates == 5
@@ -1761,15 +1474,7 @@ class TestStreamingOrchestrator:
                 return self._h
 
         fetcher = FakeFetcher(history)
-        m = await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            release_fetcher=fetcher,
-        )
+        m = await _compute(scans, deps, release_fetcher=fetcher)
 
         # The fetcher must be asked for the group:artifact name, not the bare artifact.
         assert ("maven", registry_name) in fetcher.calls[0]
@@ -1799,15 +1504,7 @@ class TestStreamingOrchestrator:
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {"s1": [_composer_dep("s1", "10.0.0")], "s2": [_composer_dep("s2", "10.1.0")]}
         fetcher = FakeFetcher()
-        await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-            release_fetcher=fetcher,
-        )
+        await _compute(scans, deps, release_fetcher=fetcher)
 
         assert fetcher.calls == []
 
@@ -1995,15 +1692,6 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
         }
         return scans, deps
 
-    @staticmethod
-    async def _compare(projects, scans, deps):
-        return await compute_update_frequency_comparison(
-            projects=projects,
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-        )
-
     @pytest.mark.asyncio
     async def test_a_retry_storm_leaves_a_project_fully_covered(self):
         # Eight of ten scans are CI retries of one commit. Both read paths give a run
@@ -2011,7 +1699,7 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
         # project out of the ranking for scanning too often.
         scans, deps = self._retry_storm_project("proj-retry")
 
-        result = await self._compare([{"_id": "proj-retry", "name": "Retry"}], scans, deps)
+        result = await _compare([{"_id": "proj-retry", "name": "Retry"}], scans, deps)
 
         row = result.projects[0]
         assert row.data_status == "ready"
@@ -2025,7 +1713,7 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
         scans, deps = self._steady_project("proj-ready")
         scans += [_scan_days_ago(f"ancient-{i}", 200 + i, project_id="proj-ready") for i in range(100)]
 
-        result = await self._compare([{"_id": "proj-ready", "name": "Ready"}], scans, deps)
+        result = await _compare([{"_id": "proj-ready", "name": "Ready"}], scans, deps)
 
         assert [p.data_status for p in result.projects] == ["ready"]
 
@@ -2040,7 +1728,7 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
             for i in range(8)
         ]
 
-        result = await self._compare([{"_id": "proj-thin", "name": "Thin"}], scans, deps)
+        result = await _compare([{"_id": "proj-thin", "name": "Thin"}], scans, deps)
 
         row = result.projects[0]
         assert (row.data_status, row.scan_count) == ("ready", 2)
@@ -2074,17 +1762,6 @@ class TestWindowCutoff:
 class TestRecentUpdatesSelection:
     """One limit and one order for the list, so the walk and the ledger keep the same events."""
 
-    @staticmethod
-    async def _compute(scans, deps):
-        return await compute_update_frequency(
-            project_id="proj-1",
-            project_name="Project",
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-            branch="main",
-        )
-
     @pytest.mark.asyncio
     async def test_a_scan_with_more_changes_than_the_limit_keeps_the_ranked_ones(self):
         changed = RECENT_UPDATES_LIMIT + 10
@@ -2096,7 +1773,7 @@ class TestRecentUpdatesSelection:
             "s1": [_make_dep("s1", f"pkg{i:03d}", "2.0.0" if i == changed - 1 else "1.0.1") for i in range(changed)],
         }
 
-        m = await self._compute(scans, deps)
+        m = await _compute(scans, deps)
 
         assert len(m.recent_updates) == RECENT_UPDATES_LIMIT
         assert m.recent_updates[0].package_name == f"pkg{changed - 1:03d}"
@@ -2114,7 +1791,7 @@ class TestRecentUpdatesSelection:
             "s2": [_make_dep("s2", "pkg-a", "1.0.2")],
         }
 
-        m = await self._compute(scans, deps)
+        m = await _compute(scans, deps)
 
         assert [event.new_version for event in m.recent_updates] == ["1.0.2", "1.0.1"]
 

@@ -9,20 +9,15 @@ from app.core.metrics import analysis_waivers_applied_total
 from app.models.finding import Finding, FindingType, Severity
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
-from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.adhoc import apply_global_waivers_in_memory
-from app.services.analysis.engine import (
-    _finalize_scan_and_project,
-    _persist_findings_and_waivers,
-    _prepare_finding_records,
-    _unwaived_findings,
-)
+from app.services.analysis.engine import _finalize_scan_and_project, _unwaived_findings
 from app.services.analysis.notifications import _categorize_vulnerabilities
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.stats import recalculate_project_stats
-from tests.helpers.findings import aggregated_vulnerability
+from tests.helpers.databases import DATABASES
+from tests.helpers.findings import aggregated_vulnerability, persist_findings
 from tests.mocks.fake_mongo import FakeDatabase
 
 pytestmark = pytest.mark.asyncio
@@ -37,11 +32,6 @@ _FIELD_REASON = "accepted component"
 _CVE_REASON = "not reachable"
 _SECRET_FILE = "deploy/values.yaml"
 _WORKER = "pod-a/worker-0"
-
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 
 def _vulnerable_component() -> Finding:
@@ -144,8 +134,7 @@ def _waiver_where_the_secret_last_was() -> Waiver:
 
 
 async def _persist(db, scan_id: str, *findings: Finding) -> list[dict]:
-    records, _ = _prepare_finding_records(list(findings), scan_id, _PROJECT, datetime.now(timezone.utc))
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, scan_id, _PROJECT, findings, datetime.now(timezone.utc))
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 
@@ -167,7 +156,7 @@ async def _finalize(db, scan_id: str) -> None:
     )
 
 
-@pytest.mark.parametrize("_database", _DATABASES)
+@pytest.mark.parametrize("_database", DATABASES)
 async def test_a_partial_cve_waiver_does_not_lift_a_whole_finding_waiver_at_ingest(db, _database):
     for waiver in (_field_waiver(), _partial_cve_waiver()):
         await WaiverRepository(db).create(waiver)
@@ -178,7 +167,7 @@ async def test_a_partial_cve_waiver_does_not_lift_a_whole_finding_waiver_at_inge
     assert [entry.get("waived") for entry in doc["details"]["vulnerabilities"]] == [True, None]
 
 
-@pytest.mark.parametrize("_database", _DATABASES)
+@pytest.mark.parametrize("_database", DATABASES)
 @pytest.mark.parametrize("cve_first", [False, True], ids=["whole-finding-first", "cve-first"])
 async def test_the_stored_scan_and_the_adhoc_gate_agree_on_the_same_waivers(db, _database, cve_first):
     waivers = [_field_waiver(None), _partial_cve_waiver(None)]
@@ -198,7 +187,7 @@ async def test_the_stored_scan_and_the_adhoc_gate_agree_on_the_same_waivers(db, 
     assert outcome(stored) == outcome(record) == (True, _FIELD_REASON, "LOW")
 
 
-@pytest.mark.parametrize("_database", _DATABASES)
+@pytest.mark.parametrize("_database", DATABASES)
 async def test_the_alert_names_only_the_advisories_no_waiver_covers(db, _database):
     await WaiverRepository(db).create(_partial_cve_waiver())
     await WaiverRepository(db).create(
@@ -213,8 +202,7 @@ async def test_the_alert_names_only_the_advisories_no_waiver_covers(db, _databas
         ),
         aggregated_vulnerability("left-pad", "1.0.0", {"id": "CVE-2024-0004", "severity": "CRITICAL"}),
     ]
-    records, _ = _prepare_finding_records(findings, _FEATURE, _PROJECT, datetime.now(timezone.utc))
-    await _persist_findings_and_waivers(records, _FEATURE, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, _FEATURE, _PROJECT, findings, datetime.now(timezone.utc))
 
     announced = await _unwaived_findings(_FEATURE, db)
 
@@ -372,7 +360,7 @@ async def test_heads_analysis_records_each_waivers_outcome_and_leaves_the_recalc
     assert restamped == []
 
 
-@pytest.mark.parametrize("_database", _DATABASES)
+@pytest.mark.parametrize("_database", DATABASES)
 async def test_a_waiver_reaches_every_run_that_reports_the_restamped_scan(db, _database):
     """The rescan's run sits on the rescan and on its root; the root's own restamp leaves that run alone."""
     await create_indexes(db)

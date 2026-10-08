@@ -1,7 +1,7 @@
 """The OSV analyzer's real HTTP client, answered in-process through httpx.MockTransport."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any
 
 import httpx
@@ -44,6 +44,25 @@ def osv_cache(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr("app.services.analyzers.osv.cache_service.mget", _mget)
     monkeypatch.setattr("app.services.analyzers.osv.cache_service.mset", _mset)
     return store
+
+
+class FakeOsv:
+    """The OSV analyzer's wire shape: ``advisories`` on every parsed component, or on those named in ``components``."""
+
+    name = "osv"
+
+    def __init__(self, *advisories: dict[str, Any], components: Collection[str] | None = None) -> None:
+        self._advisories = list(advisories)
+        self._components = components
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        return {
+            "osv_vulnerabilities": [
+                {"component": component["name"], "version": component["version"], "vulnerabilities": self._advisories}
+                for component in parsed_components or []
+                if self._advisories and (self._components is None or component["name"] in self._components)
+            ]
+        }
 
 
 def batch_queries(requests: list[httpx.Request]) -> list[dict[str, Any]]:

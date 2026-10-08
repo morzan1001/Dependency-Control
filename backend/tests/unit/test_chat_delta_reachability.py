@@ -2,9 +2,7 @@
 
 import pytest
 
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 _PROJECT = "p1"
 _ENRICHED_SCAN = "sa"
@@ -12,16 +10,6 @@ _RESCANNED_SCAN = "sb"
 
 _COVERABLE = 9
 _ANALYSED = 9
-
-
-@pytest.fixture
-def admin_user():
-    return User(
-        id="admin-1",
-        username="admin",
-        email="admin@test.com",
-        permissions=list(PRESET_ADMIN),
-    )
 
 
 async def _seed_one_enriched_side(db) -> None:

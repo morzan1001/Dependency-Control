@@ -6,7 +6,6 @@ import logging
 import httpx
 import pytest
 
-from app.core import http_utils
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import (
     external_api_duration_seconds,
@@ -132,17 +131,6 @@ async def test_success_observes_the_elapsed_duration_in_the_histogram():
     await client.get("https://example.test")
 
     assert _histogram_sum(external_api_duration_seconds, service) - before >= 0.04
-
-
-def test_dead_helpers_removed():
-    for name in (
-        "HTTPRequestError",
-        "safe_http_request",
-        "fetch_json",
-        "post_json",
-        "with_http_error_handling",
-    ):
-        assert not hasattr(http_utils, name), f"{name} should have been removed"
 
 
 @pytest.mark.asyncio

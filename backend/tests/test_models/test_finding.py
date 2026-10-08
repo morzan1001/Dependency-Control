@@ -49,18 +49,6 @@ class TestFindingTypeEnum:
 
 
 class TestFindingModel:
-    def test_minimal_valid_finding(self):
-        finding = Finding(
-            id="CVE-2023-1234",
-            type=FindingType.VULNERABILITY,
-            severity=Severity.HIGH,
-            component="requests",
-            description="Test vulnerability",
-            scanners=["trivy"],
-        )
-        assert finding.id == "CVE-2023-1234"
-        assert finding.component == "requests"
-
     def test_defaults_populated(self):
         finding = Finding(
             id="test",

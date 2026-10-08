@@ -20,21 +20,6 @@ class TestBroadcastModel:
         defaults.update(overrides)
         return Broadcast(**defaults)
 
-    def test_minimal_valid(self):
-        b = self._make_broadcast()
-        assert b.type == "general"
-        assert b.target_type == "global"
-        assert b.subject == "Maintenance window"
-        assert b.message == "System will be down for maintenance."
-        assert b.created_by == "admin-1"
-
-    def test_id_auto_generated(self):
-        a = self._make_broadcast()
-        b = self._make_broadcast()
-        assert a.id is not None
-        assert len(a.id) > 0
-        assert a.id != b.id
-
     def test_default_stats_zero(self):
         b = self._make_broadcast()
         assert b.recipient_count == 0
@@ -89,23 +74,6 @@ class TestBroadcastIdAlias:
         }
         defaults.update(overrides)
         return Broadcast(**defaults)
-
-    def test_model_dump_by_alias_contains_id(self):
-        b = self._make_broadcast()
-        dumped = b.model_dump(by_alias=True)
-        assert "_id" in dumped
-        assert dumped["_id"] == b.id
-
-    def test_accepts_id_from_mongo(self):
-        b = Broadcast(
-            _id="custom-broadcast-id",
-            type="advisory",
-            target_type="teams",
-            subject="s",
-            message="m",
-            created_by="u1",
-        )
-        assert b.id == "custom-broadcast-id"
 
     def test_roundtrip_via_model_dump(self):
         original = self._make_broadcast()

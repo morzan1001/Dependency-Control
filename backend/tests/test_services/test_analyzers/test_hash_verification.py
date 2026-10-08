@@ -33,27 +33,6 @@ class _FakeClient:
         return httpx.Response(self._status_code, json=self._payload, request=httpx.Request("GET", url))
 
 
-class _MemoryCache:
-    """Mirrors cache_service: a batched read, and a locked fetch that stores what the fetch returned."""
-
-    def __init__(self, entries: dict[str, Any] | None = None):
-        self.entries = dict(entries or {})
-        self.mget_calls: list[list[str]] = []
-
-    async def mget(self, keys: list[str]) -> dict[str, Any]:
-        self.mget_calls.append(list(keys))
-        return {key: self.entries.get(key) for key in keys}
-
-    async def get_or_fetch_with_lock(
-        self, key: str, fetch_fn, ttl_seconds: int | None = None, reraise_fetch_errors: bool = False
-    ) -> Any:
-        if self.entries.get(key) is not None:
-            return self.entries[key]
-        value = await fetch_fn()
-        self.entries[key] = {} if value is None else value
-        return value
-
-
 # sha256 digests for three released files of the same version.
 _MAC_WHEEL_SHA256 = "a" * 64
 _MANYLINUX_WHEEL_SHA256 = "b" * 64
@@ -86,11 +65,9 @@ def _left_pad(*hashes: tuple[str, str]) -> dict[str, Any]:
     }
 
 
-async def _verify(
-    monkeypatch, components: list[dict[str, Any]], client: Any, cache: _MemoryCache | None = None
-) -> dict[str, Any]:
+async def _verify(monkeypatch, cache: Any, components: list[dict[str, Any]], client: Any) -> dict[str, Any]:
     monkeypatch.setattr(hash_verification, "InstrumentedAsyncClient", lambda *_a, **_k: client)
-    monkeypatch.setattr(hash_verification, "cache_service", cache or _MemoryCache())
+    monkeypatch.setattr(hash_verification, "cache_service", cache)
     return await analyze_cyclonedx(HashVerificationAnalyzer(), components)
 
 
@@ -104,16 +81,18 @@ async def test_fetch_pypi_collects_all_file_digests():
 
 
 @pytest.mark.asyncio
-async def test_non_first_wheel_hash_is_verified_not_flagged(monkeypatch):
-    result = await _verify(monkeypatch, [_numpy(("SHA-256", _MANYLINUX_WHEEL_SHA256))], _FakeClient(_PYPI_PAYLOAD))
+async def test_non_first_wheel_hash_is_verified_not_flagged(monkeypatch, fake_cache):
+    result = await _verify(
+        monkeypatch, fake_cache, [_numpy(("SHA-256", _MANYLINUX_WHEEL_SHA256))], _FakeClient(_PYPI_PAYLOAD)
+    )
 
     assert result["hash_issues"] == []
     assert result["summary"] == {"verified_count": 1, "unverifiable_count": 0, "mismatch_count": 0}
 
 
 @pytest.mark.asyncio
-async def test_genuinely_wrong_hash_is_a_critical_finding(monkeypatch):
-    result = await _verify(monkeypatch, [_numpy(("SHA-256", "d" * 64))], _FakeClient(_PYPI_PAYLOAD))
+async def test_genuinely_wrong_hash_is_a_critical_finding(monkeypatch, fake_cache):
+    result = await _verify(monkeypatch, fake_cache, [_numpy(("SHA-256", "d" * 64))], _FakeClient(_PYPI_PAYLOAD))
     aggregator = ResultAggregator()
     aggregator.aggregate("hash_verification", result)
 
@@ -123,8 +102,8 @@ async def test_genuinely_wrong_hash_is_a_critical_finding(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_finding_takes_the_severity_the_analyzer_gave(monkeypatch):
-    result = await _verify(monkeypatch, [_numpy(("SHA-256", "d" * 64))], _FakeClient(_PYPI_PAYLOAD))
+async def test_the_finding_takes_the_severity_the_analyzer_gave(monkeypatch, fake_cache):
+    result = await _verify(monkeypatch, fake_cache, [_numpy(("SHA-256", "d" * 64))], _FakeClient(_PYPI_PAYLOAD))
     result["hash_issues"][0]["severity"] = Severity.HIGH.value
     aggregator = ResultAggregator()
 
@@ -134,10 +113,10 @@ async def test_the_finding_takes_the_severity_the_analyzer_gave(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_uppercase_registry_digest_verifies_against_the_sbom_hash(monkeypatch):
+async def test_uppercase_registry_digest_verifies_against_the_sbom_hash(monkeypatch, fake_cache):
     client = _FakeClient({"urls": [{"digests": {"sha256": _SDIST_SHA256.upper()}}]})
 
-    result = await _verify(monkeypatch, [_numpy(("SHA-256", _SDIST_SHA256))], client)
+    result = await _verify(monkeypatch, fake_cache, [_numpy(("SHA-256", _SDIST_SHA256))], client)
 
     assert result["summary"]["verified_count"] == 1
 
@@ -191,20 +170,20 @@ async def test_a_scoped_npm_package_is_requested_with_an_escaped_slash():
         pytest.param("f" * 40, 0, 1, id="other_digest"),
     ],
 )
-async def test_npm_single_digest_per_algorithm_is_compared(monkeypatch, sbom_sha1, verified, mismatches):
+async def test_npm_single_digest_per_algorithm_is_compared(monkeypatch, fake_cache, sbom_sha1, verified, mismatches):
     client = _FakeClient({"dist": {"shasum": "e" * 40}})
 
-    result = await _verify(monkeypatch, [_left_pad(("SHA-1", sbom_sha1))], client)
+    result = await _verify(monkeypatch, fake_cache, [_left_pad(("SHA-1", sbom_sha1))], client)
 
     assert result["summary"]["verified_count"] == verified
     assert result["summary"]["mismatch_count"] == mismatches
 
 
 @pytest.mark.asyncio
-async def test_a_component_without_a_hash_makes_no_registry_request(monkeypatch):
+async def test_a_component_without_a_hash_makes_no_registry_request(monkeypatch, fake_cache):
     client = _FakeClient(_PYPI_PAYLOAD)
 
-    result = await _verify(monkeypatch, [_numpy()], client)
+    result = await _verify(monkeypatch, fake_cache, [_numpy()], client)
 
     assert client.urls == []
     assert result == {
@@ -214,26 +193,34 @@ async def test_a_component_without_a_hash_makes_no_registry_request(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_a_component_without_a_version_makes_no_registry_request(monkeypatch):
+async def test_a_component_without_a_version_makes_no_registry_request(monkeypatch, fake_cache):
     client = _FakeClient(_PYPI_PAYLOAD)
 
-    result = await _verify(monkeypatch, [_numpy(("SHA-256", _SDIST_SHA256), version=None)], client)
+    result = await _verify(monkeypatch, fake_cache, [_numpy(("SHA-256", _SDIST_SHA256), version=None)], client)
 
     assert client.urls == []
     assert result["summary"]["unverifiable_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_all_registry_hashes_are_read_from_the_cache_in_one_batch(monkeypatch):
+async def test_all_registry_hashes_are_read_from_the_cache_in_one_batch(monkeypatch, fake_cache):
     numpy_key = CacheKeys.package_hash("pypi", "numpy", "1.26.4")
     left_pad_key = CacheKeys.package_hash("npm", "left-pad", "1.0.0")
-    cache = _MemoryCache({numpy_key: {"sha256": [_SDIST_SHA256]}, left_pad_key: {"sha1": "e" * 40}})
+    await fake_cache.mset({numpy_key: {"sha256": [_SDIST_SHA256]}, left_pad_key: {"sha1": "e" * 40}})
+    mget_calls = []
+    read_many = fake_cache.mget
+
+    async def _recording_mget(keys):
+        mget_calls.append(sorted(keys))
+        return await read_many(keys)
+
+    monkeypatch.setattr(fake_cache, "mget", _recording_mget)
     client = _FakeClient({})
     components = [_numpy(("SHA-256", _SDIST_SHA256)), _left_pad(("SHA-1", "e" * 40))]
 
-    result = await _verify(monkeypatch, components, client, cache)
+    result = await _verify(monkeypatch, fake_cache, components, client)
 
-    assert [sorted(keys) for keys in cache.mget_calls] == [sorted([numpy_key, left_pad_key])]
+    assert mget_calls == [sorted([numpy_key, left_pad_key])]
     assert client.urls == []
     assert result["summary"]["verified_count"] == 2
 
@@ -260,7 +247,7 @@ class _ConcurrencyProbe:
 
 
 @pytest.mark.asyncio
-async def test_registry_fan_out_is_bounded(monkeypatch):
+async def test_registry_fan_out_is_bounded(monkeypatch, fake_cache):
     """One outbound request per component, so an unbounded gather turns an SBOM into a fan-out amplifier."""
     probe = _ConcurrencyProbe()
     components = [
@@ -274,7 +261,7 @@ async def test_registry_fan_out_is_bounded(monkeypatch):
         for i in range(200)
     ]
 
-    await _verify(monkeypatch, components, probe)
+    await _verify(monkeypatch, fake_cache, components, probe)
 
     assert probe.peak == ANALYZER_BATCH_SIZES["hash_verification"]
     assert probe.live == 0

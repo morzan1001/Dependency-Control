@@ -5,28 +5,18 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
-from app.models.user import User
 from app.services.aggregation.versions import aggregate_fixed_version
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.auth import make_admin
+from tests.helpers.databases import DATABASES
 
-# The value is unread: the marker on the second case makes the ``db`` fixture hand out a real server.
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
-
-pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", _DATABASES)]
+pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
 
 _PROJECT = "p-advisory"
 _SCAN = "s-head"
 _LOG4SHELL = "CVE-2021-44228"
 _LOG4J_DOS = "CVE-2021-45105"
 _GHSA = "GHSA-jfh8-c2jp-5v3q"
-
-
-def _admin() -> User:
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 async def _seed_head(db) -> None:
@@ -73,7 +63,7 @@ def _finding(
 
 
 async def _call(db, tool: str, **args) -> dict:
-    return await ChatToolRegistry().execute_tool(tool, args, _admin(), db)
+    return await ChatToolRegistry().execute_tool(tool, args, make_admin(), db)
 
 
 def _log4j(**details) -> dict:

@@ -28,41 +28,12 @@ class TestGitLabInstanceModelDefaults:
         instance = GitLabInstance(name="Test", url="https://gitlab.com", created_by="admin", is_default=True)
         assert "is_default" not in instance.model_dump()
 
-    def test_id_auto_generated(self):
-        instance = GitLabInstance(
-            name="Test",
-            url="https://gitlab.com",
-            created_by="admin",
-        )
-        assert instance.id is not None
-        assert len(instance.id) > 0
-
-    def test_two_instances_have_different_ids(self):
-        a = GitLabInstance(name="A", url="https://a.com", created_by="admin")
-        b = GitLabInstance(name="B", url="https://b.com", created_by="admin")
-        assert a.id != b.id
-
 
 class TestGitLabInstanceSerialization:
     def test_access_token_excluded_from_model_dump(self):
         instance = make_gitlab_instance(access_token="secret-token")
         dumped = instance.model_dump()
         assert "access_token" not in dumped
-
-    def test_id_uses_alias_in_dump(self):
-        instance = make_gitlab_instance(id="custom-id")
-        dumped = instance.model_dump(by_alias=True)
-        assert dumped["_id"] == "custom-id"
-
-    def test_populate_by_alias(self):
-        data = {
-            "_id": "from-alias",
-            "name": "Test",
-            "url": "https://gitlab.com",
-            "created_by": "admin",
-        }
-        instance = GitLabInstance(**data)
-        assert instance.id == "from-alias"
 
 
 MODULE = "app.api.v1.endpoints.gitlab_instances"

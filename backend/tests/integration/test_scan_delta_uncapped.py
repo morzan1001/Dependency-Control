@@ -9,13 +9,11 @@ import pytest
 from app.core.init_db import create_indexes
 from app.models.waiver import Waiver
 from app.repositories.dependencies import DependencyRepository
-from app.repositories.findings import FindingRepository
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.components_delta import compare_components
 from app.services.analytics.findings_delta import compare_findings
 from app.services.dependency_store import store_scan_dependencies
 from app.services.sbom_parser import parse_sbom
-from tests.helpers.findings import grype_findings
+from tests.helpers.findings import grype_findings, persist_findings
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -81,8 +79,7 @@ def _brace(index: int) -> str:
 
 
 async def _persist(db, scan_id: str, findings: list) -> None:
-    records, _ = _prepare_finding_records(findings, scan_id, _PROJECT, datetime.now(timezone.utc))
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, scan_id, _PROJECT, findings, datetime.now(timezone.utc))
 
 
 async def _waive(db, **fields) -> None:

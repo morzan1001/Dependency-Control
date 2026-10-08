@@ -17,6 +17,7 @@ from app.repositories.findings import FindingRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analysis.engine import _partial_run_reasons, _persist_findings_and_waivers, _prepare_finding_records
+from tests.helpers.databases import DATABASES
 from tests.helpers.profiler import inserts_and_upserts, profiled
 
 pytestmark = pytest.mark.asyncio
@@ -27,11 +28,6 @@ _SCAN_CREATED = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _EARLIER_RUN = datetime(2026, 9, 2, tzinfo=timezone.utc)
 _MAX_DOCUMENT = 16 * 1024 * 1024
 _BEARER_OUTPUT = json.loads((Path(__file__).parents[1] / "fixtures/sast/bearer_2.1.1_findings.json").read_text())
-
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -83,7 +79,7 @@ async def _stored_ids(db) -> list[str]:
     return sorted(doc["_id"] for doc in await db.findings.find({"scan_id": _SCAN}, {"_id": 1}).to_list(None))
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 async def test_reanalysis_drops_rows_the_run_no_longer_found_and_rewrites_the_rest(db, database, monkeypatch):
     first = _trivy_records(
         _trivy_vulnerability("CVE-2023-45288", "golang.org/x/net"),

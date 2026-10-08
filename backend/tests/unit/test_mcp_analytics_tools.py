@@ -5,15 +5,10 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
-from app.models.user import User
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN
-
-
-def _admin() -> User:
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
+from tests.helpers.auth import make_admin
 
 
 async def _seed_md5_scan(db):
@@ -59,7 +54,7 @@ async def test_a_null_grouping_groups_hotspots_by_name(db):
     await _seed_md5_scan(db)
 
     result = await ChatToolRegistry().execute_tool(
-        "get_crypto_hotspots", {"project_id": "p", "group_by": None}, _admin(), db
+        "get_crypto_hotspots", {"project_id": "p", "group_by": None}, make_admin(), db
     )
 
     assert result["grouping_dimension"] == "name"
@@ -70,7 +65,7 @@ async def test_a_null_metric_trends_the_total_crypto_findings(db):
     await _seed_md5_scan(db)
 
     result = await ChatToolRegistry().execute_tool(
-        "get_crypto_trends", {"project_id": "p", "metric": None}, _admin(), db
+        "get_crypto_trends", {"project_id": "p", "metric": None}, make_admin(), db
     )
 
     assert result["metric"] == "total_crypto_findings"

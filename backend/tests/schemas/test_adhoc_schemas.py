@@ -24,7 +24,6 @@ _MISSPELLED_POLICY_VALUE = "internalonly"
 _INPUT_REQUIRED = "at least one non-empty entry in 'sboms' or 'scanners'"
 _CLI_BATCH = "cli_batch"
 _INTERNAL_ONLY = "internal_only"
-_NETWORK_FACING = "network_facing"
 
 
 def test_request_defaults():

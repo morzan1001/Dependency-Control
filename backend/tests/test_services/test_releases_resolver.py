@@ -58,11 +58,6 @@ _TIED_SCAN_LOW_ROW_ID = "tie-a"
 _TIED_SCAN_HIGH_ROW_ID = "tie-z"
 
 
-@pytest.fixture
-def db():
-    return FakeDatabase()
-
-
 def _scan(scan_id: str, project_id: str, *, created_delta: int = 0, status: str = _COMPLETED, **extra) -> dict:
     return {
         "_id": scan_id,

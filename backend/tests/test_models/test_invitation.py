@@ -19,19 +19,6 @@ class TestSystemInvitationModel:
         defaults.update(overrides)
         return SystemInvitation(**defaults)
 
-    def test_minimal_valid(self):
-        inv = self._make_system_invitation()
-        assert inv.email == "newuser@example.com"
-        assert inv.token == "sys-tok-456"
-        assert inv.invited_by == "superadmin"
-
-    def test_id_auto_generated(self):
-        a = self._make_system_invitation()
-        b = self._make_system_invitation()
-        assert a.id is not None
-        assert len(a.id) > 0
-        assert a.id != b.id
-
     def test_is_used_defaults_to_false(self):
         inv = self._make_system_invitation()
         assert inv.is_used is False
@@ -57,16 +44,6 @@ class TestSystemInvitationModel:
     def test_invalid_email_rejected(self):
         with pytest.raises(ValidationError):
             self._make_system_invitation(email="bad-email")
-
-    def test_model_dump_by_alias_contains_id(self):
-        inv = self._make_system_invitation()
-        dumped = inv.model_dump(by_alias=True)
-        assert "_id" in dumped
-        assert dumped["_id"] == inv.id
-
-    def test_accepts_id_from_mongo(self):
-        inv = self._make_system_invitation(_id="sys-inv-custom")
-        assert inv.id == "sys-inv-custom"
 
     def test_roundtrip_via_model_dump(self):
         original = self._make_system_invitation()

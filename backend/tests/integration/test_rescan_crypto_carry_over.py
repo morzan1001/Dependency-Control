@@ -22,7 +22,7 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
 from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
-from tests.helpers.sboms import store_sbom
+from tests.helpers.sboms import sbom_ref, store_sbom
 
 _PROJECT_ID = "cbom-rescan-project"
 _WORKER = "pod-a/worker-0"
@@ -50,10 +50,6 @@ _INGESTED_ASSETS = [
 ]
 
 
-def _gridfs_ref() -> dict:
-    return {"storage": "gridfs", "file_id": _FILE_ID, "type": "gridfs_reference", "gridfs_id": _FILE_ID}
-
-
 async def _ingest_assets(db, scan_id: str) -> None:
     await CryptoAssetRepository(db).bulk_upsert(
         _PROJECT_ID,
@@ -77,12 +73,12 @@ async def _seed_lineage(db) -> tuple[str, str]:
     await create_indexes(db)
     await store_sbom(db, _SBOM, _FILE_ID)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
-    original = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref()], status="completed")
+    original = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[sbom_ref(_FILE_ID)], status="completed")
     await db.scans.insert_one(original.model_dump(by_alias=True))
     rescan = Scan(
         project_id=_PROJECT_ID,
         branch="main",
-        sbom_refs=[_gridfs_ref()],
+        sbom_refs=[sbom_ref(_FILE_ID)],
         status="processing",
         worker_id=_WORKER,
         is_rescan=True,
@@ -96,7 +92,10 @@ async def _seed_lineage(db) -> tuple[str, str]:
 
 async def _rescan_and_list(db) -> list[str]:
     original_id, rescan_id = await _seed_lineage(db)
-    assert await run_analysis(rescan_id, [_gridfs_ref()], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert (
+        await run_analysis(rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED
+    )
 
     repo = CryptoAssetRepository(db)
     assert await repo.count_by_scan(_PROJECT_ID, original_id) == len(_INGESTED_ASSETS)

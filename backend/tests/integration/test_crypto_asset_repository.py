@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -10,14 +9,7 @@ from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType
-from tests.mocks.mongodb import create_mock_collection
-
-
-def _make_mock_db(collection):
-    """Create a mock database that supports dict-style access."""
-    db = MagicMock()
-    db.__getitem__ = MagicMock(return_value=collection)
-    return db
+from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
 def _asset_doc(**overrides):
@@ -39,7 +31,7 @@ class TestBulkUpsertAndListByScan:
     def test_bulk_upsert_and_list_by_scan(self):
         assets_data = [_asset_doc(_id=f"asset-{i}", bom_ref=f"c{i}", name=f"algo-{i}") for i in range(5)]
         collection = create_mock_collection(find=assets_data)
-        db = _make_mock_db(collection)
+        db = create_mock_db({"crypto_assets": collection})
         repo = CryptoAssetRepository(db)
 
         assets = [

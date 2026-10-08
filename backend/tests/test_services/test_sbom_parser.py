@@ -765,18 +765,6 @@ class TestSyftParsing:
         assert "/app/requirements.txt" in result.dependencies[0].locations
 
 
-class TestParseSBOMConvenience:
-    def test_convenience_function(self, cyclonedx_minimal):
-        result = parse_sbom(cyclonedx_minimal)
-        assert result.format == SBOMFormat.CYCLONEDX
-        assert len(result.dependencies) > 0
-
-    def test_unknown_format_best_effort(self):
-        result = parse_sbom({"random": "data"})
-        assert result.format == SBOMFormat.UNKNOWN
-        assert len(result.dependencies) == 0
-
-
 def _nested_npm_sbom():
     """Mirrors prod cyclonedx-npm 6.0.1 output: sub-dependencies nested in
     components[].components[], pipe-joined bom-refs, nested refs present in

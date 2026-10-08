@@ -7,19 +7,7 @@ from app.models.finding import FindingType, Severity
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-
-
-def _rule_dict(rule_id: str) -> dict:
-    return {
-        "rule_id": rule_id,
-        "name": rule_id,
-        "description": "",
-        "finding_type": "crypto_weak_algorithm",
-        "default_severity": "HIGH",
-        "source": "custom",
-        "match_name_patterns": ["X"],
-        "enabled": True,
-    }
+from tests.helpers.crypto_policy import rule_dict
 
 
 @pytest.mark.asyncio
@@ -28,7 +16,7 @@ async def test_get_system_policy_admin_only(client, db, admin_auth_headers, memb
     resp = await client.get("/api/v1/crypto-policies/system", headers=admin_auth_headers)
     assert resp.status_code == 200
     resp2 = await client.get("/api/v1/crypto-policies/system", headers=member_auth_headers)
-    assert resp2.status_code in (401, 403)
+    assert resp2.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -36,7 +24,7 @@ async def test_put_system_policy_bumps_version(client, db, admin_auth_headers):
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[]))
     resp = await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [_rule_dict("new-rule")]},
+        json={"rules": [rule_dict("new-rule")]},
         headers=admin_auth_headers,
     )
     assert resp.status_code == 200, resp.text
@@ -56,7 +44,7 @@ async def test_project_policy_roundtrip(client, db, owner_auth_headers_proj):
 
     put = await client.put(
         "/api/v1/projects/p/crypto-policy",
-        json={"rules": [_rule_dict("override-me")]},
+        json={"rules": [rule_dict("override-me")]},
         headers=owner_auth_headers_proj,
     )
     assert put.status_code == 200, put.text
@@ -101,7 +89,7 @@ async def test_delete_project_policy(client, db, owner_auth_headers_proj):
 async def _seeded_system_policy(db) -> CryptoPolicyRepository:
     repo = CryptoPolicyRepository(db)
     await repo.upsert_system_policy(
-        CryptoPolicy(scope="system", version=1, rules=[CryptoRule.model_validate(_rule_dict("keep-me"))])
+        CryptoPolicy(scope="system", version=1, rules=[CryptoRule.model_validate(rule_dict("keep-me"))])
     )
     return repo
 
@@ -110,8 +98,8 @@ async def _seeded_system_policy(db) -> CryptoPolicyRepository:
 @pytest.mark.parametrize(
     "body",
     [
-        pytest.param({"Rules": [_rule_dict("r1")]}, id="misspelled-rules-key"),
-        pytest.param({"rulez": [_rule_dict("r1")]}, id="unknown-key"),
+        pytest.param({"Rules": [rule_dict("r1")]}, id="misspelled-rules-key"),
+        pytest.param({"rulez": [rule_dict("r1")]}, id="unknown-key"),
         pytest.param({}, id="empty-body"),
     ],
 )
@@ -134,7 +122,7 @@ async def test_put_system_policy_rejects_bodies_that_carry_no_rules(client, db, 
     "body",
     [
         pytest.param({"rules": [{"rule_id": 5, "n": "x"}]}, id="malformed-rule"),
-        pytest.param({"rules": [_rule_dict("r1")], "comment": "x" * 1001}, id="over-long-comment"),
+        pytest.param({"rules": [rule_dict("r1")], "comment": "x" * 1001}, id="over-long-comment"),
     ],
 )
 async def test_put_system_policy_answers_422_not_500(client, db, admin_auth_headers, body):
@@ -164,7 +152,7 @@ async def test_put_system_policy_still_allows_an_explicit_empty_rule_set(client,
 async def test_put_project_policy_is_refused_for_a_project_viewer(client, db, member_auth_headers):
     resp = await client.put(
         "/api/v1/projects/test-project-id/crypto-policy",
-        json={"rules": [_rule_dict("viewer-wrote-this")]},
+        json={"rules": [rule_dict("viewer-wrote-this")]},
         headers=member_auth_headers,
     )
 
@@ -180,7 +168,7 @@ async def test_delete_project_policy_is_refused_for_a_project_viewer(client, db,
             scope="project",
             project_id="test-project-id",
             version=1,
-            rules=[CryptoRule.model_validate(_rule_dict("keep-me"))],
+            rules=[CryptoRule.model_validate(rule_dict("keep-me"))],
         )
     )
 
@@ -207,7 +195,7 @@ async def test_put_project_policy_is_locked_out_while_the_system_enforces_a_glob
 
     resp = await client.put(
         "/api/v1/projects/p/crypto-policy",
-        json={"rules": [_rule_dict("override-me")]},
+        json={"rules": [rule_dict("override-me")]},
         headers=owner_auth_headers_proj,
     )
 
@@ -221,7 +209,7 @@ async def test_put_project_policy_bumps_the_stored_version(client, db, owner_aut
     collapse onto one number."""
     first = await client.put(
         "/api/v1/projects/p/crypto-policy",
-        json={"rules": [_rule_dict("r1")]},
+        json={"rules": [rule_dict("r1")]},
         headers=owner_auth_headers_proj,
     )
     assert first.status_code == 200, first.text
@@ -229,7 +217,7 @@ async def test_put_project_policy_bumps_the_stored_version(client, db, owner_aut
 
     second = await client.put(
         "/api/v1/projects/p/crypto-policy",
-        json={"rules": [_rule_dict("r2")]},
+        json={"rules": [rule_dict("r2")]},
         headers=owner_auth_headers_proj,
     )
     assert second.status_code == 200, second.text
@@ -246,7 +234,7 @@ async def test_put_system_policy_refuses_a_misspelled_rule_key(client, db, admin
 
     resp = await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [{**_rule_dict("typo"), "match_name_pattern": ["md5"]}]},
+        json={"rules": [{**rule_dict("typo"), "match_name_pattern": ["md5"]}]},
         headers=admin_auth_headers,
     )
 
@@ -262,7 +250,7 @@ async def test_a_revert_refuses_a_snapshot_holding_a_rule_a_write_would_refuse(c
     from app.schemas.policy_audit import PolicyAuditAction
 
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=2, rules=[]))
-    unscoped = {**_rule_dict("fires-on-everything"), "match_name_patterns": []}
+    unscoped = {**rule_dict("fires-on-everything"), "match_name_patterns": []}
     await PolicyAuditRepository(db).create(
         PolicyAuditEntry(
             policy_scope="system",
@@ -292,7 +280,7 @@ async def test_a_revert_refusal_names_the_field_it_refuses(client, db, admin_aut
     from app.schemas.policy_audit import PolicyAuditAction
 
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=2, rules=[]))
-    dropped_key = {**_rule_dict("old-shape"), "match_name_pattern": ["md5"]}
+    dropped_key = {**rule_dict("old-shape"), "match_name_pattern": ["md5"]}
     await PolicyAuditRepository(db).create(
         PolicyAuditEntry(
             policy_scope="system",
@@ -320,7 +308,7 @@ async def test_saving_the_stored_rules_again_writes_no_version_and_announces_not
     from app.services.notifications.service import notification_service
     from app.services.webhooks import webhook_service
 
-    body = {"rules": [_rule_dict("keep-me")], "comment": "no change"}
+    body = {"rules": [rule_dict("keep-me")], "comment": "no change"}
     first = await client.put("/api/v1/crypto-policies/system", json=body, headers=admin_auth_headers)
     webhooks, notifications = AsyncMock(), AsyncMock()
     monkeypatch.setattr(webhook_service, "trigger_webhooks", webhooks)
@@ -361,10 +349,10 @@ async def test_an_override_recreated_after_a_delete_continues_the_version_count(
     from app.repositories.policy_audit_entry import PolicyAuditRepository
 
     path = "/api/v1/projects/p/crypto-policy"
-    await client.put(path, json={"rules": [_rule_dict("first")]}, headers=owner_auth_headers_proj)
+    await client.put(path, json={"rules": [rule_dict("first")]}, headers=owner_auth_headers_proj)
     await client.delete(path, headers=owner_auth_headers_proj)
 
-    recreated = await client.put(path, json={"rules": [_rule_dict("second")]}, headers=owner_auth_headers_proj)
+    recreated = await client.put(path, json={"rules": [rule_dict("second")]}, headers=owner_auth_headers_proj)
 
     assert recreated.json()["version"] == 3
     entries = await PolicyAuditRepository(db).list(policy_scope="project", policy_type="crypto", project_id="p")
@@ -383,7 +371,7 @@ async def test_the_global_lock_refuses_every_write_to_an_override(
     client, db, owner_auth_headers_proj, method, path, body
 ):
     await client.put(
-        "/api/v1/projects/p/crypto-policy", json={"rules": [_rule_dict("stored")]}, headers=owner_auth_headers_proj
+        "/api/v1/projects/p/crypto-policy", json={"rules": [rule_dict("stored")]}, headers=owner_auth_headers_proj
     )
     await SystemSettingsRepository(db).update({"crypto_policy_mode": "global"})
 
@@ -401,7 +389,7 @@ async def test_an_admin_save_keeps_the_seed_version_so_the_next_start_does_not_r
     from app.services.crypto_policy.seeder import CURRENT_SEED_VERSION, seed_crypto_policies
 
     await seed_crypto_policies(db)
-    await client.put("/api/v1/crypto-policies/system", json={"rules": [_rule_dict("mine")]}, headers=admin_auth_headers)
+    await client.put("/api/v1/crypto-policies/system", json={"rules": [rule_dict("mine")]}, headers=admin_auth_headers)
 
     await seed_crypto_policies(db)
 

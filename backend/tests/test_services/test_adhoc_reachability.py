@@ -5,6 +5,7 @@ import pytest
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
 from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.osv import FakeOsv
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OSV = "osv"
@@ -59,39 +60,19 @@ _UNREADABLE_CALLGRAPH = {"nonsense": 1}
 _CALLGRAPH_WITHOUT_LANGUAGE = {k: v for k, v in _CALLGRAPH.items() if k != "language"}
 
 
-class _FakeOsv:
-    """The OSV analyzer's own wire shape: ``osv_vulnerabilities`` per component, advisories nested."""
-
-    name = _OSV
-
-    def __init__(self, component: str = _IMPORTED_PACKAGE, version: str = "2.31.0") -> None:
-        self._component = component
-        self._version = version
-
-    async def analyze(self, sbom, settings=None, parsed_components=None):
-        return {
-            "osv_vulnerabilities": [
-                {
-                    "component": self._component,
-                    "version": self._version,
-                    "vulnerabilities": [
-                        {"id": _VULNERABILITY_ID, "severity": "HIGH", "summary": "demo"},
-                    ],
-                }
-            ]
-        }
+_ADVISORY = {"id": _VULNERABILITY_ID, "severity": "HIGH", "summary": "demo"}
 
 
 @pytest.fixture
 def _osv(monkeypatch):
 
-    serve_analyzer(monkeypatch, _OSV, _FakeOsv())
+    serve_analyzer(monkeypatch, _OSV, FakeOsv(_ADVISORY, components={_IMPORTED_PACKAGE}))
 
 
 @pytest.fixture
 def _osv_on_the_unused_package(monkeypatch):
 
-    serve_analyzer(monkeypatch, _OSV, _FakeOsv(_ANALYZED_BUT_UNUSED_PACKAGE, "2.1.0"))
+    serve_analyzer(monkeypatch, _OSV, FakeOsv(_ADVISORY, components={_ANALYZED_BUT_UNUSED_PACKAGE}))
 
 
 def _vulnerabilities(response):

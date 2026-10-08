@@ -11,11 +11,10 @@ import pytest_asyncio
 from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType, Severity
-from app.repositories.findings import FindingRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
+from app.services.analysis.engine import _prepare_finding_records
 from app.services.analytics.findings_delta import (
     FINDING_IDENTITY_PROJECTION,
     compare_findings,
@@ -26,7 +25,8 @@ from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry
 from app.services.analyzers.crypto.certificate_lifecycle import evaluate_certificates
 from app.services.analyzers.crypto.protocol_cipher import evaluate_protocols
 from app.services.crypto_policy.resolver import EffectivePolicy
-from tests.helpers.findings import stored_vulnerability
+from tests.helpers.databases import DATABASES
+from tests.helpers.findings import persist_findings, stored_vulnerability
 
 _PROJECT = "identity-project"
 # Whole seconds, so the server's millisecond precision cannot move the dates the tests compare.
@@ -37,11 +37,6 @@ _KICS = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform.json").read_text())
 _KICS_MOVED_DOWN = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform_moved_down.json").read_text())
 _KICS_THIRD_BUCKET = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform_third_bucket.json").read_text())
 _OPENGREP = json.loads((_FIXTURES / "sast/crypto_misuse_findings.json").read_text())
-
-_DATABASES = [
-    pytest.param("attrappe", id="attrappe"),
-    pytest.param("real-mongo", marks=pytest.mark.live_mongo, id="real-mongo"),
-]
 
 _NO_POLICY = EffectivePolicy(rules=[], system_rules=[], system_version=1, override_version=None)
 _MD5_RULE = CryptoRule(
@@ -82,8 +77,7 @@ def _aggregated(*results: tuple[str, dict]) -> list[Finding]:
 
 
 async def _persist(db, scan_id: str, findings: list[Finding], created_at: datetime = _NOW) -> None:
-    records, _ = _prepare_finding_records(findings, scan_id, _PROJECT, created_at)
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await persist_findings(db, scan_id, _PROJECT, findings, created_at)
 
 
 async def _delta(db, from_scan: str = "scan-a", to_scan: str = "scan-b"):
@@ -290,7 +284,7 @@ async def test_every_path_an_extractor_reads_is_projected(db):
     }
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_further_instance_of_an_iac_rule_in_one_file_is_added(db, database):
     await _persist(db, "scan-a", _aggregated(("kics", _KICS)))
@@ -299,7 +293,7 @@ async def test_a_further_instance_of_an_iac_rule_in_one_file_is_added(db, databa
     assert _totals(await _delta(db)) == (3, 0, 7)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_iac_findings_that_moved_down_the_file_are_unchanged(db, database):
     await _persist(db, "scan-a", _aggregated(("kics", _KICS)))
@@ -308,7 +302,7 @@ async def test_iac_findings_that_moved_down_the_file_are_unchanged(db, database)
     assert _totals(await _delta(db)) == (0, 0, 7)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_sast_findings_that_moved_down_the_file_are_unchanged(db, database):
     await _persist(db, "scan-a", _aggregated(("opengrep", _OPENGREP)))
@@ -317,7 +311,7 @@ async def test_sast_findings_that_moved_down_the_file_are_unchanged(db, database
     assert _totals(await _delta(db)) == (0, 0, 3)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_an_upstream_release_leaves_outdated_findings_unchanged(db, database):
     await _persist(db, "scan-a", _aggregated(("outdated_packages", _outdated("4.17.21"))))
@@ -326,7 +320,7 @@ async def test_an_upstream_release_leaves_outdated_findings_unchanged(db, databa
     assert _totals(await _delta(db)) == (0, 0, 2)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_maintainer_risk_whose_day_count_grew_is_unchanged(db, database):
     await _persist(db, "scan-a", _aggregated(("maintainer_risk", _maintainer_risk(400))))
@@ -335,7 +329,7 @@ async def test_a_maintainer_risk_whose_day_count_grew_is_unchanged(db, database)
     assert _totals(await _delta(db)) == (0, 0, 1)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_crypto_findings_with_regenerated_bom_refs_are_unchanged(db, database):
     await _persist(db, "scan-a", _aggregated(*_crypto("1")))
@@ -344,7 +338,7 @@ async def test_crypto_findings_with_regenerated_bom_refs_are_unchanged(db, datab
     assert _totals(await _delta(db)) == (0, 0, 3)
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_removed_finding_reports_its_first_detection_not_its_scan_date(db, database):
     lodash = Finding.model_validate(stored_vulnerability("lodash", "4.17.20", [{"id": "CVE-2021-23337"}]))
@@ -357,7 +351,7 @@ async def test_a_removed_finding_reports_its_first_detection_not_its_scan_date(d
     assert (removed.change, removed.first_seen) == ("removed", _days_ago(200))
 
 
-@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.asyncio
 async def test_a_removed_finding_stored_without_a_detection_date_reports_its_scan_date(db, database):
     lodash = Finding.model_validate(stored_vulnerability("lodash", "4.17.20", [{"id": "CVE-2021-23337"}]))

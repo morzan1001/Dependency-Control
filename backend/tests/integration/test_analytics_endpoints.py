@@ -55,7 +55,7 @@ async def test_hotspots_denied_unauth(client, db):
         "/api/v1/analytics/crypto/hotspots",
         params={"scope": "project", "scope_id": "p", "group_by": "name"},
     )
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -65,7 +65,7 @@ async def test_hotspots_global_requires_permission(client, db, member_auth_heade
         params={"scope": "global", "group_by": "name"},
         headers=member_auth_headers,
     )
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -165,8 +165,7 @@ async def test_hotspots_user_scope_accepted(client, db, owner_auth_headers_proj)
         params={"scope": "user", "group_by": "name"},
         headers=owner_auth_headers_proj,
     )
-    # Accept 200 (resolved to project list) or 403 (no access), never 422.
-    assert resp.status_code != 422, resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
@@ -185,7 +184,7 @@ async def test_trends_user_scope_accepted(client, db, owner_auth_headers_proj):
         },
         headers=owner_auth_headers_proj,
     )
-    assert resp.status_code != 422, resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
@@ -452,7 +451,7 @@ async def test_recommendations_recurrence_counts_only_usable_builds_of_the_viewe
 @pytest.mark.asyncio
 async def test_scope_denied_unauth(client, db):
     resp = await client.get(_SCOPE_PATH)
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio

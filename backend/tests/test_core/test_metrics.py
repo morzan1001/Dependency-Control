@@ -197,11 +197,3 @@ class TestMetricsEndpoint:
         assert response.status_code == 200
         assert len(generating_threads) == 1
         assert generating_threads[0] is not threading.current_thread()
-
-
-class TestDeadCodeRemoved:
-    def test_track_cache_operation_removed(self) -> None:
-        assert not hasattr(metrics, "track_cache_operation")
-
-    def test_track_external_api_removed(self) -> None:
-        assert not hasattr(metrics, "track_external_api")

@@ -5,15 +5,6 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.services.analytics.cache import get_analytics_cache
-
-
-@pytest.fixture(autouse=True)
-def _clear_analytics_cache():
-    """Reset the process-level analytics cache so each test observes its own inputs."""
-    get_analytics_cache().clear()
-    yield
-    get_analytics_cache().clear()
 
 
 @pytest.mark.asyncio
@@ -73,7 +64,7 @@ async def test_pqc_endpoint_respects_scope_permission(
         "/api/v1/analytics/crypto/pqc-migration?scope=global",
         headers=member_auth_headers,
     )
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
