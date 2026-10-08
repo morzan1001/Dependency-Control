@@ -13,13 +13,6 @@ from app.schemas.projections import ProjectWithScanId
 _MEMBERS_USER_ID = "members.user_id"
 
 
-# A project whose ``team_ids`` is absent or explicitly null. Measured against the server: this
-# matches both, ``$size: 0`` matches neither, and neither shape answers an ownership filter — such a
-# project sits in no team view and in no unassigned view at once. Normalising it to ``[]`` at
-# startup is what lets everything downstream spell unassigned ``{"team_ids": {"$size": 0}}``.
-UNSHAPED_OWNERS: dict[str, Any] = {"team_ids": {"$in": [None]}}
-
-
 def _team_source_entries(cond: dict[str, Any]) -> dict[str, Any]:
     """The provenance map's ``{k, v}`` entries satisfying ``cond``; a missing map reads as empty."""
     return {

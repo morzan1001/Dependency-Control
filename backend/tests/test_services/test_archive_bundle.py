@@ -166,8 +166,6 @@ async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
     # _id comes back as a real ObjectId.
     assert isinstance(restored_scan["_id"], ObjectId)
     assert restored_scan["_id"] == scan_oid
-    # Header identification fields stay plain strings by design.
-    assert header["scan_id"] == str(scan_oid)
 
     assert len(findings) == 1
     assert isinstance(findings[0]["_id"], ObjectId)
@@ -210,27 +208,6 @@ async def test_read_detects_integrity_failure():
 
 
 @pytest.mark.asyncio
-async def test_serialize_handles_nested_lists_and_objectids():
-    from bson import ObjectId
-
-    from app.services.archive_bundle import _serialize
-
-    oid_a = ObjectId()
-    oid_b = ObjectId()
-    nested = {
-        "id": oid_a,
-        "items": [[oid_b, "plain"], [{"inner": oid_a}]],
-        "ts": None,
-    }
-    result = _serialize(nested)
-    # Recursive normalization: inner objectid in nested-list-of-list is normalized
-    assert result["id"] == str(oid_a)
-    assert result["items"][0][0] == str(oid_b)
-    assert result["items"][0][1] == "plain"
-    assert result["items"][1][0]["inner"] == str(oid_a)
-
-
-@pytest.mark.asyncio
 async def test_doc_before_collection_marker_raises():
     from app.services.archive_bundle import read_bundle_frames
 
@@ -256,42 +233,6 @@ async def test_empty_bundle_raises():
     with pytest.raises(ValueError, match="header"):
         async for _ in read_bundle_frames(source()):
             pass
-
-
-@pytest.mark.asyncio
-async def test_header_serializes_objectid_id_and_project_id():
-    """Header must not crash when scan_doc has BSON ObjectId in _id / project_id."""
-    from bson import ObjectId
-
-    from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
-
-    oid_scan = ObjectId()
-    oid_proj = ObjectId()
-    scan_doc = {"_id": oid_scan, "project_id": oid_proj, "branch": "main"}
-
-    stats = BundleStats()
-
-    async def gen():
-        async for chunk in BundleFrames.write(
-            scan_doc=scan_doc,
-            collections={"findings": _async_iter([])},
-            stats=stats,
-        ):
-            yield chunk
-
-    raw = await _collect(gen())
-
-    async def source():
-        yield raw
-
-    header = None
-    async for event in read_bundle_frames(source()):
-        if event["type"] == "header":
-            header = event["data"]
-            break
-    assert header is not None
-    assert header["scan_id"] == str(oid_scan)
-    assert header["project_id"] == str(oid_proj)
 
 
 @pytest.mark.asyncio

@@ -33,7 +33,7 @@ from app.core.metrics import (
 from app.db.mongodb import get_database, open_gridfs_download_with_retry
 from app.repositories.scans import ScanRepository
 from app.schemas.adhoc import AdhocAnalyzeRequest
-from app.services.analysis import run_analysis
+from app.services.analysis.engine import run_analysis
 from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.notifications import notify_analysis_failed
 

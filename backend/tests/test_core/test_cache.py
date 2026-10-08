@@ -337,15 +337,6 @@ class TestSuppressCacheWrites:
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
 
     @pytest.mark.asyncio
-    async def test_delete_leaves_another_callers_entry_alone(self, fake_cache):
-        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
-
-        with suppress_cache_writes():
-            assert await fake_cache.delete(_SEEDED_KEY) is False
-
-        assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
-
-    @pytest.mark.asyncio
     async def test_reads_still_hit_the_shared_cache(self, fake_cache):
         await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
 
@@ -430,7 +421,7 @@ class TestConnectionPoolBursts:
             assert svc._available is True
             assert await svc.mget(keys) == {key: {"ok": True} for key in keys}
         finally:
-            await svc.close()
+            await svc._client.aclose(close_connection_pool=True)
 
 
 class TestFetchFailuresReachTheCaller:
@@ -495,7 +486,6 @@ class TestAtomicPrimitives:
 _OPERATIONS = {
     "get": (lambda c: c.get("k"), None),
     "set": (lambda c: c.set("k", 1), False),
-    "delete": (lambda c: c.delete("k"), False),
     "mget": (lambda c: c.mget(["k", "j"]), {"k": None, "j": None}),
     "mset": (lambda c: c.mset({"k": 1}), False),
     "incr": (lambda c: c.incr("n", 60), None),

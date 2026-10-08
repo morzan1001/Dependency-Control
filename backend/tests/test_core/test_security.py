@@ -72,7 +72,7 @@ class TestAccessToken:
         [
             pytest.param({}, "sub", "user123", id="subject"),
             pytest.param({}, "type", "access", id="type"),
-            pytest.param({"permissions": ["user:read"]}, "permissions", ["user:read"], id="permissions"),
+            pytest.param({"permissions": ["project:read"]}, "permissions", ["project:read"], id="permissions"),
         ],
     )
     def test_the_decoded_payload_carries_the_claim(self, token_kwargs, claim, expected):

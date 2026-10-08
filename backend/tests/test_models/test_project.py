@@ -8,12 +8,11 @@ from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 
 class TestProjectModel:
     def test_minimal_valid_project(self):
-        project = Project(name="my-project", owner_id="user-123")
+        project = Project(name="my-project")
         assert project.name == "my-project"
-        assert project.owner_id == "user-123"
 
     def test_defaults(self):
-        project = Project(name="test", owner_id="user-1")
+        project = Project(name="test")
         assert project.retention_days == 90
         assert project.active_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
         assert project.members == []
@@ -22,7 +21,7 @@ class TestProjectModel:
         assert project.gitlab_mr_comments_enabled is False
 
     def test_id_auto_generated(self):
-        project = Project(name="test", owner_id="user-1")
+        project = Project(name="test")
         assert project.id is not None
         assert len(project.id) > 0
 

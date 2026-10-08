@@ -31,17 +31,8 @@ _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$", re.ASCII)
 
 
 def validate_script_name(script_name: str) -> None:
-    """Validate script name is allowed and safe from path traversal (404 otherwise)."""
+    """404 for a name outside the allowlist, which also keeps the path from naming any other file."""
     if script_name not in ALLOWED_SCRIPTS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Script '{script_name}' not found",
-        )
-
-    # is_relative_to (not str.startswith) so a sibling like scripts/foo-evil is rejected.
-    script_path = (SCRIPTS_DIR / script_name).resolve()
-    if not script_path.is_relative_to(SCRIPTS_DIR.resolve()):
-        logger.warning(f"Path traversal attempt detected for script: {script_name}")
         raise HTTPException(
             status_code=404,
             detail=f"Script '{script_name}' not found",
@@ -70,11 +61,8 @@ def _resolve_script_path(script_name: str, version: str | None) -> Path:
             detail="Invalid version. Expected semver-shape X.Y.Z (digits only).",
         )
 
-    stem, dot, ext = script_name.partition(".")
-    if not dot:
-        raise HTTPException(status_code=400, detail="Invalid script name")
-    versioned_name = f"{stem}-{version}.{ext}"
-    return (VERSIONS_DIR / versioned_name).resolve()
+    stem, _, ext = script_name.partition(".")
+    return (VERSIONS_DIR / f"{stem}-{version}.{ext}").resolve()
 
 
 def _read_and_describe(script_path: Path) -> tuple[str, str, str]:
@@ -92,13 +80,6 @@ def _read_and_describe_frozen(script_path_str: str) -> tuple[str, str, str]:
 def get_script_content(script_name: str, version: str | None = None) -> tuple[str, str, str]:
     """Return (content, version, sha256) for the latest pointer (version=None) or a specific frozen release."""
     script_path = _resolve_script_path(script_name, version)
-    base = VERSIONS_DIR.resolve() if version else SCRIPTS_DIR.resolve()
-    # is_relative_to avoids the str.startswith prefix-collision (e.g. versions-evil vs versions).
-    if not script_path.is_relative_to(base):
-        raise FileNotFoundError(f"Script {script_name} not found")
-    if not script_path.exists():
-        raise FileNotFoundError(f"Script {script_name} not found")
-
     if version is not None:
         return _read_and_describe_frozen(str(script_path))
     return _read_and_describe(script_path)
@@ -108,9 +89,7 @@ def list_available_versions(script_name: str) -> list[str]:
     """Return the sorted versions present under versions/ for script_name."""
     if not VERSIONS_DIR.is_dir():
         return []
-    stem, dot, ext = script_name.partition(".")
-    if not dot:
-        return []
+    stem, _, ext = script_name.partition(".")
     pattern = re.compile(
         rf"^{re.escape(stem)}-(\d+\.\d+\.\d+)\.{re.escape(ext)}$",
         re.ASCII,
@@ -164,14 +143,6 @@ async def get_script_hash(
             status_code=404,
             detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
         ) from exc
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error getting script hash for %s: %s", script_name, e)
-        raise HTTPException(
-            status_code=500,
-            detail="Error reading script file",
-        ) from e
 
 
 @router.get(
@@ -200,32 +171,23 @@ async def get_script(
 
     try:
         content, version, sha256_hash = get_script_content(script_name, version=v)
-
-        return PlainTextResponse(
-            content=content,
-            media_type="text/plain",
-            headers={
-                "Content-Disposition": f"inline; filename={script_name}",
-                "X-Script-Version": version,
-                "X-Script-SHA256": sha256_hash,
-                "Cache-Control": "no-cache",
-            },
-        )
     except FileNotFoundError as exc:
         logger.exception("Script file not found: %s (version=%s)", script_name, v or "latest")
         raise HTTPException(
             status_code=404,
             detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
         ) from exc
-    except HTTPException:
-        # Propagate _resolve_script_path's 400 without converting to 500.
-        raise
-    except Exception as e:
-        logger.exception("Error reading script %s: %s", script_name, e)
-        raise HTTPException(
-            status_code=500,
-            detail="Error reading script file",
-        ) from e
+
+    return PlainTextResponse(
+        content=content,
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f"inline; filename={script_name}",
+            "X-Script-Version": version,
+            "X-Script-SHA256": sha256_hash,
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @router.get(

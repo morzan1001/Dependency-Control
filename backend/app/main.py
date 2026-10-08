@@ -67,17 +67,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await connect_to_mongo()
             await init_db()
 
-            # PDF compliance reports depend on WeasyPrint; missing it is non-fatal.
-            try:
-                import weasyprint  # noqa: F401
-
-                logger.info("WeasyPrint is available")
-            except Exception as e:
-                logger.warning(
-                    "WeasyPrint is NOT available - PDF compliance reports will fail: %s",
-                    e,
-                )
-
             from app.core.s3 import ensure_bucket_exists, is_archive_enabled
 
             if is_archive_enabled():
@@ -99,9 +88,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             else:
                 logger.exception("Could not connect to database after multiple attempts.")
                 raise
-        except (OSError, RuntimeError) as e:
-            logger.exception("Unexpected error during startup: %s", e)
-            raise
 
     try:
         yield

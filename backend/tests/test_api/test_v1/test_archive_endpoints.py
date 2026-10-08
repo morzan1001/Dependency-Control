@@ -34,7 +34,6 @@ def _make_archive_metadata(**overrides):
         "scan_created_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
         "archived_at": datetime(2025, 6, 1, tzinfo=timezone.utc),
         "compressed_size_bytes": 1000,
-        "original_size_bytes": 5000,
         "findings_count": 5,
         "critical_findings_count": 1,
         "high_findings_count": 2,
@@ -391,7 +390,6 @@ class TestDownloadArchive:
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
         ):
             result = asyncio.run(
@@ -749,7 +747,7 @@ async def _aiter(items):
 
 async def _legacy_bundle(*, encrypted: bool) -> bytes:
     """A bundle as archived before ingest hashed TruffleHog's Raw."""
-    from app.core.encryption import EncryptionStreamWriter
+    from app.core.encryption import encrypt_stream
     from app.services.archive import _gzip_compress_stream
     from app.services.archive_bundle import BundleFrames, BundleStats
 
@@ -770,19 +768,8 @@ async def _legacy_bundle(*, encrypted: bool) -> bytes:
         },
         stats=BundleStats(),
     )
-    gzipped = b"".join([chunk async for chunk in _gzip_compress_stream(frames)])
-    if not encrypted:
-        return gzipped
-    collected: list[bytes] = []
-
-    async def sink(chunk: bytes) -> None:
-        collected.append(chunk)
-
-    writer = EncryptionStreamWriter(sink)
-    await writer.start()
-    await writer.write(gzipped)
-    await writer.aclose()
-    return b"".join(collected)
+    gzipped = _gzip_compress_stream(frames)
+    return b"".join([chunk async for chunk in (encrypt_stream(gzipped) if encrypted else gzipped)])
 
 
 class _BucketRecordingS3(FakeS3Client):
@@ -821,19 +808,20 @@ class TestDownloadStripsPlaintextSecrets:
             db.findings.insert_many = AsyncMock()
             db.analysis_results.insert_many = AsyncMock()
             reason, _ = await _replay_bundle(db, "scan-1", _aiter([bundle]))
-            return bundle, reason, db
+            return response, bundle, reason, db
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=encrypted),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
             patch("app.core.s3.get_s3_client", lambda: fake_get_s3_client(s3)),
             patch("app.core.encryption.settings") as encryption_settings,
         ):
             encryption_settings.ARCHIVE_ENCRYPTION_KEY = "0" * 64
-            bundle, reason, db = asyncio.run(run_download_and_restore())
+            response, bundle, reason, db = asyncio.run(run_download_and_restore())
 
+        assert response.media_type == "application/gzip"
+        assert response.headers["Content-Disposition"] == 'attachment; filename="scan-1.json.gz"'
         assert s3.buckets_read == ["dc-archives"]
         assert _LEGACY_SECRET.encode() not in bundle
         assert reason is None

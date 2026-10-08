@@ -151,7 +151,6 @@ class TestProjectGitHubFields:
 
         project = Project(
             name="owner/repo",
-            owner_id="user-1",
             github_instance_id="gh-inst-1",
             github_repository_id="123456",
             github_repository_path="owner/repo",
@@ -163,7 +162,7 @@ class TestProjectGitHubFields:
     def test_project_github_fields_default_none(self):
         from app.models.project import Project
 
-        project = Project(name="test", owner_id="user-1")
+        project = Project(name="test")
         assert project.github_instance_id is None
         assert project.github_repository_id is None
         assert project.github_repository_path is None

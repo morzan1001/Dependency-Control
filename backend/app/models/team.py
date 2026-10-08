@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, NamedTuple
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, Field, computed_field
 
 from app.core.constants import TEAM_ROLE_MEMBER, TEAM_SOURCE_MANUAL, TeamRole, team_binding_key
 from app.models.base import CreatedAtModel
@@ -70,5 +70,3 @@ class Team(MongoDocument, CreatedAtModel):
     bindings: list[TeamBinding] = Field(default_factory=list)
     members: list[TeamMember] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)

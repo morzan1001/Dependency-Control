@@ -50,7 +50,7 @@ async def test_a_leftover_negative_cache_entry_reads_as_unavailable(fake_cache, 
 async def test_the_catalog_is_kept_in_process_between_calls(fake_cache, monkeypatch):
     seen = serve_enrichment(monkeypatch, fake_cache, Upstreams(kev=(_LOG4SHELL,)))
     first = await _load()
-    await fake_cache.delete(CacheKeys.kev_catalog())
+    await fake_cache._client.delete(fake_cache._make_key(CacheKeys.kev_catalog()))
 
     assert await _load() == first
     assert len(seen) == 1

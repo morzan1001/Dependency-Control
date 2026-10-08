@@ -26,11 +26,10 @@ HELPERS_WEBHOOKS = "app.api.v1.helpers.webhooks"
 class TestCheckProjectAccess:
     """Tests for check_project_access — the primary project security gate."""
 
-    def _make_project(self, owner_id="owner-1", members=None, team_ids=()):
+    def _make_project(self, members=None, team_ids=()):
         return Project(
             id="proj-1",
             name="Test",
-            owner_id=owner_id,
             members=members or [],
             team_ids=list(team_ids),
         )
@@ -56,7 +55,7 @@ class TestCheckProjectAccess:
     def test_admin_with_read_all_bypasses_all_checks(self, admin_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id="someone-else")
+        project = self._make_project()
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 
@@ -112,7 +111,6 @@ class TestCheckProjectAccess:
         from app.api.v1.helpers.projects import check_project_access
 
         project = self._make_project(
-            owner_id="other",
             members=[ProjectMember(user_id=str(regular_user.id), role=PROJECT_ROLE_VIEWER)],
         )
         mock_proj_repo = MagicMock()
@@ -133,7 +131,6 @@ class TestCheckProjectAccess:
         from app.api.v1.helpers.projects import check_project_access
 
         project = self._make_project(
-            owner_id="other",
             members=[ProjectMember(user_id=str(regular_user.id), role=PROJECT_ROLE_VIEWER)],
         )
         mock_proj_repo = MagicMock()
@@ -156,7 +153,6 @@ class TestCheckProjectAccess:
         from app.api.v1.helpers.projects import check_project_access
 
         project = self._make_project(
-            owner_id="other",
             members=[ProjectMember(user_id=str(regular_user.id), role=PROJECT_ROLE_EDITOR)],
         )
         mock_proj_repo = MagicMock()
@@ -178,7 +174,6 @@ class TestCheckProjectAccess:
         from app.api.v1.helpers.projects import check_project_access
 
         project = self._make_project(
-            owner_id="other",
             members=[ProjectMember(user_id=str(regular_user.id), role=PROJECT_ROLE_EDITOR)],
         )
         mock_proj_repo = MagicMock()
@@ -200,7 +195,7 @@ class TestCheckProjectAccess:
     def test_non_member_denied_access(self, regular_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id="other", members=[])
+        project = self._make_project(members=[])
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 
@@ -221,7 +216,7 @@ class TestCheckProjectAccess:
     def test_team_admin_gets_project_admin_role(self, regular_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id="other", team_ids=["team-1"])
+        project = self._make_project(team_ids=["team-1"])
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 
@@ -247,7 +242,7 @@ class TestCheckProjectAccess:
     def test_team_member_gets_viewer_role(self, regular_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id="other", team_ids=["team-1"])
+        project = self._make_project(team_ids=["team-1"])
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 
@@ -284,7 +279,6 @@ class TestCheckProjectAccess:
         from app.api.v1.helpers.projects import check_project_access
 
         project = self._make_project(
-            owner_id="other",
             members=[ProjectMember(user_id=str(no_perms_user.id), role=PROJECT_ROLE_VIEWER)],
         )
         mock_proj_repo = MagicMock()

@@ -19,9 +19,6 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # External APIs
-    OPEN_SOURCE_MALWARE_API_KEY: str = ""
-
     # Worker Settings
     WORKER_COUNT: int = 2
 

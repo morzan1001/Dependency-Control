@@ -26,7 +26,6 @@ def _project(members=None, team_ids=None):
     return Project(
         id="proj-1",
         name="Test",
-        owner_id="owner-x",
         members=members or [],
         team_ids=team_ids or [],
     )
@@ -236,7 +235,6 @@ class TestUpdateProjectTeamAssignment:
         return Project(
             id="proj-1",
             name="Test",
-            owner_id="owner-x",
             members=[],
             team_ids=["team-abc"],
             team_sources={"team-abc": "gitlab"},

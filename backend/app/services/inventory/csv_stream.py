@@ -14,6 +14,7 @@ MULTI_VALUE_SEPARATOR = "; "
 _UTF8_BOM = "﻿"
 _FORMULA_TRIGGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 _NEGATIVE_NUMBER = re.compile(r"-\d+(\.\d+)?")
+_CHUNK_CHARS = 64 * 1024
 
 
 def _guard_formula(text: str) -> str:
@@ -51,6 +52,9 @@ async def iter_csv(columns: list[str], rows: AsyncIterator[dict[str, Any]]) -> A
     yield _UTF8_BOM + _drain(buffer)
     async for row in rows:
         writer.writerow([format_cell(row.get(column)) for column in columns])
+        if buffer.tell() >= _CHUNK_CHARS:
+            yield _drain(buffer)
+    if buffer.tell():
         yield _drain(buffer)
 
 

@@ -29,7 +29,6 @@ def _archive_doc(archive_id, project_id=_PROJECT, branch=_MAIN, archived_at=_T0,
         "scan_created_at": scan_created_at,
         "branch": branch,
         "commit_hash": "abc123",
-        "original_size_bytes": 5000,
         "compressed_size_bytes": 1000,
     }
 

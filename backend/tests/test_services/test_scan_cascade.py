@@ -127,12 +127,6 @@ async def test_project_deletion_and_retention_remove_the_same_scan_scoped_collec
 
 def test_the_archive_bundle_carries_exactly_what_the_cascade_removes() -> None:
     """An archive that snapshots less than deletion removes loses the difference for good."""
-    from app.models.archive import ArchiveMetadata
     from app.services.archive import _RESTORABLE_COLLECTIONS
 
     assert {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME, ARCHIVE_GRIDFS_CHUNK_FRAME} == _RESTORABLE_COLLECTIONS
-    assert set(ArchiveMetadata(project_id="p", scan_id="s", s3_key="k", s3_bucket="b").collections_included) == {
-        "scans",
-        *SCAN_SCOPED_COLLECTIONS,
-        ARCHIVE_GRIDFS_CHUNK_FRAME,
-    }

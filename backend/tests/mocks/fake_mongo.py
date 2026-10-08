@@ -1235,6 +1235,9 @@ class _FakeCursor:
     def hint(self, _index: str) -> _FakeCursor:
         return self
 
+    def batch_size(self, _n: int) -> _FakeCursor:
+        return self
+
     def sort(self, key_or_list, direction: int = 1) -> _FakeCursor:
         if isinstance(key_or_list, list):
             self._sort = list(key_or_list)

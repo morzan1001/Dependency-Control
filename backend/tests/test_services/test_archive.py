@@ -4,13 +4,14 @@ import hashlib
 import json
 import zlib
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pymongo.errors import AutoReconnect
 
-from app.core.constants import SCAN_SCOPED_COLLECTIONS
+from app.core.constants import ENCRYPTION_MAGIC, SCAN_SCOPED_COLLECTIONS
 from app.models.archive import ArchiveMetadata
 from app.services.archive import archive_scan, restore_scan
 
@@ -47,7 +48,6 @@ def _make_archive_metadata(**overrides):
         "s3_bucket": "dc-archives",
         "branch": "main",
         "commit_hash": "abc123",
-        "original_size_bytes": 1000,
         "compressed_size_bytes": 200,
     }
     defaults.update(overrides)
@@ -432,6 +432,18 @@ async def test_replay_labels_invalid_tag_as_encryption():
 
 
 @pytest.mark.asyncio
+async def test_replay_labels_a_broken_download_as_s3_error():
+    from app.services.archive import _replay_bundle
+
+    async def src():
+        raise OSError("connection reset by peer")
+        yield b""
+
+    reason, _ = await _replay_bundle(MagicMock(), "x", src())
+    assert reason == "s3_error"
+
+
+@pytest.mark.asyncio
 async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
     """S3 delete failure must NOT leave a zombie metadata record."""
     scan_doc = _make_scan_doc()
@@ -647,6 +659,24 @@ async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
     RepoCls.return_value.create.assert_not_awaited()
     # The failed multipart upload was aborted (nothing left in S3).
     assert archive_env.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_an_encrypted_archive_restores_its_findings(archive_env, monkeypatch):
+    db = _make_mock_db(scan_doc=_make_scan_doc(), findings=[{"_id": "f1", "scan_id": "scan-1", "severity": "HIGH"}])
+    monkeypatch.setattr(f"{MODULE}.is_encryption_enabled", lambda: True)
+    monkeypatch.setattr("app.core.encryption.settings", SimpleNamespace(ARCHIVE_ENCRYPTION_KEY="0" * 64))
+
+    with _patch_repos()():
+        meta = await archive_scan(db, "scan-1")
+    stored = archive_env.objects[meta.s3_key]
+    db.scans.find_one = AsyncMock(return_value=None)
+    with _patch_repos(existing_metadata=meta)():
+        restored = await restore_scan(db, "scan-1")
+
+    assert stored.startswith(ENCRYPTION_MAGIC)
+    assert restored is not None
+    assert [doc["_id"] for doc in db.findings.insert_many.await_args.args[0]] == ["f1"]
 
 
 @pytest.mark.asyncio

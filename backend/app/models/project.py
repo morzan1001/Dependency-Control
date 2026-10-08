@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
@@ -29,7 +29,6 @@ class ProjectMember(BaseModel):
 
 class Project(MongoDocument, CreatedAtModel):
     name: str
-    owner_id: str | None = None  # Deprecated: use team/member admins instead
     team_ids: list[str] = Field(default_factory=list, description="Every team that owns this project")
     # Provenance per owner: "manual", or "<provider>:<instance id>" naming the sync that established
     # it. A sync only ever replaces the entries naming its own instance, so a hand assignment and
@@ -92,8 +91,6 @@ class Project(MongoDocument, CreatedAtModel):
     # Periodic Scanning
     rescan_enabled: bool | None = None  # If None, use system default
     rescan_interval: int | None = None  # Hours. If None, use system default
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class Scan(MongoDocument, CreatedAtModel):
@@ -167,8 +164,6 @@ class Scan(MongoDocument, CreatedAtModel):
     # Pipeline result tracking - prevents premature completion when multiple scanners run
     last_result_at: datetime | None = None  # When the last scanner result was received
     received_results: list[str] = Field(default_factory=list)  # List of analyzer names that have submitted results
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class AnalysisResult(MongoDocument, CreatedAtModel):

@@ -29,7 +29,6 @@ _IMPACT = {"H": 0.56, "L": 0.22, "N": 0.0}
 
 _V3_PREFIXES = ("CVSS:3.0", "CVSS:3.1")
 _V4_PREFIX = "CVSS:4.0"
-SUPPORTED_PREFIXES = (*_V3_PREFIXES, _V4_PREFIX)
 
 
 def _roundup(value: float) -> float:

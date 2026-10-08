@@ -7,9 +7,14 @@ the same collections is how ``crypto_assets`` and ``finding_records`` came to ou
 import logging
 from typing import Any
 
+import pymongo
+
 from app.core.constants import SCAN_KEYED_COLLECTIONS, SCAN_SCOPED_COLLECTIONS
 
 logger = logging.getLogger(__name__)
+
+# Lifts the pool's 30 s socketTimeoutMS, which a large project's deletes outlast.
+_CASCADE_TIMEOUT_SECONDS = 3600
 
 
 async def delete_scans_and_related_data(db: Any, scan_ids: list[str], label: str = "") -> int:
@@ -17,11 +22,12 @@ async def delete_scans_and_related_data(db: Any, scan_ids: list[str], label: str
     if not scan_ids:
         return 0
 
-    for collection in SCAN_SCOPED_COLLECTIONS:
-        await getattr(db, collection).delete_many({"scan_id": {"$in": scan_ids}})
-    for collection in SCAN_KEYED_COLLECTIONS:
-        await getattr(db, collection).delete_many({"_id": {"$in": scan_ids}})
-    result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
+    with pymongo.timeout(_CASCADE_TIMEOUT_SECONDS):
+        for collection in SCAN_SCOPED_COLLECTIONS:
+            await getattr(db, collection).delete_many({"scan_id": {"$in": scan_ids}})
+        for collection in SCAN_KEYED_COLLECTIONS:
+            await getattr(db, collection).delete_many({"_id": {"$in": scan_ids}})
+        result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
 
     if label:
         logger.info(f"{label}: Deleted {result.deleted_count} scans.")

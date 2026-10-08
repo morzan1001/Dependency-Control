@@ -22,6 +22,16 @@ _BINDING_INSTANCE = f"{_BINDINGS}.instance_id"
 _ENTRY = "entry"
 
 
+def _not_the_last_admin(user_id: str) -> dict[str, Any]:
+    """Match unless ``user_id`` is the only admin; the write checks it, so two admins cannot both leave."""
+    return {
+        "$or": [
+            {_MEMBERS: {"$elemMatch": {_USER_ID: user_id, "role": {"$ne": TEAM_ROLE_ADMIN}}}},
+            {_MEMBERS: {"$elemMatch": {_USER_ID: {"$ne": user_id}, "role": TEAM_ROLE_ADMIN}}},
+        ]
+    }
+
+
 class MemberSubset(NamedTuple):
     """The members one sync resolved, and the provenance tag bounding the entries it may replace."""
 
@@ -270,13 +280,9 @@ class TeamRepository:
         return bool(result.matched_count)
 
     async def remove_member(self, team_id: str, user_id: str, updated_at: datetime) -> bool:
-        """False when the pull would leave the team with no admin.
-
-        Expressed as a filter rather than a count taken from an earlier read, so two admins
-        removing each other at once cannot both pass the guard.
-        """
+        """False when ``user_id`` is the team's last admin."""
         result = await self.collection.update_one(
-            {"_id": team_id, "members": {"$elemMatch": {_USER_ID: {"$ne": user_id}, "role": TEAM_ROLE_ADMIN}}},
+            {"_id": team_id, **_not_the_last_admin(user_id)},
             {"$pull": {"members": {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
         )
         return bool(result.matched_count)
@@ -288,10 +294,10 @@ class TeamRepository:
         )
 
     async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> bool:
-        """False when a demotion would leave the team with no admin; the filter decides, as in remove_member."""
+        """False when the demotion would take the team's last admin."""
         query: dict[str, Any] = {"_id": team_id}
         if role != TEAM_ROLE_ADMIN:
-            query[_MEMBERS] = {"$elemMatch": {_USER_ID: {"$ne": user_id}, "role": TEAM_ROLE_ADMIN}}
+            query.update(_not_the_last_admin(user_id))
         # Address the member by identity: a concurrent $pull shifts array indices under a positional write.
         result = await self.collection.update_one(
             query,

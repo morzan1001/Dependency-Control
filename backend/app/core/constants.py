@@ -2,6 +2,7 @@
 
 import os
 import re
+from collections.abc import Mapping
 from typing import Any, Literal, get_args
 
 from app.models.finding import Severity
@@ -42,19 +43,14 @@ def max_severity[S: str | None](*severities: S) -> S:
     return max(severities, key=get_severity_value)
 
 
-def sort_by_severity(items: list, key: str = "severity", reverse: bool = True) -> list:
-    """Sort a list of dicts (or objects) by severity, most severe first by default."""
-    return sorted(
-        items,
-        key=lambda x: get_severity_value(x.get(key) if isinstance(x, dict) else getattr(x, key, None)),
-        reverse=reverse,
-    )
+def sort_by_severity[T: Mapping[str, Any]](items: list[T]) -> list[T]:
+    """Most severe first; items of equal severity keep their order."""
+    return sorted(items, key=lambda item: get_severity_value(item.get("severity")), reverse=True)
 
 
 # EPSS score thresholds based on exploitation probability
 EPSS_HIGH_THRESHOLD: float = 0.1  # >= 10% - Very likely to be exploited
 EPSS_MEDIUM_THRESHOLD: float = 0.01  # >= 1% - Moderate exploitation risk
-EPSS_LOW_THRESHOLD: float = 0.0  # < 1% - Low exploitation risk
 
 
 # SPDX identifiers defined once, shared by LICENSE_URL_PATTERNS and LICENSE_ALIASES.
@@ -204,9 +200,6 @@ TEAM_SOURCE_MANUAL = "manual"
 
 TEAM_SOURCE_GITLAB = "gitlab"
 TEAM_SOURCE_GITHUB = "github"
-# The providers a bare, un-instanced provenance value can name. Such a value belongs to no instance,
-# so no sync retires its owner or replaces its member.
-TEAM_SOURCE_PROVIDERS: tuple[str, ...] = (TEAM_SOURCE_GITLAB, TEAM_SOURCE_GITHUB)
 
 # A provider alone cannot say which sync established an owner or a member, and two instances of one
 # provider then read each other's entries as their own and retire them, alternating, on every CI
@@ -248,7 +241,6 @@ TEAM_ROLES: list[str] = list(get_args(TeamRole))
 ApiKeySurface = Literal["mcp", "adhoc"]
 API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
 API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
-API_KEY_SURFACES: frozenset[str] = frozenset(get_args(ApiKeySurface))
 # The UI shows a key's last use to the minute, so stamping it more often only adds primary writes.
 API_KEY_LAST_USED_RESOLUTION_SECONDS = 60
 
@@ -384,7 +376,6 @@ MAX_DEPENDENCY_DEPTH: int = 5
 # Thresholds for recommendation analysis
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"
 FINDING_DELTA_THRESHOLD: int = 10  # Min new findings to trigger regression warning
-MIN_VULNS_FOR_RECOMMENDATION: int = 3  # Min vulns to generate certain recommendations
 CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project patterns
 
 # EPSS very high threshold (for immediate action recommendations)
@@ -797,7 +788,6 @@ TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current
 OIDC_HTTP_TIMEOUT_SECONDS: float = 30.0
 
 # Webhook configuration
-WEBHOOK_LIST_LIMIT: int = 100
 WEBHOOK_BACKOFF_BASE: int = 2  # Exponential backoff base (2^n seconds)
 WEBHOOK_RESPONSE_BODY_LIMIT_BYTES: int = 64 * 1024  # Only a diagnostic prefix of a receiver's answer is kept
 
@@ -955,11 +945,8 @@ REACHABILITY_CONFIDENCE_SYMBOLS_NOT_USED = 0.35
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
-GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20
-GITLAB_ACCESS_DEVELOPER = 30
 GITLAB_ACCESS_MAINTAINER = 40
-GITLAB_ACCESS_OWNER = 50
 
 # Minimum access level for admin role in DependencyControl
 GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
@@ -1139,7 +1126,6 @@ MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 COMPLIANCE_REPORT_SLOTS: int = 2
 # Generation runs as an in-process background task, so a report this old lost its pod mid-run.
 COMPLIANCE_REPORT_STUCK_AFTER_HOURS: int = 6
-POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
 
 # Environments are used as index and query keys, so the slug shape is enforced, not normalised.

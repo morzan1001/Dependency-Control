@@ -74,11 +74,11 @@ class TestCreateUserPrivilegeEscalation:
 
     def test_manager_can_grant_permission_they_hold(self):
         result, repo = _run_create(
-            _perm_manager_user(extra=[Permissions.USER_READ]),
-            [Permissions.USER_READ],
+            _perm_manager_user(extra=[Permissions.TEAM_READ]),
+            [Permissions.TEAM_READ],
         )
         repo.create.assert_called_once()
-        assert result.permissions == [Permissions.USER_READ]
+        assert result.permissions == [Permissions.TEAM_READ]
 
     def test_empty_permissions_allowed_for_plain_create(self):
         result, repo = _run_create(_helpdesk_user(), [])

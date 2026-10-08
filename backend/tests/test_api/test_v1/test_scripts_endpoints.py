@@ -104,7 +104,7 @@ class TestGetScriptContent:
 
 
 class TestPrefixCollisionImmunity:
-    """An attacker sibling dir like scripts/versions-evil/ must not be served when the base is scripts/versions/ (the check uses Path.is_relative_to, not str.startswith)."""
+    """An attacker sibling dir like scripts/versions-evil/ is never served for a version missing from scripts/versions/."""
 
     def test_sibling_directory_not_served(self, tmp_path: Path):
         scripts_dir = tmp_path / "scripts"
@@ -172,6 +172,13 @@ class TestHandlers:
         with pytest.raises(HTTPException) as exc:
             asyncio.run(scripts_module.get_script_hash("scanner.sh", v="\u0660.\u0660.\u0660"))
         assert exc.value.status_code == 400
+
+    def test_get_script_serves_the_pinned_file_with_its_hash(self, scripts_layout):
+        response = asyncio.run(scripts_module.get_script("scanner.sh", v="1.0.0"))
+
+        assert response.body.decode() == V_1_0_0_CONTENT
+        assert response.headers["X-Script-Version"] == "1.0.0"
+        assert response.headers["X-Script-SHA256"] == scripts_module.compute_sha256(V_1_0_0_CONTENT)
 
     def test_get_script_unknown_version_raises_404(self, scripts_layout):
         with pytest.raises(HTTPException) as exc:

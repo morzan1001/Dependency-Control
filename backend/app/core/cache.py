@@ -292,14 +292,6 @@ class CacheService:
             return await self._try_reconnect()
         return False
 
-    async def close(self) -> None:
-        if self._client:
-            await self._client.aclose()
-            self._client = None
-        if self._pool:
-            await self._pool.disconnect()
-            self._pool = None
-
     def _make_key(self, key: str) -> str:
         return f"{settings.CACHE_PREFIX}{key}"
 
@@ -331,16 +323,6 @@ class CacheService:
                 client.set(self._make_key(key), json.dumps(value, default=str), ex=ttl_seconds),
                 timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
-            return True
-        return False
-
-    async def delete(self, key: str) -> bool:
-        if _writes_suppressed.get() or not await self._ensure_available():
-            return False
-
-        with _CacheOp(self, "delete"):
-            client = await self.get_client()
-            await asyncio.wait_for(client.delete(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             return True
         return False
 

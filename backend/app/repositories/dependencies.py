@@ -46,9 +46,6 @@ class DependencyRepository(BaseRepository[Dependency]):
             ordered=False,
         )
 
-    async def count_by_scan(self, project_id: str, scan_id: str) -> int:
-        return await self.count({"project_id": project_id, "scan_id": scan_id})
-
     async def get_unique_packages(self, scan_ids: list[str]) -> int:
         pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},

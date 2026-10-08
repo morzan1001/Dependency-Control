@@ -587,7 +587,6 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
             await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT])
             await cache_service.mset({_CALLER_DERIVED_CACHE_KEY: [_CALLER_ONLY_COMPONENT]})
             await cache_service.get_or_fetch_with_lock(_CALLER_DERIVED_CACHE_KEY, _fetch)
-            await cache_service.delete(_UPSTREAM_PYPI_KEY)
             return {"findings": []}
 
     serve_analyzer(monkeypatch, _CACHING_ANALYZER, _Caching())

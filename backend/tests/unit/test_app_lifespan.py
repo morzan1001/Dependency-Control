@@ -1,5 +1,5 @@
+import importlib.abc
 import sys
-from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -22,9 +22,30 @@ def deps(monkeypatch):
     monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: False)
     deps.ensure_bucket_exists = AsyncMock()
     monkeypatch.setattr("app.core.s3.ensure_bucket_exists", deps.ensure_bucket_exists)
-    # A real WeasyPrint import inside a running loop can segfault (see tests/conftest.py).
-    monkeypatch.setitem(sys.modules, "weasyprint", ModuleType("weasyprint"))
     return deps
+
+
+class _RefuseImport(importlib.abc.MetaPathFinder):
+    def __init__(self, name):
+        self.name = name
+        self.attempts = 0
+
+    def find_spec(self, fullname, path, target=None):
+        if fullname == self.name:
+            self.attempts += 1
+            raise ImportError(fullname)
+
+
+@pytest.mark.asyncio
+async def test_startup_leaves_weasyprint_to_the_pdf_renderer(deps, monkeypatch):
+    weasyprint = _RefuseImport("weasyprint")
+    monkeypatch.delitem(sys.modules, "weasyprint", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [weasyprint, *sys.meta_path])
+
+    async with app.router.lifespan_context(app):
+        pass
+
+    assert weasyprint.attempts == 0
 
 
 @pytest.mark.asyncio

@@ -126,7 +126,6 @@ class TestMrDecorationEarlyReturns:
     def test_skips_when_mr_comments_disabled(self):
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-1",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=False,
@@ -136,7 +135,6 @@ class TestMrDecorationEarlyReturns:
     def test_skips_when_no_gitlab_ids(self):
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_mr_comments_enabled=True,
             gitlab_instance_id=None,
             gitlab_project_id=None,
@@ -146,7 +144,6 @@ class TestMrDecorationEarlyReturns:
     def test_skips_when_no_commit_hash(self):
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-1",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -156,7 +153,6 @@ class TestMrDecorationEarlyReturns:
     def test_skips_when_instance_not_found(self):
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="nonexistent",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -166,7 +162,6 @@ class TestMrDecorationEarlyReturns:
     def test_an_unusable_instance_is_logged_as_a_warning(self, caplog):
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-gone",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -179,7 +174,6 @@ class TestMrDecorationEarlyReturns:
     def test_skips_when_instance_inactive(self):
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-1",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -191,7 +185,6 @@ class TestMrDecorationEarlyReturns:
     def test_skips_when_instance_has_no_access_token(self):
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-1",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -210,7 +203,6 @@ class TestMrDecorationInstanceRouting:
 
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-a",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -255,14 +247,12 @@ class TestMrDecorationInstanceRouting:
         projects = [
             Project(
                 name="Proj A",
-                owner_id="u1",
                 gitlab_instance_id="inst-a",
                 gitlab_project_id=100,
                 gitlab_mr_comments_enabled=True,
             ),
             Project(
                 name="Proj B",
-                owner_id="u1",
                 gitlab_instance_id="inst-b",
                 gitlab_project_id=100,
                 gitlab_mr_comments_enabled=True,
@@ -321,7 +311,6 @@ class TestMrDecorationInstanceRouting:
 
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-a",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -374,7 +363,6 @@ class TestMrDecorationInstanceRouting:
 
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-a",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -432,7 +420,6 @@ class TestMrDecorationInstanceRouting:
         project = Project(
             id="fixed-proj-id",
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-a",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
@@ -492,7 +479,6 @@ class TestMrCommentTarget:
 
         project = Project(
             name="Test",
-            owner_id="u1",
             gitlab_instance_id="inst-1",
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,

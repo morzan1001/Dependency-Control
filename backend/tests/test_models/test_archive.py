@@ -50,19 +50,7 @@ class TestArchiveMetadata:
         assert metadata.scan_created_at is None
         assert metadata.scan_completed_at is None
         assert metadata.scan_status is None
-        assert metadata.original_size_bytes is None
         assert metadata.compressed_size_bytes is None
-
-    def test_collections_included_default(self):
-        metadata = ArchiveMetadata(
-            project_id="proj-1",
-            scan_id="scan-1",
-            s3_key="proj-1/scan-1.json.gz",
-            s3_bucket="dc-archives",
-        )
-        assert "scans" in metadata.collections_included
-        assert "findings" in metadata.collections_included
-        assert "gridfs_chunks" in metadata.collections_included
 
     def test_full_metadata(self):
         metadata = ArchiveMetadata(
@@ -75,12 +63,10 @@ class TestArchiveMetadata:
             scan_created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
             scan_completed_at=datetime(2025, 1, 1, 1, 0, tzinfo=timezone.utc),
             scan_status="completed",
-            original_size_bytes=5000,
             compressed_size_bytes=1000,
         )
         assert metadata.branch == "main"
         assert metadata.commit_hash == "abc123"
-        assert metadata.original_size_bytes == 5000
         assert metadata.compressed_size_bytes == 1000
 
     def test_serialization_alias(self):

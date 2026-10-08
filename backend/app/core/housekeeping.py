@@ -52,7 +52,7 @@ from app.services.audit.retention import prune_old_audit_entries
 from app.services.branch_sync import sync_project_branches
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
-from app.services.releases import reconcile_release_flags, release_protected_scan_ids
+from app.services.releases import reconcile_release_flags, release_protected_scan_ids, released_scan_ids
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, create_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.stats import run_waiver_recalc
@@ -140,16 +140,9 @@ def resolve_rescan_interval(project: Project, system_settings: Any) -> int | Non
     return interval_hours
 
 
-def _rescan_clock(source_scan: dict) -> datetime | None:
-    """The instant the due decision measures from; a source never rescanned falls back to its own
-    creation time."""
-    clock: datetime | None = source_scan.get("last_rescanned_at") or source_scan.get("created_at")
-    return clock
-
-
 def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
-    """Whether this source scan has gone interval_hours without a rescan."""
-    last_rescan = _rescan_clock(source_scan)
+    """Whether this source scan has gone interval_hours without a rescan; one never rescanned counts from its creation."""
+    last_rescan: datetime | None = source_scan.get("last_rescanned_at") or source_scan.get("created_at")
     if not last_rescan:
         return False
     next_rescan_due = last_rescan + timedelta(hours=interval_hours)
@@ -164,8 +157,6 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     back in would deepen the lineage chain by a link per interval and hand the tip slot to whichever
     rescan ran last.
     """
-    from app.services.releases import released_scan_ids
-
     # Head's own tip build, so the rescan refreshes the analysis head reports; the lineage step is
     # left out because a rescan target has to be the build, not the previous interval's output.
     tip = await ScanRepository(db).head_build(
@@ -631,7 +622,6 @@ async def recover_stuck_scans(
                 "status": SCAN_STATUS_PROCESSING,
                 "$or": [
                     {"analysis_started_at": {"$lt": timeout_threshold}},
-                    {"analysis_started_at": {"$exists": False}},
                     {"analysis_started_at": None},
                 ],
             }
@@ -754,32 +744,20 @@ async def housekeeping_loop(
         await recover_stuck_scans(worker_manager)
         await check_scheduled_rescans(worker_manager)
 
-        try:
-            db = await get_database()
-            await update_db_stats(db)
-        except Exception as e:
-            logger.exception("Failed to update database statistics: %s", e)
+        db = await get_database()
+        await update_db_stats(db)
+        await update_archive_stats(db)
+        await update_cache_stats()
 
         try:
-            db = await get_database()
-            await update_archive_stats(db)
-        except Exception as e:
-            logger.exception("Failed to update archive statistics: %s", e)
-
-        try:
-            await update_cache_stats()
-        except Exception as e:
-            logger.exception("Failed to update cache statistics: %s", e)
-
-        try:
-            await run_waiver_recalc(await get_database())
+            await run_waiver_recalc(db)
         except Exception as e:
             logger.exception("Waiver recalculation failed: %s", e)
 
         await run_housekeeping()
 
         try:
-            await _run_retention(await get_database())
+            await _run_retention(db)
         except Exception as e:
             logger.exception("Housekeeping: retention failed: %s", e)
 

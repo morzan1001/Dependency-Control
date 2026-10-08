@@ -57,7 +57,6 @@ async def test_cache_mget_counts_each_requested_key_as_a_hit_or_a_miss(fake_cach
     [
         ("get", lambda c: c.get("k")),
         ("set", lambda c: c.set("k", 1)),
-        ("delete", lambda c: c.delete("k")),
         ("mget", lambda c: c.mget(["k"])),
         ("mset", lambda c: c.mset({"k": 1})),
         ("incr", lambda c: c.incr("n", 60)),
