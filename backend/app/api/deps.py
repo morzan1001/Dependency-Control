@@ -177,12 +177,6 @@ def _owner_budget(project: Project, source: str) -> int:
     return MAX_PROJECT_TEAMS - len(set(project.team_ids) - owners_replaced_by(project, source))
 
 
-def _new_project_owners(source: str, resolved: list[str] | None, repository_path: str) -> list[str]:
-    """The owners to store on a project this ingest is creating."""
-    owners = sorted(set(resolved or []))
-    return owners if _within_cap(source, set(owners), repository_path) else []
-
-
 def _team_subset_stages(project: Project, source: str, resolved: list[str] | None, repository_path: str) -> list[dict]:
     """The ownership stages this provider contributes, empty when there is nothing for it to write.
 
@@ -347,7 +341,7 @@ async def _handle_gitlab_oidc(
     gitlab_source = team_source(TEAM_SOURCE_GITLAB, instance_id)
     if gitlab_instance.sync_teams:
         resolved = await gitlab_service.sync_team_from_gitlab(db, gitlab_project_id, gitlab_project_path)
-        owners = _new_project_owners(gitlab_source, resolved.team_ids, gitlab_project_path)
+        owners = resolved.team_ids or []
 
     new_project = Project(
         name=gitlab_project_path,
@@ -439,7 +433,7 @@ async def _handle_github_oidc(
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     if github_instance.sync_teams:
         sync_result = await github_service.sync_team_from_github(db, repo_path, current_owner_ids=set())
-        owners = _new_project_owners(github_source, sync_result.team_ids, repo_path)
+        owners = sync_result.team_ids or []
 
     new_project = Project(
         name=repo_path,
