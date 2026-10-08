@@ -326,29 +326,6 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
             _NEIGHBOUR_PROJECTION,
         ).to_list(None)
 
-    async def find_project_window(
-        self, project_id: str, branch: str, since: datetime, limit: int
-    ) -> list[dict[str, Any]]:
-        """The newest ``limit`` in-window deltas of one branch, oldest first, arrays included.
-
-        The limit is per branch, as the live path's is: spending it across every
-        branch of a project would truncate the analysed one behind the others.
-        """
-        docs = (
-            await self.collection.find(
-                {
-                    "project_id": project_id,
-                    "branch": branch,
-                    "scan_created_at": {"$gte": since},
-                    "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
-                }
-            )
-            .sort([("scan_created_at", -1), ("_id", -1)])
-            .limit(limit)
-            .to_list(limit)
-        )
-        return sorted(docs, key=_chain_order)
-
     async def _neighbour(self, query: dict[str, Any], direction: int) -> dict[str, Any] | None:
         docs = (
             await self.collection.find(query, _NEIGHBOUR_PROJECTION)

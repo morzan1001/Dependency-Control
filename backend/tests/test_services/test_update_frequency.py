@@ -18,9 +18,6 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
-    ScanOutdatedSetRepository,
-    ScanUpdateDeltaRepository,
-    window_scans_by_branch,
 )
 from app.schemas.analytics import ProjectUpdateSummary, ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.release_history import ReleaseHistory, ReleaseInfo
@@ -40,8 +37,8 @@ from app.services.update_frequency import (
     window_coverage_status,
     window_cutoff,
 )
-from app.services.update_frequency_fold import fold_window, select_window
 from app.services.update_frequency_rollup import record_scan_update_delta
+from tests.helpers.update_frequency import rollup_metrics
 from tests.mocks.fake_mongo import FakeDatabase, _bson_sort_key
 
 
@@ -482,9 +479,7 @@ class TestBranchScopedScanSelection:
         scan_repo = FakeScanRepo(scans)
         if "branch" not in kwargs:
             since = window_cutoff(kwargs.get("window_days"))
-            kwargs["branch"], _activity = await elect_primary_branch(
-                scan_repo, "proj-1", since, default_branch, deleted_branches
-            )
+            kwargs["branch"] = await elect_primary_branch(scan_repo, "proj-1", since, default_branch, deleted_branches)
         return await compute_update_frequency(
             project_id="proj-1",
             project_name="Project",
@@ -1863,9 +1858,7 @@ class TestBranchRuleDifferential:
 
     async def _live(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
         """The walk over the branch the per-project endpoint elects."""
-        branch, _activity = await elect_primary_branch(
-            ScanRepository(db), self._PROJECT, window_cutoff(self._WINDOW), None, []
-        )
+        branch = await elect_primary_branch(ScanRepository(db), self._PROJECT, window_cutoff(self._WINDOW), None, [])
         return await compute_update_frequency(
             project_id=self._PROJECT,
             project_name="Diff",
@@ -1878,16 +1871,10 @@ class TestBranchRuleDifferential:
 
     async def _rollup(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
         """The ledger read the way the comparison endpoint assembles it."""
-        since = window_cutoff(self._WINDOW)
-        assert since is not None
-        activity = await window_scans_by_branch(ScanRepository(db), [self._PROJECT], since)
-        branch = select_primary_branch({b: seen for (_pid, b), seen in activity.items()}, None, [])
-        assert branch is not None
-        deltas = await ScanUpdateDeltaRepository(db).find_project_window(self._PROJECT, branch, since, 1000)
-        window = select_window(deltas)
-        baselines = await ScanOutdatedSetRepository(db).names_by_scan([window[0]["_id"]])
-        folded = fold_window(window, baselines.get(window[0]["_id"]), self._WINDOW)
-        return folded.to_metrics(self._PROJECT, "Diff", branch=branch)
+        project = {"_id": self._PROJECT, "name": "Diff", "default_branch": None, "deleted_branches": []}
+        rolled = await rollup_metrics(db, project, self._WINDOW)
+        assert rolled is not None
+        return rolled
 
     @pytest.mark.asyncio
     async def test_a_busy_branch_beats_a_fresher_one_on_both_paths(self):

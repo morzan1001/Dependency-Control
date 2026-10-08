@@ -134,40 +134,6 @@ class TestGroupWindowByBranch:
         assert db.scan_update_deltas.aggregate.call_count == 0
 
 
-class TestFindProjectWindow:
-    @pytest.mark.asyncio
-    async def test_the_newest_deltas_survive_the_limit_and_come_back_oldest_first(self):
-        db = FakeDatabase()
-        for i in range(5):
-            await db.scan_update_deltas.insert_one(_delta(f"s{i}", "p1", "main", i * 10))
-
-        deltas = await ScanUpdateDeltaRepository(db).find_project_window("p1", "main", T0 - timedelta(days=1), 3)
-
-        assert [d["_id"] for d in deltas] == ["s2", "s3", "s4"]
-
-    @pytest.mark.asyncio
-    async def test_the_single_project_read_keeps_the_update_samples(self):
-        db = FakeDatabase()
-        await db.scan_update_deltas.insert_one(_delta("s1", "p1", "main", 0, updates_sample=[{"n": "requests"}]))
-
-        deltas = await ScanUpdateDeltaRepository(db).find_project_window("p1", "main", T0 - timedelta(days=1), 10)
-
-        assert deltas[0]["updates_sample"] == [{"n": "requests"}]
-
-    @pytest.mark.asyncio
-    async def test_the_limit_is_spent_on_the_asked_branch_alone(self):
-        # A busier sibling branch must not push the analysed branch out of its own window.
-        db = FakeDatabase()
-        for i in range(4):
-            await db.scan_update_deltas.insert_one(_delta(f"side{i}", "p1", "side", 100 + i))
-        for i in range(3):
-            await db.scan_update_deltas.insert_one(_delta(f"main{i}", "p1", "main", i * 10))
-
-        deltas = await ScanUpdateDeltaRepository(db).find_project_window("p1", "main", T0 - timedelta(days=1), 3)
-
-        assert [d["_id"] for d in deltas] == ["main0", "main1", "main2"]
-
-
 async def _seed_scan(db: FakeDatabase, scan_id: str, project_id: str, branch: str | None, minutes: int, **overrides):
     await db.scans.insert_one(
         {

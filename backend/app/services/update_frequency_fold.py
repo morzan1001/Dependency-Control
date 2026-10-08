@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from itertools import dropwhile, pairwise
 from typing import Any, Literal, get_args
 
-from app.core.constants import COUNTED_UPDATE_KINDS, RECENT_UPDATES_LIMIT, UpdateKind
-from app.schemas.analytics import DependencyUpdateEvent, ScanTimelineEntry
+from app.core.constants import COUNTED_UPDATE_KINDS, UpdateKind
+from app.schemas.analytics import ScanTimelineEntry
 from app.services.update_frequency import (
     FoldedWindow,
     dominant_ecosystem,
@@ -196,33 +196,3 @@ def _timeline_entry(delta: dict[str, Any], *, baseline: bool) -> ScanTimelineEnt
         unknown=counts["unknown"],
         downgrades=int(updates.get("downgrade", 0)),
     )
-
-
-def sampled_updates(deltas: Sequence[dict[str, Any]]) -> list[DependencyUpdateEvent]:
-    """Newest-first update events drawn from the per-scan samples of the deltas after a window's anchor."""
-    events: list[DependencyUpdateEvent] = []
-    for delta in reversed(deltas):
-        prev_created_at = delta.get("prev_created_at")
-        if prev_created_at is None:
-            continue
-        scan_date = delta["scan_created_at"]
-        previous_scan_date = prev_created_at
-        days_between = max(1, (scan_date - previous_scan_date).days)
-        for sample in delta.get("updates_sample") or []:
-            events.append(
-                DependencyUpdateEvent(
-                    package_name=sample["n"],
-                    package_type=sample["t"],
-                    purl=sample.get("p"),
-                    old_version=sample["ov"],
-                    new_version=sample["nv"],
-                    update_type=sample["k"],
-                    scan_date=scan_date.isoformat(),
-                    previous_scan_date=previous_scan_date.isoformat(),
-                    days_between_scans=days_between,
-                    was_outdated=bool(sample["wo"]),
-                )
-            )
-            if len(events) == RECENT_UPDATES_LIMIT:
-                return events
-    return events

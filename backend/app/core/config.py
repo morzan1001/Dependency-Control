@@ -97,8 +97,9 @@ class Settings(BaseSettings):
 
     # Kill switch for the per-scan update-frequency rollup written during ingest.
     UPDATE_FREQUENCY_ROLLUP_ENABLED: bool = True
-    # Serve the update-frequency analytics from that rollup. Stays off until the
-    # backfill has run: without deltas a project can only be reported as pending.
+    # Serve the update-frequency comparison from that rollup; the project view walks its
+    # scans either way. Stays off until the backfill has run: without deltas a project can
+    # only be reported as pending.
     UPDATE_FREQUENCY_USE_ROLLUP: bool = False
     # The nightly reconcile of that rollup against the scans. Stays off until the backfill
     # has run: an unbackfilled window is drift in every chain, which turns the reconcile

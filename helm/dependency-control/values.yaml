@@ -291,9 +291,10 @@ backend:
     # Off means the ledger stops growing and drifts from the scans, so the reads below
     # have to stay off too; it is the brake for when writing costs more than it is worth.
     updateFrequencyRollupEnabled: true
-    # Serve the update-frequency analytics from the delta ledger instead of walking
-    # every scan. Turn on only once the backfill has run: without deltas a project
-    # can only be reported as pending.
+    # Serve the update-frequency comparison from the delta ledger instead of walking
+    # every scan of every project; the project view walks its own scans either way.
+    # Turn on only once the backfill has run: without deltas a project can only be
+    # reported as pending.
     updateFrequencyUseRollup: false
     # Nightly reconcile of that ledger against the scans it summarises. Same
     # precondition: an unbackfilled window is drift in every chain.

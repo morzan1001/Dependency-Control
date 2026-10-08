@@ -754,11 +754,11 @@ async def elect_primary_branch(
     since: datetime | None,
     default_branch: str | None,
     deleted_branches: Sequence[str] | None,
-) -> tuple[str | None, dict[str, BranchWindowActivity]]:
-    """One project's primary branch in the window, with what each branch was scanned there."""
+) -> str | None:
+    """One project's primary branch in the window."""
     activity = await window_scans_by_branch(scan_repo, [project_id], since)
     by_branch = {branch: seen for (_project_id, branch), seen in activity.items()}
-    return select_primary_branch(by_branch, default_branch, deleted_branches), by_branch
+    return select_primary_branch(by_branch, default_branch, deleted_branches)
 
 
 # Slack for the scans the ledger reached between the two reads. A missing backfill

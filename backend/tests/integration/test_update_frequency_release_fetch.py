@@ -1,4 +1,4 @@
-"""The per-project view's deps.dev release lookups: one client, one Redis read, and a 404 remembered."""
+"""The per-project view's upstream release cadence: how it is read, and that every read path keeps it."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -7,7 +7,9 @@ import httpx
 import pytest
 
 from app.api.v1.endpoints.analytics import update_frequency as endpoint_module
+from app.core.config import settings
 from app.services import release_history as release_history_module
+from app.services.update_frequency_rollup import record_scan_update_delta
 
 _PATH = "/api/v1/analytics/projects/p/update-frequency"
 _PACKAGES = ("alpha", "beta", "gone")
@@ -122,3 +124,22 @@ async def test_release_lookups_share_one_client_and_one_read_and_remember_a_404(
     assert second.status_code == 200, second.text
     assert requested == []
     assert cache.round_trips == ["mget"]
+
+
+@pytest.mark.asyncio
+async def test_the_project_view_keeps_its_upstream_cadence_when_the_comparison_reads_the_ledger(
+    client, db, owner_auth_headers_proj, cache, deps_dev, monkeypatch
+):
+    """The ledger holds no release history, so only the walk can fill the cadence card."""
+    monkeypatch.setattr(settings, "UPDATE_FREQUENCY_USE_ROLLUP", True)
+    await _seed_upgrade(db)
+    for scan_id in ("s0", "s1"):
+        await record_scan_update_delta(db, scan_id)
+
+    response = await client.get(_PATH, params={"window_days": 90}, headers=owner_auth_headers_proj)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["scan_count"], body["total_updates"]) == (2, 3)
+    assert body["adoption_latency_days_median"] is not None
+    assert body["upstream_releases_last_12m_median"] is not None

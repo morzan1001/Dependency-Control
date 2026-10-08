@@ -14,7 +14,6 @@ from app.services.update_frequency import FoldedWindow
 from app.services.update_frequency_fold import (
     commit_coverage,
     fold_window,
-    sampled_updates,
     select_window,
     window_bars,
 )
@@ -593,68 +592,6 @@ class TestDowngrades:
         assert folded.updates_per_month == 0.0
         assert folded.granularity_ratio == {"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0}
         assert [(e.updates_count, e.downgrades) for e in folded.scan_timeline] == [(0, 0), (0, 5), (0, 5)]
-
-
-def _sampled(deltas: list[dict[str, Any]]) -> list[Any]:
-    return sampled_updates(select_window(deltas)[1:])
-
-
-class TestRecentUpdates:
-    def test_newest_first_across_scans(self) -> None:
-        deltas = _chain(
-            [
-                _delta("s0", 0, samples=[_sample("anchor-pkg")]),
-                _delta("s1", 10, patch=2, samples=[_sample("b"), _sample("a")]),
-                _delta("s2", 20, patch=2, samples=[_sample("d"), _sample("c")]),
-            ]
-        )
-        assert [e.package_name for e in _sampled(deltas)] == ["d", "c", "b", "a"]
-
-    def test_event_fields_come_from_the_sample_and_the_scan_pair(self) -> None:
-        deltas = _chain(
-            [
-                _delta("s0", 0),
-                _delta("s1", 7, major=1, samples=[_sample("left-pad", kind="major", old="1.2.3", new="2.0.0")]),
-            ]
-        )
-        event = _sampled(deltas)[0]
-        assert event.package_name == "left-pad"
-        assert event.package_type == "npm"
-        assert event.purl == "pkg:npm/left-pad@2.0.0"
-        assert event.old_version == "1.2.3"
-        assert event.new_version == "2.0.0"
-        assert event.update_type == "major"
-        assert event.was_outdated is True
-        assert event.scan_date == _at(7).isoformat()
-        assert event.previous_scan_date == _at(0).isoformat()
-        assert event.days_between_scans == 7
-
-    def test_days_between_scans_is_floored_at_one(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 0.25, patch=1, samples=[_sample("a")])])
-        assert _sampled(deltas)[0].days_between_scans == 1
-
-    def test_capped_at_thirty(self) -> None:
-        deltas = _chain(
-            [_delta("s0", 0)]
-            + [
-                _delta(f"s{i}", i * 10, patch=20, samples=[_sample(f"p{i}-{j}") for j in range(20)])
-                for i in range(1, 4)
-            ]
-        )
-        recent = _sampled(deltas)
-        assert len(recent) == 30
-        # Newest scan first: its whole sample, then the next scan's.
-        assert recent[0].package_name == "p3-0"
-        assert recent[20].package_name == "p2-0"
-
-    def test_anchor_samples_are_dropped(self) -> None:
-        deltas = _chain(
-            [
-                _delta("s0", 0, samples=[_sample("anchor-pkg")]),
-                _delta("s1", 10, patch=1, samples=[_sample("a")]),
-            ]
-        )
-        assert [e.package_name for e in _sampled(deltas)] == ["a"]
 
 
 class TestDominantEcosystem:

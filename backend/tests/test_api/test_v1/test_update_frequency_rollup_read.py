@@ -17,16 +17,16 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _compute_comparison_from_rollup,
     _fold_branch,
     _resolve_window,
-    _rollup_project_metrics,
 )
-from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, BranchWindowActivity
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.update_frequency import compute_update_frequency, elect_primary_branch, window_cutoff
+from app.services.update_frequency_fold import window_bars
 from app.services.update_frequency_rollup import record_scan_update_delta
+from tests.helpers.update_frequency import rollup_metrics
 from tests.mocks.fake_mongo import FakeDatabase
 
 PROJECT = "proj-1"
@@ -113,7 +113,7 @@ def _project(**overrides: Any) -> dict[str, Any]:
     return {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []} | overrides
 
 
-async def _elected(db: FakeDatabase, project: dict[str, Any]) -> tuple[str | None, dict[str, BranchWindowActivity]]:
+async def _elected(db: FakeDatabase, project: dict[str, Any]) -> str | None:
     return await elect_primary_branch(
         ScanRepository(db),
         str(project["_id"]),
@@ -127,7 +127,7 @@ async def _live(
     db: FakeDatabase, project: dict[str, Any] | None = None, hard_limit: int = WINDOW_HARD_LIMIT
 ) -> UpdateFrequencyMetrics:
     project = project or _project()
-    branch, _activity = await _elected(db, project)
+    branch = await _elected(db, project)
     return await compute_update_frequency(
         project_id=str(project["_id"]),
         project_name=project["name"],
@@ -141,8 +141,7 @@ async def _live(
 
 
 async def _rollup(db: FakeDatabase, project: dict[str, Any] | None = None) -> UpdateFrequencyMetrics | None:
-    project = project or _project()
-    return await _rollup_project_metrics(db, Project(**project), WINDOW_DAYS, *await _elected(db, project))
+    return await rollup_metrics(db, project or _project(), WINDOW_DAYS)
 
 
 _SHARED_FIELDS = (
@@ -181,14 +180,6 @@ def _assert_same_metrics(live: UpdateFrequencyMetrics, rolled: UpdateFrequencyMe
     assert mismatches == {}
 
 
-def _update_signatures(metrics: UpdateFrequencyMetrics) -> set[tuple[str, str, str, str, str]]:
-    return {(e.package_name, e.old_version, e.new_version, e.update_type, e.scan_date) for e in metrics.recent_updates}
-
-
-def _slowest_signatures(metrics: UpdateFrequencyMetrics) -> set[tuple[str, int]]:
-    return {(p.name, p.scans_outdated) for p in metrics.slowest_packages}
-
-
 class TestDifferentialNormalHistory:
     @pytest.mark.asyncio
     async def test_every_shared_metric_matches(self):
@@ -205,22 +196,6 @@ class TestDifferentialNormalHistory:
         _assert_same_metrics(live, rolled)
         assert live.total_updates == 4
         assert live.update_coverage_pct is not None
-
-    @pytest.mark.asyncio
-    async def test_update_events_and_backlog_match(self):
-        db = FakeDatabase()
-        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0", "flask": "3.0.0"}, ("flask", "requests"))
-        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.0.1", "flask": "3.0.0"}, ("flask",))
-        await _seed_scan(db, "s3", _days_ago(40), {"requests": "2.1.0", "flask": "4.0.0"}, ("flask",))
-        await _build_ledger(db)
-
-        live = await _live(db)
-        rolled = await _rollup(db)
-
-        assert rolled is not None
-        assert _update_signatures(rolled) == _update_signatures(live)
-        assert _slowest_signatures(rolled) == _slowest_signatures(live)
-        assert rolled.slowest_packages[0].latest_version == "9.9.9"
 
     @pytest.mark.asyncio
     async def test_downgrades_stay_out_of_the_update_total(self):
@@ -328,7 +303,7 @@ class TestDifferentialNormalHistory:
         assert live.total_updates == 1
 
     @pytest.mark.asyncio
-    async def test_a_window_without_scans_falls_back_to_the_live_path(self):
+    async def test_a_window_without_scans_folds_nothing_on_either_path(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(300), {"requests": "2.0.0"}, ())
         await _seed_scan(db, "s2", _days_ago(290), {"requests": "2.1.0"}, ())
@@ -760,24 +735,6 @@ class TestPartialCoverage:
             assert (comparison.projects[0].scan_count, comparison.projects[0].data_status) == (folded, expected)
 
     @pytest.mark.asyncio
-    async def test_a_partial_window_is_not_served_to_the_project_page(self):
-        # UpdateFrequencyMetrics has no field for a caveat, so a partly folded
-        # window would read as the whole one. The comparison holds the same row
-        # back from its ranking; the project page instead falls back to the walk,
-        # which reads the scans the ledger has not reached.
-        db = FakeDatabase()
-        await _seed_series(db, PROJECT, "requests", 10)
-        await _build_ledger(db)
-        await db.scan_update_deltas.delete_many({"_id": {"$in": [f"{PROJECT}-{i}" for i in range(8)]}})
-
-        comparison = await _comparison(db, [PROJECT])
-
-        assert (comparison.projects[0].data_status, comparison.projects[0].scan_count) == ("partial", 2)
-        assert await _rollup(db) is None
-        # What the fallback delivers instead of the ledger's two-scan stretch.
-        assert (await _live(db)).scan_count == 10
-
-    @pytest.mark.asyncio
     async def test_a_retry_heavy_project_is_fully_covered_on_both_paths(self):
         # Both paths give a same-commit run one bar, so coverage counts commits too.
         # Counting raw scans instead read a CI retry storm as missing data and dropped
@@ -884,7 +841,7 @@ class TestWindowCap:
         assert resolved.status == "ready"
         assert len(resolved.window) == min(documents, WINDOW_HARD_LIMIT)
         # A cap landing inside a run leaves that run a bar of its surviving members.
-        assert len(resolved.bars) == bars
+        assert len(window_bars(resolved.window)) == bars
 
     def test_a_branch_under_the_cap_is_still_measured_against_its_own_commits(self) -> None:
         # The cap must not become a blanket amnesty: a ledger that reached three of ten
