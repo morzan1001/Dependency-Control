@@ -11,12 +11,14 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
 from app.models.finding import Finding
+from app.models.match_signature import MatchSignature
 from app.models.project import Project
 from app.models.release import Release
 from app.models.waiver import Waiver
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.waivers import WaiverRepository
 from app.schemas.ingest import BaseIngest
 from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
@@ -100,63 +102,42 @@ class ScanManager:
         await ScanRepository(self.db).upsert({"_id": scan_id}, update)
 
     async def _get_waivers(self) -> list[Waiver]:
-        """Fetch active waivers for this project, memoized for this request-scoped instance."""
+        """Active waivers for this project, memoized for this request-scoped instance."""
         if self._waivers is None:
-            from app.repositories.waivers import WaiverRepository
-
-            waiver_repo = WaiverRepository(self.db)
-            self._waivers = await waiver_repo.find_active_for_project(str(self.project.id))
-
+            self._waivers = await WaiverRepository(self.db).find_active_for_project(str(self.project.id))
         return self._waivers
 
-    def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
-        """Best-effort match at ingest; the recalculation re-anchors a moved location finding."""
-        route = route_waiver(waiver)
-        if route == "vulnerability":
-            return False
-        if route == "signature" and waiver.match is not None:
-            return finding.match is not None and waiver_strong_match(finding.match, waiver.match, waiver.status)
-        criteria = waiver_criteria(waiver)
-        record = {
-            "finding_id": finding.id,
-            "component": finding.component,
-            "version": finding.version,
-            "type": finding.type,
-            "details": finding.details,
-        }
-        return bool(criteria) and record_matches(record, criteria)
-
     async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
-        """Apply waivers to findings, returning (non_waived_findings, waived_count)."""
+        """(non-waived findings, waived count); best effort, as the recalculation re-anchors a moved location finding."""
         # Keyed by what a matching finding must equal, so each finding meets only the waivers that can match it.
-        by_anchor: dict[tuple[str, str | None], list[Waiver]] = defaultdict(list)
-        by_finding_id: dict[str, list[Waiver]] = defaultdict(list)
-        unkeyed: list[Waiver] = []
+        by_anchor: dict[tuple[str, str | None], list[tuple[MatchSignature, str]]] = defaultdict(list)
+        by_finding_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        unkeyed: list[dict[str, Any]] = []
         for waiver in await self._get_waivers():
             route = route_waiver(waiver)
             if route == "signature" and waiver.match is not None and waiver.match.is_strong:
-                by_anchor[(waiver.match.file_key, waiver.match.anchor)].append(waiver)
+                by_anchor[(waiver.match.file_key, waiver.match.anchor)].append((waiver.match, waiver.status))
             elif route == "query" and (criteria := waiver_criteria(waiver)):
-                if "finding_id" in criteria:
-                    by_finding_id[criteria["finding_id"]].append(waiver)
-                else:
-                    unkeyed.append(waiver)
+                (by_finding_id[criteria["finding_id"]] if "finding_id" in criteria else unkeyed).append(criteria)
 
-        final_findings = []
-        waived_count = 0
-
+        kept = []
         for finding in findings:
-            candidates = [*by_finding_id.get(finding.id, ()), *unkeyed]
-            if finding.match is not None:
-                candidates += by_anchor.get((finding.match.file_key, finding.match.anchor), ())
-            is_waived = any(self._finding_matches_waiver(finding, waiver) for waiver in candidates)
-
-            if is_waived:
-                waived_count += 1
-            else:
-                final_findings.append(finding)
-
-        return final_findings, waived_count
+            record = {
+                "finding_id": finding.id,
+                "component": finding.component,
+                "version": finding.version,
+                "type": finding.type,
+                "details": finding.details,
+            }
+            waived = any(
+                record_matches(record, criteria) for criteria in (*by_finding_id.get(finding.id, ()), *unkeyed)
+            )
+            if not waived and (match := finding.match) is not None:
+                signed = by_anchor.get((match.file_key, match.anchor), ())
+                waived = any(waiver_strong_match(match, signature, status) for signature, status in signed)
+            if not waived:
+                kept.append(finding)
+        return kept, len(findings) - len(kept)
 
     async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
         """Record a scanner's submission; if the scan was completed, reset to pending and re-aggregate.
