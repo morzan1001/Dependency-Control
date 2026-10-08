@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
@@ -33,46 +33,14 @@ router = CustomAPIRouter()
 
 
 class CBOMIngest(BaseIngest):
-    """CBOM ingest payload; flat shape aligned with SBOMIngest, also accepting a legacy scan_metadata envelope."""
+    """CBOM ingest payload, flat like SBOMIngest."""
 
     cbom: dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")
 
-    # Optional so legacy payloads without pipeline_id/commit_hash/branch can still ingest.
+    # Optional so a manual upload without pipeline data can still ingest.
     pipeline_id: int | None = Field(None, description="Unique ID of the pipeline run")  # type: ignore[assignment]
     commit_hash: str | None = Field(None, description="Git commit hash")  # type: ignore[assignment]
     branch: str | None = Field(None, description="Git branch name")  # type: ignore[assignment]
-
-    # Accept unknown keys so the pre-validator can fold a legacy scan_metadata envelope.
-    model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fold_legacy_scan_metadata(cls, values: Any) -> Any:
-        """Fold a legacy scan_metadata envelope onto the top-level payload for canonical validation."""
-        if not isinstance(values, dict):
-            return values
-        meta = values.get("scan_metadata")
-        if not isinstance(meta, dict):
-            return values
-        # Only fill fields that are not already present on the envelope.
-        mappings = {
-            "branch": meta.get("git_ref") or meta.get("branch"),
-            "commit_hash": meta.get("commit_sha") or meta.get("commit_hash"),
-            "pipeline_id": meta.get("pipeline_id"),
-            "pipeline_iid": meta.get("pipeline_iid"),
-            "project_url": meta.get("project_url"),
-            "pipeline_url": meta.get("pipeline_url"),
-            "job_id": meta.get("job_id"),
-            "job_started_at": meta.get("job_started_at"),
-            "commit_message": meta.get("commit_message"),
-            "commit_tag": meta.get("commit_tag"),
-            "project_name": meta.get("project_name"),
-            "pipeline_user": meta.get("pipeline_user"),
-        }
-        for key, value in mappings.items():
-            if value is not None and values.get(key) is None:
-                values[key] = value
-        return values
 
 
 class CBOMIngestResponse(BaseModel):

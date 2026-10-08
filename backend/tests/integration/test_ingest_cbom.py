@@ -34,10 +34,7 @@ def _ingests(status: str) -> float:
 
 @pytest.mark.asyncio
 async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
-    payload = {
-        "scan_metadata": {"git_ref": "main", "commit_sha": "abc123"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
+    payload = {"branch": "main", "commit_hash": "abc123", "cbom": _load("legacy_crypto_mixed.json")}
     resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
     assert resp.status_code == 202, resp.text
     body = resp.json()
@@ -86,37 +83,15 @@ async def test_ingest_cbom_rejects_unauthenticated(db):
 
 
 @pytest.mark.asyncio
-async def test_legacy_git_ref_becomes_the_scan_branch(client, db, api_key_headers):
-    """The GitLab-shaped envelope spells the branch ``git_ref``; scan identity and lineage key on it."""
-    payload = {
-        "scan_metadata": {"git_ref": "release/7.2", "commit_sha": "abc123"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
+async def test_the_posted_branch_and_commit_become_the_scans(client, db, api_key_headers):
+    payload = {"branch": "release/7.2", "commit_hash": "feedface", "cbom": _load("legacy_crypto_mixed.json")}
 
     resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
 
     assert resp.status_code == 202, resp.text
     scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
     assert scan is not None
-    assert scan["branch"] == "release/7.2"
-
-
-@pytest.mark.asyncio
-async def test_top_level_fields_win_over_the_legacy_envelope(client, db, api_key_headers):
-    payload = {
-        "branch": "feature/explicit",
-        "commit_hash": "feedface",
-        "scan_metadata": {"git_ref": "stale-main", "commit_sha": "0000000"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
-
-    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
-
-    assert resp.status_code == 202, resp.text
-    scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
-    assert scan is not None
-    assert scan["branch"] == "feature/explicit"
-    assert scan["commit_hash"] == "feedface"
+    assert (scan["branch"], scan["commit_hash"]) == ("release/7.2", "feedface")
 
 
 @pytest.mark.asyncio
