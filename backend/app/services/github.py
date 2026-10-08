@@ -93,21 +93,25 @@ async def cached_public_emails[K](
     """Key -> public email ("" for none) in one cache read; None once a fetch was refused, cancelling those queued."""
     cached = await cache_service.mget(list(cache_keys.values()))
     emails = {key: value for key, cache_key in cache_keys.items() if isinstance(value := cached.get(cache_key), str)}
+    answered: dict[K, str] = {}
     refused = False
 
-    async def fetch_one(key: K) -> str | None:
+    async def fetch_one(key: K) -> None:
         nonlocal refused
         async with _org_walk_gate(instance_id):
             if refused:
-                return None
+                return
             email = await fetch(key)
-        refused = refused or email is None
-        return email
+        if email is None:
+            refused = True
+        else:
+            answered[key] = email
 
-    missing = [key for key in cache_keys if key not in emails]
-    fetched = dict(zip(missing, await asyncio.gather(*(fetch_one(key) for key in missing)), strict=True))
-    answered = {key: email for key, email in fetched.items() if email is not None}
-    await cache_service.mset({cache_keys[key]: email for key, email in answered.items()}, ttl_seconds)
+    try:
+        await asyncio.gather(*(fetch_one(key) for key in cache_keys if key not in emails))
+    finally:
+        # Also when the caller's deadline cancels the batch, so the next sync resumes from these answers.
+        await cache_service.mset({cache_keys[key]: email for key, email in answered.items()}, ttl_seconds)
     return None if refused else {**emails, **answered}
 
 

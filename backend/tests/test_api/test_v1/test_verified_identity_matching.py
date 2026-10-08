@@ -1,6 +1,7 @@
 """Identity matching trusts only what an account has proven: an unverified email or a bare username
 names whoever typed it, not the person the external identity belongs to."""
 
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -328,6 +329,30 @@ class TestGitLabTeamSyncWithoutListedEmails:
         assert refused is None
         assert answered[0].email == cached[0].email == "ada@corp.com"
         assert read.await_count == len(answers)
+
+    @pytest.mark.asyncio
+    async def test_a_lookup_the_budget_cut_short_keeps_its_answers_so_the_next_one_resumes(self):
+        service = GitLabService(make_gitlab_instance(id="inst-1"))
+        listing = [GitLabMember(id=i, username=f"m{i}-gl", access_level=30) for i in range(1, 41)]
+        profiles = {f"/users/{i}": _answer(200, {"id": i, "public_email": f"m{i}@corp.com"}) for i in range(1, 41)}
+        unread = [f"/users/{i}" for i in range(21, 41)]
+
+        async def stalling_on_the_unread(endpoint, *_a, **_k):
+            if endpoint in unread:
+                budget.reschedule(asyncio.get_running_loop().time())
+                await asyncio.Event().wait()
+            return profiles[endpoint]
+
+        with patch.object(service, "_api_get", new=stalling_on_the_unread), pytest.raises(TimeoutError):
+            async with asyncio.timeout(None) as budget:
+                await service._with_public_emails(listing)
+
+        read = AsyncMock(side_effect=lambda endpoint, *_a, **_k: profiles[endpoint])
+        with patch.object(service, "_api_get", new=read):
+            completed = await service._with_public_emails(listing)
+
+        assert sorted(call.args[0] for call in read.await_args_list) == sorted(unread)
+        assert [member.email for member in completed] == [f"m{i}@corp.com" for i in range(1, 41)]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("public_email", ["ada@corp.com", None], ids=["public-email", "none"])
