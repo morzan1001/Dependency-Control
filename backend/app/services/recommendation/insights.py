@@ -201,7 +201,7 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
         priority=Priority.HIGH if len(widespread_cves) > _SHARED_CVES_HIGH_PRIORITY else Priority.MEDIUM,
         title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
         description=(
-            f"These CVEs appear in {len(widespread_cves)} or more of your projects, {scope_note}. "
+            f"These CVEs appear in {CROSS_PROJECT_MIN_OCCURRENCES} or more of your projects, {scope_note}. "
             "Fixing them once (e.g., in a shared package or template) "
             "could benefit all affected projects."
         ),
@@ -285,8 +285,6 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
     if not any(p["total_critical"] > _TOP_PROJECT_CRITICAL_GATE for p in top_problematic):
         return None
 
-    critical = sum(p["total_critical"] for p in top_problematic)
-    high = sum(p["total_high"] for p in top_problematic)
     return Recommendation(
         type=RecommendationType.CROSS_PROJECT_PATTERN,
         priority=Priority.MEDIUM,
@@ -296,7 +294,7 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
             "than others. Consider prioritizing remediation efforts "
             "on these projects."
         ),
-        impact={"critical": critical, "high": high, "medium": 0, "low": 0, "total": critical + high},
+        impact={"total": 0},
         affected_components=[],
         action={
             "type": "prioritize_projects",

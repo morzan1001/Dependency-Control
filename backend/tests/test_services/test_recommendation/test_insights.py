@@ -337,6 +337,37 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
         assert [p["name"] for p in priority_recs[0].action["priority_projects"]] == ["App1", "App2", "App3"]
 
 
+class TestCrossProjectCardsStateTheirOwnNumbers:
+    def test_the_shared_cve_text_names_the_project_threshold_not_the_cve_count(self):
+        cves = [f"CVE-2024-{n:04d}" for n in range(12)]
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", cves=cves),
+                _project(project_id="p2", project_name="App2", cves=cves),
+            ]
+        )
+
+        [shared] = [
+            r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.SHARED_VULNERABILITY
+        ]
+
+        assert shared.description.startswith(
+            "These CVEs appear in 2 or more of your projects, compared across all 2 of your projects."
+        )
+
+    def test_the_most_affected_card_books_no_other_projects_findings_as_its_impact(self):
+        counts = [(400, 900), (250, 700), (120, 300), (2, 10)]
+        projects = [
+            _project(project_id=f"p{n}", project_name=f"App{n}", total_critical=critical, total_high=high)
+            for n, (critical, high) in enumerate(counts)
+        ]
+
+        [card] = [r for r in analyze_cross_project_patterns(_cross_project_data(projects)) if "Prioritize" in r.title]
+
+        assert card.impact == {"total": 0}
+        assert card.action["priority_projects"][0] == {"name": "App0", "id": "p0", "critical": 400, "high": 900}
+
+
 class TestAnalyzeCrossProjectPatternsMultipleRecommendations:
     def test_shared_vuln_and_inconsistent_versions(self):
         data = _cross_project_data(
