@@ -33,10 +33,7 @@ def _ingests(status: str) -> float:
 
 @pytest.mark.asyncio
 async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
-    payload = {
-        "scan_metadata": {"git_ref": "main", "commit_sha": "abc123"},
-        "cbom": _load("legacy_crypto_mixed.json"),
-    }
+    payload = {"cbom": _load("legacy_crypto_mixed.json")}
     resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
     assert resp.status_code == 202, resp.text
     body = resp.json()

@@ -18,10 +18,7 @@ async def test_crypto_asset_ingested_dispatches_webhook(client, db, api_key_head
         dispatched_calls.append({"event": event_type, "payload": payload, "project_id": project_id})
 
     cbom_data = json.loads((FIXTURES / "legacy_crypto_mixed.json").read_text())
-    request_payload = {
-        "scan_metadata": {},
-        "cbom": cbom_data,
-    }
+    request_payload = {"cbom": cbom_data}
 
     # The patch must stay active until the background task drains.
     with patch(
