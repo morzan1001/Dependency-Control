@@ -12,13 +12,12 @@ import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download } from 'lucide-
 import { useInventoryComponents } from '@/hooks/queries/use-inventory'
 import { usePaginationState } from '@/hooks/use-pagination-state'
 import { inventoryApi } from '@/api/inventory'
-import { downloadFile } from '@/lib/download'
+import { downloadServerFile } from '@/lib/download'
 import { ComponentItem } from '@/types/inventory'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 
 interface ComponentsTableProps {
   projectId: string
-  projectName: string
   branch?: string
 }
 
@@ -34,7 +33,7 @@ function LifecycleBadge({ item }: { readonly item: ComponentItem }) {
   return <span className="text-muted-foreground">—</span>
 }
 
-export function ComponentsTable({ projectId, projectName, branch }: Readonly<ComponentsTableProps>) {
+export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableProps>) {
   const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' })
 
@@ -59,9 +58,9 @@ export function ComponentsTable({ projectId, projectName, branch }: Readonly<Com
     return sortOrder === 'asc' ? <ArrowUp className="ml-2 inline h-4 w-4" /> : <ArrowDown className="ml-2 inline h-4 w-4" />
   }
 
-  const handleDownload = () => downloadFile(
+  const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'components', branch),
-    `${projectName}_components_${branch}_${new Date().toISOString().slice(0, 10)}.csv`,
+    'components.csv',
     'Failed to download components CSV',
   )
 

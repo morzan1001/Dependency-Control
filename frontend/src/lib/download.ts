@@ -11,18 +11,6 @@ function triggerBrowserDownload(blob: Blob, filename: string) {
   a.remove()
 }
 
-export async function downloadFile(
-  fetchBlob: () => Promise<Blob>,
-  filename: string,
-  errorMsg: string,
-) {
-  try {
-    triggerBrowserDownload(await fetchBlob(), filename)
-  } catch {
-    toast.error(errorMsg)
-  }
-}
-
 /** Download honouring the server's filename; falls back to a zip extension when the payload is a zip. */
 export async function downloadServerFile(
   fetchFile: () => Promise<{ blob: Blob; filename: string | null }>,

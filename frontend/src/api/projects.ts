@@ -41,10 +41,7 @@ export const projectApi = {
     return response.data;
   },
 
-  exportCsv: async (projectId: string): Promise<Blob> => {
-    const response = await api.get(`/projects/${projectId}/export/csv`, { responseType: 'blob' });
-    return response.data;
-  },
+  exportCsv: (projectId: string) => getServerFile(`/projects/${projectId}/export/csv`),
 
   // Multi-SBOM scans come back as a zip; the server names the file accordingly.
   exportSbom: (projectId: string) => getServerFile(`/projects/${projectId}/export/sbom`),
@@ -100,10 +97,8 @@ export const projectApi = {
     return response.data;
   },
 
-  downloadArchive: async (projectId: string, scanId: string): Promise<Blob> => {
-    const response = await api.get(`/projects/${projectId}/archives/${scanId}/download`, { responseType: 'blob' });
-    return response.data;
-  },
+  downloadArchive: (projectId: string, scanId: string) =>
+    getServerFile(`/projects/${projectId}/archives/${scanId}/download`),
 
   pinScan: async (projectId: string, scanId: string): Promise<{ scan_id: string; pinned: boolean }> => {
     const response = await api.post<{ scan_id: string; pinned: boolean }>(`/projects/${projectId}/scans/${scanId}/pin`);

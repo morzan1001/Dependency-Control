@@ -19,7 +19,7 @@ function renderInventory() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <ProjectInventory projectId="p1" defaultBranch="main" projectName="proj" />
+      <ProjectInventory projectId="p1" defaultBranch="main" />
     </QueryClientProvider>,
   )
 }

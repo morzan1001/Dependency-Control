@@ -18,6 +18,7 @@ import {
 import { ChevronLeft, ChevronRight, Archive, RotateCcw, Download, GitBranch, GitCommit, AlertTriangle, Package, FileText } from 'lucide-react'
 import { toast } from "sonner"
 import { formatBytes, getErrorMessage, formatDateTime, shortCommitHash } from '@/lib/utils'
+import { downloadServerFile } from '@/lib/download'
 import {
   Dialog,
   DialogContent,
@@ -82,23 +83,11 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
     )
   }
 
-  const handleDownload = async (scanId: string) => {
-    try {
-      const blob = await projectApi.downloadArchive(projectId, scanId)
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `archive-${scanId}.json.gz`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      a.remove()
-    } catch (error) {
-      toast.error("Download failed", {
-        description: getErrorMessage(error),
-      })
-    }
-  }
+  const handleDownload = (scanId: string) => downloadServerFile(
+    () => projectApi.downloadArchive(projectId, scanId),
+    `${scanId}.json.gz`,
+    "Download failed",
+  )
 
   const clearFilters = () => {
     setBranchFilter('')

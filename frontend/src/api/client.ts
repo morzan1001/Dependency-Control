@@ -114,9 +114,12 @@ export const refreshAccessToken = async (): Promise<string | null> => {
   return refreshPromise;
 };
 
-// No timeout: stored SBOMs and analyzer results have no size limit.
-export async function getServerFile(url: string): Promise<{ blob: Blob; filename: string | null }> {
-  const response = await api.get<Blob>(url, { responseType: 'blob', timeout: 0 });
+// No timeout: served files (SBOMs, results, archives, CSV exports) have no size limit.
+export async function getServerFile(
+  url: string,
+  params?: Record<string, string | undefined>,
+): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await api.get<Blob>(url, { params, responseType: 'blob', timeout: 0 });
   return { blob: response.data, filename: filenameFromContentDisposition(response.headers['content-disposition']) };
 }
 

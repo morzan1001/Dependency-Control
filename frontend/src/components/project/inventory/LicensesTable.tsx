@@ -10,11 +10,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Download } from 'lucide-react'
 import { useInventoryLicenses } from '@/hooks/queries/use-inventory'
 import { inventoryApi } from '@/api/inventory'
-import { downloadFile } from '@/lib/download'
+import { downloadServerFile } from '@/lib/download'
 
 interface LicensesTableProps {
   projectId: string
-  projectName: string
   branch?: string
 }
 
@@ -33,12 +32,12 @@ function CategoryBadge({ category }: { readonly category?: string | null }) {
   )
 }
 
-export function LicensesTable({ projectId, projectName, branch }: Readonly<LicensesTableProps>) {
+export function LicensesTable({ projectId, branch }: Readonly<LicensesTableProps>) {
   const { data, isPending, isError, refetch } = useInventoryLicenses(projectId, branch)
 
-  const handleDownload = () => downloadFile(
+  const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'licenses', branch),
-    `${projectName}_licenses_${branch}_${new Date().toISOString().slice(0, 10)}.csv`,
+    'licenses.csv',
     'Failed to download licenses CSV',
   )
 

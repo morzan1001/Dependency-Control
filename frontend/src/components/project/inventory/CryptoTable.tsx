@@ -11,16 +11,15 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ChevronLeft, ChevronRight, Download } from 'lucide-react'
 import { useInventoryCrypto } from '@/hooks/queries/use-inventory'
 import { inventoryApi } from '@/api/inventory'
-import { downloadFile } from '@/lib/download'
+import { downloadServerFile } from '@/lib/download'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 
 interface CryptoTableProps {
   projectId: string
-  projectName: string
   branch?: string
 }
 
-export function CryptoTable({ projectId, projectName, branch }: Readonly<CryptoTableProps>) {
+export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
   const [page, setPage] = useState(1)
 
   const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryCrypto(projectId, branch, {
@@ -29,9 +28,9 @@ export function CryptoTable({ projectId, projectName, branch }: Readonly<CryptoT
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1
 
-  const handleDownload = () => downloadFile(
+  const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'crypto', branch),
-    `${projectName}_crypto_${branch}_${new Date().toISOString().slice(0, 10)}.csv`,
+    'crypto.csv',
     'Failed to download crypto CSV',
   )
 
