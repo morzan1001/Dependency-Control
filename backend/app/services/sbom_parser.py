@@ -382,6 +382,24 @@ class SBOMParser:
         result.skipped_components += count
         result.skipped_reasons[reason] = result.skipped_reasons.get(reason, 0) + count
 
+    @staticmethod
+    def _append_distro(result: ParsedSBOM, distro_id: Any, version: Any, description: Any = None) -> None:
+        """The scanned operating system, shaped like the CycloneDX row base-image end-of-life detection reads."""
+        if not (isinstance(distro_id, str) and distro_id and isinstance(version, str) and version):
+            return
+        result.dependencies.append(
+            ParsedDependency(
+                name=distro_id,
+                version=version,
+                type="operating-system",
+                direct=True,
+                direct_inferred=True,
+                source_type=result.source_type,
+                source_target=result.source_target,
+                description=description if isinstance(description, str) else None,
+            )
+        )
+
     # Placeholder tokens generators emit when they could not determine a version.
     _PLACEHOLDER_VERSIONS = frozenset({"", "unknown", "noassertion", "none"})
 
@@ -1049,12 +1067,14 @@ class SBOMParser:
         license_refs = self._spdx_license_refs(sbom)
         self._count_skipped(result, "file", len(sbom.get("files") or []))
 
+        roots = set(subjects)
         for pkg in packages:
             if not isinstance(pkg, dict) or pkg.get("SPDXID") not in described:
                 continue
             if pkg.get("primaryPackagePurpose") == "CONTAINER":
                 result.source_type = SOURCE_TYPE_IMAGE
                 result.source_target = _image_reference(pkg.get("name"), _spdx_value(pkg, "versionInfo"))
+                roots.add(pkg["SPDXID"])
                 break
             if pkg.get("SPDXID") in subjects:
                 result.source_type, result.source_target = SOURCE_TYPE_APPLICATION, pkg.get("name")
@@ -1064,7 +1084,7 @@ class SBOMParser:
         for pkg in packages:
             if not isinstance(pkg, dict):
                 self._count_skipped(result, "malformed")
-            elif pkg.get("SPDXID") in subjects:
+            elif pkg.get("SPDXID") in roots:
                 self._count_skipped(result, "root-component")
             elif parsed := self._append_parsed(
                 result,
@@ -1082,6 +1102,17 @@ class SBOMParser:
             ):
                 parsed_by_id[pkg.get("SPDXID")] = parsed
         _resolve_parent_refs(parsed_by_id, forward)
+
+        if not any(
+            isinstance(pkg, dict) and pkg.get("primaryPackagePurpose") == "OPERATING-SYSTEM" for pkg in packages
+        ):
+            # Syft's SPDX names the distro only in the purl qualifiers of its packages.
+            distro_purls = (parse_purl(dep.purl or "") for dep in result.dependencies if dep.type in OS_PACKAGE_TYPES)
+            distro = next(
+                (purl.qualifiers["distro"] for purl in distro_purls if purl and "distro" in purl.qualifiers), ""
+            )
+            distro_id, _, version = distro.rpartition("-")
+            self._append_distro(result, distro_id, version)
 
     _SPDX_DOWNLOAD_LOC_TYPE_MAP = (
         (("npmjs.org", "registry.npmjs"), "npm"),

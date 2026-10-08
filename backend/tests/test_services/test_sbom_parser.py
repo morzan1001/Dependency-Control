@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.schemas.sbom import ParsedDependency, SBOMFormat
+from app.services.analyzers.end_of_life import collect_products_to_check
 from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.sbom_parser import (
     SBOMParser,
@@ -280,6 +281,34 @@ class TestDirectnessOfRealGraphs:
             "musl-utils",
             "ssl_client",
         }
+
+    def test_the_spdx_image_root_is_skipped_and_its_distro_becomes_the_operating_system(self):
+        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+        components = [dep.to_dict() for dep in result.dependencies]
+
+        assert [dep.purl for dep in result.dependencies if dep.type == "oci"] == []
+        assert result.skipped_reasons["root-component"] == 1
+        assert [
+            (dep.name, dep.version, dep.source_type, dep.source_target)
+            for dep in result.dependencies
+            if dep.type == "operating-system"
+        ] == [("alpine", "3.20.10", "image", "alpine:3.20")]
+        assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
+
+    def test_an_spdx_operating_system_package_is_not_doubled_by_the_purl_distro(self):
+        sbom = _fixture("alpine.syft.spdx.json")
+        sbom["packages"].append(
+            {
+                "SPDXID": "SPDXRef-OperatingSystem-alpine",
+                "name": "alpine",
+                "versionInfo": "3.20.9",
+                "primaryPackagePurpose": "OPERATING-SYSTEM",
+            }
+        )
+
+        result = parse_sbom(sbom)
+
+        assert [(dep.name, dep.version) for dep in result.dependencies if dep.name == "alpine"] == [("alpine", "3.20.9")]
 
 
 class TestMalformedDependencyGraph:
