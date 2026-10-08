@@ -281,7 +281,7 @@ async def set_team_binding(
 
     logger.info(
         "Team %s bound to %s on instance %s by %s",
-        team_id.replace("\n", "_").replace("\r", "_"),
+        sanitize_for_log(team_id),
         _binding_conflict(binding),
         binding.instance_id,
         current_user.username,
@@ -310,8 +310,8 @@ async def clear_team_binding(
 
     logger.info(
         "Binding for instance %s removed from team %s by %s",
-        instance_id.replace("\n", "_").replace("\r", "_"),
-        team_id.replace("\n", "_").replace("\r", "_"),
+        sanitize_for_log(instance_id),
+        sanitize_for_log(team_id),
         current_user.username,
     )
     return await fetch_and_enrich_team(team_id, db)

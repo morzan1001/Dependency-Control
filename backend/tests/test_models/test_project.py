@@ -8,9 +8,8 @@ from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 
 class TestProjectModel:
     def test_minimal_valid_project(self):
-        project = Project(name="my-project", owner_id="user-123")
+        project = Project(name="my-project")
         assert project.name == "my-project"
-        assert project.owner_id == "user-123"
 
     def test_defaults(self):
         project = Project(name="test", owner_id="user-1")

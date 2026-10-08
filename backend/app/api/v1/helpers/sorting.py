@@ -26,12 +26,6 @@ SORT_FIELDS: dict[str, dict[str, str]] = {
         "findings_count": "findings_count",
         "status": "status",
     },
-    "findings": {
-        "severity": "severity_rank",
-        "component": "component",
-        "type": "type",
-        "created_at": "created_at",
-    },
 }
 
 
@@ -45,7 +39,7 @@ def parse_sort_direction(sort_order: SortOrder) -> int:
 
 
 def get_sort_field(
-    entity_type: Literal["projects", "scans", "project_scans", "findings"],
+    entity_type: Literal["projects", "scans", "project_scans"],
     sort_by: str,
     default: str = "created_at",
 ) -> str:

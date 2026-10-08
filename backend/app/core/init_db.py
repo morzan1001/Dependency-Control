@@ -94,7 +94,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["users"].create_index("email", unique=True)
 
     # Projects
-    await database["projects"].create_index("owner_id")
     # Multikey: serves the element equality every ownership filter is and the $in a member's visible
     # scope is. The project list sorts after filtering
     # and this index cannot supply that order, so it blocking-sorts the matched set; a compound

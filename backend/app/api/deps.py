@@ -132,8 +132,6 @@ class PermissionChecker:
         )
 
     def __call__(self, current_user: User = Depends(get_current_active_user)) -> User:
-        from app.core.permissions import has_permission
-
         if has_permission(current_user.permissions, self.required_permissions):
             return current_user
 
@@ -459,9 +457,7 @@ async def _handle_github_oidc(
     return project
 
 
-async def _authenticate_via_api_key(x_api_key: str, project_repo: ProjectRepository) -> "Project":
-    from app.models.project import Project
-
+async def _authenticate_via_api_key(x_api_key: str, project_repo: ProjectRepository) -> Project:
     if "." not in x_api_key:
         raise HTTPException(status_code=403, detail="Invalid API Key format")
     project_id, secret = x_api_key.split(".", 1)

@@ -24,12 +24,6 @@ class TestGetSortField:
     def test_invalid_field_falls_back_to_default(self):
         assert get_sort_field("projects", "nonexistent") == "created_at"
 
-    def test_findings_severity_maps_to_rank(self):
-        assert get_sort_field("findings", "severity") == "severity_rank"
-
-    def test_findings_component(self):
-        assert get_sort_field("findings", "component") == "component"
-
     def test_scans_created_at(self):
         assert get_sort_field("scans", "created_at") == "created_at"
 

@@ -90,6 +90,7 @@ from app.repositories.projects import (
     set_owners_pipeline,
 )
 from app.schemas.pagination import Page
+from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.project import (
     BranchInfo,
     BranchTip,
@@ -110,6 +111,7 @@ from app.schemas.project import (
     ScanWithReleases,
     license_policy_from_settings,
 )
+from app.services.audit.history import record_license_policy_change
 from app.services.branch_sync import sync_project_branches
 from app.services.component_identity import component_match_expr
 from app.services.gitlab import GitLabService
@@ -206,20 +208,7 @@ async def get_dashboard_stats(
         },
     ]
 
-    result = await project_repo.aggregate(pipeline)
-
-    empty_response = {
-        "total_projects": 0,
-        "total_critical": 0,
-        "total_high": 0,
-        "avg_risk_score": 0.0,
-        "top_risky_projects": [],
-    }
-
-    if not result or len(result) == 0:
-        return empty_response
-
-    data = result[0]
+    data = (await project_repo.aggregate(pipeline))[0]
     totals = data.get("totals", [])
     totals = totals[0] if totals else {}
     top_risky = data.get("top_risky", [])
@@ -362,23 +351,16 @@ async def read_projects(
     sort_field = get_sort_field("projects", sort_by)
 
     total = await project_repo.count(final_query)
-    projects = await project_repo.find_many(
-        final_query,
-        skip=skip,
-        limit=limit,
-        sort_by=sort_field,
-        sort_order=direction,
+    docs = await project_repo.find_many_raw(
+        final_query, skip=skip, limit=limit, sort_by=sort_field, sort_order=direction
     )
+    projects = [ProjectWithTeam(**doc) for doc in docs]
 
     team_name_map = await resolve_team_names(db, {team_id for p in projects for team_id in p.team_ids})
+    for project in projects:
+        project.teams = team_refs(project.team_ids, team_name_map)
 
-    enriched_projects = []
-    for p in projects:
-        p_data = p.model_dump()
-        p_data["teams"] = team_refs(p.team_ids, team_name_map)
-        enriched_projects.append(ProjectWithTeam(**p_data))
-
-    return build_pagination_response(enriched_projects, total, skip, limit)
+    return build_pagination_response(projects, total, skip, limit)
 
 
 @router.get(
@@ -552,9 +534,6 @@ async def _audit_license_policy_change(
 ) -> None:
     """Record a best-effort license-policy audit entry; never blocks the caller."""
     try:
-        from app.schemas.policy_audit import PolicyAuditAction
-        from app.services.audit.history import record_license_policy_change
-
         old_entry = (old_project.analyzer_settings or {}).get("license_compliance") if old_project else None
         new_entry = (updated_project.analyzer_settings or {}).get("license_compliance")
         await record_license_policy_change(
@@ -567,9 +546,7 @@ async def _audit_license_policy_change(
             comment=None,
         )
     except Exception:  # pragma: no cover - defensive
-        logging.getLogger(__name__).exception(
-            "License-policy audit for project %s failed (non-blocking)", sanitize_for_log(project_id)
-        )
+        logger.exception("License-policy audit for project %s failed (non-blocking)", sanitize_for_log(project_id))
 
 
 @router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_400_404_409)
@@ -1205,8 +1182,6 @@ def _build_scan_findings_pipeline(
 
 def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
     """Pull ``(data, total)`` out of the ``$facet`` result envelope."""
-    if not result:
-        return [], 0
     bucket = result[0]
     data = bucket.get("data") or []
     metadata = bucket.get("metadata") or []

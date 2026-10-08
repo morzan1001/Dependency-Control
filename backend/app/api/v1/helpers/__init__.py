@@ -27,7 +27,6 @@ from app.api.v1.helpers.teams import (
 from app.api.v1.helpers.users import (
     check_admin_or_self,
     ensure_can_manage_target,
-    fetch_updated_user,
     get_user_or_404,
 )
 from app.api.v1.helpers.webhooks import check_webhook_permission, get_webhook_or_404
@@ -45,7 +44,6 @@ __all__ = [
     "check_webhook_permission",
     "ensure_can_manage_target",
     "fetch_and_enrich_team",
-    "fetch_updated_user",
     "generate_project_api_key",
     "get_available_channels",
     "get_category_type_filter",
