@@ -370,6 +370,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                     {(() => {
                                         const vulns: NestedVulnerability[] = finding.details?.vulnerabilities || []
                                         if (vulns.length === 0) return null
+                                        const reachability = finding.details?.reachability
 
                                         return (
                                             <div className="space-y-4">
@@ -383,7 +384,6 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                                 
                                                 {vulns.map((vuln: NestedVulnerability) => {
                                                     const vulnId = vuln.id || finding.id;
-                                                    const reachability = vuln.reachability ?? finding.details?.reachability;
                                                     const isCve = vulnId?.startsWith('CVE-');
                                                     const isGhsa = vulnId?.startsWith('GHSA-');
                                                     const resolvedCve = vuln.resolved_cve;
