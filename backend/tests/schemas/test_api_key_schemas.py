@@ -1,11 +1,12 @@
 """Tests for unified API key schemas."""
 
 from datetime import datetime, timezone
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
 
-from app.core.constants import API_KEY_SURFACES
+from app.core.constants import ApiKeySurface
 from app.schemas.api_keys import (
     ApiKeyCreate,
     ApiKeyCreateResponse,
@@ -26,7 +27,7 @@ class TestApiKeyCreate:
     def test_the_allowed_surfaces_reach_the_published_schema(self):
         # A bare list[str] publishes no enum, leaving a client to guess the vocabulary.
         items = ApiKeyCreate.model_json_schema()["properties"]["surfaces"]["items"]
-        assert set(items["enum"]) == API_KEY_SURFACES
+        assert set(items["enum"]) == set(get_args(ApiKeySurface))
 
     def test_valid_payload_round_trips(self):
         payload = {"name": "my-key", "surfaces": ["mcp", "adhoc"], "expires_in_days": 90}

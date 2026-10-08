@@ -241,7 +241,6 @@ TEAM_ROLES: list[str] = list(get_args(TeamRole))
 ApiKeySurface = Literal["mcp", "adhoc"]
 API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
 API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
-API_KEY_SURFACES: frozenset[str] = frozenset(get_args(ApiKeySurface))
 # The UI shows a key's last use to the minute, so stamping it more often only adds primary writes.
 API_KEY_LAST_USED_RESOLUTION_SECONDS = 60
 
