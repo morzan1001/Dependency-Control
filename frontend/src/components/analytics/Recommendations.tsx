@@ -8,37 +8,30 @@ import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { RecommendationCard } from './recommendations/RecommendationCard'
 import { SummaryCard } from './recommendations/SummaryCard'
 
-interface RecommendationsProps {
-  projectId?: string
-  scanId?: string
-}
+export function Recommendations() {
+  const [selectedProjectId, setSelectedProjectId] = useState('')
 
-export function Recommendations({ projectId: initialProjectId, scanId }: Readonly<RecommendationsProps>) {
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
-
-  const { data, isLoading, error, refetch } = useProjectRecommendations(selectedProjectId, scanId)
+  const { data, isLoading, error, refetch } = useProjectRecommendations(selectedProjectId)
 
   return (
     <div className="space-y-6">
-      {!initialProjectId && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Recommendations</CardTitle>
-            <CardDescription>
-              Get actionable remediation recommendations for your project's vulnerabilities
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-4">
-              <ProjectCombobox
-                value={selectedProjectId}
-                onValueChange={setSelectedProjectId}
-                className="w-[350px]"
-              />
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Recommendations</CardTitle>
+          <CardDescription>
+            Get actionable remediation recommendations for your project's vulnerabilities
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-4">
+            <ProjectCombobox
+              value={selectedProjectId}
+              onValueChange={setSelectedProjectId}
+              className="w-[350px]"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {isLoading && selectedProjectId && (
         <div className="space-y-4">
@@ -50,7 +43,7 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Readonl
 
       {error && <AnalyticsErrorCard title="Failed to load recommendations" error={error} onRetry={() => refetch()} />}
 
-      {!selectedProjectId && !initialProjectId && (
+      {!selectedProjectId && (
         <Card>
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">

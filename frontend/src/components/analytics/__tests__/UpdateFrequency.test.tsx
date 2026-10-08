@@ -11,6 +11,13 @@ vi.mock("@/api/analytics", () => ({
   },
 }));
 
+// The tab only loads once a project is picked; stub the combobox to select one.
+vi.mock("@/components/ui/project-combobox", () => ({
+  ProjectCombobox: ({ onValueChange }: { onValueChange: (v: string) => void }) => (
+    <button type="button" onClick={() => onValueChange("p1")}>select-project</button>
+  ),
+}));
+
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   ComposedChart: ({ children }: { children?: ReactNode }) => <div data-testid="timeline">{children}</div>,
@@ -88,9 +95,10 @@ function renderFrequency(): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <UpdateFrequency projectId="p1" />
+      <UpdateFrequency />
     </QueryClientProvider>,
   );
+  fireEvent.click(screen.getByText("select-project"));
 }
 
 describe("UpdateFrequency", () => {

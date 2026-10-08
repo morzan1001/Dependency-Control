@@ -1,5 +1,5 @@
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { UpdateFrequencyMetrics } from "@/types/analytics";
@@ -7,6 +7,13 @@ import { UpdateFrequency } from "../UpdateFrequency";
 
 vi.mock("@/api/analytics", () => ({
   analyticsApi: { getUpdateFrequency: vi.fn() },
+}));
+
+// The tab only loads once a project is picked; stub the combobox to select one.
+vi.mock("@/components/ui/project-combobox", () => ({
+  ProjectCombobox: ({ onValueChange }: { onValueChange: (v: string) => void }) => (
+    <button type="button" onClick={() => onValueChange("p1")}>select-project</button>
+  ),
 }));
 
 // Everything but ResponsiveContainer stays real -- the behaviour under test is how recharts
@@ -88,9 +95,10 @@ describe("UpdateFrequency timeline with an unmeasured scan", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { container } = render(
       <QueryClientProvider client={client}>
-        <UpdateFrequency projectId="p1" />
+        <UpdateFrequency />
       </QueryClientProvider>,
     );
+    fireEvent.click(screen.getByText("select-project"));
 
     expect(await screen.findByText("Update Timeline")).toBeInTheDocument();
     // A null neighbour suppresses the line segment, so the dot is the only mark left.

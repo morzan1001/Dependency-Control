@@ -16,7 +16,7 @@ export const analyticsKeys = {
     scope: (releaseEnvironment?: string) => [...analyticsKeys.all, 'scope', modeOf(releaseEnvironment)] as const,
     summary: (releaseEnvironment?: string) => [...analyticsKeys.all, 'summary', modeOf(releaseEnvironment)] as const,
     topDependencies: (limit: number, type?: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'top-dependencies', { limit, type }, modeOf(releaseEnvironment)] as const,
-    dependencyTree: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'dependency-tree', projectId, { scanId }] as const,
+    dependencyTree: (projectId: string) => [...analyticsKeys.all, 'dependency-tree', projectId] as const,
     impactAnalysis: (limit: number, releaseEnvironment?: string) => [...analyticsKeys.all, 'impact-analysis', { limit }, modeOf(releaseEnvironment)] as const,
     hotspots: (sortBy: string, sortOrder: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'hotspots', { sortBy, sortOrder }, modeOf(releaseEnvironment)] as const,
     advancedSearch: (filters: Record<string, unknown>, releaseEnvironment?: string) => [...analyticsKeys.all, 'advanced-search', filters, modeOf(releaseEnvironment)] as const,
@@ -24,7 +24,7 @@ export const analyticsKeys = {
     componentFindings: (component: string, version?: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'component-findings', { component, version }, modeOf(releaseEnvironment)] as const,
     dependencyMetadata: (component: string, version?: string, type?: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }, modeOf(releaseEnvironment)] as const,
     dependencyTypes: (releaseEnvironment?: string) => [...analyticsKeys.all, 'dependency-types', modeOf(releaseEnvironment)] as const,
-    recommendations: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'recommendations', projectId, { scanId }] as const,
+    recommendations: (projectId: string) => [...analyticsKeys.all, 'recommendations', projectId] as const,
     updateFrequency: (projectId: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency', projectId, { ...opts }] as const,
     updateFrequencyComparison: (teamId?: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency-comparison', { teamId, ...opts }] as const,
 }
@@ -69,10 +69,10 @@ export const useTopDependencies = (limit: number = 20, type?: string, releaseEnv
     });
 }
 
-export const useDependencyTree = (projectId: string, scanId?: string) => {
+export const useDependencyTree = (projectId: string) => {
     return useQuery({
-        queryKey: analyticsKeys.dependencyTree(projectId, scanId),
-        queryFn: () => analyticsApi.getDependencyTree(projectId, scanId),
+        queryKey: analyticsKeys.dependencyTree(projectId),
+        queryFn: () => analyticsApi.getDependencyTree(projectId),
         enabled: !!projectId,
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
@@ -115,10 +115,10 @@ export const useDependencyTypes = (releaseEnvironment?: string) => {
     });
 }
 
-export const useProjectRecommendations = (projectId: string, scanId?: string) => {
+export const useProjectRecommendations = (projectId: string) => {
     return useQuery({
-        queryKey: analyticsKeys.recommendations(projectId, scanId),
-        queryFn: () => analyticsApi.getProjectRecommendations(projectId, scanId),
+        queryKey: analyticsKeys.recommendations(projectId),
+        queryFn: () => analyticsApi.getProjectRecommendations(projectId),
         enabled: !!projectId,
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,

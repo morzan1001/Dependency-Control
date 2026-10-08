@@ -66,7 +66,7 @@ describe('analyticsKeys release mode', () => {
 
   it('leaves the keys of the endpoints that have no release mode alone', () => {
     expect(analyticsKeys.dashboardStats()).toEqual([...analyticsKeys.all, 'dashboard-stats'])
-    expect(analyticsKeys.recommendations('p1')).toEqual([...analyticsKeys.all, 'recommendations', 'p1', { scanId: undefined }])
+    expect(analyticsKeys.recommendations('p1')).toEqual([...analyticsKeys.all, 'recommendations', 'p1'])
   })
 })
 
