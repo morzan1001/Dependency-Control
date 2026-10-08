@@ -24,15 +24,6 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
 
   const isLocalUser = user?.auth_provider === 'local';
 
-  const validatePassword = (password: string) => {
-    if (password.length < 8) return "Password must be at least 8 characters long";
-    if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter";
-    if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter";
-    if (!/\d/.test(password)) return "Password must contain at least one digit";
-    if (!/[!@#$%^&*(),.?":{}|<>\-_+=[\]\\;'`~/]/.test(password)) return "Password must contain at least one special character";
-    return null;
-  };
-
   const updatePasswordMutation = useMutation({
     mutationFn: () => userApi.updatePassword(currentPassword, newPassword),
     onSuccess: () => {
@@ -70,14 +61,6 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
     if (newPassword !== confirmPassword) {
       toast.error("Error", {
         description: "New passwords do not match",
-      });
-      return;
-    }
-
-    const error = validatePassword(newPassword);
-    if (error) {
-      toast.error("Invalid Password", {
-        description: error,
       });
       return;
     }
