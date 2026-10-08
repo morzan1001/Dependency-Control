@@ -17,6 +17,7 @@ from app.core.constants import (
 from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
+from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.policy_audit import PolicyAuditAction
@@ -76,7 +77,7 @@ async def record_policy_change(
     old_policy: CryptoPolicy | None,
     new_policy: CryptoPolicy,
     action: PolicyAuditAction,
-    actor: Any,
+    actor: User | None,
     comment: str | None,
     reverted_from_version: int | None = None,
 ) -> PolicyAuditEntry:
@@ -86,8 +87,8 @@ async def record_policy_change(
         project_id=project_id,
         version=new_policy.version,
         action=action,
-        actor_user_id=_actor_id(actor),
-        actor_display_name=_actor_display_name(actor),
+        actor_user_id=str(actor.id) if actor else None,
+        actor_display_name=(actor.username or actor.email) if actor else None,
         timestamp=datetime.now(timezone.utc),
         snapshot=new_policy.model_dump(by_alias=True),
         change_summary=compute_change_summary(old_policy, new_policy),
@@ -112,23 +113,6 @@ async def _persist_and_announce(db: AsyncIOMotorDatabase, entry: PolicyAuditEntr
         await _notify_relevant_users(db, entry)
     except Exception:
         logger.exception("Policy audit notification failed (non-blocking)")
-
-
-def _actor_id(actor: Any) -> str | None:
-    if actor is None:
-        return None
-    result = getattr(actor, "id", None) or getattr(actor, "user_id", None)
-    return str(result) if result is not None else None
-
-
-def _actor_display_name(actor: Any) -> str | None:
-    if actor is None:
-        return None
-    for attr in ("display_name", "full_name", "username", "email"):
-        val = getattr(actor, attr, None)
-        if val:
-            return str(val)
-    return None
 
 
 async def _dispatch_webhook(db: AsyncIOMotorDatabase, entry: PolicyAuditEntry) -> None:
@@ -204,8 +188,7 @@ async def record_license_policy_change(
     old_policy: dict[str, Any],
     new_policy: dict[str, Any],
     action: PolicyAuditAction,
-    actor: Any,
-    comment: str | None = None,
+    actor: User,
 ) -> PolicyAuditEntry | None:
     """Persist a license-policy audit entry (best-effort); returns None if no effective change. Version continues the highest audited one since the project doc has no version column."""
     if old_policy == new_policy:
@@ -220,12 +203,11 @@ async def record_license_policy_change(
         project_id=project_id,
         version=version,
         action=action,
-        actor_user_id=_actor_id(actor),
-        actor_display_name=_actor_display_name(actor),
+        actor_user_id=str(actor.id),
+        actor_display_name=actor.username or actor.email,
         timestamp=datetime.now(timezone.utc),
         snapshot=new_policy,
         change_summary=compute_license_policy_change_summary(old_policy, new_policy),
-        comment=comment,
     )
     await _persist_and_announce(db, entry)
     return entry

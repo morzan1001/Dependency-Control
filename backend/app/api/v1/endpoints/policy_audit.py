@@ -226,13 +226,9 @@ async def get_project_license_audit_entry(
 # revert/prune for license-policy audit omitted: overwriting license settings would need a non-trivial merge with peer analyzer settings.
 
 
-def _min_prune_days() -> int:
-    return settings.POLICY_AUDIT_MIN_PRUNE_DAYS
-
-
 def _enforce_min_prune_cutoff(cutoff: datetime) -> None:
     """Reject prune requests whose cutoff is too recent, preserving forensic history."""
-    days = _min_prune_days()
+    days = settings.POLICY_AUDIT_MIN_PRUNE_DAYS
     min_age_boundary = datetime.now(timezone.utc) - timedelta(days=days)
     if ensure_utc(cutoff) > min_age_boundary:
         raise HTTPException(

@@ -118,3 +118,22 @@ async def test_a_duplicated_version_resolves_to_its_newest_entry(db):
 
     assert hit is not None
     assert hit.comment == "newest"
+
+
+@pytest.mark.asyncio
+async def test_crypto_and_license_entries_of_one_project_are_read_and_pruned_apart(db):
+    repo = PolicyAuditRepository(db)
+    scope = {"policy_scope": "project", "project_id": "p1"}
+    await repo.create(_entry(version=3, **scope))
+    await repo.create(_entry(version=1, **scope).model_copy(update={"policy_type": "license"}))
+
+    crypto = await repo.list(**scope, policy_type="crypto")
+    licenses = await repo.list(**scope, policy_type="license")
+
+    assert [(e.policy_type, e.version) for e in crypto] == [("crypto", 3)]
+    assert [(e.policy_type, e.version) for e in licenses] == [("license", 1)]
+    assert await repo.max_version(**scope, policy_type="license") == 1
+    assert await repo.get_by_version(**scope, version=3, policy_type="license") is None
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    assert await repo.delete_older_than(**scope, cutoff=tomorrow, policy_type="license") == 1
+    assert [e.version for e in await repo.list(**scope, policy_type="crypto")] == [3]

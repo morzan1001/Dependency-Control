@@ -23,5 +23,4 @@ def test_policy_audit_indexes_target_crypto_policy_history_collection():
     assert wrong.create_index.await_count == 0, (
         "No index should be created on the unused 'policy_audit_entries' collection"
     )
-    # All four policy-audit indexes must land on 'crypto_policy_history'.
-    assert real.create_index.await_count == 4
+    assert real.create_index.await_count == 2

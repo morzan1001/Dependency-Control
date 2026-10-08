@@ -494,13 +494,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.DESCENDING),
         ]
     )
-    await database["crypto_policy_history"].create_index(
-        [("policy_scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING), ("version", pymongo.DESCENDING)]
-    )
     await database["crypto_policy_history"].create_index([("timestamp", pymongo.DESCENDING)])
-    await database["crypto_policy_history"].create_index(
-        [("actor_user_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
-    )
 
     # Compliance Reports
     await database["compliance_reports"].create_index(
