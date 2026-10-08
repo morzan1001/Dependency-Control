@@ -98,7 +98,9 @@ function ScanSide({ label, scanId, options, onSelect, side }: {
 
 export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }: Readonly<DeltaHeaderProps>) {
   const { data, hasNextPage, fetchNextPage } = useProjectScanWindow(projectId)
-  const options = (data?.pages.flat() ?? []).filter((s) => isScanUsable(s.status))
+  // Pages are offsets read click by click, so a scan created in between repeats one already shown.
+  const scanById = new Map((data?.pages.flat() ?? []).map((s) => [s.id, s]))
+  const options = [...scanById.values()].filter((s) => isScanUsable(s.status))
   // Unqualified by environment so a project that only deploys to staging still gets a quick pick;
   // the button names whichever environment won, since "the release" elsewhere means production.
   const { latestRelease } = useLatestProjectRelease(projectId)

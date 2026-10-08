@@ -134,6 +134,22 @@ describe('DeltaHeader', () => {
     expect(skips).toEqual([0, 1, 2, 3].map((page) => page * SCAN_WINDOW_PAGE_SIZE))
   })
 
+  it('offers a scan once when a newer scan shifts the next page onto it', async () => {
+    const actual = await vi.importActual<typeof import('@/hooks/queries/use-scans')>('@/hooks/queries/use-scans')
+    vi.mocked(useProjectScanWindow).mockImplementation(actual.useProjectScanWindow)
+    vi.mocked(scansApi.scanApi.getOne).mockImplementation(getOne)
+    const server = Array.from({ length: 4 * SCAN_WINDOW_PAGE_SIZE }, (_, index) => ({ ...toScan, id: `s${index}` }))
+    vi.mocked(scansApi.scanApi.getProjectScans).mockImplementation(async (_, { skip = 0, limit = 0 } = {}) =>
+      server.slice(skip, skip + limit))
+
+    renderHeader()
+    await screen.findByText(`The pickers offer the ${SCAN_WINDOW_PAGE_SIZE} most recent scans; this project has older ones.`)
+    server.unshift({ ...toScan, id: 'created-between-widens' })
+    fireEvent.click(screen.getByRole('button', { name: `Load ${SCAN_WINDOW_PAGE_SIZE} older` }))
+
+    await screen.findByText(`The pickers offer the ${2 * SCAN_WINDOW_PAGE_SIZE - 1} most recent scans; this project has older ones.`)
+  })
+
   it("shows the compared scan's label on the From side even though it is excluded from the pickable options", async () => {
     mockScanSources()
 
