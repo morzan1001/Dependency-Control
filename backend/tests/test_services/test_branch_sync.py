@@ -317,17 +317,40 @@ def _timed_out(request: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("", request=request)
 
 
+_LIST_BRANCHES = [
+    pytest.param(lambda: GitLabService(make_gitlab_instance()).list_branches(100), id="gitlab"),
+    pytest.param(
+        lambda: GitHubService(make_github_instance(access_token="ghp-x")).list_branches("acme", "api"),
+        id="github",
+    ),
+]
+# Both providers list branches by name, so these sort ahead of main.
+_MANY_BRANCHES = [f"dependabot/npm/pkg-{index:04d}" for index in range(1200)] + [_MAIN]
+
+
+def _paged_branches(request: httpx.Request) -> httpx.Response:
+    """Both providers' paging: GitLab's x-total-pages and GitHub's Link header."""
+    page, per_page = int(request.url.params["page"]), int(request.url.params["per_page"])
+    pages = -(-len(_MANY_BRANCHES) // per_page)
+    headers = {"x-total-pages": str(pages)}
+    if page < pages:
+        headers["link"] = f'<{request.url.copy_set_param("page", page + 1)}>; rel="next"'
+    chunk = _MANY_BRANCHES[(page - 1) * per_page : page * per_page]
+    return httpx.Response(200, json=[{"name": name} for name in chunk], headers=headers, request=request)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "list_branches",
-    [
-        pytest.param(lambda: GitLabService(make_gitlab_instance()).list_branches(100), id="gitlab"),
-        pytest.param(
-            lambda: GitHubService(make_github_instance(access_token="ghp-x")).list_branches("acme", "api"),
-            id="github",
-        ),
-    ],
-)
+@pytest.mark.parametrize("list_branches", _LIST_BRANCHES)
+async def test_a_repository_with_more_branches_than_ten_pages_still_lists_main(monkeypatch, list_branches):
+    """The sync marks every scanned branch the listing lacks as deleted, so a short listing retires main."""
+    transport = httpx.MockTransport(_paged_branches)
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=transport))
+
+    assert await list_branches() == _MANY_BRANCHES
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("list_branches", _LIST_BRANCHES)
 @pytest.mark.parametrize(("vcs_answer", "cause"), [(_not_found, "404"), (_timed_out, "ReadTimeout")])
 async def test_a_failed_branch_listing_logs_one_warning_line_without_a_traceback(
     monkeypatch, caplog, list_branches, vcs_answer, cause

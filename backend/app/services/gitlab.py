@@ -271,7 +271,7 @@ class GitLabService:
 
     async def list_branches(self, project_id: int) -> list[str] | None:
         """Fetches all branch names from a GitLab project. Returns None on API failure."""
-        branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches")
+        branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches", max_pages=None)
         if branches is None:
             return None
         return [b["name"] for b in branches]

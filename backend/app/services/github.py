@@ -367,7 +367,7 @@ class GitHubService:
 
     async def list_branches(self, owner: str, repo: str) -> list[str] | None:
         """Fetches all branch names from a GitHub repository. Returns None on API failure."""
-        branches = await self._api_get_paginated(f"/repos/{owner}/{repo}/branches")
+        branches = await self._api_get_paginated(f"/repos/{owner}/{repo}/branches", max_pages=None)
         if branches is None:
             return None
         return [b["name"] for b in branches]
