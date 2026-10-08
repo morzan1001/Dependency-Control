@@ -7,8 +7,7 @@ so crypto-misuse SAST findings (id OPENGREP-...) are also covered.
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from app.models.match_signature import AnchorKind, MatchSignature
 from app.services.normalizers.utils import FindingIdPrefix
@@ -17,24 +16,6 @@ from app.services.normalizers.utils import FindingIdPrefix
 _SCANNER_PREFERENCE = ("opengrep", "bearer")
 
 _WS = re.compile(r"\s+")
-
-
-class SignatureSource(Protocol):
-    """Structural view of the fields signature derivation needs."""
-
-    @property
-    def id(self) -> str | None: ...
-    @property
-    def details(self) -> dict[str, Any] | None: ...
-    @property
-    def component(self) -> str: ...
-
-
-@dataclass(frozen=True)
-class _DocSignatureSource:
-    id: str | None
-    details: dict[str, Any] | None
-    component: str
 
 
 def snippet_hash(text: str | None) -> str | None:
@@ -57,11 +38,10 @@ def _select_sast_entry(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return min(entries, key=lambda e: (str(e.get("scanner") or ""), str(e.get("id") or "")))
 
 
-def _sast_signature(finding: SignatureSource) -> MatchSignature:
-    details = finding.details or {}
+def _sast_signature(finding_id: str, details: Mapping[str, Any], component: str) -> MatchSignature:
     # An unmerged finding (crypto-misuse rules keep their own type) is its own single entry.
     entries = details.get("sast_findings") or [
-        {"scanner": (finding.id or "").split("-", 1)[0].lower(), "id": details.get("rule_id"), "details": details}
+        {"scanner": finding_id.split("-", 1)[0].lower(), "id": details.get("rule_id"), "details": details}
     ]
     entry = _select_sast_entry(entries)
     edetails = entry.get("details") or {}
@@ -74,11 +54,11 @@ def _sast_signature(finding: SignatureSource) -> MatchSignature:
         anchor, kind = fingerprint, "scanner_fp"
     else:
         # Without the scanner's fingerprint or the code, only the exact location identifies the instance.
-        content_hash = content_hash or snippet_hash(f"{rule_key}\x00{finding.component}\x00{line}")
+        content_hash = content_hash or snippet_hash(f"{rule_key}\x00{component}\x00{line}")
         anchor, kind = content_hash, "content_hash"
     return MatchSignature(
         rule_key=rule_key,
-        file_key=finding.component,
+        file_key=component,
         anchor=anchor,
         anchor_kind=kind,
         content_hash=content_hash,
@@ -87,8 +67,7 @@ def _sast_signature(finding: SignatureSource) -> MatchSignature:
     )
 
 
-def _iac_signature(finding: SignatureSource) -> MatchSignature:
-    details = finding.details or {}
+def _iac_signature(details: Mapping[str, Any], component: str) -> MatchSignature:
     kics_key = f"KICS:{details.get('rule_id') or 'unknown'}"
     content_hash = snippet_hash("\n".join(str(details.get(k) or "") for k in ("actual_value", "expected_value")))
     similarity_id = details.get("similarity_id")
@@ -103,7 +82,7 @@ def _iac_signature(finding: SignatureSource) -> MatchSignature:
     )
     return MatchSignature(
         rule_key=kics_key,
-        file_key=finding.component,
+        file_key=component,
         anchor=anchor,
         anchor_kind=kind,
         content_hash=content_hash,
@@ -112,12 +91,12 @@ def _iac_signature(finding: SignatureSource) -> MatchSignature:
     )
 
 
-def _secret_signature(finding: SignatureSource) -> MatchSignature:
-    detector = (finding.details or {}).get("detector") or "unknown"
-    secret_hash = (finding.id or "").rsplit("-", 1)[-1]
+def _secret_signature(finding_id: str, details: Mapping[str, Any], component: str) -> MatchSignature:
+    detector = details.get("detector") or "unknown"
+    secret_hash = finding_id.rsplit("-", 1)[-1]
     return MatchSignature(
         rule_key=detector,
-        file_key=finding.component,
+        file_key=component,
         anchor=secret_hash,
         anchor_kind="secret_hash",
         content_hash=secret_hash,
@@ -126,27 +105,18 @@ def _secret_signature(finding: SignatureSource) -> MatchSignature:
     )
 
 
-def compute_match_signature(finding: SignatureSource) -> MatchSignature | None:
+def compute_match_signature(
+    finding_id: str | None, details: Mapping[str, Any] | None, component: str
+) -> MatchSignature | None:
     """Return a MatchSignature for SAST/IaC/Secret findings (dispatched by id prefix / details), else None."""
-    fid = finding.id or ""
-    details = finding.details or {}
+    fid = finding_id or ""
+    details = details or {}
 
     sast_prefixes = (f"{FindingIdPrefix.OPENGREP}-", f"{FindingIdPrefix.BEARER}-")
     if details.get("sast_findings") is not None or fid.startswith(sast_prefixes):
-        return _sast_signature(finding)
+        return _sast_signature(fid, details, component)
     if fid.startswith(f"{FindingIdPrefix.KICS}-"):
-        return _iac_signature(finding)
+        return _iac_signature(details, component)
     if fid.startswith(f"{FindingIdPrefix.SECRET}-"):
-        return _secret_signature(finding)
+        return _secret_signature(fid, details, component)
     return None
-
-
-def compute_match_signature_from_doc(doc: Mapping[str, Any]) -> MatchSignature | None:
-    """Recompute a MatchSignature from a raw persisted finding document when the stored `match` field is missing."""
-    return compute_match_signature(
-        _DocSignatureSource(
-            id=doc.get("finding_id"),
-            details=doc.get("details"),
-            component=doc.get("component") or "",
-        )
-    )

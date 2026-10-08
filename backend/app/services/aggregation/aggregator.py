@@ -380,7 +380,7 @@ class ResultAggregator:
         self._link_related_findings_by_component(final_findings)
 
         for f in final_findings:
-            f.match = compute_match_signature(f)
+            f.match = compute_match_signature(f.id, f.details, f.component)
 
         return final_findings
 

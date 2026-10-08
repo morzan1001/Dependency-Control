@@ -1,5 +1,13 @@
 from app.models.finding import Finding
-from app.services.waivers.signature import compute_match_signature, compute_match_signature_from_doc, snippet_hash
+from app.services.waivers.signature import compute_match_signature, snippet_hash
+
+
+def _signature(finding: Finding):
+    return compute_match_signature(finding.id, finding.details, finding.component)
+
+
+def _doc_signature(doc: dict):
+    return compute_match_signature(doc["finding_id"], doc["details"], doc["component"])
 
 
 def _sast_merged(component, line, scanner, rule_id, fingerprint, code):
@@ -47,7 +55,7 @@ class TestSnippetHash:
 class TestSastSignature:
     def test_scanner_fp_anchor(self):
         f = _sast_merged("a.py", 10, "opengrep", "weak-rng", "fp-1", "random.random()")
-        sig = compute_match_signature(f)
+        sig = _signature(f)
         assert sig.rule_key == "opengrep:weak-rng"
         assert sig.file_key == "a.py"
         assert sig.anchor == "fp-1"
@@ -57,7 +65,7 @@ class TestSastSignature:
 
     def test_missing_fingerprint_degrades_to_content_hash(self):
         f = _sast_merged("a.py", 10, "opengrep", "weak-rng", None, "random.random()")
-        sig = compute_match_signature(f)
+        sig = _signature(f)
         assert sig.anchor_kind == "content_hash"
         assert sig.content_hash is not None
         assert sig.is_strong is False
@@ -76,13 +84,13 @@ class TestSastSignature:
                 "details": {"fingerprint": "fp-bearer", "code_extract": "code", "start": {"line": 10}},
             },
         )
-        sig = compute_match_signature(f)
+        sig = _signature(f)
         assert sig.anchor == "fp-og"  # opengrep preferred regardless of list order
         assert sig.rule_key == "opengrep:r"
 
     def test_empty_code_extract_sentinel(self):
         f = _sast_merged("a.py", 10, "opengrep", "r", "fp-1", None)
-        sig = compute_match_signature(f)
+        sig = _signature(f)
         assert sig.anchor == "fp-1"
         assert sig.content_hash is None  # sentinel, not sha1("")
 
@@ -107,7 +115,7 @@ class TestIacSignature:
         )
 
     def test_similarity_id_preferred(self):
-        sig = compute_match_signature(self._kics(similarity_id="sim-1"))
+        sig = _signature(self._kics(similarity_id="sim-1"))
         assert sig.rule_key == "KICS:q1"
         assert sig.anchor == "sim-1"
         assert sig.anchor_kind == "similarity_id"
@@ -115,12 +123,12 @@ class TestIacSignature:
         assert sig.last_line == 5
 
     def test_search_key_fallback(self):
-        sig = compute_match_signature(self._kics(similarity_id=None, search_key="resource.x"))
+        sig = _signature(self._kics(similarity_id=None, search_key="resource.x"))
         assert sig.anchor == "resource.x"
         assert sig.anchor_kind == "search_key"
 
     def test_no_anchor_degrades(self):
-        sig = compute_match_signature(self._kics(similarity_id=None, search_key=None))
+        sig = _signature(self._kics(similarity_id=None, search_key=None))
         assert sig.anchor_kind == "content_hash"
 
 
@@ -135,7 +143,7 @@ class TestSecretSignature:
             scanners=["trufflehog"],
             details={"detector": "aws"},
         )
-        sig = compute_match_signature(f)
+        sig = _signature(f)
         assert sig.rule_key == "aws"
         assert sig.anchor == "1a2b3c4d"
         assert sig.anchor_kind == "secret_hash"
@@ -153,7 +161,7 @@ class TestNonLocationFindings:
             scanners=["grype"],
             details={},
         )
-        assert compute_match_signature(f) is None
+        assert _signature(f) is None
 
 
 def test_compute_match_signature_from_doc_recovers_bearer_sast():
@@ -173,7 +181,7 @@ def test_compute_match_signature_from_doc_recovers_bearer_sast():
             ],
         },
     }
-    sig = compute_match_signature_from_doc(doc)
+    sig = _doc_signature(doc)
     assert sig is not None
     assert sig.rule_key == "bearer:java_lang_hardcoded_secret"
     assert sig.file_key == "a.py"
@@ -183,7 +191,7 @@ def test_compute_match_signature_from_doc_recovers_bearer_sast():
 
 
 def test_compute_match_signature_from_doc_none_for_non_location():
-    assert compute_match_signature_from_doc({"finding_id": "CVE-2021-1", "component": "pkg", "details": {}}) is None
+    assert _doc_signature({"finding_id": "CVE-2021-1", "component": "pkg", "details": {}}) is None
 
 
 def test_sast_signature_collects_all_scanner_rule_keys():
@@ -199,7 +207,7 @@ def test_sast_signature_collects_all_scanner_rule_keys():
             ],
         },
     }
-    sig = compute_match_signature_from_doc(doc)
+    sig = _doc_signature(doc)
     assert sig is not None
     assert sig.rule_keys == ["bearer:X", "opengrep:X"]
     assert sig.rule_key in sig.rule_keys
@@ -212,25 +220,9 @@ def test_iac_signature_rule_keys_is_single():
         "type": "iac",
         "details": {"rule_id": "q1", "similarity_id": "s", "start": {"line": 3}},
     }
-    sig = compute_match_signature_from_doc(doc)
+    sig = _doc_signature(doc)
     assert sig is not None
     assert sig.rule_keys == ["KICS:q1"]
-
-
-def test_finding_and_raw_doc_produce_same_signature():
-    """Both signature code paths must agree; guards against a finding_id/id field-name mismatch."""
-    finding = _sast_merged("src/auth.py", 94, "bearer", "java_lang_hardcoded_secret", "edb203_2", 'API_KEY="s3cr3t"')
-    doc = {
-        "finding_id": finding.id,
-        "component": finding.component,
-        "type": "sast",
-        "details": finding.details,
-    }
-    sig_finding = compute_match_signature(finding)
-    sig_doc = compute_match_signature_from_doc(doc)
-    assert sig_finding is not None, "compute_match_signature returned None for a valid SAST finding"
-    assert sig_doc is not None, "compute_match_signature_from_doc returned None for the equivalent doc"
-    assert sig_finding.model_dump() == sig_doc.model_dump()
 
 
 def _aggregated(normalize, result):
@@ -293,13 +285,13 @@ def test_bearer_ordinal_fingerprint_never_anchors():
 
 def test_a_finding_without_fingerprint_or_snippet_is_bound_to_its_line():
     no_evidence = [_sast_merged("a.py", line, "opengrep", "r", None, None) for line in (10, 11)]
-    sigs = [compute_match_signature(f) for f in no_evidence]
+    sigs = [_signature(f) for f in no_evidence]
     assert all(s.anchor_kind == "content_hash" and s.anchor == s.content_hash for s in sigs)
     assert sigs[0].anchor is not None
     assert sigs[0].anchor != sigs[1].anchor
 
 
-def test_crypto_misuse_opengrep_finding_gets_the_same_signature_as_its_raw_doc():
+def test_a_crypto_misuse_opengrep_finding_gets_a_scanner_fingerprint_signature():
     from app.services.normalizers.sast import normalize_opengrep
 
     item = _opengrep_item(12, "fp-crypto", "key = b'x'", check_id="crypto-misuse-hardcoded-key", path="src/a.py")
@@ -310,5 +302,3 @@ def test_crypto_misuse_opengrep_finding_gets_the_same_signature_as_its_raw_doc()
     assert finding.match.anchor == "fp-crypto"
     assert finding.match.rule_key == "opengrep:crypto-misuse-hardcoded-key"
     assert finding.match.last_line == 12
-    doc = {"finding_id": finding.id, "component": finding.component, "details": finding.details}
-    assert compute_match_signature_from_doc(doc) == finding.match

@@ -25,7 +25,7 @@ from app.services.waivers.matching import (
     waiver_criteria,
     waiver_query,
 )
-from app.services.waivers.signature import compute_match_signature_from_doc
+from app.services.waivers.signature import compute_match_signature
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,9 @@ async def _signed_location_findings(
     for doc in await finding_repo.find_location_findings(scan_id):
         if doc.get("match"):
             sig = _safe_match_signature(doc["match"], f"finding {doc['_id']}")
-        elif (sig := compute_match_signature_from_doc(doc)) is not None:
+        elif (
+            sig := compute_match_signature(doc["finding_id"], doc.get("details"), doc.get("component") or "")
+        ) is not None:
             finding_fields[doc["_id"]]["match"] = sig.model_dump()
         if sig is not None:
             signed.append((doc["finding_id"], MatchFinding(id=doc["_id"], sig=sig)))
