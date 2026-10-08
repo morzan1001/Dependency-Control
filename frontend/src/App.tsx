@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryCache } from '@tanstack/react-query'
 import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
 import Signup from './pages/Signup'
@@ -31,9 +31,9 @@ import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { authApi } from '@/api/auth'
-import { systemApi } from '@/api/system'
+import { usePublicConfig } from '@/hooks/queries/use-system'
 import { ANALYTICS_ROUTE_PERMISSIONS, LOGIN_RETURN_KEY } from '@/lib/constants'
-import { lazy, Suspense, useState, useEffect } from 'react'
+import { lazy, Suspense } from 'react'
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -42,11 +42,6 @@ const queryClient = new QueryClient({
       if (axiosError.response?.status && axiosError.response.status >= 500) {
         toast.error("Server Error", { description: "Something went wrong on the server." })
       }
-    }
-  }),
-  mutationCache: new MutationCache({
-    onError: (_error: Error) => {
-      // Mutations handle their own error display.
     }
   }),
   defaultOptions: {
@@ -68,7 +63,7 @@ function Force2FAGuard({ children }: Readonly<{ children: React.ReactNode }>) {
       return <Navigate to="/setup-2fa" replace />;
   }
 
-  if (location.pathname === '/setup-2fa' && !(permissions.length === 1 && permissions[0] === 'auth:setup_2fa')) {
+  if (location.pathname === '/setup-2fa') {
       return <Navigate to="/dashboard" replace />;
   }
 
@@ -79,16 +74,7 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   const { isAuthenticated, isLoading, signedOut } = useAuth();
   const location = useLocation();
 
-  if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="space-y-4 flex flex-col items-center">
-          <Skeleton className="h-12 w-12 rounded-full" />
-          <Skeleton className="h-4 w-32" />
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return <PageLoader />;
 
   if (!isAuthenticated) {
     if (!signedOut) sessionStorage.setItem(LOGIN_RETURN_KEY, location.pathname + location.search + location.hash);
@@ -99,22 +85,10 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
 }
 
 function SignupRoute() {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const { data: config, isPending } = usePublicConfig();
 
-  useEffect(() => {
-    systemApi.getPublicConfig().then(config => setEnabled(config.allow_public_registration)).catch(() => setEnabled(false));
-  }, []);
-
-  if (enabled === null) return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="space-y-4 flex flex-col items-center">
-        <Skeleton className="h-12 w-12 rounded-full" />
-        <Skeleton className="h-4 w-32" />
-      </div>
-    </div>
-  );
-  
-  if (!enabled) return <Navigate to="/login" replace />;
+  if (isPending) return <PageLoader />;
+  if (!config?.allow_public_registration) return <Navigate to="/login" replace />;
 
   return <Signup />;
 }
