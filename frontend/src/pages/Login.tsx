@@ -10,7 +10,8 @@ import { Link, useLocation } from 'react-router-dom'
 import { getErrorMessage } from '@/lib/utils'
 
 export default function Login() {
-  const [error, setError] = useState<string | null>(null)
+  const location = useLocation()
+  const [error, setError] = useState<string | null>(location.state?.error ?? null)
   const [showOTP, setShowOTP] = useState(false)
   const [showResendLink, setShowResendLink] = useState(false)
   
@@ -24,7 +25,6 @@ export default function Login() {
   const [password, setPassword] = useState('')
 
   const { login } = useAuth()
-  const location = useLocation()
   const message = location.state?.message
   const loginMutation = useLogin();
   const isLoading = loginMutation.isPending
