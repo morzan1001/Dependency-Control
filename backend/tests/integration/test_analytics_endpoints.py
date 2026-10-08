@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -312,19 +313,18 @@ async def test_recommendations_count_only_vulnerability_findings_as_vulnerabilit
     assert body["summary"]["finding_counts"]["secrets"] == 1
 
 
-@pytest.mark.asyncio
-async def test_recommendations_recurrence_window_holds_the_newest_scans(
-    client, db, owner_auth_headers_proj, monkeypatch
-):
-    """A CVE present only in the three most recent of fourteen builds is still recurring; the
-    window is the newest scans, so it sees them."""
+@pytest.fixture
+def _no_enrichment(monkeypatch):
     from app.api.v1.endpoints.analytics import recommendations as rec_module
 
-    async def _no_enrichment(_cves):
-        return {}
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", AsyncMock(return_value={}))
 
-    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_enrichment")
+async def test_recommendations_recurrence_window_holds_the_newest_scans(client, db, owner_auth_headers_proj):
+    """A CVE present only in the three most recent of fourteen builds is still recurring; the
+    window is the newest scans, so it sees them."""
     now = datetime.now(timezone.utc)
     scan_count = 14
     scan_ids = [f"win-{i:02d}" for i in range(scan_count)]
@@ -376,16 +376,9 @@ async def _seed_build(db, scan_id: str, hours_ago: int, cve: str | None, **field
 
 
 @pytest.mark.asyncio
-async def test_recommendations_recurrence_window_stays_on_the_viewed_scans_branch(
-    client, db, owner_auth_headers_proj, monkeypatch
-):
+@pytest.mark.usefixtures("_no_enrichment")
+async def test_recommendations_recurrence_window_stays_on_the_viewed_scans_branch(client, db, owner_auth_headers_proj):
     """Two feature-branch builds carrying a CVE make it recur there, not in the one main build that has it."""
-    from app.api.v1.endpoints.analytics import recommendations as rec_module
-
-    async def _no_enrichment(_cves):
-        return {}
-
-    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
     await _seed_build(db, "main-old", 5, None)
     await _seed_build(db, "main-head", 3, "CVE-2026-1111")
     await _seed_build(db, "feat-1", 2, "CVE-2026-1111", branch="feature/x")
@@ -395,16 +388,9 @@ async def test_recommendations_recurrence_window_stays_on_the_viewed_scans_branc
 
 
 @pytest.mark.asyncio
-async def test_recommendations_recurrence_window_counts_a_rescanned_build_once(
-    client, db, owner_auth_headers_proj, monkeypatch
-):
+@pytest.mark.usefixtures("_no_enrichment")
+async def test_recommendations_recurrence_window_counts_a_rescanned_build_once(client, db, owner_auth_headers_proj):
     """Rescans re-analyse one build's commit, so the build and its rescans are one scan of the window."""
-    from app.api.v1.endpoints.analytics import recommendations as rec_module
-
-    async def _no_enrichment(_cves):
-        return {}
-
-    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
     await _seed_build(db, "build", 3, "CVE-2026-3333")
     for index in (1, 2):
         await _seed_build(db, f"rescan-{index}", 3 - index, "CVE-2026-3333", is_rescan=True, original_scan_id="build")
