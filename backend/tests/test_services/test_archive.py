@@ -432,6 +432,18 @@ async def test_replay_labels_invalid_tag_as_encryption():
 
 
 @pytest.mark.asyncio
+async def test_replay_labels_a_broken_download_as_s3_error():
+    from app.services.archive import _replay_bundle
+
+    async def src():
+        raise OSError("connection reset by peer")
+        yield b""
+
+    reason, _ = await _replay_bundle(MagicMock(), "x", src())
+    assert reason == "s3_error"
+
+
+@pytest.mark.asyncio
 async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
     """S3 delete failure must NOT leave a zombie metadata record."""
     scan_doc = _make_scan_doc()

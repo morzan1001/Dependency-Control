@@ -105,15 +105,6 @@ async def _hash_plaintext_secrets_in(
         yield doc
 
 
-async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[dict[str, Any]]:
-    """Yield documents from a collection where scan_id matches."""
-    cursor = collection.find({"scan_id": scan_id})
-    if hasattr(cursor, "batch_size"):
-        cursor = cursor.batch_size(500)
-    async for doc in cursor:
-        yield doc
-
-
 async def _stream_gridfs_chunks(db: Any, scan_doc: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     """Yield every GridFS file of the scan as ordered chunk frames, each file opening with n=0 even when empty."""
     scan_id = scan_doc["_id"]
@@ -209,20 +200,13 @@ def _build_archive_payload(
     scan_doc: dict[str, Any],
     scan_id: str,
     stats: BundleStats,
-    bytes_counter: dict[str, int],
 ) -> tuple[AsyncIterator[bytes], str]:
     """Build the upload payload iterator and its content-type string."""
-
-    async def count_through(it: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-        async for c in it:
-            bytes_counter["total"] += len(c)
-            yield c
-
     frames = BundleFrames.write(
         scan_doc=scan_doc,
         collections={
             **{
-                name: _hash_plaintext_secrets_in(name, _stream_collection(getattr(db, name), scan_id))
+                name: _hash_plaintext_secrets_in(name, getattr(db, name).find({"scan_id": scan_id}).batch_size(500))
                 for name in SCAN_SCOPED_COLLECTIONS
             },
             ARCHIVE_GRIDFS_CHUNK_FRAME: _stream_gridfs_chunks(db, scan_doc),
@@ -231,8 +215,8 @@ def _build_archive_payload(
     )
     gzipped = _gzip_compress_stream(frames)
     if is_encryption_enabled():
-        return count_through(_encrypt_stream(gzipped)), "application/octet-stream"
-    return count_through(gzipped), "application/gzip"
+        return _encrypt_stream(gzipped), "application/octet-stream"
+    return gzipped, "application/gzip"
 
 
 def _count_failure(operation: str, reason: str) -> None:
@@ -359,8 +343,7 @@ async def _upload_archive_bundle(
 ) -> tuple[int, BundleStats] | None:
     """Build and upload the archive bundle; returns (total_bytes, stats) or None on failure (metrics recorded)."""
     stats = BundleStats()
-    bytes_counter: dict[str, int] = {"total": 0}
-    payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats, bytes_counter)
+    payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats)
     try:
         total = await upload_stream(s3_key, payload, content_type=content_type)
     except _ArchiveSourceReadError as e:
@@ -523,11 +506,6 @@ def stream_bundle_for_download(metadata: ArchiveMetadata) -> AsyncIterator[bytes
 # ---------------------------------------------------------------------------
 
 
-def _parse_error_reason(exc: ValueError) -> str:
-    """Map a bundle ValueError to the appropriate ArchiveFailureReason string."""
-    return ArchiveFailureReason.VERSION_MISMATCH if "version" in str(exc).lower() else ArchiveFailureReason.INTEGRITY
-
-
 async def _flush_batches(
     db: Any,
     batch_by_collection: dict[str, list[dict[str, Any]]],
@@ -688,30 +666,22 @@ async def _replay_bundle(
                 await gridfs.close()
                 await _flush_batches(db, batch_by_collection, collections_restored)
                 break
-    except ValueError as e:
-        logger.exception(
-            "Restore parse error",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
-        )
-        return _parse_error_reason(e), collections_restored
-    except PyMongoError as e:
-        logger.exception(
-            "Restore MongoDB error",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
-        )
-        return ArchiveFailureReason.UNKNOWN, collections_restored
-    except InvalidTag as e:
-        logger.exception(
-            "Restore decryption error",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
-        )
-        return ArchiveFailureReason.ENCRYPTION, collections_restored
     except Exception as e:
+        if isinstance(e, ValueError):
+            reason = (
+                ArchiveFailureReason.VERSION_MISMATCH if "version" in str(e).lower() else ArchiveFailureReason.INTEGRITY
+            )
+        elif isinstance(e, PyMongoError):
+            reason = ArchiveFailureReason.UNKNOWN
+        elif isinstance(e, InvalidTag):
+            reason = ArchiveFailureReason.ENCRYPTION
+        else:
+            reason = ArchiveFailureReason.S3_ERROR
         logger.exception(
-            "Restore stream error",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+            "Restore failed",
+            extra={"scan_id": sanitize_for_log(scan_id), "reason": reason, "error": sanitize_for_log(e)},
         )
-        return ArchiveFailureReason.S3_ERROR, collections_restored
+        return reason, collections_restored
     finally:
         with contextlib.suppress(PyMongoError):
             await gridfs.abort()
