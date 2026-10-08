@@ -3,7 +3,7 @@ name, primitive, asset_type, weakness_tag, or severity.
 """
 
 from datetime import datetime, timezone
-from typing import Any, get_args
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -12,9 +12,6 @@ from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
-
-# The chat tool passes an unchecked string, so this is its only validation.
-_SUPPORTED_GROUPINGS = frozenset(get_args(GroupBy))
 
 # $push of every occurrence_locations array can exceed MongoDB's 16MB group-doc limit on a hot
 # group, so the accumulator reads the arrays of this many assets and no more.
@@ -48,10 +45,6 @@ class CryptoHotspotService:
         scan_id: str | None = None,
         limit: int = 100,
     ) -> HotspotResponse:
-        if group_by not in _SUPPORTED_GROUPINGS:
-            raise ValueError(f"unsupported group_by: {group_by!r}")
-        limit = max(1, min(limit, 500))
-
         latest_scan_ids = await self._pick_scan_ids(resolved, scan_id)
         # A scan_id is taken unchecked, so the project set is what keeps two user scopes apart.
         digests = (scope_digest(latest_scan_ids), scope_digest(resolved.project_ids))

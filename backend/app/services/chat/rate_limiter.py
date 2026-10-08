@@ -20,9 +20,9 @@ def _client() -> redis.Redis:
     return redis.from_url(settings.REDIS_URL)
 
 
-async def enforce_rate_limit(owner_id: str, *, prefix: str, per_minute: int, per_hour: int) -> None:
+async def enforce_rate_limit(owner_id: str, *, per_minute: int, per_hour: int) -> None:
     """Raise 429 with Retry-After once the owner's window is spent; a Redis outage admits the request."""
-    limiter = ChatRateLimiter(_client(), prefix=prefix)
+    limiter = ChatRateLimiter(_client())
     try:
         allowed, retry_after = await limiter.check_rate_limit(owner_id, per_minute=per_minute, per_hour=per_hour)
     except redis.RedisError:
@@ -70,9 +70,8 @@ redis.call('EXPIRE', KEYS[1], math.floor(window * 2))
 return {1, max_reqs - count - 1}
 """
 
-    def __init__(self, redis_client: redis.Redis, prefix: str = CHAT_PREFIX):
+    def __init__(self, redis_client: redis.Redis):
         self.redis = redis_client
-        self.prefix = prefix
 
     async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int]:
         """Return (allowed, retry_after_seconds).
@@ -83,14 +82,14 @@ return {1, max_reqs - count - 1}
         now = time.time()
         member = f"{user_id}:{now}"
 
-        minute_key = f"{self.prefix}{user_id}:minute"
+        minute_key = f"{CHAT_PREFIX}{user_id}:minute"
         result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
             chat_rate_limited_total.inc()
             return False, retry_or_remaining
 
-        hour_key = f"{self.prefix}{user_id}:hour"
+        hour_key = f"{CHAT_PREFIX}{user_id}:hour"
         result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:

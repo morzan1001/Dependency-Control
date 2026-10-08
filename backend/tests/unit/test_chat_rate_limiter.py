@@ -13,7 +13,6 @@ from app.core.metrics import REGISTRY
 from app.services.chat.rate_limiter import ChatRateLimiter, enforce_rate_limit
 
 _START = 1_000_000.0
-_PREFIX = "test:chat:rl:"
 
 
 class _FrozenClock:
@@ -46,7 +45,7 @@ async def redis_client():
 
 @pytest_asyncio.fixture
 async def limiter(redis_client):
-    return ChatRateLimiter(redis_client, prefix=_PREFIX)
+    return ChatRateLimiter(redis_client)
 
 
 @pytest.mark.asyncio
@@ -132,7 +131,7 @@ def built_clients(monkeypatch):
 
 
 async def _enforce(owner_id: str = "owner-1", per_minute: int = 5) -> None:
-    await enforce_rate_limit(owner_id, prefix=_PREFIX, per_minute=per_minute, per_hour=100)
+    await enforce_rate_limit(owner_id, per_minute=per_minute, per_hour=100)
 
 
 @pytest.mark.asyncio

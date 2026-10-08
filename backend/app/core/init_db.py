@@ -446,10 +446,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
         name="conversation_messages_chronological",
     )
-    await chat_messages.create_index(
-        [("conversation_id", pymongo.ASCENDING)],
-        name="conversation_cascade_delete",
-    )
 
     # Unified API keys
     api_keys = database["api_keys"]

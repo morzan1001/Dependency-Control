@@ -36,6 +36,7 @@ from app.core.constants import (
     max_severity,
 )
 from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
+from app.core.cache import cache_service
 from app.core.housekeeping import resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
@@ -236,6 +237,18 @@ def _callgraph_summary(graph: dict[str, Any]) -> dict[str, Any]:
     graph["module_usage_total"] = len(usage)
     graph["analyzed_modules"] = _clip_value(graph.get("analyzed_modules") or [])
     return graph
+
+
+async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject: str) -> dict[str, Any]:
+    """The waivers `query` selects, bounded, each marked with whether it is still active."""
+    now = datetime.now(timezone.utc)
+    waivers, waivers_total = await bounded_read(db["waivers"], query, subject=subject, limit=_WAIVER_READ)
+    return {
+        "waivers": [
+            {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
+        ],
+        "waivers_total": waivers_total,
+    }
 
 
 def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
@@ -914,28 +927,10 @@ class ChatToolRegistry:
         if not project:
             return {"error": _ERR_PROJECT_NOT_FOUND}
         await _gated(authorize_waiver_read(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
-        now = datetime.now(timezone.utc)
-        waivers, waivers_total = await bounded_read(
-            ctx.db["waivers"], {"project_id": project["_id"]}, subject="waivers", limit=_WAIVER_READ
-        )
-        return {
-            "waivers": [
-                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
-            ],
-            "waivers_total": waivers_total,
-        }
+        return await _waiver_rows(ctx.db, {"project_id": project["_id"]}, "waivers")
 
     async def _tool_list_global_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        now = datetime.now(timezone.utc)
-        waivers, waivers_total = await bounded_read(
-            ctx.db["waivers"], {"project_id": None}, subject="global waivers", limit=_WAIVER_READ
-        )
-        return {
-            "waivers": [
-                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
-            ],
-            "waivers_total": waivers_total,
-        }
+        return await _waiver_rows(ctx.db, {"project_id": None}, "global waivers")
 
     async def _tool_get_top_priority_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         limit = ctx.args["limit"]
@@ -1396,13 +1391,9 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_expiring_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        from datetime import datetime as _dt
-        from datetime import timedelta as _td
-        from datetime import timezone as _tz
-
         days = ctx.args["days"]
-        now = _dt.now(_tz.utc)
-        cutoff = now + _td(days=days)
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(days=days)
         query: dict[str, Any] = {"expiration_date": {"$gte": now, "$lte": cutoff}}
         scope = await self._in_scope(ctx)
         if scope:
@@ -1598,8 +1589,6 @@ class ChatToolRegistry:
         return {"settings": SystemSettingsResponse.model_validate(stored).model_dump(mode="json")}
 
     async def _tool_get_system_health(self, ctx: _ToolContext) -> dict[str, Any]:
-        from app.core.cache import cache_service
-
         return {"cache": await cache_service.health_check()}
 
     async def _tool_list_crypto_assets(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1838,12 +1827,10 @@ class ChatToolRegistry:
 
     async def _heads_in_scope(self, ctx: _ToolContext) -> tuple[dict[str, str], dict[str, str]]:
         """Head scan ids and names by project id, for the `project_id` argument or the whole scope in one read."""
-        from app.services.releases import resolve_scan_ids
-
         if ctx.args.get("project_id"):
             project = await self._require_project(ctx)
             scan_id = await self._head_scan_id(project, ctx.db)
             return ({project["_id"]: scan_id} if scan_id else {}), {project["_id"]: project.get("name", "")}
         projects = await read_scope_projects(ctx.db, ctx.user_project_query)
-        heads = await resolve_scan_ids(ctx.db, [p.id for p in projects], projects=projects)
+        heads = await ScanRepository(ctx.db).get_latest_active_scan_ids(list(projects))
         return heads, {p.id: p.name for p in projects}
