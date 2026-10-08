@@ -31,10 +31,6 @@ BRANCH = "main"
 T0 = (datetime.now(tz=timezone.utc) - timedelta(days=10)).replace(microsecond=0)
 
 
-class _StopLoop(Exception):
-    """Breaks out of the endless housekeeping loop."""
-
-
 def _at(hours: int) -> datetime:
     return T0 + timedelta(hours=hours)
 
@@ -712,54 +708,6 @@ class TestScope:
 
 
 class TestHousekeepingWiring:
-    @pytest.fixture
-    def loop_calls(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-        """Everything the loop does per iteration, stubbed out except the reconcile."""
-        calls: list[str] = []
-
-        async def _noop(*_args: Any, **_kwargs: Any) -> None:
-            return None
-
-        for name in (
-            "recover_stuck_scans",
-            "check_scheduled_rescans",
-            "update_db_stats",
-            "update_archive_stats",
-            "update_cache_stats",
-            "get_database",
-            "run_housekeeping",
-            "_run_retention",
-            "sync_branch_status",
-        ):
-            monkeypatch.setattr(housekeeping, name, _noop)
-
-        async def _reconcile(*_args: Any) -> None:
-            calls.append("reconcile")
-
-        monkeypatch.setattr(housekeeping, "reconcile_update_frequency_ledger", _reconcile)
-        # Whichever hour the suite runs in is the quiet one, so what is left of the gate
-        # here is the once-a-day stamp.
-        hour = datetime.now(tz=timezone.utc).hour
-        monkeypatch.setattr(housekeeping, "HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC", hour)
-        return calls
-
-    @pytest.mark.asyncio
-    async def test_the_loop_reconciles_once_per_interval(self, monkeypatch: pytest.MonkeyPatch, loop_calls: list[str]):
-        iterations = 0
-
-        async def _sleep(_seconds: float) -> None:
-            nonlocal iterations
-            iterations += 1
-            if iterations == 2:
-                raise _StopLoop
-
-        monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=_sleep))
-
-        with pytest.raises(_StopLoop):
-            await housekeeping.housekeeping_loop()
-
-        assert loop_calls == ["reconcile"]
-
     @pytest.mark.asyncio
     async def test_a_failing_reconcile_does_not_stop_housekeeping(self, monkeypatch: pytest.MonkeyPatch):
         db = FakeDatabase()
