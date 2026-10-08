@@ -402,7 +402,7 @@ async def test_a_crypto_framework_reads_only_the_finding_types_its_controls_map_
 
 
 @pytest.mark.asyncio
-async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
+async def test_the_pqc_plan_loads_neither_findings_nor_assets(db):
     await seed_crypto_policies(db)
     await _store_project(db, "p1")
     finding_reads, asset_reads = _reads(db.findings), _reads(db.crypto_assets)
@@ -410,6 +410,36 @@ async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
     await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
 
     assert finding_reads == asset_reads == []
+
+
+_AES = CryptoAsset(
+    project_id="p1",
+    scan_id="scan-p1",
+    bom_ref="crypto/algorithm/aes",
+    name="AES",
+    asset_type=CryptoAssetType.ALGORITHM,
+    primitive=CryptoPrimitive.BLOCK_CIPHER,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("assets", "gaps"),
+    [([], ["project 'name-p1' has no crypto assets in scan scan-p1"]), ([_AES], [])],
+    ids=["no-inventory", "nothing-quantum-vulnerable"],
+)
+async def test_the_pqc_plan_names_a_scan_without_crypto_inventory_as_a_gap(db, assets, gaps):
+    await seed_crypto_policies(db)
+    scan_id = await _store_project(db, "p1")
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, assets)
+
+    _, evaluation = await ComplianceReportEngine().evaluate(
+        db, _project_scope(), FRAMEWORK_REGISTRY[ReportFramework.PQC_MIGRATION_PLAN]
+    )
+
+    assert evaluation.controls == []
+    assert evaluation.coverage.gaps == gaps
+    assert evaluation.coverage.complete is not gaps
 
 
 @pytest.mark.asyncio
@@ -451,7 +481,14 @@ async def test_an_empty_scope_withholds_every_verdict_its_absence_would_carry(db
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key", [k for k in ReportFramework if k not in engine_module._NON_CRYPTO_FRAMEWORKS])
+@pytest.mark.parametrize(
+    "key",
+    [
+        k
+        for k in ReportFramework
+        if k not in engine_module._NON_CRYPTO_FRAMEWORKS and k is not ReportFramework.PQC_MIGRATION_PLAN
+    ],
+)
 async def test_a_scan_without_crypto_inventory_withholds_all_but_the_policy_disabled_verdicts(db, key):
     await seed_crypto_policies(db)
     await _store_project(db, "p1")

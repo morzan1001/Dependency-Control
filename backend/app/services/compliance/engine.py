@@ -43,9 +43,7 @@ _REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
 # A large-scope PDF layout peaks at hundreds of MB, and under the GIL parallel renders finish no sooner.
 _RENDER_SLOT = asyncio.Semaphore(1)
 
-_NON_CRYPTO_FRAMEWORKS = frozenset(
-    {ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT, ReportFramework.PQC_MIGRATION_PLAN}
-)
+_NON_CRYPTO_FRAMEWORKS = frozenset({ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT})
 _BASE_FINDING_FIELDS = ("type", "severity", "scan_id", "waived", "waiver_reason")
 _CRYPTO_FINDING_FIELDS = ("details.rule_id", "details.matched_rules.rule_id", "details.bom_ref")
 _CRYPTO_ASSET_FIELDS = (
@@ -151,8 +149,13 @@ class ComplianceReportEngine:
             findings = await self._collect_findings(db, scan_ids, clause, fields)
         assets: list[CryptoAsset] = []
         if framework.key not in _NON_CRYPTO_FRAMEWORKS:
-            assets = await self._collect_crypto_assets(db, scan_by_project)
-            inventoried = {asset.scan_id for asset in assets}
+            asset_query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": scan_ids}}
+            if framework.key == ReportFramework.PQC_MIGRATION_PLAN:
+                # The plan generator reads its own assets; the gap needs only the scans holding one.
+                inventoried = set(await db.crypto_assets.distinct("scan_id", asset_query))
+            else:
+                assets = await self._collect_crypto_assets(db, asset_query)
+                inventoried = {asset.scan_id for asset in assets}
             gaps += [
                 f"project '{project.name}' has no crypto assets in scan {scan_id}"
                 for project in projects
@@ -216,12 +219,7 @@ class ComplianceReportEngine:
                 gaps.append(f"project '{project.name}' runs none of {', '.join(sorted(switchable))}")
         return scan_by_project, gaps, projects
 
-    async def _collect_crypto_assets(
-        self,
-        db: AsyncIOMotorDatabase,
-        scan_by_project: dict[str, str],
-    ) -> list[CryptoAsset]:
-        query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": list(scan_by_project.values())}}
+    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[CryptoAsset]:
         docs = await CryptoAssetRepository(db).find_all_raw(query, dict.fromkeys(_CRYPTO_ASSET_FIELDS, 1))
         return [CryptoAsset.model_validate(doc) for doc in docs]
 
