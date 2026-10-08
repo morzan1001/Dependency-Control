@@ -71,7 +71,8 @@ async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase)
     claims = security.decode_session_token(token, expected_type)
     if claims is None:
         raise TokenRejected("invalid")
-    if await TokenBlacklistRepository(db).is_blacklisted(claims.jti):
+    # last_logout_at revokes access tokens; the blacklist is what spends a rotated refresh token.
+    if expected_type == "refresh" and await TokenBlacklistRepository(db).is_blacklisted(claims.jti):
         raise TokenRejected("blacklisted")
 
     user = await UserRepository(db).get_raw_by_id(claims.sub)

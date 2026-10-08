@@ -308,16 +308,23 @@ async def test_a_reset_link_gives_an_account_migrated_from_sso_its_first_passwor
     assert login.status_code == _OK
 
 
-@pytest.mark.asyncio
-async def test_logout_with_a_lowercase_scheme_revokes_the_token_itself(api, db):
-    await _add_bob(db)
-    token = security.create_access_token(_BOB_ID)
+def _minted_a_second_ago(token):
+    claims = _unverified_claims(token)
+    return jwt.encode({**claims, "iat": claims["iat"] - 1}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-    response = await api.post(f"{_API}/logout", headers={"Authorization": f"bearer {token}"})
+
+@pytest.mark.asyncio
+async def test_logout_with_a_lowercase_scheme_ends_the_session_without_a_blacklist_write(api, db):
+    await _add_bob(db)
+    access, refresh = (_minted_a_second_ago(token) for token in security.create_token_pair(_BOB_ID, []))
+
+    response = await api.post(f"{_API}/logout", headers={"Authorization": f"bearer {access}"})
+    me = await api.get(f"{_API}/users/me", headers={"Authorization": f"Bearer {access}"})
+    refreshed = await _refresh(api, refresh)
 
     assert response.status_code == _OK
-    entry = await db.token_blacklist.find_one({"_id": _unverified_claims(token)["jti"]})
-    assert entry["reason"] == "logout"
+    assert (me.status_code, refreshed.status_code) == (_UNAUTHORIZED, _FORBIDDEN)
+    assert await db.token_blacklist.count_documents({}) == 0
 
 
 @pytest.mark.asyncio

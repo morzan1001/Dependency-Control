@@ -291,20 +291,9 @@ async def create_user(
 
 
 @router.post("/logout", summary="Logout user", responses=RESP_AUTH)
-async def logout(
-    token: Annotated[str, Depends(deps.oauth2_scheme)],
-    current_user: Annotated[User, Depends(deps.get_current_user)],
-    db: DatabaseDep,
-) -> LogoutResponse:
-    """Logout the current user by blacklisting the token JTI and bumping last_logout_at."""
-    claims = security.decode_session_token(token, "access")
-    # None only when the token expired after get_current_user accepted it.
-    if claims:
-        await TokenBlacklistRepository(db).blacklist_token(
-            claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc), reason="logout"
-        )
+async def logout(current_user: Annotated[User, Depends(deps.get_current_user)], db: DatabaseDep) -> LogoutResponse:
+    """Logout the current user by bumping last_logout_at, which revokes every token issued before it."""
     await UserRepository(db).update(current_user.id, {"last_logout_at": datetime.now(timezone.utc)})
-
     return LogoutResponse(message="Successfully logged out")
 
 
