@@ -37,7 +37,9 @@ describe('CreateGlobalWaiverDialog', () => {
   it.each([
     ['CVE-2021-23337', undefined, 'CVE-2021-23337'],
     ['GHSA-35jh-r3h4-6jhm', undefined, 'GHSA-35jh-r3h4-6jhm'],
+    ['GO-2022-0969', undefined, 'GO-2022-0969'],
     ['lodash:4.17.20', 'lodash:4.17.20', undefined],
+    ['go-md2man:2.0.2', 'go-md2man:2.0.2', undefined],
   ])('sends %s where the waiver can match it', (entered, findingId, vulnerabilityId) => {
     render(<CreateGlobalWaiverDialog open onOpenChange={() => {}} />)
     const dialog = screen.getByRole('dialog')

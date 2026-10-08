@@ -33,7 +33,7 @@ const FINDING_TYPES = [
     { value: 'other', label: 'Other' },
 ] as const
 // Vulnerability findings are stored per '<component>:<version>'; an advisory id only matches as vulnerability_id.
-const ADVISORY_ID = /^(CVE|GHSA)-/i
+const ADVISORY_ID = /^(CVE|GHSA|GO|PYSEC|RUSTSEC|OSV)-[^:]*$/i
 
 interface CreateGlobalWaiverDialogProps {
     open: boolean
