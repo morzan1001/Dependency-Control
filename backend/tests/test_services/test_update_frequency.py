@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import Counter
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
@@ -316,16 +316,14 @@ class FakeAnalysisRepo(AnalysisResultRepository):
         docs = [{"_id": f"result-{index}", **result} for index, result in enumerate(results)]
         super().__init__(_seeded(self.collection_name, docs))
         self.queries: list[dict[str, Any]] = []
+        find = self.collection.find
 
-    async def find_many_raw(self, query: dict[str, Any], *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        self.queries.append(query)
-        return await super().find_many_raw(query, *args, **kwargs)
+        # Hooked on the collection so a read through any inherited repository method is recorded too.
+        def recording_find(query: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Any:
+            self.queries.append(query or {})
+            return find(query, *args, **kwargs)
 
-    def iterate_raw(
-        self, query: dict[str, Any] | None = None, *args: Any, **kwargs: Any
-    ) -> AsyncIterator[dict[str, Any]]:
-        self.queries.append(query or {})
-        return super().iterate_raw(query, *args, **kwargs)
+        self.collection.find = recording_find
 
 
 async def _compute(scans, deps, results=(), **kwargs: Any) -> UpdateFrequencyMetrics:
@@ -1371,7 +1369,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
-        # Must NOT issue a single bulk find_many across all scan_ids.
+        # Must NOT issue a single bulk read across all scan_ids.
         scans = [_make_scan(f"s{i}", i) for i in range(5)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", "1.0.0")] for i in range(5)}
         results = [_outdated_result(f"s{i}", []) for i in range(5)]
@@ -1380,12 +1378,7 @@ class TestStreamingOrchestrator:
 
         await _compute(scans, deps, analysis_repo=analysis_repo)
 
-        # No call should use {"$in": [...all scan ids...]}; calls are per-scan.
-        for q in analysis_repo.queries:
-            scan_filter = q.get("scan_id")
-            assert not isinstance(scan_filter, dict), (
-                f"analysis results loaded with bulk scan filter {scan_filter}; expected per-scan loading"
-            )
+        assert [q.get("scan_id") for q in analysis_repo.queries] == [f"s{i}" for i in range(5)]
 
     @pytest.mark.asyncio
     async def test_completed_filter_applied_before_limit(self):
