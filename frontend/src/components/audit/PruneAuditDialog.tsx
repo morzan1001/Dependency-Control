@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 interface Props {
   open: boolean;
   onClose: () => void;
-  onConfirm: (beforeIsoDate: string) => Promise<void>;
+  onConfirm: (beforeIsoDate: string) => void;
   busy?: boolean;
 }
 
@@ -22,11 +22,7 @@ export function PruneAuditDialog({ open, onClose, onConfirm, busy }: Readonly<Pr
   const defaultDate = useMemo(() => defaultCutoffISO(), []);
   const [beforeDate, setBeforeDate] = useState<string>(defaultDate);
 
-  const handleConfirm = async () => {
-    if (!beforeDate) return;
-    const iso = new Date(`${beforeDate}T00:00:00.000Z`).toISOString();
-    await onConfirm(iso);
-  };
+  const handleConfirm = () => onConfirm(new Date(`${beforeDate}T00:00:00.000Z`).toISOString());
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
