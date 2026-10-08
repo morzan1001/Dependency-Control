@@ -345,7 +345,7 @@ async def _hotspots(
     ]
 
     if mongo_sort_field:
-        pipeline.append({"$sort": {mongo_sort_field: sort_direction}})
+        pipeline.append({"$sort": {mongo_sort_field: sort_direction, "_id": 1}})
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
 
@@ -399,6 +399,8 @@ async def _hotspots(
         "risk": lambda x: x.max_risk_score or 0,
     }
     if post_sort_by:
+        # $group emits its rows in no fixed order, so ties need an order of their own to page through.
+        hotspots.sort(key=lambda x: (x.component, x.version))
         hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=sort_direction == -1)
         hotspots = hotspots[skip : skip + limit]
     return hotspots

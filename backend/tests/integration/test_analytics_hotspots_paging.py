@@ -1,6 +1,7 @@
 """Hotspots page through one total order, and only by the fields they can order by."""
 
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,7 +12,15 @@ _HEAD = "scan-head"
 _PATH = "/api/v1/analytics/hotspots"
 
 
+@pytest.fixture(autouse=True)
+def _no_live_enrichment(monkeypatch):
+    from app.api.v1.endpoints.analytics import risk
+
+    monkeypatch.setattr(risk.vulnerability_enrichment_service, "enrich_cves", AsyncMock(return_value={}))
+
+
 async def _seed_groups(db, count: int) -> None:
+    """``count`` component@version groups that tie on every sort key but the component name."""
     now = datetime.now(timezone.utc)
     await db.scans.insert_one(
         {"_id": _HEAD, "project_id": _PROJECT, "branch": "main", "status": "completed", "created_at": now}
@@ -21,13 +30,13 @@ async def _seed_groups(db, count: int) -> None:
         [
             {
                 "_id": f"f-{index}",
-                "finding_id": f"lib-{index}:1.0.0",
+                "finding_id": f"lib-{index // 2}:1.0.{index % 2}",
                 "scan_id": _HEAD,
                 "project_id": _PROJECT,
                 "type": "vulnerability",
                 "severity": "HIGH",
-                "component": f"lib-{index:03d}",
-                "version": "1.0.0",
+                "component": f"lib-{index // 2:03d}",
+                "version": f"1.0.{index % 2}",
                 "waived": False,
                 "scan_created_at": now,
                 "details": {"vulnerabilities": [{"id": f"CVE-2026-{index:04d}", "severity": "HIGH"}]},
@@ -45,3 +54,20 @@ async def test_a_sort_field_hotspots_cannot_order_by_is_refused(client, db, owne
 
     assert response.status_code == 422, f"{len(response.json())} rows served"
     assert [error["loc"] for error in response.json()["detail"]] == [["query", "sort_by"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sort_by", ["finding_count", "component", "first_seen"])
+async def test_infinite_scroll_shows_every_group_exactly_once(client, db, owner_auth_headers_proj, sort_by):
+    groups, page = 300, 100
+    await _seed_groups(db, groups)
+
+    seen: list[tuple[str, str]] = []
+    for skip in range(0, groups, page):
+        response = await client.get(
+            _PATH, params={"sort_by": sort_by, "skip": skip, "limit": page}, headers=owner_auth_headers_proj
+        )
+        assert response.status_code == 200, response.text
+        seen += [(row["component"], row["version"]) for row in response.json()]
+
+    assert len(seen) == len(set(seen)) == groups

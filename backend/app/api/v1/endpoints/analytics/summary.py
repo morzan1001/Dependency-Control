@@ -208,7 +208,7 @@ async def _top_dependencies(
                 "total_occurrences": 1,
             }
         },
-        {"$sort": {"project_count": -1, "total_occurrences": -1}},
+        {"$sort": {"project_count": -1, "total_occurrences": -1, "_id": 1}},
         {"$limit": limit},
     ]
 
