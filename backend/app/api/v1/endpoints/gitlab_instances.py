@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import httpx
@@ -38,22 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
-    return GitLabInstanceResponse(
-        id=str(instance.id),
-        name=instance.name,
-        url=instance.url,
-        description=instance.description,
-        is_active=instance.is_active,
-        oidc_audience=instance.oidc_audience,
-        auto_create_projects=instance.auto_create_projects,
-        sync_teams=instance.sync_teams,
-        team_sync_depth=getattr(instance, "team_sync_depth", 1),
-        allowed_namespaces=instance.allowed_namespaces,
-        created_at=instance.created_at,
-        created_by=instance.created_by,
-        last_modified_at=instance.last_modified_at,
-        token_configured=bool(instance.access_token),
-    )
+    return GitLabInstanceResponse(**instance.model_dump(), token_configured=bool(instance.access_token))
 
 
 @router.get("/", response_model=Page[GitLabInstanceResponse], responses=RESP_AUTH)
@@ -97,20 +81,7 @@ async def create_instance(
 
     await assert_unique(instance_repo, _LABEL, url=instance_data.url, name=instance_data.name)
 
-    new_instance = GitLabInstance(
-        name=instance_data.name,
-        url=instance_data.url,
-        description=instance_data.description,
-        is_active=instance_data.is_active,
-        access_token=instance_data.access_token,
-        oidc_audience=instance_data.oidc_audience,
-        auto_create_projects=instance_data.auto_create_projects,
-        sync_teams=instance_data.sync_teams,
-        team_sync_depth=instance_data.team_sync_depth,
-        allowed_namespaces=instance_data.allowed_namespaces,
-        created_by=str(current_user.id),
-        created_at=datetime.now(timezone.utc),
-    )
+    new_instance = GitLabInstance(**instance_data.model_dump(), created_by=str(current_user.id))
 
     if new_instance.access_token:
         gitlab_service = GitLabService(new_instance)

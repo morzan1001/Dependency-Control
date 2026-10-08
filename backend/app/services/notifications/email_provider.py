@@ -11,7 +11,6 @@ import aiosmtplib
 from app.core.constants import SMTP_TIMEOUT_SECONDS
 from app.core.metrics import notifications_failed_total, notifications_sent_total
 from app.models.system import SystemSettings
-from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ _UTF8_QP = Charset("utf-8")
 _UTF8_QP.body_encoding = QP
 
 
-class EmailProvider(NotificationProvider):
+class EmailProvider:
     def _build_message(
         self,
         settings: SystemSettings,
@@ -54,15 +53,16 @@ class EmailProvider(NotificationProvider):
             msg.attach(logo)
         return msg
 
-    async def send(  # type: ignore[override]
+    async def send(
         self,
         destination: str,
         subject: str,
         message: str,
+        *,
+        system_settings: SystemSettings,
         html_message: str | None = None,
-        system_settings: SystemSettings | None = None,
     ) -> bool:
-        if not (system_settings and system_settings.email_configured):
+        if not system_settings.email_configured:
             logger.warning("SMTP host or sender address not configured. Skipping email.")
             return False
 

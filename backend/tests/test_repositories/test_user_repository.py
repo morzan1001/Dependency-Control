@@ -5,6 +5,7 @@ import pytest_asyncio
 
 from app.repositories.users import UserRepository
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
 @pytest_asyncio.fixture
@@ -72,6 +73,14 @@ async def test_the_batched_verified_email_lookup_matches_as_the_single_one_does(
     await repo.create_raw({"_id": "u2", "username": "bob", "email": "bob@corp.com", "permissions": []})
     await repo.create_raw({"_id": "u3", "username": "carl", "email": "carl@corp.com", "is_verified": True})
 
-    found = await repo.find_raw_by_verified_emails(["ALICE@corp.com", "bob@corp.com", "c.rl@corp.com"])
+    found = await repo.verified_users_by_email(["ALICE@corp.com", "bob@corp.com", "c.rl@corp.com"])
 
-    assert [user["_id"] for user in found] == ["u1"]
+    assert {email: user["_id"] for email, user in found.items()} == {"alice@corp.com": "u1"}
+
+
+@pytest.mark.asyncio
+async def test_the_batched_verified_email_lookup_sends_no_query_for_no_emails():
+    users = create_mock_collection()
+
+    assert await UserRepository(create_mock_db({"users": users})).verified_users_by_email(set()) == {}
+    users.find.assert_not_called()

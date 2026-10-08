@@ -234,6 +234,22 @@ async def test_an_engine_result_over_16_mib_downloads_as_the_stored_file(client,
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+async def test_a_result_whose_stored_file_is_gone_is_404(client, db, member_auth_headers):
+    scan = await _scan_with_sboms(db)
+    await AnalysisResultRepository(db).save_result(scan.id, "trivy", {"Results": []}, source="SBOM #1")
+    row = await db.analysis_results.find_one({"scan_id": scan.id})
+    await _delete_file(db, {"gridfs_id": row["result_gridfs_id"]})
+
+    served = await client.get(
+        f"/api/v1/projects/scans/{scan.id}/results/{quote(row['_id'], safe='')}", headers=member_auth_headers
+    )
+
+    assert served.status_code == 404, served.text[:500]
+    assert served.json() == {"detail": "Analysis result file not found in GridFS"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_legacy_inline_result_row_is_served_from_the_row(client, db, member_auth_headers):
     scan = await _scan_with_sboms(db)
     result = {"findings": [_SECRET_FINDING]}

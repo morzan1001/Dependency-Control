@@ -1,7 +1,7 @@
 """Repository for user database operations."""
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -69,11 +69,18 @@ class UserRepository(BaseRepository[User]):
         """The lookup identity matching must use: an unverified address names whoever typed it."""
         return await self.find_one_raw({**_email_query(email), "is_verified": True})
 
-    async def find_raw_by_verified_emails(self, emails: list[str]) -> list[dict[str, Any]]:
-        """Every verified account one of ``emails`` names, matched as ``get_raw_by_verified_email`` does."""
+    async def verified_users_by_email(self, emails: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Lower-cased email -> the verified account it names, matched as ``get_raw_by_verified_email`` does."""
         patterns = [re.compile(f"^{re.escape(email)}$", re.IGNORECASE) for email in emails]
+        if not patterns:
+            return {}
         cursor = self.collection.find({"email": {"$in": patterns}, "is_verified": True})
-        return await cursor.to_list(None)
+        return {user["email"].lower(): user for user in await cursor.to_list(None)}
+
+    async def usernames_by_id(self, user_ids: Iterable[str]) -> dict[str, str]:
+        """Id -> username of every account among ``user_ids``, in one read; a deleted account is absent."""
+        cursor = self.collection.find({"_id": {"$in": sorted(set(user_ids))}}, {"username": 1})
+        return {doc["_id"]: doc["username"] async for doc in cursor}
 
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         cursor = self.collection.find({"_id": {"$in": user_ids}})

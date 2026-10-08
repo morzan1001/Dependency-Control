@@ -128,7 +128,7 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_lookup_group",
+                "get_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=False, group=None)),
             ),
         ):
@@ -158,7 +158,7 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_lookup_group",
+                "get_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=True, group=None)),
             ),
         ):
@@ -216,7 +216,9 @@ def _api_member(member_id, username, access_level, *, state="active", membership
 
 
 class TestOnlyActiveMembersWithAccessAreOwners:
-    _USERS: ClassVar = {f"{name}@test.com": {"_id": f"u-{name}"} for name in ("ada", "bob", "cy")}
+    _USERS: ClassVar = {
+        f"{name}@test.com": {"_id": f"u-{name}", "email": f"{name}@test.com"} for name in ("ada", "bob", "cy")
+    }
 
     def _written(self, api_members):
         service = _service()
@@ -224,7 +226,9 @@ class TestOnlyActiveMembersWithAccessAreOwners:
             make_repositories(existing_team=_existing_team([_SYNCED, _MANUAL])) as (team_repo, user_repo),
             patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=api_members)),
         ):
-            user_repo.get_raw_by_verified_email.side_effect = self._USERS.get
+            user_repo.verified_users_by_email.side_effect = lambda emails: {
+                email: self._USERS[email] for email in emails if email in self._USERS
+            }
             _run(service)
         return _written_subset(team_repo)
 
@@ -376,17 +380,6 @@ class TestTheMemberFetchKeepsEmptyAndFailureApart:
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=paginated)):
             assert asyncio.run(service.get_group_members(42)) == expected
 
-    @pytest.mark.parametrize(
-        ("paginated", "expected"),
-        [([], []), (None, None)],
-        ids=["an empty project stays an empty list", "a failed fetch stays None"],
-    )
-    def test_project_members(self, paginated, expected):
-        service = _service()
-
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=paginated)):
-            assert asyncio.run(service.get_project_members(42)) == expected
-
 
 class TestTheOwnerBudget:
     """A team created for an ownership write the cap then refuses is a team nobody owns anything through."""
@@ -404,7 +397,7 @@ class TestTheOwnerBudget:
 
         assert result.team_ids is None
         team_repo.create_bound.assert_not_awaited()
-        user_repo.get_raw_by_verified_email.assert_not_awaited()
+        user_repo.verified_users_by_email.assert_not_awaited()
 
     def test_a_bound_team_still_answers_without_room(self):
         service = _service()

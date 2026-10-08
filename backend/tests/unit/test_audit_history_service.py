@@ -8,6 +8,7 @@ from app.models.user import User
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.schemas.policy_audit import PolicyAuditAction
 from app.services.audit.history import record_policy_change
+from app.services.webhooks import webhook_service
 
 
 def _rule(rule_id):
@@ -62,17 +63,14 @@ async def test_record_policy_change_survives_webhook_failure():
     """Webhook dispatch failure must not block the audit persist."""
     db = MagicMock()
     insert_mock = AsyncMock()
-    dispatch_mock = AsyncMock(side_effect=RuntimeError("webhook down"))
+    delivery_mock = AsyncMock(side_effect=RuntimeError("webhook down"))
     notify_mock = AsyncMock()
     with (
         patch(
             "app.services.audit.history.PolicyAuditRepository",
             return_value=MagicMock(create=insert_mock),
         ),
-        patch(
-            "app.services.audit.history._dispatch_webhook",
-            new=dispatch_mock,
-        ),
+        patch.object(webhook_service, "trigger_webhooks", new=delivery_mock),
         patch(
             "app.services.audit.history._notify_relevant_users",
             new=notify_mock,
@@ -91,6 +89,7 @@ async def test_record_policy_change_survives_webhook_failure():
         )
 
     insert_mock.assert_awaited_once()
+    delivery_mock.assert_awaited_once()
     assert entry is not None
     notify_mock.assert_awaited_once()
 

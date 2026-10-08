@@ -3,10 +3,11 @@
 import ipaddress
 import re
 from datetime import datetime
+from typing import Annotated
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.config import settings
 from app.core.constants import (
@@ -95,9 +96,9 @@ def validate_webhook_event_type(event_type: str) -> str:
     return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
 
 
-def validate_webhook_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+def validate_webhook_headers(headers: dict[str, str]) -> dict[str, str]:
     """Delivery sends custom headers as latin-1 beside its own protocol headers, which they may not shadow."""
-    for name, value in (headers or {}).items():
+    for name, value in headers.items():
         lowered = name.lower()
         if not _HEADER_NAME.fullmatch(name) or lowered in _RESERVED_HEADER_NAMES or lowered.startswith("x-webhook-"):
             raise ValueError(f"Header name '{name}' is not allowed")
@@ -122,34 +123,32 @@ def detect_webhook_type(url: str) -> WebhookType:
     return "generic"
 
 
+WebhookUrl = Annotated[str, AfterValidator(validate_webhook_url)]
+WebhookEvents = Annotated[list[str], AfterValidator(validate_webhook_events)]
+WebhookHeaders = Annotated[dict[str, str], AfterValidator(validate_webhook_headers)]
+
+
 class WebhookCreate(BaseModel):
     """Schema for creating a new webhook."""
 
-    url: str
-    events: list[str]
+    url: WebhookUrl
+    events: WebhookEvents
     secret: str | None = None
-    headers: dict[str, str] | None = None
+    headers: WebhookHeaders | None = None
     webhook_type: WebhookType | None = None
-
-    _events_valid = field_validator("events")(validate_webhook_events)
-    _url_valid = field_validator("url")(validate_webhook_url)
-    _headers_valid = field_validator("headers")(validate_webhook_headers)
 
 
 class WebhookUpdate(BaseModel):
     """Only the sent fields change; a null clears secret or headers and is refused for the rest."""
 
-    url: str | None = None
-    events: list[str] | None = None
+    url: WebhookUrl | None = None
+    events: WebhookEvents | None = None
     is_active: bool | None = None
     secret: str | None = None
-    headers: dict[str, str] | None = None
+    headers: WebhookHeaders | None = None
     webhook_type: WebhookType | None = None
 
     _not_null = field_validator("url", "events", "is_active", "webhook_type")(reject_null)
-    _events_valid = field_validator("events")(validate_webhook_events)
-    _url_valid = field_validator("url")(validate_webhook_url)
-    _headers_valid = field_validator("headers")(validate_webhook_headers)
 
 
 class WebhookResponse(BaseModel):

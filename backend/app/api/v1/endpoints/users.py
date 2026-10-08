@@ -14,7 +14,6 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
     check_admin_or_self,
     ensure_can_manage_target,
-    fetch_updated_user,
     get_user_or_404,
 )
 from app.api.v1.helpers.auth import (
@@ -145,7 +144,7 @@ async def update_user_me(
     if update_data:
         await UserRepository(db).update(current_user.id, update_data)
 
-    return await fetch_updated_user(current_user.id, db)
+    return await get_user_or_404(current_user.id, db)
 
 
 @router.post("/me/email", response_model=UserResponse, responses=RESP_AUTH_400_501)
@@ -172,7 +171,7 @@ async def request_email_change(
     await user_repo.update(current_user.id, {"pending_email": email_in.email})
     send_email_change_email(background_tasks, current_user.id, email_in.email, system_settings)
 
-    return await fetch_updated_user(current_user.id, db)
+    return await get_user_or_404(current_user.id, db)
 
 
 @router.get("/{user_id}", response_model=UserResponse, responses=RESP_AUTH_404)
@@ -230,7 +229,7 @@ async def update_user(
     if update_data:
         await user_repo.update(user_id, update_data)
 
-    return await fetch_updated_user(user_id, db)
+    return await get_user_or_404(user_id, db)
 
 
 @router.post("/me/migrate", response_model=UserResponse, responses=RESP_AUTH_400)
@@ -252,7 +251,7 @@ async def migrate_to_local(
         {"hashed_password": hashed_password, "auth_provider": AUTH_PROVIDER_LOCAL},
     )
 
-    return await fetch_updated_user(current_user.id, db)
+    return await get_user_or_404(current_user.id, db)
 
 
 @router.post("/{user_id}/migrate", response_model=UserResponse, responses=RESP_AUTH_400_404)
@@ -271,7 +270,7 @@ async def migrate_user_to_local(
     user_repo = UserRepository(db)
     await user_repo.update(user_id, {"auth_provider": AUTH_PROVIDER_LOCAL})
 
-    return await fetch_updated_user(user_id, db)
+    return await get_user_or_404(user_id, db)
 
 
 @router.post("/{user_id}/reset-password", responses=RESP_AUTH_400_404_501)
@@ -326,7 +325,7 @@ async def update_password_me(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)
     )
 
-    return await fetch_updated_user(current_user.id, db)
+    return await get_user_or_404(current_user.id, db)
 
 
 @router.post("/me/2fa/setup", response_model=User2FASetup, responses=RESP_AUTH_400)
@@ -340,6 +339,8 @@ async def setup_2fa(
             status_code=400,
             detail="2FA must be configured in your identity provider, not in this application",
         )
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="2FA is already enabled; disable it first")
 
     secret = pyotp.random_base32()
 
@@ -371,12 +372,10 @@ async def enable_2fa(
             detail="2FA must be configured in your identity provider, not in this application",
         )
 
-    user = await get_user_or_404(current_user.id, db)
-
-    if not security.verify_password(verify_in.password, user["hashed_password"]):
+    if not security.verify_password(verify_in.password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Invalid password")
 
-    secret = user.get("totp_secret")
+    secret = current_user.totp_secret
 
     if not secret:
         raise HTTPException(status_code=400, detail="2FA setup not initiated")
@@ -392,7 +391,7 @@ async def enable_2fa(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)
     )
 
-    return await fetch_updated_user(current_user.id, db)
+    return await get_user_or_404(current_user.id, db)
 
 
 @router.post("/me/2fa/disable", response_model=UserResponse, responses=RESP_AUTH_400)
@@ -403,12 +402,10 @@ async def disable_2fa(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Disable 2FA."""
-    user = await get_user_or_404(current_user.id, db)
-
-    if not user.get("totp_enabled"):
+    if not current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="2FA is not enabled for your account")
 
-    if not security.verify_password(disable_in.password, user["hashed_password"]):
+    if not security.verify_password(disable_in.password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Invalid password")
 
     user_repo = UserRepository(db)
@@ -420,7 +417,7 @@ async def disable_2fa(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db), by_admin=False
     )
 
-    return await fetch_updated_user(current_user.id, db)
+    return await get_user_or_404(current_user.id, db)
 
 
 @router.post("/{user_id}/2fa/disable", response_model=UserResponse, responses=RESP_AUTH_400_404)
@@ -446,7 +443,7 @@ async def admin_disable_2fa(
         background_tasks, user["email"], user["username"], await deps.get_system_settings(db), by_admin=True
     )
 
-    return await fetch_updated_user(user_id, db)
+    return await get_user_or_404(user_id, db)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, responses=RESP_AUTH_400_404)

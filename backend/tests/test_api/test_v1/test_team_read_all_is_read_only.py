@@ -68,7 +68,7 @@ class TestReadAllHolderReads:
 
         team = await read_team(team_id=_TEAM, current_user=_outsider(Permissions.TEAM_READ_ALL), db=db)
 
-        assert team["_id"] == _TEAM
+        assert team.id == _TEAM
 
     @pytest.mark.asyncio
     async def test_reads_a_team_webhook_with_webhook_read(self):

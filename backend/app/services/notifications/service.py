@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any
 
@@ -9,6 +8,7 @@ from app.core.constants import (
     NOTIFICATION_CHANNEL_SLACK,
     NotificationEvent,
 )
+from app.core.http_utils import gather_bounded
 from app.models.project import Project
 from app.models.user import User
 from app.repositories.projects import ProjectRepository
@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 # Bounds how many recipients are held in memory at once, never how many are reached.
 _FAN_OUT_BATCH_SIZE = 500
+
+# Each send is an SMTP session or a chat request chain, and a relay refuses a client opening hundreds at once.
+_CONCURRENT_SENDS = 10
 
 _PROJECT_RECIPIENT_FIELDS = dict.fromkeys(
     (
@@ -78,17 +81,16 @@ class NotificationService:
                     )
                 )
             if NOTIFICATION_CHANNEL_MATTERMOST in channels and user.mattermost_username:
-                # A username, which the provider resolves to the direct-message channel only with a leading '@'.
                 sends.append(
                     self.mattermost_provider.send(
-                        "@" + user.mattermost_username.lstrip("@"),
+                        user.mattermost_username.lstrip("@"),
                         subject,
                         message,
                         system_settings=system_settings,
                         props=mattermost_props,
                     )
                 )
-        for result in await asyncio.gather(*sends, return_exceptions=True):
+        for result in await gather_bounded(sends, lambda send: send, _CONCURRENT_SENDS):
             if isinstance(result, Exception):
                 logger.error("Notification send failed: %s", result)
 
@@ -204,7 +206,6 @@ async def safe_notify_project_event(
     subject: str,
     message: str,
     *,
-    html_message: str | None = None,
     context: str = "notify",
 ) -> None:
     """Look up the project and dispatch the event to its members; errors are logged, never raised."""
@@ -214,8 +215,6 @@ async def safe_notify_project_event(
         doc = await ProjectRepository(db).find_one_raw({"_id": project_id}, _PROJECT_RECIPIENT_FIELDS)
         if doc is None:
             return
-        await notification_service.notify_project_members(
-            Project(**doc), event_type, subject, message, db, html_message=html_message
-        )
+        await notification_service.notify_project_members(Project(**doc), event_type, subject, message, db)
     except Exception:
         logger.exception("%s: notification dispatch for %s failed (non-blocking)", context, event_type)

@@ -63,8 +63,8 @@ def _service(instance_id: str = _INSTANCE) -> GitHubService:
 def _user_repo(user=None) -> MagicMock:
     """Every verified email the lookup asks about names ``user``."""
     repo = MagicMock()
-    repo.find_raw_by_verified_emails = AsyncMock(
-        side_effect=lambda emails: [{"email": email, **user} for email in emails] if user else []
+    repo.verified_users_by_email = AsyncMock(
+        side_effect=lambda emails: {email.lower(): {"email": email, **user} for email in emails} if user else {}
     )
     repo.create = AsyncMock()
     return repo
@@ -173,7 +173,7 @@ class TestMemberResolution:
             members = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
 
         assert [m.user_id for m in members] == ["u-2"]
-        repo.find_raw_by_verified_emails.assert_awaited_once_with(["Ada@Corp.com"])
+        repo.verified_users_by_email.assert_awaited_once_with({"Ada@Corp.com"})
 
     @pytest.mark.asyncio
     async def test_a_hidden_profile_email_is_never_looked_up(self):
@@ -183,7 +183,7 @@ class TestMemberResolution:
         with _public_email(service, None):
             assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == []
 
-        repo.find_raw_by_verified_emails.assert_not_awaited()
+        repo.verified_users_by_email.assert_awaited_once_with(set())
 
     @pytest.mark.asyncio
     async def test_a_member_with_no_local_account_is_skipped_and_not_created(self, caplog):
@@ -208,7 +208,7 @@ class TestMemberResolution:
         with _refused_profiles(service):
             assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) is None
 
-        repo.find_raw_by_verified_emails.assert_not_awaited()
+        repo.verified_users_by_email.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_every_resolved_member_is_tagged_with_the_instance_that_resolved_them(self):

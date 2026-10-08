@@ -1,4 +1,4 @@
-"""Blacklisted JWT tokens for logout. A MongoDB TTL index removes expired entries."""
+"""Spent refresh-token JTIs, so a rotated refresh token is refused; a TTL index removes expired entries."""
 
 from datetime import datetime, timezone
 
@@ -11,7 +11,7 @@ class TokenBlacklistRepository:
         self.db = db
         self.collection = db.token_blacklist
 
-    async def blacklist_token(self, jti: str, expires_at: datetime, reason: str) -> bool:
+    async def blacklist_token(self, jti: str, expires_at: datetime) -> bool:
         """Returns False if the token is already blacklisted."""
         try:
             await self.collection.insert_one(
@@ -20,7 +20,6 @@ class TokenBlacklistRepository:
                     "jti": jti,
                     "blacklisted_at": datetime.now(timezone.utc),
                     "expires_at": expires_at,
-                    "reason": reason,
                 }
             )
             return True

@@ -11,12 +11,12 @@ from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
-    build_team_enrichment_pipeline,
     check_team_access,
     fetch_and_enrich_team,
     get_team_with_access,
     visible_teams_filter,
 )
+from app.api.v1.helpers.teams import enrich_teams_with_usernames
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -101,8 +101,9 @@ async def read_teams(
     search_query = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
     final_query = and_filters(search_query, visible)
 
-    pipeline = build_team_enrichment_pipeline(final_query, sort_by, parse_sort_direction(sort_order))
-    return await team_repo.aggregate(pipeline, limit=1000)
+    teams = await team_repo.find_many_raw(final_query, sort_by, parse_sort_direction(sort_order), limit=1000)
+    await enrich_teams_with_usernames(teams, db)
+    return teams
 
 
 @router.get("/{team_id}", response_model=TeamResponse, responses=RESP_AUTH_404)
@@ -110,18 +111,10 @@ async def read_team(
     team_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> dict[str, Any]:
+) -> TeamResponse:
     """Get team details."""
-    team_repo = TeamRepository(db)
-
     await check_team_access(team_id, current_user, db)
-
-    pipeline = build_team_enrichment_pipeline({"_id": team_id})
-    result = await team_repo.aggregate(pipeline, limit=1)
-    if not result:
-        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
-
-    return result[0]
+    return await fetch_and_enrich_team(team_id, db)
 
 
 @router.put("/{team_id}", responses=RESP_AUTH_404)
@@ -167,11 +160,7 @@ async def delete_team(
 
 
 async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDatabase) -> GitHubTeamBinding:
-    """The binding to store, with the slug the organisation reports for the bound team number.
-
-    Reading the slug here rather than taking it from the caller is also what proves the team
-    exists: a binding to a number no organisation carries would resolve nothing, silently, forever.
-    """
+    """The binding to store, with the slug the organisation reports, which also proves the team number exists."""
     instance = await GitHubInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail=f"GitHub instance with ID {request.instance_id} not found")
@@ -201,11 +190,7 @@ async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDat
 
 
 async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDatabase) -> GitLabGroupBinding:
-    """The binding to store, with the full path the instance reports for the bound group number.
-
-    Reading the path here rather than taking it from the caller is also what proves the group
-    exists: a binding to a number no instance carries would resolve nothing, silently, forever.
-    """
+    """The binding to store, with the full path the instance reports, which also proves the group number exists."""
     instance = await GitLabInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail=f"GitLab instance with ID {request.instance_id} not found")
@@ -253,12 +238,7 @@ async def set_team_binding(
     current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """Bind a team to a group on one instance, which is what makes it resolvable from that
-    instance's ingests. A team holds one binding per instance and any number of instances.
-
-    Gated on system:manage rather than team administration: a binding decides which projects
-    of the whole estate land in this team, and team membership grants access to them.
-    """
+    """Bind a team to a group on one instance; system:manage, as a binding decides which projects land in the team."""
     team_repo = TeamRepository(db)
     if not await team_repo.get_raw_by_id(team_id):
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
@@ -281,7 +261,7 @@ async def set_team_binding(
 
     logger.info(
         "Team %s bound to %s on instance %s by %s",
-        team_id.replace("\n", "_").replace("\r", "_"),
+        sanitize_for_log(team_id),
         _binding_conflict(binding),
         binding.instance_id,
         current_user.username,
@@ -310,8 +290,8 @@ async def clear_team_binding(
 
     logger.info(
         "Binding for instance %s removed from team %s by %s",
-        instance_id.replace("\n", "_").replace("\r", "_"),
-        team_id.replace("\n", "_").replace("\r", "_"),
+        sanitize_for_log(instance_id),
+        sanitize_for_log(team_id),
         current_user.username,
     )
     return await fetch_and_enrich_team(team_id, db)

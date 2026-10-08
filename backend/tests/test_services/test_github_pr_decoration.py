@@ -243,11 +243,11 @@ class TestPullRequestWorkflowScans:
                 "_api_get_paginated",
                 AsyncMock(return_value=None if comments_page is None else list(comments_page)),
             ),
-            patch.object(GitHubService, "_api_post", api_post),
+            patch.object(GitHubService, "_api_request", api_post),
         ):
             scan = _make_scan(commit_hash=_TEST_MERGE, branch=branch)
             asyncio.run(decorate_github_pr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan, _enabled_project(), db))
-        return [call.args[0] for call in api_get.await_args_list], [call.args[0] for call in api_post.await_args_list]
+        return [call.args[0] for call in api_get.await_args_list], [call.args[1] for call in api_post.await_args_list]
 
     def test_the_current_head_is_decorated_after_github_retested_the_merge(self):
         _, posted = self._decorate(pr_head=_HEAD)

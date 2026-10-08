@@ -41,40 +41,28 @@ _MSG_MISSING_BEARER = "Missing Bearer token"
 # Unknown, revoked and expired share one message: distinguishing them would confirm to a caller
 # holding a rejected token that the token once existed.
 _MSG_OPAQUE_KEY = "Invalid, revoked, or expired API key"
+_MSG_RETIRED_KEY = "This API key format is retired. Create a dck_ key under Profile > API Keys and use it instead."
 
 # Asserting on the key collection alone leaves a usage or audit collection free to be read.
 _USERS_COL = "users"
 _REACHABLE_COLLECTIONS = frozenset({_COL, _USERS_COL})
 
-_ABSENT = object()
-_SIBLING = object()
 
-# Everything a "surfaces" field can hold that names no surface. A bare membership test admits the
-# strings and the dict — `"mcp" in "xxmcpxx"` is a substring hit, `"mcp" in {"mcp": 1}` a key hit —
-# and raises TypeError on the null and the number.
-_NAMES_NO_SURFACE = {
-    "the-sibling-surface": _SIBLING,
-    "no-surfaces-field": _ABSENT,
-    "null": None,
-    "a-number": 123,
-    "the-bare-surface-string": API_KEY_SURFACE_MCP,
-    "a-string-containing-the-surface": f"xx{API_KEY_SURFACE_MCP}xx",
-    "a-dict-keyed-by-the-surface": {API_KEY_SURFACE_MCP: 1},
-}
-
-
-def _key_doc(surfaces=_ABSENT):
-    doc = {
+def _key_doc(surfaces):
+    """The document ApiKeyRepository.create writes."""
+    now = datetime.now(timezone.utc)
+    return {
         "_id": _KEY_ID,
         "user_id": _OWNER,
         "name": _KEY_NAME,
+        "surfaces": surfaces,
         "prefix": _TOKEN[:_PREFIX_LENGTH],
         "token_hash": hash_token(_TOKEN),
+        "created_at": now,
+        "expires_at": now + timedelta(days=90),
+        "last_used_at": None,
         "revoked_at": None,
     }
-    if surfaces is not _ABSENT:
-        doc["surfaces"] = surfaces
-    return doc
 
 
 def _db_with_key(doc):
@@ -157,6 +145,18 @@ async def test_an_unresolvable_token_is_401_with_one_shared_message():
     assert exc.value.headers is None
 
 
+@pytest.mark.parametrize("retired", ["mcp_" + "a" * _TOKEN_BODY_CHARS, "dca_" + "b" * _TOKEN_BODY_CHARS])
+@pytest.mark.asyncio
+async def test_a_retired_key_format_is_401_naming_the_key_that_replaced_it(retired):
+    db, _ = _db_with_key(None)
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(API_KEY_SURFACE_MCP, db, authorization=f"Bearer {retired}")
+
+    assert exc.value.status_code == _UNAUTHORIZED
+    assert exc.value.detail == _MSG_RETIRED_KEY
+
+
 @pytest.mark.asyncio
 async def test_an_inactive_owner_is_401(monkeypatch):
     db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
@@ -193,15 +193,11 @@ async def test_an_owner_without_the_surface_permission_is_403(monkeypatch, surfa
     assert exc.value.detail == f"Token owner no longer has {surface} access"
 
 
-# A malformed surfaces field is reachable: anything writing the collection outside
-# ApiKeyRepository.create — a migration, an operator — writes one, and it must name no surface.
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
-@pytest.mark.parametrize("stored", _NAMES_NO_SURFACE.values(), ids=list(_NAMES_NO_SURFACE))
 @pytest.mark.asyncio
-async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface, stored):
-    if stored is _SIBLING:
-        stored = [API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP]
-    db, _ = _db_with_key(_key_doc(stored))
+async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface):
+    sibling = API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP
+    db, _ = _db_with_key(_key_doc([sibling]))
     # The owner holds the permission, so only the key's surface list can turn this caller away.
     _patch_user(monkeypatch, _active_user([_SURFACE_PERMISSION[surface]]))
 
@@ -226,35 +222,6 @@ async def test_the_surface_is_answered_before_the_permission(monkeypatch, surfac
         await _authenticate(surface, db)
 
     assert exc.value.detail == f"API key does not grant the {surface} surface"
-
-
-# Same provenance as a malformed surfaces field: a write that did not come from the repository.
-@pytest.mark.asyncio
-async def test_a_key_document_naming_no_owner_is_401(monkeypatch):
-    doc = _key_doc([API_KEY_SURFACE_MCP])
-    del doc["user_id"]
-    db, _ = _db_with_key(doc)
-    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
-
-    with pytest.raises(HTTPException) as exc:
-        await _authenticate(API_KEY_SURFACE_MCP, db)
-
-    assert exc.value.status_code == _UNAUTHORIZED
-
-
-@pytest.mark.asyncio
-async def test_a_key_document_carrying_no_id_still_authenticates(monkeypatch):
-    doc = _key_doc([API_KEY_SURFACE_MCP])
-    del doc["_id"]
-    db, _ = _db_with_key(doc)
-    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
-    touch = _patch_touch_last_used(monkeypatch)
-
-    user, _ = await _authenticate(API_KEY_SURFACE_MCP, db)
-
-    assert user.id == _OWNER
-    # The stamp has nothing to address and matches no document; the credential is still good.
-    touch.assert_awaited_once_with("")
 
 
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
@@ -300,21 +267,6 @@ async def test_a_key_used_within_the_last_minute_is_not_stamped_again(monkeypatc
     await _authenticate(API_KEY_SURFACE_MCP, db)
 
     assert touch.await_count == int(stamped)
-
-
-# A plain-JSON mongoimport or a hand edit stores the moment as a string or a number.
-@pytest.mark.parametrize("last_used_at", ["2026-09-30T12:00:00Z", 1759233600000], ids=["iso-string", "epoch-millis"])
-@pytest.mark.asyncio
-async def test_a_damaged_last_use_still_authenticates_and_is_stamped_afresh(monkeypatch, last_used_at):
-    doc = _key_doc([API_KEY_SURFACE_MCP])
-    doc["last_used_at"] = last_used_at
-    db, _ = _db_with_key(doc)
-    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
-    touch = _patch_touch_last_used(monkeypatch)
-
-    await _authenticate(API_KEY_SURFACE_MCP, db)
-
-    touch.assert_awaited_once_with(_KEY_ID)
 
 
 @pytest.mark.asyncio

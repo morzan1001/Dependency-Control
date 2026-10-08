@@ -1,4 +1,4 @@
-"""Unified API keys: hashed at rest, stored with the requested surfaces and lifetime, revoke idempotent."""
+"""Unified API keys: hashed at rest, stored with their surfaces and lifetime, revocable once and only by their owner."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock

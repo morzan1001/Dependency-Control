@@ -30,12 +30,8 @@ class ProjectMember(BaseModel):
 class Project(MongoDocument, CreatedAtModel):
     name: str
     team_ids: list[str] = Field(default_factory=list, description="Every team that owns this project")
-    # Provenance per owner: "manual", or "<provider>:<instance id>" naming the sync that established
-    # it. A sync only ever replaces the entries naming its own instance, so a hand assignment and
-    # another instance's owner both survive it. Any other value belongs to no sync and is therefore
-    # retired by none, which is what a document written before the instance ids degrades to.
-    # Unconstrained on purpose: rejecting an unmigrated value here would 500 every read of the
-    # project rather than leave its owners in place.
+    # Per owner, "manual" or the "<provider>:<instance id>" of the sync that may retire it; unconstrained,
+    # as an unmigrated value rejected here would fail every read of the project instead of staying in place.
     team_sources: dict[str, str] = Field(default_factory=dict)
     members: list[ProjectMember] = Field(default_factory=list)
     api_key_hash: str | None = Field(None, exclude=True)
@@ -117,8 +113,7 @@ class Scan(MongoDocument, CreatedAtModel):
     # Bumped with every SBOM replacement and CBOM post, so a run can tell its inputs were superseded.
     sbom_generation: int | None = None
 
-    # Marks scans whose only source is a CBOM (no SBOM); the analysis engine
-    # forces crypto analyzers for these even when no SBOM was attached.
+    # A scan whose only source is a CBOM; the engine forces the crypto analyzers for it.
     scan_type: str | None = None
 
     status: str = SCAN_STATUS_PENDING
@@ -131,8 +126,7 @@ class Scan(MongoDocument, CreatedAtModel):
     error: str | None = None
     # Analyzers that crashed or returned partial coverage in the last run.
     failed_analyzers: list[str] | None = None
-    # Post-processor enrichments (EPSS/KEV, reachability) that failed; these do not
-    # affect the scan status, so this is the only queryable trace of an outage.
+    # Failed post-processor enrichments, which leave the status alone: the only queryable trace of an outage.
     enrichment_failures: list[str] | None = None
     findings_count: int | None = None
     ignored_count: int = 0
@@ -154,8 +148,7 @@ class Scan(MongoDocument, CreatedAtModel):
     is_rescan: bool = False
     original_scan_id: str | None = None
     latest_rescan_id: str | None = None
-    # The scheduled-rescan clock. Lives here because project.last_scan_at is bumped by every
-    # scanner post, so a project-wide clock never expires while CI is active.
+    # The rescan clock lives here: project.last_scan_at moves with every scanner post, so it never expires.
     last_rescanned_at: datetime | None = None
 
     # Summary of the latest run (either this scan itself, or the latest re-scan if this is the original)

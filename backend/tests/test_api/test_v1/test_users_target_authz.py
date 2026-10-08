@@ -75,7 +75,6 @@ def _call(run, target, smtp_host="smtp.test"):
         patch(f"{MODULE}.TeamRepository", return_value=membership_repo),
         patch(f"{MODULE}.ProjectRepository", return_value=membership_repo),
         patch(f"{MODULE}.get_user_or_404", new=AsyncMock(return_value=target)),
-        patch(f"{MODULE}.fetch_updated_user", new=AsyncMock(return_value=target)),
         patch(f"{MODULE}.UserRepository", return_value=repo),
         patch(f"{MODULE}.deps.get_system_settings", new=AsyncMock(return_value=SystemSettings(smtp_host=smtp_host))),
     ):

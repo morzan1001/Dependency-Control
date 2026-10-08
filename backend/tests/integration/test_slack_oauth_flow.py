@@ -1,5 +1,6 @@
 """The Slack install: only a state the settings page minted may replace the system-wide bot token."""
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, parse_qsl, urlsplit
@@ -13,6 +14,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
 from app.core import security
 from app.core.security import create_access_token
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.notifications import slack_provider
 from app.services.notifications.slack_provider import SlackProvider
@@ -151,3 +153,77 @@ async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack, monk
     stored = await SystemSettingsRepository(db).get()
     assert (stored.slack_bot_token, stored.slack_refresh_token) == ("xoxb-new", "xoxe-new")
     assert before + _TOKEN_LIFETIME <= stored.slack_token_expires_at <= time.time() + _TOKEN_LIFETIME
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_install_without_rotation_drops_the_rotation_fields_of_the_last_one(client, db, slack, monkeypatch):
+    rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-old", "slack_token_expires_at": time.time() - 60}
+    await SystemSettingsRepository(db).update(rotating)
+    monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": True, "access_token": "xoxb-static"})
+
+    async def _get_database():
+        return db
+
+    monkeypatch.setattr(slack_provider, "get_database", _get_database)
+    _, query = await _install_url(client)
+    await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
+    stored = await SystemSettingsRepository(db).get()
+
+    assert await SlackProvider().send("#alerts", "Subject", "Body", system_settings=stored)
+
+    assert (stored.slack_bot_token, stored.slack_refresh_token, stored.slack_token_expires_at) == (
+        "xoxb-static",
+        None,
+        None,
+    )
+    assert [request["url"] for request in slack] == [_OAUTH_ACCESS, _POST_MESSAGE]
+
+
+async def _expiring_settings(db, monkeypatch):
+    async def _get_database():
+        return db
+
+    monkeypatch.setattr(slack_provider, "get_database", _get_database)
+    rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-current", "slack_token_expires_at": time.time()}
+    return await SystemSettingsRepository(db).update(rotating)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack, monkeypatch):
+    system_settings = await _expiring_settings(db, monkeypatch)
+    provider = SlackProvider()
+
+    sent = await asyncio.gather(
+        *(provider.send("#alerts", "S", "B", system_settings=system_settings) for _ in range(20))
+    )
+
+    assert all(sent)
+    assert [r["refresh_token"] for r in slack if r["url"] == _OAUTH_ACCESS] == ["xoxe-current"]
+    assert [r["authorization"] for r in slack if r["url"] == _POST_MESSAGE] == ["Bearer xoxb-new"] * 20
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_sends_waiting_on_another_pods_refresh_wait_side_by_side_and_use_its_token(db, slack, monkeypatch):
+    system_settings = await _expiring_settings(db, monkeypatch)
+    assert await DistributedLocksRepository(db).acquire_lock("slack_token_refresh", new_lock_holder(), 30)
+    senders = 4
+    all_waiting = asyncio.Barrier(senders)
+
+    async def other_pod_refreshing(_seconds):
+        await SystemSettingsRepository(db).update(
+            {"slack_bot_token": "xoxb-other-pod", "slack_token_expires_at": time.time() + _TOKEN_LIFETIME}
+        )
+        await asyncio.wait_for(all_waiting.wait(), timeout=5)
+
+    monkeypatch.setattr(slack_provider.asyncio, "sleep", other_pod_refreshing)
+    provider = SlackProvider()
+
+    sent = await asyncio.gather(
+        *(provider.send("#alerts", "S", "B", system_settings=system_settings) for _ in range(senders))
+    )
+
+    assert all(sent)
+    assert [r["authorization"] for r in slack] == ["Bearer xoxb-other-pod"] * senders

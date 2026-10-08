@@ -105,10 +105,7 @@ async def _persist_and_announce(db: AsyncIOMotorDatabase, entry: PolicyAuditEntr
         await PolicyAuditRepository(db).create(entry)
     except Exception:
         logger.exception("Policy audit persistence failed (non-blocking)")
-    try:
-        await _dispatch_webhook(db, entry)
-    except Exception:
-        logger.exception("Policy audit webhook dispatch failed (non-blocking)")
+    await _dispatch_webhook(db, entry)
     try:
         await _notify_relevant_users(db, entry)
     except Exception:

@@ -168,18 +168,19 @@ async def test_an_access_token_minted_later_in_the_same_second_as_the_logout_is_
 
 
 @pytest.mark.asyncio
-async def test_a_blacklisted_access_token_is_refused_and_counted_blacklisted():
+async def test_an_access_token_is_checked_without_reading_the_blacklist():
     db = await _db_with_user()
-    token = security.create_access_token(_USER_ID)
-    await db.token_blacklist.insert_one({"_id": jwt.decode(token, options={"verify_signature": False})["jti"]})
-    blacklisted_before = _validations("blacklisted")
+    reads = []
+    read = db.token_blacklist.find_one
 
-    with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(db=db, token=token)
+    async def counted(*args, **kwargs):
+        reads.append(args)
+        return await read(*args, **kwargs)
 
-    assert exc_info.value.status_code == _UNAUTHORIZED
-    assert exc_info.value.detail == _MSG_CREDENTIALS
-    assert _validations("blacklisted") == blacklisted_before + 1
+    db.token_blacklist.find_one = counted
+    await get_current_user(db=db, token=security.create_access_token(_USER_ID))
+
+    assert reads == []
 
 
 @pytest.mark.asyncio

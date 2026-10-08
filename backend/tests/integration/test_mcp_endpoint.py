@@ -116,6 +116,14 @@ async def test_a_revoked_unified_key_gets_no_tools(client, db):
 
 
 @pytest.mark.asyncio
+async def test_a_retired_mcp_key_is_told_to_switch_to_a_dck_key(client, db):
+    resp = await client.post(_MCP, json=_TOOLS_LIST, headers=_bearer("mcp_" + "a" * 64))
+
+    assert resp.status_code == _UNAUTHORIZED, resp.text
+    assert "dck_" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_admitting_a_unified_key_stamps_its_last_use(client, db):
     doc, token = await _issue_unified_key(db)
     assert await _last_used(db, doc["_id"]) is None, "a fresh key must start unstamped"

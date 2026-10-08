@@ -97,7 +97,7 @@ def _client_host(request: Request) -> str:
 
 async def _within_email_budget(scope: str, email: str) -> bool:
     """Counted for every request, known address or not, so the budget reveals nothing."""
-    return await _within_rate_limit(f"{scope}_email:{email.strip().lower()}", max_attempts=3, window_seconds=3600)
+    return await _within_rate_limit(f"{scope}_email:{email.strip().casefold()}", max_attempts=3, window_seconds=3600)
 
 
 async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> dict | None:
@@ -176,7 +176,7 @@ async def login_access_token(
     otp: Annotated[str | None, Form()] = None,
 ) -> Any:
     """OAuth2-compatible token login; accepts username/email, password, and otp when 2FA is enabled."""
-    await _check_rate_limit(f"login:{form_data.username}")
+    await _check_rate_limit(f"login:{form_data.username.strip().casefold()}")
     user_repo = UserRepository(db)
     user = await _lookup_user_for_login(user_repo, form_data.username)
 
@@ -236,7 +236,7 @@ async def refresh_token(
     _ensure_email_verified(user, system_config)
     # The insert is the atomic step: of two concurrent exchanges of one token only one lists it.
     if not await TokenBlacklistRepository(db).blacklist_token(
-        claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc), reason="refresh_rotated"
+        claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc)
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_MSG_CREDENTIALS)
     return _session_tokens(user, system_config)
@@ -291,20 +291,9 @@ async def create_user(
 
 
 @router.post("/logout", summary="Logout user", responses=RESP_AUTH)
-async def logout(
-    token: Annotated[str, Depends(deps.oauth2_scheme)],
-    current_user: Annotated[User, Depends(deps.get_current_user)],
-    db: DatabaseDep,
-) -> LogoutResponse:
-    """Logout the current user by blacklisting the token JTI and bumping last_logout_at."""
-    claims = security.decode_session_token(token, "access")
-    # None only when the token expired after get_current_user accepted it.
-    if claims:
-        await TokenBlacklistRepository(db).blacklist_token(
-            claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc), reason="logout"
-        )
+async def logout(current_user: Annotated[User, Depends(deps.get_current_user)], db: DatabaseDep) -> LogoutResponse:
+    """Logout the current user by bumping last_logout_at, which revokes every token issued before it."""
     await UserRepository(db).update(current_user.id, {"last_logout_at": datetime.now(timezone.utc)})
-
     return LogoutResponse(message="Successfully logged out")
 
 

@@ -2,7 +2,11 @@
 
 import asyncio
 import logging
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
@@ -51,24 +55,15 @@ class TestApiMethodTokenGuards:
         result = asyncio.run(service._api_get("/projects/1"))
         assert result is None
 
-    def test_api_post_returns_none_without_token(self):
+    @pytest.mark.parametrize("method", ["POST", "PUT"])
+    def test_a_write_returns_none_without_token(self, method):
         service = GitLabService(make_gitlab_instance(access_token=None))
-        result = asyncio.run(service._api_post("/projects/1/notes", {"body": "x"}))
-        assert result is None
-
-    def test_api_put_returns_none_without_token(self):
-        service = GitLabService(make_gitlab_instance(access_token=None))
-        result = asyncio.run(service._api_put("/test", {"body": "x"}))
+        result = asyncio.run(service._api_request(method, "/projects/1/notes", json_data={"body": "x"}))
         assert result is None
 
     def test_api_get_paginated_returns_none_without_token(self):
         service = GitLabService(make_gitlab_instance(access_token=None))
         result = asyncio.run(service._api_get_paginated("/test"))
-        assert result is None
-
-    def test_get_project_members_returns_none_without_token(self):
-        service = GitLabService(make_gitlab_instance(access_token=None))
-        result = asyncio.run(service.get_project_members(123))
         assert result is None
 
     def test_get_group_members_returns_none_without_token(self):
@@ -84,7 +79,7 @@ class TestTeamMemberSyncResolveOnly:
         service = GitLabService(make_gitlab_instance())
         existing = {"_id": "u-1", "email": "real@example.com", "username": "real"}
         user_repo = MagicMock()
-        user_repo.get_raw_by_verified_email = AsyncMock(return_value=existing)
+        user_repo.verified_users_by_email = AsyncMock(return_value={"real@example.com": existing})
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
         result, _, _ = asyncio.run(service._build_team_members(members, user_repo))
@@ -96,7 +91,7 @@ class TestTeamMemberSyncResolveOnly:
         # GitLab service-account / bot: no matching local user -> skipped, NOT created.
         service = GitLabService(make_gitlab_instance())
         user_repo = MagicMock()
-        user_repo.get_raw_by_verified_email = AsyncMock(return_value=None)
+        user_repo.verified_users_by_email = AsyncMock(return_value={})
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="group_875_bot_f4597604b42b729d0de22d01e5126164", access_level=40)]
         result, unresolved, resolved_any = asyncio.run(service._build_team_members(members, user_repo))
@@ -612,9 +607,10 @@ class TestTeamSyncGroupMembers:
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
 
-            # Users found by email - use _id as key (raw MongoDB format)
-            user_doc = {"_id": "user-id", "username": "test"}
-            users_coll = create_mock_collection(find_one=user_doc)
+            emails = ("dev@test.com", "maint@test.com", "owner@test.com")
+            users_coll = create_mock_collection(
+                find=[{"_id": "user-id", "username": "test", "email": e} for e in emails]
+            )
             teams_coll = create_mock_collection(find_one=None)
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
@@ -646,13 +642,12 @@ class TestTeamSyncGroupMembers:
 
         with (
             patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members,
-            patch.object(service, "_lookup_group", new_callable=AsyncMock) as mock_resolve,
+            patch.object(service, "get_group", new_callable=AsyncMock) as mock_resolve,
         ):
             mock_members.return_value = members
             mock_resolve.return_value = GitLabGroupLookup(reachable=True, group={"id": 10})
 
-            user_doc = {"_id": "uid", "username": "dev"}
-            users_coll = create_mock_collection(find_one=user_doc)
+            users_coll = create_mock_collection(find=[{"_id": "uid", "username": "dev", "email": "dev@test.com"}])
             teams_coll = create_mock_collection(find_one=None)
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
@@ -689,8 +684,7 @@ class TestTeamSyncGroupMembers:
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
 
-            user_doc = {"_id": "uid", "username": "dev"}
-            users_coll = create_mock_collection(find_one=user_doc)
+            users_coll = create_mock_collection(find=[{"_id": "uid", "username": "dev", "email": "dev@test.com"}])
             teams_coll = create_mock_collection(find_one=existing_team)
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
@@ -830,7 +824,7 @@ class TestTeamSyncResolveGroupFallback:
         with (
             make_repositories(user_doc={"_id": "uid", "username": "dev"}) as (team_repo, _),
             patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
-            patch.object(service, "_lookup_group", new=AsyncMock(return_value=lookup)),
+            patch.object(service, "get_group", new=AsyncMock(return_value=lookup)),
         ):
             result = asyncio.run(
                 sync_team(
@@ -979,7 +973,7 @@ class TestMemberResolution:
 
         team_repo, user_repo = self._resolved(gitlab_instance_a, member, user_doc={"_id": "u-ada"})
 
-        user_repo.get_raw_by_verified_email.assert_awaited_once_with("ada@corp.com")
+        user_repo.verified_users_by_email.assert_awaited_once_with({"ada@corp.com"})
         assert [m.user_id for m in team_repo.create_bound.await_args.args[0].members] == ["u-ada"]
 
     def test_a_member_no_verified_account_holds_is_skipped(self, gitlab_instance_a):
@@ -1166,81 +1160,67 @@ class TestTeamSyncEmaillessMembers:
         )
 
 
-class TestApiGetPaginatedCap:
-    """Membership fetches must not be silently truncated at the default cap: fetch all pages, or at minimum WARN when a cap is hit."""
+def _gitlab_offset_pages(total: int, *, with_totals: bool = True):
+    """GitLab's offset pagination as gitlab.com answers it: Link rel next/prev/first, plus rel last and the
+    x-total headers, which GitLab leaves out past 10,000 rows."""
+    requested: list[int] = []
 
-    def test_get_group_members_fetches_beyond_default_1000(self, gitlab_instance_a):
-        """A group with 12 pages (1200 members) must have all members fetched, not truncated at 1000."""
-        service = GitLabService(gitlab_instance_a)
+    def answer(request: httpx.Request) -> httpx.Response:
+        page, per_page = int(request.url.params["page"]), int(request.url.params["per_page"])
+        requested.append(page)
+        last = max(1, -(-total // per_page))
+        links = [f'<{request.url.copy_set_param("page", page + 1)}>; rel="next"'] if page < last else []
+        if page > 1:
+            links.append(f'<{request.url.copy_set_param("page", page - 1)}>; rel="prev"')
+        links.append(f'<{request.url.copy_set_param("page", 1)}>; rel="first"')
+        headers = {
+            "x-page": str(page),
+            "x-per-page": str(per_page),
+            "x-next-page": str(page + 1) if page < last else "",
+        }
+        if with_totals:
+            links.append(f'<{request.url.copy_set_param("page", last)}>; rel="last"')
+            headers |= {"x-total": str(total), "x-total-pages": str(last)}
+        rows = [
+            {"id": n, "name": f"row-{n}", "username": f"user-{n}", "access_level": 30, "author": {"id": 1}}
+            for n in range((page - 1) * per_page, min(page * per_page, total))
+        ]
+        return httpx.Response(200, json=rows, headers={"link": ", ".join(links), **headers}, request=request)
 
-        total_pages = 12
-        per_page = 100
+    return answer, requested
 
-        def _make_response(page: int):
-            resp = MagicMock()
-            resp.status_code = 200
-            # Each page returns a full page of distinct members.
-            resp.json.return_value = [
-                {"username": f"u{(page - 1) * per_page + i}", "email": f"u{i}p{page}@t.com", "access_level": 30}
-                for i in range(per_page)
-            ]
-            resp.headers = {"x-total-pages": str(total_pages)}
-            return resp
 
-        call_pages: list[int] = []
+def _serve(monkeypatch, answer) -> None:
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(answer)))
 
-        async def fake_get(url, headers=None, params=None):
-            page = params["page"]
-            call_pages.append(page)
-            return _make_response(page)
 
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(side_effect=fake_get)
+class TestGitLabPagination:
+    """Every paginated read follows GitLab's Link header to the last page; only the group picker is capped."""
 
-        class _CM:
-            async def __aenter__(self):
-                return mock_client
+    @pytest.mark.parametrize(
+        "read",
+        [
+            pytest.param(lambda service: service.list_branches(100), id="branches"),
+            pytest.param(lambda service: service.get_group_members(42), id="members"),
+            pytest.param(lambda service: service.get_merge_request_notes(100, 7), id="notes"),
+        ],
+    )
+    @pytest.mark.parametrize("with_totals", [True, False], ids=["with-totals", "past-10k-rows"])
+    def test_every_page_is_read_and_nothing_past_the_last(self, gitlab_instance_a, monkeypatch, read, with_totals):
+        answer, requested = _gitlab_offset_pages(1201, with_totals=with_totals)
+        _serve(monkeypatch, answer)
 
-            async def __aexit__(self, *a):
-                return False
+        result = asyncio.run(read(GitLabService(gitlab_instance_a)))
 
-        with patch.object(service, "_api_client", return_value=_CM()):
-            result = asyncio.run(service.get_group_members(42))
+        assert len(result) == 1201
+        assert requested == list(range(1, 14))
 
-        assert result is not None
-        # All 1200 members fetched, NOT truncated at 1000.
-        assert len(result) == total_pages * per_page
-        assert max(call_pages) == total_pages
+    def test_the_group_picker_stops_at_its_cap_and_says_so(self, gitlab_instance_a, monkeypatch, caplog):
+        answer, requested = _gitlab_offset_pages(1201)
+        _serve(monkeypatch, answer)
 
-    def test_paginated_logs_warning_when_cap_reached(self, gitlab_instance_a, caplog):
-        """If a hard cap is ever hit while more pages remain, a WARNING must fire."""
-        service = GitLabService(gitlab_instance_a)
+        with caplog.at_level("WARNING"):
+            groups = asyncio.run(GitLabService(gitlab_instance_a).get_groups())
 
-        def _make_response(page: int):
-            resp = MagicMock()
-            resp.status_code = 200
-            resp.json.return_value = [{"id": i, "username": f"u{page}_{i}"} for i in range(100)]
-            # Always claims there are far more pages than the cap.
-            resp.headers = {"x-total-pages": "9999"}
-            return resp
-
-        async def fake_get(url, headers=None, params=None):
-            return _make_response(params["page"])
-
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(side_effect=fake_get)
-
-        class _CM:
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, *a):
-                return False
-
-        with patch.object(service, "_api_client", return_value=_CM()):
-            with caplog.at_level("WARNING", logger="app.services.gitlab"):
-                asyncio.run(service._api_get_paginated("/groups/42/members/all", max_pages=3))
-
-        assert any("cap" in r.message.lower() or "truncat" in r.message.lower() for r in caplog.records), (
-            f"Expected a cap/truncation warning. Got: {[r.message for r in caplog.records]}"
-        )
+        assert (len(groups), requested) == (1000, list(range(1, 11)))
+        assert any("TRUNCATED" in record.getMessage() for record in caplog.records)

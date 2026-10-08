@@ -148,6 +148,10 @@ class _GitHubApi:
     async def client(self):
         yield self
 
+    async def request(self, method, url, headers=None, params=None, json=None):
+        assert (method, json) == ("GET", None)
+        return await self.get(url, headers=headers, params=params)
+
     async def get(self, url, headers=None, params=None):
         path = url.removeprefix(GITHUB_API_URL)
         self.requests.append((path, dict(params or {})))
@@ -182,7 +186,7 @@ class TestTeamRepositoryCheck:
         """Without it GitHub answers 204, and holding the repository stops looking like a 200."""
         service = _service()
         client = MagicMock()
-        client.get = AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))
+        client.request = AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))
 
         class _ClientContext:
             async def __aenter__(self):
@@ -194,7 +198,7 @@ class TestTeamRepositoryCheck:
         with patch.object(service, "_api_client", return_value=_ClientContext()):
             await service.team_writes_to_repository("acme", "payments", 4711, "widgets")
 
-        assert client.get.await_args.kwargs["headers"]["Accept"] == _REPOSITORY_ACCEPT
+        assert client.request.await_args.kwargs["headers"]["Accept"] == _REPOSITORY_ACCEPT
 
     @pytest.mark.asyncio
     async def test_read_only_access_is_not_holding_it(self, fake_cache):
@@ -387,15 +391,12 @@ class TestOrgTeams:
     for."""
 
     @pytest.mark.asyncio
-    async def test_are_fetched_uncapped_from_the_org_endpoint(self, fake_cache):
+    async def test_are_fetched_from_the_org_endpoint(self, fake_cache):
         service = _service()
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
             assert await service.get_org_teams("acme") == _KEPT_TEAMS
 
         assert paginated.await_args.args[0] == "/orgs/acme/teams"
-        # A capped listing is an organisation quietly missing teams, and a team the listing omits
-        # reads as one the organisation dissolved.
-        assert paginated.await_args.kwargs["max_pages"] is None
 
     @pytest.mark.asyncio
     async def test_an_organisation_without_teams_is_an_empty_listing(self, fake_cache):
@@ -855,13 +856,12 @@ class TestOrgRepositoryMap:
 
 class TestOrgTeamCount:
     @pytest.mark.asyncio
-    async def test_is_fetched_uncapped_from_the_org_endpoint(self):
+    async def test_is_fetched_from_the_org_endpoint(self):
         service = _service()
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
             assert await service.count_org_teams("acme") == 2
 
         assert paginated.await_args.args[0] == "/orgs/acme/teams"
-        assert paginated.await_args.kwargs["max_pages"] is None
 
     @pytest.mark.asyncio
     async def test_a_refused_request_stays_none_rather_than_zero(self):
@@ -906,18 +906,16 @@ class TestTeamMembers:
             "member": [{"login": "bob", "id": 2, "type": "User"}],
         }
 
-        async def _paginated(endpoint, params=None, max_pages=10):
+        async def _paginated(endpoint, params=None):
             return pages[params["role"]]
 
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=_paginated)) as paginated:
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=_paginated)):
             result = await service.get_team_members("acme", "payments", 4711)
 
         assert result == [
             {"login": "ada", "role": "admin"},
             {"login": "bob", "role": "member"},
         ]
-        # A capped member list is a team quietly missing people, so both calls must be uncapped.
-        assert [call.kwargs["max_pages"] for call in paginated.await_args_list] == [None, None]
 
     @pytest.mark.asyncio
     async def test_a_failed_page_yields_none_rather_than_half_a_team(self, fake_cache):
@@ -966,13 +964,12 @@ class TestTeamMembers:
 
 class TestViewerOrganisations:
     @pytest.mark.asyncio
-    async def test_are_fetched_uncapped_from_the_viewer_endpoint(self):
+    async def test_are_fetched_from_the_viewer_endpoint(self):
         service = _service()
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_MEMBERSHIPS)) as paginated:
             assert await service.get_viewer_organisations() == _ORG_MEMBERSHIPS
 
         assert paginated.await_args.args[0] == "/user/orgs"
-        assert paginated.await_args.kwargs["max_pages"] is None
 
     @pytest.mark.asyncio
     async def test_a_refused_request_stays_none_rather_than_an_empty_list(self):

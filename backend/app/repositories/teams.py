@@ -68,11 +68,7 @@ def _detach_instance(instance_id: str, source: str) -> dict[str, Any]:
 
 
 def _binding_restamp_stage(key: str, binding_fields: dict[str, Any]) -> dict[str, Any]:
-    """Restamp the display fields of the entry holding ``key``, leaving every other entry alone.
-
-    A ``$map`` rather than array filters because a classic update and an aggregation pipeline
-    cannot be combined, and the member subset above can only be expressed as a pipeline.
-    """
+    """Restamp the entry holding ``key`` as a ``$map``: array filters cannot join the member subset's pipeline."""
     return {
         "$set": {
             _BINDINGS: {
@@ -107,20 +103,15 @@ class TeamRepository:
         return await self.collection.find_one({"_id": team_id})
 
     async def get_raw_by_binding_key(self, key: str) -> dict[str, Any] | None:
-        """The team holding one binding. The unique index is built by hand before the deploy and
-        its build can be skipped, so the binding endpoint checks the key here as well."""
+        """The team holding one binding; checked here too, since the unique index build can be skipped."""
         return await self.collection.find_one({_BINDING_KEY: key})
 
     async def get_raw_by_binding(self, provider: str, instance_id: str, external_id: int) -> dict[str, Any] | None:
         return await self.get_raw_by_binding_key(team_binding_key(provider, instance_id, external_id))
 
     async def add_binding_if_absent(self, team_id: str, binding: dict[str, Any]) -> dict[str, Any] | None:
-        """Attach a binding to a team the instance does not hold yet; None when it holds one by now.
-
-        The instance condition is part of the filter, so two ingests cannot both adopt one team, and
-        no team ends up with two bindings on one instance — which the unique index cannot refuse,
-        because a multikey index deduplicates the keys of a single document.
-        """
+        """Attach a binding to a team the instance does not hold yet; None when it holds one by now."""
+        # In the filter, since a multikey unique index cannot refuse two bindings of one instance on one team.
         adopted: dict[str, Any] | None = await self.collection.find_one_and_update(
             {"_id": team_id, _BINDING_INSTANCE: {"$ne": binding["instance_id"]}},
             {"$push": {_BINDINGS: binding}, "$set": {"updated_at": datetime.now(timezone.utc)}},
@@ -129,11 +120,7 @@ class TeamRepository:
         return adopted
 
     async def replace_binding_for_instance(self, team_id: str, binding: dict[str, Any]) -> bool:
-        """Set the team's binding for one instance, replacing the one it holds there.
-
-        Two writes rather than one: the append and the in-place replacement have different filters,
-        and each is atomic on its own, so a binding written between them is replaced, not doubled.
-        """
+        """Set the team's binding for one instance; append and replace are each atomic, so nothing is doubled."""
         if await self.add_binding_if_absent(team_id, binding) is not None:
             return True
         result = await self.collection.update_one(
@@ -167,15 +154,7 @@ class TeamRepository:
         binding_fields: dict[str, Any],
         member_subset: MemberSubset | None = None,
     ) -> None:
-        """One write for what a sync learned about a team and about the binding it resolved through.
-
-        ``binding_fields`` addresses the entry by its key, which the display fields it carries are
-        not part of, so a renamed group is restamped in place.
-
-        ``member_subset`` is None to leave the stored members alone. Given, it turns the write into
-        a pipeline — the only form that can read the stored array — and the restamp travels as a
-        ``$map`` because a classic modifier cannot be combined with one.
-        """
+        """One write for a sync's team fields, binding display fields and, unless None, its member subset."""
         now = datetime.now(timezone.utc)
         if member_subset is not None:
             members = _subset_members(member_subset)
@@ -204,17 +183,14 @@ class TeamRepository:
         )
 
     async def find_raw_by_github_org(self, github_instance_id: str, github_org: str) -> list[dict[str, Any]]:
-        """Every team bound to one organisation of one instance. Scoped to the instance: a team
-        number is unique per instance only, and two instances are two tenants."""
+        """Every team bound to one organisation of one instance, where team numbers are unique."""
         cursor = self.collection.find(
             {
                 _BINDINGS: {
                     "$elemMatch": {
                         "provider": TEAM_SOURCE_GITHUB,
                         "instance_id": github_instance_id,
-                        # GitHub organisation names differ only in case, so an equality match
-                        # reports "nobody holds this repository" whenever the binding was stored
-                        # in another case.
+                        # Organisation names are case-insensitive, and a binding keeps the case it was stored in.
                         "org": {"$regex": f"^{re.escape(github_org)}$", "$options": "i"},
                     }
                 }
@@ -243,20 +219,6 @@ class TeamRepository:
     async def delete(self, team_id: str) -> bool:
         result = await self.collection.delete_one({"_id": team_id})
         return result.deleted_count > 0
-
-    async def find_many(
-        self,
-        query: dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "name",
-        sort_order: int = 1,
-    ) -> list[Team]:
-        if limit <= 0:
-            return []
-        cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
-        return [Team(**doc) for doc in docs]
 
     async def count(self, query: dict[str, Any] | None = None) -> int:
         return await self.collection.count_documents(query or {})
@@ -306,5 +268,7 @@ class TeamRepository:
         )
         return bool(result.matched_count)
 
-    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-        return await self.collection.aggregate(pipeline).to_list(limit)
+    async def find_many_raw(
+        self, query: dict[str, Any], sort_by: str = "name", sort_order: int = 1, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        return await self.collection.find(query).sort(sort_by, sort_order).to_list(limit)

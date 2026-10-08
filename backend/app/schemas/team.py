@@ -12,7 +12,7 @@ from app.schemas._not_null import reject_null
 class TeamMemberSchema(BaseModel):
     user_id: str
     username: str | None = None
-    # Deliberately not TeamRole: read_team serves from an aggregate that bypasses the storage
+    # Deliberately not TeamRole: the team reads serve the stored document without the storage
     # model, so this is the last view that can still render a team holding a pre-existing bad role.
     role: str
     # "manual", or the "<provider>:<instance id>" of the sync that owns the entry.

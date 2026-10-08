@@ -125,7 +125,9 @@ def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[Magic
     team_repo.add_binding_if_absent = AsyncMock()
 
     user_repo = MagicMock()
-    user_repo.get_raw_by_verified_email = AsyncMock(return_value=user_doc)
+    user_repo.verified_users_by_email = AsyncMock(
+        side_effect=lambda emails: {email.lower(): {**user_doc, "email": email} for email in emails} if user_doc else {}
+    )
 
     with (
         patch("app.services.gitlab.TeamRepository", return_value=team_repo),
