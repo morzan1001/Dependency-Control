@@ -214,6 +214,43 @@ DEBIAN_OPENSSL: dict[str, Any] = {
     ],
 }
 
+# Every Ubuntu release and its Pro archive share one source purl; only the listed versions tell them apart.
+UBUNTU_OPENSSL: dict[str, Any] = {
+    "id": "UBUNTU-CVE-2025-68160",
+    "details": "Issue summary: Writing large, newline-free data into a BIO chain ... out-of-bounds write.",
+    "modified": "2026-10-05T19:21:43.551395441Z",
+    "severity": [
+        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"},
+        {"type": "Ubuntu", "score": "low"},
+    ],
+    "affected": [
+        {
+            "package": {
+                "name": "openssl",
+                "ecosystem": ecosystem,
+                "purl": f"pkg:deb/ubuntu/openssl?arch=source&distro={archive}",
+            },
+            "ranges": _ranges({"introduced": "0"}, {"fixed": fixed}),
+            "versions": versions,
+        }
+        for ecosystem, archive, fixed, versions in (
+            (
+                "Ubuntu:Pro:18.04:LTS",
+                "esm-infra%2Fbionic",
+                "1.1.1-1ubuntu2.1~18.04.23+esm7",
+                ["1.1.1-1ubuntu2.1~18.04.23", "1.1.1-1ubuntu2.1~18.04.23+esm6"],
+            ),
+            (
+                "Ubuntu:Pro:20.04:LTS",
+                "esm-infra%2Ffocal",
+                "1.1.1f-1ubuntu2.24+esm2",
+                ["1.1.1f-1ubuntu2.23", "1.1.1f-1ubuntu2.24", "1.1.1f-1ubuntu2.24+esm1"],
+            ),
+            ("Ubuntu:22.04:LTS", "jammy", "3.0.2-0ubuntu1.21", ["3.0.2-0ubuntu1.19", "3.0.2-0ubuntu1.20"]),
+        )
+    ],
+}
+
 MALWARE_COMBINEZONE: dict[str, Any] = {
     "id": "MAL-2024-2000",
     "summary": "Malicious code in combinezone (npm)",

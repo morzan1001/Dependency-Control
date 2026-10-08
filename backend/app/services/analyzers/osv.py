@@ -190,14 +190,18 @@ def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, s
     return package_identity(purl, "", None, None) if purl else None
 
 
-def _affected_entries(record: dict[str, Any], query: dict[str, Any]) -> list[dict[str, Any]]:
-    """The record's ``affected`` entries for the queried package; OS releases share a purl and match by ecosystem."""
+def _affected_entries(record: dict[str, Any], query: dict[str, Any], installed: str) -> list[dict[str, Any]]:
+    """The record's ``affected`` entries for the queried package, narrowed to those listing the installed version.
+
+    Ubuntu's releases and Pro archives share a purl; only the listed versions tell them apart.
+    """
     parsed = parse_purl(query["package"].get("purl") or "")
     purl_type = parsed.type if parsed else None
     key = _package_key(query["package"], purl_type)
-    return [
+    entries = [
         entry for entry in record.get("affected") or [] if _package_key(entry.get("package") or {}, purl_type) == key
     ]
+    return [entry for entry in entries if installed in (entry.get("versions") or [])] or entries
 
 
 def _installed_version(query: dict[str, Any]) -> str:
@@ -522,7 +526,7 @@ class OSVAnalyzer(Analyzer):
         for vuln in vulns:
             if vuln.get("withdrawn"):
                 continue
-            entries = _affected_entries(vuln, query)
+            entries = _affected_entries(vuln, query, installed)
             cvss = self._select_cvss(vuln.get("severity") or [])
             entry: dict[str, Any] = {
                 "id": vuln.get("id", ""),
