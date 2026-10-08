@@ -91,7 +91,7 @@ async def _signed_location_findings(
         elif (sig := compute_match_signature_from_doc(doc)) is not None:
             finding_fields[doc["_id"]]["match"] = sig.model_dump()
         if sig is not None:
-            signed.append((doc.get("finding_id") or doc["_id"], MatchFinding(id=doc["_id"], sig=sig)))
+            signed.append((doc["finding_id"], MatchFinding(id=doc["_id"], sig=sig)))
     return signed
 
 

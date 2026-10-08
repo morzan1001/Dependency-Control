@@ -214,9 +214,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
                         key = (copy["component"], advisory_id)
                         earliest[key] = min(earliest.get(key, first), first)
 
-    async def count_by_scan(self, scan_id: str) -> int:
-        return await self.count({"scan_id": scan_id})
-
     async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
         """A scan's location findings, with details only where the match signature must be recomputed from them."""
         docs = await self.collection.find(
