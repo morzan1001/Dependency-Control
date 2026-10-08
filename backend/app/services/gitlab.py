@@ -33,7 +33,7 @@ from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.gitlab_instance import GitLabGroupOption
-from app.services.github import cached_public_emails, response_ok
+from app.services.github import cached_public_emails, collect_pages, iter_link_pages, response_ok
 from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -148,72 +148,15 @@ class GitLabService:
         return await self._api_request("GET", endpoint, params=params)
 
     async def _api_get_paginated(
-        self,
-        endpoint: str,
-        params: dict[str, Any] | None = None,
-        max_pages: int | None = 10,
+        self, endpoint: str, params: dict[str, Any] | None = None, max_pages: int | None = None
     ) -> list[dict[str, Any]] | None:
-        """Paginated GET; returns all items or None on failure.
-
-        ``max_pages=None`` fetches all pages uncapped; a hit finite cap logs a
-        truncation WARNING.
-        """
+        """Every item of a paginated GET, or None when a page failed or no token is configured."""
         if not self.instance.access_token:
             return None
-
-        all_items: list[dict[str, Any]] = []
-        page = 1
-        per_page = 100  # GitLab max per_page
-
-        try:
-            async with self._api_client() as client:
-                while max_pages is None or page <= max_pages:
-                    response = await client.get(
-                        f"{self.api_url}{endpoint}",
-                        headers=self._get_auth_headers(),
-                        params={**(params or {}), "page": page, "per_page": per_page},
-                    )
-                    if not response_ok("GitLab", endpoint, response):
-                        return None
-
-                    items = response.json()
-                    if not items:
-                        break
-                    all_items.extend(items)
-
-                    if self._is_last_page(items, per_page, page, response.headers.get("x-total-pages")):
-                        break
-                    if self._cap_reached(endpoint, page, max_pages, per_page, response.headers.get("x-total-pages")):
-                        break
-                    page += 1
-
-        except Exception as e:
-            logger.warning("GitLab API paginated GET %s failed: %s: %s", endpoint, type(e).__name__, e)
-            return None
-
-        return all_items
-
-    @staticmethod
-    def _is_last_page(items: list[Any], per_page: int, page: int, total_pages: str | None) -> bool:
-        """True when GitLab signals there are no further pages to fetch."""
-        if total_pages and page >= int(total_pages):
-            return True
-        return len(items) < per_page
-
-    @staticmethod
-    def _cap_reached(endpoint: str, page: int, max_pages: int | None, per_page: int, total_pages: str | None) -> bool:
-        """True (and logs a WARNING) when a finite cap is hit while more pages remain."""
-        if max_pages is None or page < max_pages:
-            return False
-        logger.warning(
-            "GitLab API GET %s hit the pagination cap of %d page(s) (~%d items) but GitLab "
-            "reports more remain (x-total-pages=%s). Result is TRUNCATED.",
-            endpoint,
-            max_pages,
-            max_pages * per_page,
-            total_pages or "unknown",
+        pages = iter_link_pages(
+            "GitLab", self._api_client(), self.api_url, endpoint, self._get_auth_headers(), params, max_pages
         )
-        return True
+        return await collect_pages(pages)
 
     async def _jwks_uris(self) -> list[str]:
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
@@ -242,7 +185,7 @@ class GitLabService:
 
     async def list_branches(self, project_id: int) -> list[str] | None:
         """Fetches all branch names from a GitLab project. Returns None on API failure."""
-        branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches", max_pages=None)
+        branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches")
         if branches is None:
             return None
         return [b["name"] for b in branches]
@@ -281,7 +224,7 @@ class GitLabService:
 
     async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> list[GitLabNote] | None:
         """Every note on a merge request, newest first; None when a page failed."""
-        notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes", max_pages=None)
+        notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
         return None if notes is None else [GitLabNote(**n) for n in notes]
 
     async def update_merge_request_comment(self, project_id: int, mr_iid: int, note_id: int, body: str) -> bool:
@@ -297,8 +240,7 @@ class GitLabService:
 
     async def get_group_members(self, group_id: int) -> list[GitLabMember] | None:
         """Fetch all group members via the system token."""
-        # Uncapped so large groups aren't silently truncated.
-        members = await self._api_get_paginated(f"/groups/{group_id}/members/all", max_pages=None)
+        members = await self._api_get_paginated(f"/groups/{group_id}/members/all")
         # An empty list is a group nobody is left in, and stays a list; only None is a failure.
         return None if members is None else [GitLabMember(**m) for m in members]
 
@@ -343,7 +285,7 @@ class GitLabService:
         params: dict[str, Any] = {"order_by": "path", "sort": "asc"}
         if search:
             params["search"] = search
-        return await self._api_get_paginated("/groups", params=params)
+        return await self._api_get_paginated("/groups", params=params, max_pages=10)
 
     async def get_group(self, ref: int | str) -> GitLabGroupLookup:
         """One group by its numeric id or its full path."""

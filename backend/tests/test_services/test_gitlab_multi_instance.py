@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
@@ -1172,81 +1174,67 @@ class TestTeamSyncEmaillessMembers:
         )
 
 
-class TestApiGetPaginatedCap:
-    """Membership fetches must not be silently truncated at the default cap: fetch all pages, or at minimum WARN when a cap is hit."""
+def _gitlab_offset_pages(total: int, *, with_totals: bool = True):
+    """GitLab's offset pagination as gitlab.com answers it: Link rel next/prev/first, plus rel last and the
+    x-total headers, which GitLab leaves out past 10,000 rows."""
+    requested: list[int] = []
 
-    def test_get_group_members_fetches_beyond_default_1000(self, gitlab_instance_a):
-        """A group with 12 pages (1200 members) must have all members fetched, not truncated at 1000."""
-        service = GitLabService(gitlab_instance_a)
+    def answer(request: httpx.Request) -> httpx.Response:
+        page, per_page = int(request.url.params["page"]), int(request.url.params["per_page"])
+        requested.append(page)
+        last = max(1, -(-total // per_page))
+        links = [f'<{request.url.copy_set_param("page", page + 1)}>; rel="next"'] if page < last else []
+        if page > 1:
+            links.append(f'<{request.url.copy_set_param("page", page - 1)}>; rel="prev"')
+        links.append(f'<{request.url.copy_set_param("page", 1)}>; rel="first"')
+        headers = {
+            "x-page": str(page),
+            "x-per-page": str(per_page),
+            "x-next-page": str(page + 1) if page < last else "",
+        }
+        if with_totals:
+            links.append(f'<{request.url.copy_set_param("page", last)}>; rel="last"')
+            headers |= {"x-total": str(total), "x-total-pages": str(last)}
+        rows = [
+            {"id": n, "name": f"row-{n}", "username": f"user-{n}", "access_level": 30, "author": {"id": 1}}
+            for n in range((page - 1) * per_page, min(page * per_page, total))
+        ]
+        return httpx.Response(200, json=rows, headers={"link": ", ".join(links), **headers}, request=request)
 
-        total_pages = 12
-        per_page = 100
+    return answer, requested
 
-        def _make_response(page: int):
-            resp = MagicMock()
-            resp.status_code = 200
-            # Each page returns a full page of distinct members.
-            resp.json.return_value = [
-                {"username": f"u{(page - 1) * per_page + i}", "email": f"u{i}p{page}@t.com", "access_level": 30}
-                for i in range(per_page)
-            ]
-            resp.headers = {"x-total-pages": str(total_pages)}
-            return resp
 
-        call_pages: list[int] = []
+def _serve(monkeypatch, answer) -> None:
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(answer)))
 
-        async def fake_get(url, headers=None, params=None):
-            page = params["page"]
-            call_pages.append(page)
-            return _make_response(page)
 
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(side_effect=fake_get)
+class TestGitLabPagination:
+    """Every paginated read follows GitLab's Link header to the last page; only the group picker is capped."""
 
-        class _CM:
-            async def __aenter__(self):
-                return mock_client
+    @pytest.mark.parametrize(
+        "read",
+        [
+            pytest.param(lambda service: service.list_branches(100), id="branches"),
+            pytest.param(lambda service: service.get_group_members(42), id="members"),
+            pytest.param(lambda service: service.get_merge_request_notes(100, 7), id="notes"),
+        ],
+    )
+    @pytest.mark.parametrize("with_totals", [True, False], ids=["with-totals", "past-10k-rows"])
+    def test_every_page_is_read_and_nothing_past_the_last(self, gitlab_instance_a, monkeypatch, read, with_totals):
+        answer, requested = _gitlab_offset_pages(1201, with_totals=with_totals)
+        _serve(monkeypatch, answer)
 
-            async def __aexit__(self, *a):
-                return False
+        result = asyncio.run(read(GitLabService(gitlab_instance_a)))
 
-        with patch.object(service, "_api_client", return_value=_CM()):
-            result = asyncio.run(service.get_group_members(42))
+        assert len(result) == 1201
+        assert requested == list(range(1, 14))
 
-        assert result is not None
-        # All 1200 members fetched, NOT truncated at 1000.
-        assert len(result) == total_pages * per_page
-        assert max(call_pages) == total_pages
+    def test_the_group_picker_stops_at_its_cap_and_says_so(self, gitlab_instance_a, monkeypatch, caplog):
+        answer, requested = _gitlab_offset_pages(1201)
+        _serve(monkeypatch, answer)
 
-    def test_paginated_logs_warning_when_cap_reached(self, gitlab_instance_a, caplog):
-        """If a hard cap is ever hit while more pages remain, a WARNING must fire."""
-        service = GitLabService(gitlab_instance_a)
+        with caplog.at_level("WARNING"):
+            groups = asyncio.run(GitLabService(gitlab_instance_a).get_groups())
 
-        def _make_response(page: int):
-            resp = MagicMock()
-            resp.status_code = 200
-            resp.json.return_value = [{"id": i, "username": f"u{page}_{i}"} for i in range(100)]
-            # Always claims there are far more pages than the cap.
-            resp.headers = {"x-total-pages": "9999"}
-            return resp
-
-        async def fake_get(url, headers=None, params=None):
-            return _make_response(params["page"])
-
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(side_effect=fake_get)
-
-        class _CM:
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, *a):
-                return False
-
-        with patch.object(service, "_api_client", return_value=_CM()):
-            with caplog.at_level("WARNING", logger="app.services.gitlab"):
-                asyncio.run(service._api_get_paginated("/groups/42/members/all", max_pages=3))
-
-        assert any("cap" in r.message.lower() or "truncat" in r.message.lower() for r in caplog.records), (
-            f"Expected a cap/truncation warning. Got: {[r.message for r in caplog.records]}"
-        )
+        assert (len(groups), requested) == (1000, list(range(1, 11)))
+        assert any("TRUNCATED" in record.getMessage() for record in caplog.records)

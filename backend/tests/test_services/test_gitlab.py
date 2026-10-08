@@ -346,7 +346,7 @@ class TestMergeRequestNotes:
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
             asyncio.run(service.get_merge_request_notes(100, 7))
 
-        paginated.assert_awaited_once_with("/projects/100/merge_requests/7/notes", max_pages=None)
+        paginated.assert_awaited_once_with("/projects/100/merge_requests/7/notes")
 
     def test_a_failed_read_is_none_rather_than_no_notes(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)

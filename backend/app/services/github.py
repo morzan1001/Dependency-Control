@@ -3,7 +3,7 @@ import logging
 import urllib.parse
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import aclosing, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
@@ -109,6 +109,64 @@ async def cached_public_emails[K](
     answered = {key: email for key, email in fetched.items() if email is not None}
     await cache_service.mset({cache_keys[key]: email for key, email in answered.items()}, ttl_seconds)
     return None if refused else {**emails, **answered}
+
+
+async def iter_link_pages(
+    provider: str,
+    client: AbstractAsyncContextManager[InstrumentedAsyncClient],
+    base_url: str,
+    endpoint: str,
+    headers: dict[str, str],
+    params: dict[str, Any] | None = None,
+    max_pages: int | None = None,
+) -> AsyncGenerator[list[dict[str, Any]] | None]:
+    """Each page of a GET paginated by its Link header, then a final None if one failed; a hit ``max_pages`` warns."""
+    failed = False
+    page = 1
+    try:
+        async with client as session:
+            while True:
+                response = await session.get(
+                    f"{base_url}{endpoint}", headers=headers, params={**(params or {}), "page": page, "per_page": 100}
+                )
+                if not response_ok(provider, endpoint, response):
+                    failed = True
+                    break
+
+                items = response.json()
+                if not items:
+                    break
+                yield items
+
+                if 'rel="next"' not in response.headers.get("link", ""):
+                    break
+                if page == max_pages:
+                    logger.warning(
+                        '%s API GET %s hit the pagination cap of %d page(s) but the Link header still offers rel="next". '
+                        "Result is TRUNCATED.",
+                        provider,
+                        sanitize_for_log(endpoint),
+                        max_pages,
+                    )
+                    break
+                page += 1
+    except Exception as e:
+        logger.warning(
+            "%s API paginated GET %s failed: %s: %s", provider, sanitize_for_log(endpoint), type(e).__name__, e
+        )
+        failed = True
+    if failed:
+        yield None
+
+
+async def collect_pages(pages: AsyncIterator[list[dict[str, Any]] | None]) -> list[dict[str, Any]] | None:
+    """Every item of the pages, or None when one failed."""
+    items: list[dict[str, Any]] = []
+    async for page in pages:
+        if page is None:
+            return None
+        items.extend(page)
+    return items
 
 
 def response_ok(provider: str, endpoint: str, response: httpx.Response) -> bool:
@@ -299,51 +357,22 @@ class GitHubService:
     async def _iter_pages(
         self, endpoint: str, params: dict[str, Any] | None = None
     ) -> AsyncGenerator[list[dict[str, Any]] | None]:
-        """Each page of a Link-header-paginated GET, then a final None if one failed."""
+        """Each page of a paginated GET, then a final None if one failed."""
         if not self.instance.access_token or self.api_url is None:
             yield None
             return
-
-        failed = False
-        page = 1
-        try:
-            async with self._api_client() as client:
-                while True:
-                    response = await client.get(
-                        f"{self.api_url}{endpoint}",
-                        headers=self._get_auth_headers(),
-                        params={**(params or {}), "page": page, "per_page": 100},
-                    )
-                    if not response_ok("GitHub", endpoint, response):
-                        failed = True
-                        break
-
-                    items = response.json()
-                    if not items:
-                        break
-                    yield items
-
-                    if 'rel="next"' not in response.headers.get("link", ""):
-                        break
-                    page += 1
-        except Exception as e:
-            logger.warning(
-                "GitHub API paginated GET %s failed: %s: %s", sanitize_for_log(endpoint), type(e).__name__, e
-            )
-            failed = True
-        if failed:
-            yield None
+        headers = self._get_auth_headers()
+        async with aclosing(
+            iter_link_pages("GitHub", self._api_client(), self.api_url, endpoint, headers, params)
+        ) as pages:
+            async for page in pages:
+                yield page
 
     async def _api_get_paginated(
         self, endpoint: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]] | None:
         """Every item of a paginated GET, or None when a page failed."""
-        all_items: list[dict[str, Any]] = []
-        async for items in self._iter_pages(endpoint, params):
-            if items is None:
-                return None
-            all_items.extend(items)
-        return all_items
+        return await collect_pages(self._iter_pages(endpoint, params))
 
     async def list_branches(self, owner: str, repo: str) -> list[str] | None:
         """Fetches all branch names from a GitHub repository. Returns None on API failure."""
