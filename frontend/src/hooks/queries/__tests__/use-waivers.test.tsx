@@ -4,18 +4,17 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import type { ReactNode } from "react";
 
 import { waiverApi } from "@/api/waivers";
-import { useCreateWaiver, useDeleteWaiver, useGlobalWaivers, useProjectWaivers } from "../use-waivers";
+import { useCreateWaiver, useDeleteWaiver, useWaiverList } from "../use-waivers";
 
 vi.mock("@/api/waivers", () => ({
   waiverApi: {
-    getByProject: vi.fn(),
     getAll: vi.fn(),
     create: vi.fn().mockResolvedValue({}),
     delete: vi.fn().mockResolvedValue({}),
   },
 }));
 
-const getByProject = vi.mocked(waiverApi.getByProject);
+const getAll = vi.mocked(waiverApi.getAll);
 const emptyPage = { items: [], total: 0, page: 1, size: 50, pages: 1 };
 const SCAN_ID = "s1";
 
@@ -44,23 +43,21 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("useProjectWaivers", () => {
+describe("useWaiverList", () => {
   it("asks for the unexpired waivers only when told to", async () => {
-    getByProject.mockResolvedValue(emptyPage);
+    getAll.mockResolvedValue(emptyPage);
 
-    const { result } = renderHook(() => useProjectWaivers("p1", { active: true }), { wrapper: makeWrapper() });
+    const { result } = renderHook(() => useWaiverList("p1", { active: true }), { wrapper: makeWrapper() });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(getByProject).toHaveBeenCalledWith("p1", expect.objectContaining({ active: true }));
+    expect(getAll).toHaveBeenCalledWith(expect.objectContaining({ project_id: "p1", active: true }));
   });
-});
 
-describe("useGlobalWaivers", () => {
   it("keeps the last page while the next search is loading, so the page does not fall back to a skeleton", async () => {
     const firstPage = { items: [], total: 3, page: 1, size: 50, pages: 1 };
     vi.mocked(waiverApi.getAll).mockResolvedValueOnce(firstPage).mockReturnValueOnce(new Promise(() => {}));
 
-    const { result, rerender } = renderHook(({ search }) => useGlobalWaivers({ search }), {
+    const { result, rerender } = renderHook(({ search }) => useWaiverList(undefined, { search }), {
       wrapper: makeWrapper(),
       initialProps: { search: "" },
     });

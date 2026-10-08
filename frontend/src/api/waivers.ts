@@ -21,10 +21,6 @@ export const waiverApi = {
         return response.data;
     },
 
-    getByProject: async (projectId: string, params?: Omit<WaiversQueryParams, 'project_id'>): Promise<WaiversPaginatedResponse> => {
-        return waiverApi.getAll({ ...params, project_id: projectId });
-    },
-
     getById: async (waiverId: string): Promise<Waiver> => {
         const response = await api.get<Waiver>(`/waivers/${waiverId}`);
         return response.data;

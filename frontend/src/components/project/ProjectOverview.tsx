@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectBranchTips, useProjectScans, useScan, useScanResults } from '@/hooks/queries/use-scans'
 import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
-import { useProjectWaivers } from '@/hooks/queries/use-waivers'
+import { useWaiverList } from '@/hooks/queries/use-waivers'
 import { Scan } from '@/types/scan'
 import { resolveRun } from '@/lib/scan-run'
 import { isScanUsable } from '@/lib/scan-status'
@@ -41,7 +41,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
   const { data: scans, isLoading: scansLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
   const { data: branchTips, isLoading: tipsLoading } = useProjectBranchTips(projectId)
 
-  const { data: waivers } = useProjectWaivers(projectId, { active: true })
+  const { data: waivers } = useWaiverList(projectId, { active: true })
 
   const isLoading = scansLoading || tipsLoading
   const scanList = scans || []

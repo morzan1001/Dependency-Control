@@ -37,8 +37,7 @@ const waiverPages = {
 };
 
 vi.mock("@/hooks/queries/use-waivers", () => ({
-  useProjectWaivers: () => waiverPages,
-  useGlobalWaivers: () => waiverPages,
+  useWaiverList: () => waiverPages,
   useDeleteWaiver: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateWaiver: () => ({ mutate: vi.fn(), isPending: false }),
   useCreateWaiver: () => ({ mutate: vi.fn(), isPending: false }),
