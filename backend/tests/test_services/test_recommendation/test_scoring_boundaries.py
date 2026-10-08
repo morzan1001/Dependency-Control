@@ -4,6 +4,8 @@ The score decides which packages reach the operator at all, and it is otherwise 
 which cards appear — an ordering a single term can dominate without changing the set.
 """
 
+import itertools
+
 import pytest
 
 from app.core.constants import DETAILS_KEY_IN_KEV
@@ -16,12 +18,12 @@ _PER_VULNERABILITY_WEIGHT = 5
 _KEV_WEIGHT = 100
 
 
+_CVE_NUMBERS = itertools.count(1)
+
+
 def _vuln(severity: str, in_kev: bool = False) -> dict:
-    return {
-        "type": "vulnerability",
-        "severity": severity,
-        "details": {"vulnerabilities": [{DETAILS_KEY_IN_KEV: in_kev}]},
-    }
+    advisory = {"id": f"CVE-2024-{next(_CVE_NUMBERS):04d}", "severity": severity, DETAILS_KEY_IN_KEV: in_kev}
+    return {"type": "vulnerability", "severity": severity, "details": {"vulnerabilities": [advisory]}}
 
 
 def _scored(vulns: list[dict]) -> dict:

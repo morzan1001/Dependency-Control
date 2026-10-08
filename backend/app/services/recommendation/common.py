@@ -1,5 +1,5 @@
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,10 +40,6 @@ class VulnerabilityInfo:
     risk_score: float | None = None
     # The SBOM graph does not record the dependency; the parser guessed it is direct.
     direct_inferred: bool = False
-
-    @property
-    def is_actionable(self) -> bool:
-        return is_actionable_vulnerability(epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable)
 
 
 # Components one recommendation lists; drawn via sample_components/sampled so each list carries its population.
@@ -230,9 +226,13 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
     )
 
 
+def names_fix(advisory: dict[str, Any]) -> bool:
+    return bool(advisory.get("fixed_version"))
+
+
 @dataclass(frozen=True)
 class VulnStats:
-    """What a set of vulnerability findings adds up to; every per-package card reads it."""
+    """What the CVEs of a set of vulnerability findings add up to; every per-package card reads it."""
 
     total: int
     severity: Counter[str]
@@ -267,26 +267,58 @@ class VulnStats:
         }
 
 
-def summarize_vulns(vulns: list[VulnerabilityInfo]) -> VulnStats:
-    reachable = [v for v in vulns if v.is_reachable is True]
-    unreachable = [v for v in vulns if v.is_reachable is False]
-    epss_scores = [v.epss_score for v in vulns if v.epss_score is not None]
-    epss_buckets = Counter(bucket_epss(score) for score in epss_scores)
+# A CVE on several installed versions is as reachable as its most reachable copy.
+_REACHABILITY_RANK = {False: 0, None: 1, True: 2}
+
+
+def summarize_vulns(
+    vulns: list[VulnerabilityInfo], counted: Callable[[dict[str, Any]], bool] = lambda _: True
+) -> VulnStats:
+    """One row per CVE of the advisories ``counted`` picks, merged across installed versions; each row takes its
+    finding's reachability."""
+    severity: dict[str, str] = {}
+    reachability: dict[str, bool | None] = {}
+    epss: dict[str, float] = {}
+    kev: set[str] = set()
+    ransomware: set[str] = set()
+    for v in vulns:
+        for advisory in filter(counted, v.advisories):
+            cves = counted_cves(advisory)
+            for cve in cves:
+                severity[cve] = max_severity(severity.get(cve, "UNKNOWN"), advisory.get("severity") or "UNKNOWN")
+                reachability[cve] = max(
+                    reachability.get(cve, False), v.is_reachable, key=_REACHABILITY_RANK.__getitem__
+                )
+            if not cves:
+                continue
+            # A bundled advisory's marks hold for any one of its CVEs, so they count once.
+            if advisory.get(DETAILS_KEY_IN_KEV):
+                kev.add(cves[0])
+            if advisory.get(DETAILS_KEY_KEV_RANSOMWARE):
+                ransomware.add(cves[0])
+            if (score := advisory.get("epss_score")) is not None:
+                epss[cves[0]] = max(score, epss.get(cves[0], 0.0))
+    reachable = [cve for cve, r in reachability.items() if r is True]
+    unreachable = [cve for cve, r in reachability.items() if r is False]
+    epss_buckets = Counter(bucket_epss(score) for score in epss.values())
     fixes = [v.fixed_version for v in vulns if v.fixed_version]
     return VulnStats(
-        total=len(vulns),
-        severity=Counter(v.severity for v in vulns),
-        cves=canonical_cves([{"vulnerabilities": v.advisories} for v in vulns]),
-        kev=sum(v.is_kev for v in vulns),
-        kev_ransomware=sum(v.kev_ransomware for v in vulns),
+        total=len(severity),
+        severity=Counter(severity.values()),
+        cves=list(severity),
+        kev=len(kev),
+        kev_ransomware=len(ransomware),
         high_epss=epss_buckets["high"],
         medium_epss=epss_buckets["medium"],
         reachable=len(reachable),
         unreachable=len(unreachable),
-        reachable_critical=sum(v.severity == "CRITICAL" for v in reachable),
-        reachable_high=sum(v.severity == "HIGH" for v in reachable),
-        unreachable_critical=sum(v.severity == "CRITICAL" for v in unreachable),
-        actionable=sum(v.is_actionable for v in vulns),
+        reachable_critical=sum(severity[cve] == "CRITICAL" for cve in reachable),
+        reachable_high=sum(severity[cve] == "HIGH" for cve in reachable),
+        unreachable_critical=sum(severity[cve] == "CRITICAL" for cve in unreachable),
+        actionable=sum(
+            is_actionable_vulnerability(epss_score=epss.get(cve), is_kev=cve in kev, reachable=reachability[cve])
+            for cve in severity
+        ),
         versions=newest_first({v.current_version for v in vulns if v.current_version}),
         fixed_versions=newest_first({part for fix in fixes for part in split_fixed_versions(fix)}),
         best_fix=calculate_best_fix_version(fixes),

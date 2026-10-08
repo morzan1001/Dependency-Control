@@ -25,6 +25,7 @@ from app.services.recommendation.common import (
     VulnStats,
     VulnerabilityInfo,
     get_attr,
+    names_fix,
     priority_for,
     sample_components,
     sampled,
@@ -124,7 +125,7 @@ def _scanned_image(dependencies: list[ModelOrDict]) -> str | None:
 def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], image: str | None) -> Recommendation | None:
     """Analyze if a base image update would be beneficial."""
 
-    impact = severity_impact(v.severity for v in vulns)
+    impact = severity_impact(summarize_vulns(vulns, names_fix).severity.elements())
     if not worth_a_card(impact):
         return None
 
@@ -207,7 +208,7 @@ def _marked_cves(vulns: list[VulnerabilityInfo], marked: Callable[[dict[str, Any
 def _build_update_recommendation(
     component: str, current_version: str, component_vulns: list[VulnerabilityInfo], transitive: bool
 ) -> Recommendation:
-    stats = summarize_vulns(component_vulns)
+    stats = summarize_vulns(component_vulns, names_fix)
     direct_inferred = not transitive and component_vulns[0].direct_inferred
     label = f"{component}@{current_version}"
 
@@ -242,14 +243,19 @@ def _build_update_recommendation(
     )
 
 
+def _unfixed_critical_or_high(advisory: dict[str, Any]) -> bool:
+    return not names_fix(advisory) and advisory.get("severity") in ("CRITICAL", "HIGH")
+
+
 def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
     """Analyze vulnerabilities whose advisories name no fixed version."""
 
-    crit_high_vulns = [v for v in vulns if v.severity in ("CRITICAL", "HIGH")]
-    if not crit_high_vulns:
+    impact = severity_impact(summarize_vulns(vulns, lambda advisory: not names_fix(advisory)).severity.elements())
+    if not impact["critical"] + impact["high"]:
         return []
 
-    unfixable_shown, unfixable_total = sample_components(sorted({v.package_name for v in crit_high_vulns}))
+    packages = {v.package_name for v in vulns if any(map(_unfixed_critical_or_high, v.advisories))}
+    unfixable_shown, unfixable_total = sample_components(sorted(packages))
 
     return [
         Recommendation(
@@ -257,11 +263,11 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
             priority=Priority.HIGH,
             title="Vulnerability with No Known Fix",
             description=(
-                f"{len(crit_high_vulns)} Critical/High vulnerabilities used in your project have "
+                f"{impact['critical'] + impact['high']} Critical/High vulnerabilities used in your project have "
                 "no fixed version in their advisories. That is the absence of a recorded fix, not "
                 "proof that none exists, so confirm upstream before replacing a component."
             ),
-            impact=severity_impact(v.severity for v in vulns),
+            impact=impact,
             affected_components=unfixable_shown,
             affected_components_total=unfixable_total,
             action={

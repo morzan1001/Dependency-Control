@@ -433,3 +433,18 @@ def test_a_package_whose_copies_each_leave_a_low_unfixed_is_still_a_quick_win():
     [rec] = identify_quick_wins(copies, [])
 
     assert rec.action["target_version"] == "3.0.13-1~deb12u1"
+
+
+# One installed version as the aggregator stores it: every CVE an advisory of the same finding.
+_LODASH_CVES = [
+    {"id": f"CVE-2021-{n:05d}", "severity": severity, "fixed_version": "4.17.21"}
+    for n, severity in enumerate(["CRITICAL"] * 2 + ["HIGH"] * 3 + ["MEDIUM"] * 2 + ["LOW"])
+]
+
+
+def test_one_installed_version_with_many_fixable_cves_is_a_quick_win():
+    [rec] = identify_quick_wins([stored_vulnerability("lodash", "4.17.20", _LODASH_CVES)], [_dep("lodash", "4.17.20")])
+
+    assert rec.type == RecommendationType.SINGLE_UPDATE_MULTI_FIX
+    assert "will fix 8 vulnerabilities in a single update! (2 critical, 3 high)" in rec.description
+    assert (rec.impact["total"], rec.action["fixes_count"]) == (8, 8)

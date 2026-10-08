@@ -13,6 +13,7 @@ from app.services.recommendation.common import (
     VulnStats,
     VulnerabilityInfo,
     get_attr,
+    names_fix,
     sample_components,
     severity_impact,
     summarize_vulns,
@@ -54,9 +55,9 @@ def identify_quick_wins(
 
     candidates: list[tuple[int, str, VulnStats, bool | None]] = []
     for pkg, vulns in fixable.items():
-        if len(vulns) < 2:
+        stats = summarize_vulns(vulns, names_fix)
+        if stats.total < 2:
             continue
-        stats = summarize_vulns(vulns)
         is_direct = lookup_component(directness, pkg)
         score = (
             stats.total * QUICK_WIN_SCORING_WEIGHTS["base_per_vuln"]

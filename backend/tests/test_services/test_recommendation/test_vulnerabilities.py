@@ -831,14 +831,11 @@ class TestCveIdOnTheStoredShape:
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].action["cves"] == ["CVE-2021-44228"]
 
-    def test_a_finding_naming_no_advisory_is_not_shown_under_its_component(self):
+    def test_a_finding_naming_no_advisory_counts_no_vulnerability(self):
         finding = _make_finding()
         finding["details"]["vulnerabilities"] = []
-        dep = _make_dependency()
 
-        [card] = process_vulnerabilities([finding], [dep])
-
-        assert (card.type, "cves" in card.action) == (RecommendationType.NO_FIX_AVAILABLE, False)
+        assert process_vulnerabilities([finding], [_make_dependency()]) == []
 
 
 class TestUpdateCardsArePerInstalledVersion:
@@ -903,7 +900,7 @@ class TestInferredDirectnessIsNotPresentedAsDeclared:
 class TestUpdateCardsReadTheLiveAdvisories:
     def _direct_card(self, advisories, **details):
         finding = _make_finding(component="log4j-core", version="2.14.1", severity="MEDIUM", fixed_version="2.17.1")
-        fixed = [a | {"fixed_version": "2.17.1"} for a in advisories]
+        fixed = [{"severity": "MEDIUM", **a, "fixed_version": "2.17.1"} for a in advisories]
         finding["details"] |= {**details, "vulnerabilities": fixed}
         dep = _make_dependency(name="log4j-core", version="2.14.1")
         result = process_vulnerabilities([finding], [dep])
@@ -1006,3 +1003,70 @@ class TestPartiallyFixableRecords:
         assert self._types(finding, _make_dependency(name="express", version="4.18.0")) == [
             RecommendationType.DIRECT_DEPENDENCY_UPDATE
         ]
+
+
+# One installed version as the aggregator stores it: every CVE an advisory of the same finding.
+_LODASH_CVES = [
+    {"id": f"CVE-2021-{n:05d}", "severity": severity, "fixed_version": "4.17.21"}
+    for n, severity in enumerate(["CRITICAL"] * 2 + ["HIGH"] * 3 + ["MEDIUM"] * 2 + ["LOW"])
+]
+
+
+class TestCardsCountTheCvesOfAnInstalledVersion:
+    def test_the_update_card_counts_the_cves_its_target_fixes(self):
+        unfixed_low = {"id": "CVE-2022-99999", "severity": "LOW", "fixed_version": None}
+        finding = stored_vulnerability("lodash", "4.17.20", [*_LODASH_CVES, unfixed_low])
+
+        [card] = process_vulnerabilities([finding], [_make_dependency(name="lodash", version="4.17.20")])
+
+        assert card.description.startswith("Update lodash from 4.17.20 to 4.17.21 to fix 8 vulnerabilities.")
+        assert {k: card.impact[k] for k in ("critical", "high", "medium", "low", "total")} == {
+            "critical": 2,
+            "high": 3,
+            "medium": 2,
+            "low": 1,
+            "total": 8,
+        }
+        assert card.action["cves_total"] == 8
+
+    def test_the_base_image_card_counts_the_cves_an_update_could_fix(self):
+        finding = stored_vulnerability(
+            "libssl3",
+            "3.0.11-1~deb12u2",
+            [{"id": f"CVE-2024-{n:04d}", "severity": "MEDIUM", "fixed_version": "3.0.13-1~deb12u1"} for n in range(3)],
+        )
+        dep = _make_dependency(
+            name="libssl3",
+            version="3.0.11-1~deb12u2",
+            purl="pkg:deb/debian/libssl3@3.0.11-1~deb12u2",
+            direct=False,
+            source_type="image",
+            dep_type="deb",
+        )
+
+        [card] = process_vulnerabilities([finding], [dep])
+
+        assert card.description.startswith("Updating the base image could fix 3 vulnerabilities across 1 OS packages.")
+        assert (card.impact["medium"], card.impact["total"]) == (3, 3)
+
+    def test_the_no_fix_card_counts_the_cves_without_a_recorded_fix(self):
+        finding = stored_vulnerability(
+            "openssl",
+            "1.1.1",
+            [
+                {"id": "CVE-2024-0101", "severity": "CRITICAL", "fixed_version": None},
+                {"id": "CVE-2024-0102", "severity": "HIGH", "fixed_version": None},
+                {"id": "CVE-2024-0103", "severity": "HIGH", "fixed_version": "1.1.2"},
+                {"id": "CVE-2024-0104", "severity": "LOW", "fixed_version": None},
+            ],
+        )
+
+        [card] = process_vulnerabilities([finding], [_make_dependency(name="openssl", version="1.1.1")])
+
+        assert card.description.startswith("2 Critical/High vulnerabilities used in your project have no fixed version")
+        assert {k: card.impact[k] for k in ("critical", "high", "low", "total")} == {
+            "critical": 1,
+            "high": 1,
+            "low": 1,
+            "total": 3,
+        }
