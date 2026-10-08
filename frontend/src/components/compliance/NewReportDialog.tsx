@@ -8,10 +8,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ProjectCombobox } from "@/components/ui/project-combobox";
 import { createReport } from "@/api/compliance";
 import type { ReportFormat, ReportFramework } from "@/types/compliance";
 import { useAuth } from "@/context/useAuth";
+import { useTeams } from "@/hooks/queries/use-teams";
+import { getErrorMessage } from "@/lib/utils";
 
 const FRAMEWORKS: { value: ReportFramework; label: string }[] = [
   // Crypto / CBOM
@@ -78,11 +80,13 @@ export function NewReportDialog({
   const [scopeError, setScopeError] = useState<string | null>(null);
 
   const needsScopeId = scope === "project" || scope === "team";
+  const { data: teams } = useTeams(undefined, "name", "asc", { enabled: scope === "team" });
+  const pickScopeId = (id: string) => { setScopeId(id); setScopeError(null); };
 
   const submit = useMutation({
     mutationFn: () => createReport({
       scope,
-      scope_id: needsScopeId ? scopeId.trim() : null,
+      scope_id: needsScopeId ? scopeId : null,
       framework,
       format,
       comment: comment || undefined,
@@ -92,12 +96,12 @@ export function NewReportDialog({
       qc.invalidateQueries({ queryKey: ["compliance-reports"] });
       onClose();
     },
-    onError: (e: Error) => toast.error(`Failed to queue report: ${e.message}`),
+    onError: (e: unknown) => toast.error(`Failed to queue report: ${getErrorMessage(e)}`),
   });
 
   const handleSubmit = () => {
-    if (needsScopeId && !scopeId.trim()) {
-      setScopeError(`A ${scope} ID is required for ${scope} scope.`);
+    if (needsScopeId && !scopeId) {
+      setScopeError(`Select a ${scope} for ${scope} scope.`);
       return;
     }
     setScopeError(null);
@@ -111,7 +115,7 @@ export function NewReportDialog({
         <div className="space-y-3">
           <label className="block text-sm">
             <span className="text-muted-foreground">Scope</span>
-            <Select value={scope} onValueChange={(v) => { setScope(v as Scope); setScopeError(null); }}>
+            <Select value={scope} onValueChange={(v) => { setScope(v as Scope); pickScopeId(""); }}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {scopeOptions.map((s) => (
@@ -125,15 +129,17 @@ export function NewReportDialog({
           </label>
           {needsScopeId && (
             <label className="block text-sm">
-              <span className="text-muted-foreground">
-                {scope === "project" ? "Project ID" : "Team ID"}
-              </span>
-              <Input
-                value={scopeId}
-                onChange={(e) => { setScopeId(e.target.value); setScopeError(null); }}
-                placeholder={scope === "project" ? "e.g. 64f1…" : "e.g. team-frontend"}
-                className="mt-1"
-              />
+              <span className="text-muted-foreground">{scope === "project" ? "Project" : "Team"}</span>
+              {scope === "project" ? (
+                <ProjectCombobox value={scopeId} onValueChange={pickScopeId} className="mt-1" />
+              ) : (
+                <Select value={scopeId} onValueChange={pickScopeId}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Select a team..." /></SelectTrigger>
+                  <SelectContent>
+                    {teams?.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
               {scopeError && (
                 <span className="mt-1 block text-xs text-destructive">{scopeError}</span>
               )}
