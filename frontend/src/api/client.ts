@@ -114,7 +114,7 @@ export const refreshAccessToken = async (): Promise<string | null> => {
   return refreshPromise;
 };
 
-// No timeout: served files (SBOMs, results, archives, CSV exports) have no size limit.
+// No timeout: served files have no size limit.
 export async function getServerFile(
   url: string,
   params?: Record<string, string | undefined>,
