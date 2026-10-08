@@ -28,6 +28,29 @@ class TestUnwaivedFindings:
 
         assert sorted(f["_id"] for f in asyncio.run(_unwaived_findings("scan-1", db))) == ["R1", "R3"]
 
+    def test_an_advisory_is_read_back_with_what_an_alert_shows_and_not_its_text(self):
+        db = FakeDatabase()
+        advisory = {
+            "id": "CVE-2021-44228",
+            "aliases": ["GHSA-jfh8-c2jp-5v3q"],
+            "severity": "CRITICAL",
+            "in_kev": True,
+            "kev_due_date": "2021-12-24",
+            "kev_ransomware_use": True,
+            "epss_score": 0.94,
+            "waived": False,
+            "description": "JNDI lookups in log messages",
+            "references": ["https://logging.apache.org/log4j/2.x/security.html"],
+        }
+        doc = {"_id": "R1", "scan_id": "scan-1", "type": "vulnerability", "details": {"vulnerabilities": [advisory]}}
+        asyncio.run(db.findings.insert_one(doc))
+
+        [finding] = asyncio.run(_unwaived_findings("scan-1", db))
+
+        assert finding["details"]["vulnerabilities"] == [
+            {k: v for k, v in advisory.items() if k not in ("description", "references")}
+        ]
+
 
 class TestAggregateExternalSkipsEngineRows:
     def test_post_processor_and_crypto_rows_are_not_aggregated_again(self):

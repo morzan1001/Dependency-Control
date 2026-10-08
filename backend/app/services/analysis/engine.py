@@ -20,6 +20,7 @@ from pymongo.errors import DocumentTooLarge
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
     DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -101,7 +102,15 @@ logger = logging.getLogger(__name__)
 _BULK_CHUNK_SIZE = 500
 _MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 _SLIMMED_ADVISORY_FIELDS = frozenset({"description", "references", "details"})
-_ANNOUNCED_FINDING_PROJECTION = {"type": 1, "component": 1, "version": 1, "details.vulnerabilities": 1}
+# What an alert shows of a finding; the advisory text can reach hundreds of MB on a large scan.
+_ANNOUNCED_ADVISORY_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "epss_score", "kev_due_date")
+_ANNOUNCED_FINDING_PROJECTION = {
+    **dict.fromkeys(("type", "component", "version"), 1),
+    **{
+        f"details.vulnerabilities.{field}": 1
+        for field in (*_ANNOUNCED_ADVISORY_FIELDS, DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE)
+    },
+}
 
 # Result rows the engine writes itself on every run, as opposed to rows posted by external scanners.
 _ENGINE_RESULT_NAMES = frozenset(analyzer_factories) | POST_PROCESSOR_ANALYZERS | CRYPTO_ANALYZERS
