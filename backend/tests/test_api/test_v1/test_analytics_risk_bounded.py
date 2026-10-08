@@ -160,11 +160,16 @@ def _run_impact(
     return response, captured[0], captured_kwargs[0]
 
 
+async def _no_enrichment(_cves: list[str]) -> dict[str, Any]:
+    return {}
+
+
 def _run_hotspots(
     agg_results: list[dict[str, Any]],
     limit: int = 20,
     sort_by: str = "finding_count",
     skip: int = 0,
+    enrich: Any = _no_enrichment,
 ) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
     """Run /hotspots with patched helpers. Returns (response, finding_pipeline, agg_kwargs)."""
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
@@ -191,15 +196,12 @@ def _run_hotspots(
     mock_dep_repo = MagicMock()
     mock_dep_repo.aggregate = AsyncMock(return_value=[])
 
-    async def _fake_enrich(_cves):
-        return {}
-
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
         patch(f"{MODULE}.DependencyRepository", return_value=mock_dep_repo),
-        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
+        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=enrich),
     ):
         response = asyncio.run(
             get_vulnerability_hotspots(
@@ -483,7 +485,7 @@ class TestDistinctSeverityCounts:
             "project_ids": ["p1"],
             "first_seen": None,
         }
-        hotspot = _build_hotspot(group, {}, {}, {}, {"p1": "p1"}, ["p1"])
+        hotspot = _build_hotspot(group, {}, {}, {}, {"p1": "p1"})
 
         assert hotspot.finding_count == hotspot.cve_count == sum(hotspot.severity_breakdown.model_dump().values()) == 3
 
@@ -556,6 +558,50 @@ class TestHotspotsPostSortPagination:
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="component", skip=40, limit=20)
         assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
         assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"
+
+
+class TestHotspotsBuildOnlyThePage:
+    """A page of twenty must not enrich and build a row for every vulnerable group in scope."""
+
+    @staticmethod
+    def _groups(count: int) -> list[dict[str, Any]]:
+        return [
+            {
+                "_id": {"component": f"lib-{index:03d}", "version": "1.0.0"},
+                "project_ids": ["proj-1"],
+                "first_seen": None,
+                "details_list": [{"vulnerabilities": [{"id": f"CVE-2026-{index:04d}", "severity": "HIGH"}]}],
+            }
+            for index in range(count)
+        ]
+
+    @staticmethod
+    def _run(sort_by: str) -> tuple[list[Any], list[str], MagicMock]:
+        from app.api.v1.endpoints.analytics import risk
+
+        enriched: list[str] = []
+
+        async def _record(cves: list[str]) -> dict[str, Any]:
+            enriched.extend(cves)
+            return {}
+
+        with patch(f"{MODULE}._build_hotspot", side_effect=risk._build_hotspot) as build:
+            response, _, _ = _run_hotspots(
+                agg_results=TestHotspotsBuildOnlyThePage._groups(300), sort_by=sort_by, skip=20, enrich=_record
+            )
+        return response, enriched, build
+
+    def test_the_default_sort_enriches_and_builds_only_the_page(self):
+        response, enriched, build = self._run("finding_count")
+
+        assert len(response) == build.call_count == 20
+        assert sorted(enriched) == sorted(top for hotspot in response for top in hotspot.top_cves)
+
+    def test_an_enrichment_sort_ranks_every_group_but_builds_only_the_page(self):
+        response, enriched, build = self._run("epss")
+
+        assert len(response) == build.call_count == 20
+        assert len(enriched) == 300
 
 
 # Finding documents carry scan_created_at (engine._prepare_finding_records); created_at never exists on them.

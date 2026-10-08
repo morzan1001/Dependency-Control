@@ -4,8 +4,9 @@ import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -17,19 +18,13 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
-    ScanOutdatedSetRepository,
-    ScanUpdateDeltaRepository,
-    window_scans_by_branch,
 )
 from app.schemas.analytics import ProjectUpdateSummary, ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     READY_COVERAGE_RATIO,
-    _aggregate_metrics,
     _build_slowest_packages,
-    _dominant_ecosystem,
-    _empty_metrics,
     classify_version_change,
     compute_trend,
     compute_update_frequency,
@@ -38,11 +33,12 @@ from app.services.update_frequency import (
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
+    summarise_window,
     window_coverage_status,
     window_cutoff,
 )
-from app.services.update_frequency_fold import fold_window, select_window
 from app.services.update_frequency_rollup import record_scan_update_delta
+from tests.helpers.update_frequency import rollup_metrics
 from tests.mocks.fake_mongo import FakeDatabase, _bson_sort_key
 
 
@@ -157,37 +153,6 @@ class TestClassifyVersionChange:
         assert result != "none"
 
 
-class TestDominantEcosystem:
-    """Pin the >=70% threshold for assigning a single ecosystem label."""
-
-    def test_pure_single_type(self):
-        assert _dominant_ecosystem({"a": "pypi", "b": "pypi", "c": "pypi"}) == "pypi"
-
-    def test_clear_majority_returns_majority(self):
-        # 8 pypi + 1 npm + 1 maven = 80% pypi, above the threshold.
-        deps = {f"py{i}": "pypi" for i in range(8)}
-        deps["js"] = "npm"
-        deps["mv"] = "maven"
-        assert _dominant_ecosystem(deps) == "pypi"
-
-    def test_balanced_mix_returns_mixed(self):
-        # 5 pypi + 5 npm = 50/50, below the 70% bar.
-        deps = {f"p{i}": "pypi" for i in range(5)}
-        deps.update({f"n{i}": "npm" for i in range(5)})
-        assert _dominant_ecosystem(deps) == "mixed"
-
-    def test_empty_returns_none(self):
-        # Nothing to classify — surface as None rather than inventing a default.
-        assert _dominant_ecosystem({}) is None
-
-    def test_unknown_types_excluded_from_majority(self):
-        # "unknown" never wins a majority; it's noise from missing PURL data.
-        deps = {f"p{i}": "pypi" for i in range(3)}
-        deps.update({f"u{i}": "unknown" for i in range(7)})
-        # 3 known (all pypi) -> pypi is 100% of *classified* deps.
-        assert _dominant_ecosystem(deps) == "pypi"
-
-
 def _baseline_entry() -> ScanTimelineEntry:
     # Orchestrator timelines always start with the no-predecessor baseline scan.
     return _make_timeline_entry(0, updates=0, outdated=5)
@@ -240,49 +205,17 @@ class TestComputeTrend:
         assert "Outdated" in detail
 
 
-class TestEmptyMetrics:
-    # empty metrics use "unknown" trend, not "stable"
-    def test_empty_metrics_trend_is_unknown(self):
-        m = _empty_metrics("p1", "Project One", 0, "")
-        assert m.trend_direction == "unknown"
-
-    # empty metrics have null coverage (no outdated history yet)
-    def test_empty_metrics_coverage_is_none(self):
-        m = _empty_metrics("p1", "Project One", 0, "")
-        assert m.update_coverage_pct is None
-
-
-class TestAggregateMetricsCoverage:
+class TestSummariseWindowCoverage:
     # coverage is None when nothing has ever been outdated
     def test_coverage_none_when_no_outdated(self):
-        m = _aggregate_metrics(
-            type_counter=Counter(),
-            recent_events=[],
-            bars=[_make_timeline_entry(0), _make_timeline_entry(30)],
-            ever_outdated=set(),
-            ever_resolved=set(),
-            dep_type_map={},
-            package_outdated_counts={},
-            package_latest_info={},
-            project_id="p1",
-            project_name="Project One",
-        )
+        m = summarise_window([_make_timeline_entry(0), _make_timeline_entry(30)], Counter(), set(), set(), None, None)
         assert m.update_coverage_pct is None
         assert m.total_outdated_detected == 0
         assert m.outdated_resolved == 0
 
     def test_coverage_pct_when_outdated_resolved(self):
-        m = _aggregate_metrics(
-            type_counter=Counter(),
-            recent_events=[],
-            bars=[_make_timeline_entry(0), _make_timeline_entry(30)],
-            ever_outdated={"pkg-a", "pkg-b"},
-            ever_resolved={"pkg-a"},
-            dep_type_map={},
-            package_outdated_counts={"pkg-a": 1, "pkg-b": 2},
-            package_latest_info={},
-            project_id="p1",
-            project_name="Project One",
+        m = summarise_window(
+            [_make_timeline_entry(0), _make_timeline_entry(30)], Counter(), {"pkg-a", "pkg-b"}, {"pkg-a"}, None, None
         )
         assert m.update_coverage_pct == 50.0
         assert m.total_outdated_detected == 2
@@ -546,9 +479,7 @@ class TestBranchScopedScanSelection:
         scan_repo = FakeScanRepo(scans)
         if "branch" not in kwargs:
             since = window_cutoff(kwargs.get("window_days"))
-            kwargs["branch"], _activity = await elect_primary_branch(
-                scan_repo, "proj-1", since, default_branch, deleted_branches
-            )
+            kwargs["branch"] = await elect_primary_branch(scan_repo, "proj-1", since, default_branch, deleted_branches)
         return await compute_update_frequency(
             project_id="proj-1",
             project_name="Project",
@@ -1069,6 +1000,63 @@ class TestUnmeasuredScans:
         assert "~10 outdated" in m.trend_detail
 
 
+class TestFailedLookups:
+    """A package whose deps.dev lookup failed went unmeasured; the rest of its scan did not."""
+
+    @staticmethod
+    async def _walk_and_ledger(
+        flagged: dict[str, list[str]], failed: dict[str, list[str]]
+    ) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics]:
+        """Both read paths over scans 30 days apart that each hold the backlog and ``flaky``."""
+        db = FakeDatabase()
+        for index, (scan_id, names) in enumerate(flagged.items()):
+            await db.scans.insert_one(_scan_days_ago(scan_id, 30 * (len(flagged) - 1 - index)))
+            await db.dependencies.insert_many(
+                [{"_id": f"{scan_id}:{name}", **_make_dep(scan_id, name, "1.0.0")} for name in (*_BACKLOG, "flaky")]
+            )
+            analysis = _backlog_outdated(scan_id, names)
+            if lost := failed.get(scan_id):
+                analysis["result"] |= {"partial_components_skipped": len(lost), "lookup_failed_components": lost}
+            await db.analysis_results.insert_one({"_id": f"{scan_id}:outdated", **analysis})
+            await record_scan_update_delta(db, scan_id)
+
+        live = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=ScanRepository(db),
+            dep_repo=DependencyRepository(db),
+            analysis_repo=AnalysisResultRepository(db),
+            branch="main",
+            window_days=90,
+        )
+        project = {"_id": "proj-1", "name": "Project", "default_branch": None, "deleted_branches": []}
+        rolled = await rollup_metrics(db, project, 90)
+        assert rolled is not None
+        return live, rolled
+
+    @pytest.mark.asyncio
+    async def test_a_package_whose_lookup_always_fails_leaves_the_backlog_measured(self):
+        flagged = {"s1": list(_BACKLOG), "s2": ["pkg-b", "pkg-c"], "s3": ["pkg-b"]}
+
+        live, rolled = await self._walk_and_ledger(flagged, failed={scan_id: ["flaky"] for scan_id in flagged})
+
+        for metrics in (live, rolled):
+            assert (metrics.update_coverage_pct, metrics.outdated_resolved) == (66.7, 2)
+            assert [e.outdated_count for e in metrics.scan_timeline] == [3, 2, 1]
+        assert (live.outdated_backlog, [p.name for p in live.slowest_packages]) == (1, ["pkg-b"])
+
+    @pytest.mark.asyncio
+    async def test_an_outdated_package_whose_lookup_failed_is_not_resolved(self):
+        # deps.dev failed for pkg-b in s2 only, and s3 shows it still outdated.
+        flagged = {"s1": list(_BACKLOG), "s2": ["pkg-c"], "s3": ["pkg-b"]}
+
+        live, rolled = await self._walk_and_ledger(flagged, failed={"s2": ["pkg-b"]})
+
+        for metrics in (live, rolled):
+            assert (metrics.update_coverage_pct, metrics.outdated_resolved) == (66.7, 2)
+            assert [e.outdated_count for e in metrics.scan_timeline] == [3, 1, 1]
+
+
 class TestAggregationAccuracy:
     @pytest.mark.asyncio
     async def test_downgrades_are_not_counted_as_updates(self):
@@ -1271,6 +1259,24 @@ class TestAggregationAccuracy:
         assert m.dominant_ecosystem == "maven"
         assert m.recent_updates[0].package_type == "maven"
 
+    @pytest.mark.asyncio
+    async def test_dominant_ecosystem_is_what_the_newest_scan_holds(self):
+        # Packages the project dropped two scans ago must not keep it "mixed" after a migration.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [_make_dep("s1", f"js{i}", "1.0.0", "npm") for i in range(4)],
+            "s2": [_make_dep("s2", "js0", "1.0.0", "npm")] + [_make_dep("s2", f"py{i}", "1.0.0") for i in range(4)],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
+        )
+        assert m.dominant_ecosystem == "pypi"
+
 
 class TestStreamingOrchestrator:
     @pytest.mark.asyncio
@@ -1394,6 +1400,20 @@ class TestStreamingOrchestrator:
         assert m.total_updates == 199 * 5
 
     @pytest.mark.asyncio
+    async def test_a_single_scan_supports_no_comparison(self):
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo([_make_scan("s1", 0)]),
+            dep_repo=FakeDepRepo({"s1": [_make_dep("s1", "pkg-a", "1.0.0")]}),
+            analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
+        )
+        assert (m.scan_count, m.branch, m.trend_direction, m.update_coverage_pct) == (1, "main", "unknown", None)
+        assert m.first_scan_date == m.last_scan_date == _BASE_SCAN_DATE.isoformat()
+        assert m.scan_timeline == []
+
+    @pytest.mark.asyncio
     async def test_no_release_fetcher_yields_none_upstream_metrics(self):
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {
@@ -1414,6 +1434,33 @@ class TestStreamingOrchestrator:
         assert m.adoption_latency_days_median is None
 
     @pytest.mark.asyncio
+    async def test_a_rollback_to_an_old_version_is_no_adoption(self):
+        """Returning to a years-old release must not add years to the adoption latency."""
+        scans = [_scan_days_ago("s1", 60), _scan_days_ago("s2", 30), _scan_days_ago("s3", 0)]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "2.0.0")],
+            "s3": [_make_dep("s3", "pkg-a", "1.0.0")],
+        }
+        history: ReleaseHistory = {
+            ("pypi", "pkg-a"): [
+                ReleaseInfo(version="1.0.0", published_at=scans[0]["created_at"] - timedelta(days=1400)),
+                ReleaseInfo(version="2.0.0", published_at=scans[1]["created_at"] - timedelta(days=12)),
+            ],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
+            release_fetcher=SimpleNamespace(fetch=AsyncMock(return_value=history)),
+        )
+        assert m.downgrade_updates == 1
+        assert m.adoption_latency_days_median == 12.0
+
+    @pytest.mark.asyncio
     async def test_release_fetcher_populates_upstream_metrics(self):
         # Two scans, one update event (pkg-a 1.0.0 -> 1.0.1).
         # Upstream history: 1.0.0 published 100d before scan 0, 1.0.1 20d before scan 1.
@@ -1425,7 +1472,7 @@ class TestStreamingOrchestrator:
         scan0_date = scans[0]["created_at"]
         scan1_date = scans[1]["created_at"]
         history: ReleaseHistory = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 ReleaseInfo(version="1.0.0", published_at=scan0_date - timedelta(days=100)),
                 ReleaseInfo(version="1.0.1", published_at=scan1_date - timedelta(days=20)),
             ],
@@ -1698,7 +1745,7 @@ class TestStreamingOrchestrator:
         scan1_date = scans[1]["created_at"]
         registry_name = "org.apache.logging.log4j:log4j-core"
         history: ReleaseHistory = {
-            registry_name: [
+            ("maven", registry_name): [
                 ReleaseInfo(version="2.14.0", published_at=scans[0]["created_at"] - timedelta(days=100)),
                 ReleaseInfo(version="2.17.0", published_at=scan1_date - timedelta(days=15)),
             ],
@@ -1856,9 +1903,7 @@ class TestBranchRuleDifferential:
 
     async def _live(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
         """The walk over the branch the per-project endpoint elects."""
-        branch, _activity = await elect_primary_branch(
-            ScanRepository(db), self._PROJECT, window_cutoff(self._WINDOW), None, []
-        )
+        branch = await elect_primary_branch(ScanRepository(db), self._PROJECT, window_cutoff(self._WINDOW), None, [])
         return await compute_update_frequency(
             project_id=self._PROJECT,
             project_name="Diff",
@@ -1871,16 +1916,10 @@ class TestBranchRuleDifferential:
 
     async def _rollup(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
         """The ledger read the way the comparison endpoint assembles it."""
-        since = window_cutoff(self._WINDOW)
-        assert since is not None
-        activity = await window_scans_by_branch(ScanRepository(db), [self._PROJECT], since)
-        branch = select_primary_branch({b: seen for (_pid, b), seen in activity.items()}, None, [])
-        assert branch is not None
-        deltas = await ScanUpdateDeltaRepository(db).find_project_window(self._PROJECT, branch, since, 1000)
-        window = select_window(deltas)
-        baselines = await ScanOutdatedSetRepository(db).names_by_scan([window[0]["_id"]])
-        folded = fold_window(window, baselines.get(window[0]["_id"]), self._WINDOW)
-        return folded.to_metrics(self._PROJECT, "Diff", branch=branch)
+        project = {"_id": self._PROJECT, "name": "Diff", "default_branch": None, "deleted_branches": []}
+        rolled = await rollup_metrics(db, project, self._WINDOW)
+        assert rolled is not None
+        return rolled
 
     @pytest.mark.asyncio
     async def test_a_busy_branch_beats_a_fresher_one_on_both_paths(self):
@@ -1905,6 +1944,33 @@ class TestBranchRuleDifferential:
         } == {}
         assert live.branch == "old"
         assert (live.scan_count, live.total_updates, live.minor_updates, live.major_updates) == (3, 2, 1, 1)
+
+    @pytest.mark.asyncio
+    async def test_a_branch_scanned_only_for_findings_wins_on_neither_path(self):
+        # A findings-only pipeline stores no dependencies, so its commits compare nothing.
+        db = FakeDatabase()
+        for i, version in enumerate(("1.0.0", "1.1.0", "2.0.0")):
+            await self._seed(db, f"m{i}", 30 - i * 10, "main", version)
+        for i in range(5):
+            await db.scans.insert_one(
+                {
+                    "_id": f"sast{i}",
+                    "project_id": self._PROJECT,
+                    "branch": "develop",
+                    "created_at": datetime.now(tz=timezone.utc) - timedelta(days=5 - i),
+                    "commit_hash": f"commit-sast{i}",
+                    "status": "completed",
+                    "is_rescan": False,
+                    "sbom_refs": [],
+                }
+            )
+        for scan in sorted(await db.scans.find({}).to_list(None), key=lambda s: (s["created_at"], s["_id"])):
+            await record_scan_update_delta(db, scan["_id"])
+
+        live = await self._live(db)
+        assert (live.branch, live.total_updates) == ("main", 2)
+        rolled = await self._rollup(db)
+        assert (rolled.branch, rolled.total_updates) == ("main", 2)
 
 
 class TestTheLiveWalkIsAlwaysFullyCovered:
@@ -2105,7 +2171,11 @@ class TestOutdatedRowsPerScan:
                 {
                     "scan_id": "scan-1",
                     "analyzer_name": "outdated_packages",
-                    "result": {"outdated_dependencies": [{"component": f"pkg{i:03d}"}]},
+                    "result": {
+                        "outdated_dependencies": [{"component": f"pkg{i:03d}"}],
+                        "partial_components_skipped": 1,
+                        "lookup_failed_components": [f"lost{i:03d}"],
+                    },
                 }
                 for i in range(self._SBOMS_PER_SCAN)
             ]
@@ -2113,10 +2183,12 @@ class TestOutdatedRowsPerScan:
 
     @pytest.mark.asyncio
     async def test_a_monorepo_posting_many_sboms_keeps_every_backlog_row(self):
-        entries = await load_outdated_entries(self._repo(), "scan-1")
+        loaded = await load_outdated_entries(self._repo(), "scan-1")
 
-        assert entries is not None
+        assert loaded is not None
+        entries, failed = loaded
         assert [e["component"] for e in entries] == [f"pkg{i:03d}" for i in range(self._SBOMS_PER_SCAN)]
+        assert failed == {f"lost{i:03d}" for i in range(self._SBOMS_PER_SCAN)}
 
     @pytest.mark.asyncio
     async def test_a_scan_with_no_outdated_analysis_is_unmeasured_not_empty(self):

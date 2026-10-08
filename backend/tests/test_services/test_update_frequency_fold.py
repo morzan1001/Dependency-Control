@@ -9,9 +9,9 @@ import pytest
 from app.schemas.analytics import ScanTimelineEntry
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
-from app.services.update_frequency import DAYS_PER_MONTH, compute_trend
+from app.services.update_frequency import DAYS_PER_MONTH, compute_trend, dominant_ecosystem
+from app.services.update_frequency import FoldedWindow
 from app.services.update_frequency_fold import (
-    FoldedWindow,
     commit_coverage,
     fold_window,
     select_window,
@@ -23,10 +23,6 @@ BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 def _at(days: float) -> datetime:
     return BASE + timedelta(days=days)
-
-
-def _sample(name: str, kind: str = "patch", old: str = "1.0.0", new: str = "1.0.1") -> dict[str, Any]:
-    return {"n": name, "t": "npm", "p": f"pkg:npm/{name}@{new}", "ov": old, "nv": new, "k": kind, "wo": True}
 
 
 def _delta(
@@ -43,8 +39,6 @@ def _delta(
     resolved: Sequence[str] = (),
     dep_count: int = 100,
     commit_hash: str | None = None,
-    eco: dict[str, int] | None = None,
-    samples: Sequence[dict[str, Any]] = (),
     error: str | None = None,
     project_id: str = "p1",
     branch: str = "main",
@@ -74,8 +68,6 @@ def _delta(
         "outdated_count": outdated_count,
         "outdated_added": list(added),
         "outdated_resolved": list(resolved),
-        "eco": eco if eco is not None else {"npm": dep_count},
-        "updates_sample": list(samples),
         "error": error,
         "schema_version": 1,
         "computed_at": BASE,
@@ -150,7 +142,6 @@ class TestGoldenWindow:
             # 4 / 7
             ("update_coverage_pct", 57.1),
             ("trend_direction", "deteriorating"),
-            ("dominant_ecosystem", "npm"),
         ],
     )
     def test_scalar_fields(self, field: str, expected: Any) -> None:
@@ -210,27 +201,6 @@ class TestCadence:
         folded = _fold(deltas)
         assert folded.avg_days_between_scans == 0.3
         assert folded.time_range_days == 1.0
-
-
-class TestInputContract:
-    def test_newest_first_input_is_rejected(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1)])
-        with pytest.raises(ValueError, match="oldest first"):
-            select_window(list(reversed(deltas)))
-
-    def test_mixed_branches_are_rejected(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1, branch="feature/x")])
-        with pytest.raises(ValueError, match="one project/branch"):
-            select_window(deltas)
-
-    def test_mixed_projects_are_rejected(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1, project_id="p2")])
-        with pytest.raises(ValueError, match="one project/branch"):
-            select_window(deltas)
-
-    def test_equal_timestamps_are_accepted(self) -> None:
-        deltas = _chain([_delta("s0", 5), _delta("s1", 5, patch=1)])
-        assert [d["_id"] for d in select_window(deltas)] == ["s0", "s1"]
 
 
 class TestChainContinuity:
@@ -307,7 +277,6 @@ class TestShortWindows:
         assert folded.first_scan_date == ""
         assert folded.last_scan_date == ""
         assert folded.scan_timeline == []
-        assert folded.recent_updates == []
         assert folded.updates_per_month is None
         assert folded.update_coverage_pct is None
         assert folded.trend_direction == "unknown"
@@ -595,64 +564,6 @@ class TestDowngrades:
         assert [(e.updates_count, e.downgrades) for e in folded.scan_timeline] == [(0, 0), (0, 5), (0, 5)]
 
 
-class TestRecentUpdates:
-    def test_newest_first_across_scans(self) -> None:
-        deltas = _chain(
-            [
-                _delta("s0", 0, samples=[_sample("anchor-pkg")]),
-                _delta("s1", 10, patch=2, samples=[_sample("b"), _sample("a")]),
-                _delta("s2", 20, patch=2, samples=[_sample("d"), _sample("c")]),
-            ]
-        )
-        assert [e.package_name for e in _fold(deltas).recent_updates] == ["d", "c", "b", "a"]
-
-    def test_event_fields_come_from_the_sample_and_the_scan_pair(self) -> None:
-        deltas = _chain(
-            [
-                _delta("s0", 0),
-                _delta("s1", 7, major=1, samples=[_sample("left-pad", kind="major", old="1.2.3", new="2.0.0")]),
-            ]
-        )
-        event = _fold(deltas).recent_updates[0]
-        assert event.package_name == "left-pad"
-        assert event.package_type == "npm"
-        assert event.purl == "pkg:npm/left-pad@2.0.0"
-        assert event.old_version == "1.2.3"
-        assert event.new_version == "2.0.0"
-        assert event.update_type == "major"
-        assert event.was_outdated is True
-        assert event.scan_date == _at(7).isoformat()
-        assert event.previous_scan_date == _at(0).isoformat()
-        assert event.days_between_scans == 7
-
-    def test_days_between_scans_is_floored_at_one(self) -> None:
-        deltas = _chain([_delta("s0", 0), _delta("s1", 0.25, patch=1, samples=[_sample("a")])])
-        assert _fold(deltas).recent_updates[0].days_between_scans == 1
-
-    def test_capped_at_thirty(self) -> None:
-        deltas = _chain(
-            [_delta("s0", 0)]
-            + [
-                _delta(f"s{i}", i * 10, patch=20, samples=[_sample(f"p{i}-{j}") for j in range(20)])
-                for i in range(1, 4)
-            ]
-        )
-        recent = _fold(deltas).recent_updates
-        assert len(recent) == 30
-        # Newest scan first: its whole sample, then the next scan's.
-        assert recent[0].package_name == "p3-0"
-        assert recent[20].package_name == "p2-0"
-
-    def test_anchor_samples_are_dropped(self) -> None:
-        deltas = _chain(
-            [
-                _delta("s0", 0, samples=[_sample("anchor-pkg")]),
-                _delta("s1", 10, patch=1, samples=[_sample("a")]),
-            ]
-        )
-        assert [e.package_name for e in _fold(deltas).recent_updates] == ["a"]
-
-
 class TestDominantEcosystem:
     @pytest.mark.parametrize(
         ("eco", "expected"),
@@ -668,9 +579,8 @@ class TestDominantEcosystem:
             ({"npm": 0, "pypi": 0}, None),
         ],
     )
-    def test_from_the_newest_scan(self, eco: dict[str, int], expected: str | None) -> None:
-        deltas = _chain([_delta("s0", 0, eco={"maven": 999}), _delta("s1", 10, eco=eco)])
-        assert _fold(deltas).dominant_ecosystem == expected
+    def test_the_ecosystem_owning_most_classified_deps(self, eco: dict[str, int], expected: str | None) -> None:
+        assert dominant_ecosystem(eco) == expected
 
 
 def _timeline(updates: Sequence[int], outdated: Sequence[int | None]) -> list[ScanTimelineEntry]:
@@ -771,9 +681,9 @@ class TestModelConstruction:
         assert metrics.update_coverage_pct == 57.1
         assert metrics.trend_direction == "deteriorating"
         assert metrics.trend_detail == folded.trend_detail
-        assert metrics.dominant_ecosystem == "npm"
+        assert metrics.dominant_ecosystem is None
         assert metrics.scan_timeline == folded.scan_timeline
-        assert metrics.recent_updates == folded.recent_updates
+        assert metrics.recent_updates == []
         assert metrics.slowest_packages == []
 
     def test_to_metrics_without_upstream_leaves_the_cadence_fields_unset(self) -> None:

@@ -11,19 +11,14 @@ from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import RECENT_UPDATES_LIMIT, UPDATE_SAMPLE_RANK
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import update_frequency_delta_writes_total
-from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts, UpdateSample
+from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
-from app.services.update_frequency import (
-    classify_version_change,
-    load_scan_deps,
-    load_outdated_entries,
-)
+from app.services.update_frequency import load_outdated_entries, load_scan_deps, version_changes
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +50,6 @@ class _ScanRef:
 @dataclass
 class _Diff:
     counts: Counter = field(default_factory=Counter)
-    samples: list[UpdateSample] = field(default_factory=list)
     outdated_added: list[str] = field(default_factory=list)
     outdated_resolved: list[str] = field(default_factory=list)
 
@@ -134,14 +128,14 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
 
 async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[str] | None]:
     deps = await load_scan_deps(DependencyRepository(db), scan.scan_id)
-    outdated = await _load_outdated(db, scan.scan_id)
+    outdated, failed = await _load_outdated(db, scan.scan_id)
 
     prev, prev_deps = await _resolve_predecessor(db, scan)
     if prev is None:
         diff = _Diff()
     else:
         prev_outdated = (await ScanOutdatedSetRepository(db).names_by_scan([prev["_id"]])).get(prev["_id"])
-        diff = _diff_scans(prev_deps, deps, prev_outdated, outdated)
+        diff = _diff_scans(prev_deps, deps, prev_outdated, outdated, failed)
 
     delta = ScanUpdateDelta(
         id=scan.scan_id,
@@ -157,8 +151,6 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         outdated_count=len(outdated) if outdated is not None else None,
         outdated_added=diff.outdated_added,
         outdated_resolved=diff.outdated_resolved,
-        eco=_eco_counts(deps),
-        updates_sample=diff.samples,
     )
     return delta, outdated
 
@@ -223,33 +215,9 @@ def _diff_scans(
     curr_deps: dict[str, dict[str, str]],
     prev_outdated: set[str] | None,
     curr_outdated: set[str] | None,
+    curr_failed: set[str],
 ) -> _Diff:
-    counts: Counter = Counter()
-    samples: list[UpdateSample] = []
-
-    for identity, curr in curr_deps.items():
-        prev = prev_deps.get(identity)
-        if prev is None or prev["version"] == curr["version"]:
-            continue
-        kind = classify_version_change(prev["version"], curr["version"])
-        if kind == "none":  # same PEP 440 identity, e.g. v1.0.0 vs 1.0.0
-            continue
-        counts[kind] += 1
-        samples.append(
-            UpdateSample(
-                n=curr["display"],
-                t=curr["type"],
-                p=curr["purl"] or None,
-                ov=prev["version"],
-                nv=curr["version"],
-                k=kind,
-                wo=prev_outdated is not None and prev["name"] in prev_outdated,
-            )
-        )
-
-    # Mongo document order is unstable, so the cap needs a total order of its own.
-    samples.sort(key=lambda sample: (UPDATE_SAMPLE_RANK[sample.k], sample.n, sample.nv))
-    diff = _Diff(counts=counts, samples=samples[:RECENT_UPDATES_LIMIT])
+    diff = _Diff(counts=Counter(kind for *_, kind in version_changes(prev_deps, curr_deps)))
     # Without a measurement of this scan any outdated movement would be invented.
     if curr_outdated is None:
         return diff
@@ -259,23 +227,20 @@ def _diff_scans(
         # went outdated across the unmeasured scan out of the coverage denominator.
         diff.outdated_added = sorted(curr_outdated)
         return diff
-    curr_names = {info["name"] for info in curr_deps.values()}
+    curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
     diff.outdated_added = sorted(curr_outdated - prev_outdated)
-    # A package that vanished was not brought up to date.
+    # A package that vanished, or whose lookup failed, was not brought up to date.
     diff.outdated_resolved = sorted((prev_outdated & curr_names) - curr_outdated)
     return diff
 
 
-def _eco_counts(deps: dict[str, dict[str, str]]) -> dict[str, int]:
-    return dict(Counter(info["type"] for info in deps.values()))
-
-
-async def _load_outdated(db: Any, scan_id: str) -> set[str] | None:
-    """Component names the scan flagged outdated, or None when it carries no such analysis."""
-    entries = await load_outdated_entries(AnalysisResultRepository(db), scan_id)
-    if entries is None:
-        return None
-    return {component for entry in entries if (component := entry.get("component", ""))}
+async def _load_outdated(db: Any, scan_id: str) -> tuple[set[str] | None, set[str]]:
+    """Component names the scan flagged outdated (None without the analysis) and those whose lookup failed."""
+    loaded = await load_outdated_entries(AnalysisResultRepository(db), scan_id)
+    if loaded is None:
+        return None, set()
+    entries, failed = loaded
+    return {component for entry in entries if (component := entry.get("component", ""))}, failed
 
 
 async def _persist(db: Any, delta: ScanUpdateDelta, outdated: set[str] | None) -> None:

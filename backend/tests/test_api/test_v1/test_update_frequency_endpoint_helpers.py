@@ -29,7 +29,6 @@ from app.core.config import settings
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.project import Project
 from app.models.user import User
-from app.repositories.update_frequency import window_scans_by_branch
 from app.schemas.analytics import ProjectUpdateSummary, UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.rescan import build_rescan
 from app.services.update_frequency import rank_summaries
@@ -44,7 +43,6 @@ def _pkey(**overrides: Any) -> str:
         "window_days": None,
         "branch": None,
         "version_token": "1",
-        "use_rollup": False,
     }
     return _project_cache_key("proj-1", **(kwargs | overrides))
 
@@ -55,7 +53,7 @@ class TestProjectCacheKey:
         assert _pkey(version_token="3") != _pkey(version_token="4")
 
     def test_key_distinguishes_branch_and_params(self):
-        keys = {_pkey(), _pkey(branch="main"), _pkey(window_days=90), _pkey(use_rollup=True)}
+        keys = {_pkey(), _pkey(branch="main"), _pkey(window_days=90), _pkey(max_scans=50)}
         assert len(keys) == 4
 
     def test_key_stable_for_same_inputs(self):
@@ -370,70 +368,6 @@ class TestReadPathSelection:
                     rolled = asyncio.run(get_update_frequency_comparison(current_user=_user("u1"), db=db))
 
         assert (live.team_avg_updates_per_month, rolled.team_avg_updates_per_month) == (1.0, 9.0)
-
-
-class TestProjectReadPathSelection:
-    @staticmethod
-    async def _run(rollup: Any, live: Any, **query: Any) -> UpdateFrequencyMetrics:
-        db = await _scanned_db()
-        with _project_patched(FakeCache(), live):
-            with patch(f"{MODULE}._rollup_project_metrics", rollup):
-                with patch.object(settings, "UPDATE_FREQUENCY_USE_ROLLUP", True):
-                    return await _view(db, **query)
-
-    @pytest.mark.asyncio
-    async def test_the_windowed_default_view_reads_the_rollup(self):
-        rollup = AsyncMock(return_value=_metrics("rollup"))
-        live = AsyncMock(return_value=_metrics("live"))
-
-        result = await self._run(rollup, live, window_days=90)
-
-        assert result.project_name == "rollup"
-        assert live.await_count == 0
-
-    @pytest.mark.asyncio
-    async def test_an_explicit_branch_stays_on_the_live_path(self):
-        rollup = AsyncMock(return_value=_metrics("rollup"))
-        live = AsyncMock(return_value=_metrics("live"))
-
-        result = await self._run(rollup, live, window_days=90, branch="main")
-
-        assert result.project_name == "live"
-        assert rollup.await_count == 0
-
-    @pytest.mark.asyncio
-    async def test_the_max_scans_mode_stays_on_the_live_path(self):
-        rollup = AsyncMock(return_value=_metrics("rollup"))
-        live = AsyncMock(return_value=_metrics("live"))
-
-        result = await self._run(rollup, live, max_scans=20)
-
-        assert result.project_name == "live"
-        assert rollup.await_count == 0
-
-    @pytest.mark.asyncio
-    async def test_a_project_the_ledger_cannot_answer_for_falls_back(self):
-        rollup = AsyncMock(return_value=None)
-        live = AsyncMock(return_value=_metrics("live"))
-
-        result = await self._run(rollup, live, window_days=90)
-
-        assert result.project_name == "live"
-        assert rollup.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_a_rollup_miss_elects_the_branch_once(self):
-        db = await _scanned_db()
-        live = AsyncMock(return_value=_metrics("live"))
-        elections = AsyncMock(side_effect=window_scans_by_branch)
-
-        with _project_patched(FakeCache(), live), patch.object(settings, "UPDATE_FREQUENCY_USE_ROLLUP", True):
-            with patch(f"{MODULE}.window_scans_by_branch", elections):
-                with patch("app.services.update_frequency.window_scans_by_branch", elections):
-                    await _view(db, window_days=90)
-
-        assert elections.await_count == 1
-        assert live.await_args.kwargs["branch"] == "main"
 
 
 _NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)

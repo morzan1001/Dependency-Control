@@ -101,7 +101,6 @@ class ImpactAnalysisResult(BaseModel):
     affected_projects: int
     total_findings: int
     findings_by_severity: SeverityBreakdown
-    recommended_version: str | None = None
     fix_impact_score: float
     affected_project_names: list[str]
     max_epss_score: float | None = None

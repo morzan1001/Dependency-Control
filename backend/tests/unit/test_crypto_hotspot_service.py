@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -295,6 +295,23 @@ async def test_a_finding_dimension_counts_each_scans_asset_where_two_projects_sh
 
 
 @pytest.mark.asyncio
+async def test_a_weakness_tag_row_spans_every_severity_it_was_seen_at(db):
+    base = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    for index, (severity, day) in enumerate((("HIGH", 3), ("LOW", 1), ("HIGH", 7))):
+        finding = _crypto_finding(f"f{index}", asset_name="RSA", project_id="pt", scan_id="st", severity=severity)
+        finding["details"] |= {"weakness_tags": ["short-key"], "bom_ref": f"b{index % 2}"}
+        await db.findings.insert_one(finding | {"scan_created_at": base + timedelta(days=day)})
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="weakness_tag", scan_id="st")
+
+    [entry] = result.items
+    assert (entry.key, entry.finding_count, entry.asset_count) == ("short-key", 3, 2)
+    assert entry.severity_mix == {"HIGH": 2, "LOW": 1}
+    assert (entry.first_seen, entry.last_seen) == (base + timedelta(days=1), base + timedelta(days=7))
+
+
+@pytest.mark.asyncio
 async def test_no_completed_scans_returns_empty_not_all_history(db):
     """With no completed/partial scan the aggregation must match nothing, not fall back to every scan."""
     await CryptoAssetRepository(db).bulk_upsert(
@@ -396,3 +413,20 @@ async def test_concurrent_callers_of_one_view_share_one_aggregation(db):
         await asyncio.gather(*(service.hotspots(resolved=resolved, group_by="name", limit=10) for _ in range(3)))
 
     assert runs == 1
+
+
+@pytest.mark.asyncio
+async def test_a_named_scan_cached_for_its_owner_is_not_served_to_an_outsider(db):
+    """User-scope callers share scope and scope_id, so only their project sets tell their entries apart."""
+    await CryptoAssetRepository(db).bulk_upsert(
+        "po", "so", [_asset("a1", "MD5", CryptoPrimitive.HASH, project_id="po", scan_id="so")]
+    )
+    service = CryptoHotspotService(db)
+    owner = ResolvedScope(scope="user", scope_id=None, project_ids=["po"])
+    outsider = ResolvedScope(scope="user", scope_id=None, project_ids=["elsewhere"])
+
+    seen_by_owner = await service.hotspots(resolved=owner, group_by="name", scan_id="so")
+    seen_by_outsider = await service.hotspots(resolved=outsider, group_by="name", scan_id="so")
+
+    assert [entry.key for entry in seen_by_owner.items] == ["MD5"]
+    assert seen_by_outsider.items == []

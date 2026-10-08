@@ -15,6 +15,14 @@ from app.services.analytics.scopes import ResolvedScope
 
 # The chat tool passes an unchecked string, so this is its only validation.
 _SUPPORTED_GROUPINGS = frozenset(get_args(GroupBy))
+# Asset-first groupings: the asset field grouped on and the findings field joined to it. Names group bare,
+# because findings carry details.asset_name == asset.name without the variant. The other groupings live
+# on findings alone.
+_ASSET_GROUPINGS = {
+    "name": ("$name", "$details.asset_name"),
+    "primitive": ("$primitive", "$details.primitive"),
+    "asset_type": ("$asset_type", "$details.asset_type"),
+}
 
 # $push of every occurrence_locations array can exceed MongoDB's 16MB group-doc limit on a hot
 # group, so the accumulator reads the arrays of this many assets and no more.
@@ -53,7 +61,8 @@ class CryptoHotspotService:
         limit = max(1, min(limit, 500))
 
         latest_scan_ids = await self._pick_scan_ids(resolved, scan_id)
-        key = ("crypto-hotspots", resolved.scope, resolved.scope_id, group_by, scope_digest(latest_scan_ids), limit)
+        scope = (resolved.scope, resolved.scope_id, scope_digest(resolved.project_ids))
+        key = ("crypto-hotspots", *scope, group_by, scope_digest(latest_scan_ids), limit)
         return await self.cache.get_or_compute(key, lambda: self._build(resolved, group_by, latest_scan_ids, limit))
 
     async def _build(
@@ -93,15 +102,14 @@ class CryptoHotspotService:
         group_by: GroupBy,
         limit: int,
     ) -> list[HotspotEntry]:
-        # severity/weakness_tag live on findings, not assets, so they use a
-        # finding-first pipeline; the rest stay asset-first.
-        if group_by in ("severity", "weakness_tag"):
+        if group_by not in _ASSET_GROUPINGS:
             return await self._aggregate_by_finding_dimension(
                 project_ids=project_ids,
                 scan_ids=scan_ids,
                 group_by=group_by,
                 limit=limit,
             )
+        group_key, join_field = _ASSET_GROUPINGS[group_by]
 
         # Empty scan_ids must match nothing ($in: []), not disable the filter
         # (which would aggregate every historical scan).
@@ -109,7 +117,6 @@ class CryptoHotspotService:
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
-        group_key = self._group_key_stage(group_by)
         asset_pipeline: list[dict[str, Any]] = [
             {"$match": match},
             {
@@ -129,8 +136,8 @@ class CryptoHotspotService:
         now = datetime.now(timezone.utc)
         out: list[HotspotEntry] = []
         async for row in self.db.crypto_assets.aggregate(asset_pipeline):
-            key = self._key_from_row(row)
-            if key is None:
+            key = row.get("_id")
+            if not isinstance(key, str) or not key:
                 continue
             distinct = _distinct_locations(row.get("locations", []))
             sampled_every_asset = row["asset_count"] <= _LOCATION_SAMPLE_ASSETS
@@ -149,7 +156,7 @@ class CryptoHotspotService:
                 )
             )
 
-        await self._enrich_with_findings(out, project_ids, scan_ids, group_by)
+        await self._enrich_with_findings(out, project_ids, scan_ids, join_field)
         return out
 
     async def _aggregate_by_finding_dimension(
@@ -200,10 +207,10 @@ class CryptoHotspotService:
 
         accum: dict[str, dict[str, Any]] = {}
         async for row in self.db.findings.aggregate(pipeline):
-            key = (row.get("_id") or {}).get("key")
+            key = row["_id"].get("key")
             if not key:
                 continue
-            sev = (row.get("_id") or {}).get("severity") or "UNKNOWN"
+            sev = row["_id"].get("severity") or "UNKNOWN"
             entry = accum.setdefault(
                 key,
                 {
@@ -216,20 +223,12 @@ class CryptoHotspotService:
                 },
             )
             entry["finding_count"] += row["finding_count"]
-            entry["bom_refs"].update((b["scan_id"], b["bom_ref"]) for b in row.get("bom_refs", []) if b.get("bom_ref"))
-            entry["project_ids"].update(row.get("project_ids", []))
+            entry["bom_refs"].update((b["scan_id"], b["bom_ref"]) for b in row["bom_refs"] if b.get("bom_ref"))
+            entry["project_ids"].update(row["project_ids"])
             entry["severity_mix"][sev] = entry["severity_mix"].get(sev, 0) + row["finding_count"]
-            for field in ("first_seen", "last_seen"):
-                value = row.get(field)
-                if value is None:
-                    continue
-                current = entry[field]
-                if (
-                    current is None
-                    or (field == "first_seen" and value < current)
-                    or (field == "last_seen" and value > current)
-                ):
-                    entry[field] = value
+            for field, pick in (("first_seen", min), ("last_seen", max)):
+                if (value := row.get(field)) is not None:
+                    entry[field] = value if entry[field] is None else pick(entry[field], value)
 
         now = datetime.now(timezone.utc)
         ranked = sorted(accum.items(), key=lambda kv: kv[1]["finding_count"], reverse=True)[:limit]
@@ -250,35 +249,14 @@ class CryptoHotspotService:
             for key, data in ranked
         ]
 
-    def _group_key_stage(self, group_by: GroupBy) -> Any:
-        if group_by == "name":
-            # Group on the bare asset name: findings carry details.asset_name == asset.name
-            # (no variant), and _enrich_with_findings must join on the same bare name.
-            return "$name"
-        if group_by == "primitive":
-            return "$primitive"
-        if group_by == "asset_type":
-            return "$asset_type"
-        return None
-
-    def _key_from_row(self, row: dict[str, Any]) -> str | None:
-        key = row.get("_id")
-        if isinstance(key, str) and key:
-            return key
-        return None
-
     async def _enrich_with_findings(
         self,
         items: list[HotspotEntry],
         project_ids: list[str] | None,
         scan_ids: list[str],
-        group_by: GroupBy,
+        join_field: str,
     ) -> None:
         if not items:
-            return
-        join_field = self._finding_join_field(group_by)
-        if join_field is None:
-            # severity/weakness_tag have no clean per-asset join; leave defaults.
             return
         match: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
@@ -314,14 +292,3 @@ class CryptoHotspotService:
             if item.key in total:
                 item.finding_count = total[item.key]
                 item.severity_mix = mix[item.key]
-
-    @staticmethod
-    def _finding_join_field(group_by: GroupBy) -> str | None:
-        """Map a hotspot grouping dimension to the matching findings.details field."""
-        if group_by == "name":
-            return "$details.asset_name"
-        if group_by == "primitive":
-            return "$details.primitive"
-        if group_by == "asset_type":
-            return "$details.asset_type"
-        return None

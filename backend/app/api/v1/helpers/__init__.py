@@ -1,19 +1,6 @@
 """Shared helper functions for API v1 endpoints."""
 
-from app.api.v1.helpers.analytics import (
-    build_hotspot_priority_reasons,
-    build_priority_reasons,
-    calculate_days_known,
-    calculate_days_until_due,
-    calculate_impact_score,
-    extract_fix_versions,
-    gather_cross_project_data,
-    get_latest_scan_ids,
-    get_projects_with_scans,
-    get_user_project_ids,
-    process_cve_enrichments,
-    require_analytics_permission,
-)
+from app.api.v1.helpers.analytics import get_user_project_ids
 from app.api.v1.helpers.findings import (
     aggregate_stats_by_category,
     get_category_for_type,
@@ -89,16 +76,11 @@ __all__ = [
     "aggregate_stats_by_category",
     "apply_system_settings_enforcement",
     "authorize_waiver_read",
-    "build_hotspot_priority_reasons",
     # Pagination helpers
     "build_pagination_response",
-    "build_priority_reasons",
     # Team helpers
     "build_team_enrichment_pipeline",
     "build_user_project_query",
-    "calculate_days_known",
-    "calculate_days_until_due",
-    "calculate_impact_score",
     # User helpers
     "check_admin_or_self",
     "check_project_access",
@@ -107,17 +89,13 @@ __all__ = [
     "check_webhook_permission",
     "enrich_team_with_usernames",
     "ensure_can_manage_target",
-    "extract_fix_versions",
     "fetch_and_enrich_team",
     "fetch_updated_user",
-    "gather_cross_project_data",
     "generate_project_api_key",
     # System helpers
     "get_available_channels",
     "get_category_for_type",
     "get_category_type_filter",
-    "get_latest_scan_ids",
-    "get_projects_with_scans",
     "get_sort_field",
     "get_team_with_access",
     "get_user_or_404",
@@ -127,11 +105,8 @@ __all__ = [
     "last_admin_guard",
     "may_read_projects",
     "parse_sort_direction",
-    "process_cve_enrichments",
     # Ingest helpers
     "process_findings_ingest",
-    # Analytics helpers
-    "require_analytics_permission",
     "resolve_team_names",
     "team_refs",
     "visible_teams_filter",

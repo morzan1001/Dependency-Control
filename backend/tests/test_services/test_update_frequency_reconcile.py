@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -13,6 +14,7 @@ from app.core.metrics import update_frequency_reconcile_drift_total
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.update_frequency import ScanUpdateDeltaRepository
 from app.services import update_frequency_reconcile as reconcile_module
+from app.services import update_frequency_rollup as rollup_module
 from app.services.update_frequency_reconcile import (
     _LOCK_NAME,
     _LOCK_TTL_SECONDS,
@@ -21,6 +23,7 @@ from app.services.update_frequency_reconcile import (
     ReconcileReport,
     run_update_frequency_reconcile,
 )
+from app.services.update_frequency_fold import select_window
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -243,6 +246,67 @@ class TestStaleSchema:
 
         assert spy == []
         assert report == ReconcileReport(chains=1)
+
+
+async def _folded_window(db: FakeDatabase) -> list[str]:
+    deltas = await db.scan_update_deltas.find({}).to_list(None)
+    return [d["_id"] for d in select_window(sorted(deltas, key=lambda d: (d["scan_created_at"], d["_id"])))]
+
+
+class TestSkipLink:
+    """A delta diffed past the comparable scan before it truncates the fold's window there."""
+
+    @pytest.mark.asyncio
+    async def test_a_delta_racing_its_predecessor_is_relinked(self, spy: list[str]):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"p": "1.0.0", "a": "1.1.0", "b": "1.2.0"}, record=False)
+        await record_scan_update_delta(db, "p")
+        # b's ingest finds its predecessor before a's delta exists, and a's successor repair
+        # runs before b's delta does.
+        b_delta, b_outdated = await rollup_module._compute_delta(db, await rollup_module._load_scan(db, "b"))
+        await record_scan_update_delta(db, "a")
+        await rollup_module._persist(db, b_delta, b_outdated)
+        assert await _folded_window(db) == ["b"]
+        exported = _metric("relink", "resolved")
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert spy == ["b"]
+        assert report.resolved == {"relink": 1}
+        assert _metric("relink", "resolved") == exported + 1
+        assert await _folded_window(db) == ["p", "a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_the_successor_of_a_failed_recompute_is_relinked_past_it(self, spy: list[str]):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s0": "1.0.0", "s1": "1.1.0", "s2": "1.2.0", "s3": "1.3.0"})
+        with patch.object(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("mongo hiccup"))):
+            await record_scan_update_delta(db, "s1")
+        assert await _folded_window(db) == ["s2", "s3"]
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert spy == ["s2"]
+        assert report.resolved == {"relink": 1}
+        assert (await _delta(db, "s1") or {}).get("error")
+        assert await _folded_window(db) == ["s0", "s2", "s3"]
+
+    @pytest.mark.asyncio
+    async def test_the_oldest_delta_in_the_window_may_point_before_it(self, spy: list[str]):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_scan(db, "s0", T0 - timedelta(days=100), [_dep("s0", "requests", "0.9.0")], outdated=())
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"}, record=False)
+        for scan_id in ("s0", "s1", "s2"):
+            await record_scan_update_delta(db, scan_id)
+        assert (await _delta(db, "s1") or {})["prev_scan_id"] == "s0"
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert report == ReconcileReport(chains=1)
+        assert spy == []
 
 
 class TestOrphanDelta:
@@ -595,29 +659,21 @@ class TestLock:
         assert held[0]["expires_at"] - held[0]["acquired_at"] >= budget
 
     @pytest.mark.asyncio
-    async def test_the_lock_is_released_after_a_run(self):
+    async def test_pods_reaching_the_quiet_hour_after_a_run_find_the_night_done(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        """Every pod checks once in the quiet hour, so a capped run must not repeat on each of them."""
         db = FakeDatabase()
         await _seed_project(db)
-        await _seed_chain(db, {"s1": "1.0.0"})
+        await _seed_chain(db, {f"s{i}": f"1.0.{i}" for i in range(6)}, record=False)
+        monkeypatch.setattr(reconcile_module, "_MAX_REPAIRS", 2)
 
-        await run_update_frequency_reconcile(db)
+        reports = [await run_update_frequency_reconcile(db) for _pod in range(3)]
 
-        assert await db.distributed_locks.find_one({"_id": _LOCK_NAME}) is None
-
-    @pytest.mark.asyncio
-    async def test_the_lock_is_released_when_the_run_fails(self, monkeypatch: pytest.MonkeyPatch):
-        db = FakeDatabase()
-        await _seed_project(db)
-
-        async def _boom(_db: Any) -> ReconcileReport:
-            raise RuntimeError("census failed")
-
-        monkeypatch.setattr(reconcile_module, "_reconcile", _boom)
-
-        with pytest.raises(RuntimeError, match="census failed"):
-            await run_update_frequency_reconcile(db)
-
-        assert await db.distributed_locks.find_one({"_id": _LOCK_NAME}) is None
+        assert reports[1:] == [None, None]
+        assert spy == ["s0", "s1"]
+        held = await db.distributed_locks.find_one({"_id": _LOCK_NAME})
+        assert held["expires_at"] - held["acquired_at"] > timedelta(hours=1)
 
 
 class TestScope:

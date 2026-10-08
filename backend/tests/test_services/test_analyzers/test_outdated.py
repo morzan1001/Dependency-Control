@@ -113,7 +113,12 @@ class TestDepsDevStatusPolicy:
 
         result = await OutdatedAnalyzer().analyze({}, parsed_components=[_component("flaky", "1.0.0")])
 
-        assert result == {"outdated_dependencies": [], "ahead_of_default": [], "partial_components_skipped": 1}
+        assert result == {
+            "outdated_dependencies": [],
+            "ahead_of_default": [],
+            "partial_components_skipped": 1,
+            "lookup_failed_components": ["flaky"],
+        }
         assert await fake_cache.get("latest2:pypi:flaky") is None
 
     @pytest.mark.asyncio

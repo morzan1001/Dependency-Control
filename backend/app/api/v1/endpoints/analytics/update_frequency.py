@@ -2,14 +2,11 @@
 
 import asyncio
 import contextlib
-import logging
-from collections import Counter
-from collections.abc import Coroutine, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from collections.abc import Coroutine, Mapping
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, cast
 
-import httpx
 from fastapi import HTTPException, Query, Request
 
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -23,40 +20,34 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
-from app.core.constants import SLOWEST_PACKAGES_LIMIT
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
-from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.projects import ProjectRepository
-from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
     ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
+    usable_scan_match,
     window_scans_by_branch,
 )
 from app.schemas.analytics import (
     ProjectUpdateSummary,
-    SlowPackage,
     UpdateDataStatus,
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
-from app.services.release_history import (
-    DepsDevReleaseHistoryFetcher,
-    ReleaseHistoryFetcher,
-)
+from app.services.release_history import DepsDevReleaseHistoryFetcher
 from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
-    load_scan_deps,
-    load_outdated_entries,
+    placeholder_summary,
     rank_summaries,
     select_primary_branch,
+    spanned_days,
     window_cutoff,
 )
 from app.services.update_frequency_fold import (
@@ -65,8 +56,6 @@ from app.services.update_frequency_fold import (
     select_window,
     window_bars,
 )
-
-logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
@@ -119,14 +108,10 @@ def _project_cache_key(
     window_days: int | None,
     branch: str | None,
     version_token: str,
-    use_rollup: bool,
 ) -> str:
     """Cache key versioned by the analysed branch's scans, so a scan finishing there misses the cache."""
     branch_tag = "b" if branch is None else f"b={branch}"
-    return (
-        f"{CacheKeys.update_frequency(project_id)}"
-        f":m{max_scans}:w{window_days or 0}:{branch_tag}:r{int(use_rollup)}:v{version_token}"
-    )
+    return f"{CacheKeys.update_frequency(project_id)}:m{max_scans}:w{window_days or 0}:{branch_tag}:v{version_token}"
 
 
 def _comparison_cache_key(
@@ -148,45 +133,11 @@ def _comparison_cache_key(
 
 async def _branch_scan_token(db: DatabaseDep, project_id: str, branch: str | None, since: datetime | None) -> str:
     """Count and newest completion of the scans the walk reads; the latter catches a re-finalised scan."""
-    match: dict[str, Any] = {**USABLE_BUILD_MATCH, "project_id": project_id, "branch": branch}
-    if since is not None:
-        match["created_at"] = {"$gte": since}
+    match = {**usable_scan_match(since), "project_id": project_id, "branch": branch}
     rows = await ScanRepository(db).aggregate(
         [{"$match": match}, {"$group": {"_id": None, "scans": {"$sum": 1}, "completed_at": {"$max": "$completed_at"}}}]
     )
     return f"{rows[0]['scans']}@{rows[0]['completed_at']}" if rows else "0"
-
-
-def _build_release_fetcher() -> ReleaseHistoryFetcher:
-    """Production deps.dev fetcher wired to Redis + httpx, built per request."""
-
-    async def cache_get(key: str) -> Any | None:
-        return await cache_service.get(key)
-
-    async def cache_set(key: str, value: Any, ttl_seconds: int) -> None:
-        await cache_service.set(key, value, ttl_seconds=ttl_seconds)
-
-    async def http_fetch(url: str) -> dict[str, Any] | None:
-        try:
-            async with InstrumentedAsyncClient("deps.dev API", timeout=10.0) as client:
-                response = await client.get(url, follow_redirects=True)
-                if response.status_code == 200:
-                    payload: dict[str, Any] = response.json()
-                    return payload
-                return None
-        except (httpx.TimeoutException, httpx.ConnectError):
-            return None
-        except Exception:
-            logger.debug("deps.dev release-history fetch failed", exc_info=True)
-            return None
-
-    return DepsDevReleaseHistoryFetcher(
-        cache_get=cache_get,
-        cache_set=cache_set,
-        http_fetch=http_fetch,
-        cache_key_builder=CacheKeys.release_history,
-        cache_ttl_seconds=CacheTTL.RELEASE_HISTORY,
-    )
 
 
 @router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
@@ -207,45 +158,32 @@ async def get_project_update_frequency(
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
     project = await check_project_access(project_id, current_user, db)
 
-    # The rollup covers exactly the default view; an explicit branch or the
-    # max_scans mode still needs the live walk over the scan history.
-    rollup_window_days = window_days if settings.UPDATE_FREQUENCY_USE_ROLLUP and branch is None else None
-
     since = window_cutoff(window_days)
-    analyzed_branch = branch
-    by_branch: dict[str, BranchWindowActivity] = {}
-    if analyzed_branch is None:
-        analyzed_branch, by_branch = await elect_primary_branch(
-            ScanRepository(db), project_id, since, project.default_branch, project.deleted_branches
-        )
+    analyzed_branch = branch or await elect_primary_branch(
+        ScanRepository(db), project_id, since, project.default_branch, project.deleted_branches
+    )
     cache_key = _project_cache_key(
         project_id,
         max_scans=max_scans,
         window_days=window_days,
         branch=analyzed_branch,
         version_token=await _branch_scan_token(db, project_id, analyzed_branch, since),
-        use_rollup=rollup_window_days is not None,
     )
 
     async def _fetch() -> dict[str, Any]:
-        metrics = None
-        if rollup_window_days is not None:
-            metrics = await _rollup_project_metrics(db, project, rollup_window_days, analyzed_branch, by_branch)
-        if metrics is None:
-            metrics = await compute_update_frequency(
-                project_id=project_id,
-                project_name=project.name,
-                scan_repo=ScanRepository(db),
-                dep_repo=DependencyRepository(db),
-                analysis_repo=AnalysisResultRepository(db),
-                max_scans=max_scans,
-                window_days=window_days,
-                release_fetcher=_build_release_fetcher(),
-                branch=analyzed_branch,
-            )
+        metrics = await compute_update_frequency(
+            project_id=project_id,
+            project_name=project.name,
+            scan_repo=ScanRepository(db),
+            dep_repo=DependencyRepository(db),
+            analysis_repo=AnalysisResultRepository(db),
+            max_scans=max_scans,
+            window_days=window_days,
+            release_fetcher=DepsDevReleaseHistoryFetcher(),
+            branch=analyzed_branch,
+        )
         return metrics.model_dump()
 
-    # A rollup miss falls back to the live walk, so the lock is sized for the walk.
     lock_wait_seconds, lock_ttl_seconds = _lock_timings(use_rollup=False)
     payload = await _await_or_abort(
         request,
@@ -320,7 +258,6 @@ class _ResolvedWindow:
     # Set only when the cap truncated the branch: the rate then has to divide by the
     # stretch actually read, not by a window whose older part was never looked at.
     measured_days: int | None = None
-    bars: list[list[dict[str, Any]]] = field(default_factory=list)
     # Scans the fold covered when the branch holds more than the cap follows.
     window_scan_cap: int | None = None
 
@@ -358,17 +295,9 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
     # Past the cap the branch's own commit count describes a longer stretch than either
     # path reads, so comparing against it would demote exactly the busiest projects.
     status: UpdateDataStatus = "ready" if capped else commit_coverage(deltas, window, activity.scans_per_commit).status
-    measured_days = _spanned_days(bars) if capped else None
-    return _ResolvedWindow(branch, window, status, measured_days, bars, WINDOW_HARD_LIMIT if capped else None)
-
-
-def _spanned_days(bars: list[list[dict[str, Any]]]) -> int:
-    """Whole days the folded stretch covers, floored at one so a burst cannot inflate a rate.
-
-    Measured representative to representative, the two scans the bars are dated by.
-    """
-    span: timedelta = bars[-1][-1]["scan_created_at"] - bars[0][-1]["scan_created_at"]
-    return max(1, round(span.total_seconds() / 86400))
+    # Measured representative to representative, the two scans the bars are dated by.
+    measured_days = spanned_days(bars[0][-1]["scan_created_at"], bars[-1][-1]["scan_created_at"]) if capped else None
+    return _ResolvedWindow(branch, window, status, measured_days, WINDOW_HARD_LIMIT if capped else None)
 
 
 def _rollup_summary(
@@ -377,25 +306,15 @@ def _rollup_summary(
     baselines: dict[str, set[str]],
     window_days: int,
 ) -> ProjectUpdateSummary:
-    project_id = str(project["_id"])
-    project_name = project.get("name", "")
-    teams = project.get("teams") or []
     if resolved.status not in ("ready", "partial"):
-        return ProjectUpdateSummary(
-            project_id=project_id,
-            project_name=project_name,
-            teams=teams,
-            data_status=resolved.status,
-            branch=resolved.branch,
-            window_days=window_days,
-        )
+        return placeholder_summary(project, resolved.status, window_days, resolved.branch)
 
     anchor_id = resolved.window[0]["_id"]
     folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
     return folded.to_summary(
-        project_id,
-        project_name,
-        teams,
+        str(project["_id"]),
+        project.get("name", ""),
+        project.get("teams") or [],
         branch=resolved.branch,
         window_days=window_days,
         data_status=resolved.status,
@@ -420,17 +339,8 @@ async def _compute_comparison_from_rollup(
     activity = await window_scans_by_branch(ScanRepository(db), project_ids, since)
     buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(project_ids, since)
 
-    scans_by_project: dict[str, dict[str, BranchWindowActivity]] = {}
-    for (project_id, branch), seen in activity.items():
-        scans_by_project.setdefault(project_id, {})[branch] = seen
-    deltas_by_project: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for (project_id, branch), deltas in buckets.items():
-        deltas_by_project.setdefault(project_id, {})[branch] = deltas
-
     resolved = {
-        project_id: _resolve_window(
-            scans_by_project.get(project_id, {}), deltas_by_project.get(project_id, {}), project
-        )
+        project_id: _resolve_window(activity.get(project_id, {}), buckets.get(project_id, {}), project)
         for project_id, project in zip(project_ids, projects_raw, strict=True)
     }
 
@@ -440,79 +350,6 @@ async def _compute_comparison_from_rollup(
 
     summaries = [_rollup_summary(p, resolved[str(p["_id"])], baselines, window_days) for p in projects_raw]
     return rank_summaries(summaries).model_dump()
-
-
-async def _rollup_slowest_packages(
-    db: DatabaseDep, bars: Sequence[Sequence[dict[str, Any]]]
-) -> tuple[list[SlowPackage], int]:
-    """The table's rows, ranked by how many timeline bars kept flagging the package, and its backlog."""
-    scan_ids = [bar[-1]["_id"] for bar in bars]
-    outdated_sets = await ScanOutdatedSetRepository(db).names_by_scan(scan_ids)
-    latest_id = next((scan_id for scan_id in reversed(scan_ids) if scan_id in outdated_sets), None)
-    if latest_id is None:
-        return [], 0
-
-    # Resolved packages are history, not backlog.
-    remaining = outdated_sets[latest_id]
-    counts = Counter(name for names in outdated_sets.values() for name in names if name in remaining)
-
-    entries = await load_outdated_entries(AnalysisResultRepository(db), latest_id) or []
-    analyzer_info = {component: e for e in entries if (component := e.get("component"))}
-    deps = await load_scan_deps(DependencyRepository(db), latest_id)
-    types = {info["name"]: info["type"] for info in deps.values()}
-    # current_version describes what the project holds now, so it comes from the newest bar
-    # even when the backlog was last measured on an older one.
-    newest_deps = deps if scan_ids[-1] == latest_id else await load_scan_deps(DependencyRepository(db), scan_ids[-1])
-    # An ambiguous bare name would show one purl sibling's version for the other.
-    per_name = Counter(info["name"] for info in newest_deps.values())
-    versions = {info["name"]: info["version"] for info in newest_deps.values() if per_name[info["name"]] == 1}
-
-    return [
-        SlowPackage(
-            name=name,
-            type=types.get(name, "unknown"),
-            current_version=versions.get(name) or analyzer_info.get(name, {}).get("current_version"),
-            latest_version=analyzer_info.get(name, {}).get("latest_version"),
-            scans_outdated=count,
-        )
-        for name, count in sorted(counts.items(), key=lambda entry: (-entry[1], entry[0]))[:SLOWEST_PACKAGES_LIMIT]
-    ], len(counts)
-
-
-async def _rollup_project_metrics(
-    db: DatabaseDep,
-    project: Project,
-    window_days: int,
-    branch: str | None,
-    by_branch: Mapping[str, BranchWindowActivity],
-) -> UpdateFrequencyMetrics | None:
-    """Metrics folded from the delta ledger, or None when it cannot answer for this project.
-
-    A partial fold falls back to the live walk rather than being served: one
-    project's walk is affordable, and it reads the scans the ledger has not
-    reached yet.
-    """
-    if branch is None:
-        return None
-
-    since = cast(datetime, window_cutoff(window_days))
-    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project.id, branch, since, WINDOW_HARD_LIMIT)
-    resolved = _fold_branch(branch, deltas, by_branch[branch])
-    if resolved.status != "ready":
-        return None
-
-    anchor_id = resolved.window[0]["_id"]
-    baselines = await ScanOutdatedSetRepository(db).names_by_scan([anchor_id])
-    folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
-    slowest_packages, outdated_backlog = await _rollup_slowest_packages(db, resolved.bars)
-    return folded.to_metrics(
-        project.id,
-        project.name,
-        branch=resolved.branch,
-        slowest_packages=slowest_packages,
-        window_scan_cap=resolved.window_scan_cap,
-        outdated_backlog=outdated_backlog,
-    )
 
 
 @router.get("/update-frequency/comparison", responses=RESP_AUTH)

@@ -13,8 +13,7 @@ from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 
 _NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
 
-# Everything the pure fold needs for a comparison row. updates_sample and
-# prev_created_at are left behind: only the single-project timeline reads them.
+# Everything the pure fold needs for a comparison row.
 _WINDOW_PROJECTION = {
     "_id": 1,
     "project_id": 1,
@@ -27,7 +26,6 @@ _WINDOW_PROJECTION = {
     "outdated_count": 1,
     "outdated_added": 1,
     "outdated_resolved": 1,
-    "eco": 1,
     "error": 1,
 }
 
@@ -49,6 +47,9 @@ class LedgerEntry:
     schema_version: int | None
     prev_scan_id: str | None
     prev_created_at: datetime | None
+    scan_created_at: datetime
+    # Carries dependencies and no writer failure, so a later scan can be diffed against it.
+    comparable: bool
 
 
 def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
@@ -57,6 +58,8 @@ def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
         pushed.get("v"),
         pushed.get("prev"),
         prev_at if isinstance(prev_at, datetime) else None,
+        pushed["at"],
+        int(pushed.get("n") or 0) > 0 and not pushed.get("e"),
     )
 
 
@@ -122,16 +125,17 @@ async def window_scans_by_branch(
     scan_repo: ScanRepository,
     project_ids: Sequence[str],
     since: datetime | None,
-) -> dict[tuple[str, str], BranchWindowActivity]:
-    """Comparable commits per (project, branch), over the window itself when one is given.
+) -> dict[str, dict[str, BranchWindowActivity]]:
+    """Comparable commits per project and branch, over the window itself when one is given.
 
     Both read paths choose their branch from these counts, so neither can settle on a
     branch the other would not, and both can tell how much of the window their numbers
     actually cover.
     """
-    scoped = usable_scan_match(since)
+    # A findings-only scan holds no dependencies to compare; $ne keeps scans older than sbom_refs.
+    scoped = {**usable_scan_match(since), "sbom_refs": {"$ne": []}}
 
-    activity: dict[tuple[str, str], BranchWindowActivity] = {}
+    activity: dict[str, dict[str, BranchWindowActivity]] = {}
     for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
             {"$match": {"project_id": {"$in": list(batch)}, **scoped}},
@@ -159,7 +163,8 @@ async def window_scans_by_branch(
             # Archive restore can insert a scan date as an ISO string, which $max hands back verbatim.
             moment = last_scan_at if isinstance(last_scan_at, datetime) else UNDATED
             per_commit = {c["t"]: int(c["n"]) for c in row["commits"] if isinstance(c.get("t"), str)}
-            activity[chain] = BranchWindowActivity(per_commit, moment)
+            project_id, branch = chain
+            activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, moment)
     return activity
 
 
@@ -245,8 +250,8 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
 
     async def group_window_by_branch(
         self, project_ids: Sequence[str], since: datetime
-    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
-        """In-window deltas of every project, bucketed by (project, branch), oldest first.
+    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
+        """In-window deltas of every project, bucketed by project and branch, oldest first.
 
         Bucketing happens here rather than in a ``$group``: a delta carries the outdated
         names its scan added and resolved, and accumulating those arrays server-side costs
@@ -254,7 +259,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         exceeded the 100 MB a blocking stage may hold. Reading them plainly has no such
         ceiling, transfers the same bytes, and leaves every metric in the pure fold.
         """
-        buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        buckets: dict[str, dict[str, list[dict[str, Any]]]] = {}
         for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             query = {
                 "project_id": {"$in": list(batch)},
@@ -268,17 +273,19 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 chain = _named_branch({"p": doc.get("project_id"), "b": doc.get("branch")})
                 if chain is None:
                     continue
-                buckets.setdefault(chain, []).append(doc)
-        for deltas in buckets.values():
-            deltas.sort(key=_chain_order)
+                project_id, branch = chain
+                buckets.setdefault(project_id, {}).setdefault(branch, []).append(doc)
+        for branches in buckets.values():
+            for deltas in branches.values():
+                deltas.sort(key=_chain_order)
         return buckets
 
     async def window_ledger_by_branch(
         self, project_ids: Sequence[str], since: datetime
     ) -> dict[tuple[str, str], dict[str, LedgerEntry]]:
-        """Version and predecessor link of every in-window delta, keyed by scan id, per chain.
+        """Version, place and predecessor link of every in-window delta, keyed by scan id, per chain.
 
-        Only those three fields travel, not the document: the reconcile compares ledger
+        Only those fields travel, not the document: the reconcile compares ledger
         membership and the chain links, and pushing whole deltas would make the nightly
         census as heavy as the comparison endpoint's fold.
         """
@@ -295,6 +302,9 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                                 "v": "$schema_version",
                                 "prev": "$prev_scan_id",
                                 "prev_at": "$prev_created_at",
+                                "at": "$scan_created_at",
+                                "n": "$dep_count",
+                                "e": "$error",
                             }
                         },
                     }
@@ -316,29 +326,6 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
             {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
             _NEIGHBOUR_PROJECTION,
         ).to_list(None)
-
-    async def find_project_window(
-        self, project_id: str, branch: str, since: datetime, limit: int
-    ) -> list[dict[str, Any]]:
-        """The newest ``limit`` in-window deltas of one branch, oldest first, arrays included.
-
-        The limit is per branch, as the live path's is: spending it across every
-        branch of a project would truncate the analysed one behind the others.
-        """
-        docs = (
-            await self.collection.find(
-                {
-                    "project_id": project_id,
-                    "branch": branch,
-                    "scan_created_at": {"$gte": since},
-                    "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
-                }
-            )
-            .sort([("scan_created_at", -1), ("_id", -1)])
-            .limit(limit)
-            .to_list(limit)
-        )
-        return sorted(docs, key=_chain_order)
 
     async def _neighbour(self, query: dict[str, Any], direction: int) -> dict[str, Any] | None:
         docs = (

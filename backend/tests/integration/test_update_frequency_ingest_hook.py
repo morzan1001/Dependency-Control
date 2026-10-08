@@ -82,7 +82,6 @@ async def test_ingest_records_delta_for_each_scan(db, _stored_sboms):
     assert delta["prev_scan_id"] == first
     assert delta["is_baseline"] is False
     assert delta["updates"] == {"patch": 0, "minor": 1, "major": 0, "unknown": 0, "downgrade": 0}
-    assert [s["n"] for s in delta["updates_sample"]] == ["requests"]
 
     # No analyzer ran, so the scan has no outdated measurement to store.
     assert delta["outdated_count"] is None

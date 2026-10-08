@@ -19,7 +19,6 @@ from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     SCAN_DEPENDENCY_READ_LIMIT,
-    SCANS_TIP_SORT,
 )
 from app.core.cve import entry_cves
 from app.core.permissions import Permissions
@@ -28,7 +27,7 @@ from app.models.finding_record import FindingRecord
 from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
-from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
@@ -48,7 +47,8 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
-# Newest scans the recurrence count is taken over; the recommendation text names the window.
+# The viewed scan and the builds it succeeded, which the recurrence count is taken over; the
+# recommendation text names the window.
 _RECURRENCE_WINDOW_SCANS = 10
 
 # What the generators read of a dependency row, the license-drift comparison of the previous scan included.
@@ -125,7 +125,7 @@ async def get_project_recommendations(
     user_projects = await get_user_projects(current_user, db)
 
     stamped = await scan_repo.find_many_raw(
-        {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1, "branch": 1}
+        {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1}
     )
     stamp = stamped[0] if stamped else {}
     # Keyed by caller scope too, so differing project access never shares an entry; cross-project data may be stale.
@@ -153,8 +153,9 @@ async def get_project_recommendations(
 
         previous = None
         previous_scan_dependencies = None
-        previous_scan = await scan_repo.get_preceding_scan(scan_id)
-        if previous_scan:
+        preceding = await scan_repo.get_preceding_scans(scan_id, _RECURRENCE_WINDOW_SCANS - 1)
+        if preceding:
+            previous_scan = preceding[0]
             previous = trends.PreviousScan()
             previous_query = {"scan_id": previous_scan.id, "waived": {"$ne": True}}
             async for doc in finding_repo.iterate_raw(previous_query, trends.PREVIOUS_SCAN_PROJECTION):
@@ -166,15 +167,7 @@ async def get_project_recommendations(
                 projection=_DEPENDENCY_PROJECTION,
             )
 
-        recent_scan_ids = [
-            recent["_id"]
-            for recent in await scan_repo.find_many_raw(
-                {**USABLE_BUILD_MATCH, "project_id": project_id, "branch": stamp.get("branch")},
-                sort=SCANS_TIP_SORT,
-                limit=_RECURRENCE_WINDOW_SCANS,
-                projection={"_id": 1},
-            )
-        ]
+        recent_scan_ids = [scan_id, *(scan.id for scan in preceding)]
         cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
 
         cross_project_data = await gather_cross_project_data(user_projects, project_id, db)
@@ -233,24 +226,8 @@ def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:
 
 
 def _summarize(recommendations: list[Recommendation], finding_counts: dict[str, int]) -> dict[str, Any]:
-    summary: dict[str, Any] = {
-        "base_image_updates": 0,
-        "direct_updates": 0,
-        "transitive_updates": 0,
-        "no_fix": 0,
-        "total_fixable_vulns": 0,
-        "total_unfixable_vulns": 0,
-        "secrets_to_rotate": 0,
-        "sast_issues": 0,
-        "iac_issues": 0,
-        "license_issues": 0,
-        "quality_issues": 0,
-        "crypto_issues": 0,
-        "fragmentation_issues": 0,
-        "trend_alerts": 0,
-        "cross_project_issues": 0,
-        "finding_counts": finding_counts,
-    }
+    summary: dict[str, Any] = {key: 0 for keys in _SUMMARY_BUCKETS.values() for key in keys if key}
+    summary["finding_counts"] = finding_counts
     for rec in recommendations:
         count_key, impact_key = _SUMMARY_BUCKETS.get(rec.type, (None, None))
         if count_key:

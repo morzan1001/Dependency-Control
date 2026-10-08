@@ -1167,8 +1167,8 @@ class ChatToolRegistry:
                 return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
         # Head and a verified scan's predecessor are this project's by construction.
         to_scan = to_id or await self._head_scan_id(project, ctx.db)
-        preceding = await ScanRepository(ctx.db).get_preceding_scan(to_scan) if to_scan and not from_id else None
-        from_scan = from_id or (preceding.id if preceding else None)
+        preceding = await ScanRepository(ctx.db).get_preceding_scans(to_scan, 1) if to_scan and not from_id else []
+        from_scan = from_id or (preceding[0].id if preceding else None)
         if not from_scan or not to_scan:
             return {"error": _ERR_NEED_TWO_SCANS}
         try:

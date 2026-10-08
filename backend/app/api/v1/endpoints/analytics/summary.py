@@ -175,7 +175,6 @@ async def _top_dependencies(
     limit: int,
     type: str | None,
 ) -> list[DependencyUsage]:
-    project_ids = [p.id for p in projects]
     scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
@@ -208,7 +207,7 @@ async def _top_dependencies(
                 "total_occurrences": 1,
             }
         },
-        {"$sort": {"project_count": -1, "total_occurrences": -1}},
+        {"$sort": {"project_count": -1, "total_occurrences": -1, "_id": 1}},
         {"$limit": limit},
     ]
 
@@ -223,7 +222,6 @@ async def _top_dependencies(
         finding_repo,
         {
             "scan_id": {"$in": scan_ids},
-            "project_id": {"$in": project_ids},
             "$expr": {"$in": [artifact_name_expr("$component"), listed_artifacts]},
         },
         "component",

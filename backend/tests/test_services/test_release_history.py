@@ -1,8 +1,12 @@
 """Tests for upstream release-history analytics (release-cadence metrics)."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from functools import partial
+from typing import Any
 
+import httpx
 import pytest
 
 from app.core.cache import CacheKeys, CacheTTL
@@ -18,19 +22,51 @@ from app.services.release_history import (
 )
 
 
-async def _async_noop(*_args, **_kwargs):
-    return None
+class _Store(dict):
+    """cache_service's batch calls over a dict, remembering the TTL each write asked for."""
+
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
+        return {key: self.get(key) for key in keys}
+
+    async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
+        self.update(mapping)
+        self.ttl = ttl_seconds
+        return True
 
 
-def _fetcher(cache_get, cache_set, http_fetch) -> DepsDevReleaseHistoryFetcher:
-    """The fetcher as the update-frequency endpoint wires it."""
-    return DepsDevReleaseHistoryFetcher(
-        cache_get=cache_get,
-        cache_set=cache_set,
-        http_fetch=http_fetch,
-        cache_key_builder=CacheKeys.release_history,
-        cache_ttl_seconds=CacheTTL.RELEASE_HISTORY,
-    )
+@pytest.fixture
+def cache(monkeypatch: pytest.MonkeyPatch) -> _Store:
+    store = _Store()
+    monkeypatch.setattr("app.services.release_history.cache_service", store)
+    return store
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, answer: Callable[[str], dict[str, Any] | int]) -> list[str]:
+    """Answer each deps.dev request with ``answer(url)``: a payload, or a status code to fail with."""
+    urls: list[str] = []
+
+    def _handle(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        reply = answer(str(request.url))
+        if isinstance(reply, int):
+            return httpx.Response(reply, request=request)
+        return httpx.Response(200, json=reply, request=request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(_handle)))
+    return urls
+
+
+def _fetch(packages: list[tuple[str, str]]) -> dict[Any, list[ReleaseInfo]]:
+    return asyncio.run(DepsDevReleaseHistoryFetcher().fetch(packages))
+
+
+def _dated(*versions: str) -> dict[str, Any]:
+    return {
+        "versions": [
+            {"versionKey": {"version": version}, "publishedAt": f"2026-0{month}-01T00:00:00Z"}
+            for month, version in enumerate(versions, start=1)
+        ]
+    }
 
 
 _REF = datetime(2026, 6, 1, tzinfo=timezone.utc)
@@ -101,20 +137,20 @@ class TestComputeAdoptionLatencies:
         # pkg-a v1.1.0 published 30 days before _REF; first scan that saw it 5 days before _REF
         # -> adoption latency = 25 days
         history = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=400)),
                 ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=30)),
             ],
         }
         observations = [
-            ("pkg-a", "1.1.0", _REF - timedelta(days=5)),
+            ("pypi", "pkg-a", "1.1.0", _REF - timedelta(days=5)),
         ]
         latencies = compute_adoption_latencies(history, observations)
         assert latencies == [25]
 
     def test_skips_versions_with_unknown_publish_date(self):
-        history = {"pkg-a": []}  # no release info for any version
-        observations = [("pkg-a", "1.0.0", _REF)]
+        history = {("pypi", "pkg-a"): []}  # no release info for any version
+        observations = [("pypi", "pkg-a", "1.0.0", _REF)]
         assert compute_adoption_latencies(history, observations) == []
 
 
@@ -130,13 +166,13 @@ class TestAggregateUpstreamMetrics:
         # pkg-a: 3 releases in last year, gap median ~60d, last 30 days ago
         # pkg-b: 1 release in last year, no gap median, last 90 days ago
         history = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 _ri(days_ago=180),
                 _ri(days_ago=120),
                 _ri(days_ago=60),
                 _ri(days_ago=30),
             ],
-            "pkg-b": [
+            ("pypi", "pkg-b"): [
                 _ri(days_ago=90),
             ],
         }
@@ -158,7 +194,7 @@ class TestAggregateUpstreamMetrics:
     def test_releases_count_excludes_prereleases(self):
         # 2 stable + 3 betas in last 12m -> stable-only count is 2.
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=300)),
                 ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=280)),
                 ReleaseInfo(version="1.0.0-rc1", published_at=_REF - timedelta(days=200)),
@@ -237,7 +273,7 @@ class TestAggregateUpstreamMetrics:
     def test_days_between_excludes_prereleases(self):
         # Stable releases 100 days apart; betas would shrink the gap if counted.
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=200)),
                 ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=150)),
                 ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=100)),
@@ -252,7 +288,7 @@ class TestAggregateUpstreamMetrics:
         # Latest stable is 200 days old; a beta released yesterday must
         # not pretend the package is "actively maintained".
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=200)),
                 ReleaseInfo(version="2.0.0-beta1", published_at=_REF - timedelta(days=1)),
             ],
@@ -265,11 +301,11 @@ class TestAggregateUpstreamMetrics:
         # the right thing — the upstream publish date of *that* beta,
         # not a hypothetical filtered-out release.
         history = {
-            "pkg": [
+            ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=20)),
             ],
         }
-        observations = [("pkg", "1.0.0-beta1", _REF - timedelta(days=5))]
+        observations = [("pypi", "pkg", "1.0.0-beta1", _REF - timedelta(days=5))]
         result = aggregate_upstream_metrics(history, observations=observations, ref=_REF)
         assert result.adoption_latency_days_median == 15
 
@@ -302,165 +338,90 @@ class TestAggregateUpstreamMetrics:
         assert parse_deps_dev_response({}) == []
         assert parse_deps_dev_response({"versions": []}) == []
 
-    def test_deps_dev_fetcher_uses_cache_when_available(self):
-        # The fetcher must consult the cache and skip HTTP when a hit exists.
-        cache_hits: list[str] = []
-
-        async def fake_get(key: str):  # type: ignore[no-untyped-def]
-            cache_hits.append(key)
-            # Return cached release list as JSON-serializable list of dicts.
-            return [
-                {"version": "1.0.0", "published_at": "2025-06-01T00:00:00+00:00"},
-            ]
-
-        async def fail_fetch(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("HTTP fetch should not be called when cache is warm")
-
-        fetcher = _fetcher(fake_get, lambda *a, **k: _async_noop(), fail_fetch)
-
-        result = asyncio.run(fetcher.fetch([("pypi", "pkg-a")]))
-        assert ("pypi", "pkg-a") in result
-        assert len(result[("pypi", "pkg-a")]) == 1
-        assert cache_hits  # cache was consulted
-
     def test_adoption_latency_uses_observation_input(self):
         history = {
-            "pkg-a": [
+            ("pypi", "pkg-a"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=100)),
                 ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=20)),
             ],
         }
         observations = [
-            ("pkg-a", "1.0.0", _REF - timedelta(days=80)),  # latency 20
-            ("pkg-a", "1.1.0", _REF - timedelta(days=5)),  # latency 15
+            ("pypi", "pkg-a", "1.0.0", _REF - timedelta(days=80)),  # latency 20
+            ("pypi", "pkg-a", "1.1.0", _REF - timedelta(days=5)),  # latency 15
         ]
         result = aggregate_upstream_metrics(history, observations=observations, ref=_REF)
         assert result.adoption_latency_days_median is not None
         assert abs(result.adoption_latency_days_median - 17.5) < 0.01
 
 
-class TestDepsDevFetcherIntegration:
-    """Drive the fetcher's cache-miss and cache-hit branches end-to-end."""
+class TestDepsDevFetcher:
+    """The fetcher as the update-frequency view runs it: the cache first, deps.dev for the rest."""
 
-    def test_cache_miss_fetches_parses_and_caches(self):
-        fetched_urls: list[str] = []
-        cache_writes: dict = {}
+    def test_a_cache_miss_is_fetched_parsed_and_cached(self, monkeypatch, cache):
+        urls = _serve(monkeypatch, lambda _url: _dated("1.0.0", "1.1.0"))
 
-        async def cache_get(_key):
-            return None  # always cold
+        result = _fetch([("pypi", "pkg-a")])
 
-        async def cache_set(key, value, ttl_seconds):
-            cache_writes[key] = (value, ttl_seconds)
-
-        async def http_fetch(url):
-            fetched_urls.append(url)
-            return {
-                "versions": [
-                    {"versionKey": {"version": "1.0.0"}, "publishedAt": "2024-06-01T00:00:00Z"},
-                    {"versionKey": {"version": "1.1.0"}, "publishedAt": "2024-09-01T00:00:00Z"},
-                ]
-            }
-
-        fetcher = _fetcher(cache_get, cache_set, http_fetch)
-        result = asyncio.run(fetcher.fetch([("pypi", "pkg-a")]))
-
-        assert len(result[("pypi", "pkg-a")]) == 2
         assert {r.version for r in result[("pypi", "pkg-a")]} == {"1.0.0", "1.1.0"}
-        assert len(fetched_urls) == 1
-        assert "pkg-a" in fetched_urls[0]
-        assert "releases:pypi:pkg-a" in cache_writes
-        # Cached payload must round-trip through the JSON-serializable shape.
-        cached_payload, _ = cache_writes["releases:pypi:pkg-a"]
-        assert isinstance(cached_payload, list)
-        assert all("version" in entry and "published_at" in entry for entry in cached_payload)
+        assert len(urls) == 1
+        assert [entry["version"] for entry in cache[CacheKeys.release_history("pypi", "pkg-a")]] == ["1.0.0", "1.1.0"]
+        assert cache.ttl == CacheTTL.RELEASE_HISTORY
 
-    def test_http_failure_returns_empty_for_that_package(self):
-        async def cache_get(_key):
-            return None
+    def test_a_cache_hit_skips_deps_dev(self, monkeypatch, cache):
+        cache[CacheKeys.release_history("pypi", "warm")] = [
+            {"version": "5.0.0", "published_at": "2025-01-01T00:00:00+00:00"}
+        ]
+        urls = _serve(monkeypatch, lambda _url: _dated("6.0.0"))
 
-        async def cache_set(*_a, **_k):
-            return None
+        result = _fetch([("pypi", "warm")])
 
-        async def http_fetch(_url):
-            return None  # simulates timeout / 5xx
+        assert [r.version for r in result[("pypi", "warm")]] == ["5.0.0"]
+        assert urls == []
 
-        fetcher = _fetcher(cache_get, cache_set, http_fetch)
-        result = asyncio.run(fetcher.fetch([("pypi", "pkg-broken")]))
-        # No history surfaces for the failed package; the orchestrator will
-        # treat it as "no upstream data" rather than crash.
-        assert ("pypi", "pkg-broken") not in result
+    def test_a_package_deps_dev_does_not_know_is_remembered_as_empty(self, monkeypatch, cache):
+        urls = _serve(monkeypatch, lambda _url: 404)
 
-    def test_a_package_without_dated_releases_leaves_the_release_median_alone(self):
-        async def cache_get(_key):
-            return None
+        assert _fetch([("npm", "gone")]) == {}
+        assert _fetch([("npm", "gone")]) == {}
 
-        async def http_fetch(url):
-            if "undated" in url:
-                return {"versions": [{"versionKey": {"version": "1.0.0"}}]}
-            return {
-                "versions": [
-                    {"versionKey": {"version": f"1.{minor}.0"}, "publishedAt": f"2026-0{minor + 1}-01T00:00:00Z"}
-                    for minor in range(3)
-                ]
-            }
+        assert len(urls) == 1
+        assert cache[CacheKeys.release_history("npm", "gone")] == []
 
-        fetcher = _fetcher(cache_get, _async_noop, http_fetch)
-        history = asyncio.run(fetcher.fetch([("npm", "dated"), ("npm", "undated")]))
+    def test_a_failed_lookup_is_neither_reported_nor_cached(self, monkeypatch, cache):
+        _serve(monkeypatch, lambda url: 503 if "broken" in url else _dated("1.0.0"))
+
+        result = _fetch([("pypi", "broken"), ("pypi", "fine")])
+
+        assert list(result) == [("pypi", "fine")]
+        assert CacheKeys.release_history("pypi", "broken") not in cache
+
+    def test_a_package_without_dated_releases_leaves_the_release_median_alone(self, monkeypatch, cache):
+        _serve(
+            monkeypatch,
+            lambda url: (
+                {"versions": [{"versionKey": {"version": "1.0.0"}}]}
+                if "undated" in url
+                else _dated("1.0", "1.1", "1.2")
+            ),
+        )
+
+        history = _fetch([("npm", "dated"), ("npm", "undated")])
 
         assert aggregate_upstream_metrics(history, observations=[], ref=_REF).upstream_releases_last_12m_median == 3.0
 
-    def test_multi_package_fetch_keys_results_by_system_and_name(self):
-        cache: dict = {}
+    def test_same_named_packages_of_two_ecosystems_stay_apart(self, monkeypatch, cache):
+        _serve(monkeypatch, lambda url: _dated("9.9.9") if "/npm/" in url else _dated("1.0.0"))
 
-        async def cache_get(key):
-            return cache.get(key)
+        result = _fetch([("npm", "foo"), ("pypi", "foo")])
 
-        async def cache_set(key, value, ttl_seconds):
-            cache[key] = value
+        assert {r.version for r in result[("npm", "foo")]} == {"9.9.9"}
+        assert {r.version for r in result[("pypi", "foo")]} == {"1.0.0"}
 
-        responses_by_url: dict = {
-            "first": {"versions": [{"versionKey": {"version": "1.0"}, "publishedAt": "2024-01-01T00:00:00Z"}]},
-            "second": {"versions": [{"versionKey": {"version": "2.0"}, "publishedAt": "2024-02-01T00:00:00Z"}]},
-        }
-        urls_seen: list[str] = []
-
-        async def http_fetch(url):
-            urls_seen.append(url)
-            # Pick payload by ordinal so the assertion is unambiguous.
-            return responses_by_url["first" if "first" in url else "second"]
-
-        fetcher = _fetcher(cache_get, cache_set, http_fetch)
-        result = asyncio.run(fetcher.fetch([("pypi", "first"), ("pypi", "second")]))
-        assert ("pypi", "first") in result and ("pypi", "second") in result
-        assert {r.version for r in result[("pypi", "first")]} == {"1.0"}
-        assert {r.version for r in result[("pypi", "second")]} == {"2.0"}
-        assert len(urls_seen) == 2
-
-    def test_cache_hit_skips_http(self):
-        async def cache_get(_key):
-            return [
-                {"version": "5.0.0", "published_at": "2025-01-01T00:00:00+00:00"},
-            ]
-
-        async def cache_set(*_a, **_k):
-            raise AssertionError("cache_set must not be called on a cache hit")
-
-        async def http_fetch(_url):
-            raise AssertionError("http_fetch must not be called on a cache hit")
-
-        fetcher = _fetcher(cache_get, cache_set, http_fetch)
-        result = asyncio.run(fetcher.fetch([("pypi", "warm")]))
-        assert len(result[("pypi", "warm")]) == 1
-        assert result[("pypi", "warm")][0].version == "5.0.0"
-
-    def test_the_url_follows_the_configured_deps_dev_base(self, monkeypatch):
+    def test_the_url_follows_the_configured_deps_dev_base(self, monkeypatch, cache):
         monkeypatch.setattr("app.services.release_history.DEPS_DEV_API_URL", "https://deps.example/v3")
-        urls: list[str] = []
+        urls = _serve(monkeypatch, lambda _url: 404)
 
-        async def http_fetch(url):
-            urls.append(url)
-
-        asyncio.run(_fetcher(_async_noop, _async_noop, http_fetch).fetch([("npm", "@babel/core")]))
+        _fetch([("npm", "@babel/core")])
 
         assert urls == ["https://deps.example/v3/systems/npm/packages/%40babel%2Fcore"]
 
@@ -468,28 +429,12 @@ class TestDepsDevFetcherIntegration:
 class TestEcosystemKeyingNoConflation:
     """Keying history/observations by (system, name) keeps same-named packages in different ecosystems separate."""
 
-    def test_fetch_keeps_same_name_across_ecosystems_separate(self):
-        # Two packages share the bare name "foo" but live in different ecosystems.
-        async def cache_get(_key):
-            return None
-
-        async def cache_set(*_a, **_k):
-            return None
-
-        async def http_fetch(url):
-            # deps.dev URL embeds the system, so key the payload off it.
-            if "/npm/" in url:
-                return {"versions": [{"versionKey": {"version": "9.9.9"}, "publishedAt": "2024-01-01T00:00:00Z"}]}
-            return {"versions": [{"versionKey": {"version": "1.0.0"}, "publishedAt": "2024-02-01T00:00:00Z"}]}
-
-        fetcher = _fetcher(cache_get, cache_set, http_fetch)
-        result = asyncio.run(fetcher.fetch([("npm", "foo"), ("pypi", "foo")]))
-
-        # Both ecosystems survive as distinct entries.
-        assert ("npm", "foo") in result
-        assert ("pypi", "foo") in result
-        assert {r.version for r in result[("npm", "foo")]} == {"9.9.9"}
-        assert {r.version for r in result[("pypi", "foo")]} == {"1.0.0"}
+    def test_an_observation_never_borrows_another_ecosystems_publish_date(self):
+        history = {
+            ("npm", "chalk"): [ReleaseInfo(version="5.3.0", published_at=_REF - timedelta(days=300))],
+            ("pypi", "chalk"): [ReleaseInfo(version="0.1.0", published_at=datetime(2015, 1, 1, tzinfo=timezone.utc))],
+        }
+        assert compute_adoption_latencies(history, [("npm", "chalk", "0.1.0", _REF)]) == []
 
     def test_aggregate_counts_both_ecosystems_of_same_name(self):
         # Cadence aggregation iterates history values; with (system, name) keys
@@ -516,19 +461,3 @@ class TestEcosystemKeyingNoConflation:
         ]
         latencies = compute_adoption_latencies(history, observations)
         assert sorted(latencies) == [10, 50]
-
-    def test_name_only_history_and_observations_still_work(self):
-        # Name-keyed history + 3-tuple observations (what update_frequency passes) must resolve.
-        history = {
-            "pkg-a": [ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=30))],
-        }
-        observations = [("pkg-a", "1.1.0", _REF - timedelta(days=5))]
-        assert compute_adoption_latencies(history, observations) == [25]
-
-    def test_system_observation_falls_back_to_name_keyed_history(self):
-        # A system-aware observation matches name-keyed history via the name+version fallback.
-        history = {
-            "pkg-a": [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=40))],
-        }
-        observations = [("pypi", "pkg-a", "1.0.0", _REF - timedelta(days=10))]
-        assert compute_adoption_latencies(history, observations) == [30]

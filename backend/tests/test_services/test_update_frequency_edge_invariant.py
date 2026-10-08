@@ -19,10 +19,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _compute_comparison,
     _compute_comparison_from_rollup,
     _fold_branch,
-    _rollup_project_metrics,
 )
-from app.core.constants import RECENT_UPDATES_LIMIT
-from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -37,6 +34,7 @@ from app.services.update_frequency import (
 )
 from app.services.update_frequency_fold import commit_coverage, fold_window, select_window, window_bars
 from app.services.update_frequency_rollup import record_scan_update_delta
+from tests.helpers.update_frequency import ledger_view, rollup_metrics
 from tests.mocks.fake_mongo import FakeDatabase
 
 PROJECT = "proj-1"
@@ -107,26 +105,21 @@ async def _build_ledger(db: FakeDatabase) -> None:
         await record_scan_update_delta(db, scan["_id"])
 
 
-async def _elected(db: FakeDatabase) -> tuple[str | None, dict[str, BranchWindowActivity]]:
-    return await elect_primary_branch(ScanRepository(db), PROJECT, window_cutoff(WINDOW_DAYS), None, None)
-
-
 async def _live(db: FakeDatabase) -> UpdateFrequencyMetrics:
-    branch, _activity = await _elected(db)
     return await compute_update_frequency(
         project_id=PROJECT,
         project_name="Project One",
         scan_repo=ScanRepository(db),
         dep_repo=DependencyRepository(db),
         analysis_repo=AnalysisResultRepository(db),
-        branch=branch,
+        branch=await elect_primary_branch(ScanRepository(db), PROJECT, window_cutoff(WINDOW_DAYS), None, None),
         window_days=WINDOW_DAYS,
     )
 
 
 async def _rollup(db: FakeDatabase) -> UpdateFrequencyMetrics | None:
-    project = Project(id=PROJECT, name="Project One")
-    return await _rollup_project_metrics(db, project, WINDOW_DAYS, *await _elected(db))
+    project = {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []}
+    return await rollup_metrics(db, project, WINDOW_DAYS)
 
 
 async def _both(db: FakeDatabase) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics]:
@@ -148,7 +141,7 @@ def _assert_bars_tile_the_pairs(metrics: UpdateFrequencyMetrics) -> None:
 
 async def _assert_identical(db: FakeDatabase) -> UpdateFrequencyMetrics:
     live, rolled = await _both(db)
-    assert live == rolled
+    assert ledger_view(live) == rolled
     _assert_bars_tile_the_pairs(live)
     return live
 
@@ -572,21 +565,6 @@ class TestAGapInTheLedgerIsStillPartial:
         assert rolled["projects"][0]["data_status"] == "partial"
 
 
-class TestRecentUpdatesLimit:
-    @pytest.mark.asyncio
-    async def test_a_scan_with_more_changes_than_the_limit_is_cut_alike(self):
-        """Writer and readers share one limit and one order."""
-        changed = RECENT_UPDATES_LIMIT + 10
-        db = FakeDatabase()
-        await _seed_scan(db, "s1", _days_ago(60), {f"pkg{i:02d}": "1.0.0" for i in range(changed)})
-        await _seed_scan(db, "s2", _days_ago(50), {f"pkg{i:02d}": "1.0.1" for i in range(changed)})
-        await _build_ledger(db)
-
-        live = await _assert_identical(db)
-
-        assert len(live.recent_updates) == RECENT_UPDATES_LIMIT
-
-
 class TestCappedRate:
     @pytest.mark.asyncio
     async def test_the_measured_span_is_the_stretch_the_bars_report(self):
@@ -858,7 +836,7 @@ class TestGeneratedHistories:
         rolled = await _rollup(db)
 
         assert rolled is not None, f"seed {seed}: the ledger declined a complete history"
-        assert live == rolled, f"seed {seed}"
+        assert ledger_view(live) == rolled, f"seed {seed}"
         _assert_bars_tile_the_pairs(live)
         assert live.branch == BRANCH
 
