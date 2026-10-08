@@ -7,6 +7,7 @@ from app.models.callgraph import ModuleUsage
 from app.services.component_identity import canonical_callgraph_language, canonical_module_key, npm_package_key
 
 _NODE_MODULES = "node_modules/"
+_TYPES_SCOPE = "@types/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"
 
 
@@ -45,7 +46,12 @@ def _get_or_create_module_usage(module_usage: dict[str, ModuleUsage], base_modul
 def _madge_package(dep: str) -> str | None:
     """Package name of a madge dependency, or None when it is a first-party source file."""
     if _NODE_MODULES in dep:
-        return npm_package_key(dep.rsplit(_NODE_MODULES, 1)[1])
+        package = npm_package_key(dep.rsplit(_NODE_MODULES, 1)[1])
+        # TypeScript resolves an import of an untyped package to its stub, @types/<name> or @types/<scope>__<name>.
+        if package.startswith(_TYPES_SCOPE):
+            name = package.removeprefix(_TYPES_SCOPE)
+            return "@" + name.replace("__", "/", 1) if "__" in name else name
+        return package
 
     if "/" not in dep and "." not in dep:
         return dep

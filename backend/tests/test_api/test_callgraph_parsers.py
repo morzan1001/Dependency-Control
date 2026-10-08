@@ -37,6 +37,21 @@ MADGE_OUTPUT = """
 }
 """
 
+# madge 8.0.0: `madge --json --include-npm --extensions js,jsx,ts,tsx --ts-config tsconfig.json .` over a TypeScript
+# fixture importing express and @babel/core, typed through @types/express and @types/babel__core, and axios, which
+# ships its own types.
+MADGE_TS_OUTPUT = """
+{
+  "src/index.ts": [
+    "node_modules/@types/babel__core/index.d.ts",
+    "node_modules/@types/express/index.d.ts",
+    "node_modules/axios/index.d.ts",
+    "src/util.ts"
+  ],
+  "src/util.ts": []
+}
+"""
+
 # The `.callgraph-python` ast scanner from callgraph.yaml, run over a fixture package with
 # requests/urllib3/PyYAML installed. The scanner resolves each import back to its distribution
 # name (yaml -> PyYAML), which is the spelling findings carry; analyzed_modules is trimmed to
@@ -132,6 +147,12 @@ class TestMadgeGoldenFixture:
     def test_analyzed_modules_survives(self):
         analyzed = _parse(MADGE_OUTPUT, "javascript").analyzed_modules
         assert analyzed == ["@babel/core", "lodash"]
+
+
+class TestMadgeTypeScriptGoldenFixture:
+    def test_an_import_typed_through_definitelytyped_counts_for_the_package_itself(self):
+        module_usage = _parse(MADGE_TS_OUTPUT, "typescript").module_usage
+        assert set(module_usage) == {"express", "@babel/core", "axios"}
 
 
 class TestPythonAstGoldenFixture:

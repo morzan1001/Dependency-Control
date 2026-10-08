@@ -389,6 +389,24 @@ class TestEvidenceAcrossGraphs:
         assert finding["details"]["adjusted_risk_score"] == 88.0
 
 
+class TestDefinitelyTypedImports:
+    def test_an_import_resolved_to_its_types_stub_confirms_the_package(self):
+        graph = _stored(
+            parse_madge_format(
+                {"src/index.ts": ["node_modules/@types/express/index.d.ts"], "__analyzed_modules__": ["express"]},
+                "typescript",
+            ),
+            "typescript",
+        )
+        finding = _finding(component="express")
+        deps = component_language_map([{"name": "express", "version": "1.0.0", "type": "npm", "direct": True}])
+
+        enrich_findings_with_reachability([finding], [graph], deps)
+
+        reach = finding["details"]["reachability"]
+        assert (reach["is_reachable"], reach["import_locations"]) == (True, ["src/index.ts"])
+
+
 class TestVerdictShape:
     def test_every_verdict_persists_only_declared_fields(self):
         graph = _stored(
