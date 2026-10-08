@@ -43,6 +43,7 @@ from app.models.webhook import Webhook
 from app.repositories.projects import ProjectRepository
 from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
 from app.repositories.webhooks import WebhookRepository
+from app.services.webhooks.messages import event_summary
 from app.services.webhooks.slack_formatter import build_slack_message, build_slack_test_message
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
@@ -211,8 +212,7 @@ class WebhookService:
             return TeamsFormatter.build_analysis_failed_card(raw_payload)
         if event_type in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
             return TeamsFormatter.build_policy_changed_card(event_type, raw_payload)
-        project_name = raw_payload.get("project", {}).get("name", "Unknown Project")
-        return TeamsFormatter.build_generic_card(event_type, f"Event for project **{project_name}**")
+        return TeamsFormatter.build_generic_card(event_type, event_summary(event_type, raw_payload)[1])
 
     async def _post_bounded(
         self, client_name: str, webhook: Webhook, content: str, headers: Mapping[str, str]

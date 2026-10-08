@@ -12,18 +12,19 @@ from app.core.constants import (
 )
 from app.schemas.notification import AlertVulnerability
 from app.services.notifications.slack_formatter import (
+    _escape_mrkdwn,
     build_analysis_completed_blocks,
     build_generic_blocks,
     build_vulnerability_found_blocks,
 )
-from app.services.webhooks.teams_formatter import policy_change_text
+from app.services.webhooks.messages import event_summary, policy_change_text
 
 _TEST_TEXT = "DependencyControl webhook is configured correctly."
 
 
 def _message(text: str, blocks: list[dict[str, Any]]) -> dict[str, Any]:
     # Notifications and clients without Block Kit show only the text.
-    return {"text": text, "blocks": blocks}
+    return {"text": _escape_mrkdwn(text), "blocks": blocks}
 
 
 def build_slack_test_message() -> dict[str, Any]:
@@ -67,5 +68,5 @@ def build_slack_message(event_type: str, payload: Mapping[str, Any]) -> dict[str
     if event_type in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
         text = policy_change_text(payload)
         return _message(text, build_generic_blocks(event_type, text))
-    text = f"{event_type} for project {project_name}"
-    return _message(text, build_generic_blocks(event_type, text))
+    subject, details = event_summary(event_type, payload)
+    return _message(subject, build_generic_blocks(event_type, details))

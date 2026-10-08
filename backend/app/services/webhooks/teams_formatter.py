@@ -6,6 +6,7 @@ from typing import Any
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.finding import Severity
 from app.schemas.notification import AlertVulnerability, scan_alert_level
+from app.services.webhooks.messages import policy_change_text
 
 _SEVERITY_KEYS = tuple(s.value.lower() for s in Severity)
 _ALERT_STYLE = {"critical": "attention", "warning": "warning", "ok": "good"}
@@ -18,13 +19,6 @@ def _header(style: str, title: str, *items: dict) -> dict:
 
 def _facts(facts: Mapping[str, object]) -> dict:
     return {"type": "FactSet", "facts": [{"title": title, "value": str(value)} for title, value in facts.items()]}
-
-
-def policy_change_text(payload: Mapping[str, Any]) -> str:
-    scope = f"project {payload['project_id']}" if payload["project_id"] else payload["policy_scope"]
-    # SEED entries have no actor.
-    actor = payload["actor"]["display_name"] or "A user"
-    return f"{actor} updated the {scope} policy: {payload['change_summary']} (version {payload['version']})"
 
 
 class TeamsFormatter:

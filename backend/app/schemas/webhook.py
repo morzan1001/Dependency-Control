@@ -111,7 +111,7 @@ def detect_webhook_type(url: str) -> WebhookType:
     hostname = (parsed.hostname or "").lower()
     path = parsed.path or ""
 
-    if hostname == "hooks.slack.com":
+    if hostname == "hooks.slack.com" and path.startswith("/services/"):
         return "slack"
     if hostname == "webhook.office.com" or hostname.endswith(".webhook.office.com"):
         return "teams"

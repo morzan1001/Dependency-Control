@@ -325,6 +325,8 @@ class TestDetectWebhookType:
             pytest.param("https://smee.io/abc123", "generic", id="github-webhook"),
             pytest.param("https://hooks.slack.com/services/T123/B456/xyz", "slack", id="slack-webhook"),
             pytest.param("https://hooks.slack.com.evil.example/services/T1/B1/x", "generic", id="slack-lookalike-host"),
+            pytest.param("https://hooks.slack.com/workflows/T1/A1/123/abc", "generic", id="slack-workflow-builder"),
+            pytest.param("https://hooks.slack.com/triggers/T1/123/abc", "generic", id="slack-workflow-trigger"),
             pytest.param("https://my-server.example.com/webhook", "generic", id="generic-https-url"),
             pytest.param("", "generic", id="empty-string"),
         ],

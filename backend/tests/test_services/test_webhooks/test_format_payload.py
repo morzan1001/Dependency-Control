@@ -96,12 +96,58 @@ class TestFormatPayloadSlackWebhook:
         assert "grype crashed" in json.dumps(message["blocks"])
 
     @pytest.mark.asyncio
+    async def test_the_notification_text_escapes_what_slack_reads_as_markup(self):
+        _event, payload = await delivered(
+            webhook_service.trigger_scan_completed(
+                MagicMock(), "scan-abc", "proj-1", "<!channel> R&D", 3, Stats().model_dump(), "completed", []
+            )
+        )
+        message = WebhookService()._format_payload("slack", "scan.completed", payload)
+        assert "&lt;!channel&gt; R&amp;D" in message["text"]
+
+    @pytest.mark.asyncio
     async def test_a_policy_change_names_the_actor_and_the_change(self):
         payload = await _policy_payload(_policy_entry())
         message = WebhookService()._format_payload("slack", WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, payload)
         blocks = json.dumps(message["blocks"])
         assert message["text"]
         assert "Alice" in blocks and "Disallowed MD5" in blocks
+
+
+_COMPLIANCE_PAYLOAD = {
+    "event": "compliance_report.generated",
+    "timestamp": "2026-10-08T10:00:00+00:00",
+    "report_id": "r-1",
+    "framework": "nist-800-53",
+    "format": "pdf",
+    "scope": "project",
+    "scope_id": "proj-1",
+    "status": "failed",
+    "summary": None,
+}
+_SBOM_PAYLOAD = {
+    "scan_id": "scan-abc",
+    "project_id": "proj-1",
+    "branch": "main",
+    "sboms_processed": 2,
+    "sboms_failed": 0,
+}
+
+
+class TestEventsWithoutAProjectObject:
+    """SBOM, CBOM and compliance events carry flat fields; their message lists them instead of an unknown project."""
+
+    @pytest.mark.parametrize("webhook_type", ["slack", "teams"])
+    def test_a_failed_compliance_report_says_so(self, webhook_type):
+        message = json.dumps(
+            WebhookService()._format_payload(webhook_type, "compliance_report.generated", _COMPLIANCE_PAYLOAD)
+        )
+        assert "failed" in message
+        assert "Unknown Project" not in message
+
+    def test_an_ingested_sbom_names_its_project_in_the_slack_text(self):
+        message = WebhookService()._format_payload("slack", "sbom.ingested", _SBOM_PAYLOAD)
+        assert "proj-1" in message["text"]
 
 
 class TestFormatPayloadGenericWebhook:
