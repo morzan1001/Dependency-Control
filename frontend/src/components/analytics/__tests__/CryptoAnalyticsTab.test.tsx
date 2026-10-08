@@ -1,7 +1,9 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+import { createReport } from "@/api/compliance";
 
 import { CryptoAnalyticsTab } from "../CryptoAnalyticsTab";
 
@@ -23,6 +25,35 @@ vi.mock("@/api/cryptoAnalytics", () => ({
   getCryptoHotspots: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
   getCryptoTrends: vi.fn().mockResolvedValue({ points: [] }),
 }));
+
+vi.mock("@/api/pqcMigration", () => ({
+  getPQCMigrationPlan: vi.fn().mockResolvedValue({
+    scope: "user",
+    scope_id: null,
+    generated_at: "2026-01-01T00:00:00Z",
+    items: [],
+    mappings_version: 3,
+    summary: {
+      total_items: 0,
+      items_returned: 0,
+      status_counts: { migrate_now: 0, migrate_soon: 0, plan_migration: 0, monitor: 0 },
+      earliest_deadline: null,
+    },
+  }),
+}));
+
+vi.mock("@/api/compliance", () => ({
+  listReports: vi.fn().mockResolvedValue({ reports: [] }),
+  createReport: vi.fn().mockResolvedValue({ report_id: "r1", status: "pending" }),
+  deleteReport: vi.fn(),
+}));
+
+vi.mock("@/context/useAuth", () => ({ useAuth: () => ({ hasPermission: () => false }) }));
+
+function activate(name: RegExp) {
+  // Radix activates a tab on mouseDown.
+  fireEvent.mouseDown(screen.getByRole("tab", { name }));
+}
 
 function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -68,5 +99,36 @@ describe("CryptoAnalyticsTab trends range", () => {
     // Day-boundary normalized: no millisecond precision leaks into the query key.
     expect(last.end).toMatch(/:00:00\.000Z$/);
     expect(last.start).toMatch(/:00:00\.000Z$/);
+  });
+});
+
+describe("CryptoAnalyticsTab PQC export", () => {
+  it("opens the compliance tab with a PQC migration plan report ready to queue", async () => {
+    renderTab();
+
+    activate(/PQC Migration/);
+    fireEvent.click(await screen.findByRole("button", { name: /Export as Compliance Report/i }));
+
+    expect(screen.getByRole("tab", { name: /Compliance Reports/, hidden: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Generate" }));
+    await waitFor(() =>
+      expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ framework: "pqc-migration-plan" })),
+    );
+  });
+
+  it("does not reopen the prefilled dialog on a later visit", async () => {
+    renderTab();
+
+    activate(/PQC Migration/);
+    fireEvent.click(await screen.findByRole("button", { name: /Export as Compliance Report/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    activate(/Trends/);
+    activate(/Compliance Reports/);
+
+    expect(await screen.findByRole("button", { name: "Generate report" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createReport, listReports } from '@/api/compliance'
-import type { ComplianceReportMeta, ReportStatus } from '@/types/compliance'
+import type { ComplianceReportMeta, ReportFramework, ReportStatus } from '@/types/compliance'
 
 import { ComplianceReportsPanel } from '../ComplianceReportsPanel'
 
@@ -23,17 +23,16 @@ function report(status: ReportStatus): ComplianceReportMeta {
   }
 }
 
-function renderPanel() {
+function renderPanel(defaultFramework?: ReportFramework) {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ComplianceReportsPanel />
+      <ComplianceReportsPanel defaultFramework={defaultFramework} />
     </QueryClientProvider>,
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  localStorage.clear()
   vi.mocked(createReport).mockResolvedValue({ report_id: 'r2', status: 'pending' })
 })
 
@@ -56,14 +55,9 @@ describe('ComplianceReportsPanel', () => {
 
   it('queues the framework another tab asked for', async () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [] })
-    renderPanel()
-    await screen.findByText('No reports yet')
+    renderPanel('pqc-migration-plan')
 
-    localStorage.setItem('prefill_compliance_framework', 'pqc-migration-plan')
-    act(() => {
-      globalThis.dispatchEvent(new CustomEvent('goto-compliance-reports-tab'))
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate' }))
 
     await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ framework: 'pqc-migration-plan' })))
   })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
@@ -9,10 +9,10 @@ import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
 
-export function ComplianceReportsPanel() {
-  const newReportDialog = useDialogState();
+export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultFramework?: ReportFramework }>) {
+  const newReportDialog = useDialogState(defaultFramework !== undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [prefillFramework, setPrefillFramework] = useState<ReportFramework | undefined>();
+  const [prefillFramework, setPrefillFramework] = useState(defaultFramework);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["compliance-reports"],
@@ -23,19 +23,6 @@ export function ComplianceReportsPanel() {
       return hasInFlight ? 2000 : false;
     },
   });
-
-  useEffect(() => {
-    const onPrefill = () => {
-      const stored = localStorage.getItem("prefill_compliance_framework") as ReportFramework | null;
-      if (stored) {
-        setPrefillFramework(stored);
-        newReportDialog.openDialog();
-        localStorage.removeItem("prefill_compliance_framework");
-      }
-    };
-    globalThis.addEventListener("goto-compliance-reports-tab", onPrefill);
-    return () => globalThis.removeEventListener("goto-compliance-reports-tab", onPrefill);
-  }, [newReportDialog]);
 
   const reports = data?.reports ?? [];
   const selected = reports.find((r) => r._id === selectedId) ?? null;
