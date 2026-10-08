@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools.registry import (
     _CVE_OCCURRENCE_READ,
@@ -19,7 +18,6 @@ from app.services.chat.tools.registry import (
     _WEBHOOK_DELIVERY_READ,
     _WEBHOOK_READ,
 )
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
 _PROJECT = "checkout-service"
@@ -33,11 +31,6 @@ _INSIDE_THE_CEILING = 3
 _ESTATE_SIZE = 8
 _PROJECT_PAGE = 5
 _DEPENDENCY_PAGE = 40
-
-
-@pytest.fixture
-def admin_user():
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 @pytest.fixture

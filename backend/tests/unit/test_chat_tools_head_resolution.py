@@ -11,13 +11,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
-from app.models.user import User
 from app.schemas.enrichment import KEVEntry
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._arguments import checked_arguments
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.enrichment.service import _build_enrichment, apply_enrichments
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
 
@@ -70,11 +68,6 @@ _FIX_VERSION = "1.0.1"
 # and branch deletion left the pointer on a branch the VCS dropped.
 _MISLEADING_POINTERS = [_QUEUED_SCAN, _DELETED_BRANCH_SCAN]
 _POINTER_IDS = ["pointer-names-a-queued-scan", "pointer-names-a-deleted-branch"]
-
-
-@pytest.fixture
-def admin_user():
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 def _scan(scan_id, branch, status, age_days, critical=0, **extra):

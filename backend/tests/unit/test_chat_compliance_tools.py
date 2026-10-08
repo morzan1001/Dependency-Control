@@ -3,19 +3,14 @@
 import pytest
 import pytest_asyncio
 
-from app.models.user import User
 from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema
 from app.services.audit.history import record_license_policy_change
 from app.services.chat.tools import ChatToolRegistry
 from app.services.crypto_policy.seeder import load_seed_rules, seed_crypto_policies, write_policy
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.auth import make_admin
 
 _PROJECT = "p-audit"
-
-
-def _admin() -> User:
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 @pytest_asyncio.fixture
@@ -31,7 +26,7 @@ async def audited(db):
         project_id=_PROJECT,
         rules=list(load_seed_rules()),
         action=PolicyAuditAction.UPDATE,
-        actor=_admin(),
+        actor=make_admin(),
     )
     old = LicensePolicySchema().model_dump()
     await record_license_policy_change(
@@ -40,13 +35,13 @@ async def audited(db):
         old_policy=old,
         new_policy={**old, "allow_strong_copyleft": True},
         action=PolicyAuditAction.UPDATE,
-        actor=_admin(),
+        actor=make_admin(),
     )
     return db
 
 
 async def _audit(db, **args) -> dict:
-    return await ChatToolRegistry().execute_tool("list_policy_audit_entries", args, _admin(), db)
+    return await ChatToolRegistry().execute_tool("list_policy_audit_entries", args, make_admin(), db)
 
 
 @pytest.mark.asyncio
@@ -55,7 +50,7 @@ async def test_every_report_framework_is_evaluated(audited, framework):
     result = await ChatToolRegistry().execute_tool(
         "get_framework_evaluation_summary",
         {"scope": "project", "scope_id": _PROJECT, "framework": framework},
-        _admin(),
+        make_admin(),
         audited,
     )
 
@@ -69,7 +64,7 @@ async def test_an_unknown_framework_is_refused_with_the_frameworks_that_exist(au
     result = await ChatToolRegistry().execute_tool(
         "get_framework_evaluation_summary",
         {"scope": "project", "scope_id": _PROJECT, "framework": framework},
-        _admin(),
+        make_admin(),
         audited,
     )
 

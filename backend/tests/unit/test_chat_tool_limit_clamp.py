@@ -8,10 +8,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._helpers import MAX_SUMMARY_ROWS, _clamp_limit, begin_limit_ledger, clamped_limit_note
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
 _PROJECT = "checkout-service"
@@ -19,11 +17,6 @@ _SCAN = "scan-head"
 _DEFAULT = 10
 _CEILING = MAX_SUMMARY_ROWS
 _ASKED_FOR = _CEILING * 3
-
-
-@pytest.fixture
-def admin_user():
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 @pytest.fixture

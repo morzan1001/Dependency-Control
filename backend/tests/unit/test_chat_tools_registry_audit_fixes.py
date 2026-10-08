@@ -9,22 +9,12 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._arguments import checked_arguments
-from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
+from tests.helpers.permission_presets import PRESET_USER
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
 _PROJECT = "proj-1"
 _BRANCH = "main"
 _SCAN = "scan-1"
-
-
-@pytest.fixture
-def admin_user():
-    return User(
-        id="admin-1",
-        username="admin",
-        email="admin@test.com",
-        permissions=list(PRESET_ADMIN),
-    )
 
 
 @pytest.fixture

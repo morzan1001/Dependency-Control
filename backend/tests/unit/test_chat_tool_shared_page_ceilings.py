@@ -19,7 +19,6 @@ from app.api.v1.endpoints.pqc_migration import get_pqc_migration_plan
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
 _PROJECT = "proj-1"
@@ -34,11 +33,6 @@ def _endpoint_ceiling(endpoint: Any) -> int:
     ceilings = [c.le for c in metadata if isinstance(getattr(c, "le", None), int)]
     assert len(ceilings) == 1
     return int(ceilings[0])
-
-
-@pytest.fixture
-def admin_user():
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 @pytest.fixture

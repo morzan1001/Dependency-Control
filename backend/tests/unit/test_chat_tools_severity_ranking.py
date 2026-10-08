@@ -10,10 +10,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools import registry as registry_module
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
 _PROJECT = "checkout-service"
@@ -30,11 +28,6 @@ _SEV_LOW = "LOW"
 _SEV_NEGLIGIBLE = "NEGLIGIBLE"
 _SEV_INFO = "INFO"
 _TOTAL = _LOW_COUNT + _CRITICAL_COUNT
-
-
-@pytest.fixture
-def admin_user():
-    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
 def _finding(index: int, severity: str) -> dict:
