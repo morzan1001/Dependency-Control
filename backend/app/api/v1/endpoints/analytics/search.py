@@ -104,32 +104,15 @@ async def _dependency_ids_by_vulnerability(
     return [dep["_id"] for dep in candidates if is_vulnerable(dep) == has_vulnerabilities]
 
 
+# Every other result field carries the dependency's own field of the same name.
+_DEPENDENCY_FIELDS = DependencySearchResult.model_fields.keys() - {"project_name", "package"}
+
+
 def _dep_to_search_result(dep: Dependency, project_name_map: dict[str, str]) -> DependencySearchResult:
     return DependencySearchResult(
-        project_id=dep.project_id,
+        **dep.model_dump(include=_DEPENDENCY_FIELDS),
         project_name=project_name_map.get(dep.project_id, "Unknown"),
         package=dep.name,
-        version=dep.version,
-        type=dep.type,
-        license=dep.license,
-        license_url=dep.license_url,
-        direct=dep.direct,
-        purl=dep.purl,
-        source_type=dep.source_type,
-        source_target=dep.source_target,
-        layer_digest=dep.layer_digest,
-        found_by=dep.found_by,
-        locations=dep.locations,
-        cpes=dep.cpes,
-        description=dep.description,
-        author=dep.author,
-        publisher=dep.publisher,
-        group=dep.group,
-        homepage=dep.homepage,
-        repository_url=dep.repository_url,
-        download_url=dep.download_url,
-        hashes=dep.hashes,
-        properties=dep.properties,
     )
 
 
