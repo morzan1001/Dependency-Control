@@ -260,6 +260,55 @@ class TestUpdateWebhook:
 
         assert db.webhooks._docs["wh-1"]["webhook_type"] == expected
 
+    @pytest.mark.parametrize(
+        ("update", "cleared"),
+        [
+            pytest.param(
+                {"url": "https://contoso.webhook.office.com/webhookb2/def/IncomingWebhook/uvw"}, True, id="url"
+            ),
+            pytest.param({"webhook_type": "generic"}, True, id="type"),
+            pytest.param({"secret": "rotated-key"}, True, id="secret"),
+            pytest.param({"secret": None}, True, id="secret-removed"),
+            pytest.param({"headers": {"Authorization": "Bearer rotated"}}, True, id="headers"),
+            pytest.param({"events": ["vulnerability.found"]}, False, id="events"),
+            pytest.param({"is_active": False}, False, id="paused"),
+            pytest.param({"url": _TEAMS_URL, "secret": _SECRET}, False, id="unchanged-values"),
+        ],
+    )
+    def test_changing_how_deliveries_go_out_clears_the_failure_state(self, admin_user, update, cleared):
+        from app.api.v1.endpoints.webhooks import update_webhook
+        from app.schemas.webhook import WebhookUpdate
+
+        failure_state = {
+            "consecutive_failures": 5,
+            "circuit_breaker_until": datetime(2099, 1, 1, tzinfo=timezone.utc),
+            "last_failure_at": datetime(2026, 10, 8, 8, 18, tzinfo=timezone.utc),
+        }
+        db = FakeDatabase()
+        asyncio.run(
+            db.webhooks.insert_one(
+                {
+                    "_id": "wh-1",
+                    "url": _TEAMS_URL,
+                    "events": ["scan.completed"],
+                    "webhook_type": "teams",
+                    "secret": _SECRET,
+                    **failure_state,
+                }
+            )
+        )
+
+        with patch(f"{MODULE}.check_webhook_permission", new_callable=AsyncMock):
+            asyncio.run(
+                update_webhook(
+                    webhook_id="wh-1", webhook_update=WebhookUpdate(**update), current_user=admin_user, db=db
+                )
+            )
+
+        stored = db.webhooks._docs["wh-1"]
+        cleared_state = {"consecutive_failures": 0, "circuit_breaker_until": None, "last_failure_at": None}
+        assert {field: stored[field] for field in failure_state} == (cleared_state if cleared else failure_state)
+
 
 class TestDeleteWebhook:
     def test_success_deletes_webhook(self, regular_user):

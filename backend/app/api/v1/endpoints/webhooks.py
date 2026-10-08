@@ -28,6 +28,8 @@ from app.services.webhooks.webhook_service import webhook_service
 
 router = CustomAPIRouter()
 
+_DELIVERY_FIELDS = ("url", "webhook_type", "secret", "headers")
+
 
 async def _create_scoped(
     webhook_in: WebhookCreate, db: DatabaseDep, *, project_id: str | None = None, team_id: str | None = None
@@ -158,6 +160,10 @@ async def update_webhook(
     # Re-detect type when URL changes without an explicit webhook_type override.
     if "url" in update_data and "webhook_type" not in update_data:
         update_data["webhook_type"] = detect_webhook_type(update_data["url"])
+
+    # Failures under the old delivery settings would keep a corrected webhook marked failing and its circuit open.
+    if any(field in update_data and update_data[field] != getattr(webhook, field) for field in _DELIVERY_FIELDS):
+        update_data.update(consecutive_failures=0, circuit_breaker_until=None, last_failure_at=None)
 
     return await webhook_repo.update(webhook_id, update_data)
 
