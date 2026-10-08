@@ -797,7 +797,6 @@ TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current
 OIDC_HTTP_TIMEOUT_SECONDS: float = 30.0
 
 # Webhook configuration
-WEBHOOK_LIST_LIMIT: int = 100
 WEBHOOK_BACKOFF_BASE: int = 2  # Exponential backoff base (2^n seconds)
 WEBHOOK_RESPONSE_BODY_LIMIT_BYTES: int = 64 * 1024  # Only a diagnostic prefix of a receiver's answer is kept
 

@@ -58,9 +58,6 @@ class _PinnedIPTransport(httpx.AsyncHTTPTransport):
         self._ip = ip
 
     def _pin(self, request: httpx.Request) -> httpx.Request:
-        resolved = ipaddress.ip_address(self._ip)
-        if is_blocked_ip(resolved):
-            raise WebhookTargetBlocked(f"pinned address {resolved} is in a blocked range")
         request.extensions = {**request.extensions, "sni_hostname": self._hostname}
         request.url = request.url.copy_with(host=self._ip)
         return request

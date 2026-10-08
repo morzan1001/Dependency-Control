@@ -48,10 +48,6 @@ class AnalysisFailedPayload(BaseWebhookPayload):
     error: str
 
 
-class TestWebhookPayload(TypedDict):
-    event: str
-    timestamp: str
+class TestWebhookPayload(BaseWebhookPayload):
     test: bool
     message: str
-    scan: ScanPayload
-    project: ProjectPayload

@@ -206,7 +206,6 @@ async def safe_notify_project_event(
     subject: str,
     message: str,
     *,
-    html_message: str | None = None,
     context: str = "notify",
 ) -> None:
     """Look up the project and dispatch the event to its members; errors are logged, never raised."""
@@ -216,8 +215,6 @@ async def safe_notify_project_event(
         doc = await ProjectRepository(db).find_one_raw({"_id": project_id}, _PROJECT_RECIPIENT_FIELDS)
         if doc is None:
             return
-        await notification_service.notify_project_members(
-            Project(**doc), event_type, subject, message, db, html_message=html_message
-        )
+        await notification_service.notify_project_members(Project(**doc), event_type, subject, message, db)
     except Exception:
         logger.exception("%s: notification dispatch for %s failed (non-blocking)", context, event_type)
