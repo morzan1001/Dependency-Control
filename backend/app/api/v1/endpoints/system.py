@@ -24,7 +24,6 @@ from app.schemas.system import (
 router = CustomAPIRouter()
 
 
-@router.get("/", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 @router.get("/settings", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 async def get_settings(
     current_user: deps.SystemManagerDep,
@@ -34,7 +33,6 @@ async def get_settings(
     return await deps.get_system_settings(db)
 
 
-@router.put("/", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 @router.put("/settings", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 async def update_settings(
     settings_in: SystemSettingsUpdate,
