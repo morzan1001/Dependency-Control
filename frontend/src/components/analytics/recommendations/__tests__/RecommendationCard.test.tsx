@@ -187,3 +187,20 @@ describe('RecommendationCard steps', () => {
     expect(Array.from(list!.querySelectorAll('li'), (li) => li.textContent)).toEqual(steps)
   })
 })
+
+describe('RecommendationCard type badge', () => {
+  it('names a type without its own entry instead of calling it a dependency update', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation(
+            { type: 'review_license_drift' },
+            { type: 'license_drift' as Recommendation['type'] },
+          )}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('license drift')).toBeInTheDocument()
+    expect(screen.queryByText('Dependency Update')).not.toBeInTheDocument()
+  })
+})

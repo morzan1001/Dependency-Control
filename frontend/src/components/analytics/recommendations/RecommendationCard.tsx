@@ -58,7 +58,12 @@ function componentsHeading(recommendation: Recommendation): string {
 export function RecommendationCard({ recommendation }: Readonly<{ recommendation: Recommendation }>) {
   const [expanded, setExpanded] = useState(false)
 
-  const typeInfo = typeConfig[recommendation.type] || typeConfig.direct_dependency_update
+  const typeInfo = typeConfig[recommendation.type] || {
+    icon: Lightbulb,
+    label: recommendation.type.replaceAll('_', ' '),
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted',
+  }
   const priorityInfo = priorityConfig[recommendation.priority] || priorityConfig.medium
   const effortInfo = effortConfig[recommendation.effort] || effortConfig.medium
   const TypeIcon = typeInfo.icon
