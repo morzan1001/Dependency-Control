@@ -178,6 +178,36 @@ describe("AnalyticsDependencyModal scope", () => {
   });
 });
 
+describe("AnalyticsDependencyModal additional details", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("lists the group, maintainers and publication date it knows and nothing for the rest", () => {
+    renderModal({
+      ...baseMetadata,
+      group: "org.acme",
+      author: "Ann Author",
+      deps_dev: { published_at: "2024-01-02T00:00:00Z" },
+    });
+
+    fireEvent.click(screen.getByText(/Additional Details/i));
+
+    expect(screen.getByText("Group").nextElementSibling).toHaveTextContent("org.acme");
+    expect(screen.getByText("Author").nextElementSibling).toHaveTextContent("Ann Author");
+    expect(screen.getByText("Published").nextElementSibling).toHaveTextContent(/2024/);
+    expect(screen.queryByText("Publisher")).not.toBeInTheDocument();
+  });
+
+  it("leaves the group out when the metadata names none", () => {
+    renderModal({ ...baseMetadata, author: "Ann Author" });
+
+    fireEvent.click(screen.getByText(/Additional Details/i));
+
+    expect(screen.queryByText("Group")).not.toBeInTheDocument();
+  });
+});
+
 describe("AnalyticsDependencyModal version", () => {
   beforeEach(() => {
     vi.clearAllMocks();

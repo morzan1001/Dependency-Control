@@ -9,10 +9,17 @@ vi.mock("@/hooks/queries/use-analytics", () => ({
   useComponentFindings: vi.fn(),
 }));
 vi.mock("@/components/findings/FindingDetailsModal", () => ({
-  FindingDetailsModal: ({ finding, onSelectFinding }: { finding: ComponentFinding; onSelectFinding: (id: string) => void }) => (
+  FindingDetailsModal: ({ finding, onSelectFinding, onClose, onNavigate }: {
+    finding: ComponentFinding;
+    onSelectFinding: (id: string) => void;
+    onClose: () => void;
+    onNavigate: () => void;
+  }) => (
     <div>
       <output data-testid="opened-finding">{`${finding.type} ${finding.project_name}`}</output>
       <button type="button" onClick={() => onSelectFinding("lodash:4.17.20")}>open-vulnerability</button>
+      {/* A Found In badge closes the finding, then leaves for the scan page. */}
+      <button type="button" onClick={() => { onClose(); onNavigate(); }}>go-to-scan</button>
     </div>
   ),
 }));
@@ -56,6 +63,25 @@ describe("AnalyticsDependencyModal related findings", () => {
     fireEvent.click(screen.getByText("open-vulnerability"));
 
     expect(screen.getByTestId("opened-finding")).toHaveTextContent("vulnerability beta");
+  });
+
+  it("closes itself along with the finding when the finding leaves for its scan", () => {
+    const onOpenChange = vi.fn();
+    vi.mocked(useComponentFindings).mockReturnValue({
+      data: { items: [finding("license", "LOW", "beta")], total: 1 },
+      isLoading: false,
+    } as never);
+    render(
+      <MemoryRouter>
+        <AnalyticsDependencyModal component="lodash" version="4.17.20" open onOpenChange={onOpenChange} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByText("LIC-MIT"));
+    fireEvent.click(screen.getByText("go-to-scan"));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.queryByTestId("opened-finding")).not.toBeInTheDocument();
   });
 
   it("lists a license finding of two versions in one scan under their own row keys", () => {

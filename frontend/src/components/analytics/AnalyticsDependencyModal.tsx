@@ -108,43 +108,14 @@ function safeHref(url?: string | null): string | undefined {
   return url && (url.startsWith('http://') || url.startsWith('https://')) ? url : undefined
 }
 
-function InfoRow({
-  icon: Icon,
-  label,
-  value,
-  href,
-  copyable = false,
-}: Readonly<{
-  icon: React.ElementType
-  label: string
-  value?: string | null
-  href?: string
-  copyable?: boolean
-}>) {
+function InfoRow({ icon: Icon, label, value }: Readonly<{ icon: React.ElementType; label: string; value?: string | null }>) {
   if (!value) return null
-
-  const validHref = safeHref(href)
-
   return (
     <div className="flex items-start gap-3 py-1.5">
       <Icon className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs text-muted-foreground">{label}</p>
-        <div className="flex items-center gap-2">
-          {validHref ? (
-            <a
-              href={validHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-primary hover:underline break-all"
-            >
-              {value}
-            </a>
-          ) : (
-            <p className="text-sm break-all">{value}</p>
-          )}
-          {copyable && <CopyButton text={value} />}
-        </div>
+        <p className="text-sm break-all">{value}</p>
       </div>
     </div>
   )
@@ -412,9 +383,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
             </div>
           )}
 
-          {metadata.group && (
-            <InfoRow icon={Tag} label="Group" value={metadata.group} />
-          )}
+          <InfoRow icon={Tag} label="Group" value={metadata.group} />
 
           {hasMaintainerInfo && (
             <div className="space-y-1">
@@ -686,10 +655,7 @@ export function AnalyticsDependencyModal({
                 setSelectedFinding(found);
               }
             }}
-            onNavigate={() => {
-              setSelectedFinding(null)
-              onOpenChange(false)
-            }}
+            onNavigate={() => onOpenChange(false)}
           />
         )}
       </DialogContent>
