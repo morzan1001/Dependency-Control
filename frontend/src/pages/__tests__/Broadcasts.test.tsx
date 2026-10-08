@@ -38,7 +38,7 @@ vi.mock('@/hooks/queries/use-teams', () => ({
   useTeams: () => ({ data: [] }),
 }))
 vi.mock('@/hooks/queries/use-system', () => ({
-  useNotificationChannels: () => ({ data: ['email'] }),
+  useNotificationChannels: () => ['email'],
 }))
 
 // Radix Select isn't driveable in jsdom (pointer capture); use a native select.

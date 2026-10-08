@@ -30,7 +30,7 @@ export default function Broadcasts() {
   const { mutateAsync: sendBroadcast, isPending } = useBroadcast()
   const { data: teams } = useTeams()
   const { data: history, refetch: refetchHistory, isLoading: isLoadingHistory } = useBroadcastHistory()
-  const { data: availableChannels } = useNotificationChannels()
+  const availableChannels = useNotificationChannels()
 
   const [activeTab, setActiveTab] = useState<string>("announcement")
   const [announcementTarget, setAnnouncementTarget] = useState<"global" | "teams">("global")
