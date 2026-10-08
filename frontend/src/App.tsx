@@ -19,7 +19,6 @@ const ScanDelta = lazy(() => import('./pages/ScanDelta'))
 const ProfilePage = lazy(() => import('./pages/Profile'))
 const SystemSettings = lazy(() => import('./pages/SystemSettings'))
 const Broadcasts = lazy(() => import('./pages/Broadcasts'))
-const SearchPage = lazy(() => import('./pages/Search'))
 const AnalyticsPage = lazy(() => import('./pages/Analytics'))
 const ArchivesPage = lazy(() => import('./pages/Archives'))
 const GlobalWaivers = lazy(() => import('./pages/GlobalWaivers'))
@@ -186,11 +185,7 @@ function AppRoutes() {
             <UsersPage />
           </RequirePermission>
         } />
-        <Route path="/search/dependencies" element={
-          <RequirePermission permission={['analytics:search', 'analytics:read']}>
-            <SearchPage />
-          </RequirePermission>
-        } />
+        <Route path="/search/dependencies" element={<Navigate to="/analytics?tab=search-deps" replace />} />
         <Route path="/analytics" element={
           <RequirePermission permission={[...ANALYTICS_ROUTE_PERMISSIONS]}>
             <AnalyticsPage />
