@@ -366,3 +366,19 @@ async def test_concurrent_callers_of_one_view_share_one_aggregation(db):
         await asyncio.gather(*(service.hotspots(resolved=resolved, group_by="name", limit=10) for _ in range(3)))
 
     assert runs == 1
+
+
+@pytest.mark.asyncio
+async def test_a_scan_id_under_user_scope_answers_each_caller_from_their_own_projects(db):
+    await CryptoAssetRepository(db).bulk_upsert("p1", "s1", [_asset("a1", "RSA", CryptoPrimitive.PKE)])
+    service = CryptoHotspotService(db)
+
+    owner = await service.hotspots(
+        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p1"]), group_by="name", scan_id="s1"
+    )
+    outsider = await service.hotspots(
+        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p2"]), group_by="name", scan_id="s1"
+    )
+
+    assert [e.key for e in owner.items] == ["RSA"]
+    assert outsider.items == []
