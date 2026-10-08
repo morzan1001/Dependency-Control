@@ -349,6 +349,24 @@ describe('ScanDetails raw tab', () => {
     const row = (await screen.findByRole('button', { name: 'Download SBOM #2' })).parentElement
     await waitFor(() => expect(row).toHaveClass('ring-2'))
   })
+
+  it('highlights the only SBOM of a scan for a named Found In source', async () => {
+    vi.mocked(scanApi.getSboms).mockResolvedValue([SBOM_ROWS[0]])
+    renderPage(`${RAW_TAB}&sbomSource=my-service`)
+
+    const row = (await screen.findByRole('button', { name: 'Download app.cdx.json' })).parentElement
+    await waitFor(() => expect(row).toHaveClass('ring-2'))
+  })
+
+  it('highlights no SBOM of a multi-SBOM scan for a named Found In source', async () => {
+    renderPage(`${RAW_TAB}&sbomSource=my-service`)
+
+    const first = (await screen.findByRole('button', { name: 'Download app.cdx.json' })).parentElement
+    const second = screen.getByRole('button', { name: 'Download SBOM #2' }).parentElement
+    await act(() => new Promise((resolve) => setTimeout(resolve, 300)))
+    expect(first).not.toHaveClass('ring-2')
+    expect(second).not.toHaveClass('ring-2')
+  })
 })
 
 describe('ScanDetails for a scan pinned by an archive restore', () => {

@@ -115,12 +115,10 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
     const handleSbomClick = (source: string) => {
         if (!scanId) return
         const match = /SBOM #(\d+)/i.exec(source)
-        // A root-component name does not say which SBOM it came from unless the scan has only one.
-        let sbomQuery = scanContext?.sbomCount === 1 ? '&sbom=0' : ''
-        if (match) sbomQuery = `&sbom=${Number.parseInt(match[1], 10) - 1}`
+        const sbomQuery = match ? `sbom=${Number.parseInt(match[1], 10) - 1}` : `sbomSource=${encodeURIComponent(source)}`
         onClose()
         onNavigate?.()
-        navigate(`/projects/${projectId}/scans/${scanId}?tab=raw${sbomQuery}`)
+        navigate(`/projects/${projectId}/scans/${scanId}?tab=raw&${sbomQuery}`)
     }
 
     return (

@@ -122,6 +122,7 @@ export default function ScanDetails() {
 
   const activeTab = searchParams.get('tab') || 'overview';
   const sbomParam = searchParams.get('sbom');
+  const namedSbomSource = searchParams.has('sbomSource');
   const severityFilter = searchParams.get('severity') || undefined;
 
   const [complianceLicenseCategory, setComplianceLicenseCategory] = useState<string | undefined>(undefined);
@@ -175,14 +176,15 @@ export default function ScanDetails() {
   }, [])
 
   useEffect(() => {
-    if (activeTab === 'raw' && sbomParam !== null && !isSbomsLoading && scanSboms && scanSboms.length > 0) {
-      const sbomIndex = Number.parseInt(sbomParam, 10)
-      if (!Number.isNaN(sbomIndex) && sbomIndex >= 0 && sbomIndex < scanSboms.length) {
+    if (activeTab === 'raw' && !isSbomsLoading && scanSboms && scanSboms.length > 0) {
+      // A named Found In source says which SBOM it came from only when the scan has one.
+      const sbomIndex = namedSbomSource && scanSboms.length === 1 ? 0 : Number.parseInt(sbomParam ?? '', 10)
+      if (sbomIndex >= 0 && sbomIndex < scanSboms.length) {
         const timeoutId = setTimeout(() => scrollToSbom(sbomIndex), 100)
         return () => clearTimeout(timeoutId)
       }
     }
-  }, [activeTab, sbomParam, isSbomsLoading, scanSboms, scrollToSbom])
+  }, [activeTab, sbomParam, namedSbomSource, isSbomsLoading, scanSboms, scrollToSbom])
 
   useEffect(() => {
     if (highlightedSbomIndex === null) return
@@ -222,7 +224,6 @@ export default function ScanDetails() {
     pipelineUrl: scan.pipeline_url,
     commitHash: scan.commit_hash,
     branch: scan.branch,
-    sbomCount: scan.sbom_refs?.length,
   }
 
   const activeAnalyzers = project.active_analyzers || [];
