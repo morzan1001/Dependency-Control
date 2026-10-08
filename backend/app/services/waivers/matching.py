@@ -88,9 +88,11 @@ def route_waiver(waiver: Waiver) -> WaiverRoute:
 
 
 def may_bind_signature(waiver: Waiver) -> bool:
-    """A waiver without a signature that names a location finding it could take one from."""
+    """A project waiver without a signature that names a location finding it could take one from; a global waiver
+    spans projects, keeps no signature and goes by its criteria."""
     return (
-        waiver.match is None
+        waiver.project_id is not None
+        and waiver.match is None
         and waiver.scope == WAIVER_SCOPE_FINDING
         and not waiver.vulnerability_id
         and bool(waiver.finding_id)
@@ -112,12 +114,9 @@ def bind_legacy_signatures(
 
 
 def waiver_reach_filter(waiver: Waiver) -> dict[str, Any] | None:
-    """The findings a waiver can stamp, as a MongoDB filter; None when it can stamp none."""
-    route = route_waiver(waiver)
-    if route == "vulnerability" and waiver.vulnerability_id:
+    """The findings a global waiver can stamp, as a MongoDB filter; None when it can stamp none."""
+    if waiver.vulnerability_id:
         return {**waiver_query(waiver), "type": "vulnerability", **advisory_match(waiver.vulnerability_id)}
-    if route == "signature" and waiver.match is not None:
-        return {"type": {"$in": [t.value for t in LOCATION_FINDING_TYPES]}, "component": waiver.match.file_key}
     return waiver_query(waiver) or None
 
 

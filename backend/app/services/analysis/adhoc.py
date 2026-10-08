@@ -21,7 +21,6 @@ from app.core.constants import (
     TOP_PYPI_PACKAGES_URL,
 )
 from app.models.crypto_asset import CryptoAsset
-from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
@@ -52,9 +51,6 @@ from app.services.reachability_enrichment import (
 from app.services.recommendations import generate_recommendations
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.waivers.matching import (
-    MatchFinding,
-    apply_waivers_to_findings,
-    bind_legacy_signatures,
     record_matches,
     roll_up_advisories,
     route_waiver,
@@ -541,43 +537,13 @@ def _apply_field_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
             record["waiver_reason"] = waiver.reason
 
 
-def _apply_signature_waivers(records: list[dict[str, Any]], waivers: list[Waiver]) -> None:
-    """Bind location waivers to the findings they were taken from, re-anchoring across line drift."""
-    # Keyed by position: a record's own id is not guaranteed unique across posted inputs.
-    by_key = {str(index): record for index, record in enumerate(records)}
-    located = [
-        MatchFinding(id=key, sig=MatchSignature(**record["match"]))
-        for key, record in by_key.items()
-        if record.get("match")
-    ]
-    if not located:
-        return
-
-    reasons = {waiver.id: waiver.reason for waiver in waivers}
-    application = apply_waivers_to_findings(located, waivers)
-    for key, waiver_id in application.waived.items():
-        by_key[key]["waived"] = True
-        by_key[key]["waiver_reason"] = reasons.get(waiver_id)
-    for key, waiver_id in application.lapsed.items():
-        by_key[key]["waiver_lapsed"] = True
-        by_key[key]["lapsed_waiver_id"] = waiver_id
-
-
 def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[Waiver]) -> int:
-    """Apply global waivers to in-memory records; returns how many records end up waived."""
-    signed = [(record["finding_id"], MatchSignature(**record["match"])) for record in records if record.get("match")]
-    bind_legacy_signatures(waivers, signed)
-    signature_waivers: list[Waiver] = []
+    """Apply global waivers, which keep no signature and go by their criteria; returns how many records end up waived."""
     for waiver in waivers:
-        route = route_waiver(waiver)
-        if route == "signature":
-            signature_waivers.append(waiver)
-        elif route == "vulnerability":
+        if route_waiver(waiver) == "vulnerability":
             _apply_vulnerability_waiver(records, waiver)
         else:
             _apply_field_waiver(records, waiver)
-
-    _apply_signature_waivers(records, signature_waivers)
     return sum(1 for record in records if record.get("waived") is True)
 
 

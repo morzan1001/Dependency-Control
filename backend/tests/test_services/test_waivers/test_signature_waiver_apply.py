@@ -205,3 +205,13 @@ async def test_an_unsigned_waiver_naming_a_file_takes_the_signature_of_the_findi
 
     assert await waived(db, _SCAN) == {"secret:config/a.env": "reason w"}
     assert waiver_repo.writes["w"]["match"]["file_key"] == "config/a.env"
+
+
+@pytest.mark.asyncio
+async def test_a_global_waiver_goes_by_its_criteria_and_loads_no_location_finding_for_a_signature():
+    waiver = Waiver(id="w", project_id=None, reason="reason w", created_by="u", finding_id=_LEAKED_KEY)
+
+    db, waiver_repo = await restamp_docs([_secret_doc("config/a.env"), _secret_doc("config/b.env")], [waiver], _SCAN)
+
+    assert await waived(db, _SCAN) == {"secret:config/a.env": "reason w", "secret:config/b.env": "reason w"}
+    assert waiver.match is None and waiver_repo.writes == {}

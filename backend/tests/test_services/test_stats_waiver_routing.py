@@ -35,9 +35,12 @@ class TestRouteWaiver:
 
 
 class TestMayBindSignature:
-    def test_an_unsigned_location_waiver_naming_a_finding_may_bind(self):
-        assert may_bind_signature(_waiver(finding_type="secret", finding_id="SECRET-AWS-ab12")) is True
-        assert may_bind_signature(_waiver(finding_id="SECRET-AWS-ab12")) is True
+    def test_an_unsigned_project_location_waiver_naming_a_finding_may_bind(self):
+        assert may_bind_signature(_waiver(finding_type="secret", finding_id="SECRET-AWS-ab12", project_id="p")) is True
+        assert may_bind_signature(_waiver(finding_id="SECRET-AWS-ab12", project_id="p")) is True
+
+    def test_a_global_waiver_never_binds_a_signature(self):
+        assert may_bind_signature(_waiver(finding_type="secret", finding_id="SECRET-AWS-ab12")) is False
 
     def test_a_waiver_naming_no_finding_or_no_location_type_may_not(self):
         assert may_bind_signature(_waiver(finding_type="secret", package_name="a.yaml")) is False
