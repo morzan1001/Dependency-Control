@@ -16,7 +16,6 @@ from app.services.analyzers import (
     Analyzer,
     DepsDevAnalyzer,
     EndOfLifeAnalyzer,
-    EPSSKEVAnalyzer,
     GrypeAnalyzer,
     HashVerificationAnalyzer,
     LicenseAnalyzer,
@@ -24,7 +23,6 @@ from app.services.analyzers import (
     OpenSourceMalwareAnalyzer,
     OSVAnalyzer,
     OutdatedAnalyzer,
-    ReachabilityAnalyzer,
     TrivyAnalyzer,
     TyposquattingAnalyzer,
 )
@@ -50,11 +48,8 @@ analyzer_factories: dict[str, AnalyzerFactory] = {
     "maintainer_risk": MaintainerRiskAnalyzer,
 }
 
-# Post-processors enrich existing findings; they run after analyzers and don't see SBOMs.
-post_processor_factories: dict[str, AnalyzerFactory] = {
-    "epss_kev": EPSSKEVAnalyzer,
-    "reachability": ReachabilityAnalyzer,
-}
+# Post-processors enrich existing findings inside the engine; they run after analyzers and don't see SBOMs.
+POST_PROCESSOR_ANALYZERS: frozenset[str] = frozenset({"epss_kev", "reachability"})
 
 # Vulnerability scanners — post-processors depend on these.
 VULNERABILITY_ANALYZERS: set[str] = {"trivy", "grype", "osv", "deps_dev"}
@@ -82,5 +77,5 @@ CRYPTO_ANALYZERS: frozenset[str] = frozenset(crypto_evaluators({}))
 
 # Names a project may list; crypto analyzers are not among them because CBOM presence decides them.
 SELECTABLE_ANALYZERS: frozenset[str] = frozenset(
-    analyzer_factories.keys() | post_processor_factories.keys() | CI_SCANNER_ANALYZERS
+    analyzer_factories.keys() | POST_PROCESSOR_ANALYZERS | CI_SCANNER_ANALYZERS
 )
