@@ -1070,3 +1070,25 @@ class TestCardsCountTheCvesOfAnInstalledVersion:
             "low": 1,
             "total": 3,
         }
+
+    def test_fixes_on_release_lines_no_single_update_reaches_stay_on_the_no_fix_card(self):
+        finding = stored_vulnerability(
+            "acme-lib",
+            "1.5.0",
+            [
+                {"id": "CVE-2024-0201", "severity": "CRITICAL", "fixed_version": "1.6.0"},
+                {"id": "CVE-2024-0202", "severity": "HIGH", "fixed_version": "2.1.0"},
+                {"id": "CVE-2024-0203", "severity": "MEDIUM", "fixed_version": None},
+            ],
+        )
+
+        [card] = process_vulnerabilities([finding], [_make_dependency(name="acme-lib", version="1.5.0")])
+
+        assert (card.type, card.affected_components) == (RecommendationType.NO_FIX_AVAILABLE, ["acme-lib"])
+        assert card.description.startswith("2 Critical/High vulnerabilities used in your project have no fixed version")
+        assert {k: card.impact[k] for k in ("critical", "high", "medium", "total")} == {
+            "critical": 1,
+            "high": 1,
+            "medium": 1,
+            "total": 3,
+        }

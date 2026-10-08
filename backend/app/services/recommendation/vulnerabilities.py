@@ -1,5 +1,6 @@
 from collections import Counter, defaultdict
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from app.core.constants import (
@@ -243,18 +244,24 @@ def _build_update_recommendation(
     )
 
 
-def _unfixed_critical_or_high(advisory: dict[str, Any]) -> bool:
-    return not names_fix(advisory) and advisory.get("severity") in ("CRITICAL", "HIGH")
+def _critical_or_high(advisory: dict[str, Any]) -> bool:
+    return advisory.get("severity") in ("CRITICAL", "HIGH")
+
+
+def _without_single_fix(v: VulnerabilityInfo) -> VulnerabilityInfo:
+    unfixed = [a for a in v.advisories if not names_fix(a)]
+    # Short of an unfixed Critical/High, a finding lands here because its recorded fixes share no release line.
+    return replace(v, advisories=unfixed) if any(map(_critical_or_high, unfixed)) else v
 
 
 def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
-    """Analyze vulnerabilities whose advisories name no fixed version."""
-
-    impact = severity_impact(summarize_vulns(vulns, lambda advisory: not names_fix(advisory)).severity.elements())
+    """Analyze vulnerabilities no single recorded fixed version covers."""
+    vulns = [_without_single_fix(v) for v in vulns]
+    impact = severity_impact(summarize_vulns(vulns).severity.elements())
     if not impact["critical"] + impact["high"]:
         return []
 
-    packages = {v.package_name for v in vulns if any(map(_unfixed_critical_or_high, v.advisories))}
+    packages = {v.package_name for v in vulns if any(map(_critical_or_high, v.advisories))}
     unfixable_shown, unfixable_total = sample_components(sorted(packages))
 
     return [
@@ -264,7 +271,8 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
             title="Vulnerability with No Known Fix",
             description=(
                 f"{impact['critical'] + impact['high']} Critical/High vulnerabilities used in your project have "
-                "no fixed version in their advisories. That is the absence of a recorded fix, not "
+                "no fixed version in their advisories, or fixes on release lines no single update reaches. "
+                "That is the absence of a recorded fix, not "
                 "proof that none exists, so confirm upstream before replacing a component."
             ),
             impact=impact,
