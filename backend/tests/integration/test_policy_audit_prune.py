@@ -49,7 +49,7 @@ async def test_prune_denied_for_non_admin(client, db, member_auth_headers):
         f"/api/v1/crypto-policies/system/audit?before={cutoff.isoformat()}",
         headers=member_auth_headers,
     )
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio

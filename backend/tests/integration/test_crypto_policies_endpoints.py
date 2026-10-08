@@ -28,7 +28,7 @@ async def test_get_system_policy_admin_only(client, db, admin_auth_headers, memb
     resp = await client.get("/api/v1/crypto-policies/system", headers=admin_auth_headers)
     assert resp.status_code == 200
     resp2 = await client.get("/api/v1/crypto-policies/system", headers=member_auth_headers)
-    assert resp2.status_code in (401, 403)
+    assert resp2.status_code == 403
 
 
 @pytest.mark.asyncio

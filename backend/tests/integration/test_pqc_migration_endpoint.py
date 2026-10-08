@@ -73,7 +73,7 @@ async def test_pqc_endpoint_respects_scope_permission(
         "/api/v1/analytics/crypto/pqc-migration?scope=global",
         headers=member_auth_headers,
     )
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio

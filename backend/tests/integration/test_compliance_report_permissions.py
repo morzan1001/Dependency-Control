@@ -50,7 +50,7 @@ async def test_unauth_request_blocked(client, db):
         "/api/v1/compliance/reports",
         json={"scope": "project", "scope_id": "p", "framework": "nist-sp-800-131a", "format": "json"},
     )
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -72,7 +72,7 @@ async def test_global_scope_requires_admin(
         json={"scope": "global", "framework": "nist-sp-800-131a", "format": "json"},
         headers=member_auth_headers,
     )
-    assert resp_denied.status_code in (401, 403)
+    assert resp_denied.status_code == 403
 
 
 @pytest.mark.asyncio

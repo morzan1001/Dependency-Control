@@ -117,7 +117,7 @@ async def test_revert_denied_for_non_admin(
         json={"target_version": 1, "comment": "no"},
         headers=member_auth_headers,
     )
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
