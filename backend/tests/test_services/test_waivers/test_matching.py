@@ -471,3 +471,17 @@ def test_an_unmoved_waiver_records_no_signature_change():
 
     assert exact.waived == content.waived == {"f1": "w1"}
     assert exact.refreshed == exact.reanchored == content.refreshed == content.reanchored == {}
+
+
+@pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+def test_a_content_anchored_waiver_keeps_its_unmoved_finding_beside_an_identical_snippet(status):
+    """Bearer stores no fingerprint, so two identical snippets on adjacent lines share their content anchor."""
+    findings = [
+        mf("f10", rule="BEARER:rule_x", anchor="cLog", kind="content_hash", ch="cLog", line=10),
+        mf("f11", rule="BEARER:rule_x", anchor="cLog", kind="content_hash", ch="cLog", line=11),
+    ]
+    waiver = _W("w", status, sig(rule="BEARER:rule_x", anchor="cLog", kind="content_hash", ch="cLog", line=10))
+
+    app = apply_waivers_to_findings(findings, [waiver])
+
+    assert (app.waived, app.lapsed) == ({"f10": "w"}, {})

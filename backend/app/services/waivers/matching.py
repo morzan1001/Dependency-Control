@@ -280,11 +280,11 @@ def _line_distance(f: MatchFinding, last_line: int | None) -> float:
 
 
 def _pick_unique_nearest(candidates: list[MatchFinding], last_line: int | None) -> MatchFinding | None:
-    """Return the nearest candidate within WINDOW when it beats the runner-up by MARGIN."""
+    """Return the nearest candidate within WINDOW when it beats the runner-up by MARGIN or sits at the exact line."""
     ranked = sorted(candidates, key=lambda f: _line_distance(f, last_line))
     d0 = _line_distance(ranked[0], last_line)
     d1 = _line_distance(ranked[1], last_line) if len(ranked) > 1 else float("inf")
-    if d0 <= REANCHOR_WINDOW and d1 - d0 >= REANCHOR_MARGIN:
+    if d0 <= REANCHOR_WINDOW and (d1 - d0 >= REANCHOR_MARGIN or d0 == 0 < d1):
         return ranked[0]
     return None
 
