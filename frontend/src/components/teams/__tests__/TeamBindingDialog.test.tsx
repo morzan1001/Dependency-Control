@@ -132,6 +132,14 @@ beforeEach(() => {
 });
 
 describe("TeamBindingDialog", () => {
+  it("loads no instance list while closed, since the Teams page mounts it for every team click", async () => {
+    render(<TeamBindingDialog team={team()} isOpen={false} onClose={() => {}} />, { wrapper: Wrapper });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(listInstances).not.toHaveBeenCalled();
+    expect(listGitlabInstances).not.toHaveBeenCalled();
+  });
+
   it("lists every binding the team holds, each naming the instance it is held on", async () => {
     renderDialog(team([GITHUB_BINDING, GITLAB_BINDING, LEGACY_BINDING]));
 

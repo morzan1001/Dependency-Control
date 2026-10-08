@@ -267,8 +267,8 @@ function GitLabBindingForm({
 export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindingDialogProps>) {
   const [pickedInstanceId, setPickedInstanceId] = useState<string | null>(null);
 
-  const { data: githubInstances, isLoading: githubLoading, error: githubError } = useGitHubInstances();
-  const { data: gitlabInstances, isLoading: gitlabLoading, error: gitlabError } = useGitLabInstances();
+  const { data: githubInstances, isLoading: githubLoading, error: githubError } = useGitHubInstances(undefined, isOpen);
+  const { data: gitlabInstances, isLoading: gitlabLoading, error: gitlabError } = useGitLabInstances(undefined, isOpen);
 
   const clearBinding = useClearTeamBinding();
 
