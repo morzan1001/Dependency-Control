@@ -16,6 +16,7 @@ from app.core.constants import (
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
+    WEBHOOK_EVENT_SCAN_COMPLETED,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
 )
 from app.core.init_db import create_indexes
@@ -663,6 +664,39 @@ async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_wai
     alerts = {c.kwargs["event_type"]: c.kwargs["payload"] for c in delivered.await_args_list}
     vulnerabilities = alerts[WEBHOOK_EVENT_VULNERABILITY_FOUND]["vulnerabilities"]
     assert (vulnerabilities["kev"], [v["id"] for v in vulnerabilities["top"]]) == (1, [_LOG4SHELL])
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_cve_waived_on_its_own_is_not_alerted_while_its_package_has_other_advisories(
+    db, monkeypatch, fake_cache, stored_sbom
+):
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "default_branch": "main"})
+    await db.waivers.insert_one(
+        {"_id": "w-cve", "project_id": _PROJECT_ID, "vulnerability_id": _LOG4SHELL, "reason": "r", "created_by": "u"}
+    )
+    scan_id = await _seed_scan(db)
+    log4j = {"PkgName": "org.apache.logging.log4j:log4j-core", "InstalledVersion": "2.14.1"}
+    trivy = {
+        "Results": [
+            {
+                "Target": "app",
+                "Vulnerabilities": [
+                    {"VulnerabilityID": _LOG4SHELL, "Severity": "CRITICAL", **log4j},
+                    {"VulnerabilityID": "CVE-2021-44832", "Severity": "MEDIUM", **log4j},
+                ],
+            }
+        ]
+    }
+    serve_analyzer(monkeypatch, "trivy", _CannedReport(trivy))
+    serve_enrichment(monkeypatch, fake_cache, Upstreams(kev=(_LOG4SHELL,)))
+    delivered = AsyncMock()
+    monkeypatch.setattr(webhook_service, "trigger_webhooks", delivered)
+    monkeypatch.setattr(notification_service, "notify_project_members", AsyncMock())
+
+    await engine.run_analysis(scan_id, [stored_sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
+
+    assert [c.kwargs["event_type"] for c in delivered.await_args_list] == [WEBHOOK_EVENT_SCAN_COMPLETED]
 
 
 _BASE_IMAGE_CVES = ("CVE-2024-0727", "CVE-2024-2511", "CVE-2024-4741")

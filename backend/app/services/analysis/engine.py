@@ -100,6 +100,7 @@ logger = logging.getLogger(__name__)
 _BULK_CHUNK_SIZE = 500
 _MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 _SLIMMED_ADVISORY_FIELDS = frozenset({"description", "references", "details"})
+_ANNOUNCED_FINDING_PROJECTION = {"type": 1, "component": 1, "version": 1, "details.vulnerabilities": 1}
 
 # Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
 _POST_PROCESSOR_ANALYZERS = frozenset({"epss_kev", "reachability"})
@@ -907,13 +908,10 @@ async def _finalize_scan_and_project(
     return status
 
 
-async def _filter_out_waived_findings(
-    findings: list[dict[str, Any]], scan_id: str, db: Database
-) -> list[dict[str, Any]]:
-    """Drop the records waived in this scan, re-read from the DB because waivers are applied only there."""
-    finding_repo = FindingRepository(db)
-    waived = {doc["_id"] async for doc in finding_repo.iterate_raw({"scan_id": scan_id, "waived": True}, {"_id": 1})}
-    return [record for record in findings if record["_id"] not in waived]
+async def _unwaived_findings(scan_id: str, db: Database) -> list[dict[str, Any]]:
+    """The scan's findings no waiver covers, read back from the DB because waivers are applied only there."""
+    query = {"scan_id": scan_id, "waived": {"$ne": True}}
+    return [doc async for doc in FindingRepository(db).iterate_raw(query, _ANNOUNCED_FINDING_PROJECTION)]
 
 
 async def _send_integrations_and_notifications(
@@ -988,7 +986,6 @@ async def _announce_outcome(
     scan_id: str,
     scan_doc: Scan,
     stats: Stats,
-    findings: list[dict[str, Any]],
     analyzer_outcomes: dict[str, str],
     db: Database,
 ) -> None:
@@ -998,7 +995,7 @@ async def _announce_outcome(
         if status == SCAN_STATUS_FAILED:
             await notify_analysis_failed(db, scan_id, project_id, error or status)
             return
-        notify_findings = await _filter_out_waived_findings(findings, scan_id, db)
+        notify_findings = await _unwaived_findings(scan_id, db)
         await _send_integrations_and_notifications(
             project_id,
             scan_id,
@@ -1192,6 +1189,7 @@ async def run_analysis(
     persisted_findings_count = await _persist_findings_and_waivers(
         findings_to_insert, scan_id, project_id, finding_repo, db
     )
+    del findings_to_insert, vulnerability_findings
     stats, ignored_count = await calculate_comprehensive_stats(db, scan_id, component_languages)
 
     # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
@@ -1258,11 +1256,9 @@ async def run_analysis(
         scan_id,
         scan_doc,
         stats,
-        findings_to_insert,
         analyzer_outcomes,
         db,
     )
-    del findings_to_insert, vulnerability_findings
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
     await record_scan_update_delta(db, scan_id)
