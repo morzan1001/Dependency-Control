@@ -34,15 +34,21 @@ case "$url" in
 esac
 """
 
-# madge 8 reads only the extensions --extensions names, ['js'] by default.
+# madge 8 walks only the path it is given, reads only the --extensions (['js'] by default) and lists node_modules
+# imports only under --include-npm.
 _MADGE_STUB = r"""#!/usr/bin/env python3
 import json, os, sys
 
 args = sys.argv[1:]
 extensions = args[args.index("--extensions") + 1].split(",") if "--extensions" in args else ["js"]
+root = os.path.relpath(args[-1])
 with open(os.environ["STUB_MADGE_GRAPH"]) as fh:
     graph = json.load(fh)
-print(json.dumps({path: deps for path, deps in graph.items() if path.rsplit(".", 1)[-1] in extensions}))
+print(json.dumps({
+    path: [dep for dep in deps if "--include-npm" in args or "node_modules" not in dep]
+    for path, deps in graph.items()
+    if (root == "." or path.startswith(root + "/")) and path.rsplit(".", 1)[-1] in extensions
+}))
 """
 
 # madge 8.0.0 `--json --include-npm --extensions js,jsx,ts,tsx .` over a Vite React checkout.
@@ -172,7 +178,7 @@ _CALLGRAPH_META = {"pipeline_id": 4711, "branch": "main", "commit_hash": "a" * 4
     ("files", "expected"),
     [
         pytest.param(
-            {"package.json": "{}"},
+            {"package.json": "{}", **dict.fromkeys(_JSX_GRAPH, "")},
             {"format": "madge", "language": "javascript", "data": _JSX_GRAPH},
             id="javascript",
         ),
