@@ -6,18 +6,20 @@ import {
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
 import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
 
+const TOP_N = 20;
+
 interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
   scanId?: string;
-  topN?: number;
 }
 
-export function HotspotBarChart({ scope, scopeId, groupBy, scanId, topN = 20 }: Readonly<Props>) {
+export function HotspotBarChart({ scope, scopeId, groupBy, scanId }: Readonly<Props>) {
+  // TOP_N in the key keeps this 20-row query apart from the 100-row one the table, heatmap and treemap share.
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId, topN],
-    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId, limit: topN }),
+    queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId, TOP_N],
+    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId, limit: TOP_N }),
   });
   if (isLoading) return <div className="p-4 text-sm">Loading…</div>;
   if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load hotspot data.</div>;

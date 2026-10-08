@@ -97,7 +97,7 @@ export function CryptoAnalyticsTab() {
 
 function HotspotsSection() {
   const [groupBy, setGroupBy] = useState<GroupingDimension>("name");
-  const view = useAnalyticsView("table");
+  const view = useAnalyticsView();
   const common = { scope: "user" as const, groupBy };
 
   return (
@@ -159,6 +159,7 @@ function TrendsSection() {
       <TrendsTimeSeriesChart
         scope="user"
         metric={metric}
+        label={TREND_METRIC_LABELS[metric]}
         bucket={autoBucket(days)}
         rangeStart={start}
         rangeEnd={end}

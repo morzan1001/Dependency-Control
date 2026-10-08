@@ -9,21 +9,11 @@ import type {
   AnalyticsScope, TrendBucket, TrendMetric,
 } from "@/types/cryptoAnalytics";
 
-const METRIC_LABEL: Record<TrendMetric, string> = {
-  total_crypto_findings: "Total crypto findings",
-  quantum_vulnerable_findings: "Quantum-vulnerable findings",
-  weak_algo_findings: "Weak algorithm findings",
-  weak_key_findings: "Weak key findings",
-  cert_expiring_soon: "Certs expiring soon",
-  cert_expired: "Certs expired",
-  unique_algorithms: "Unique algorithms",
-  unique_cipher_suites: "Unique cipher suites",
-};
-
 interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   metric: TrendMetric;
+  label: string;
   bucket: TrendBucket;
   rangeStart: Date;
   rangeEnd: Date;
@@ -53,7 +43,7 @@ export function TrendsTimeSeriesChart(p: Readonly<Props>) {
 
   return (
     <div className="space-y-2">
-      <div className="text-sm font-medium">{METRIC_LABEL[p.metric]}</div>
+      <div className="text-sm font-medium">{p.label}</div>
       <div style={{ width: "100%", height: 320 }}>
         <ResponsiveContainer>
           <LineChart data={chartData}>

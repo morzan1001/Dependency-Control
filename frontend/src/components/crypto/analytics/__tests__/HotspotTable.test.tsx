@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi } from "vitest";
 
+import { getCryptoHotspots } from "@/api/cryptoAnalytics";
 import { HotspotTable } from "../HotspotTable";
 
 vi.mock("@/api/cryptoAnalytics", () => ({
@@ -51,5 +52,14 @@ describe("HotspotTable", () => {
       <HotspotTable scope="project" scopeId="p" groupBy="name" />,
     );
     expect(await screen.findByText(/HIGH/)).toBeInTheDocument();
+  });
+
+  it("reports a failed request as an error rather than an empty scope", async () => {
+    vi.mocked(getCryptoHotspots).mockRejectedValueOnce(new Error("boom"));
+    renderWithClient(
+      <HotspotTable scope="project" scopeId="p" groupBy="name" />,
+    );
+    expect(await screen.findByText("Failed to load hotspot data.")).toBeInTheDocument();
+    expect(screen.queryByText("No hotspots in this scope.")).not.toBeInTheDocument();
   });
 });

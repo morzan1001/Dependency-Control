@@ -1,32 +1,28 @@
+import { useQuery } from "@tanstack/react-query";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
-import { useAnalyticsList } from "@/hooks/useAnalyticsList";
 import { formatDate } from "@/lib/utils";
-import type {
-  AnalyticsScope,
-  GroupingDimension,
-  HotspotEntry,
-  HotspotResponse,
-} from "@/types/cryptoAnalytics";
+import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
 
 interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
   scanId?: string;
-  onSelect?: (entry: HotspotEntry) => void;
 }
 
-export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Readonly<Props>) {
-  const { items, isLoading, isEmpty } = useAnalyticsList<HotspotResponse, HotspotEntry>({
+export function HotspotTable({ scope, scopeId, groupBy, scanId }: Readonly<Props>) {
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
-    selectItems: (resp) => resp.items,
   });
 
   if (isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">Loading hotspots…</div>;
   }
-  if (isEmpty) {
+  if (isError || !data) {
+    return <div className="p-4 text-sm text-destructive">Failed to load hotspot data.</div>;
+  }
+  if (data.items.length === 0) {
     return <div className="p-4 text-sm text-muted-foreground">No hotspots in this scope.</div>;
   }
 
@@ -44,12 +40,8 @@ export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Read
           </tr>
         </thead>
         <tbody>
-          {items.map((e) => (
-            <tr
-              key={e.key}
-              className="border-t cursor-pointer hover:bg-muted/30"
-              onClick={() => onSelect?.(e)}
-            >
+          {data.items.map((e) => (
+            <tr key={e.key} className="border-t hover:bg-muted/30">
               <td className="p-2 font-mono">{e.key}</td>
               <td className="p-2">{e.asset_count}</td>
               <td className="p-2">{e.finding_count}</td>

@@ -1,12 +1,12 @@
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { useAnalyticsView } from "./useAnalyticsView";
 
 export type AnalyticsView =
   | "table" | "heatmap" | "treemap" | "bar";
 
 interface Props {
   availableViews: AnalyticsView[];
-  defaultView?: AnalyticsView;
 }
 
 const LABEL: Record<AnalyticsView, string> = {
@@ -16,9 +16,9 @@ const LABEL: Record<AnalyticsView, string> = {
   bar: "Top-N",
 };
 
-export function AnalyticsViewSwitcher({ availableViews, defaultView = "table" }: Readonly<Props>) {
+export function AnalyticsViewSwitcher({ availableViews }: Readonly<Props>) {
   const [params, setParams] = useSearchParams();
-  const current = (params.get("analytics_view") as AnalyticsView) ?? defaultView;
+  const current = useAnalyticsView();
   return (
     <div className="inline-flex gap-1 rounded-md border p-1 bg-background">
       {availableViews.map((v) => (

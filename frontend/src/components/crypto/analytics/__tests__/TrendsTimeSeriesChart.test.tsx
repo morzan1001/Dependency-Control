@@ -29,7 +29,7 @@ describe("TrendsTimeSeriesChart", () => {
     const { container } = renderWithClient(
       <TrendsTimeSeriesChart
         scope="project" scopeId="p"
-        metric="total_crypto_findings" bucket="week"
+        metric="total_crypto_findings" label="Total Crypto Findings" bucket="week"
         rangeStart={new Date("2026-01-01")} rangeEnd={new Date("2026-01-15")}
       />,
     );
