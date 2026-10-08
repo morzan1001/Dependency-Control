@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, it, expect, vi } from "vitest";
@@ -19,6 +19,8 @@ vi.mock("../FindingDetailsModal", () => ({
 
 import { scanApi } from "@/api/scans";
 
+type GetFindings = typeof scanApi.getFindings;
+
 const row = (id: string, type: string, component: string): Partial<Finding> => ({
   id,
   type: type as Finding["type"],
@@ -29,14 +31,16 @@ const row = (id: string, type: string, component: string): Partial<Finding> => (
   details: {},
 });
 
-const ROWS = [
-  row("LIC-UNKNOWN", "license", "foo"),
-  row("LIC-UNKNOWN", "license", "bar"),
-  row("bar:1.0", "vulnerability", "bar"),
-];
+const FOO_LICENSE = row("LIC-UNKNOWN", "license", "foo");
+const BAR_LICENSE = row("LIC-UNKNOWN", "license", "bar");
+const BAR_VULNERABILITY = row("bar:1.0", "vulnerability", "bar");
+const ROWS = [FOO_LICENSE, BAR_LICENSE, BAR_VULNERABILITY];
 
-function renderTable() {
-  vi.mocked(scanApi.getFindings).mockResolvedValue({ items: ROWS, total: ROWS.length, page: 1, size: 50, pages: 1 } as never);
+const envelope = (items: Partial<Finding>[], total = items.length) =>
+  ({ items, total, page: 1, size: 50, pages: Math.ceil(total / 50) }) as never;
+
+function renderTable(getFindings: GetFindings = async () => envelope(ROWS)) {
+  vi.mocked(scanApi.getFindings).mockImplementation(getFindings);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -68,5 +72,18 @@ describe("FindingsTable findings that share an id", () => {
     fireEvent.click(screen.getByText("open-license"));
 
     expect(screen.getByTestId("opened-finding")).toHaveTextContent("license bar");
+  });
+
+  it("looks up the linking package's license finding when only another package's is loaded", async () => {
+    const getFindings = vi.fn<GetFindings>(async (_scanId, params) =>
+      params?.type === "license" ? envelope([BAR_LICENSE]) : envelope([FOO_LICENSE, BAR_VULNERABILITY], 300),
+    );
+    renderTable(getFindings);
+
+    fireEvent.click(await screen.findByText("bar:1.0"));
+    fireEvent.click(screen.getByText("open-license"));
+
+    await waitFor(() => expect(screen.getByTestId("opened-finding")).toHaveTextContent("license bar"));
+    expect(getFindings.mock.calls.filter(([, params]) => params?.type === "license")).toHaveLength(1);
   });
 });

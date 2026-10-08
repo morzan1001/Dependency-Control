@@ -41,7 +41,7 @@ describe("resolveRelatedFindingInRows", () => {
     const rows = [
       makeFinding({ id: "CVE-1", type: "vulnerability", component: "a" }),
       makeFinding({ id: "LIC-MIT", type: "license", component: "mitpkg" }),
-      makeFinding({ id: "LIC-GPL-3.0", type: "license", component: "gplpkg" }),
+      makeFinding({ id: "LIC-GPL-3.0", type: "license", component: "pkg" }),
     ];
     const found = resolveRelatedFindingInRows(rows, "LIC-GPL-3.0", FROM);
     expect(found?.id).toBe("LIC-GPL-3.0");
@@ -88,7 +88,7 @@ describe("resolveRelatedFindingInRows", () => {
 
   it("prefers an exact id match over format-specific dispatch", () => {
     const rows = [
-      makeFinding({ id: "OUTDATED-react", type: "vulnerability", component: "other" }),
+      makeFinding({ id: "OUTDATED-react", type: "vulnerability", component: "pkg" }),
       makeFinding({ id: "u2", type: "outdated", component: "react" }),
     ];
     expect(resolveRelatedFindingInRows(rows, "OUTDATED-react", FROM)?.id).toBe("OUTDATED-react");
@@ -123,6 +123,18 @@ describe("related findings whose id other packages share", () => {
       search: "bar",
       skip: 0,
       limit: RELATED_FINDING_SEARCH_LIMIT,
+    });
+  });
+
+  it("reports a window miss instead of opening another package's finding the search matched", async () => {
+    const foobar = makeFinding({ id: "LIC-GPL-3.0", type: "license", component: "foobar", version: "1.0" });
+    const matched = RELATED_FINDING_SEARCH_LIMIT + 1;
+    getFindingsMock.mockResolvedValue({ items: [foobar], total: matched, page: 1, size: RELATED_FINDING_SEARCH_LIMIT, pages: 2 });
+
+    expect(await fetchRelatedFinding("scan1", "LIC-GPL-3.0", barVuln)).toEqual({
+      status: "beyond-window",
+      searched: RELATED_FINDING_SEARCH_LIMIT,
+      matched,
     });
   });
 });

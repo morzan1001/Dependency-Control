@@ -56,7 +56,6 @@ function preferSamePackage<T extends Finding>(matches: readonly T[], from: Findi
     }
     return pick(f => f.component?.toLowerCase() === from.component?.toLowerCase())
         ?? pick(f => artifactName(f.component) === artifactName(from.component))
-        ?? matches[0]
 }
 
 /** Resolve a reference `from` holds: exact id first, then format-specific match; undefined for LIC-/unknown. */
