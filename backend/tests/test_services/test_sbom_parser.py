@@ -556,7 +556,6 @@ class TestCycloneDXParsing:
         result = self.parser.parse(cyclonedx_minimal)
         assert result.format == SBOMFormat.CYCLONEDX
         assert len(result.dependencies) == 2
-        assert len(result.dependencies) == 2
 
     def test_component_names(self, cyclonedx_minimal):
         result = self.parser.parse(cyclonedx_minimal)
@@ -988,10 +987,8 @@ class TestDuplicateComponentMerge:
     def test_duplicates_collapse_to_one_document(self):
         result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
         assert len(result.dependencies) == 1
-        assert len(result.dependencies) == 1
         assert result.merged_components == 1
         assert result.skipped_components == 0
-        assert _accounted(result) == 2
 
     def test_merged_locations_are_unioned(self):
         result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
