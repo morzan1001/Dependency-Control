@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -63,6 +63,8 @@ _CVES_SHOWN = 5
 
 # first_seen_at carries a finding's earliest detection in its project past retention; older rows lack it.
 _FIRST_SEEN = {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}
+
+HotspotSort = Literal["finding_count", "component", "first_seen", "epss", "risk"]
 
 
 @router.get("/impact", responses=RESP_AUTH)
@@ -282,10 +284,7 @@ async def get_vulnerability_hotspots(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of records to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    sort_by: Annotated[
-        str,
-        Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
-    ] = "finding_count",
+    sort_by: HotspotSort = "finding_count",
     sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
@@ -305,7 +304,7 @@ async def _hotspots(
     db: AsyncIOMotorDatabase,
     projects: list[ProjectWithScanId],
     release_environment: str | None,
-    sort_by: str,
+    sort_by: HotspotSort,
     sort_order: SortOrder,
     skip: int,
     limit: int,
