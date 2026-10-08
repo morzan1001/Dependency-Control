@@ -33,9 +33,8 @@ from app.services.update_frequency_rollup import record_scan_update_delta
 logger = logging.getLogger(__name__)
 
 _LOCK_NAME = "update_frequency_reconcile"
-# Longer than any capped run can last, short enough that a pod killed mid-run does not
-# hold the next night's slot.
-_LOCK_TTL_SECONDS = 1800
+# Held to expiry, never released: it outlasts the quiet hour in which every pod checks once.
+_LOCK_TTL_SECONDS = 2 * 3600
 
 # The comparison endpoint's default window. A caller may ask for a wider one; the nightly
 # sweep repairs nothing older.
@@ -92,15 +91,12 @@ async def run_update_frequency_reconcile(db: Any) -> ReconcileReport | None:
     if not settings.UPDATE_FREQUENCY_ROLLUP_ENABLED:
         return None
 
-    locks = DistributedLocksRepository(db)
-    holder_id = new_lock_holder()
-    if not await locks.acquire_lock(_LOCK_NAME, holder_id, ttl_seconds=_LOCK_TTL_SECONDS):
+    if not await DistributedLocksRepository(db).acquire_lock(
+        _LOCK_NAME, new_lock_holder(), ttl_seconds=_LOCK_TTL_SECONDS
+    ):
         logger.debug("Update-frequency reconcile skipped: another pod holds the lock")
         return None
-    try:
-        return await _reconcile(db)
-    finally:
-        await locks.release_lock(_LOCK_NAME, holder_id)
+    return await _reconcile(db)
 
 
 async def _reconcile(db: Any) -> ReconcileReport:

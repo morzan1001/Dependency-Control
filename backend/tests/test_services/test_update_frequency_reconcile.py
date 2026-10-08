@@ -595,29 +595,21 @@ class TestLock:
         assert held[0]["expires_at"] - held[0]["acquired_at"] >= budget
 
     @pytest.mark.asyncio
-    async def test_the_lock_is_released_after_a_run(self):
+    async def test_pods_reaching_the_quiet_hour_after_a_run_find_the_night_done(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        """Every pod checks once in the quiet hour, so a capped run must not repeat on each of them."""
         db = FakeDatabase()
         await _seed_project(db)
-        await _seed_chain(db, {"s1": "1.0.0"})
+        await _seed_chain(db, {f"s{i}": f"1.0.{i}" for i in range(6)}, record=False)
+        monkeypatch.setattr(reconcile_module, "_MAX_REPAIRS", 2)
 
-        await run_update_frequency_reconcile(db)
+        reports = [await run_update_frequency_reconcile(db) for _pod in range(3)]
 
-        assert await db.distributed_locks.find_one({"_id": _LOCK_NAME}) is None
-
-    @pytest.mark.asyncio
-    async def test_the_lock_is_released_when_the_run_fails(self, monkeypatch: pytest.MonkeyPatch):
-        db = FakeDatabase()
-        await _seed_project(db)
-
-        async def _boom(_db: Any) -> ReconcileReport:
-            raise RuntimeError("census failed")
-
-        monkeypatch.setattr(reconcile_module, "_reconcile", _boom)
-
-        with pytest.raises(RuntimeError, match="census failed"):
-            await run_update_frequency_reconcile(db)
-
-        assert await db.distributed_locks.find_one({"_id": _LOCK_NAME}) is None
+        assert reports[1:] == [None, None]
+        assert spy == ["s0", "s1"]
+        held = await db.distributed_locks.find_one({"_id": _LOCK_NAME})
+        assert held["expires_at"] - held["acquired_at"] > timedelta(hours=1)
 
 
 class TestScope:
