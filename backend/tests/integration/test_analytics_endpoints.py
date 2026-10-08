@@ -353,6 +353,43 @@ async def test_recommendations_recurrence_window_holds_the_newest_scans(
 
 
 @pytest.mark.asyncio
+async def test_recommendations_recurrence_counts_only_usable_builds_of_the_viewed_branch(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    from app.api.v1.endpoints.analytics import recommendations as rec_module
+
+    async def _no_enrichment(_cves):
+        return {}
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
+
+    now = datetime.now(timezone.utc)
+    window = [
+        ("main-old", {"branch": "main"}),
+        ("feature-1", {"branch": "feature"}),
+        ("feature-2", {"branch": "feature"}),
+        ("main-rescan", {"branch": "main", "is_rescan": True, "original_scan_id": "main-old"}),
+        ("main-failed", {"branch": "main", "status": "failed"}),
+        ("main-head", {"branch": "main"}),
+    ]
+    for position, (scan_id, fields) in enumerate(window):
+        created_at = now - timedelta(hours=len(window) - position)
+        await db.scans.insert_one(
+            {"_id": scan_id, "project_id": "p", "status": "completed", "created_at": created_at} | fields
+        )
+        await db.findings.insert_one(_vuln_finding(f"f-{scan_id}", scan_id, cve="CVE-2026-7777"))
+
+    resp = await client.get(
+        "/api/v1/analytics/projects/p/recommendations",
+        params={"scan_id": "main-head"},
+        headers=owner_auth_headers_proj,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert [r for r in resp.json()["recommendations"] if r["type"] == "recurring_vulnerability"] == []
+
+
+@pytest.mark.asyncio
 async def test_scope_denied_unauth(client, db):
     resp = await client.get(_SCOPE_PATH)
     assert resp.status_code in (401, 403)

@@ -15,14 +15,11 @@ from app.repositories.base import BaseRepository, find_window
 # What names a CVE, plus the fields a recurrence row reports back.
 _VULNERABILITY_IDENTITY_PROJECTION = {
     "scan_id": 1,
-    "severity": 1,
     "component": 1,
-    "description": 1,
-    "finding_id": 1,
-    "aliases": 1,
     "details.vulnerabilities.id": 1,
     "details.vulnerabilities.resolved_cve": 1,
     "details.vulnerabilities.aliases": 1,
+    "details.vulnerabilities.severity": 1,
 }
 
 FindingIdentity = tuple[Any, Any, Any, Any]

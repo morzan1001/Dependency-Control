@@ -166,9 +166,11 @@ class RecommendationEngine:
                 "regressions",
             )
         if cve_recurrence:
+            live = set(common.live_cves(get_attr(v, "details") for v in vulns))
+            recurring = {cve: row for cve, row in cve_recurrence.items() if cve in live}
             _safe_extend(
                 recommendations,
-                lambda: trends.analyze_recurring_issues(cve_recurrence, recurrence_window_scans),
+                lambda: trends.analyze_recurring_issues(recurring, recurrence_window_scans),
                 "recurring_issues",
             )
 

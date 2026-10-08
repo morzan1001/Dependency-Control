@@ -15,6 +15,7 @@ from app.services.recommendation.trends import (
     analyze_regressions,
     build_cve_recurrence,
 )
+from app.services.recommendations import RecommendationEngine
 from tests.helpers.findings import stored_vulnerability
 
 _SEV_CRITICAL = "CRITICAL"
@@ -303,9 +304,7 @@ def _scan_vuln(scan_id, cve_id=_CVE_DEFAULT, severity=_SEV_CRITICAL, component=_
     """The projection ``iter_vulnerability_identities`` yields, one row per stored finding."""
     return {
         "scan_id": scan_id,
-        "severity": severity,
         "component": component,
-        "finding_id": f"{component}:{_VERSION}",
         "details": {"vulnerabilities": [{"id": cve_id, "severity": severity}]},
     }
 
@@ -463,7 +462,6 @@ class TestBuildCveRecurrence:
         findings = [
             {
                 "scan_id": f"scan{i}",
-                "severity": _SEV_CRITICAL,
                 "component": _COMPONENT,
                 "details": {"vulnerabilities": [{"id": "GHSA-aaaa", "aliases": ["CVE-2024-001"]}]},
             }
@@ -475,10 +473,55 @@ class TestBuildCveRecurrence:
         assert list(recurrence) == ["CVE-2024-001"]
 
     @pytest.mark.asyncio
-    async def test_a_finding_naming_no_advisory_falls_back_to_its_own_identifier(self):
-        findings = [
-            {"scan_id": f"scan{i}", "severity": _SEV_CRITICAL, "component": _COMPONENT, "finding_id": "pkg:1.0.0"}
+    async def test_each_cve_keeps_its_own_advisory_severity_not_its_findings(self):
+        bundled = {
+            "vulnerabilities": [
+                {"id": "CVE-2024-0001", "severity": "CRITICAL"},
+                {"id": "CVE-2024-0002", "severity": "LOW"},
+            ]
+        }
+        rows = [{**_scan_vuln(f"scan{i}"), "details": bundled} for i in range(3)]
+
+        recurrence = await _recurrence(rows)
+
+        assert {cve: row.severity for cve, row in recurrence.items()} == {
+            "CVE-2024-0001": "CRITICAL",
+            "CVE-2024-0002": "LOW",
+        }
+
+
+_LODASH_CVE = "CVE-2021-23337"
+_LODASH_SIBLING_CVE = "CVE-2020-8203"
+
+
+def _recurring_cards(findings, recurrence):
+    recs = RecommendationEngine().generate_recommendations(
+        findings=findings, cve_recurrence=recurrence, recurrence_window_scans=8
+    )
+    return [r for r in recs if r.type == RecommendationType.RECURRING_VULNERABILITY]
+
+
+class TestRecurringNamesOnlyWhatTheViewedScanStillCarries:
+    @pytest.mark.asyncio
+    async def test_cves_the_viewed_scan_fixed_or_waived_are_not_reported(self):
+        lodash = [_scan_vuln(f"s{i}", cve_id=_LODASH_CVE, component="lodash") for i in range(1, 6)]
+        minimist = [_scan_vuln(f"s{i}", cve_id="CVE-2021-44906", component="minimist") for i in range(4, 8)]
+
+        assert _recurring_cards([], await _recurrence(lodash + minimist)) == []
+
+    @pytest.mark.asyncio
+    async def test_a_cve_waived_in_the_viewed_scan_is_left_off_while_its_live_sibling_recurs(self):
+        window = [
+            {
+                **_scan_vuln(f"s{i}", component="lodash"),
+                "details": {"vulnerabilities": [_advisory(_LODASH_CVE), _advisory(_LODASH_SIBLING_CVE)]},
+            }
             for i in range(3)
         ]
+        viewed = stored_vulnerability(
+            "lodash", "4.17.20", [_advisory(_LODASH_CVE), _advisory(_LODASH_SIBLING_CVE, waived=True)]
+        )
 
-        assert list(await _recurrence(findings)) == ["pkg:1.0.0"]
+        [card] = _recurring_cards([viewed], await _recurrence(window))
+
+        assert [row["cve"] for row in card.action["cves"]] == [_LODASH_CVE]

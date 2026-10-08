@@ -19,6 +19,7 @@ from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     SCAN_DEPENDENCY_READ_LIMIT,
+    SCANS_TIP_SORT,
 )
 from app.core.cve import entry_cves
 from app.core.permissions import Permissions
@@ -27,7 +28,7 @@ from app.models.finding_record import FindingRecord
 from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
@@ -120,7 +121,7 @@ async def get_project_recommendations(
     user_projects = await get_user_projects(current_user, db)
 
     stamped = await scan_repo.find_many_raw(
-        {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1}
+        {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1, "branch": 1}
     )
     stamp = stamped[0] if stamped else {}
     # Keyed by caller scope too, so differing project access never shares an entry; cross-project data may be stale.
@@ -159,11 +160,12 @@ async def get_project_recommendations(
             )
 
         recent_scan_ids = [
-            recent.id
-            for recent in await scan_repo.find_many(
-                {"project_id": project_id},
+            recent["_id"]
+            for recent in await scan_repo.find_many_raw(
+                {**USABLE_BUILD_MATCH, "project_id": project_id, "branch": stamp.get("branch")},
+                sort=SCANS_TIP_SORT,
                 limit=_RECURRENCE_WINDOW_SCANS,
-                sort=[("created_at", -1)],
+                projection={"_id": 1},
             )
         ]
         cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
