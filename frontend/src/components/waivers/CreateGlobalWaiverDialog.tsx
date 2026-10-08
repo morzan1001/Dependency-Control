@@ -32,6 +32,8 @@ const FINDING_TYPES = [
     { value: 'quality', label: 'Quality' },
     { value: 'other', label: 'Other' },
 ] as const
+// Vulnerability findings are stored per '<component>:<version>'; an advisory id only matches as vulnerability_id.
+const ADVISORY_ID = /^(CVE|GHSA)-/i
 
 interface CreateGlobalWaiverDialogProps {
     open: boolean
@@ -67,9 +69,11 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
         e.preventDefault()
         if (!reason) return
 
+        const advisory = ADVISORY_ID.test(findingId)
         createMutation.mutate({
             // No project_id → global waiver
-            finding_id: findingId || undefined,
+            finding_id: advisory ? undefined : findingId || undefined,
+            vulnerability_id: advisory ? findingId : undefined,
             package_name: packageName || undefined,
             package_version: packageVersion || undefined,
             finding_type: findingType || undefined,

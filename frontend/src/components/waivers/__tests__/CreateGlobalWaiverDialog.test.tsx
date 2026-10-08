@@ -34,6 +34,30 @@ describe('CreateGlobalWaiverDialog', () => {
     )
   })
 
+  it.each([
+    ['CVE-2021-23337', undefined, 'CVE-2021-23337'],
+    ['GHSA-35jh-r3h4-6jhm', undefined, 'GHSA-35jh-r3h4-6jhm'],
+    ['lodash:4.17.20', 'lodash:4.17.20', undefined],
+  ])('sends %s where the waiver can match it', (entered, findingId, vulnerabilityId) => {
+    render(<CreateGlobalWaiverDialog open onOpenChange={() => {}} />)
+    const dialog = screen.getByRole('dialog')
+
+    fireEvent.click(within(dialog).getAllByRole('combobox')[0])
+    fireEvent.click(screen.getByRole('option', { name: 'Vulnerability' }))
+    fireEvent.change(within(dialog).getByPlaceholderText('e.g. CVE-2023-1234'), { target: { value: entered } })
+    fireEvent.change(within(dialog).getByPlaceholderText('Why is this finding being waived globally?'), {
+      target: { value: 'reviewed' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Global Waiver' }))
+
+    const [payload] = mutate.mock.calls[0]
+    expect([payload.finding_type, payload.finding_id, payload.vulnerability_id]).toEqual([
+      'vulnerability',
+      findingId,
+      vulnerabilityId,
+    ])
+  })
+
   it('asks for no rule on a finding scope waiver', () => {
     render(<CreateGlobalWaiverDialog open onOpenChange={() => {}} />)
 
