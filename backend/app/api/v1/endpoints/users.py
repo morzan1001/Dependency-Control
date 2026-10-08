@@ -340,6 +340,8 @@ async def setup_2fa(
             status_code=400,
             detail="2FA must be configured in your identity provider, not in this application",
         )
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="2FA is already enabled; disable it first")
 
     secret = pyotp.random_base32()
 

@@ -238,6 +238,18 @@ async def test_the_code_that_enabled_2fa_does_not_also_log_in(api, db):
 
 
 @pytest.mark.asyncio
+async def test_setup_on_an_account_with_2fa_enabled_keeps_the_live_secret(api, db):
+    await _add_bob(db, totp_enabled=True, totp_secret=_TOTP_SECRET)
+    auth = {"Authorization": f"Bearer {security.create_access_token(_BOB_ID)}"}
+
+    response = await api.post(f"{_API}/users/me/2fa/setup", headers=auth)
+
+    assert response.status_code == _BAD_REQUEST
+    stored = await db.users.find_one({"_id": _BOB_ID})
+    assert (stored["totp_enabled"], stored["totp_secret"]) == (True, _TOTP_SECRET)
+
+
+@pytest.mark.asyncio
 async def test_a_reset_link_stops_working_once_a_newer_one_was_used(api, db, mailbox):
     await _add_bob(db)
     await _store_settings(db, **_MAIL_SETTINGS)
