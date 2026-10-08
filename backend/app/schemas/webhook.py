@@ -95,9 +95,9 @@ def validate_webhook_event_type(event_type: str) -> str:
     return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
 
 
-def validate_webhook_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+def validate_webhook_headers(headers: dict[str, str]) -> dict[str, str]:
     """Delivery sends custom headers as latin-1 beside its own protocol headers, which they may not shadow."""
-    for name, value in (headers or {}).items():
+    for name, value in headers.items():
         lowered = name.lower()
         if not _HEADER_NAME.fullmatch(name) or lowered in _RESERVED_HEADER_NAMES or lowered.startswith("x-webhook-"):
             raise ValueError(f"Header name '{name}' is not allowed")
