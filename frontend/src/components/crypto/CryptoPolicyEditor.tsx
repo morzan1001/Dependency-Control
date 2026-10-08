@@ -67,6 +67,10 @@ function emptyRule(): CryptoRule {
   };
 }
 
+function splitPatterns(text: string): string[] {
+  return text.split(",").map(s => s.trim()).filter(Boolean);
+}
+
 function arraysEqual<T>(a: T[], b: T[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
@@ -296,12 +300,12 @@ export function CryptoPolicyEditor({
                     />
                   </td>
                   <td className="p-2">
+                    {/* Parsed on blur so a trailing comma survives typing; the key reloads it on revert or resync. */}
                     <Input
+                      key={r.match_name_patterns.join(",")}
                       disabled={readOnly}
-                      value={r.match_name_patterns.join(", ")}
-                      onChange={(e) => updateRule(idx, {
-                        match_name_patterns: e.target.value.split(",").map(s => s.trim()).filter(Boolean),
-                      })}
+                      defaultValue={r.match_name_patterns.join(", ")}
+                      onBlur={(e) => updateRule(idx, { match_name_patterns: splitPatterns(e.target.value) })}
                       placeholder="comma-separated"
                     />
                   </td>
@@ -351,13 +355,14 @@ function AddRuleDialog({
   onAdd: (r: CryptoRule) => void;
 }>) {
   const [rule, setRule] = useState<CryptoRule>(emptyRule());
+  const [patternsText, setPatternsText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const submit = () => {
     if (!rule.rule_id) { setError("rule_id is required"); return; }
     if (existingIds.has(rule.rule_id)) { setError("rule_id already exists"); return; }
     if (!rule.name) { setError("name is required"); return; }
-    onAdd(rule);
+    onAdd({ ...rule, match_name_patterns: splitPatterns(patternsText) });
   };
 
   return (
@@ -383,13 +388,7 @@ function AddRuleDialog({
           </label>
           <label className="block text-sm">
             <span className="text-muted-foreground">match name patterns (comma-separated)</span>
-            <Input
-              value={rule.match_name_patterns.join(", ")}
-              onChange={(e) => setRule({
-                ...rule,
-                match_name_patterns: e.target.value.split(",").map(s => s.trim()).filter(Boolean),
-              })}
-            />
+            <Input value={patternsText} onChange={(e) => setPatternsText(e.target.value)} />
           </label>
           {error && <div className="text-sm text-destructive">{error}</div>}
         </div>
