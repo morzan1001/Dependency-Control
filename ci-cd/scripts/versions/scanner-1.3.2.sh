@@ -534,11 +534,12 @@ _generate_callgraph_js() {
     fi
 
     # --include-npm resolves a package import only through node_modules, so install the project first.
+    # madge reads only .js files unless --extensions names more.
     if [[ "$lang" = "typescript" ]]; then
-        madge --json --include-npm --ts-config tsconfig.json . > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || \
-        madge --json --include-npm . > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || true
+        madge --json --include-npm --extensions js,jsx,ts,tsx --ts-config tsconfig.json . > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || \
+        madge --json --include-npm --extensions js,jsx,ts,tsx . > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || true
     else
-        madge --json --include-npm . > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || true
+        madge --json --include-npm --extensions js,jsx,ts,tsx . > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || true
     fi
 
     echo "$lang:madge:$TEMP_DIR/callgraph_js.json"

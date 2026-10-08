@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from tests.test_api.test_callgraph_parsers import MADGE_OUTPUT
+from tests.test_api.test_callgraph_parsers import MADGE_TS_OUTPUT
 
 _REPO = Path(__file__).parents[3]
 _SCRIPTS = _REPO / "ci-cd" / "scripts"
@@ -33,6 +33,24 @@ case "$url" in
     *) printf '{"detail": "Not Found"}\\n404' ;;
 esac
 """
+
+# madge 8 reads only the extensions --extensions names, ['js'] by default.
+_MADGE_STUB = r"""#!/usr/bin/env python3
+import json, os, sys
+
+args = sys.argv[1:]
+extensions = args[args.index("--extensions") + 1].split(",") if "--extensions" in args else ["js"]
+with open(os.environ["STUB_MADGE_GRAPH"]) as fh:
+    graph = json.load(fh)
+print(json.dumps({path: deps for path, deps in graph.items() if path.rsplit(".", 1)[-1] in extensions}))
+"""
+
+# madge 8.0.0 `--json --include-npm --extensions js,jsx,ts,tsx .` over a Vite React checkout.
+_JSX_GRAPH = {
+    "src/App.jsx": [],
+    "src/main.jsx": ["node_modules/react-dom/client.js", "node_modules/react/index.js", "src/App.jsx"],
+    "vite.config.js": ["node_modules/vite/dist/node/index.js"],
+}
 
 _GO_STUB = r"""#!/usr/bin/env python3
 import json, os, sys
@@ -74,7 +92,14 @@ def _stub(directory: Path, name: str, body: str) -> None:
     path.chmod(0o755)
 
 
-def _run(script: Path, command: str, tmp_path: Path, files: dict[str, str], **extra_env: str) -> Path:
+def _run(
+    script: Path,
+    command: str,
+    tmp_path: Path,
+    files: dict[str, str],
+    madge_graph: dict[str, Any] | None = None,
+    **extra_env: str,
+) -> Path:
     """Run the scanner in a checkout holding ``files``; returns where the curl stub captured the upload."""
     stubs, workdir = tmp_path / "bin", tmp_path / "repo"
     stubs.mkdir(parents=True)
@@ -82,10 +107,10 @@ def _run(script: Path, command: str, tmp_path: Path, files: dict[str, str], **ex
     for name, content in files.items():
         (workdir / name).parent.mkdir(parents=True, exist_ok=True)
         (workdir / name).write_text(content)
-    (tmp_path / "madge.json").write_text(MADGE_OUTPUT)
+    (tmp_path / "madge.json").write_text(json.dumps(madge_graph or {}))
     _stub(stubs, "curl", _CURL_STUB)
     _stub(stubs, "syft", f"#!/bin/sh\ncat '{_FIXTURES / 'sbom' / 'mono.syft.json'}'\n")
-    _stub(stubs, "madge", f"#!/bin/sh\ncat '{tmp_path / 'madge.json'}'\n")
+    _stub(stubs, "madge", _MADGE_STUB)
     _stub(stubs, "go", _GO_STUB)
     capture = tmp_path / "body.json"
     env = {
@@ -106,6 +131,7 @@ def _run(script: Path, command: str, tmp_path: Path, files: dict[str, str], **ex
         "CAPTURE": str(capture),
         "STUB_GO_PACKAGES": _GO_PACKAGES,
         "STUB_GO_MODULES": _GO_MODULES,
+        "STUB_MADGE_GRAPH": str(tmp_path / "madge.json"),
         **extra_env,
     }
     subprocess.run(["bash", str(script), command], cwd=workdir, env=env, check=True, timeout=60, capture_output=True)
@@ -147,8 +173,13 @@ _CALLGRAPH_META = {"pipeline_id": 4711, "branch": "main", "commit_hash": "a" * 4
     [
         pytest.param(
             {"package.json": "{}"},
-            {"format": "madge", "language": "javascript", "data": json.loads(MADGE_OUTPUT)},
+            {"format": "madge", "language": "javascript", "data": _JSX_GRAPH},
             id="javascript",
+        ),
+        pytest.param(
+            {"package.json": "{}", "tsconfig.json": "{}"},
+            {"format": "madge", "language": "typescript", "data": json.loads(MADGE_TS_OUTPUT)},
+            id="typescript",
         ),
         pytest.param(
             {"pyproject.toml": "[project]\nname = 'demo'\n", "app/client.py": "import requests\nfrom . import x\n"},
@@ -177,7 +208,7 @@ _CALLGRAPH_META = {"pipeline_id": 4711, "branch": "main", "commit_hash": "a" * 4
     ],
 )
 def test_a_callgraph_goes_to_the_project_the_ingest_config_names(files, expected, tmp_path):
-    capture = _run(_SCRIPTS / "scanner.sh", "callgraph", tmp_path, files)
+    capture = _run(_SCRIPTS / "scanner.sh", "callgraph", tmp_path, files, expected["data"])
 
     assert capture.with_name("body.json.urls").read_text().split() == ["http://dc.invalid/api/v1/projects/p1/callgraph"]
     assert json.loads(capture.read_text()) == {**expected, **_CALLGRAPH_META}
