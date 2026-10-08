@@ -142,7 +142,7 @@ class TestSafeExtend:
         recs = [existing_rec]
 
         def raise_error():
-            raise RuntimeError("Crash!")
+            raise ValueError("Crash!")
 
         _safe_extend(recs, raise_error, "failing_module")
         assert len(recs) == 1
