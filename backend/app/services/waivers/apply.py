@@ -49,7 +49,7 @@ async def restamp_waivers(
     counts: Counter[str] = Counter()
 
     signed = await _signed_location_findings(finding_repo, scan_id, waivers, finding_fields)
-    bound = bind_legacy_signatures(waivers, {legacy_id: finding.sig for legacy_id, finding in signed})
+    bound = bind_legacy_signatures(waivers, [(legacy_id, finding.sig) for legacy_id, finding in signed])
     routed: dict[str, list[Waiver]] = defaultdict(list)
     for waiver in waivers:
         routed[route_waiver(waiver)].append(waiver)

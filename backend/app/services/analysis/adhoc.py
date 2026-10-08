@@ -583,7 +583,7 @@ def _apply_signature_waivers(records: list[dict[str, Any]], waivers: list[Waiver
 
 def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[Waiver]) -> int:
     """Apply global waivers to in-memory records; returns how many records end up waived."""
-    signed = {record["finding_id"]: MatchSignature(**record["match"]) for record in records if record.get("match")}
+    signed = [(record["finding_id"], MatchSignature(**record["match"])) for record in records if record.get("match")]
     bind_legacy_signatures(waivers, signed)
     signature_waivers: list[Waiver] = []
     for waiver in waivers:

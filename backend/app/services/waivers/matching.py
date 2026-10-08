@@ -99,12 +99,14 @@ def may_bind_signature(waiver: Waiver) -> bool:
 
 
 def bind_legacy_signatures(
-    waivers: Iterable[Waiver], sig_by_finding_id: Mapping[str, MatchSignature]
+    waivers: Iterable[Waiver], signed: Iterable[tuple[str, MatchSignature]]
 ) -> dict[str, MatchSignature]:
-    """Give each unsigned waiver the signature of the finding it names by exact id; returns what each one took."""
+    """Sign each unsigned waiver with the finding its id names, in its named file if any (a secret id spans files)."""
+    sigs = {(finding_id, file_key): sig for finding_id, sig in signed for file_key in (sig.file_key, None)}
     bound = {}
     for waiver in waivers:
-        if may_bind_signature(waiver) and (sig := sig_by_finding_id.get(waiver.finding_id or "")) is not None:
+        key = (waiver.finding_id or "", waiver.package_name)
+        if may_bind_signature(waiver) and (sig := sigs.get(key)) is not None:
             waiver.match = bound[waiver.id] = sig
     return bound
 
