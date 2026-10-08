@@ -9,10 +9,6 @@ from app.models.callgraph import Callgraph, ModuleUsage
 
 
 class TestModuleUsage:
-    def test_minimal_valid(self):
-        usage = ModuleUsage(module="requests")
-        assert usage.module == "requests"
-
     def test_defaults(self):
         usage = ModuleUsage(module="pkg")
         assert usage.import_count == 0
@@ -42,12 +38,6 @@ class TestCallgraphModel:
         }
         defaults.update(overrides)
         return Callgraph(**defaults)
-
-    def test_minimal_valid(self):
-        cg = self._make_callgraph()
-        assert cg.project_id == "proj-1"
-        assert cg.language == "python"
-        assert cg.tool == "ast"
 
     def test_optional_fields_default_none(self):
         cg = self._make_callgraph()

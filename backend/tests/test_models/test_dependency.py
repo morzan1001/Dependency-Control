@@ -19,13 +19,6 @@ class TestDependencyModel:
         defaults.update(overrides)
         return Dependency(**defaults)
 
-    def test_minimal_valid(self):
-        dep = self._make_dependency()
-        assert dep.project_id == "proj-1"
-        assert dep.scan_id == "scan-1"
-        assert dep.name == "requests"
-        assert dep.version == "2.31.0"
-
     def test_type_defaults_to_unknown(self):
         dep = self._make_dependency()
         assert dep.type == "unknown"

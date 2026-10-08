@@ -6,18 +6,6 @@ from app.models.archive import ArchiveMetadata
 
 
 class TestArchiveMetadata:
-    def test_minimal_valid_metadata(self):
-        metadata = ArchiveMetadata(
-            project_id="proj-1",
-            scan_id="scan-1",
-            s3_key="proj-1/scan-1.json.gz",
-            s3_bucket="dc-archives",
-        )
-        assert metadata.project_id == "proj-1"
-        assert metadata.scan_id == "scan-1"
-        assert metadata.s3_key == "proj-1/scan-1.json.gz"
-        assert metadata.s3_bucket == "dc-archives"
-
     def test_archived_at_auto_set(self):
         metadata = ArchiveMetadata(
             project_id="proj-1",

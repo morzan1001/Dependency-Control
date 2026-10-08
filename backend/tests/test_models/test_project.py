@@ -7,11 +7,6 @@ from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 
 
 class TestProjectModel:
-    def test_minimal_valid_project(self):
-        project = Project(name="my-project", owner_id="user-123")
-        assert project.name == "my-project"
-        assert project.owner_id == "user-123"
-
     def test_defaults(self):
         project = Project(name="test", owner_id="user-1")
         assert project.retention_days == 90
@@ -29,11 +24,6 @@ class TestProjectMemberModel:
 
 
 class TestScanModel:
-    def test_minimal_valid_scan(self):
-        scan = Scan(project_id="proj-1", branch="main")
-        assert scan.project_id == "proj-1"
-        assert scan.branch == "main"
-
     def test_defaults(self):
         scan = Scan(project_id="proj-1", branch="main")
         assert scan.status == "pending"

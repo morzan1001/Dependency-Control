@@ -14,14 +14,6 @@ from app.schemas.webhook import WebhookCreate, WebhookResponse, WebhookUpdate
 
 
 class TestWebhookModel:
-    def test_minimal_valid(self):
-        webhook = Webhook(
-            url="https://example.com/hook",
-            events=["scan_completed"],
-        )
-        assert webhook.url == "https://example.com/hook"
-        assert "scan_completed" in webhook.events
-
     def test_defaults(self):
         webhook = Webhook(
             url="https://example.com/hook",

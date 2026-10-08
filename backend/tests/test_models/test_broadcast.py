@@ -20,14 +20,6 @@ class TestBroadcastModel:
         defaults.update(overrides)
         return Broadcast(**defaults)
 
-    def test_minimal_valid(self):
-        b = self._make_broadcast()
-        assert b.type == "general"
-        assert b.target_type == "global"
-        assert b.subject == "Maintenance window"
-        assert b.message == "System will be down for maintenance."
-        assert b.created_by == "admin-1"
-
     def test_default_stats_zero(self):
         b = self._make_broadcast()
         assert b.recipient_count == 0

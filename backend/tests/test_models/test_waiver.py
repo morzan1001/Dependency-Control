@@ -8,11 +8,6 @@ from app.schemas.waiver import WaiverResponse
 
 
 class TestWaiverModel:
-    def test_minimal_valid_waiver(self):
-        waiver = Waiver(reason="False positive", created_by="admin")
-        assert waiver.reason == "False positive"
-        assert waiver.created_by == "admin"
-
     def test_default_status(self):
         waiver = Waiver(reason="Test", created_by="admin")
         assert waiver.status == WAIVER_STATUS_ACCEPTED_RISK

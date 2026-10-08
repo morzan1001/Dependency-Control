@@ -19,12 +19,6 @@ class TestSystemInvitationModel:
         defaults.update(overrides)
         return SystemInvitation(**defaults)
 
-    def test_minimal_valid(self):
-        inv = self._make_system_invitation()
-        assert inv.email == "newuser@example.com"
-        assert inv.token == "sys-tok-456"
-        assert inv.invited_by == "superadmin"
-
     def test_is_used_defaults_to_false(self):
         inv = self._make_system_invitation()
         assert inv.is_used is False

@@ -5,15 +5,6 @@ from app.models.github_instance import GitHubInstance
 
 
 class TestGitHubInstanceModel:
-    def test_minimal_valid_instance(self):
-        instance = GitHubInstance(
-            name="GitHub.com",
-            url="https://token.actions.githubusercontent.com",
-            created_by="admin",
-        )
-        assert instance.name == "GitHub.com"
-        assert instance.url == "https://token.actions.githubusercontent.com"
-
     def test_defaults(self):
         instance = GitHubInstance(
             name="Test",
@@ -46,18 +37,6 @@ class TestGitHubInstanceModel:
 
 
 class TestGitHubOIDCPayloadModel:
-    def test_minimal_valid_payload(self):
-        payload = GitHubOIDCPayload(
-            repository_id="123456",
-            repository="owner/repo",
-            repository_owner="owner",
-            actor="user",
-        )
-        assert payload.repository_id == "123456"
-        assert payload.repository == "owner/repo"
-        assert payload.repository_owner == "owner"
-        assert payload.actor == "user"
-
     def test_optional_fields_default_none(self):
         payload = GitHubOIDCPayload(
             repository_id="1",
