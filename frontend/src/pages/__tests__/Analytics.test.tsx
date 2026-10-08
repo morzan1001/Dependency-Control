@@ -54,6 +54,9 @@ vi.mock('@/components/analytics/AnalyticsDependencyModal', () => ({ AnalyticsDep
 vi.mock('@/components/analytics/CryptoAnalyticsTab', () => ({
   CryptoAnalyticsTab: () => <span data-testid="crypto-view">{useAnalyticsView()}</span>,
 }))
+vi.mock('@/components/compliance/ComplianceReportsPanel', () => ({
+  ComplianceReportsPanel: () => <span data-testid="compliance-reports" />,
+}))
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
 const scope: AnalyticsScope = {
@@ -178,3 +181,23 @@ describe('Analytics deep link', () => {
     expect(screen.getByTestId('vuln-severity')).toHaveTextContent('all')
   })
 })
+
+describe('Analytics compliance reports', () => {
+  it('open from a tab of their own', () => {
+    renderPage('/analytics?tab=compliance')
+
+    expect(screen.getByRole('tab', { name: 'Compliance' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('compliance-reports')).toBeInTheDocument()
+  })
+
+  it('leave the release switch off, since each report picks its own scans', () => {
+    renderPage()
+    pickRelease()
+
+    openTab('Compliance')
+
+    expect(screen.getByLabelText(SCOPE_LABEL)).toBeDisabled()
+    expect(screen.getByText(HEAD_ONLY_NOTE)).toBeInTheDocument()
+  })
+})
+

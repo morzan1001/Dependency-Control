@@ -19,7 +19,7 @@ function renderInventory() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <ProjectInventory projectId="p1" defaultBranch="main" projectName="proj" />
+      <ProjectInventory projectId="p1" defaultBranch="main" />
     </QueryClientProvider>,
   )
 }
@@ -70,6 +70,45 @@ describe('ProjectInventory', () => {
     fireEvent.click(screen.getByRole('button', { name: /retry/i }))
 
     await waitFor(() => expect(screen.getByText('42')).toBeInTheDocument())
+  })
+
+  it('opens a newly picked branch on the first page of each table, keeping the search', async () => {
+    vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
+      data: [{ name: 'main', is_active: true }, { name: 'dev', is_active: true }],
+    } as ReturnType<typeof projectHooks.useProjectBranches>)
+    const api = vi.mocked(inventoryApiModule.inventoryApi)
+    api.getStats.mockResolvedValue(stats)
+    api.getLicenses.mockResolvedValue({ scan: stats.scan, items: [] })
+    api.getComponents.mockImplementation(async (_, params) => ({
+      scan: stats.scan, total: 50, page: params?.page ?? 1, page_size: 25,
+      items: [{ name: `lodash-${params?.branch}-${params?.page}`, version: '1', latest_version: null, ecosystem: 'npm',
+        license: null, license_category: null, direct: true, eol: false, outdated: false, purl: null }],
+    }))
+    api.getCrypto.mockImplementation(async (_, params) => ({
+      scan: stats.scan, total: 50, page: params?.page ?? 1, page_size: 25,
+      items: [{ name: `rsa-${params?.branch}-${params?.page}`, asset_type: 'algorithm', primitive: 'pke', variant: 'RSA',
+        key_size_bits: 2048, location_count: 1, locations: [] }],
+    }))
+
+    renderInventory()
+    fireEvent.change(await screen.findByPlaceholderText('Search components…'), { target: { value: 'lod' } })
+    await waitFor(() => expect(api.getComponents).toHaveBeenCalledWith('p1', expect.objectContaining({ search: 'lod' })))
+    await screen.findByText('lodash-main-1')
+    await screen.findByText('rsa-main-1')
+    for (const next of screen.getAllByRole('button', { name: /next/i })) fireEvent.click(next)
+    await screen.findByText('lodash-main-2')
+    await screen.findByText('rsa-main-2')
+
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('option', { name: 'dev' }))
+
+    await screen.findByText('lodash-dev-1')
+    await screen.findByText('rsa-dev-1')
+    const devPages = (calls: { branch?: string; page?: number }[]) =>
+      calls.filter((params) => params.branch === 'dev').map((params) => params.page)
+    expect(devPages(api.getComponents.mock.calls.map(([, params]) => params ?? {}))).toEqual([1])
+    expect(devPages(api.getCrypto.mock.calls.map(([, params]) => params ?? {}))).toEqual([1])
+    expect(api.getComponents).toHaveBeenLastCalledWith('p1', expect.objectContaining({ branch: 'dev', search: 'lod' }))
   })
 
   it('shows an empty state when the project has no active branches', async () => {

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card'
@@ -7,18 +8,18 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Pagination } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download } from 'lucide-react'
 import { useInventoryComponents } from '@/hooks/queries/use-inventory'
 import { usePaginationState } from '@/hooks/use-pagination-state'
 import { inventoryApi } from '@/api/inventory'
-import { downloadFile } from '@/lib/download'
+import { downloadServerFile } from '@/lib/download'
 import { ComponentItem } from '@/types/inventory'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 
 interface ComponentsTableProps {
   projectId: string
-  projectName: string
   branch?: string
 }
 
@@ -34,9 +35,14 @@ function LifecycleBadge({ item }: { readonly item: ComponentItem }) {
   return <span className="text-muted-foreground">—</span>
 }
 
-export function ComponentsTable({ projectId, projectName, branch }: Readonly<ComponentsTableProps>) {
+export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableProps>) {
   const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' })
+  const [pageBranch, setPageBranch] = useState(branch)
+  if (pageBranch !== branch) {
+    setPageBranch(branch)
+    setPage(1)
+  }
 
   const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryComponents(projectId, branch, {
     page, pageSize: DEFAULT_PAGE_SIZE, search: debouncedSearch || undefined, sortBy, sortOrder,
@@ -59,9 +65,9 @@ export function ComponentsTable({ projectId, projectName, branch }: Readonly<Com
     return sortOrder === 'asc' ? <ArrowUp className="ml-2 inline h-4 w-4" /> : <ArrowDown className="ml-2 inline h-4 w-4" />
   }
 
-  const handleDownload = () => downloadFile(
+  const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'components', branch),
-    `${projectName}_components_${branch}_${new Date().toISOString().slice(0, 10)}.csv`,
+    'components.csv',
     'Failed to download components CSV',
   )
 
@@ -148,17 +154,7 @@ export function ComponentsTable({ projectId, projectName, branch }: Readonly<Com
             </TableBody>
           </Table>
         </div>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-end gap-2 py-4 text-sm text-muted-foreground">
-            Page {data?.page ?? 1} of {totalPages}
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
-              <ChevronLeft className="h-4 w-4" /> Previous
-            </Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages || isPlaceholderData} onClick={() => setPage(p => p + 1)}>
-              Next <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />
       </CardContent>
     </Card>
   )

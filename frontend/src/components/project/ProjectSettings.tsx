@@ -179,8 +179,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
   
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
-    if (!project || !user) return {};
-
     if (project.enforce_notification_settings) {
       return enforcedPreferences(project) || {};
     }
@@ -280,7 +278,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       retention_days: retentionDays,
       retention_action: retentionAction as 'delete' | 'archive' | 'none',
       active_analyzers: analyzers,
-      default_branch: defaultBranch === "none" ? null : defaultBranch,
+      default_branch: defaultBranch ?? null,
       rescan_enabled: rescanEnabled,
       rescan_interval: rescanInterval,
       gitlab_mr_comments_enabled: gitlabMrCommentsEnabled,
@@ -356,7 +354,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 <div className="grid gap-2">
                     <Label htmlFor="defaultBranch">Default Branch</Label>
                     <Select value={defaultBranch || "none"} onValueChange={(val) => setDefaultBranch(val === "none" ? undefined : val)}>
-                        <SelectTrigger>
+                        <SelectTrigger id="defaultBranch">
                             <SelectValue placeholder="Select default branch" />
                         </SelectTrigger>
                         <SelectContent>

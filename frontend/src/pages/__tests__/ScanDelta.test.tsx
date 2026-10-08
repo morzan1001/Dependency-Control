@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ScanDelta from '../ScanDelta'
 import * as deltaApi from '@/api/scanDelta'
 import * as scansApi from '@/api/scans'
@@ -80,6 +80,7 @@ function renderPage(url = `/projects/${PROJECT_ID}/delta?from=${FROM_SCAN_ID}&to
 }
 
 describe('ScanDelta page', () => {
+  beforeEach(() => { vi.mocked(scansApi.scanApi.getProjectScans).mockResolvedValue([]) })
   afterEach(() => { cleanup(); vi.clearAllMocks() })
 
   it('loads the findings delta for the scan pair from the URL', async () => {
@@ -94,6 +95,17 @@ describe('ScanDelta page', () => {
     expect(args).toMatchObject({
       projectId: PROJECT_ID, fromScanId: FROM_SCAN_ID, toScanId: TO_SCAN_ID, category: 'findings',
     })
+  })
+
+  it('counts the changes on the badge of each tab that answered', async () => {
+    vi.mocked(deltaApi.getScanDelta).mockResolvedValue(emptyDelta('findings'))
+    vi.mocked(scansApi.scanApi.getOne).mockImplementation((id: string) => Promise.resolve(scan(id)))
+    vi.mocked(releaseApi.list).mockResolvedValue(noReleases)
+
+    renderPage()
+
+    expect(await screen.findByRole('tab', { name: 'Findings 3' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Components —' })).toBeInTheDocument()
   })
 
   // The page rejects the pair before it renders the header, so nothing asks for a release here.

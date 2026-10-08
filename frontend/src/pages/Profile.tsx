@@ -10,7 +10,7 @@ import { ApiKeysCard } from '@/components/profile/ApiKeysCard';
 export default function ProfilePage() {
   const { data: user, isLoading } = useCurrentUser();
 
-  const { data: notificationChannels } = useNotificationChannels();
+  const notificationChannels = useNotificationChannels();
 
   if (isLoading) {
     return (

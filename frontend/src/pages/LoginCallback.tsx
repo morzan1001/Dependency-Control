@@ -27,7 +27,7 @@ export default function LoginCallback() {
 
     const error = new URLSearchParams(globalThis.location.hash.substring(1)).get('error')
     globalThis.history.replaceState(null, '', globalThis.location.pathname)
-    const fail = (message: string) => navigate('/login', { state: { message }, replace: true })
+    const fail = (message: string) => navigate('/login', { state: { error: message }, replace: true })
     if (error !== null) {
       fail(SSO_ERRORS.get(error) ?? SSO_FAILED)
       return

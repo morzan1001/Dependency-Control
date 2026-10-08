@@ -61,8 +61,8 @@ export const useDeleteWaiver = () => {
     })
 }
 
-export const useProjectWaivers = (
-    projectId: string,
+export const useWaiverList = (
+    projectId: string | undefined,
     options?: {
         search?: string;
         sortBy?: string;
@@ -74,24 +74,25 @@ export const useProjectWaivers = (
     const { search, sortBy = 'created_at', sortOrder = 'desc', orphaned, active } = options || {};
 
     return useInfiniteQuery({
-        queryKey: waiverKeys.projectWithParams(projectId, search, sortBy, sortOrder, orphaned, active),
-        queryFn: async ({ pageParam = 0 }) => {
-            return waiverApi.getByProject(projectId, {
-                skip: pageParam,
-                limit: DEFAULT_PAGE_SIZE,
-                search,
-                sort_by: sortBy,
-                sort_order: sortOrder,
-                orphaned,
-                active,
-            });
-        },
+        queryKey: projectId
+            ? waiverKeys.projectWithParams(projectId, search, sortBy, sortOrder, orphaned, active)
+            : waiverKeys.globalWithParams(search, sortBy, sortOrder, orphaned),
+        queryFn: ({ pageParam }) => waiverApi.getAll({
+            ...(projectId ? { project_id: projectId } : { global_only: true }),
+            skip: pageParam,
+            limit: DEFAULT_PAGE_SIZE,
+            search,
+            sort_by: sortBy,
+            sort_order: sortOrder,
+            orphaned,
+            active,
+        }),
         initialPageParam: 0,
         getNextPageParam: (lastPage) => {
             const nextSkip = lastPage.page * lastPage.size;
             return nextSkip < lastPage.total ? nextSkip : undefined;
         },
-        enabled: !!projectId,
+        placeholderData: keepPreviousData,
     });
 }
 
@@ -105,35 +106,3 @@ export const useWaiverById = (waiverId: string | undefined) => {
         enabled: !!waiverId,
     });
 };
-
-export const useGlobalWaivers = (
-    options?: {
-        search?: string;
-        sortBy?: string;
-        sortOrder?: 'asc' | 'desc';
-        orphaned?: boolean;
-    }
-) => {
-    const { search, sortBy = 'created_at', sortOrder = 'desc', orphaned } = options || {};
-
-    return useInfiniteQuery({
-        queryKey: waiverKeys.globalWithParams(search, sortBy, sortOrder, orphaned),
-        queryFn: async ({ pageParam = 0 }) => {
-            return waiverApi.getAll({
-                global_only: true,
-                skip: pageParam,
-                limit: DEFAULT_PAGE_SIZE,
-                search,
-                sort_by: sortBy,
-                sort_order: sortOrder,
-                orphaned,
-            });
-        },
-        initialPageParam: 0,
-        getNextPageParam: (lastPage) => {
-            const nextSkip = lastPage.page * lastPage.size;
-            return nextSkip < lastPage.total ? nextSkip : undefined;
-        },
-        placeholderData: keepPreviousData,
-    });
-}

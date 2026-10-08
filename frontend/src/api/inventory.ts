@@ -1,4 +1,4 @@
-import { api } from '@/api/client';
+import { api, getServerFile } from '@/api/client';
 import {
   ComponentsPage, CryptoPage, InventoryStats, InventoryTable, LicensesPayload,
 } from '@/types/inventory';
@@ -39,11 +39,6 @@ export const inventoryApi = {
     return response.data;
   },
 
-  exportTable: async (projectId: string, table: InventoryTable, branch?: string): Promise<Blob> => {
-    const response = await api.get(`/projects/${projectId}/inventory/${table}/export`, {
-      params: { branch },
-      responseType: 'blob',
-    });
-    return response.data;
-  },
+  exportTable: (projectId: string, table: InventoryTable, branch?: string) =>
+    getServerFile(`/projects/${projectId}/inventory/${table}/export`, { branch }),
 };

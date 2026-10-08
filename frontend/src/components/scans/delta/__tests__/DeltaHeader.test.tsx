@@ -7,13 +7,16 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { DeltaHeader } from '../DeltaHeader'
 import * as scansApi from '@/api/scans'
 import { useLatestProjectRelease, type LatestProjectRelease } from '@/hooks/queries/use-releases'
-import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow, type ScanWindow } from '@/hooks/queries/use-scans'
+import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow } from '@/hooks/queries/use-scans'
 import type { ReleaseItem } from '@/types/release'
 import type { ScanWithReleases } from '@/types/scan'
 import type { ScanDeltaResponse } from '@/types/scanDelta'
 
 vi.mock('@/api/scans')
-vi.mock('@/hooks/queries/use-scans')
+vi.mock('@/hooks/queries/use-scans', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-scans')>()),
+  useProjectScanWindow: vi.fn(),
+}))
 vi.mock('@/hooks/queries/use-releases')
 
 const PROJECT_ID = 'p1'
@@ -78,11 +81,11 @@ function renderHeader(
 
 function mockScanSources(options: ScanWithReleases[] = [toScan], complete = true) {
   vi.mocked(scansApi.scanApi.getOne).mockImplementation(getOne)
-  // Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
-  const window: ScanWindow = { scans: options, complete }
+  const fetchNextPage = vi.fn()
   vi.mocked(useProjectScanWindow).mockReturnValue(
-    { data: window } as unknown as ReturnType<typeof useProjectScanWindow>,
+    { data: { pages: [options], pageParams: [0] }, hasNextPage: !complete, fetchNextPage } as unknown as ReturnType<typeof useProjectScanWindow>,
   )
+  return fetchNextPage
 }
 
 describe('DeltaHeader', () => {
@@ -106,13 +109,45 @@ describe('DeltaHeader', () => {
   })
 
   it('asks the window for another page when the widen control is used', () => {
-    mockScanSources([toScan], false)
+    const fetchNextPage = mockScanSources([toScan], false)
 
     renderHeader()
     fireEvent.click(screen.getByRole('button', { name: `Load ${SCAN_WINDOW_PAGE_SIZE} older` }))
 
-    const pagesAsked = vi.mocked(useProjectScanWindow).mock.calls.map((call) => call[1])
-    expect(Math.max(...pagesAsked)).toBe(2)
+    expect(fetchNextPage).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads each older page once, however often the window is widened', async () => {
+    const actual = await vi.importActual<typeof import('@/hooks/queries/use-scans')>('@/hooks/queries/use-scans')
+    vi.mocked(useProjectScanWindow).mockImplementation(actual.useProjectScanWindow)
+    vi.mocked(scansApi.scanApi.getOne).mockImplementation(getOne)
+    vi.mocked(scansApi.scanApi.getProjectScans).mockImplementation(async (_, params) =>
+      Array.from({ length: SCAN_WINDOW_PAGE_SIZE }, (_, index) => ({ ...toScan, id: `s${(params?.skip ?? 0) + index}` })))
+
+    renderHeader()
+    for (const offered of [2, 3, 4].map((pages) => pages * SCAN_WINDOW_PAGE_SIZE)) {
+      fireEvent.click(await screen.findByRole('button', { name: `Load ${SCAN_WINDOW_PAGE_SIZE} older` }))
+      await screen.findByText(`The pickers offer the ${offered} most recent scans; this project has older ones.`)
+    }
+
+    const skips = vi.mocked(scansApi.scanApi.getProjectScans).mock.calls.map(([, params]) => params?.skip)
+    expect(skips).toEqual([0, 1, 2, 3].map((page) => page * SCAN_WINDOW_PAGE_SIZE))
+  })
+
+  it('offers a scan once when a newer scan shifts the next page onto it', async () => {
+    const actual = await vi.importActual<typeof import('@/hooks/queries/use-scans')>('@/hooks/queries/use-scans')
+    vi.mocked(useProjectScanWindow).mockImplementation(actual.useProjectScanWindow)
+    vi.mocked(scansApi.scanApi.getOne).mockImplementation(getOne)
+    const server = Array.from({ length: 4 * SCAN_WINDOW_PAGE_SIZE }, (_, index) => ({ ...toScan, id: `s${index}` }))
+    vi.mocked(scansApi.scanApi.getProjectScans).mockImplementation(async (_, { skip = 0, limit = 0 } = {}) =>
+      server.slice(skip, skip + limit))
+
+    renderHeader()
+    await screen.findByText(`The pickers offer the ${SCAN_WINDOW_PAGE_SIZE} most recent scans; this project has older ones.`)
+    server.unshift({ ...toScan, id: 'created-between-widens' })
+    fireEvent.click(screen.getByRole('button', { name: `Load ${SCAN_WINDOW_PAGE_SIZE} older` }))
+
+    await screen.findByText(`The pickers offer the ${2 * SCAN_WINDOW_PAGE_SIZE - 1} most recent scans; this project has older ones.`)
   })
 
   it("shows the compared scan's label on the From side even though it is excluded from the pickable options", async () => {

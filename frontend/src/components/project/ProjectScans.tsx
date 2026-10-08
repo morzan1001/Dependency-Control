@@ -5,6 +5,7 @@ import { resolveRun } from '@/lib/scan-run'
 import { isScanUsable, SCAN_STATUS_FAILED } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
+import { ScmLink } from '@/components/scans/ScmLink'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
 import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectScans } from '@/hooks/queries/use-scans'
@@ -242,58 +243,25 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs">
-                        {(() => {
-                          const projectUrl = scan.project_url
-                          const pipelineId = scan.pipeline_id
-                          const href = buildPipelineUrl({
-                            projectUrl,
-                            pipelineUrl: scan.pipeline_url,
-                            pipelineId,
-                          })
-
-                          if (!scan.pipeline_iid) return 'N/A'
-                          if (!href) return `#${scan.pipeline_iid}`
-
-                          return (
-                            <a
-                              href={href}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-primary hover:underline"
-                            >
-                              #{scan.pipeline_iid}
-                            </a>
-                          )
-                        })()}
+                        {scan.pipeline_iid ? (
+                          <ScmLink href={buildPipelineUrl({
+                            projectUrl: scan.project_url, pipelineUrl: scan.pipeline_url, pipelineId: scan.pipeline_id,
+                          })}>
+                            #{scan.pipeline_iid}
+                          </ScmLink>
+                        ) : 'N/A'}
                       </span>
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <GitBranch className="h-4 w-4 text-muted-foreground" />
-                      {(() => {
-                        const projectUrl = scan.project_url
-                        const href = buildBranchUrl({
-                          projectUrl,
-                          pipelineUrl: scan.pipeline_url,
-                          branch: scan.branch,
-                        })
-
-                        return href ? (
-                          <a
-                            href={href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="font-mono text-xs text-primary hover:underline"
-                          >
-                            {scan.branch}
-                          </a>
-                        ) : (
-                          <span className="font-mono text-xs">{scan.branch}</span>
-                        )
-                      })()}
+                      <ScmLink
+                        href={buildBranchUrl({ projectUrl: scan.project_url, pipelineUrl: scan.pipeline_url, branch: scan.branch })}
+                        className="font-mono text-xs"
+                      >
+                        {scan.branch}
+                      </ScmLink>
                     </div>
                     {scan.releases.map((release) => (
                       <ReleaseBadge
@@ -307,32 +275,17 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <GitCommit className="h-4 w-4 text-muted-foreground" />
-                      {(() => {
-                        const shortSha = shortCommitHash(scan.commit_hash)
-                        if (!shortSha) return <span className="font-mono text-xs">N/A</span>
-
-                        const projectUrl = scan.project_url
-                        const href = buildCommitUrl({
-                          projectUrl,
-                          pipelineUrl: scan.pipeline_url,
-                          commitHash: scan.commit_hash,
-                        })
-
-                        return href ? (
-                          <a
-                            href={href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="font-mono text-xs text-primary hover:underline"
-                            title={scan.commit_hash}
-                          >
-                            {shortSha}
-                          </a>
-                        ) : (
-                          <span className="font-mono text-xs">{shortSha}</span>
-                        )
-                      })()}
+                      {scan.commit_hash ? (
+                        <ScmLink
+                          href={buildCommitUrl({ projectUrl: scan.project_url, pipelineUrl: scan.pipeline_url, commitHash: scan.commit_hash })}
+                          className="font-mono text-xs"
+                          title={scan.commit_hash}
+                        >
+                          {shortCommitHash(scan.commit_hash)}
+                        </ScmLink>
+                      ) : (
+                        <span className="font-mono text-xs">N/A</span>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>

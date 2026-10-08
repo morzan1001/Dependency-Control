@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Pagination } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
@@ -23,8 +24,6 @@ import {
 import {
   Trophy,
   AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   GitBranch,
   Hourglass,
@@ -481,17 +480,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
           </Table>
           </TooltipProvider>
         </div>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-end gap-2 py-4 text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-              <ChevronLeft className="h-4 w-4" /> Previous
-            </Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
-              Next <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </CardContent>
     </Card>
   )

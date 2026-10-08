@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter, Trash2 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { downloadFile, downloadServerFile } from '@/lib/download'
+import { downloadServerFile } from '@/lib/download'
 import { ProjectOverview } from '@/components/project/ProjectOverview'
 import { ProjectScans } from '@/components/project/ProjectScans'
 import { ProjectWaivers } from '@/components/project/ProjectWaivers'
@@ -74,7 +74,7 @@ export default function ProjectDetails() {
       }
   }
 
-  const handleExportCsv = () => downloadFile(
+  const handleExportCsv = () => downloadServerFile(
     () => projectApi.exportCsv(id!),
     `project-${project?.name}-export.csv`,
     "Failed to export CSV"
@@ -230,7 +230,7 @@ export default function ProjectDetails() {
         </TabsContent>
 
         <TabsContent value="inventory" className="space-y-4">
-          <ProjectInventory projectId={id!} projectName={project.name} defaultBranch={project.default_branch} />
+          <ProjectInventory projectId={id!} defaultBranch={project.default_branch} />
         </TabsContent>
 
         <TabsContent value="scans" className="space-y-4">

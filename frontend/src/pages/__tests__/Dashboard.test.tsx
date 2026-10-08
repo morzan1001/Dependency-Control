@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Dashboard from '../Dashboard'
@@ -22,16 +22,6 @@ vi.mock('recharts', () => ({
   YAxis: () => null,
   CartesianGrid: () => null,
   Tooltip: () => null,
-}))
-
-// jsdom gives every element zero height, so the real virtualizer would render no rows at all.
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({ index, key: index, start: index * 73, end: (index + 1) * 73 })),
-    getTotalSize: () => count * 73,
-    measureElement: () => undefined,
-  }),
 }))
 
 function project(id: string, teams: Project['teams']): Project {
@@ -86,3 +76,22 @@ describe('Dashboard severity cards', () => {
     expect(navigateMock).toHaveBeenCalledWith(`/analytics?tab=search-vulns&severity=${severity}`)
   })
 })
+
+describe('Dashboard project table rows', () => {
+  it('renders every project of the page with its risk status and opens it on click', () => {
+    renderDashboard([
+      { ...project('p1', []), stats: { critical: 2, high: 1 } } as Project,
+      { ...project('p2', []), stats: { critical: 0, high: 4 } } as Project,
+      { ...project('p3', []), stats: { critical: 0, high: 0 } } as Project,
+    ])
+
+    const statuses = ['p1', 'p2', 'p3'].map((id) =>
+      within(screen.getByRole('row', { name: new RegExp(`project-${id}`) })).getByText(/Critical|High Risk|Secure/).textContent,
+    )
+    expect(statuses).toEqual(['Critical', 'High Risk', 'Secure'])
+
+    fireEvent.click(screen.getByText('project-p2'))
+    expect(navigateMock).toHaveBeenCalledWith('/projects/p2')
+  })
+})
+

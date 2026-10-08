@@ -143,4 +143,25 @@ describe("FindingsDeltaTab", () => {
       expect(calls[calls.length - 1][0].change).toBe("changed");
     });
   });
+
+  it("returns to the first page when a filter changes", async () => {
+    const getScanDelta = api.getScanDelta as unknown as ReturnType<typeof vi.fn>;
+    getScanDelta.mockImplementation(async (args: { page: number }) => ({ ...sampleResponse, page: args.page, total_pages: 3 }));
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /next/i }));
+    await waitFor(() => expect(getScanDelta).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 })));
+
+    fireEvent.click(screen.getByRole("button", { name: /^high$/i }));
+
+    await waitFor(() =>
+      expect(getScanDelta).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, severity: ["high"] })),
+    );
+  });
+
+  it("says so when no finding changed", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ...sampleResponse, items: [] });
+    renderTab();
+
+    expect(await screen.findByText("No findings changes")).toBeInTheDocument();
+  });
 });

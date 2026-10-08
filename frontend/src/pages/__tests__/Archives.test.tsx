@@ -1,7 +1,7 @@
 // Force a non-UTC timezone so date parsing is exercised in local time.
 process.env.TZ = 'America/New_York'
 
-import { act, render, screen, fireEvent } from '@testing-library/react'
+import { act, render, screen, fireEvent, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -11,7 +11,8 @@ import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 const mockUseAdminArchives = vi.fn()
 
-vi.mock('@/hooks/queries/use-archives', () => ({
+vi.mock('@/hooks/queries/use-archives', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-archives')>()),
   useAdminArchives: (...args: unknown[]) => mockUseAdminArchives(...args),
 }))
 
@@ -64,6 +65,55 @@ describe('ArchivesPage - formatBytes', () => {
 
     expect(screen.getByText('1.0 TB')).toBeInTheDocument()
     expect(screen.queryByText(/undefined/)).not.toBeInTheDocument()
+  })
+})
+
+describe('ArchivesPage rows', () => {
+  it('summarises an archived scan with its project and archive time', () => {
+    mockUseAdminArchives.mockReturnValue({
+      data: makeResponse([makeArchive({
+        branch: 'release/2.0', findings_count: 17, critical_findings_count: 2, high_findings_count: 5,
+        dependencies_count: 321, sbom_filenames: ['sbom-a.json', 'sbom-b.json'], compressed_size_bytes: 2048,
+      })]),
+      isLoading: false,
+    })
+
+    renderPage()
+
+    const row = screen.getByRole('row', { name: /release\/2\.0/ })
+    expect(within(row).getByRole('link', { name: 'Proj 1' })).toHaveAttribute('href', '/projects/p1')
+    for (const text of ['release/2.0', 'abcdef1', '17', '2 C', '5 H', '321', '2', '2.0 KB']) {
+      expect(within(row).getByText(text)).toBeInTheDocument()
+    }
+    expect(within(row).getByText(new Date('2026-07-02T12:00:00Z').toLocaleDateString(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    }))).toBeInTheDocument()
+  })
+
+  it('tells an unfiltered empty list apart from a filtered one', () => {
+    renderPage()
+    expect(screen.getByText('Archives will appear here when data retention archiving is active.')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } })
+    expect(screen.getByText('Try adjusting your filters.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByLabelText('From')).toHaveValue('')
+  })
+})
+
+describe('ArchivesPage pager', () => {
+  it('names the archive total and asks for the next page', () => {
+    mockUseAdminArchives.mockReturnValue({
+      data: { items: [makeArchive()], total: 40, page: 1, size: 20, pages: 2 },
+      isLoading: false,
+    })
+
+    renderPage()
+    expect(screen.getByText('Page 1 of 2 (40 total)')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /next/i }))
+
+    expect(mockUseAdminArchives).toHaveBeenLastCalledWith(2, 20, undefined)
   })
 })
 

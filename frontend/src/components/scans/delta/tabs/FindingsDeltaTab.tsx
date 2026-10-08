@@ -1,7 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FindingDeltaItem } from "@/types/scanDelta";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -14,8 +12,9 @@ import { SeverityBadge } from "@/components/findings/SeverityBadge";
 import { formatDate } from "@/lib/utils";
 import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
-import { DeltaPagination } from "../shared/DeltaPagination";
+import { Pagination } from "@/components/ui/pagination";
 import { DeltaSummaryCards } from "../shared/DeltaSummaryCards";
+import { DeltaFilterBar, DeltaFilterGroup, DeltaStatusRows } from "../shared/DeltaTableParts";
 import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 const SEVERITIES = ["critical", "high", "medium", "low"] as const;
@@ -37,33 +36,21 @@ function toggle<T extends string>(list: readonly T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
-export function FindingsDeltaTab({
-  projectId,
-  fromScanId,
-  toScanId,
-  onLoaded,
-}: DeltaTabProps) {
+export function FindingsDeltaTab(props: DeltaTabProps) {
   const [severity, setSeverity] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [change, setChange] = useState<FindingsChangeFilter>("all");
 
   const { query, setPage } = useDeltaTabQuery({
+    ...props,
     category: "findings",
-    projectId,
-    fromScanId,
-    toScanId,
-    extra: {
+    filters: {
       change,
       severity: severity.length ? severity : undefined,
       findingType: types.length ? types : undefined,
     },
-    filterKey: [severity, types, change],
   });
   const { data, isLoading, isError } = query;
-
-  useEffect(() => {
-    if (data) onLoaded(data);
-  }, [data, onLoaded]);
 
   if (isError) return <DeltaError category="findings" />;
 
@@ -76,56 +63,13 @@ export function FindingsDeltaTab({
         changed={data?.totals.changed ?? 0}
         bySeverity={data?.totals.by_severity}
       />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-muted/30 p-2 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">Severity:</span>
-          {SEVERITIES.map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant={severity.includes(s) ? "default" : "outline"}
-              onClick={() => {
-                setPage(1);
-                setSeverity(toggle(severity, s));
-              }}
-            >
-              {s}
-            </Button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">Type:</span>
-          {TYPES.map((t) => (
-            <Button
-              key={t}
-              size="sm"
-              variant={types.includes(t) ? "default" : "outline"}
-              onClick={() => {
-                setPage(1);
-                setTypes(toggle(types, t));
-              }}
-            >
-              {t}
-            </Button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">Change:</span>
-          {CHANGES.map((c) => (
-            <Button
-              key={c}
-              size="sm"
-              variant={change === c ? "default" : "outline"}
-              onClick={() => {
-                setPage(1);
-                setChange(c);
-              }}
-            >
-              {c}
-            </Button>
-          ))}
-        </div>
-      </div>
+      <DeltaFilterBar>
+        <DeltaFilterGroup label="Severity" options={SEVERITIES} isActive={(s) => severity.includes(s)}
+          onSelect={(s) => setSeverity(toggle(severity, s))} />
+        <DeltaFilterGroup label="Type" options={TYPES} isActive={(t) => types.includes(t)}
+          onSelect={(t) => setTypes(toggle(types, t))} />
+        <DeltaFilterGroup label="Change" options={CHANGES} isActive={(c) => change === c} onSelect={setChange} />
+      </DeltaFilterBar>
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -139,16 +83,6 @@ export function FindingsDeltaTab({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading &&
-              ["s1", "s2", "s3"].map((id) => (
-                <TableRow key={id}>
-                  {["c1", "c2", "c3", "c4", "c5", "c6"].map((c) => (
-                    <TableCell key={c}>
-                      <Skeleton className="h-5 w-20" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
             {(data?.items as FindingDeltaItem[] | undefined)?.map((item) => (
               <TableRow key={`${item.change}-${item.finding_id}`}>
                 <TableCell><ChangeBadge change={item.change} /></TableCell>
@@ -164,17 +98,11 @@ export function FindingsDeltaTab({
                 </TableCell>
               </TableRow>
             ))}
-            {!isLoading && (data?.items.length ?? 0) === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                  No findings changes
-                </TableCell>
-              </TableRow>
-            )}
+            <DeltaStatusRows isLoading={isLoading} rows={data?.items.length ?? 0} columns={6} emptyText="No findings changes" />
           </TableBody>
         </Table>
       </div>
-      <DeltaPagination
+      <Pagination
         page={data?.page ?? 1}
         totalPages={data?.total_pages ?? 1}
         onChange={setPage}

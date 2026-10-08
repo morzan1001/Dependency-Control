@@ -1,13 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { systemApi } from '@/api/system';
 import { SystemSettings } from '@/types/system';
+import { NOTIFICATION_CHANNELS } from '@/lib/constants';
 
 export const systemKeys = {
   all: ['system'] as const,
   settings: () => [...systemKeys.all, 'settings'] as const,
   appConfig: () => [...systemKeys.all, 'appConfig'] as const,
   publicConfig: () => [...systemKeys.all, 'publicConfig'] as const,
-  notificationChannels: () => [...systemKeys.all, 'notificationChannels'] as const,
 };
 
 // Full system settings; requires 'system:manage' permission.
@@ -54,10 +54,7 @@ export const usePublicConfig = () => {
   });
 };
 
-export const useNotificationChannels = () => {
-  return useQuery({
-    queryKey: systemKeys.notificationChannels(),
-    queryFn: systemApi.getNotificationChannels,
-    staleTime: 5 * 60 * 1000,
-  });
+export const useNotificationChannels = (): string[] | undefined => {
+  const { data } = useAppConfig();
+  return data && NOTIFICATION_CHANNELS.map((channel) => channel.id).filter((id) => data.notifications[id]);
 };

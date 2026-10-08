@@ -16,11 +16,10 @@ import { CryptoTable } from './CryptoTable'
 
 interface ProjectInventoryProps {
   projectId: string
-  projectName: string
   defaultBranch?: string | null
 }
 
-export function ProjectInventory({ projectId, projectName, defaultBranch }: Readonly<ProjectInventoryProps>) {
+export function ProjectInventory({ projectId, defaultBranch }: Readonly<ProjectInventoryProps>) {
   const { data: branches } = useProjectBranches(projectId)
   const branchesLoaded = branches !== undefined
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
@@ -99,10 +98,10 @@ export function ProjectInventory({ projectId, projectName, defaultBranch }: Read
       {branchesLoaded && branch && !isError && (
         <>
           <InventoryStatCards stats={stats} isLoading={isLoading} />
-          <ComponentsTable projectId={projectId} projectName={projectName} branch={branch} />
+          <ComponentsTable projectId={projectId} branch={branch} />
           <div className="grid items-stretch gap-4 lg:grid-cols-2">
-            <LicensesTable projectId={projectId} projectName={projectName} branch={branch} />
-            <CryptoTable projectId={projectId} projectName={projectName} branch={branch} />
+            <LicensesTable projectId={projectId} branch={branch} />
+            <CryptoTable projectId={projectId} branch={branch} />
           </div>
         </>
       )}

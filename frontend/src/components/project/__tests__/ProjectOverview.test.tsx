@@ -18,7 +18,7 @@ const mockUseProjectBranchTips = vi.fn()
 const mockUseScan = vi.fn()
 const mockUseScanResults = vi.fn()
 const mockUseLatestProjectRelease = vi.fn()
-const mockUseProjectWaivers = vi.fn()
+const mockUseWaiverList = vi.fn()
 const mockNavigate = vi.fn()
 
 vi.mock('@/api/scans')
@@ -35,7 +35,7 @@ vi.mock('@/hooks/queries/use-releases', () => ({
 }))
 
 vi.mock('@/hooks/queries/use-waivers', () => ({
-  useProjectWaivers: (...args: unknown[]) => mockUseProjectWaivers(...args),
+  useWaiverList: (...args: unknown[]) => mockUseWaiverList(...args),
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -129,7 +129,7 @@ function renderOverview(
 beforeEach(() => {
   vi.clearAllMocks()
   mockUseScanResults.mockReturnValue({ data: [] })
-  mockUseProjectWaivers.mockReturnValue({ data: undefined })
+  mockUseWaiverList.mockReturnValue({ data: undefined })
 })
 
 describe('ProjectOverview - enrichment cards', () => {
@@ -381,7 +381,7 @@ describe('ProjectOverview - waiver tile', () => {
   it('counts the waivers that have not expired', () => {
     const ACTIVE = 2
     const ALL = 5
-    mockUseProjectWaivers.mockImplementation((_projectId: string, options?: { active?: boolean }) => ({
+    mockUseWaiverList.mockImplementation((_projectId: string, options?: { active?: boolean }) => ({
       data: { pages: [{ total: options?.active ? ACTIVE : ALL }] },
     }))
 

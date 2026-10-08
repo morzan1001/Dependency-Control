@@ -14,9 +14,10 @@ import { Recommendations } from '@/components/analytics/Recommendations'
 import { UpdateFrequency } from '@/components/analytics/UpdateFrequency'
 import { UpdateFrequencyComparison } from '@/components/analytics/UpdateFrequencyComparison'
 import { AnalyticsDependencyModal } from '@/components/analytics/AnalyticsDependencyModal'
-import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert, RefreshCw, KeyRound } from 'lucide-react'
+import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert, RefreshCw, KeyRound, ClipboardCheck } from 'lucide-react'
 import { useAuth } from '@/context/useAuth'
 import { CryptoAnalyticsTab } from '@/components/analytics/CryptoAnalyticsTab'
+import { ComplianceReportsPanel } from '@/components/compliance/ComplianceReportsPanel'
 
 interface AnalyticsTab {
   id: string
@@ -54,6 +55,7 @@ export default function AnalyticsPage() {
     if (canViewSearch) tabs.push({ id: 'search-deps', label: 'Dependencies', icon: Package, readsRelease: true })
     if (canViewSearch) tabs.push({ id: 'search-vulns', label: 'Vulnerabilities', icon: ShieldAlert, readsRelease: true })
     if (canViewCrypto) tabs.push({ id: 'cryptography', label: 'Cryptography', icon: KeyRound, readsRelease: false })
+    if (canViewCrypto) tabs.push({ id: 'compliance', label: 'Compliance', icon: ClipboardCheck, readsRelease: false })
     return tabs
   }, [canViewSummary, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch, canViewCrypto])
 
@@ -181,6 +183,12 @@ export default function AnalyticsPage() {
           {canViewCrypto && (
             <TabsContent value="cryptography">
               <CryptoAnalyticsTab />
+            </TabsContent>
+          )}
+
+          {canViewCrypto && (
+            <TabsContent value="compliance">
+              <ComplianceReportsPanel />
             </TabsContent>
           )}
         </Tabs>

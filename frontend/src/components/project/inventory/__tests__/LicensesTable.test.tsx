@@ -20,7 +20,7 @@ function renderTable() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <LicensesTable projectId="p1" projectName="proj" branch="main" />
+      <LicensesTable projectId="p1" branch="main" />
     </QueryClientProvider>,
   )
 }
@@ -44,9 +44,10 @@ describe('LicensesTable', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /download csv/i }))
 
-    await waitFor(() => expect(downloadModule.downloadFile).toHaveBeenCalled())
-    const [, filename] = vi.mocked(downloadModule.downloadFile).mock.calls[0]
-    expect(filename).toMatch(/proj_licenses_main_\d{4}-\d{2}-\d{2}\.csv/)
+    await waitFor(() => expect(downloadModule.downloadServerFile).toHaveBeenCalled())
+    const [fetchFile] = vi.mocked(downloadModule.downloadServerFile).mock.calls[0]
+    await fetchFile()
+    expect(inventoryApiModule.inventoryApi.exportTable).toHaveBeenCalledWith('p1', 'licenses', 'main')
   })
 
   it('shows an error row with a retry button when loading fails', async () => {

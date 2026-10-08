@@ -61,7 +61,7 @@ describe('LoginCallback', () => {
 
     renderCallbackFlow()
 
-    expect(await screen.findByText('Single sign-on failed. Please try again.')).toBeInTheDocument()
+    expect(await screen.findByText('Single sign-on failed. Please try again.')).toHaveClass('text-destructive')
     expect(login).not.toHaveBeenCalled()
   })
 
@@ -70,7 +70,7 @@ describe('LoginCallback', () => {
 
     renderCallbackFlow()
 
-    expect(await screen.findByText(/No account exists for you yet/)).toBeInTheDocument()
+    expect(await screen.findByText(/No account exists for you yet/)).toHaveClass('text-destructive')
     expect(exchangeOidcLogin).not.toHaveBeenCalled()
   })
 

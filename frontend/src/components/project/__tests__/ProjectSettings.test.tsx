@@ -13,6 +13,7 @@ const mockGitLabList = vi.fn()
 const mockUseTeams = vi.fn()
 const mockUseAuth = vi.fn()
 const mockUseAppConfig = vi.fn()
+const mockUseProjectBranches = vi.fn()
 
 vi.mock('@/api/projects', () => ({
   projectApi: {
@@ -25,7 +26,7 @@ vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => mockUseAppCon
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => mockUseTeams() }))
 vi.mock('@/hooks/queries/use-projects', () => ({
   projectKeys: { detail: (id: string) => ['project', id] },
-  useProjectBranches: () => ({ data: [] }),
+  useProjectBranches: () => mockUseProjectBranches(),
   useUpdateProjectNotifications: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 vi.mock('@/hooks/queries/use-webhooks', () => ({
@@ -62,6 +63,7 @@ beforeEach(() => {
   mockGitLabList.mockReset().mockRejectedValue(new Error('Request failed with status code 403'))
   mockGitHubList.mockReset().mockRejectedValue(new Error('Request failed with status code 403'))
   mockUseAppConfig.mockReturnValue({ data: undefined })
+  mockUseProjectBranches.mockReturnValue({ data: [] })
 })
 
 function githubProject(overrides: Partial<Project> = {}): Project {
@@ -126,6 +128,26 @@ describe('ProjectSettings GitHub PR decoration', () => {
     renderSettings(githubProject({ github_instance_id: undefined, gitlab_instance_id: 'gl-1' }))
 
     expect(screen.queryByLabelText('Pull Request Decoration')).toBeNull()
+  })
+})
+
+describe('ProjectSettings default branch', () => {
+  beforeEach(() => {
+    mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+    mockUseProjectBranches.mockReturnValue({ data: [{ name: 'main' }, { name: 'dev' }] })
+  })
+
+  it('clears the stored default branch when None is picked', async () => {
+    renderSettings(githubProject({ default_branch: 'main' }))
+
+    fireEvent.click(screen.getByLabelText('Default Branch'))
+    fireEvent.click(screen.getByRole('option', { name: 'None (Show All)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    const wire = JSON.parse(JSON.stringify(mockUpdate.mock.calls[0][1]))
+    expect(wire).toHaveProperty('default_branch', null)
   })
 })
 

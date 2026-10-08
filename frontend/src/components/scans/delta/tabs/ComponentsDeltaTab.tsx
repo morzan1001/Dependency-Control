@@ -1,7 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ComponentDeltaItem } from "@/types/scanDelta";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -12,34 +10,19 @@ import {
 } from "@/components/ui/table";
 import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
-import { DeltaPagination } from "../shared/DeltaPagination";
+import { Pagination } from "@/components/ui/pagination";
 import { DeltaSummaryCards } from "../shared/DeltaSummaryCards";
+import { DeltaFilterBar, DeltaFilterGroup, DeltaStatusRows } from "../shared/DeltaTableParts";
 import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 const CHANGES = ["all", "added", "removed", "changed"] as const;
 type ComponentChangeFilter = (typeof CHANGES)[number];
 
-export function ComponentsDeltaTab({
-  projectId,
-  fromScanId,
-  toScanId,
-  onLoaded,
-}: DeltaTabProps) {
+export function ComponentsDeltaTab(props: DeltaTabProps) {
   const [change, setChange] = useState<ComponentChangeFilter>("all");
 
-  const { query, setPage } = useDeltaTabQuery({
-    category: "components",
-    projectId,
-    fromScanId,
-    toScanId,
-    extra: { change },
-    filterKey: [change],
-  });
+  const { query, setPage } = useDeltaTabQuery({ ...props, category: "components", filters: { change } });
   const { data, isLoading, isError } = query;
-
-  useEffect(() => {
-    if (data) onLoaded(data);
-  }, [data, onLoaded]);
 
   if (isError) return <DeltaError category="components" />;
 
@@ -51,24 +34,9 @@ export function ComponentsDeltaTab({
         unchanged={data?.totals.unchanged ?? 0}
         changed={data?.totals.changed ?? 0}
       />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-muted/30 p-2 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">Change:</span>
-          {CHANGES.map((c) => (
-            <Button
-              key={c}
-              size="sm"
-              variant={change === c ? "default" : "outline"}
-              onClick={() => {
-                setPage(1);
-                setChange(c);
-              }}
-            >
-              {c}
-            </Button>
-          ))}
-        </div>
-      </div>
+      <DeltaFilterBar>
+        <DeltaFilterGroup label="Change" options={CHANGES} isActive={(c) => change === c} onSelect={setChange} />
+      </DeltaFilterBar>
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -80,16 +48,6 @@ export function ComponentsDeltaTab({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading &&
-              ["s1", "s2", "s3"].map((id) => (
-                <TableRow key={id}>
-                  {["c1", "c2", "c3", "c4"].map((c) => (
-                    <TableCell key={c}>
-                      <Skeleton className="h-5 w-20" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
             {(data?.items as ComponentDeltaItem[] | undefined)?.map((item, i) => (
               <TableRow key={`${item.change}-${item.name}-${i}`}>
                 <TableCell><ChangeBadge change={item.change} /></TableCell>
@@ -106,17 +64,11 @@ export function ComponentsDeltaTab({
                 </TableCell>
               </TableRow>
             ))}
-            {!isLoading && (data?.items.length ?? 0) === 0 && (
-              <TableRow>
-                <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                  No component changes
-                </TableCell>
-              </TableRow>
-            )}
+            <DeltaStatusRows isLoading={isLoading} rows={data?.items.length ?? 0} columns={4} emptyText="No component changes" />
           </TableBody>
         </Table>
       </div>
-      <DeltaPagination
+      <Pagination
         page={data?.page ?? 1}
         totalPages={data?.total_pages ?? 1}
         onChange={setPage}

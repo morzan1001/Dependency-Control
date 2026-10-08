@@ -1,15 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
 import { ArrowLeftRight, GitBranch, GitCommit, Rocket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { scanApi } from '@/api/scans'
 import { DeltaComparability } from '@/components/scans/delta/DeltaComparability'
 import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
-import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow } from '@/hooks/queries/use-scans'
+import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow, useScan } from '@/hooks/queries/use-scans'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { isScanUsable } from '@/lib/scan-status'
 import type { ReleaseItem } from '@/types/release'
@@ -56,7 +53,7 @@ function ScanSide({ label, scanId, options, onSelect, side }: {
   readonly onSelect: (id: string) => void
   readonly side: ScanDeltaSide | null | undefined
 }) {
-  const { data: scan } = useQuery({ queryKey: ['scan', scanId], queryFn: () => scanApi.getOne(scanId) })
+  const { data: scan } = useScan(scanId)
   // The compared scan can be a rescan or a release older than the option window; without this
   // fallback the trigger renders blank.
   const currentInOptions = options.some((option) => option.id === scanId)
@@ -100,9 +97,10 @@ function ScanSide({ label, scanId, options, onSelect, side }: {
 }
 
 export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }: Readonly<DeltaHeaderProps>) {
-  const [pages, setPages] = useState(1)
-  const { data: window } = useProjectScanWindow(projectId, pages)
-  const options = (window?.scans ?? []).filter((s) => isScanUsable(s.status))
+  const { data, hasNextPage, fetchNextPage } = useProjectScanWindow(projectId)
+  // Pages are offsets read click by click, so a scan created in between repeats one already shown.
+  const scanById = new Map((data?.pages.flat() ?? []).map((s) => [s.id, s]))
+  const options = [...scanById.values()].filter((s) => isScanUsable(s.status))
   // Unqualified by environment so a project that only deploys to staging still gets a quick pick;
   // the button names whichever environment won, since "the release" elsewhere means production.
   const { latestRelease } = useLatestProjectRelease(projectId)
@@ -145,12 +143,12 @@ export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }
           <ScanSide label="To" scanId={toScanId} options={options} side={delta?.to_side}
             onSelect={(id) => id !== fromScanId && onChange(fromScanId, id)} />
         </div>
-        {window && !window.complete && (
+        {hasNextPage && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted-foreground">
               {`The pickers offer the ${options.length} most recent scans; this project has older ones.`}
             </span>
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setPages((n) => n + 1)}>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => fetchNextPage()}>
               {`Load ${SCAN_WINDOW_PAGE_SIZE} older`}
             </Button>
           </div>

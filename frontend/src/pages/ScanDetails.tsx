@@ -13,7 +13,7 @@ import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSecti
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Download, Eye, EyeOff, PinOff, X } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, PlayCircle, RefreshCw, Download, Eye, EyeOff, PinOff, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -24,6 +24,7 @@ import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { SCAN_STATUS_COMPLETED_WITH_ERRORS, isScanInProgress } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
+import { ScmLink } from '@/components/scans/ScmLink'
 import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
@@ -31,24 +32,6 @@ import { formatBytes, formatDateTime, getErrorMessage, shortCommitHash } from '@
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
-interface ScanHistoryItem {
-  id: string;
-  is_rescan?: boolean;
-  created_at: string;
-}
-
-function ScmLink({ href, children }: Readonly<{ href: string | undefined | null; children: React.ReactNode }>) {
-  if (href) {
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-primary hover:underline">
-        {children}
-        <ExternalLink className="h-3 w-3" />
-      </a>
-    )
-  }
-  return <>{children}</>
-}
 
 // Pretty-printing a larger file into the DOM stalls the tab, so those stay download-only.
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024
@@ -223,6 +206,9 @@ export default function ScanDetails() {
     commitHash: scan.commit_hash,
     branch: scan.branch,
   }
+  const pipelineHref = buildPipelineUrl({
+    projectUrl: scan.project_url, pipelineUrl: scan.pipeline_url, pipelineId: scan.pipeline_id,
+  })
 
   const activeAnalyzers = project.active_analyzers || [];
   const showSecurity = activeAnalyzers.some(a => ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev', 'hash_verification'].includes(a));
@@ -280,7 +266,7 @@ export default function ScanDetails() {
                         <SelectValue placeholder="Select version" />
                     </SelectTrigger>
                     <SelectContent>
-                        {scanHistory.runs.map((h: ScanHistoryItem) => (
+                        {scanHistory.runs.map((h) => (
                             <SelectItem key={h.id} value={h.id}>
                                 {h.is_rescan ? 'Re-scan' : 'Original'} - {formatDateTime(h.created_at)}
                             </SelectItem>
@@ -353,7 +339,7 @@ export default function ScanDetails() {
                             <span className="text-sm text-muted-foreground">Branch</span>
                             <div className="flex items-center gap-2">
                                 <GitBranch className="h-4 w-4" />
-                                <ScmLink href={buildBranchUrl({
+                                <ScmLink external className="flex items-center gap-2" href={buildBranchUrl({
                                     projectUrl: scan.project_url,
                                     pipelineUrl: scan.pipeline_url,
                                     branch: scan.branch,
@@ -368,7 +354,7 @@ export default function ScanDetails() {
                                 <span className="text-sm text-muted-foreground">Commit</span>
                                 <div className="flex items-center gap-2">
                                     <GitCommit className="h-4 w-4" />
-                                    <ScmLink href={buildCommitUrl({
+                                    <ScmLink external className="flex items-center gap-2" href={buildCommitUrl({
                                         projectUrl: scan.project_url,
                                         pipelineUrl: scan.pipeline_url,
                                         commitHash: scan.commit_hash,
@@ -410,25 +396,15 @@ export default function ScanDetails() {
                                 </div>
                             </div>
                         )}
-                        {(() => {
-                            const pipelineId = scan.pipeline_id
-                            const href = buildPipelineUrl({
-                                projectUrl: scan.project_url,
-                                pipelineUrl: scan.pipeline_url,
-                                pipelineId,
-                            })
-                            if (!href || !pipelineId) return null
-                            return (
-                                <div className="flex flex-col space-y-1">
-                                    <span className="text-sm text-muted-foreground">Pipeline</span>
-                                    <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-primary hover:underline">
-                                        <PlayCircle className="h-4 w-4" />
-                                        <span className="font-medium">#{pipelineId}</span>
-                                        <ExternalLink className="h-3 w-3" />
-                                    </a>
-                                </div>
-                            )
-                        })()}
+                        {pipelineHref && scan.pipeline_id ? (
+                            <div className="flex flex-col space-y-1">
+                                <span className="text-sm text-muted-foreground">Pipeline</span>
+                                <ScmLink external className="flex items-center gap-2" href={pipelineHref}>
+                                    <PlayCircle className="h-4 w-4" />
+                                    <span className="font-medium">#{scan.pipeline_id}</span>
+                                </ScmLink>
+                            </div>
+                        ) : null}
                     </div>
                 </CardContent>
             </Card>

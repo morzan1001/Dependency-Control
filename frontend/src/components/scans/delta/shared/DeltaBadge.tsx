@@ -5,16 +5,9 @@ interface Props {
 }
 
 export function DeltaBadge({ count }: Readonly<Props>) {
-  if (count === null) {
-    return (
-      <Badge variant="secondary" className="ml-2">
-        —
-      </Badge>
-    );
-  }
   return (
     <Badge variant="secondary" className="ml-2">
-      {count}
+      {count ?? "—"}
     </Badge>
   );
 }

@@ -5,6 +5,7 @@ import { useAuth } from '@/context/useAuth';
 import { usePaginationState } from '@/hooks/use-pagination-state';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Pagination } from '@/components/ui/pagination';
 import { Input } from '@/components/ui/input';
 import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, ArrowUp, ArrowDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -179,27 +180,7 @@ export default function ProjectsPage() {
         ))}
       </div>
       
-      <div className="flex items-center justify-center space-x-2 py-4">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page === 1}
-        >
-          Previous
-        </Button>
-        <div className="text-sm text-muted-foreground">
-          Page {page} of {totalPages || 1}
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          disabled={page === totalPages || totalPages === 0}
-        >
-          Next
-        </Button>
-      </div>
+      <Pagination page={page} totalPages={totalPages} onChange={setPage} />
 
       <CreateProjectDialog 
         open={isCreateOpen} 

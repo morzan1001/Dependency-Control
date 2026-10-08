@@ -7,21 +7,26 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Pagination } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { Download } from 'lucide-react'
 import { useInventoryCrypto } from '@/hooks/queries/use-inventory'
 import { inventoryApi } from '@/api/inventory'
-import { downloadFile } from '@/lib/download'
+import { downloadServerFile } from '@/lib/download'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 
 interface CryptoTableProps {
   projectId: string
-  projectName: string
   branch?: string
 }
 
-export function CryptoTable({ projectId, projectName, branch }: Readonly<CryptoTableProps>) {
+export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
   const [page, setPage] = useState(1)
+  const [pageBranch, setPageBranch] = useState(branch)
+  if (pageBranch !== branch) {
+    setPageBranch(branch)
+    setPage(1)
+  }
 
   const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryCrypto(projectId, branch, {
     page, pageSize: DEFAULT_PAGE_SIZE,
@@ -29,9 +34,9 @@ export function CryptoTable({ projectId, projectName, branch }: Readonly<CryptoT
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1
 
-  const handleDownload = () => downloadFile(
+  const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'crypto', branch),
-    `${projectName}_crypto_${branch}_${new Date().toISOString().slice(0, 10)}.csv`,
+    'crypto.csv',
     'Failed to download crypto CSV',
   )
 
@@ -101,17 +106,7 @@ export function CryptoTable({ projectId, projectName, branch }: Readonly<CryptoT
             </TableBody>
           </Table>
         </div>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-end gap-2 py-4 text-sm text-muted-foreground">
-            Page {data?.page ?? 1} of {totalPages}
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
-              <ChevronLeft className="h-4 w-4" /> Previous
-            </Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages || isPlaceholderData} onClick={() => setPage(p => p + 1)}>
-              Next <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />
       </CardContent>
     </Card>
   )

@@ -81,20 +81,4 @@ describe("inventoryApi", () => {
       params: { branch: "main", page: 1, page_size: 25 },
     });
   });
-
-  it.each(["components", "licenses", "crypto"] as const)(
-    "exportTable requests %s as a blob with the branch param",
-    async (table) => {
-      const blob = new Blob(["csv"]);
-      mockedGet.mockResolvedValue({ data: blob });
-
-      const result = await inventoryApi.exportTable("p1", table, "main");
-
-      expect(mockedGet).toHaveBeenCalledWith(`/projects/p1/inventory/${table}/export`, {
-        params: { branch: "main" },
-        responseType: "blob",
-      });
-      expect(result).toBe(blob);
-    },
-  );
 });

@@ -6,29 +6,31 @@ import { useProjects} from '@/hooks/queries/use-projects'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useMemo, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { useVirtualizer } from '@tanstack/react-virtual'
-import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
+import { useState } from 'react'
+import { Pagination } from '@/components/ui/pagination'
 import { formatDate } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
+import type { Project } from '@/types/project'
 
 const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
 const DASHBOARD_ACTIVITY_SKELETON_IDS = ['da1', 'da2', 'da3', 'da4', 'da5']
 const DASHBOARD_PROJECTS_SKELETON_IDS = ['dp1', 'dp2', 'dp3', 'dp4', 'dp5']
 
-function getProjectStatusClassName(hasCritical: boolean, hasHigh: boolean): string {
-  if (hasCritical) return 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-  if (hasHigh) return 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80'
-  return 'bg-success text-success-foreground hover:bg-success/80'
+function projectStatus(stats: Project['stats']): [label: string, className: string] {
+  if ((stats?.critical || 0) > 0) return ['Critical', 'bg-destructive text-destructive-foreground hover:bg-destructive/80']
+  if ((stats?.high || 0) > 0) return ['High Risk', 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80']
+  return ['Secure', 'bg-success text-success-foreground hover:bg-success/80']
 }
 
-function getProjectStatusLabel(hasCritical: boolean, hasHigh: boolean): string {
-  if (hasCritical) return 'Critical'
-  if (hasHigh) return 'High Risk'
-  return 'Secure'
+function ProjectStatusPill({ stats }: Readonly<{ stats: Project['stats'] }>) {
+  const [label, className] = projectStatus(stats)
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${className}`}>
+      {label}
+    </span>
+  )
 }
 
 export default function Dashboard() {
@@ -65,24 +67,6 @@ export default function Dashboard() {
   const scanList = recentScans || []
   const projectList = projectsData?.items || []
   const totalPages = projectsData?.pages || 0
-
-  const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
-
-  const scrollObserver = useMemo(
-    () => createScrollObserver(scrollContainer, tableOffsetRef),
-    [scrollContainer, tableOffsetRef]
-  )
-
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const rowVirtualizer = useVirtualizer({
-    count: projectList.length,
-    getScrollElement: () => scrollContainer,
-    estimateSize: () => 73, // Approximate row height
-    overscan: 5,
-    observeElementOffset: scrollObserver,
-  })
-
-  const virtualItems = rowVirtualizer.getVirtualItems()
 
   const stats = [
     {
@@ -265,10 +249,7 @@ export default function Dashboard() {
           <CardTitle>Projects</CardTitle>
         </CardHeader>
         <CardContent>
-            <div 
-                ref={parentRef}
-                className="relative w-full"
-            >
+            <div className="relative w-full">
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
@@ -301,74 +282,25 @@ export default function Dashboard() {
                                 </tr>
                             ))
                         ) : (
-                            <>
-                                {virtualItems.length > 0 && (
-                                    <tr style={{ height: `${virtualItems[0].start}px` }}>
-                                        <td colSpan={6} />
-                                    </tr>
-                                )}
-                                {virtualItems.map((virtualRow) => {
-                                    const project = projectList[virtualRow.index]
-                                    return (
-                                        <tr 
-                                            key={project.id} 
-                                            data-index={virtualRow.index}
-                                            ref={rowVirtualizer.measureElement}
-                                            className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
-                                            onClick={() => navigate(`/projects/${project.id}`)}
-                                        >
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 overflow-hidden"><OwningTeamsCell teams={project.teams} /></td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-high font-bold">{project.stats?.high || 0}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
-                                                {(() => {
-                                                    const hasCritical = (project.stats?.critical || 0) > 0
-                                                    const hasHigh = (project.stats?.high || 0) > 0
-                                                    const statusClassName = getProjectStatusClassName(hasCritical, hasHigh)
-                                                    const statusLabel = getProjectStatusLabel(hasCritical, hasHigh)
-                                                    return (
-                                                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${statusClassName}`}>
-                                                            {statusLabel}
-                                                        </span>
-                                                    )
-                                                })()}
-                                            </td>
-                                        </tr>
-                                    )
-                                })}
-                                {virtualItems.length > 0 && (
-                                    <tr style={{ height: `${rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end}px` }}>
-                                        <td colSpan={6} />
-                                    </tr>
-                                )}
-                            </>
+                            projectList.map((project) => (
+                                <tr
+                                    key={project.id}
+                                    className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
+                                    onClick={() => navigate(`/projects/${project.id}`)}
+                                >
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 overflow-hidden"><OwningTeamsCell teams={project.teams} /></td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-high font-bold">{project.stats?.high || 0}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0"><ProjectStatusPill stats={project.stats} /></td>
+                                </tr>
+                            ))
                         )}
                     </tbody>
                 </table>
             </div>
-            <div className="flex items-center justify-end space-x-2 py-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-              >
-                Previous
-              </Button>
-              <div className="text-sm text-muted-foreground">
-                Page {page} of {totalPages || 1}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages || totalPages === 0}
-              >
-                Next
-              </Button>
-            </div>
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </CardContent>
       </Card>
     </div>
