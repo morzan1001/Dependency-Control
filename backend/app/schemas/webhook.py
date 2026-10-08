@@ -3,11 +3,11 @@
 import ipaddress
 import re
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, computed_field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationInfo, computed_field, field_validator
 
 from app.core.config import settings
 from app.core.constants import (
@@ -122,41 +122,29 @@ def detect_webhook_type(url: str) -> WebhookType:
     return "generic"
 
 
+WebhookUrl = Annotated[str, AfterValidator(validate_webhook_url)]
+WebhookEvents = Annotated[list[str], AfterValidator(validate_webhook_events)]
+WebhookHeaders = Annotated[dict[str, str], AfterValidator(validate_webhook_headers)]
+
+
 class WebhookCreate(BaseModel):
     """Schema for creating a new webhook."""
 
-    url: str
-    events: list[str]
+    url: WebhookUrl
+    events: WebhookEvents
     secret: str | None = None
-    headers: dict[str, str] | None = None
+    headers: WebhookHeaders | None = None
     webhook_type: WebhookType | None = None
-
-    @field_validator("events")
-    @classmethod
-    def _validate_events(cls, v: list[str]) -> list[str]:
-        """Validate that all events are valid event types."""
-        return validate_webhook_events(v)
-
-    @field_validator("url")
-    @classmethod
-    def _validate_url(cls, v: str) -> str:
-        """Validate that URL is HTTPS (except for localhost in development)."""
-        return validate_webhook_url(v)
-
-    @field_validator("headers")
-    @classmethod
-    def _validate_headers(cls, v: dict[str, str] | None) -> dict[str, str] | None:
-        return validate_webhook_headers(v)
 
 
 class WebhookUpdate(BaseModel):
     """Only the sent fields change; a null clears secret or headers and is refused for the rest."""
 
-    url: str | None = None
-    events: list[str] | None = None
+    url: WebhookUrl | None = None
+    events: WebhookEvents | None = None
     is_active: bool | None = None
     secret: str | None = None
-    headers: dict[str, str] | None = None
+    headers: WebhookHeaders | None = None
     webhook_type: WebhookType | None = None
 
     @field_validator("url", "events", "is_active", "webhook_type")
@@ -165,21 +153,6 @@ class WebhookUpdate(BaseModel):
         if v is None:
             raise ValueError(f"{info.field_name} cannot be null")
         return v
-
-    @field_validator("events")
-    @classmethod
-    def _validate_events(cls, v: list[str]) -> list[str]:
-        return validate_webhook_events(v)
-
-    @field_validator("url")
-    @classmethod
-    def _validate_url(cls, v: str) -> str:
-        return validate_webhook_url(v)
-
-    @field_validator("headers")
-    @classmethod
-    def _validate_headers(cls, v: dict[str, str] | None) -> dict[str, str] | None:
-        return validate_webhook_headers(v)
 
 
 class WebhookResponse(BaseModel):
