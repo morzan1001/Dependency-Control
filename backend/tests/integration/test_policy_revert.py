@@ -5,19 +5,7 @@ import pytest
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.services.crypto_policy.seeder import CURRENT_SEED_VERSION, seed_crypto_policies
-
-
-def _rule_dict(rule_id: str) -> dict:
-    return {
-        "rule_id": rule_id,
-        "name": rule_id,
-        "description": "",
-        "finding_type": "crypto_weak_algorithm",
-        "default_severity": "HIGH",
-        "source": "custom",
-        "match_name_patterns": ["X"],
-        "enabled": True,
-    }
+from tests.helpers.crypto_policy import rule_dict
 
 
 @pytest.mark.asyncio
@@ -28,12 +16,12 @@ async def test_revert_system_policy_creates_new_version(
 ):
     await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [_rule_dict("alpha")]},
+        json={"rules": [rule_dict("alpha")]},
         headers=admin_auth_headers,
     )
     await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [_rule_dict("beta")]},
+        json={"rules": [rule_dict("beta")]},
         headers=admin_auth_headers,
     )
     system = await CryptoPolicyRepository(db).get_system_policy()
@@ -70,7 +58,7 @@ async def test_list_audit_entries_endpoint(
 ):
     await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [_rule_dict("x")]},
+        json={"rules": [rule_dict("x")]},
         headers=admin_auth_headers,
     )
     resp = await client.get(
@@ -91,7 +79,7 @@ async def test_get_single_audit_entry(
 ):
     await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [_rule_dict("y")]},
+        json={"rules": [rule_dict("y")]},
         headers=admin_auth_headers,
     )
     system_policy = await CryptoPolicyRepository(db).get_system_policy()
@@ -148,7 +136,7 @@ async def test_revert_answers_422_not_500(client, db, admin_auth_headers, body):
     catch-all handler turned them into a 500."""
     await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [_rule_dict("alpha")]},
+        json={"rules": [rule_dict("alpha")]},
         headers=admin_auth_headers,
     )
 
@@ -169,7 +157,7 @@ async def test_a_revert_names_the_admin_who_made_it(client, db, admin_auth_heade
     """The policy page shows 'last edited by' from updated_by."""
     for rule_id in ("alpha", "beta"):
         await client.put(
-            "/api/v1/crypto-policies/system", json={"rules": [_rule_dict(rule_id)]}, headers=admin_auth_headers
+            "/api/v1/crypto-policies/system", json={"rules": [rule_dict(rule_id)]}, headers=admin_auth_headers
         )
 
     resp = await client.post(
@@ -190,7 +178,7 @@ async def test_a_legacy_policy_last_changed_by_a_revert_keeps_its_rules_through_
     """Without updated_by and seed_version, the seeder reads the editor from the newest audit entry."""
     for rule_id in ("alpha", "beta"):
         await client.put(
-            "/api/v1/crypto-policies/system", json={"rules": [_rule_dict(rule_id)]}, headers=admin_auth_headers
+            "/api/v1/crypto-policies/system", json={"rules": [rule_dict(rule_id)]}, headers=admin_auth_headers
         )
     await client.post("/api/v1/crypto-policies/system/revert", json={"target_version": 1}, headers=admin_auth_headers)
     await db.crypto_policies.update_one(

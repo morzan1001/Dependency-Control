@@ -4,18 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-
-def _rule_dict(rule_id: str) -> dict:
-    return {
-        "rule_id": rule_id,
-        "name": rule_id,
-        "description": "",
-        "finding_type": "crypto_weak_algorithm",
-        "default_severity": "HIGH",
-        "source": "custom",
-        "match_name_patterns": ["X"],
-        "enabled": True,
-    }
+from tests.helpers.crypto_policy import rule_dict
 
 
 @pytest.mark.asyncio
@@ -34,7 +23,7 @@ async def test_system_policy_change_notifies_users_with_permission(
 
     resp = await client.put(
         "/api/v1/crypto-policies/system",
-        json={"rules": [_rule_dict("r1")], "comment": "Q2"},
+        json={"rules": [rule_dict("r1")], "comment": "Q2"},
         headers=admin_auth_headers,
     )
     assert resp.status_code == 200
@@ -64,7 +53,7 @@ async def test_project_policy_change_notifies_project_members(
 
     resp = await client.put(
         "/api/v1/projects/p/crypto-policy",
-        json={"rules": [_rule_dict("pr1")], "comment": "override"},
+        json={"rules": [rule_dict("pr1")], "comment": "override"},
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 200
