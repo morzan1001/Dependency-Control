@@ -32,6 +32,8 @@ weasyprint = ">=65,<71"
 packaging = ">=24.0"
 cvss = "^3.6"
 nh3 = "^0.3"
+pyyaml = "^6.0"
+cryptography = ">=50.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
