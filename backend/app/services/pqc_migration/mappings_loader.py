@@ -33,11 +33,10 @@ class Timeline:
 
 @dataclass(frozen=True)
 class PQCMappings:
-    version: int
-    snapshot_date: str
     mappings: list[PQCMapping]
     timelines: list[Timeline]
-    family_aliases: dict[str, str]
+    # Upper-cased family or alias -> canonical source_family; CBOM tools emit names in arbitrary casing.
+    families: dict[str, str]
 
 
 @lru_cache(maxsize=1)
@@ -63,18 +62,9 @@ def load_mappings() -> PQCMappings:
         )
         for t in (doc.get("timelines") or [])
     ]
-    return PQCMappings(
-        version=int(doc.get("version", 1)),
-        snapshot_date=doc.get("snapshot_date", ""),
-        mappings=mappings,
-        timelines=timelines,
-        family_aliases=dict(doc.get("family_aliases") or {}),
-    )
-
-
-def clear_mappings_cache() -> None:
-    """Clear the in-process ``load_mappings`` cache so the YAML is re-read."""
-    load_mappings.cache_clear()
+    families = {m.source_family.upper(): m.source_family for m in mappings}
+    families.update({alias.upper(): family for alias, family in (doc.get("family_aliases") or {}).items()})
+    return PQCMappings(mappings=mappings, timelines=timelines, families=families)
 
 
 def _parse_date(s: str) -> datetime:
@@ -84,23 +74,10 @@ def _parse_date(s: str) -> datetime:
 
 
 def normalise_family(name: str | None, mappings: PQCMappings) -> str:
-    """Resolve an asset name to its canonical source_family."""
+    """Resolve an asset name to its canonical source_family; an alias wins over a family of the same spelling."""
     if not name:
         return ""
-    if name in mappings.family_aliases:
-        return mappings.family_aliases[name]
-    # CBOM tools emit families with arbitrary casing; match aliases case-insensitively.
-    upper_aliases = {k.upper(): v for k, v in mappings.family_aliases.items()}
-    if name.upper() in upper_aliases:
-        return upper_aliases[name.upper()]
-    canonical = {m.source_family for m in mappings.mappings}
-    if name in canonical:
-        return name
-    upper = name.upper()
-    for canon in canonical:
-        if canon.upper() == upper:
-            return canon
-    return name
+    return mappings.families.get(name.upper(), name)
 
 
 def resolve_family(asset: CryptoAsset, mappings: PQCMappings) -> str:
