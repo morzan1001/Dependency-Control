@@ -53,11 +53,3 @@ export interface TrendSeries {
   range_start: string;
   range_end: string;
 }
-
-export interface ScanDelta {
-  from_scan_id: string;
-  to_scan_id: string;
-  added: HotspotEntry[];
-  removed: HotspotEntry[];
-  unchanged_count: number;
-}

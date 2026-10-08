@@ -25,23 +25,6 @@ export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
 // Canonical severity ordering, most severe first.
 export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NEGLIGIBLE', 'INFO', 'UNKNOWN']
 
-export function getSeverityColor(severity: string): string {
-  switch (severity?.toUpperCase()) {
-    case 'CRITICAL':
-      return 'text-severity-critical'
-    case 'HIGH':
-      return 'text-severity-high'
-    case 'MEDIUM':
-      return 'text-severity-medium'
-    case 'LOW':
-      return 'text-severity-low'
-    case 'INFO':
-      return 'text-severity-info'
-    default:
-      return 'text-muted-foreground'
-  }
-}
-
 export function getSeverityBgColor(severity: string): string {
   switch (severity?.toUpperCase()) {
     case 'CRITICAL':
