@@ -154,6 +154,8 @@ def _resolve_parent_refs(parsed_by_ref: dict[Any, ParsedDependency], *edge_maps:
 
 
 def _image_reference(name: Any, version: Any) -> str | None:
+    if not isinstance(name, str):
+        return None
     # An OCI tag never contains ':', so a version that does is a digest.
     separator = "@" if ":" in str(version) else ":"
     return f"{name}{separator}{version}" if version else name
@@ -439,7 +441,9 @@ class SBOMParser:
             ref, comp_type = comp.get("bom-ref") or comp.get("purl"), comp.get("type")
             if not isinstance(ref, str) or comp_type in cls._NON_PACKAGE_COMPONENT_TYPES:
                 continue
-            props = [(p.get("name"), p.get("value")) for p in comp.get("properties") or [] if isinstance(p, dict)]
+            raw_props = comp.get("properties")
+            entries = raw_props if isinstance(raw_props, list) else []
+            props = [(p.get("name"), p.get("value")) for p in entries if isinstance(p, dict)]
             # Trivy groups each lock file's packages under a purl-less application node.
             if comp_type == "application" and not comp.get("purl"):
                 children = forward.get(ref, [])
@@ -468,7 +472,7 @@ class SBOMParser:
             ref for ref in (main_component.get("bom-ref"), main_component.get("purl")) if isinstance(ref, str) and ref
         }
         result.source_type, result.source_target = self._extract_cyclonedx_source(
-            main_component, metadata.get("properties") or []
+            main_component, metadata.get("properties")
         )
 
         # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
@@ -539,7 +543,7 @@ class SBOMParser:
         source_type = None
         source_target = None
         comp_type = component.get("type")
-        comp_name = component.get("name")
+        comp_name = name if isinstance(name := component.get("name"), str) else None
         if comp_type == "container":
             source_type = SOURCE_TYPE_IMAGE
             source_target = _image_reference(comp_name, component.get("version"))
@@ -550,7 +554,7 @@ class SBOMParser:
             source_type = SOURCE_TYPE_FILE
             source_target = comp_name
 
-        for prop in properties:
+        for prop in properties if isinstance(properties, list) else []:
             if not isinstance(prop, dict):
                 continue
             name = prop.get("name", "")
@@ -1073,11 +1077,11 @@ class SBOMParser:
                 continue
             if pkg.get("primaryPackagePurpose") == "CONTAINER":
                 result.source_type = SOURCE_TYPE_IMAGE
-                result.source_target = _image_reference(pkg.get("name"), _spdx_value(pkg, "versionInfo"))
+                result.source_target = _image_reference(_spdx_value(pkg, "name"), _spdx_value(pkg, "versionInfo"))
                 roots.add(pkg["SPDXID"])
                 break
             if pkg.get("SPDXID") in subjects:
-                result.source_type, result.source_target = SOURCE_TYPE_APPLICATION, pkg.get("name")
+                result.source_type, result.source_target = SOURCE_TYPE_APPLICATION, _spdx_value(pkg, "name")
                 break
 
         parsed_by_id: dict[Any, ParsedDependency] = {}

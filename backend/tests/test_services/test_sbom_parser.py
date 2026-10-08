@@ -308,7 +308,9 @@ class TestDirectnessOfRealGraphs:
 
         result = parse_sbom(sbom)
 
-        assert [(dep.name, dep.version) for dep in result.dependencies if dep.name == "alpine"] == [("alpine", "3.20.9")]
+        assert [(dep.name, dep.version) for dep in result.dependencies if dep.name == "alpine"] == [
+            ("alpine", "3.20.9")
+        ]
 
 
 class TestMalformedDependencyGraph:
@@ -1535,6 +1537,34 @@ class TestMalformedComponentResilience:
         )
         result = self.parser.parse(sbom)
         assert [d.name for d in result.dependencies] == ["first", "second", "third"]
+
+    @pytest.mark.parametrize(
+        "malform",
+        [
+            pytest.param(lambda sbom: sbom["components"][0].update(properties=5), id="component-properties"),
+            pytest.param(lambda sbom: sbom["metadata"].update(properties=5), id="metadata-properties"),
+            pytest.param(lambda sbom: sbom["metadata"]["component"].update(name=2024), id="application-name"),
+            pytest.param(
+                lambda sbom: sbom["metadata"]["component"].update(name=2024, type="container"), id="container-name"
+            ),
+        ],
+    )
+    def test_one_malformed_document_field_keeps_every_component(self, malform):
+        sbom = _fixture("mono.trivy.cdx.json")
+        malform(sbom)
+
+        result = self.parser.parse(sbom)
+
+        assert len(result.dependencies) == 9
+
+    def test_a_numeric_spdx_root_name_keeps_every_package(self):
+        sbom = _spdx_github_export()
+        sbom["packages"][0]["name"] = 2024
+
+        result = self.parser.parse(sbom)
+
+        assert len(result.dependencies) == 3
+        assert result.source_target is None
 
     def test_crashing_component_is_skipped_and_counted_others_survive(self):
         sbom = _three_component_sbom(
