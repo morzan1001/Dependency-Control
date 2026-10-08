@@ -238,7 +238,7 @@ class DepsDevAnalyzer(Analyzer):
     @staticmethod
     def _classify_link_label(label: str) -> str:
         """Classify a link label into a normalized category name."""
-        if "home" in label or label == "homepage":
+        if "home" in label:
             return "homepage"
         if "repo" in label or "source" in label or "github" in label or "gitlab" in label:
             return "repository"
@@ -246,7 +246,7 @@ class DepsDevAnalyzer(Analyzer):
             return "documentation"
         if "bug" in label or "issue" in label:
             return "issues"
-        if "changelog" in label or "change" in label:
+        if "change" in label:
             return "changelog"
         return label
 

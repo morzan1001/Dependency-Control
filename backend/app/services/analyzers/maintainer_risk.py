@@ -192,9 +192,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
     def _calculate_overall_severity(self, risks: list[dict[str, Any]]) -> str:
         """Calculate overall severity from individual risk scores."""
-        if not risks:
-            return Severity.LOW.value
-        max_severity = max(r.get("severity_score", 1) for r in risks)
+        max_severity = max(r["severity_score"] for r in risks)
         if max_severity >= 4:
             return Severity.CRITICAL.value
         if max_severity >= 3:

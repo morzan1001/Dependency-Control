@@ -550,7 +550,7 @@ class OSVAnalyzer(Analyzer):
         return normalized
 
     # CVSS-type preference order — newest standard wins.
-    _CVSS_TYPE_PREFERENCE = ("CVSS_V4", "CVSS_V3", "CVSS_V3.1", "CVSS_V3.0", "CVSS_V2")
+    _CVSS_TYPE_PREFERENCE = ("CVSS_V4", "CVSS_V3", "CVSS_V2")
 
     @staticmethod
     def _cvss_to_severity(cvss_score: float, cvss_type: str = "CVSS_V3") -> str:

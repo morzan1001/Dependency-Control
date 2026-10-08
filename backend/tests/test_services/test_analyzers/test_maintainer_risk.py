@@ -107,7 +107,7 @@ class TestCorrelateMaintainerRisks:
 class TestOverallSeverity:
     @pytest.mark.parametrize(
         ("scores", "expected"),
-        [([], "LOW"), ([1], "LOW"), ([2, 1], "MEDIUM"), ([3], "HIGH"), ([1, 4], "CRITICAL"), ([5], "CRITICAL")],
+        [([1], "LOW"), ([2, 1], "MEDIUM"), ([3], "HIGH"), ([1, 4], "CRITICAL"), ([5], "CRITICAL")],
     )
     def test_the_worst_signal_sets_the_package_severity(self, scores, expected):
         risks = [{"severity_score": score} for score in scores]

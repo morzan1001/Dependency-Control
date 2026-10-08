@@ -40,13 +40,11 @@ async def run_process(args: list[str], time_limit: float) -> tuple[bytes, bytes,
 class CLIAnalyzer(Analyzer):
     """Base class for analyzers that execute CLI tools with temp-file management and retry."""
 
-    cli_command: str = ""
+    cli_command: str
     empty_result_key: str = "results"
 
     def is_tool_available(self) -> bool:
         """Check if the CLI tool is available in the system PATH."""
-        if not self.cli_command:
-            return False
         return shutil.which(self.cli_command) is not None
 
     retryable_patterns: tuple[str, ...] = (
