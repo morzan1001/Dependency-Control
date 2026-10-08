@@ -270,7 +270,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                 </div>
               )
             }
-            if (error) {
+            if (error && allResults.length === 0) {
               return <AnalyticsErrorCard title="Failed to search dependencies" error={error} onRetry={() => refetch()} />
             }
             if (allResults.length > 0) {

@@ -80,6 +80,45 @@ describe("CrossProjectSearch load error", () => {
   });
 });
 
+describe("CrossProjectSearch later page error", () => {
+  it("keeps the loaded rows when a later page fails", async () => {
+    search.mockReset();
+    search.mockImplementation(async (_q, options) => {
+      if (options?.skip) throw new Error("Request failed with status code 504");
+      const items = [0, 1, 2].map((i) => ({
+        project_id: "p",
+        project_name: "P",
+        package: `lodash-${i}`,
+        version: "4.17.21",
+        type: "npm",
+        direct: true,
+      }));
+      return { items, total: items.length + 1, page: 1, size: 50, pages: 2 };
+    });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+
+    const main = document.createElement("main");
+    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    document.body.appendChild(main);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+      { container: main },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+    await screen.findByText("lodash-0");
+    await waitFor(() => expect(client.getQueryCache().getAll().some((q) => q.state.status === "error")).toBe(true));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+
+    expect(screen.getByText("lodash-0")).toBeInTheDocument();
+  });
+});
+
 describe("CrossProjectSearch project filter", () => {
   it("reads no project list until the filter panel opens, and then a single page", async () => {
     const getAll = vi.mocked(projectApi.getAll);
