@@ -18,15 +18,6 @@ export default function ResetPassword() {
   const resetPasswordMutation = useResetPassword();
   const isLoading = resetPasswordMutation.isPending
 
-  const validatePassword = (password: string) => {
-    if (password.length < 8) return "Password must be at least 8 characters long";
-    if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter";
-    if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter";
-    if (!/\d/.test(password)) return "Password must contain at least one digit";
-    if (!/[!@#$%^&*(),.?":{}|<>\-_+=[\]\\;'`~/]/.test(password)) return "Password must contain at least one special character";
-    return null;
-  };
-
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     
@@ -37,12 +28,6 @@ export default function ResetPassword() {
 
     if (newPassword !== confirmPassword) {
         toast.error("Error", { description: "Passwords do not match" })
-        return
-    }
-
-    const validationError = validatePassword(newPassword)
-    if (validationError) {
-        toast.error("Invalid Password", { description: validationError })
         return
     }
 

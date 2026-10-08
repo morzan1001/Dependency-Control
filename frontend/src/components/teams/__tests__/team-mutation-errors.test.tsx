@@ -7,8 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Team } from "@/types/team";
 
 import { AddMemberDialog } from "../AddMemberDialog";
-import { CreateTeamDialog } from "../CreateTeamDialog";
-import { EditTeamDialog } from "../EditTeamDialog";
+import { TeamFormDialog } from "../TeamFormDialog";
 import { TeamMembersDialog } from "../TeamMembersDialog";
 
 const { teamApi, toastError } = vi.hoisted(() => ({
@@ -81,7 +80,7 @@ describe("team mutations show the server's refusal", () => {
 
   it("creating a team", async () => {
     teamApi.create.mockRejectedValue(apiError(403, "Not enough permissions"));
-    renderWithClient(<CreateTeamDialog />);
+    renderWithClient(<TeamFormDialog />);
 
     fireEvent.click(screen.getByRole("button", { name: /Create Team/ }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team Gamma" } });
@@ -94,7 +93,7 @@ describe("team mutations show the server's refusal", () => {
 
   it("updating a team", async () => {
     teamApi.update.mockRejectedValue(apiError(404, "Team not found"));
-    renderWithClient(<EditTeamDialog team={TEAM} onClose={vi.fn()} />);
+    renderWithClient(<TeamFormDialog team={TEAM} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Update Team" }));
 

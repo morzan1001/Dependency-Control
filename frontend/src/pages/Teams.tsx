@@ -6,9 +6,8 @@ import { usePaginationState } from '@/hooks/use-pagination-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { CreateTeamDialog } from '@/components/teams/CreateTeamDialog';
+import { TeamFormDialog } from '@/components/teams/TeamFormDialog';
 import { TeamCard } from '@/components/teams/TeamCard';
-import { EditTeamDialog } from '@/components/teams/EditTeamDialog';
 import { TeamMembersDialog } from '@/components/teams/TeamMembersDialog';
 import { AddMemberDialog } from '@/components/teams/AddMemberDialog';
 import { DeleteTeamDialog } from '@/components/teams/DeleteTeamDialog';
@@ -29,7 +28,7 @@ export default function TeamsPage() {
   const { hasPermission, permissions } = useAuth();
   const { data: currentUser } = useCurrentUser();
 
-  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editTeamId, setEditTeamId] = useState<string | null>(null);
   const [isManageMembersOpen, setIsManageMembersOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -47,11 +46,9 @@ export default function TeamsPage() {
   // Derive team objects from fresh query data instead of stale state snapshots
   const selectedTeam = teams?.find(t => t.id === selectedTeamId) ?? null;
   const webhookTeam = teams?.find(t => t.id === webhookTeamId) ?? null;
+  const editTeam = teams?.find(t => t.id === editTeamId);
 
-  const openEditDialog = (team: Team) => {
-    setSelectedTeamId(team.id);
-    setIsEditOpen(true);
-  };
+  const openEditDialog = (team: Team) => setEditTeamId(team.id);
 
   const openManageMembersDialog = (team: Team) => {
     setSelectedTeamId(team.id);
@@ -127,7 +124,7 @@ export default function TeamsPage() {
           >
             {sortOrder === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
           </Button>
-          {hasPermission('team:create') && <CreateTeamDialog />}
+          {hasPermission('team:create') && <TeamFormDialog />}
         </div>
       </div>
 
@@ -146,9 +143,7 @@ export default function TeamsPage() {
         ))}
       </div>
 
-      {isEditOpen && (
-        <EditTeamDialog team={selectedTeam} onClose={() => setIsEditOpen(false)} />
-      )}
+      {editTeam && <TeamFormDialog team={editTeam} onClose={() => setEditTeamId(null)} />}
 
       <TeamBindingDialog
         key={`binding-${selectedTeam?.id}`}

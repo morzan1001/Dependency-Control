@@ -8,11 +8,6 @@ export const teamApi = {
     return response.data;
   },
 
-  getOne: async (id: string): Promise<Team> => {
-    const response = await api.get<Team>(`/teams/${id}`);
-    return response.data;
-  },
-
   create: async (data: TeamCreate): Promise<Team> => {
     const response = await api.post<Team>('/teams/', data);
     return response.data;

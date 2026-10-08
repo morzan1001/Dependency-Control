@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
 import {
-  hasTeamRole,
-  isTeamAdmin,
   canUpdateTeam,
   canDeleteTeam,
   canManageTeamMembers,
@@ -19,18 +17,9 @@ function makeTeam(members: Array<{ user_id: string; role: string }> = []): Team 
 const AUDITOR = 'auditor-1'
 const STRANGER = 'stranger-1'
 
-describe('hasTeamRole — team:read_all is READ-ONLY', () => {
+describe('team:read_all is READ-ONLY', () => {
   const team = makeTeam([{ user_id: 'someone-else', role: 'admin' }])
   const readAll = ['team:read_all']
-
-  it('read_all grants a member (read) request', () => {
-    expect(hasTeamRole(team, AUDITOR, 'member', readAll)).toBe(true)
-  })
-
-  it('read_all does NOT grant the admin role', () => {
-    expect(hasTeamRole(team, AUDITOR, 'admin', readAll)).toBe(false)
-    expect(isTeamAdmin(team, AUDITOR, readAll)).toBe(false)
-  })
 
   it('an auditor with only read_all cannot update, delete, manage members or write webhooks', () => {
     expect(canUpdateTeam(team, AUDITOR, readAll)).toBe(false)
@@ -60,18 +49,18 @@ describe('team roles', () => {
     { user_id: 'member-1', role: 'member' },
   ])
 
-  it('an admin member satisfies every role', () => {
-    expect(hasTeamRole(team, 'admin-1', 'member', [])).toBe(true)
-    expect(isTeamAdmin(team, 'admin-1', [])).toBe(true)
+  it('an admin member updates, deletes and manages members without a global grant', () => {
+    expect(canUpdateTeam(team, 'admin-1', [])).toBe(true)
+    expect(canDeleteTeam(team, 'admin-1', [])).toBe(true)
+    expect(canManageTeamMembers(team, 'admin-1', [])).toBe(true)
   })
 
-  it('a plain member satisfies member but not admin', () => {
-    expect(hasTeamRole(team, 'member-1', 'member', [])).toBe(true)
-    expect(isTeamAdmin(team, 'member-1', [])).toBe(false)
-  })
-
-  it('a non-member satisfies nothing', () => {
-    expect(hasTeamRole(team, STRANGER, 'member', [])).toBe(false)
+  it('a plain member and a non-member do none of it', () => {
+    for (const user of ['member-1', STRANGER]) {
+      expect(canUpdateTeam(team, user, [])).toBe(false)
+      expect(canDeleteTeam(team, user, [])).toBe(false)
+      expect(canManageTeamMembers(team, user, [])).toBe(false)
+    }
   })
 })
 

@@ -100,11 +100,6 @@ export const projectApi = {
   downloadArchive: (projectId: string, scanId: string) =>
     getServerFile(`/projects/${projectId}/archives/${scanId}/download`),
 
-  pinScan: async (projectId: string, scanId: string): Promise<{ scan_id: string; pinned: boolean }> => {
-    const response = await api.post<{ scan_id: string; pinned: boolean }>(`/projects/${projectId}/scans/${scanId}/pin`);
-    return response.data;
-  },
-
   unpinScan: async (projectId: string, scanId: string): Promise<{ scan_id: string; pinned: boolean }> => {
     const response = await api.post<{ scan_id: string; pinned: boolean }>(`/projects/${projectId}/scans/${scanId}/unpin`);
     return response.data;

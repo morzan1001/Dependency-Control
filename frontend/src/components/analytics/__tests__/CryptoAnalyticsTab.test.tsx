@@ -22,7 +22,7 @@ vi.mock("@/components/crypto/analytics/TrendsTimeSeriesChart", () => ({
 
 // Keep the default (hotspots) tab from hitting the network.
 vi.mock("@/api/cryptoAnalytics", () => ({
-  getCryptoHotspots: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+  getCryptoHotspots: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   getCryptoTrends: vi.fn().mockResolvedValue({ points: [] }),
 }));
 

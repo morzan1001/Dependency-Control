@@ -14,9 +14,10 @@ interface Props {
 export function RevertConfirmDialog({ open, targetVersion, onClose, onConfirm }: Readonly<Props>) {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
+  const close = () => { setComment(""); onClose(); };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Revert to version {targetVersion}?</DialogTitle></DialogHeader>
         <p className="text-sm text-muted-foreground">
@@ -34,14 +35,14 @@ export function RevertConfirmDialog({ open, targetVersion, onClose, onConfirm }:
           />
         </label>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={close}>Cancel</Button>
           <Button
             disabled={busy || !comment.trim()}
             onClick={async () => {
               setBusy(true);
               try {
                 await onConfirm(comment);
-                onClose();
+                close();
               } catch {
                 // The caller's toast reports the failure; the dialog stays open for another try.
               } finally {

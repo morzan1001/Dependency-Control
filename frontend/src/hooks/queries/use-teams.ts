@@ -6,8 +6,6 @@ export const teamKeys = {
   all: ['teams'] as const,
   lists: () => [...teamKeys.all, 'list'] as const,
   list: (filters: Record<string, unknown>) => [...teamKeys.lists(), filters] as const,
-  details: () => [...teamKeys.all, 'detail'] as const,
-  detail: (id: string) => [...teamKeys.details(), id] as const,
 };
 
 interface UseTeamsOptions {
@@ -26,14 +24,6 @@ export const useTeams = (
     queryFn: () => teamApi.getAll(search, sortBy, sortOrder),
     enabled,
     placeholderData: keepPreviousData,
-  });
-};
-
-export const useTeam = (id: string) => {
-  return useQuery({
-    queryKey: teamKeys.detail(id),
-    queryFn: () => teamApi.getOne(id),
-    enabled: !!id,
   });
 };
 
@@ -62,8 +52,7 @@ export const useAddTeamMember = () => {
   return useMutation({
     mutationFn: ({ teamId, data }: { teamId: string; data: TeamMemberCreate }) => 
       teamApi.addMember(teamId, data),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
     },
   });
@@ -83,8 +72,7 @@ export const useRemoveTeamMember = () => {
   return useMutation({
     mutationFn: ({ teamId, userId }: { teamId: string; userId: string }) => 
       teamApi.removeMember(teamId, userId),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
     },
   });
@@ -95,8 +83,7 @@ export const useSetTeamBinding = () => {
   return useMutation({
     mutationFn: ({ teamId, data }: { teamId: string; data: TeamBindingRequest }) =>
       teamApi.setBinding(teamId, data),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
     },
   });
@@ -107,8 +94,7 @@ export const useClearTeamBinding = () => {
   return useMutation({
     mutationFn: ({ teamId, instanceId }: { teamId: string; instanceId: string }) =>
       teamApi.clearBinding(teamId, instanceId),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
     },
   });
@@ -119,8 +105,7 @@ export const useUpdateTeamMember = () => {
   return useMutation({
     mutationFn: ({ teamId, userId, role }: { teamId: string; userId: string; role: string }) => 
       teamApi.updateMember(teamId, userId, role),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
     },
   });

@@ -34,7 +34,7 @@ interface UserTableProps {
   page: number;
   limit: number;
   onPageChange: (page: number) => void;
-  onSelectUser: (user: User) => void;
+  onSelectUser?: (user: User) => void;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
   onSort?: (column: string) => void;
@@ -118,10 +118,10 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
           </TableHeader>
           <TableBody>
             {users?.map((user: User) => (
-              <TableRow 
-                key={user.id} 
-                className="cursor-pointer"
-                onClick={() => onSelectUser(user)}
+              <TableRow
+                key={user.id}
+                className={onSelectUser && "cursor-pointer"}
+                onClick={onSelectUser && (() => onSelectUser(user))}
               >
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2">

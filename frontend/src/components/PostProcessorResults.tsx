@@ -17,7 +17,8 @@ import {
   Bug,
   Clock,
   Package,
-  ChevronDown
+  ChevronDown,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Tooltip,
@@ -34,6 +35,7 @@ import { getSeverityBadgeVariant } from "@/lib/finding-utils";
 import { formatDateTime } from "@/lib/utils";
 import { useScanResult } from "@/hooks/queries/use-scans";
 import { ReachabilitySummary } from "@/types/scan";
+import type { ReactNode } from "react";
 
 export interface EPSSKEVSummary {
   total_vulnerabilities: number;
@@ -79,6 +81,34 @@ export interface EPSSKEVSummary {
 
 const HIGH_RISK_ROWS_SHOWN = 10;
 
+function StatTile({ icon: Icon, tone, iconClass, label, value, sub }: Readonly<{
+  icon: LucideIcon; tone: string; iconClass: string; label: string; value: ReactNode; sub?: ReactNode;
+}>) {
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-center gap-4">
+          <div className={`p-3 rounded-full ${tone}`}>
+            <Icon className={`h-6 w-6 ${iconClass}`} />
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">{label}</p>
+            <p className="text-2xl font-bold">{value}</p>
+            {sub}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const REACHABILITY_BARS = [
+  { level: "confirmed", label: "Confirmed", icon: CheckCircle, iconClass: "text-red-500", barClass: "bg-red-100 [&>div]:bg-red-500" },
+  { level: "likely", label: "Likely", icon: AlertCircle, iconClass: "text-orange-500", barClass: "bg-orange-100 [&>div]:bg-orange-500" },
+  { level: "unreachable", label: "Unreachable", icon: XCircle, iconClass: "text-green-500", barClass: "bg-green-100 [&>div]:bg-green-500" },
+  { level: "unknown", label: "Unknown", icon: AlertTriangle, iconClass: "text-gray-400", barClass: "bg-gray-100 [&>div]:bg-gray-400" },
+] as const;
+
 export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
   // Target the Progress indicator, not the track, so bars aren't all rendered full.
   const getMaturityColor = (maturity: string) => {
@@ -106,84 +136,34 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900">
-                <Activity className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">EPSS Enriched</p>
-                <p className="text-2xl font-bold">{data.epss_enriched} / {data.total_vulnerabilities}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-red-100 dark:bg-red-900">
-                <ShieldAlert className="h-6 w-6 text-severity-critical" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">KEV CVEs at scan time</p>
-                <p className="text-2xl font-bold">{data.kev_matches}</p>
-                {data.kev_ransomware > 0 && (
-                  <p className="text-xs text-severity-critical flex items-center gap-1">
-                    <Skull className="h-3 w-3" /> {data.kev_ransomware} Ransomware
-                  </p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-orange-100 dark:bg-orange-900">
-                <TrendingUp className="h-6 w-6 text-severity-high" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Avg EPSS Score</p>
-                <p className="text-2xl font-bold">
-                  {data.avg_epss_score !== null 
-                    ? `${(data.avg_epss_score * 100).toFixed(2)}%` 
-                    : "N/A"}
-                </p>
-                {data.max_epss_score !== null && (
-                  <p className="text-xs text-muted-foreground">
-                    Max: {(data.max_epss_score * 100).toFixed(2)}%
-                  </p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-purple-100 dark:bg-purple-900">
-                <Target className="h-6 w-6 text-purple-600 dark:text-purple-400" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Avg Threat Score</p>
-                <p className="text-2xl font-bold">
-                  {data.avg_risk_score !== null 
-                    ? data.avg_risk_score.toFixed(1) 
-                    : "N/A"}
-                </p>
-                {data.max_risk_score !== null && (
-                  <p className="text-xs text-muted-foreground">
-                    Max: {data.max_risk_score.toFixed(1)}
-                  </p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <StatTile
+          icon={Activity} tone="bg-blue-100 dark:bg-blue-900" iconClass="text-blue-600 dark:text-blue-400"
+          label="EPSS Enriched" value={<>{data.epss_enriched} / {data.total_vulnerabilities}</>}
+        />
+        <StatTile
+          icon={ShieldAlert} tone="bg-red-100 dark:bg-red-900" iconClass="text-severity-critical"
+          label="KEV CVEs at scan time" value={data.kev_matches}
+          sub={data.kev_ransomware > 0 && (
+            <p className="text-xs text-severity-critical flex items-center gap-1">
+              <Skull className="h-3 w-3" /> {data.kev_ransomware} Ransomware
+            </p>
+          )}
+        />
+        <StatTile
+          icon={TrendingUp} tone="bg-orange-100 dark:bg-orange-900" iconClass="text-severity-high"
+          label="Avg EPSS Score"
+          value={data.avg_epss_score !== null ? `${(data.avg_epss_score * 100).toFixed(2)}%` : "N/A"}
+          sub={data.max_epss_score !== null && (
+            <p className="text-xs text-muted-foreground">Max: {(data.max_epss_score * 100).toFixed(2)}%</p>
+          )}
+        />
+        <StatTile
+          icon={Target} tone="bg-purple-100 dark:bg-purple-900" iconClass="text-purple-600 dark:text-purple-400"
+          label="Avg Threat Score" value={data.avg_risk_score !== null ? data.avg_risk_score.toFixed(1) : "N/A"}
+          sub={data.max_risk_score !== null && (
+            <p className="text-xs text-muted-foreground">Max: {data.max_risk_score.toFixed(1)}</p>
+          )}
+        />
       </div>
 
       <Card>
@@ -398,66 +378,29 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900">
-                <Target className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Analyzed</p>
-                <p className="text-2xl font-bold">{data.analyzed} / {data.total_vulnerabilities}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-red-100 dark:bg-red-900">
-                <AlertCircle className="h-6 w-6 text-severity-critical" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Reachable</p>
-                <p className="text-2xl font-bold">{reachableCount}</p>
-                <p className="text-xs text-muted-foreground">
-                  {data.reachability_levels.confirmed} confirmed, {data.reachability_levels.likely} likely
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-green-100 dark:bg-green-900">
-                <ShieldCheck className="h-6 w-6 text-success" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Unreachable</p>
-                <p className="text-2xl font-bold">{data.reachability_levels.unreachable}</p>
-                <p className="text-xs text-success">Can be deprioritized</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-gray-100 dark:bg-gray-800">
-                <AlertTriangle className="h-6 w-6 text-severity-info" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Unknown</p>
-                <p className="text-2xl font-bold">{data.reachability_levels.unknown}</p>
-                <p className="text-xs text-muted-foreground">Needs manual review</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <StatTile
+          icon={Target} tone="bg-blue-100 dark:bg-blue-900" iconClass="text-blue-600 dark:text-blue-400"
+          label="Analyzed" value={<>{data.analyzed} / {data.total_vulnerabilities}</>}
+        />
+        <StatTile
+          icon={AlertCircle} tone="bg-red-100 dark:bg-red-900" iconClass="text-severity-critical"
+          label="Reachable" value={reachableCount}
+          sub={
+            <p className="text-xs text-muted-foreground">
+              {data.reachability_levels.confirmed} confirmed, {data.reachability_levels.likely} likely
+            </p>
+          }
+        />
+        <StatTile
+          icon={ShieldCheck} tone="bg-green-100 dark:bg-green-900" iconClass="text-success"
+          label="Unreachable" value={data.reachability_levels.unreachable}
+          sub={<p className="text-xs text-success">Can be deprioritized</p>}
+        />
+        <StatTile
+          icon={AlertTriangle} tone="bg-gray-100 dark:bg-gray-800" iconClass="text-severity-info"
+          label="Unknown" value={data.reachability_levels.unknown}
+          sub={<p className="text-xs text-muted-foreground">Needs manual review</p>}
+        />
       </div>
 
       <Card>
@@ -499,70 +442,23 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {totalAnalyzed > 0 && (
-              <>
-                <div className="flex items-center gap-3">
-                  <div className="w-32 text-sm flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-red-500" />
-                    Confirmed
-                  </div>
-                  <div className="flex-1">
-                    <Progress 
-                      value={(data.reachability_levels.confirmed / totalAnalyzed) * 100} 
-                      className="h-3 bg-red-100 [&>div]:bg-red-500"
-                    />
-                  </div>
-                  <div className="w-12 text-right text-sm font-medium">
-                    {data.reachability_levels.confirmed}
-                  </div>
+            {totalAnalyzed > 0 && REACHABILITY_BARS.map(({ level, label, icon: Icon, iconClass, barClass }) => (
+              <div key={level} className="flex items-center gap-3">
+                <div className="w-32 text-sm flex items-center gap-2">
+                  <Icon className={`h-4 w-4 ${iconClass}`} />
+                  {label}
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="w-32 text-sm flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-orange-500" />
-                    Likely
-                  </div>
-                  <div className="flex-1">
-                    <Progress 
-                      value={(data.reachability_levels.likely / totalAnalyzed) * 100} 
-                      className="h-3 bg-orange-100 [&>div]:bg-orange-500"
-                    />
-                  </div>
-                  <div className="w-12 text-right text-sm font-medium">
-                    {data.reachability_levels.likely}
-                  </div>
+                <div className="flex-1">
+                  <Progress
+                    value={(data.reachability_levels[level] / totalAnalyzed) * 100}
+                    className={`h-3 ${barClass}`}
+                  />
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="w-32 text-sm flex items-center gap-2">
-                    <XCircle className="h-4 w-4 text-green-500" />
-                    Unreachable
-                  </div>
-                  <div className="flex-1">
-                    <Progress 
-                      value={(data.reachability_levels.unreachable / totalAnalyzed) * 100} 
-                      className="h-3 bg-green-100 [&>div]:bg-green-500"
-                    />
-                  </div>
-                  <div className="w-12 text-right text-sm font-medium">
-                    {data.reachability_levels.unreachable}
-                  </div>
+                <div className="w-12 text-right text-sm font-medium">
+                  {data.reachability_levels[level]}
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="w-32 text-sm flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-gray-400" />
-                    Unknown
-                  </div>
-                  <div className="flex-1">
-                    <Progress 
-                      value={(data.reachability_levels.unknown / totalAnalyzed) * 100} 
-                      className="h-3 bg-gray-100 [&>div]:bg-gray-400"
-                    />
-                  </div>
-                  <div className="w-12 text-right text-sm font-medium">
-                    {data.reachability_levels.unknown}
-                  </div>
-                </div>
-              </>
-            )}
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>

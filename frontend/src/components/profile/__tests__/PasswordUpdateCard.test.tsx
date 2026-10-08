@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
-import type { InternalAxiosRequestConfig } from 'axios'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -74,5 +74,26 @@ describe('PasswordUpdateCard', () => {
     expect(toast.success).toHaveBeenCalledWith('Password updated', {
       description: 'Sign in with your new password.',
     })
+  })
+
+  it("shows the server's password policy message for a weak new password", async () => {
+    api.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      sentUrls.push(config.url)
+      const detail = [{ loc: ['body', 'new_password'], msg: 'Value error, Password must contain at least one uppercase letter' }]
+      throw new AxiosError('Request failed with status code 422', 'ERR_BAD_REQUEST', config, null, {
+        data: { detail }, status: 422, statusText: 'Unprocessable Entity', headers: {}, config,
+      })
+    }
+    renderProfile()
+
+    fireEvent.change(screen.getByLabelText('Current Password'), { target: { value: 'Correct-Horse-1' } })
+    fireEvent.change(screen.getByLabelText('New Password'), { target: { value: 'battery-staple-2' } })
+    fireEvent.change(screen.getByLabelText('Confirm New Password'), { target: { value: 'battery-staple-2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Update Password' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', {
+      description: 'Password must contain at least one uppercase letter',
+    }))
+    expect(sentUrls).toContain('/users/me/password')
   })
 })

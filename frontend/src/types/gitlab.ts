@@ -58,11 +58,3 @@ export interface GitLabInstanceTestConnectionResponse {
   instance_name: string;
   url: string;
 }
-
-export interface GitLabInstanceStats {
-  instance_id: string;
-  instance_name: string;
-  project_count: number;
-  active_project_count: number;
-  last_scan_at?: string;
-}

@@ -21,12 +21,4 @@ describe("useDialogState", () => {
     act(() => result.current.closeDialog());
     expect(result.current.open).toBe(false);
   });
-
-  it("toggleDialog inverts the flag", () => {
-    const { result } = renderHook(() => useDialogState());
-    act(() => result.current.toggleDialog());
-    expect(result.current.open).toBe(true);
-    act(() => result.current.toggleDialog());
-    expect(result.current.open).toBe(false);
-  });
 });

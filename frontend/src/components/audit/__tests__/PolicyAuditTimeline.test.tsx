@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { describe, it, expect, vi } from "vitest";
 
-import { revertSystemPolicy } from "@/api/policyAudit";
+import { pruneSystemAudit, revertSystemPolicy } from "@/api/policyAudit";
 import { PolicyAuditTimeline } from "../PolicyAuditTimeline";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -77,5 +77,41 @@ describe("PolicyAuditTimeline", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
       "Revert failed: Version 2 holds rules a write would refuse: rule 'r1': needs a subject matcher",
     ));
+  });
+
+  it("opens the revert dialog for another version without the previous revert's comment", async () => {
+    withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+    fireEvent.click((await screen.findAllByTitle("Revert to this version"))[0]);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "roll back X" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm revert" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByTitle("Revert to this version")[1]);
+
+    expect(screen.getByRole("textbox")).toHaveValue("");
+  });
+
+  it("reports a refused prune through the toast without an unhandled rejection", async () => {
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      vi.mocked(pruneSystemAudit).mockRejectedValueOnce(
+        Object.assign(new Error("Request failed with status code 400"), {
+          response: { data: { detail: "Cutoff must be at least 90 days in the past" } },
+        }),
+      );
+      withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+      fireEvent.click(await screen.findByRole("button", { name: /Prune old entries/i }));
+      fireEvent.click(screen.getByRole("button", { name: "Prune" }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+        "Prune failed: Cutoff must be at least 90 days in the past",
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 });

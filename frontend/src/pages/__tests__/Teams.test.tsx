@@ -16,6 +16,7 @@ const TEAM: Team = {
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 }
+const PLATFORM: Team = { ...TEAM, id: 't-2', name: 'Platform' }
 
 vi.mock('@/api/teams', () => ({ teamApi: { getAll: vi.fn(), update: vi.fn() } }))
 vi.mock('@/api/users', () => ({ userApi: { getMe: () => Promise.resolve({ id: 'u-1' }) } }))
@@ -23,20 +24,24 @@ vi.mock('@/context/useAuth', () => ({
   useAuth: () => ({ permissions: ['team:update'], hasPermission: (p: string) => p === 'team:update' }),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
-vi.mock('@/components/teams/CreateTeamDialog', () => ({ CreateTeamDialog: () => null }))
-vi.mock('@/components/teams/TeamMembersDialog', () => ({ TeamMembersDialog: () => null }))
+vi.mock('@/components/teams/TeamMembersDialog', () => ({
+  TeamMembersDialog: ({ team, isOpen }: { team: Team | null; isOpen: boolean }) =>
+    isOpen ? <div data-testid="members-dialog">{team?.id}</div> : null,
+}))
 vi.mock('@/components/teams/AddMemberDialog', () => ({ AddMemberDialog: () => null }))
 vi.mock('@/components/teams/DeleteTeamDialog', () => ({ DeleteTeamDialog: () => null }))
 vi.mock('@/components/teams/TeamWebhooksDialog', () => ({ TeamWebhooksDialog: () => null }))
 vi.mock('@/components/teams/TeamBindingDialog', () => ({ TeamBindingDialog: () => null }))
 
 async function renderPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={client}>
       <TeamsPage />
     </QueryClientProvider>,
   )
   await screen.findByText(TEAM.name)
+  return client
 }
 
 // The card header's only action for a user who may edit but not delete the team.
@@ -99,5 +104,18 @@ describe('TeamsPage edit dialog', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     expect(within(editTeam(renamed.name)).getByLabelText('Name')).toHaveValue(renamed.name)
+  })
+
+  it('stays shut for the next team clicked after the edited team left the list', async () => {
+    vi.mocked(teamApi.getAll).mockResolvedValueOnce([TEAM, PLATFORM]).mockResolvedValue([PLATFORM])
+    const client = await renderPage()
+    editTeam()
+    await client.invalidateQueries()
+    await waitFor(() => expect(screen.queryByText(TEAM.name)).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByText(PLATFORM.name))
+
+    expect(screen.getByTestId('members-dialog')).toHaveTextContent(PLATFORM.id)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

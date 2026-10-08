@@ -82,6 +82,7 @@ export function WebhookManager({
     : hasPermission(updatePermission)
 
   const handleDelete = async (id: string) => {
+    if (!window.confirm("Delete this webhook? It stops receiving events and its settings cannot be restored.")) return
     try {
       await onDelete(id)
       toast.success("Webhook deleted")

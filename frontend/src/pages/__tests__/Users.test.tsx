@@ -28,7 +28,7 @@ vi.mock('@/components/users/InviteUserDialog', () => ({
   InviteUserDialog: () => <div data-testid="invite-dialog" />,
 }))
 vi.mock('@/components/users/UserDetailsDialog', () => ({
-  UserDetailsDialog: () => null,
+  UserDetailsDialog: ({ open }: { open: boolean }) => (open ? <div>User Details</div> : null),
 }))
 
 function makeUser(i: number): User {
@@ -100,6 +100,21 @@ describe('UsersPage - invitations & pagination', () => {
 
     expect(screen.queryAllByText('Invited')).toHaveLength(0)
     expect(screen.getByText(`user${limit}`)).toBeInTheDocument()
+  })
+})
+
+describe('UsersPage - opening a row', () => {
+  it('opens the details of a user but not of a pending invitation', () => {
+    mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [makeInvitation(0)], isLoading: false })
+
+    render(<UsersPage />)
+
+    fireEvent.click(screen.getAllByText('invite0@example.com')[0])
+    expect(screen.queryByText('User Details')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('user0'))
+    expect(screen.getByText('User Details')).toBeInTheDocument()
   })
 })
 

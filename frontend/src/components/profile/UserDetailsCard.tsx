@@ -69,14 +69,6 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   const queryClient = useQueryClient();
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
-  const [prevUserId, setPrevUserId] = useState<string | undefined>(user?.id);
-
-  // Reset form fields when a different user loads
-  if (user && user.id !== prevUserId) {
-    setPrevUserId(user.id);
-    setSlackUsername(user.slack_username || '');
-    setMattermostUsername(user.mattermost_username || '');
-  }
 
   const updateProfileMutation = useMutation({
     mutationFn: () => userApi.updateMe({

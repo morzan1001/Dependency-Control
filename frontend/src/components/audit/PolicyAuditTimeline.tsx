@@ -165,7 +165,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
         open={pruneDialog.open}
         busy={doPrune.isPending}
         onClose={pruneDialog.closeDialog}
-        onConfirm={async (before) => { await doPrune.mutateAsync(before); }}
+        onConfirm={doPrune.mutate}
       />
     </div>
   );

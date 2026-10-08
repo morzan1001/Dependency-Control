@@ -28,7 +28,8 @@ interface EditWaiverDialogProps {
 function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose: () => void }>) {
     const [reason, setReason] = useState(waiver.reason)
     const [status, setStatus] = useState<WaiverStatus>(waiver.status || 'accepted_risk')
-    const [date, setDate] = useState(waiver.expiration_date ? waiver.expiration_date.split('T')[0] : '')
+    const storedDate = waiver.expiration_date ? waiver.expiration_date.split('T')[0] : ''
+    const [date, setDate] = useState(storedDate)
 
     const updateMutation = useUpdateWaiver()
 
@@ -88,7 +89,8 @@ function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose:
                     type="date"
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
-                    min={new Date().toISOString().split('T')[0]}
+                    // An expired waiver keeps its past date valid until the user picks a new one.
+                    min={date === storedDate ? undefined : new Date().toISOString().split('T')[0]}
                 />
             </div>
 

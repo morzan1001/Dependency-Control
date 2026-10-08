@@ -99,3 +99,45 @@ describe("CryptoPolicyEditor override detection", () => {
     expect(onSave).toHaveBeenCalledWith([override]);
   });
 });
+
+function typeInto(input: HTMLElement, text: string) {
+  for (const ch of text) {
+    fireEvent.change(input, { target: { value: (input as HTMLInputElement).value + ch } });
+  }
+}
+
+describe("CryptoPolicyEditor name patterns", () => {
+  it("keeps commas and spaces while typing in a rule row and saves the parsed patterns", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CryptoPolicyEditor initialRules={[{ ...systemRule(), match_name_patterns: ["RC4"] }]} onSave={onSave} />);
+
+    const input = screen.getByDisplayValue("RC4");
+    typeInto(input, ", DES");
+    expect(input).toHaveValue("RC4, DES");
+
+    // A browser blurs the field on the mousedown that precedes the Save click.
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0][0].match_name_patterns).toEqual(["RC4", "DES"]);
+  });
+
+  it("keeps commas and spaces while typing a new rule's patterns", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CryptoPolicyEditor initialRules={[]} onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add custom rule" }));
+    const [ruleId, name] = screen.getAllByRole("textbox");
+    fireEvent.change(ruleId, { target: { value: "custom-rc4" } });
+    fireEvent.change(name, { target: { value: "Block RC4" } });
+    const patterns = screen.getByLabelText(/match name patterns/);
+    typeInto(patterns, "RC4, DES");
+    expect(patterns).toHaveValue("RC4, DES");
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0][0].match_name_patterns).toEqual(["RC4", "DES"]);
+  });
+});

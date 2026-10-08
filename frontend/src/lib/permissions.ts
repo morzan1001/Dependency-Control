@@ -70,63 +70,7 @@ export const Permissions = {
 export type Permission = (typeof Permissions)[keyof typeof Permissions];
 
 // All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
-export const ALL_PERMISSIONS: Permission[] = [
-  // System
-  Permissions.SYSTEM_MANAGE,
-  // User
-  Permissions.USER_CREATE,
-  Permissions.USER_READ_ALL,
-  Permissions.USER_UPDATE,
-  Permissions.USER_DELETE,
-  Permissions.USER_MANAGE_PERMISSIONS,
-  // Team
-  Permissions.TEAM_CREATE,
-  Permissions.TEAM_READ,
-  Permissions.TEAM_READ_ALL,
-  Permissions.TEAM_UPDATE,
-  Permissions.TEAM_DELETE,
-  // Project
-  Permissions.PROJECT_CREATE,
-  Permissions.PROJECT_READ,
-  Permissions.PROJECT_READ_ALL,
-  Permissions.PROJECT_UPDATE,
-  Permissions.PROJECT_DELETE,
-  // Analytics
-  Permissions.ANALYTICS_READ,
-  Permissions.ANALYTICS_SUMMARY,
-  Permissions.ANALYTICS_DEPENDENCIES,
-  Permissions.ANALYTICS_TREE,
-  Permissions.ANALYTICS_IMPACT,
-  Permissions.ANALYTICS_HOTSPOTS,
-  Permissions.ANALYTICS_SEARCH,
-  Permissions.ANALYTICS_RECOMMENDATIONS,
-  Permissions.ANALYTICS_GLOBAL,
-  // Notifications
-  Permissions.NOTIFICATIONS_BROADCAST,
-  // Waivers
-  Permissions.WAIVER_READ,
-  Permissions.WAIVER_READ_ALL,
-  Permissions.WAIVER_MANAGE,
-  Permissions.WAIVER_DELETE,
-  // Webhooks
-  Permissions.WEBHOOK_CREATE,
-  Permissions.WEBHOOK_READ,
-  Permissions.WEBHOOK_UPDATE,
-  Permissions.WEBHOOK_DELETE,
-  // Archives
-  Permissions.ARCHIVE_READ,
-  Permissions.ARCHIVE_RESTORE,
-  Permissions.ARCHIVE_DOWNLOAD,
-  Permissions.ARCHIVE_READ_ALL,
-  // Chat
-  Permissions.CHAT_ACCESS,
-  Permissions.CHAT_HISTORY_READ,
-  Permissions.CHAT_HISTORY_DELETE,
-  // MCP
-  Permissions.MCP_ACCESS,
-  // Ad-hoc analysis
-  Permissions.ANALYZE_ADHOC,
-];
+export const ALL_PERMISSIONS: Permission[] = Object.values(Permissions);
 
 // Admin: All permissions
 export const PRESET_ADMIN: Permission[] = [...ALL_PERMISSIONS];
@@ -183,7 +127,6 @@ export interface PermissionItem {
 }
 
 export interface PermissionGroup {
-  id: string;
   title: string;
   description: string;
   permissions: PermissionItem[];
@@ -191,7 +134,6 @@ export interface PermissionGroup {
 
 export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
-    id: "system",
     title: "System & Administration",
     description: "System-wide administrative permissions",
     permissions: [
@@ -203,7 +145,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "user",
     title: "User Management",
     description: "Permissions for managing users",
     permissions: [
@@ -235,7 +176,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "team",
     title: "Team Management",
     description: "Permissions for managing teams",
     permissions: [
@@ -267,7 +207,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "project",
     title: "Project Management",
     description: "Permissions for managing projects",
     permissions: [
@@ -299,7 +238,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "analytics",
     title: "Analytics & Insights",
     description: "Permissions for viewing analytics",
     permissions: [
@@ -351,7 +289,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "notifications",
     title: "Notifications & Broadcasts",
     description: "Permissions for notifications",
     permissions: [
@@ -363,7 +300,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "waiver",
     title: "Security & Compliance",
     description: "Permissions for managing waivers",
     permissions: [
@@ -390,7 +326,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "webhook",
     title: "Integrations",
     description: "Permissions for managing webhooks",
     permissions: [
@@ -417,7 +352,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "archive",
     title: "Archives",
     description: "Permissions for managing scan archives",
     permissions: [
@@ -444,7 +378,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "chat",
     title: "Chat",
     description: "Permissions for the AI security assistant",
     permissions: [
@@ -466,7 +399,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "mcp",
     title: "MCP (External LLM access)",
     description:
       "Lets a user mint a personal API key opening the MCP surface, so external LLM clients (Claude Desktop, Cursor, custom bots) can call the DependencyControl tool surface over MCP.",
@@ -480,7 +412,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    id: "analyze",
     title: "Ad-hoc Analysis",
     description:
       "Lets a user mint a personal API key opening the ad-hoc analysis surface: POST /api/v1/analyze queues the analysis of a posted SBOM, GET /api/v1/analyze/{job_id} returns the result, and both are kept for 24 hours.",
@@ -494,18 +425,3 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
 ];
-
-/** When `requireAll` is true, all required permissions must match; otherwise any one suffices. */
-export function hasPermission(
-  userPermissions: string[],
-  required: string | string[],
-  requireAll: boolean = false
-): boolean {
-  const requiredList = Array.isArray(required) ? required : [required];
-
-  if (requireAll) {
-    return requiredList.every((perm) => userPermissions.includes(perm));
-  } else {
-    return requiredList.some((perm) => userPermissions.includes(perm));
-  }
-}

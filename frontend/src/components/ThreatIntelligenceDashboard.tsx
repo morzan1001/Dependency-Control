@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { 
@@ -13,13 +14,28 @@ import {
   AlertCircle,
   Info,
   ArrowDownRight,
-  Activity
+  Activity,
+  type LucideIcon,
 } from 'lucide-react'
 import { EnhancedStats } from '@/types/scan'
 
 interface Props {
   stats: EnhancedStats
   className?: string
+}
+
+function CountRow({ icon: Icon, iconClass, label, count, variant = 'secondary', className }: Readonly<{
+  icon: LucideIcon; iconClass: string; label: string; count: ReactNode; variant?: BadgeProps['variant']; className?: string
+}>) {
+  return (
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <Icon className={`h-4 w-4 ${iconClass}`} />
+        <span className="text-sm">{label}</span>
+      </div>
+      <Badge variant={variant} className={className}>{count}</Badge>
+    </div>
+  )
 }
 
 export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props>) {
@@ -36,6 +52,32 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
   const reductionPercent = totalVulns > 0
     ? Math.min(100, Math.round((deprioritizedCount / totalVulns) * 100))
     : 0
+
+  const priorityTiles = [
+    {
+      box: 'bg-red-500/10 border border-red-500/20', tone: 'text-severity-critical', icon: AlertTriangle,
+      label: 'Action Required', value: prioritized?.actionable_critical || 0, caption: 'Critical + Exploitable',
+      tooltip: 'Critical vulnerabilities that are either in CISA KEV (actively exploited) or have high EPSS (>10%), ' +
+        'and not ruled out by reachability analysis. These require immediate attention.',
+    },
+    {
+      box: 'bg-orange-500/10 border border-orange-500/20', tone: 'text-severity-high', icon: Activity,
+      label: 'High Priority', value: prioritized?.actionable_high || 0, caption: 'High + Exploitable',
+      tooltip: 'High severity vulnerabilities with real exploitation risk (KEV or high EPSS), ' +
+        'not ruled out by reachability analysis.',
+    },
+    {
+      box: 'bg-primary/10 border border-primary/20', tone: 'text-primary', icon: Target,
+      label: 'Total Actionable', value: actionableCount, caption: `of ${totalVulns} total`,
+      tooltip: 'All vulnerabilities that are exploitable (KEV or high EPSS) and not ruled out by reachability analysis.',
+    },
+    {
+      box: 'bg-muted border', tone: 'text-muted-foreground', icon: ZapOff,
+      label: 'Deprioritized', value: deprioritizedCount, caption: 'Low risk or unreachable',
+      tooltip: 'Vulnerabilities that are either unreachable in your code OR have low exploitation probability ' +
+        '(low EPSS, not in KEV). These can be safely deferred.',
+    },
+  ]
 
   if (!threatIntel && !reachability) {
     return (
@@ -78,107 +120,29 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                    <div className="flex items-center gap-2 text-severity-critical mb-1">
-                      <AlertTriangle className="h-4 w-4" />
-                      <span className="text-xs font-medium">Action Required</span>
+            {priorityTiles.map((tile) => (
+              <TooltipProvider key={tile.label}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className={`p-3 rounded-lg ${tile.box}`}>
+                      <div className={`flex items-center gap-2 ${tile.tone} mb-1`}>
+                        <tile.icon className="h-4 w-4" />
+                        <span className="text-xs font-medium">{tile.label}</span>
+                      </div>
+                      <div className={`text-2xl font-bold ${tile.tone}`}>
+                        {tile.value}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {tile.caption}
+                      </div>
                     </div>
-                    <div className="text-2xl font-bold text-severity-critical">
-                      {prioritized?.actionable_critical || 0}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Critical + Exploitable
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="max-w-xs">
-                    Critical vulnerabilities that are either in CISA KEV (actively exploited)
-                    or have high EPSS (&gt;10%), and not ruled out by reachability analysis.
-                    These require immediate attention.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                    <div className="flex items-center gap-2 text-severity-high mb-1">
-                      <Activity className="h-4 w-4" />
-                      <span className="text-xs font-medium">High Priority</span>
-                    </div>
-                    <div className="text-2xl font-bold text-severity-high">
-                      {prioritized?.actionable_high || 0}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      High + Exploitable
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="max-w-xs">
-                    High severity vulnerabilities with real exploitation risk (KEV or high EPSS),
-                    not ruled out by reachability analysis.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
-                    <div className="flex items-center gap-2 text-primary mb-1">
-                      <Target className="h-4 w-4" />
-                      <span className="text-xs font-medium">Total Actionable</span>
-                    </div>
-                    <div className="text-2xl font-bold text-primary">
-                      {actionableCount}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      of {totalVulns} total
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="max-w-xs">
-                    All vulnerabilities that are exploitable (KEV or high EPSS)
-                    and not ruled out by reachability analysis.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="p-3 rounded-lg bg-muted border">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                      <ZapOff className="h-4 w-4" />
-                      <span className="text-xs font-medium">Deprioritized</span>
-                    </div>
-                    <div className="text-2xl font-bold text-muted-foreground">
-                      {deprioritizedCount}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Low risk or unreachable
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="max-w-xs">
-                    Vulnerabilities that are either unreachable in your code 
-                    OR have low exploitation probability (low EPSS, not in KEV).
-                    These can be safely deferred.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="max-w-xs">{tile.tooltip}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ))}
           </div>
 
           {totalVulns > 0 && (
@@ -206,45 +170,24 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-severity-critical" />
-                  <span className="text-sm">KEV findings (actively exploited)</span>
-                </div>
-                <Badge variant={threatIntel.kev_count > 0 ? "destructive" : "secondary"}>
-                  {threatIntel.kev_count}
-                </Badge>
-              </div>
-              
+              <CountRow
+                icon={AlertCircle} iconClass="text-severity-critical" label="KEV findings (actively exploited)"
+                count={threatIntel.kev_count} variant={threatIntel.kev_count > 0 ? 'destructive' : 'secondary'}
+              />
               {threatIntel.kev_ransomware_count > 0 && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Skull className="h-4 w-4 text-severity-critical" />
-                    <span className="text-sm">Used in Ransomware</span>
-                  </div>
-                  <Badge variant="destructive">{threatIntel.kev_ransomware_count}</Badge>
-                </div>
+                <CountRow
+                  icon={Skull} iconClass="text-severity-critical" label="Used in Ransomware"
+                  count={threatIntel.kev_ransomware_count} variant="destructive"
+                />
               )}
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-severity-high" />
-                  <span className="text-sm">High EPSS (&gt;10%)</span>
-                </div>
-                <Badge variant={threatIntel.high_epss_count > 0 ? "default" : "secondary"} 
-                       className={threatIntel.high_epss_count > 0 ? "bg-orange-500" : ""}>
-                  {threatIntel.high_epss_count}
-                </Badge>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-severity-medium" />
-                  <span className="text-sm">Medium EPSS (1-10%)</span>
-                </div>
-                <Badge variant="secondary">{threatIntel.medium_epss_count}</Badge>
-              </div>
-              
+              <CountRow
+                icon={TrendingUp} iconClass="text-severity-high" label="High EPSS (>10%)" count={threatIntel.high_epss_count}
+                variant={threatIntel.high_epss_count > 0 ? 'default' : 'secondary'}
+                className={threatIntel.high_epss_count > 0 ? 'bg-orange-500' : ''}
+              />
+              <CountRow
+                icon={Activity} iconClass="text-severity-medium" label="Medium EPSS (1-10%)" count={threatIntel.medium_epss_count}
+              />
               {threatIntel.avg_epss_score !== null && (
                 <div className="pt-2 border-t text-xs text-muted-foreground">
                   <div className="flex justify-between">
@@ -291,43 +234,20 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-severity-critical" />
-                  <span className="text-sm">Confirmed Reachable (symbol-level)</span>
-                </div>
-                <Badge variant={reachability.confirmed_reachable_count > 0 ? "destructive" : "secondary"}>
-                  {reachability.confirmed_reachable_count}
-                </Badge>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-severity-high" />
-                  <span className="text-sm">Likely Reachable (import-level)</span>
-                </div>
-                <Badge variant="secondary" className="bg-orange-500/20">
-                  {reachability.likely_reachable_count}
-                </Badge>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-success" />
-                  <span className="text-sm">Unreachable (Safe)</span>
-                </div>
-                <Badge variant="secondary" className="bg-green-500/20 text-green-600">
-                  {reachability.unreachable_count}
-                </Badge>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Info className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm">Unknown</span>
-                </div>
-                <Badge variant="secondary">{reachability.unknown_count}</Badge>
-              </div>
+              <CountRow
+                icon={AlertTriangle} iconClass="text-severity-critical" label="Confirmed Reachable (symbol-level)"
+                count={reachability.confirmed_reachable_count}
+                variant={reachability.confirmed_reachable_count > 0 ? 'destructive' : 'secondary'}
+              />
+              <CountRow
+                icon={AlertCircle} iconClass="text-severity-high" label="Likely Reachable (import-level)"
+                count={reachability.likely_reachable_count} className="bg-orange-500/20"
+              />
+              <CountRow
+                icon={CheckCircle2} iconClass="text-success" label="Unreachable (Safe)"
+                count={reachability.unreachable_count} className="bg-green-500/20 text-green-600"
+              />
+              <CountRow icon={Info} iconClass="text-muted-foreground" label="Unknown" count={reachability.unknown_count} />
 
               {reachability.coverable_count !== undefined && (
                 <p className="text-xs text-muted-foreground pt-1">

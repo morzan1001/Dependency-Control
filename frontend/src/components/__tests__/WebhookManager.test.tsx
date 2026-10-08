@@ -143,13 +143,38 @@ describe("WebhookManager", () => {
     expect(webhookApi.test).toHaveBeenCalledWith("w-slack");
   });
 
-  it("deletes a webhook from its named Delete button", async () => {
+  it("deletes a webhook from its named Delete button once the deletion is confirmed", async () => {
+    vi.spyOn(window, "confirm").mockReturnValueOnce(true);
     const onDelete = vi.fn().mockResolvedValue(undefined);
     render(<WebhookManager webhooks={[slackHook]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={onDelete} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete webhook" }));
 
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith("w-slack"));
+  });
+
+  it("keeps a webhook whose deletion is not confirmed", () => {
+    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    render(<WebhookManager webhooks={[slackHook]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={onDelete} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete webhook" }));
+
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it("creates one webhook when Create is clicked twice while the first request runs", () => {
+    const onCreate = vi.fn(() => new Promise<never>(() => undefined));
+    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://example.com/hook" } });
+    fireEvent.click(screen.getByLabelText(/Scan completed/i));
+
+    const create = screen.getByRole("button", { name: /Create Webhook/i });
+    fireEvent.click(create);
+    fireEvent.click(create);
+
+    expect(onCreate).toHaveBeenCalledTimes(1);
   });
 
   it("stores a Slack URL with its detected type after a Teams URL was edited away", async () => {
