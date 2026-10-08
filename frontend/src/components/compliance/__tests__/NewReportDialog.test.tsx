@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReport } from "@/api/compliance";
+import { projectApi } from "@/api/projects";
 import { teamApi } from "@/api/teams";
 import { NewReportDialog } from "../NewReportDialog";
 
@@ -51,6 +52,7 @@ describe("NewReportDialog", () => {
     permissionSet.clear();
     vi.mocked(createReport).mockClear();
     vi.mocked(teamApi.getAll).mockClear();
+    vi.mocked(projectApi.getAll).mockClear();
   });
 
   it("offers the caller's teams by name and sends the picked team's id", async () => {
@@ -88,6 +90,31 @@ describe("NewReportDialog", () => {
     await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ scope: "team", scope_id: "t-9" })));
     expect(screen.queryByPlaceholderText("Team ID")).not.toBeInTheDocument();
   });
+
+  it("lets a project:update holder without project:read type the id of any project", async () => {
+    permissionSet.add("analytics:read");
+    permissionSet.add("project:update");
+    withClient(<NewReportDialog onClose={vi.fn()} />);
+    await pickOption(screen.getAllByRole("combobox")[0], "Project");
+    fireEvent.change(screen.getByPlaceholderText("Project ID"), { target: { value: " p-other " } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+    await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ scope: "project", scope_id: "p-other" })));
+    expect(projectApi.getAll).not.toHaveBeenCalled();
+  });
+
+  it.each(["project:read", "project:read_all"])(
+    "offers a project:update holder with %s the projects by name",
+    async (permission) => {
+      permissionSet.add("project:update");
+      permissionSet.add(permission);
+      withClient(<NewReportDialog onClose={vi.fn()} />);
+      await pickOption(screen.getAllByRole("combobox")[0], "Project");
+
+      await waitFor(() => expect(projectApi.getAll).toHaveBeenCalled());
+      expect(screen.queryByPlaceholderText("Project ID")).not.toBeInTheDocument();
+    },
+  );
 
   it("forgets the picked team when the scope changes", async () => {
     withClient(<NewReportDialog onClose={vi.fn()} />);
