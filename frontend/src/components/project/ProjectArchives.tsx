@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useState, type ReactNode } from 'react'
 import { projectApi } from '@/api/projects'
 import { useProjectArchives, useRestoreArchive, useArchiveBranches } from '@/hooks/queries/use-projects'
+import { archiveFilters, NO_ARCHIVE_FILTER, type ArchiveFilterValue } from '@/hooks/queries/use-archives'
 import { useAuth } from '@/context/useAuth'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -34,7 +35,133 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import type { ArchiveFilters } from '@/types/archive'
+import type { ArchiveListItem } from '@/types/archive'
+
+export function ArchiveFilterBar({ value, onChange, children }: Readonly<{
+  value: ArchiveFilterValue
+  onChange: (patch: Partial<ArchiveFilterValue>) => void
+  children: ReactNode
+}>) {
+  const dateInput = (key: 'from' | 'to', label: string) => (
+    <div>
+      <label htmlFor={`archive-date-${key}`} className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
+      <Input
+        id={`archive-date-${key}`}
+        type="date"
+        value={value[key]}
+        onChange={(e) => onChange({ [key]: e.target.value })}
+        className="w-40"
+      />
+    </div>
+  )
+  return (
+    <div className="flex flex-wrap items-end gap-3 mb-4">
+      {children}
+      {dateInput('from', 'From')}
+      {dateInput('to', 'To')}
+      {(value.branch || value.from || value.to) && (
+        <Button variant="ghost" size="sm" onClick={() => onChange(NO_ARCHIVE_FILTER)}>
+          Clear filters
+        </Button>
+      )}
+    </div>
+  )
+}
+
+export function ArchiveEmptyState({ hint }: Readonly<{ hint: string }>) {
+  return (
+    <div className="text-center py-8 text-muted-foreground">
+      <Archive className="h-12 w-12 mx-auto mb-3 opacity-30" />
+      <p>No archived scans found.</p>
+      <p className="text-sm mt-1">{hint}</p>
+    </div>
+  )
+}
+
+export function ArchiveSummaryHead() {
+  return (
+    <>
+      <TableHead>Branch</TableHead>
+      <TableHead>Commit</TableHead>
+      <TableHead>Scan Date</TableHead>
+      <TableHead>Findings</TableHead>
+      <TableHead>Deps</TableHead>
+      <TableHead>SBOMs</TableHead>
+      <TableHead>Size</TableHead>
+    </>
+  )
+}
+
+export function ArchiveSummaryCells({ archive }: Readonly<{ archive: ArchiveListItem }>) {
+  return (
+    <>
+      <TableCell>
+        <div className="flex items-center gap-1.5">
+          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-mono text-sm">{archive.branch || '-'}</span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1.5">
+          <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-mono text-sm">
+            {archive.commit_hash ? shortCommitHash(archive.commit_hash) : '-'}
+          </span>
+        </div>
+      </TableCell>
+      <TableCell className="text-sm">
+        {archive.scan_created_at ? formatDateTime(archive.scan_created_at) : '-'}
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm">{archive.findings_count}</span>
+          {archive.critical_findings_count > 0 && (
+            <Badge variant="destructive" className="text-xs px-1.5 py-0 whitespace-nowrap">
+              {archive.critical_findings_count} C
+            </Badge>
+          )}
+          {archive.high_findings_count > 0 && (
+            <Badge variant="secondary" className="text-xs px-1.5 py-0 whitespace-nowrap bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+              {archive.high_findings_count} H
+            </Badge>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="text-sm">
+        <div className="flex items-center gap-1">
+          <Package className="h-3.5 w-3.5 text-muted-foreground" />
+          {archive.dependencies_count}
+        </div>
+      </TableCell>
+      <TableCell>
+        {archive.sbom_filenames.length > 0 ? (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-1 cursor-help">
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-sm">{archive.sbom_filenames.length}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <ul className="text-xs space-y-0.5">
+                  {archive.sbom_filenames.map((f) => (
+                    <li key={f} className="font-mono">{f}</li>
+                  ))}
+                </ul>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <span className="text-sm text-muted-foreground">-</span>
+        )}
+      </TableCell>
+      <TableCell className="text-sm">
+        {formatBytes(archive.compressed_size_bytes)}
+      </TableCell>
+    </>
+  )
+}
 
 interface ProjectArchivesProps {
   projectId: string
@@ -43,22 +170,18 @@ interface ProjectArchivesProps {
 export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
   const [page, setPage] = useState(1)
   const [restoreScanId, setRestoreScanId] = useState<string | null>(null)
-  const [branchFilter, setBranchFilter] = useState<string>('')
-  const [dateFrom, setDateFrom] = useState<string>('')
-  const [dateTo, setDateTo] = useState<string>('')
+  const [filter, setFilter] = useState(NO_ARCHIVE_FILTER)
   const size = 20
 
   const { hasPermission } = useAuth()
   const canRestore = hasPermission('archive:restore')
   const canDownload = hasPermission('archive:download')
 
-  const filters: ArchiveFilters | undefined = useMemo(() => {
-    const f: ArchiveFilters = {}
-    if (branchFilter) f.branch = branchFilter
-    if (dateFrom) f.date_from = new Date(dateFrom + 'T00:00:00').toISOString()
-    if (dateTo) f.date_to = new Date(dateTo + 'T23:59:59').toISOString()
-    return Object.keys(f).length > 0 ? f : undefined
-  }, [branchFilter, dateFrom, dateTo])
+  const filters = archiveFilters(filter)
+  const updateFilter = (patch: Partial<ArchiveFilterValue>) => {
+    setFilter((current) => ({ ...current, ...patch }))
+    setPage(1)
+  }
 
   const { data, isLoading } = useProjectArchives(projectId, page, size, filters)
   const { data: branches } = useArchiveBranches(projectId)
@@ -89,15 +212,6 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
     `${scanId}.json.gz`,
     "Download failed",
   )
-
-  const clearFilters = () => {
-    setBranchFilter('')
-    setDateFrom('')
-    setDateTo('')
-    setPage(1)
-  }
-
-  const hasActiveFilters = branchFilter || dateFrom || dateTo
 
   if (isLoading) {
     return (
@@ -136,10 +250,10 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap items-end gap-3 mb-4">
+          <ArchiveFilterBar value={filter} onChange={updateFilter}>
             <div className="w-48">
               <label htmlFor="archive-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>
-              <Select value={branchFilter} onValueChange={(v) => { setBranchFilter(v === '_all' ? '' : v); setPage(1) }}>
+              <Select value={filter.branch} onValueChange={(v) => updateFilter({ branch: v === '_all' ? '' : v })}>
                 <SelectTrigger id="archive-branch-filter">
                   <SelectValue placeholder="All branches" />
                 </SelectTrigger>
@@ -151,125 +265,25 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <label htmlFor="archive-date-from" className="text-xs font-medium text-muted-foreground mb-1 block">From</label>
-              <Input
-                id="archive-date-from"
-                type="date"
-                value={dateFrom}
-                onChange={(e) => { setDateFrom(e.target.value); setPage(1) }}
-                className="w-40"
-              />
-            </div>
-            <div>
-              <label htmlFor="archive-date-to" className="text-xs font-medium text-muted-foreground mb-1 block">To</label>
-              <Input
-                id="archive-date-to"
-                type="date"
-                value={dateTo}
-                onChange={(e) => { setDateTo(e.target.value); setPage(1) }}
-                className="w-40"
-              />
-            </div>
-            {hasActiveFilters && (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                Clear filters
-              </Button>
-            )}
-          </div>
+          </ArchiveFilterBar>
 
           {archives.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Archive className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p>No archived scans found.</p>
-              <p className="text-sm mt-1">
-                {hasActiveFilters
-                  ? 'Try adjusting your filters.'
-                  : 'Scans will appear here when data retention archiving is enabled.'}
-              </p>
-            </div>
+            <ArchiveEmptyState
+              hint={filters ? 'Try adjusting your filters.' : 'Scans will appear here when data retention archiving is enabled.'}
+            />
           ) : (
             <>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Branch</TableHead>
-                    <TableHead>Commit</TableHead>
-                    <TableHead>Scan Date</TableHead>
-                    <TableHead>Findings</TableHead>
-                    <TableHead>Deps</TableHead>
-                    <TableHead>SBOMs</TableHead>
-                    <TableHead>Size</TableHead>
+                    <ArchiveSummaryHead />
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {archives.map((archive) => (
                     <TableRow key={archive.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="font-mono text-sm">{archive.branch || '-'}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="font-mono text-sm">
-                            {archive.commit_hash ? shortCommitHash(archive.commit_hash) : '-'}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {archive.scan_created_at ? formatDateTime(archive.scan_created_at) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm">{archive.findings_count}</span>
-                          {archive.critical_findings_count > 0 && (
-                            <Badge variant="destructive" className="text-xs px-1.5 py-0 whitespace-nowrap">
-                              {archive.critical_findings_count} C
-                            </Badge>
-                          )}
-                          {archive.high_findings_count > 0 && (
-                            <Badge variant="secondary" className="text-xs px-1.5 py-0 whitespace-nowrap bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-                              {archive.high_findings_count} H
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        <div className="flex items-center gap-1">
-                          <Package className="h-3.5 w-3.5 text-muted-foreground" />
-                          {archive.dependencies_count}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {archive.sbom_filenames.length > 0 ? (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <div className="flex items-center gap-1 cursor-help">
-                                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                                  <span className="text-sm">{archive.sbom_filenames.length}</span>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <ul className="text-xs space-y-0.5">
-                                  {archive.sbom_filenames.map((f) => (
-                                    <li key={f} className="font-mono">{f}</li>
-                                  ))}
-                                </ul>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {formatBytes(archive.compressed_size_bytes)}
-                      </TableCell>
+                      <ArchiveSummaryCells archive={archive} />
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           {canDownload && (
