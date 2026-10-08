@@ -67,27 +67,10 @@ function emptyRule(): CryptoRule {
   };
 }
 
-function arraysEqual<T>(a: T[], b: T[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((v, i) => v === b[i]);
-}
-
+// Every key counts: the API also returns the certificate thresholds this editor does not show.
 function rulesEqual(a: CryptoRule, b: CryptoRule): boolean {
-  return (
-    a.name === b.name
-    && a.description === b.description
-    && a.finding_type === b.finding_type
-    && a.default_severity === b.default_severity
-    && a.match_primitive === b.match_primitive
-    && a.match_min_key_size_bits === b.match_min_key_size_bits
-    && a.quantum_vulnerable === b.quantum_vulnerable
-    && a.enabled === b.enabled
-    && a.source === b.source
-    && arraysEqual(a.match_name_patterns, b.match_name_patterns)
-    && arraysEqual(a.match_curves, b.match_curves)
-    && arraysEqual(a.match_protocol_versions, b.match_protocol_versions)
-    && arraysEqual(a.references, b.references)
-  );
+  const keys = Object.keys({ ...a, ...b }) as (keyof CryptoRule)[];
+  return keys.every((k) => JSON.stringify(a[k]) === JSON.stringify(b[k]));
 }
 
 function getRuleStatus(rule: CryptoRule, systemMap: Map<string, CryptoRule>): RuleStatus {

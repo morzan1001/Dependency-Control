@@ -78,3 +78,24 @@ describe("CryptoPolicyEditor add rule", () => {
     expect(onSave.mock.calls[0][0]).toEqual([expect.objectContaining({ rule_id: "custom-rc4", enabled: false })]);
   });
 });
+
+describe("CryptoPolicyEditor override detection", () => {
+  it("keeps an override that differs from the system rule only in a certificate threshold", async () => {
+    const sys = {
+      ...systemRule(),
+      rule_id: "sys-cert-expiring",
+      name: "Certificate expiring soon",
+      finding_type: "crypto_cert_expiring_soon" as const,
+      expiry_high_days: 30,
+    };
+    const override = { ...sys, expiry_high_days: 90 };
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    render(<CryptoPolicyEditor initialRules={[override]} systemRules={[sys]} onSave={onSave} />);
+
+    expect(screen.getByText("Overridden")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith([override]);
+  });
+});
