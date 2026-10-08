@@ -9,45 +9,15 @@ from app.services.sbom_parser import merge_duplicate_dependencies
 
 _DEP_CHUNK_SIZE = 500
 _FREE_TEXT_MAX_CHARS = 2048
-
-
-def _clip(text: str | None) -> str | None:
-    return text[:_FREE_TEXT_MAX_CHARS] if text else text
+_CLIP = ("license", "license_url", "description", "author", "publisher", "homepage", "repository_url", "download_url")
 
 
 def _parsed_dep_to_dependency(
     parsed_dep: ParsedDependency, project_id: str, scan_id: str, written_at: datetime
 ) -> Dependency:
-    return Dependency(
-        project_id=project_id,
-        scan_id=scan_id,
-        created_at=written_at,
-        name=parsed_dep.name,
-        version=parsed_dep.version,
-        purl=parsed_dep.purl,
-        type=parsed_dep.type,
-        license=_clip(parsed_dep.license),
-        license_url=_clip(parsed_dep.license_url),
-        scope=parsed_dep.scope,
-        direct=parsed_dep.direct,
-        direct_inferred=parsed_dep.direct_inferred,
-        parent_components=parsed_dep.parent_components,
-        source_type=parsed_dep.source_type,
-        source_target=parsed_dep.source_target,
-        layer_digest=parsed_dep.layer_digest,
-        found_by=parsed_dep.found_by,
-        locations=parsed_dep.locations,
-        cpes=parsed_dep.cpes,
-        description=_clip(parsed_dep.description),
-        author=_clip(parsed_dep.author),
-        publisher=_clip(parsed_dep.publisher),
-        group=parsed_dep.group,
-        homepage=_clip(parsed_dep.homepage),
-        repository_url=_clip(parsed_dep.repository_url),
-        download_url=_clip(parsed_dep.download_url),
-        hashes=parsed_dep.hashes,
-        properties=parsed_dep.properties,
-    )
+    fields = parsed_dep.model_dump()
+    fields.update({name: text[:_FREE_TEXT_MAX_CHARS] for name in _CLIP if (text := fields[name])})
+    return Dependency(**fields, project_id=project_id, scan_id=scan_id, created_at=written_at)
 
 
 async def store_scan_dependencies(

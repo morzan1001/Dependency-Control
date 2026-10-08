@@ -2726,6 +2726,38 @@ class TestCycloneDXParentRefs:
         assert nodes["express"].child_ids == [nodes["body-parser"].id]
         assert graph.roots == [nodes["express"].id]
 
+    def test_a_stored_dependency_keeps_every_parsed_field_and_clips_the_free_text(self):
+        from app.services.dependency_store import _parsed_dep_to_dependency
+
+        long_text = "x" * 3000
+        clipped = ("license", "license_url", "description", "author", "publisher", "homepage", "repository_url")
+        parsed = ParsedDependency(
+            name="lib",
+            version="1.0",
+            purl="pkg:npm/lib@1.0",
+            type="npm",
+            scope="required",
+            direct=True,
+            parent_components=["pkg:npm/app@1.0"],
+            source_type="application",
+            source_target="app",
+            layer_digest="sha256:abc",
+            found_by="javascript-lock-cataloger",
+            locations=["package-lock.json"],
+            cpes=["cpe:2.3:a:lib:lib:1.0:*:*:*:*:*:*:*"],
+            group="@scope",
+            hashes={"sha256": "a" * 64},
+            properties={"aquasecurity:trivy:SrcName": "lib"},
+            download_url=long_text,
+            **dict.fromkeys(clipped, long_text),
+        )
+        now = datetime.now(timezone.utc)
+
+        stored = _parsed_dep_to_dependency(parsed, "p", "s", now).model_dump(exclude={"id"})
+
+        expected = {**parsed.model_dump(), **dict.fromkeys((*clipped, "download_url"), "x" * 2048)}
+        assert stored == {**expected, "project_id": "p", "scan_id": "s", "created_at": now, "license_category": None}
+
     def test_chain_and_cycle_analysis_read_a_syft_cyclonedx_graph(self):
         import itertools
 
