@@ -636,7 +636,7 @@ export function AnalyticsDependencyModal({
                 <TableBody>
                   {sortedFindings.map((finding) => (
                     <TableRow
-                      key={`${finding.id}-${finding.project_id}-${finding.scan_id}`}
+                      key={`${finding.type}:${finding.id}:${finding.version}:${finding.scan_id}`}
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => {
                         setSelectedFinding(finding)
@@ -688,7 +688,8 @@ export function AnalyticsDependencyModal({
             projectId={selectedFinding.project_id}
             scanId={selectedFinding.scan_id}
             onSelectFinding={(id) => {
-              const found = resolveRelatedFindingInRows(sortedFindings, id);
+              const sameScan = sortedFindings.filter((f) => f.scan_id === selectedFinding.scan_id)
+              const found = resolveRelatedFindingInRows(sameScan, id, selectedFinding)
               if (found) {
                 setSelectedFinding(found);
               }

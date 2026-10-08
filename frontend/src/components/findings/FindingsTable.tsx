@@ -359,7 +359,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                             return (
                                 <TableRow
                                     onClick={() => setSelectedFinding(finding)}
-                                    key={finding.id}
+                                    key={`${finding.type}:${finding.id}:${finding.component}:${finding.version}`}
                                     className={rowClass}
                                 >
                                     <TableCell className="p-4 align-middle">
@@ -437,7 +437,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     onClose={closeSelectedFinding}
                     onSelectFinding={async (id) => {
                         // Prefer a match among the already-loaded rows.
-                        const inRows = resolveRelatedFindingInRows(allRows, id)
+                        const inRows = resolveRelatedFindingInRows(allRows, id, selectedFinding)
                         if (inRows) {
                             setSelectedFinding(inRows)
                             return
@@ -445,7 +445,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                         // If not present locally (e.g. switching between
                         // quality/security tabs), fall back to the API.
                         try {
-                            const outcome = await fetchRelatedFinding(scanId, id)
+                            const outcome = await fetchRelatedFinding(scanId, id, selectedFinding)
                             if (outcome.status === 'found') setSelectedFinding(outcome.finding)
                             else reportUnresolved(outcome)
                         } catch (err) {
