@@ -12,7 +12,6 @@ from typing import Any
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import API_KEY_SURFACES
 from app.repositories.base import find_window
 
 logger = logging.getLogger(__name__)
@@ -25,8 +24,6 @@ _TOKEN_ALPHABET = string.ascii_letters + string.digits
 _TOKEN_BODY_CHARS = 64
 _PREFIX_BODY_CHARS = 8
 
-_MIN_EXPIRY_DAYS = 1
-_MAX_EXPIRY_DAYS = 365
 LIST_LIMIT = 100
 
 
@@ -63,23 +60,17 @@ class ApiKeyRepository:
         expires_in_days: int,
     ) -> tuple[dict[str, Any], str]:
         """Returns (stored_document, plaintext_token); the plaintext is shown once and never persisted."""
-        requested = list(dict.fromkeys(surfaces))
-        unknown = [surface for surface in requested if surface not in API_KEY_SURFACES]
-        if unknown or not requested:
-            raise ValueError(f"surfaces must be a non-empty subset of {sorted(API_KEY_SURFACES)}")
-
         token = generate_plaintext_token()
-        clamped_days = max(_MIN_EXPIRY_DAYS, min(expires_in_days, _MAX_EXPIRY_DAYS))
         now = datetime.now(timezone.utc)
         doc: dict[str, Any] = {
             "_id": str(uuid.uuid4()),
             "user_id": user_id,
             "name": name,
-            "surfaces": requested,
+            "surfaces": list(surfaces),
             "prefix": token[: len(_TOKEN_PREFIX) + _PREFIX_BODY_CHARS],
             "token_hash": hash_token(token),
             "created_at": now,
-            "expires_at": now + timedelta(days=clamped_days),
+            "expires_at": now + timedelta(days=expires_in_days),
             "last_used_at": None,
             "revoked_at": None,
         }

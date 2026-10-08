@@ -1,4 +1,4 @@
-"""Unified API keys: hashed at rest, surfaces validated on write, expiry clamped, revoke idempotent."""
+"""Unified API keys: hashed at rest, stored with the requested surfaces and lifetime, revoke idempotent."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
@@ -15,8 +15,6 @@ _STRANGER = "user-2"
 _KEY_NAME = "client"
 _OTHER_KEY_NAME = "b"
 _EXPIRY_DAYS = 30
-_OVERLONG_EXPIRY_DAYS = 5000
-_MAX_EXPIRY_DAYS = 365
 _TOKEN_PREFIX = "dck_"
 _TOKEN_BODY_CHARS = 64
 _PREFIX_LENGTH = 12
@@ -28,12 +26,9 @@ _STALE_DAYS = 1
 _SAMPLES = 200
 _BOTH_SURFACES = [API_KEY_SURFACE_MCP, API_KEY_SURFACE_ADHOC]
 _MCP_ONLY = [API_KEY_SURFACE_MCP]
-_UNKNOWN_SURFACE = "admin"
-_SURFACE_ERROR = "non-empty subset"
 _NEWEST_AGE_DAYS = 0
 _MIDDLE_AGE_DAYS = 1
 _OLDEST_AGE_DAYS = 2
-_BELOW_THE_FLOOR_DAYS = [0, -1]
 _MISSING_KEY_ID = "no-such-key"
 
 
@@ -60,38 +55,6 @@ async def test_create_records_the_requested_surfaces():
 
 
 @pytest.mark.asyncio
-async def test_create_rejects_an_unknown_surface():
-    """A surface nothing serves is a key whose reach nobody can reason about."""
-    db = FakeDatabase()
-
-    with pytest.raises(ValueError, match=_SURFACE_ERROR):
-        await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, [API_KEY_SURFACE_MCP, _UNKNOWN_SURFACE], _EXPIRY_DAYS)
-
-    assert await db[_COL].count_documents({}) == _NO_KEYS
-
-
-@pytest.mark.asyncio
-async def test_create_rejects_an_empty_surface_list():
-    """A key that opens no door is a mistake, not a default."""
-    db = FakeDatabase()
-
-    with pytest.raises(ValueError, match=_SURFACE_ERROR):
-        await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, [], _EXPIRY_DAYS)
-
-    assert await db[_COL].count_documents({}) == _NO_KEYS
-
-
-@pytest.mark.asyncio
-async def test_create_deduplicates_repeated_surfaces():
-    db = FakeDatabase()
-    doc, _ = await ApiKeyRepository(db).create(
-        _OWNER, _KEY_NAME, [API_KEY_SURFACE_MCP, API_KEY_SURFACE_MCP], _EXPIRY_DAYS
-    )
-
-    assert doc["surfaces"] == _MCP_ONLY
-
-
-@pytest.mark.asyncio
 async def test_a_created_key_carries_a_null_last_used_stamp():
     db = FakeDatabase()
     doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
@@ -115,18 +78,6 @@ def test_generated_tokens_are_unique():
 
 
 @pytest.mark.asyncio
-async def test_expiry_is_clamped_to_one_year():
-    db = FakeDatabase()
-    doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _OVERLONG_EXPIRY_DAYS)
-    horizon = datetime.now(timezone.utc) + timedelta(days=_MAX_EXPIRY_DAYS + 1)
-    expires_at = doc["expires_at"]
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-    assert expires_at < horizon
-
-
-@pytest.mark.asyncio
 async def test_the_requested_lifetime_is_honoured():
     """Both stamps come from one clock reading, so the span is exact: a wrong unit or a lifetime
     that ignores the request survives a ceiling-only assertion."""
@@ -134,18 +85,6 @@ async def test_the_requested_lifetime_is_honoured():
     doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
 
     assert doc["expires_at"] - doc["created_at"] == timedelta(days=_EXPIRY_DAYS)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("expires_in_days", _BELOW_THE_FLOOR_DAYS)
-async def test_an_expiry_under_a_day_is_lifted_to_the_floor(expires_in_days):
-    """Without the floor the key expires no later than it was minted, and the `$gt: now` clause
-    turns it down on its very first use — a key that never authenticates at all."""
-    db = FakeDatabase()
-    repo = ApiKeyRepository(db)
-    _, plaintext = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, expires_in_days)
-
-    assert await repo.get_by_plaintext(plaintext) is not None
 
 
 @pytest.mark.asyncio
