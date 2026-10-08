@@ -8,8 +8,10 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
+    APP_PACKAGE_TYPES,
     DETAILS_KEY_IN_KEV,
     MAX_RESCAN_HOPS,
+    OS_PACKAGE_TYPES,
     REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
     REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO,
     REACHABILITY_CONFIDENCE_NOT_USED,
@@ -51,9 +53,9 @@ _LOCK_TTL_SECONDS = 600
 # An analysis in flight replaces the findings, so it applies the callgraphs itself once final.
 _REQUESTED = {"reachability_pending": True, "status": {"$nin": SCAN_ACTIVE_STATUSES}}
 
-# Purl type -> the callgraph language(s) that can analyze it. Any other ecosystem
-# (cargo, nuget, rpm, deb, ...) has no callgraph producer.
+# Purl type -> the callgraph language(s) that can analyze it; another known ecosystem has no producer.
 _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset[str]] = {
+    **dict.fromkeys(OS_PACKAGE_TYPES | APP_PACKAGE_TYPES, frozenset()),
     "pypi": frozenset({"python"}),
     "npm": frozenset({"javascript", "typescript"}),
     "go": frozenset({"go"}),
@@ -67,19 +69,13 @@ _NON_FALSIFYING_LANGUAGES = JVM_LANGUAGES
 ComponentLanguages = Mapping[str, list[tuple[str, frozenset[str], bool]]]
 
 
-def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset[str]:
-    """Callgraph language(s) that can analyze a package, derived from its
-    dependency ecosystem/type or (fallback) its purl. Empty when undeterminable
-    or unsupported."""
-    if ecosystem:
-        langs = _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES.get(ecosystem.lower())
-        if langs:
-            return langs
-    if purl:
-        purl_type = get_purl_type(purl)
-        if purl_type:
-            return _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES.get(purl_type, frozenset())
-    return frozenset()
+def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset[str] | None:
+    """Callgraph language(s) that can analyze a package, from its dependency type or else its purl;
+    empty for an ecosystem no producer reads, None when the ecosystem is unknown."""
+    for kind in ((ecosystem or "").lower(), get_purl_type(purl)):
+        if kind in _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES:
+            return _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES[kind]
+    return None
 
 
 def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, list[tuple[str, frozenset[str], bool]]]:
@@ -95,7 +91,7 @@ def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, list[
         if not name:
             continue
         langs = _ecosystem_languages(dep.get("type"), dep.get("purl"))
-        if langs:
+        if langs is not None:
             key = (str(dep.get("version") or ""), langs)
             transitive = dep.get("direct") is False and dep.get("direct_inferred") is False
             candidates = out.setdefault(name, {})
@@ -277,10 +273,12 @@ def _unknown_verdict(
     transitive: bool,
 ) -> str:
     """Why absence from the analyzed callgraphs yields no verdict."""
-    if not language_sets:
+    if not any(language_sets):
         return f"Package '{component}' is in an ecosystem no callgraph tool supports; reachability unknown."
 
-    uncovered = next((langs for langs in language_sets if not any(p.language in langs for p in prepared_graphs)), None)
+    uncovered = next(
+        (langs for langs in language_sets if langs and not any(p.language in langs for p in prepared_graphs)), None
+    )
     if uncovered is not None:
         analyzed = ", ".join(p.language for p in prepared_graphs) or "none"
         return (
@@ -316,14 +314,16 @@ def _enrich_finding_from_callgraphs(
     prepared_graphs: list[_PreparedCallgraph],
     component_languages: ComponentLanguages,
 ) -> None:
-    """Store the verdict every graph using the package supports; absence falsifies only when a graph can falsify it."""
+    """Store the verdict every graph of the package's ecosystems supports (every graph when the inventory does not
+    list the package); absence falsifies only when a graph can falsify it."""
     component = finding["component"]
-    usages = [usage for prepared in prepared_graphs if (usage := _find_usage(prepared, component)) is not None]
+    language_sets, transitive = _candidate_languages(component_languages, component, finding.get("version"))
+    graphs = [p for p in prepared_graphs if not language_sets or any(p.language in langs for langs in language_sets)]
+    usages = [usage for prepared in graphs if (usage := _find_usage(prepared, component)) is not None]
     if usages:
         store_reachability(finding, _analyze_reachability(finding, usages))
         return
 
-    language_sets, transitive = _candidate_languages(component_languages, component, finding.get("version"))
     falsifying = [] if transitive else _falsifying_languages(component, prepared_graphs, language_sets)
     if falsifying:
         verdict = ReachabilityInfo(
