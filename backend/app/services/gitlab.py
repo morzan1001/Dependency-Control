@@ -33,7 +33,7 @@ from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.gitlab_instance import GitLabGroupOption
-from app.services.github import response_ok
+from app.services.github import cached_public_emails, response_ok
 from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -95,13 +95,6 @@ class GitLabSyncTarget(NamedTuple):
     """
 
     group: _OwningGroup | None
-    determined: bool = True
-
-
-class GitLabEmailLookup(NamedTuple):
-    """A user's public profile email; ``determined`` is False for a GitLab that would not answer."""
-
-    email: str | None
     determined: bool = True
 
 
@@ -348,42 +341,37 @@ class GitLabService:
         # An empty list is a group nobody is left in, and stays a list; only None is a failure.
         return None if members is None else [GitLabMember(**m) for m in members]
 
-    async def get_user_public_email(self, user_id: int) -> GitLabEmailLookup:
-        """The public profile email, which GitLab accepts only from the user's confirmed addresses."""
-        cache_key = self._get_cache_key(f"user_email:{user_id}")
-        # "" is the stored "no public email": a cached None reads back as a miss.
-        cached: str | None = await cache_service.get(cache_key)
-        if cached is not None:
-            return GitLabEmailLookup(cached or None)
-
+    async def _fetch_public_email(self, user_id: int) -> str | None:
+        """The profile's public email, which GitLab accepts only from confirmed addresses; "" for none, None unanswered."""
         response = await self._api_get(f"/users/{user_id}")
         if response is None:
-            return GitLabEmailLookup(None, determined=False)
-        if response.status_code == 200:
-            public_email = response.json().get("public_email")
-            email = str(public_email) if public_email else ""
-        elif response.status_code == 404:
-            email = ""
-        else:
+            return None
+        if response.status_code == 404:
+            return ""
+        if response.status_code != 200:
             logger.warning("GitLab API GET /users/%s answered %s", user_id, response.status_code)
-            return GitLabEmailLookup(None, determined=False)
-
-        await cache_service.set(cache_key, email, ttl_seconds=GITLAB_USER_EMAIL_CACHE_TTL)
-        return GitLabEmailLookup(email or None)
+            return None
+        return str(response.json().get("public_email") or "")
 
     async def _with_public_emails(self, members: list[GitLabMember]) -> list[GitLabMember] | None:
         """The members, each one listed without an email carrying its public one; None if GitLab would not say."""
-        completed: list[GitLabMember] = []
-        for member in members:
-            if member.email or member.id is None:
-                completed.append(member)
-                continue
-            lookup = await self.get_user_public_email(member.id)
-            if not lookup.determined:
-                # Written without them, the members GitLab would not describe would lose the team.
-                return None
-            completed.append(member.model_copy(update={"email": lookup.email}))
-        return completed
+        keys = {
+            member_id: self._get_cache_key(f"user_email:{member_id}")
+            for member in members
+            if not member.email and (member_id := member.id) is not None
+        }
+        emails = await cached_public_emails(
+            keys, self._fetch_public_email, self._instance_id, GITLAB_USER_EMAIL_CACHE_TTL
+        )
+        if emails is None:
+            # Written without them, the members GitLab would not describe would lose the team.
+            return None
+        return [
+            member
+            if member.email or member.id is None
+            else member.model_copy(update={"email": emails[member.id] or None})
+            for member in members
+        ]
 
     async def get_groups(self, search: str | None = None) -> list[dict[str, Any]] | None:
         """The groups this instance's token can see, to pick from when binding a team.
@@ -478,11 +466,14 @@ class GitLabService:
         user_repo: UserRepository,
     ) -> tuple[list[TeamMember], int, bool]:
         """(owners, unresolved count, any resolved), matching only verified local users, tagged with this instance."""
+        wanted = sorted({member.email for member in gitlab_members if member.email})
+        users = await user_repo.find_raw_by_verified_emails(wanted) if wanted else []
+        by_email = {str(user.get("email", "")).lower(): user for user in users}
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
         resolved_any = False
         for member in gitlab_members:
-            user = await user_repo.get_raw_by_verified_email(member.email) if member.email else None
+            user = by_email.get(member.email.lower()) if member.email else None
             if not user:
                 # No verified local account yet, or a GitLab service account/bot. Sync never
                 # creates users; a real member is added on their next sync after logging in via OIDC.

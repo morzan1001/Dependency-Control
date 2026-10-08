@@ -84,7 +84,7 @@ class TestTeamMemberSyncResolveOnly:
         service = GitLabService(make_gitlab_instance())
         existing = {"_id": "u-1", "email": "real@example.com", "username": "real"}
         user_repo = MagicMock()
-        user_repo.get_raw_by_verified_email = AsyncMock(return_value=existing)
+        user_repo.find_raw_by_verified_emails = AsyncMock(return_value=[existing])
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
         result, _, _ = asyncio.run(service._build_team_members(members, user_repo))
@@ -96,7 +96,7 @@ class TestTeamMemberSyncResolveOnly:
         # GitLab service-account / bot: no matching local user -> skipped, NOT created.
         service = GitLabService(make_gitlab_instance())
         user_repo = MagicMock()
-        user_repo.get_raw_by_verified_email = AsyncMock(return_value=None)
+        user_repo.find_raw_by_verified_emails = AsyncMock(return_value=[])
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="group_875_bot_f4597604b42b729d0de22d01e5126164", access_level=40)]
         result, unresolved, resolved_any = asyncio.run(service._build_team_members(members, user_repo))
@@ -626,9 +626,10 @@ class TestTeamSyncGroupMembers:
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
 
-            # Users found by email - use _id as key (raw MongoDB format)
-            user_doc = {"_id": "user-id", "username": "test"}
-            users_coll = create_mock_collection(find_one=user_doc)
+            emails = ("dev@test.com", "maint@test.com", "owner@test.com")
+            users_coll = create_mock_collection(
+                find=[{"_id": "user-id", "username": "test", "email": e} for e in emails]
+            )
             teams_coll = create_mock_collection(find_one=None)
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
@@ -665,8 +666,7 @@ class TestTeamSyncGroupMembers:
             mock_members.return_value = members
             mock_resolve.return_value = GitLabGroupLookup(reachable=True, group={"id": 10})
 
-            user_doc = {"_id": "uid", "username": "dev"}
-            users_coll = create_mock_collection(find_one=user_doc)
+            users_coll = create_mock_collection(find=[{"_id": "uid", "username": "dev", "email": "dev@test.com"}])
             teams_coll = create_mock_collection(find_one=None)
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
@@ -703,8 +703,7 @@ class TestTeamSyncGroupMembers:
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
 
-            user_doc = {"_id": "uid", "username": "dev"}
-            users_coll = create_mock_collection(find_one=user_doc)
+            users_coll = create_mock_collection(find=[{"_id": "uid", "username": "dev", "email": "dev@test.com"}])
             teams_coll = create_mock_collection(find_one=existing_team)
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
@@ -993,7 +992,7 @@ class TestMemberResolution:
 
         team_repo, user_repo = self._resolved(gitlab_instance_a, member, user_doc={"_id": "u-ada"})
 
-        user_repo.get_raw_by_verified_email.assert_awaited_once_with("ada@corp.com")
+        user_repo.find_raw_by_verified_emails.assert_awaited_once_with(["ada@corp.com"])
         assert [m.user_id for m in team_repo.create_bound.await_args.args[0].members] == ["u-ada"]
 
     def test_a_member_no_verified_account_holds_is_skipped(self, gitlab_instance_a):

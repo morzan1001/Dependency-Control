@@ -206,6 +206,7 @@ def gitlab_cache(monkeypatch):
     cache._pool = object()
     cache._available = True
     monkeypatch.setattr("app.services.gitlab.cache_service", cache)
+    monkeypatch.setattr("app.services.github.cache_service", cache)
     return cache
 
 
@@ -286,16 +287,46 @@ class TestGitLabTeamSyncWithoutListedEmails:
         assert await self._member_ids(db) == ["u-old"]
 
     @pytest.mark.asyncio
+    async def test_a_sync_reads_the_cache_and_the_accounts_once_whatever_the_member_count(
+        self, gitlab_cache, monkeypatch
+    ):
+        db = await _db(_VERIFIED)
+        member_ids = range(1, 21)
+        listing = [GitLabMember(id=i, username=f"m{i}-gl", access_level=30) for i in member_ids]
+        profiles = {f"/users/{i}": _answer(200, {"id": i, "public_email": f"m{i}@corp.com"}) for i in member_ids}
+        reads: list[str] = []
+
+        def counted(name, read):
+            def spy(*args, **kwargs):
+                reads.append(name)
+                return read(*args, **kwargs)
+
+            return spy
+
+        for target, name, method in (
+            (gitlab_cache, "cache", "get"),
+            (gitlab_cache, "cache", "mget"),
+            (db.users, "users", "find_one"),
+            (db.users, "users", "find"),
+        ):
+            monkeypatch.setattr(target, method, counted(name, getattr(target, method)))
+
+        await self._sync(db, listing, profiles)
+
+        assert sorted(reads) == ["cache", "users"]
+
+    @pytest.mark.asyncio
     async def test_a_profile_answer_is_cached_and_a_refusal_is_not(self):
         service = GitLabService(make_gitlab_instance(id="inst-1"))
+        listing = [GitLabMember(id=7, username="ada-gl", access_level=30)]
         answers = [_answer(429), _answer(200, {"id": 7, "public_email": "ada@corp.com"})]
         with patch.object(service, "_api_get", new=AsyncMock(side_effect=answers)) as read:
-            refused = await service.get_user_public_email(7)
-            answered = await service.get_user_public_email(7)
-            cached = await service.get_user_public_email(7)
+            refused = await service._with_public_emails(listing)
+            answered = await service._with_public_emails(listing)
+            cached = await service._with_public_emails(listing)
 
-        assert refused.determined is False
-        assert answered.email == cached.email == "ada@corp.com"
+        assert refused is None
+        assert answered[0].email == cached[0].email == "ada@corp.com"
         assert read.await_count == len(answers)
 
     @pytest.mark.asyncio
@@ -308,7 +339,7 @@ class TestGitLabTeamSyncWithoutListedEmails:
         service = GitLabService(make_gitlab_instance(id="inst-1"))
         answer = _answer(200, {"id": 7, "public_email": public_email})
         with patch.object(service, "_api_get", new=AsyncMock(return_value=answer)):
-            await service.get_user_public_email(7)
+            await service._with_public_emails([GitLabMember(id=7, username="ada-gl", access_level=30)])
 
         key = gitlab_cache._make_key(service._get_cache_key("user_email:7"))
         assert await gitlab_cache._client.ttl(key) >= members / answers_per_window * window_seconds

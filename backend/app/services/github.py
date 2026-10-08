@@ -87,6 +87,30 @@ def _org_walk_gate(instance_id: str) -> asyncio.Semaphore:
     return gates.setdefault(instance_id, asyncio.Semaphore(_GITHUB_ORG_WALK_CONCURRENCY))
 
 
+async def cached_public_emails[K](
+    cache_keys: dict[K, str], fetch: Callable[[K], Awaitable[str | None]], instance_id: str, ttl_seconds: int
+) -> dict[K, str] | None:
+    """Key -> public email ("" for none) in one cache read; None once a fetch was refused, cancelling those queued."""
+    cached = await cache_service.mget(list(cache_keys.values()))
+    emails = {key: value for key, cache_key in cache_keys.items() if isinstance(value := cached.get(cache_key), str)}
+    refused = False
+
+    async def fetch_one(key: K) -> str | None:
+        nonlocal refused
+        async with _org_walk_gate(instance_id):
+            if refused:
+                return None
+            email = await fetch(key)
+        refused = refused or email is None
+        return email
+
+    missing = [key for key in cache_keys if key not in emails]
+    fetched = dict(zip(missing, await asyncio.gather(*(fetch_one(key) for key in missing)), strict=True))
+    answered = {key: email for key, email in fetched.items() if email is not None}
+    await cache_service.mset({cache_keys[key]: email for key, email in answered.items()}, ttl_seconds)
+    return None if refused else {**emails, **answered}
+
+
 def response_ok(provider: str, endpoint: str, response: httpx.Response) -> bool:
     """True for 200. A rejected read must not be mistaken for an empty one, so a non-200 is logged here."""
     if response.status_code == 200:
@@ -614,26 +638,11 @@ class GitHubService:
         return str(_json_document(response).get("email") or "")
 
     async def _public_emails(self, logins: list[str]) -> dict[str, str] | None:
-        """Login -> public email ("" for none); None once GitHub refused one, which cancels the reads still queued."""
+        """Login -> public email ("" for none); None once GitHub refused one."""
         keys = {login: self._get_cache_key(f"user_email:{login}") for login in logins}
-        cached = await cache_service.mget(list(keys.values()))
-        emails = {login: value for login, key in keys.items() if isinstance(value := cached.get(key), str)}
-        refused = False
-
-        async def fetch(login: str) -> str | None:
-            nonlocal refused
-            async with _org_walk_gate(self._instance_id):
-                if refused:
-                    return None
-                email = await self._fetch_public_email(login)
-            refused = refused or email is None
-            return email
-
-        missing = [login for login in logins if login not in emails]
-        fetched = dict(zip(missing, await asyncio.gather(*(fetch(login) for login in missing)), strict=True))
-        answered = {login: email for login, email in fetched.items() if email is not None}
-        await cache_service.mset({keys[login]: email for login, email in answered.items()}, GITHUB_USER_EMAIL_CACHE_TTL)
-        return None if refused else {**emails, **answered}
+        return await cached_public_emails(
+            keys, self._fetch_public_email, self._instance_id, GITHUB_USER_EMAIL_CACHE_TTL
+        )
 
     async def _resolve_logins(self, logins: list[str], user_repo: UserRepository) -> dict[str, dict[str, Any]] | None:
         """Login -> existing local user by verified public email, never by username; None when GitHub won't say."""
