@@ -240,4 +240,39 @@ describe("AnalyticsDependencyModal findings list", () => {
     expect(screen.getByText("130")).toBeInTheDocument();
     expect(screen.getByText("Showing the 2 most severe of 130 findings.")).toBeInTheDocument();
   });
+
+  it("names a vulnerability row by its advisory, not by the package it aggregates on", () => {
+    const single = { ...finding("pkg:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-1" }] } };
+    const several = {
+      ...finding("lib:2.0", "HIGH"),
+      details: { vulnerabilities: [{ id: "CVE-2024-2" }, { id: "CVE-2024-3" }] },
+    };
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [single, several], total: 2 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    expect(screen.getByText("CVE-2024-1")).toBeInTheDocument();
+    expect(screen.getByText("Multiple Vulnerabilities")).toBeInTheDocument();
+    expect(screen.queryByText("pkg:1.0")).not.toBeInTheDocument();
+  });
+
+  it("sorts the Finding column by the advisory it shows", () => {
+    const rows = [
+      { ...finding("a:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-9" }] } },
+      { ...finding("b:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-1" }] } },
+    ];
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: rows, total: 2 },
+      isLoading: false,
+    });
+
+    renderFindings();
+    fireEvent.click(screen.getByText("Finding", { selector: "th" }));
+
+    const shown = screen.getAllByText(/^CVE-2024-/).map((cell) => cell.textContent);
+    expect(shown).toEqual(["CVE-2024-1", "CVE-2024-9"]);
+  });
 });

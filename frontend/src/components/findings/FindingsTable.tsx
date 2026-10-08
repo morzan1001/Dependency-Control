@@ -18,7 +18,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
-import { getSourceInfo, isSecretDeprioritized, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
+import { getDisplayId, getSourceInfo, isSecretDeprioritized, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
 import { toast } from 'sonner'
 import {
@@ -31,30 +31,6 @@ import {
 
 // Fixed string keys avoid the array-index-as-key anti-pattern.
 const SKELETON_ROW_KEYS = Array.from({ length: 10 }, (_, i) => `skeleton-row-${i}`)
-
-type FindingWithDetails = {
-    id: string
-    type?: string
-    details?: {
-        vulnerabilities?: ReadonlyArray<{ id?: string }>
-        quality_issues?: ReadonlyArray<{ id?: string }>
-    }
-}
-
-// Aggregated findings show "Multiple …"; a single issue shows its id; else the finding's own id.
-function getDisplayId(finding: FindingWithDetails): string | undefined {
-    const vulnCount = finding.details?.vulnerabilities?.length ?? 0
-    if (finding.type === 'vulnerability') {
-        if (vulnCount > 1) return 'Multiple Vulnerabilities'
-        if (vulnCount === 1) return finding.details?.vulnerabilities?.[0]?.id
-    }
-    const qualityCount = finding.details?.quality_issues?.length ?? 0
-    if (finding.type === 'quality') {
-        if (qualityCount > 1) return 'Multiple Quality Issues'
-        if (qualityCount === 1) return finding.details?.quality_issues?.[0]?.id
-    }
-    return finding.id
-}
 
 interface ReachabilityIndicatorProps {
     readonly reachability: NonNullable<NonNullable<Finding['details']>['reachability']>

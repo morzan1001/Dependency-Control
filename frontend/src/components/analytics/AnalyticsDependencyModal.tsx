@@ -56,7 +56,7 @@ import {
   Copy,
   Check,
 } from "lucide-react"
-import { getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { getDisplayId, getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 
 // Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
@@ -519,7 +519,7 @@ export function AnalyticsDependencyModal({
       
       switch (sortBy) {
         case 'id':
-          comparison = (a.id || '').localeCompare(b.id || '')
+          comparison = (getDisplayId(a) ?? '').localeCompare(getDisplayId(b) ?? '')
           break
         case 'type':
           comparison = (a.type || '').localeCompare(b.type || '')
@@ -640,17 +640,7 @@ export function AnalyticsDependencyModal({
                       }}
                     >
                       <TableCell className="font-mono text-xs truncate">
-                        <div className="flex items-center gap-1">
-                          {(() => {
-                            if (finding.id?.startsWith('CVE-')) {
-                              return <span className="text-destructive font-medium">{finding.id}</span>
-                            }
-                            if (finding.id?.includes('Multiple')) {
-                              return <span className="text-orange-500 font-medium">{finding.id}</span>
-                            }
-                            return <span>{finding.id || '-'}</span>
-                          })()}
-                        </div>
+                        {getDisplayId(finding) || '-'}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{finding.type}</Badge>
