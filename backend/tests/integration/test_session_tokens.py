@@ -133,7 +133,6 @@ async def test_an_exchanged_refresh_token_is_refused_and_its_successor_works(api
     assert successor.status_code == _OK
     claims = _unverified_claims(presented)
     entry = await db.token_blacklist.find_one({"_id": claims["jti"]})
-    assert entry["reason"] == "refresh_rotated"
     assert entry["expires_at"] == datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
 
 

@@ -30,7 +30,7 @@ def _create_token(
     expire: datetime,
     extra_claims: dict | None = None,
 ) -> str:
-    """Create a JWT with a jti claim (for blacklisting on logout) and optional extra claims."""
+    """Create a JWT with optional extra claims and a jti, which refresh rotation lists to spend a refresh token."""
     to_encode = {
         "exp": expire,
         # A float, because a datetime claim is encoded truncated to the second and last_logout_at is finer.

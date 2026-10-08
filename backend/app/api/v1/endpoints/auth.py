@@ -236,7 +236,7 @@ async def refresh_token(
     _ensure_email_verified(user, system_config)
     # The insert is the atomic step: of two concurrent exchanges of one token only one lists it.
     if not await TokenBlacklistRepository(db).blacklist_token(
-        claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc), reason="refresh_rotated"
+        claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc)
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_MSG_CREDENTIALS)
     return _session_tokens(user, system_config)
