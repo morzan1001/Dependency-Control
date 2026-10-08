@@ -22,7 +22,7 @@ function collectTeamEntities(obj: Record<string, unknown>, add: AddEntity): void
   for (const owner of obj.teams) {
     const ref = owner as Record<string, unknown>;
     if (typeof ref?.id === 'string' && typeof ref.name === 'string') {
-      add(ref.name, `[${ref.name}](/teams/${ref.id})`);
+      add(ref.name, `[${ref.name}](/teams)`);
     }
   }
 }

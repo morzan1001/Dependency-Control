@@ -62,7 +62,7 @@ describe('linkifyAssistantMarkdown', () => {
       }),
     ]);
     const out = linkifyAssistantMarkdown('Payments and Platform own acme-api today.', entities);
-    expect(out).toBe('[Payments](/teams/t1) and [Platform](/teams/t2) own [acme-api](/projects/p9) today.');
+    expect(out).toBe('[Payments](/teams) and [Platform](/teams) own [acme-api](/projects/p9) today.');
   });
 
   it('links a finding by the finding_id the findings search resolves, not its row uuid', () => {
