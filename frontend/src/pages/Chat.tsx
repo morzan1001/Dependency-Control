@@ -68,15 +68,16 @@ export default function Chat() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { data: conversationsData } = useConversations();
+  const { data: conversationsData, refetch: refetchConversations } = useConversations();
   const { data: conversationDetail, refetch: refetchConversation } =
     useConversation(activeConversationId);
   const createConversation = useCreateConversation();
   const deleteConversation = useDeleteConversation();
 
-  const onMessageComplete = useCallback(() => {
-    refetchConversation();
-  }, [refetchConversation]);
+  const onMessageComplete = useCallback(
+    () => Promise.all([refetchConversation(), refetchConversations()]),
+    [refetchConversation, refetchConversations],
+  );
 
   const {
     sendMessage,
@@ -84,27 +85,10 @@ export default function Chat() {
     streamingContent,
     streamingToolCalls,
     pendingUserMessage,
-    clearPendingUserMessage,
     isStreaming,
     activeToolCall,
     error,
   } = useChatStream(activeConversationId, onMessageComplete);
-
-  // Drop the optimistic user message once the persisted one arrives, so it isn't rendered twice.
-  useEffect(() => {
-    if (isStreaming || !pendingUserMessage) return;
-    const lastMsg = conversationDetail?.messages?.[conversationDetail.messages.length - 1];
-    if (lastMsg?.role === 'user' && lastMsg.content === pendingUserMessage.content) {
-      clearPendingUserMessage();
-      return;
-    }
-    if (lastMsg?.role === 'assistant') {
-      clearPendingUserMessage();
-      return;
-    }
-    const t = setTimeout(clearPendingUserMessage, 1500);
-    return () => clearTimeout(t);
-  }, [isStreaming, pendingUserMessage, conversationDetail?.messages, clearPendingUserMessage]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
