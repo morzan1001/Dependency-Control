@@ -57,6 +57,7 @@ from app.services.update_frequency import (
 from app.services.update_frequency_fold import (
     commit_coverage,
     fold_window,
+    sampled_updates,
     select_window,
     window_bars,
 )
@@ -473,6 +474,7 @@ async def _rollup_project_metrics(
         project.name,
         branch=resolved.branch,
         slowest_packages=slowest_packages,
+        recent_updates=sampled_updates(resolved.window[1:]),
         window_scan_cap=resolved.window_scan_cap,
         outdated_backlog=outdated_backlog,
     )

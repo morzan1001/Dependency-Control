@@ -27,9 +27,7 @@ from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     READY_COVERAGE_RATIO,
-    _aggregate_metrics,
     _build_slowest_packages,
-    _empty_metrics,
     classify_version_change,
     compute_trend,
     compute_update_frequency,
@@ -38,6 +36,7 @@ from app.services.update_frequency import (
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
+    summarise_window,
     window_coverage_status,
     window_cutoff,
 )
@@ -209,49 +208,17 @@ class TestComputeTrend:
         assert "Outdated" in detail
 
 
-class TestEmptyMetrics:
-    # empty metrics use "unknown" trend, not "stable"
-    def test_empty_metrics_trend_is_unknown(self):
-        m = _empty_metrics("p1", "Project One", 0, "")
-        assert m.trend_direction == "unknown"
-
-    # empty metrics have null coverage (no outdated history yet)
-    def test_empty_metrics_coverage_is_none(self):
-        m = _empty_metrics("p1", "Project One", 0, "")
-        assert m.update_coverage_pct is None
-
-
-class TestAggregateMetricsCoverage:
+class TestSummariseWindowCoverage:
     # coverage is None when nothing has ever been outdated
     def test_coverage_none_when_no_outdated(self):
-        m = _aggregate_metrics(
-            type_counter=Counter(),
-            recent_events=[],
-            bars=[_make_timeline_entry(0), _make_timeline_entry(30)],
-            ever_outdated=set(),
-            ever_resolved=set(),
-            dep_type_map={},
-            package_outdated_counts={},
-            package_latest_info={},
-            project_id="p1",
-            project_name="Project One",
-        )
+        m = summarise_window([_make_timeline_entry(0), _make_timeline_entry(30)], Counter(), set(), set(), None, None)
         assert m.update_coverage_pct is None
         assert m.total_outdated_detected == 0
         assert m.outdated_resolved == 0
 
     def test_coverage_pct_when_outdated_resolved(self):
-        m = _aggregate_metrics(
-            type_counter=Counter(),
-            recent_events=[],
-            bars=[_make_timeline_entry(0), _make_timeline_entry(30)],
-            ever_outdated={"pkg-a", "pkg-b"},
-            ever_resolved={"pkg-a"},
-            dep_type_map={},
-            package_outdated_counts={"pkg-a": 1, "pkg-b": 2},
-            package_latest_info={},
-            project_id="p1",
-            project_name="Project One",
+        m = summarise_window(
+            [_make_timeline_entry(0), _make_timeline_entry(30)], Counter(), {"pkg-a", "pkg-b"}, {"pkg-a"}, None, None
         )
         assert m.update_coverage_pct == 50.0
         assert m.total_outdated_detected == 2
@@ -1391,6 +1358,20 @@ class TestStreamingOrchestrator:
         # right number of update events (199 transitions x 5 packages).
         assert m.scan_count == 200
         assert m.total_updates == 199 * 5
+
+    @pytest.mark.asyncio
+    async def test_a_single_scan_supports_no_comparison(self):
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo([_make_scan("s1", 0)]),
+            dep_repo=FakeDepRepo({"s1": [_make_dep("s1", "pkg-a", "1.0.0")]}),
+            analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
+        )
+        assert (m.scan_count, m.branch, m.trend_direction, m.update_coverage_pct) == (1, "main", "unknown", None)
+        assert m.first_scan_date == m.last_scan_date == _BASE_SCAN_DATE.isoformat()
+        assert m.scan_timeline == []
 
     @pytest.mark.asyncio
     async def test_no_release_fetcher_yields_none_upstream_metrics(self):

@@ -6,145 +6,22 @@ import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from itertools import dropwhile, pairwise
 from typing import Any, Literal, get_args
 
 from app.core.constants import COUNTED_UPDATE_KINDS, RECENT_UPDATES_LIMIT, UpdateKind
-from app.schemas.analytics import (
-    DependencyUpdateEvent,
-    ProjectUpdateSummary,
-    ScanTimelineEntry,
-    SlowPackage,
-    UpdateFrequencyMetrics,
-)
-from app.schemas.team import TeamRef
-from app.services.release_history import UpstreamCadenceMetrics
+from app.schemas.analytics import DependencyUpdateEvent, ScanTimelineEntry
 from app.services.update_frequency import (
-    compute_trend,
+    FoldedWindow,
     dominant_ecosystem,
     fold_runs_into_bars,
-    granularity_ratio,
     same_commit_runs,
-    updates_per_month,
+    short_window,
+    summarise_window,
     window_coverage_status,
 )
 
 logger = logging.getLogger(__name__)
-
-_NOT_ENOUGH_SCANS = "Not enough scans to analyze (need at least 2)"
-
-
-@dataclass(frozen=True)
-class FoldedWindow:
-    """Everything ``UpdateFrequencyMetrics`` and ``ProjectUpdateSummary`` need, minus project identity."""
-
-    scan_count: int
-    time_range_days: float
-    first_scan_date: str
-    last_scan_date: str
-    total_updates: int
-    updates_per_scan: float
-    updates_per_month: float | None
-    patch_updates: int
-    minor_updates: int
-    major_updates: int
-    unknown_updates: int
-    downgrade_updates: int
-    granularity_ratio: dict[str, float]
-    avg_days_between_scans: float
-    total_outdated_detected: int
-    outdated_resolved: int
-    update_coverage_pct: float | None
-    trend_direction: str
-    trend_detail: str
-    dominant_ecosystem: str | None
-    scan_timeline: list[ScanTimelineEntry]
-    recent_updates: list[DependencyUpdateEvent]
-
-    def to_metrics(
-        self,
-        project_id: str,
-        project_name: str,
-        *,
-        branch: str | None = None,
-        slowest_packages: Sequence[SlowPackage] = (),
-        upstream: UpstreamCadenceMetrics | None = None,
-        window_scan_cap: int | None = None,
-        outdated_backlog: int = 0,
-    ) -> UpdateFrequencyMetrics:
-        return UpdateFrequencyMetrics(
-            project_id=project_id,
-            project_name=project_name,
-            branch=branch,
-            scan_count=self.scan_count,
-            time_range_days=self.time_range_days,
-            first_scan_date=self.first_scan_date,
-            last_scan_date=self.last_scan_date,
-            total_updates=self.total_updates,
-            updates_per_scan=self.updates_per_scan,
-            updates_per_month=self.updates_per_month,
-            patch_updates=self.patch_updates,
-            minor_updates=self.minor_updates,
-            major_updates=self.major_updates,
-            unknown_updates=self.unknown_updates,
-            downgrade_updates=self.downgrade_updates,
-            granularity_ratio=self.granularity_ratio,
-            avg_days_between_scans=self.avg_days_between_scans,
-            total_outdated_detected=self.total_outdated_detected,
-            outdated_resolved=self.outdated_resolved,
-            update_coverage_pct=self.update_coverage_pct,
-            trend_direction=self.trend_direction,
-            trend_detail=self.trend_detail,
-            dominant_ecosystem=self.dominant_ecosystem,
-            window_scan_cap=window_scan_cap,
-            outdated_backlog=outdated_backlog,
-            scan_timeline=self.scan_timeline,
-            slowest_packages=list(slowest_packages),
-            recent_updates=self.recent_updates,
-            upstream_releases_last_12m_median=(upstream.upstream_releases_last_12m_median if upstream else None),
-            upstream_days_between_releases_median=(
-                upstream.upstream_days_between_releases_median if upstream else None
-            ),
-            upstream_days_since_latest_release_median=(
-                upstream.upstream_days_since_latest_release_median if upstream else None
-            ),
-            adoption_latency_days_median=(upstream.adoption_latency_days_median if upstream else None),
-        )
-
-    def to_summary(
-        self,
-        project_id: str,
-        project_name: str,
-        teams: list[TeamRef] | None = None,
-        *,
-        branch: str | None = None,
-        window_days: int,
-        data_status: Literal["ready", "partial"] = "ready",
-        window_scan_cap: int | None = None,
-    ) -> ProjectUpdateSummary:
-        """A row carrying the folded numbers.
-
-        ``data_status`` is the caller's verdict from ``window_coverage_status``:
-        the fold knows what it summed, not how many scans the window really held.
-        """
-        return ProjectUpdateSummary(
-            project_id=project_id,
-            project_name=project_name,
-            teams=teams or [],
-            data_status=data_status,
-            branch=branch,
-            window_days=window_days,
-            scan_count=self.scan_count,
-            updates_per_month=self.updates_per_month,
-            update_coverage_pct=self.update_coverage_pct,
-            patch_ratio=self.granularity_ratio.get("patch", 0.0),
-            trend_direction=self.trend_direction,
-            total_updates=self.total_updates,
-            total_outdated=self.total_outdated_detected,
-            last_scan_date=self.last_scan_date,
-            window_scan_cap=window_scan_cap,
-        )
 
 
 def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -240,7 +117,7 @@ def fold_window(
     per_scan.extend(_timeline_entry(delta, baseline=False) for delta in window[1:])
     timeline = fold_runs_into_bars(per_scan, [delta.get("commit_hash") for delta in window])
     if len(timeline) < 2:
-        return _short_window(timeline)
+        return short_window(timeline)
 
     kinds: Counter[str] = Counter()
     for delta in window[1:]:
@@ -249,42 +126,8 @@ def fold_window(
             kinds[kind] += int(updates.get(kind, 0))
 
     ever_outdated, ever_resolved = _outdated_movement(window, baseline_outdated)
-
-    total_updates = sum(kinds[kind] for kind in COUNTED_UPDATE_KINDS)
-    num_intervals = len(timeline) - 1
-
-    first_date = datetime.fromisoformat(timeline[0].date)
-    last_date = datetime.fromisoformat(timeline[-1].date)
-    raw_range_days = (last_date - first_date).total_seconds() / 86400.0
-
-    resolved_count = len(ever_outdated & ever_resolved)
-    trend_direction, trend_detail = compute_trend(timeline)
-
-    return FoldedWindow(
-        scan_count=len(timeline),
-        # Floored at one day so the rendered span never reads as zero.
-        time_range_days=round(max(1.0, raw_range_days), 2),
-        first_scan_date=first_date.isoformat(),
-        last_scan_date=last_date.isoformat(),
-        total_updates=total_updates,
-        updates_per_scan=round(total_updates / num_intervals, 2),
-        updates_per_month=updates_per_month(total_updates, window_days),
-        patch_updates=kinds["patch"],
-        minor_updates=kinds["minor"],
-        major_updates=kinds["major"],
-        unknown_updates=kinds["unknown"],
-        downgrade_updates=kinds["downgrade"],
-        granularity_ratio=granularity_ratio(kinds, total_updates),
-        # Cadence reports the real average interval, not the floored range.
-        avg_days_between_scans=round(raw_range_days / num_intervals, 1),
-        total_outdated_detected=len(ever_outdated),
-        outdated_resolved=resolved_count,
-        update_coverage_pct=(round(resolved_count / len(ever_outdated) * 100, 1) if ever_outdated else None),
-        trend_direction=trend_direction,
-        trend_detail=trend_detail,
-        dominant_ecosystem=dominant_ecosystem(window[-1].get("eco") or {}),
-        scan_timeline=timeline,
-        recent_updates=_recent_updates(window[1:]),
+    return summarise_window(
+        timeline, kinds, ever_outdated, ever_resolved, window_days, dominant_ecosystem(window[-1].get("eco") or {})
     )
 
 
@@ -338,35 +181,6 @@ def _outdated_movement(
     return ever_outdated, ever_resolved
 
 
-def _short_window(bars: Sequence[ScanTimelineEntry]) -> FoldedWindow:
-    """A window with fewer than two bars supports no comparison at all."""
-    scan_date = bars[0].date if bars else ""
-    return FoldedWindow(
-        scan_count=len(bars),
-        time_range_days=0.0,
-        first_scan_date=scan_date,
-        last_scan_date=scan_date,
-        total_updates=0,
-        updates_per_scan=0.0,
-        updates_per_month=None,
-        patch_updates=0,
-        minor_updates=0,
-        major_updates=0,
-        unknown_updates=0,
-        downgrade_updates=0,
-        granularity_ratio={"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0},
-        avg_days_between_scans=0.0,
-        total_outdated_detected=0,
-        outdated_resolved=0,
-        update_coverage_pct=None,
-        trend_direction="unknown",
-        trend_detail=_NOT_ENOUGH_SCANS,
-        dominant_ecosystem=None,
-        scan_timeline=[],
-        recent_updates=[],
-    )
-
-
 def _timeline_entry(delta: dict[str, Any], *, baseline: bool) -> ScanTimelineEntry:
     updates: dict[str, Any] = {} if baseline else (delta.get("updates") or {})
     counts = {kind: int(updates.get(kind, 0)) for kind in COUNTED_UPDATE_KINDS}
@@ -384,8 +198,8 @@ def _timeline_entry(delta: dict[str, Any], *, baseline: bool) -> ScanTimelineEnt
     )
 
 
-def _recent_updates(deltas: Sequence[dict[str, Any]]) -> list[DependencyUpdateEvent]:
-    """Newest-first update events drawn from the per-scan samples."""
+def sampled_updates(deltas: Sequence[dict[str, Any]]) -> list[DependencyUpdateEvent]:
+    """Newest-first update events drawn from the per-scan samples of the deltas after a window's anchor."""
     events: list[DependencyUpdateEvent] = []
     for delta in reversed(deltas):
         prev_created_at = delta.get("prev_created_at")

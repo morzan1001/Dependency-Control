@@ -10,10 +10,11 @@ from app.schemas.analytics import ScanTimelineEntry
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import DAYS_PER_MONTH, compute_trend
+from app.services.update_frequency import FoldedWindow
 from app.services.update_frequency_fold import (
-    FoldedWindow,
     commit_coverage,
     fold_window,
+    sampled_updates,
     select_window,
     window_bars,
 )
@@ -307,7 +308,6 @@ class TestShortWindows:
         assert folded.first_scan_date == ""
         assert folded.last_scan_date == ""
         assert folded.scan_timeline == []
-        assert folded.recent_updates == []
         assert folded.updates_per_month is None
         assert folded.update_coverage_pct is None
         assert folded.trend_direction == "unknown"
@@ -595,6 +595,10 @@ class TestDowngrades:
         assert [(e.updates_count, e.downgrades) for e in folded.scan_timeline] == [(0, 0), (0, 5), (0, 5)]
 
 
+def _sampled(deltas: list[dict[str, Any]]) -> list[Any]:
+    return sampled_updates(select_window(deltas)[1:])
+
+
 class TestRecentUpdates:
     def test_newest_first_across_scans(self) -> None:
         deltas = _chain(
@@ -604,7 +608,7 @@ class TestRecentUpdates:
                 _delta("s2", 20, patch=2, samples=[_sample("d"), _sample("c")]),
             ]
         )
-        assert [e.package_name for e in _fold(deltas).recent_updates] == ["d", "c", "b", "a"]
+        assert [e.package_name for e in _sampled(deltas)] == ["d", "c", "b", "a"]
 
     def test_event_fields_come_from_the_sample_and_the_scan_pair(self) -> None:
         deltas = _chain(
@@ -613,7 +617,7 @@ class TestRecentUpdates:
                 _delta("s1", 7, major=1, samples=[_sample("left-pad", kind="major", old="1.2.3", new="2.0.0")]),
             ]
         )
-        event = _fold(deltas).recent_updates[0]
+        event = _sampled(deltas)[0]
         assert event.package_name == "left-pad"
         assert event.package_type == "npm"
         assert event.purl == "pkg:npm/left-pad@2.0.0"
@@ -627,7 +631,7 @@ class TestRecentUpdates:
 
     def test_days_between_scans_is_floored_at_one(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 0.25, patch=1, samples=[_sample("a")])])
-        assert _fold(deltas).recent_updates[0].days_between_scans == 1
+        assert _sampled(deltas)[0].days_between_scans == 1
 
     def test_capped_at_thirty(self) -> None:
         deltas = _chain(
@@ -637,7 +641,7 @@ class TestRecentUpdates:
                 for i in range(1, 4)
             ]
         )
-        recent = _fold(deltas).recent_updates
+        recent = _sampled(deltas)
         assert len(recent) == 30
         # Newest scan first: its whole sample, then the next scan's.
         assert recent[0].package_name == "p3-0"
@@ -650,7 +654,7 @@ class TestRecentUpdates:
                 _delta("s1", 10, patch=1, samples=[_sample("a")]),
             ]
         )
-        assert [e.package_name for e in _fold(deltas).recent_updates] == ["a"]
+        assert [e.package_name for e in _sampled(deltas)] == ["a"]
 
 
 class TestDominantEcosystem:
@@ -773,7 +777,7 @@ class TestModelConstruction:
         assert metrics.trend_detail == folded.trend_detail
         assert metrics.dominant_ecosystem == "npm"
         assert metrics.scan_timeline == folded.scan_timeline
-        assert metrics.recent_updates == folded.recent_updates
+        assert metrics.recent_updates == []
         assert metrics.slowest_packages == []
 
     def test_to_metrics_without_upstream_leaves_the_cadence_fields_unset(self) -> None:
