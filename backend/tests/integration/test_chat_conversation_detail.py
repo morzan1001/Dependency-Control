@@ -1,4 +1,4 @@
-"""GET /chat/conversations/{id} serves stored messages, including ones written by older releases."""
+"""The chat conversation endpoints answer with the caller's stored conversations and their messages."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -74,3 +74,31 @@ async def test_a_long_conversation_serves_its_newest_messages_in_order(client, d
 
     assert resp.status_code == 200, resp.text
     assert [m["content"] for m in resp.json()["messages"]] == [f"message {i}" for i in range(20, 120)]
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_is_created_listed_read_and_deleted_by_its_owner_only(client, db, monkeypatch):
+    monkeypatch.setattr(settings, "CHAT_ENABLED", True)
+    chat = [Permissions.CHAT_ACCESS, Permissions.CHAT_HISTORY_READ, Permissions.CHAT_HISTORY_DELETE]
+    owner, stranger = bearer_headers(_USER, chat), bearer_headers("someone-else", chat)
+
+    created = (await client.post("/api/v1/chat/conversations", json={"title": "Risk talk"}, headers=owner)).json()
+    listed = (await client.get("/api/v1/chat/conversations", headers=owner)).json()
+    detail = (await client.get(f"/api/v1/chat/conversations/{created['id']}", headers=owner)).json()
+
+    assert set(created) == {"id", "user_id", "title", "created_at", "updated_at", "message_count"}
+    assert (created["user_id"], created["title"], created["message_count"]) == (_USER, "Risk talk", 0)
+    stored = {key: value for key, value in created.items() if not key.endswith("_at")}
+    assert [{key: c[key] for key in stored} for c in listed["conversations"]] == [stored]
+    assert listed["total"] == 1
+    assert {key: detail["conversation"][key] for key in stored} == stored
+    assert detail["messages"] == []
+    assert (await client.get("/api/v1/chat/conversations", headers=stranger)).json() == {
+        "conversations": [],
+        "total": 0,
+    }
+    assert (await client.get(f"/api/v1/chat/conversations/{created['id']}", headers=stranger)).status_code == 404
+    assert (await client.delete(f"/api/v1/chat/conversations/{created['id']}", headers=stranger)).status_code == 404
+    deleted = await client.delete(f"/api/v1/chat/conversations/{created['id']}", headers=owner)
+    assert deleted.json() == {"detail": "Conversation deleted"}
+    assert (await client.get(f"/api/v1/chat/conversations/{created['id']}", headers=owner)).status_code == 404

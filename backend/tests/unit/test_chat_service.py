@@ -81,11 +81,9 @@ def _make_service() -> ChatService:
     )
     service.repo.update_conversation_title = AsyncMock()
     service.repo.get_recent_messages = AsyncMock(return_value=[])
-    service.repo.list_conversations = AsyncMock(return_value=[])
     service.repo.create_conversation = AsyncMock(
         return_value={"_id": "conv-new", "user_id": "user-1", "title": "New", "message_count": 0}
     )
-    service.repo.delete_conversation = AsyncMock(return_value=True)
 
     service.tools = MagicMock()
     service.tools.get_available_tool_definitions = MagicMock(return_value=[])
@@ -385,16 +383,6 @@ async def test_create_conversation_uses_repo():
         user_id="user-1",
         title="Hello",
     )
-
-
-@pytest.mark.asyncio
-async def test_delete_conversation_scoped_to_user():
-    service = _make_service()
-    user = _make_user()
-
-    result = await service.delete_conversation("conv-1", user)
-    assert result is True
-    service.repo.delete_conversation.assert_awaited_once_with("conv-1", user_id="user-1")
 
 
 @pytest.mark.asyncio

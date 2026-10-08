@@ -58,15 +58,6 @@ class ChatService:
             title=title or "New Conversation",
         )
 
-    async def list_conversations(self, user: User) -> list[dict[str, Any]]:
-        return await self.repo.list_conversations(user_id=str(user.id))
-
-    async def get_conversation(self, conversation_id: str, user: User) -> dict[str, Any] | None:
-        return await self.repo.get_conversation(conversation_id, user_id=str(user.id))
-
-    async def delete_conversation(self, conversation_id: str, user: User) -> bool:
-        return await self.repo.delete_conversation(conversation_id, user_id=str(user.id))
-
     async def send_message(
         self,
         conversation_id: str,
