@@ -234,6 +234,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         event_type=WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
         payload=payload,
         project_id=report.scope_id if report.scope == "project" else None,
+        team_ids=[report.scope_id] if report.scope == "team" and report.scope_id else None,
         context="compliance_reports",
     )
 

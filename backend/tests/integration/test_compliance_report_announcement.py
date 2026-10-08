@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.api.v1.endpoints import compliance_reports
+from app.core.constants import WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED
 from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport
 from app.models.project import Project, ProjectMember
 from app.models.user import User
+from app.models.webhook import Webhook
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.compliance.engine import ComplianceReportEngine
@@ -90,3 +92,32 @@ async def test_a_report_gone_after_its_job_crashed_announces_nothing(db, deliver
 
     webhooks.assert_not_awaited()
     notifications.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_team_report_reaches_the_teams_own_webhooks(db, monkeypatch):
+    team_hook = Webhook(
+        team_id="team-a", url="https://hooks.example/a", events=[WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED]
+    )
+    other_hook = Webhook(
+        team_id="team-b", url="https://hooks.example/b", events=[WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED]
+    )
+    for hook in (team_hook, other_hook):
+        await db.webhooks.insert_one(hook.model_dump(by_alias=True))
+    delivered = AsyncMock(return_value=True)
+    monkeypatch.setattr(webhook_service, "_send_webhook", delivered)
+    monkeypatch.setattr(ComplianceReportEngine, "generate", AsyncMock(return_value=(ReportStatus.COMPLETED, {})))
+    report = ComplianceReport(
+        scope="team",
+        scope_id="team-a",
+        framework=ReportFramework.BSI_TR_02102,
+        format=ReportFormat.JSON,
+        status=ReportStatus.PENDING,
+        requested_by="ownerp",
+        requested_at=datetime.now(timezone.utc),
+    )
+
+    await compliance_reports._run_and_webhook(db, report, _user("ownerp"))
+
+    assert [call.args[1].id for call in delivered.await_args_list] == [team_hook.id]
