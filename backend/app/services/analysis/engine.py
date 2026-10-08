@@ -910,10 +910,26 @@ async def _finalize_scan_and_project(
 async def _filter_out_waived_findings(
     findings: list[dict[str, Any]], scan_id: str, db: Database
 ) -> list[dict[str, Any]]:
-    """Drop the records waived in this scan, re-read from the DB because waivers are applied only there."""
-    finding_repo = FindingRepository(db)
-    waived = {doc["_id"] async for doc in finding_repo.iterate_raw({"scan_id": scan_id, "waived": True}, {"_id": 1})}
-    return [record for record in findings if record["_id"] not in waived]
+    """Drop the records and advisories waived in this scan, re-read from the DB because waivers are applied only there."""
+    query = {
+        "scan_id": scan_id,
+        "$or": [{"waived": True}, {"type": "vulnerability", "details.vulnerabilities.waived": True}],
+    }
+    projection = {"waived": 1, "details.vulnerabilities.id": 1, "details.vulnerabilities.waived": 1}
+    waived_advisories: dict[str, set[Any] | None] = {}
+    async for doc in FindingRepository(db).iterate_raw(query, projection):
+        waived_advisories[doc["_id"]] = (
+            None if doc.get("waived") else {a.get("id") for a in doc["details"]["vulnerabilities"] if a.get("waived")}
+        )
+    kept = []
+    for record in findings:
+        if record["_id"] not in waived_advisories:
+            kept.append(record)
+        elif (waived := waived_advisories[record["_id"]]) is not None:
+            details = record["details"]
+            live = [advisory for advisory in details["vulnerabilities"] if advisory.get("id") not in waived]
+            kept.append({**record, "details": {**details, "vulnerabilities": live}})
+    return kept
 
 
 async def _send_integrations_and_notifications(

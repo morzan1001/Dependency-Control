@@ -15,50 +15,29 @@ from app.services.analysis.stats import build_epss_kev_summary, build_reachabili
 from tests.mocks.fake_mongo import FakeDatabase
 
 
-class _AsyncIter:
-    """Minimal async cursor stand-in for motor's find()."""
-
-    def __init__(self, docs):
-        self._docs = list(docs)
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if not self._docs:
-            raise StopAsyncIteration
-        return self._docs.pop(0)
-
-
-class _FakeFindings:
-    def __init__(self, waived_docs):
-        self._waived_docs = waived_docs
-        self.last_query = None
-
-    def find(self, query, projection=None):
-        self.last_query = query
-        return _AsyncIter(self._waived_docs)
+async def _filter_against(stored: list[dict], findings: list[dict]) -> list[dict]:
+    db = FakeDatabase()
+    for doc in stored:
+        await db.findings.insert_one(doc)
+    return await _filter_out_waived_findings(findings, "scan-1", db)
 
 
 class TestFilterOutWaivedFindings:
-    def test_waived_record_is_excluded(self):
+    def test_a_record_waived_in_this_scan_is_excluded(self):
         findings = [{"_id": "R1"}, {"_id": "R2"}, {"_id": "R3"}]
-        db = {"findings": _FakeFindings([{"_id": "R2"}])}
+        stored = [
+            {"_id": "R2", "scan_id": "scan-1", "waived": True},
+            {"_id": "R3", "scan_id": "scan-2", "waived": True},
+        ]
 
-        result = asyncio.run(_filter_out_waived_findings(findings, "scan-1", db))
+        result = asyncio.run(_filter_against(stored, findings))
 
         assert [f["_id"] for f in result] == ["R1", "R3"]
 
     def test_without_waivers_every_record_is_kept(self):
         findings = [{"_id": "R1"}]
-        db = {"findings": _FakeFindings([])}
 
-        assert asyncio.run(_filter_out_waived_findings(findings, "scan-1", db)) == findings
-
-    def test_query_filters_on_scan_and_waived(self):
-        db = {"findings": _FakeFindings([])}
-        asyncio.run(_filter_out_waived_findings([{"_id": "R1"}], "scan-9", db))
-        assert db["findings"].last_query == {"scan_id": "scan-9", "waived": True}
+        assert asyncio.run(_filter_against([{"_id": "R1", "scan_id": "scan-1", "waived": False}], findings)) == findings
 
 
 class TestAggregateExternalSkipsEngineRows:
