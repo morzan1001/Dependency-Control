@@ -13,7 +13,6 @@ from app.models.stats import Stats
 from app.repositories.scans import ScanRepository
 from app.services.analysis.engine import _finalize_scan_and_project
 from app.services.rescan import build_rescan
-from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p1"
 _MAIN = "main"
@@ -23,11 +22,6 @@ _NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _HOUR = timedelta(hours=1)
 _SBOM_REFS = [{"type": "gridfs_reference", "gridfs_id": "g1"}]
 _WORKER = "pod-a/worker-0"
-
-
-@pytest.fixture
-def db():
-    return FakeDatabase()
 
 
 async def _project(db, latest_scan_id=None, **fields):

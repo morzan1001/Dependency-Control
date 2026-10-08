@@ -320,11 +320,6 @@ async def _rescans(db: FakeDatabase) -> list[dict[str, Any]]:
 
 
 @pytest.fixture
-def db() -> FakeDatabase:
-    return FakeDatabase()
-
-
-@pytest.fixture
 def worker() -> AsyncMock:
     manager = AsyncMock()
     manager.is_saturated = MagicMock(return_value=False)

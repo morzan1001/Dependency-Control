@@ -3,7 +3,6 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-import pytest_asyncio
 from pymongo.errors import DuplicateKeyError
 
 from app.models.release import Release
@@ -18,11 +17,6 @@ _VERSION = "v2.1.0"
 _EARLIER_VERSION = "v2.0.0"
 _ONE_RECORD = 1
 _FIRST_CALL = 1
-
-
-@pytest_asyncio.fixture
-async def db():
-    return FakeDatabase()
 
 
 def _competitor_row() -> dict:

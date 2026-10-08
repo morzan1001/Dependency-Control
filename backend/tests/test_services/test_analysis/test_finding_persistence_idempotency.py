@@ -5,14 +5,8 @@ import pytest
 from app.models.finding import Finding, FindingType, Severity
 from app.repositories.findings import FindingRepository
 from app.services.analysis.engine import _prepare_finding_records
-from tests.mocks.fake_mongo import FakeDatabase
 
 _SCAN_ID = "ed8fa8da-205c-5bac-852b-9fafd4a33bb8"
-
-
-@pytest.fixture
-def db():
-    return FakeDatabase()
 
 
 def _finding(fid: str, component: str = "hamcrest-core", version: str = "3.0") -> Finding:

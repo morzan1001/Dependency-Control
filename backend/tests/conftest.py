@@ -28,6 +28,7 @@ from bson import ObjectId
 from app.models.user import User
 from tests.helpers.auth import make_admin
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER, PRESET_VIEWER
+from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
 
@@ -70,6 +71,11 @@ def _isolate_analytics_cache():
     yield
     get_analytics_cache().clear()
     get_delta_cache().clear()
+
+
+@pytest.fixture
+def db():
+    return FakeDatabase()
 
 
 @pytest.fixture
