@@ -3,11 +3,10 @@
 import ipaddress
 import re
 from datetime import datetime
-from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.config import settings
 from app.core.constants import (
@@ -19,6 +18,7 @@ from app.core.constants import (
     WEBHOOK_VALID_EVENTS,
     WebhookType,
 )
+from app.schemas._not_null import reject_null
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -131,22 +131,9 @@ class WebhookCreate(BaseModel):
     headers: dict[str, str] | None = None
     webhook_type: WebhookType | None = None
 
-    @field_validator("events")
-    @classmethod
-    def _validate_events(cls, v: list[str]) -> list[str]:
-        """Validate that all events are valid event types."""
-        return validate_webhook_events(v)
-
-    @field_validator("url")
-    @classmethod
-    def _validate_url(cls, v: str) -> str:
-        """Validate that URL is HTTPS (except for localhost in development)."""
-        return validate_webhook_url(v)
-
-    @field_validator("headers")
-    @classmethod
-    def _validate_headers(cls, v: dict[str, str] | None) -> dict[str, str] | None:
-        return validate_webhook_headers(v)
+    _events_valid = field_validator("events")(validate_webhook_events)
+    _url_valid = field_validator("url")(validate_webhook_url)
+    _headers_valid = field_validator("headers")(validate_webhook_headers)
 
 
 class WebhookUpdate(BaseModel):
@@ -159,27 +146,10 @@ class WebhookUpdate(BaseModel):
     headers: dict[str, str] | None = None
     webhook_type: WebhookType | None = None
 
-    @field_validator("url", "events", "is_active", "webhook_type")
-    @classmethod
-    def _reject_null(cls, v: Any, info: ValidationInfo) -> Any:
-        if v is None:
-            raise ValueError(f"{info.field_name} cannot be null")
-        return v
-
-    @field_validator("events")
-    @classmethod
-    def _validate_events(cls, v: list[str]) -> list[str]:
-        return validate_webhook_events(v)
-
-    @field_validator("url")
-    @classmethod
-    def _validate_url(cls, v: str) -> str:
-        return validate_webhook_url(v)
-
-    @field_validator("headers")
-    @classmethod
-    def _validate_headers(cls, v: dict[str, str] | None) -> dict[str, str] | None:
-        return validate_webhook_headers(v)
+    _not_null = field_validator("url", "events", "is_active", "webhook_type")(reject_null)
+    _events_valid = field_validator("events")(validate_webhook_events)
+    _url_valid = field_validator("url")(validate_webhook_url)
+    _headers_valid = field_validator("headers")(validate_webhook_headers)
 
 
 class WebhookResponse(BaseModel):
@@ -211,11 +181,7 @@ class WebhookTestRequest(BaseModel):
 
     event_type: str = WEBHOOK_EVENT_SCAN_COMPLETED
 
-    @field_validator("event_type")
-    @classmethod
-    def _validate_event_type(cls, v: str) -> str:
-        """Validate that the event type is valid."""
-        return validate_webhook_event_type(v)
+    _event_type_valid = field_validator("event_type")(validate_webhook_event_type)
 
 
 class WebhookTestResponse(BaseModel):

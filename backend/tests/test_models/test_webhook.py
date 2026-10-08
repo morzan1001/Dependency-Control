@@ -161,7 +161,7 @@ class TestWebhookCreateSchemaType:
 class TestWebhookUpdateNulls:
     @pytest.mark.parametrize("field", ["url", "events", "is_active", "webhook_type"])
     def test_an_explicit_null_for_a_field_the_stored_model_requires_is_rejected(self, field):
-        with pytest.raises(ValidationError, match="cannot be null"):
+        with pytest.raises(ValidationError, match="may be omitted but not null"):
             WebhookUpdate(**{field: None})
 
     @pytest.mark.parametrize("field", ["secret", "headers"])
