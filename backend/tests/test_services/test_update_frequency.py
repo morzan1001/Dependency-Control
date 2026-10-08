@@ -43,7 +43,7 @@ from app.services.update_frequency import (
 )
 from app.services.update_frequency_fold import fold_window, select_window
 from app.services.update_frequency_rollup import record_scan_update_delta
-from tests.mocks.fake_mongo import FakeDatabase, _bson_sort_key
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 def _make_timeline_entry(idx: int, updates: int = 0, outdated: int = 0) -> ScanTimelineEntry:
@@ -289,124 +289,43 @@ class TestAggregateMetricsCoverage:
         assert m.outdated_resolved == 1
 
 
-# --- Fake repos for streaming-orchestrator tests ---
+def _seeded(collection: str, docs: list[dict[str, Any]]) -> FakeDatabase:
+    """A database holding ``docs`` as given; insert_one would truncate their datetimes to milliseconds."""
+    db = FakeDatabase()
+    db[collection]._docs.update({doc["_id"]: doc for doc in docs})
+    return db
 
 
-def _apply_projection(doc: dict[str, Any], projection: dict[str, int] | None) -> dict[str, Any]:
-    """Mongo inclusion projection: only the named fields survive, plus _id unless excluded."""
-    if not projection:
-        return dict(doc)
-    keep = {field for field, include in projection.items() if include}
-    if projection.get("_id", 1):
-        keep.add("_id")
-    else:
-        keep.discard("_id")
-    return {k: v for k, v in doc.items() if k in keep}
-
-
-def _matches_scan_query(scan: dict[str, Any], query: dict[str, Any]) -> bool:
-    for field, cond in query.items():
-        value = scan.get(field)
-        if isinstance(cond, dict):
-            if "$ne" in cond and value == cond["$ne"]:
-                return False
-            if "$nin" in cond and value in cond["$nin"]:
-                return False
-            if "$in" in cond and value not in cond["$in"]:
-                return False
-            # Mongo compares only within one BSON type, so a string date never passes a datetime bound.
-            if "$gte" in cond and not (isinstance(value, type(cond["$gte"])) and value >= cond["$gte"]):
-                return False
-        elif value != cond:
-            return False
-    return True
-
-
-class FakeScanRepo:
+class FakeScanRepo(ScanRepository):
     def __init__(self, scans: list[dict[str, Any]]):
-        # scans must include _id, created_at, status, project_id, branch
-        self._scans = scans
-
-    def _filtered(self, query: dict[str, Any], sort: list[tuple[str, int]] | None) -> list[dict[str, Any]]:
-        matched = [s for s in self._scans if _matches_scan_query(s, query)]
-        if sort:
-            for field, order in reversed(sort):
-                matched.sort(key=lambda s, f=field: _bson_sort_key(s.get(f)), reverse=(order == -1))
-        return matched
-
-    async def find_many_raw(
-        self,
-        query: dict[str, Any],
-        sort: list[tuple[str, int]] | None = None,
-        skip: int = 0,
-        limit: int | None = None,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        # Mirrors ScanRepository.find_many_raw: filter by the query (incl. status),
-        # sort, then apply the limit — status is filtered BEFORE the limit.
-        matched = self._filtered(query, sort)
-        matched = matched[skip : skip + limit] if limit is not None else matched[skip:]
-        return [_apply_projection(s, projection) for s in matched]
-
-    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-        # Run the real pipeline through the fake Mongo engine rather than
-        # reimplementing it: a pipeline that would not answer in Mongo must not
-        # answer here either, down to the UTC datetimes it stores.
-        db = FakeDatabase()
-        for scan in self._scans:
-            await db.scans.insert_one(dict(scan))
-        return await db.scans.aggregate(pipeline).to_list(limit)
+        super().__init__(_seeded("scans", scans))
 
 
-class FakeDepRepo:
+class FakeDepRepo(DependencyRepository):
     def __init__(self, deps_by_scan: dict[str, list[dict[str, Any]]]):
-        self._deps_by_scan = deps_by_scan
-        self.calls: list[str] = []
+        docs = [
+            {**dep, "_id": f"{scan_id}:{index}", "scan_id": scan_id}
+            for scan_id, deps in deps_by_scan.items()
+            for index, dep in enumerate(deps)
+        ]
+        super().__init__(_seeded(self.collection_name, docs))
 
-    async def find_all_raw(self, query: dict[str, Any], projection: dict[str, int]) -> list[dict[str, Any]]:
-        self.calls.append(query["scan_id"])
-        return [_apply_projection(d, projection) for d in self._deps_by_scan.get(query["scan_id"], [])]
 
-
-class FakeAnalysisRepo:
-    load_result = AnalysisResultRepository.load_result
-
+class FakeAnalysisRepo(AnalysisResultRepository):
     def __init__(self, results: list[dict[str, Any]]):
-        self._results = results
+        docs = [{"_id": f"result-{index}", **result} for index, result in enumerate(results)]
+        super().__init__(_seeded(self.collection_name, docs))
         self.queries: list[dict[str, Any]] = []
 
-    def _matching(self, query: dict[str, Any], projection: dict[str, int] | None) -> list[dict[str, Any]]:
+    async def find_many_raw(self, query: dict[str, Any], *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         self.queries.append(query)
-        scan_filter = query.get("scan_id")
-        analyzer = query.get("analyzer_name")
-        out = []
-        for r in self._results:
-            if isinstance(scan_filter, dict):
-                ids = scan_filter.get("$in", [])
-                if r["scan_id"] not in ids:
-                    continue
-            elif scan_filter is not None and r["scan_id"] != scan_filter:
-                continue
-            if analyzer is not None and r["analyzer_name"] != analyzer:
-                continue
-            out.append(_apply_projection(r, projection))
-        return out
+        return await super().find_many_raw(query, *args, **kwargs)
 
-    async def find_many_raw(
-        self,
-        query: dict[str, Any],
-        limit: int = 1000,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        return self._matching(query, projection)[:limit]
-
-    async def iterate_raw(
-        self,
-        query: dict[str, Any] | None = None,
-        projection: dict[str, int] | None = None,
+    def iterate_raw(
+        self, query: dict[str, Any] | None = None, *args: Any, **kwargs: Any
     ) -> AsyncIterator[dict[str, Any]]:
-        for doc in self._matching(query or {}, projection):
-            yield doc
+        self.queries.append(query or {})
+        return super().iterate_raw(query, *args, **kwargs)
 
 
 _BASE_SCAN_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
