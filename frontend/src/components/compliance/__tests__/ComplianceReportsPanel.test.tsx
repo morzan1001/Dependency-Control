@@ -12,7 +12,6 @@ vi.mock('@/api/compliance', () => ({
   listReports: vi.fn(),
   createReport: vi.fn(),
   deleteReport: vi.fn(),
-  downloadReport: vi.fn(),
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: () => false }) }))
 

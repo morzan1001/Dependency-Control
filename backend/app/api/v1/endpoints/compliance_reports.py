@@ -27,6 +27,7 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.renderers.base import coverage_statement
 from app.services.compliance.visibility import report_visibility_filter
 from app.services.gridfs_maintenance import iter_gridfs_chunks
 from app.services.notifications.service import safe_notify_project_event
@@ -54,6 +55,12 @@ class ReportAck(BaseModel):
 
 def _status_str(value: Any) -> str:
     return str(value.value) if hasattr(value, "value") else str(value)
+
+
+def _report_view(report: ComplianceReport) -> dict[str, Any]:
+    """The stored report with the coverage sentence its artifact prints."""
+    statement = coverage_statement(report.coverage) if report.coverage else None
+    return {**report.model_dump(by_alias=True), "coverage_statement": statement}
 
 
 @router.post(
@@ -128,7 +135,7 @@ async def list_reports(
         skip=skip,
         limit=limit,
     )
-    return {"reports": [r.model_dump(by_alias=True) for r in reports]}
+    return {"reports": [_report_view(r) for r in reports]}
 
 
 @router.get(
@@ -146,7 +153,7 @@ async def get_report(
     if not await _user_can_see_report(db, current_user, r):
         # Don't leak the report's existence to a caller without scope access.
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
-    return r.model_dump(by_alias=True)
+    return _report_view(r)
 
 
 @router.get(

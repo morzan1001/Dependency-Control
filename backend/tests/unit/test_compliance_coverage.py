@@ -430,6 +430,15 @@ def test_a_gap_makes_the_coverage_partial_and_the_statement_names_it_once():
     assert _WITHHELD_STATEMENT not in statement
 
 
+def test_the_statement_names_five_gaps_and_counts_the_rest():
+    gaps = [f"project 'p{index}' has no usable scan" for index in range(7)]
+
+    statement = coverage_statement(_with_gaps(*gaps))
+
+    assert f"{gaps[4]} and 2 more." in statement
+    assert gaps[5] not in statement
+
+
 def test_json_carries_the_gaps():
     body, _, _ = JsonRenderer().render(_evaluation_with(_with_gaps(_GAP)), _report())
 
