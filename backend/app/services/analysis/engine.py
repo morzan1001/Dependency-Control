@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
+from itertools import batched
 from pathlib import Path
 from typing import Any
 
@@ -529,27 +530,12 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
 
     logger.info(f"Enriching {len(enrichment_entries)} dependencies with aggregated metadata")
 
-    bulk_ops: list[UpdateMany] = []
+    ops = (op for entry in enrichment_entries for op in _dependency_update_ops(scan_id, entry))
     total_updated = 0
-
-    for entry in enrichment_entries:
-        if not entry["data"]:
-            continue
-
-        bulk_ops.extend(_dependency_update_ops(scan_id, entry))
-
-        if len(bulk_ops) >= _BULK_CHUNK_SIZE:
-            try:
-                await db.dependencies.bulk_write(bulk_ops, ordered=False)
-                total_updated += len(bulk_ops)
-            except Exception as e:
-                logger.exception("Failed to bulk update dependencies: %s", e)
-            bulk_ops.clear()
-
-    if bulk_ops:
+    for chunk in batched(ops, _BULK_CHUNK_SIZE, strict=False):
         try:
-            await db.dependencies.bulk_write(bulk_ops, ordered=False)
-            total_updated += len(bulk_ops)
+            await db.dependencies.bulk_write(list(chunk), ordered=False)
+            total_updated += len(chunk)
         except Exception as e:
             logger.exception("Failed to bulk update dependencies: %s", e)
 
