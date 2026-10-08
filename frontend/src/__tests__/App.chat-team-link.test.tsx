@@ -11,15 +11,9 @@ vi.mock('@/hooks/queries/use-system', () => ({
 vi.mock('@/api/users', () => ({ userApi: { getMe: vi.fn().mockResolvedValue({ permissions: ['team:read'] }) } }))
 vi.mock('../pages/Teams', () => ({ default: () => <p>teams page</p> }))
 
-// The signature is never verified client-side.
-function sessionToken(permissions: string[]): string {
-  const encode = (obj: unknown) => btoa(JSON.stringify(obj)).replace(/=+$/, '')
-  return `${encode({ alg: 'HS256' })}.${encode({ sub: 'u1', permissions, type: 'access' })}.sig`
-}
-
 beforeEach(() => {
   localStorage.clear()
-  localStorage.setItem('token', sessionToken(['team:read']))
+  localStorage.setItem('token', 'access')
   localStorage.setItem('refresh_token', 'refresh')
   // next-themes reads the colour-scheme preference, which jsdom does not implement.
   globalThis.matchMedia = vi.fn().mockReturnValue({ matches: false, addListener: vi.fn(), removeListener: vi.fn() })
