@@ -435,24 +435,23 @@ class ScanRepository:
                 return head
         return None
 
-    async def get_preceding_scan(self, scan_id: str) -> Scan | None:
-        """The build the given scan's commit succeeded: the newest usable build on its branch that
-        predates it. A rescan carries today's date over an older commit, so a rescan is measured by
-        the build it re-analysed and never counts as a predecessor."""
+    async def get_preceding_scans(self, scan_id: str, limit: int) -> list[Scan]:
+        """The builds the given scan's commit succeeded, newest first: the usable builds on its branch
+        that predate it. A rescan carries today's date over an older commit, so a rescan is measured
+        by the build it re-analysed and never counts as a predecessor."""
         fields = {"project_id": 1, "branch": 1, "created_at": 1, "is_rescan": 1, "original_scan_id": 1}
         current = await self.collection.find_one({"_id": scan_id}, fields)
         if current and current.get("is_rescan") and current.get("original_scan_id"):
             current = await self.collection.find_one({"_id": current["original_scan_id"]}, fields)
         if not current or current.get("created_at") is None:
-            return None
+            return []
         query = {
             **USABLE_BUILD_MATCH,
             "project_id": current.get("project_id"),
             "branch": current.get("branch"),
             "created_at": {"$lt": current["created_at"]},
         }
-        data = await self.collection.find_one(query, sort=SCANS_TIP_SORT)
-        return Scan(**data) if data else None
+        return await self.find_many(query, sort=SCANS_TIP_SORT, limit=limit)
 
     async def freshest_in_lineage(
         self, scan_ids: Iterable[str], seeds: dict[str, dict[str, Any]] | None = None

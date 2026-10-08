@@ -476,8 +476,8 @@ class TestGetPrecedingScan:
     @staticmethod
     async def _preceding_id(scans: list[dict], scan_id: str = _HEAD) -> str | None:
         db = await _seeded(scans)
-        preceding = await ScanRepository(db).get_preceding_scan(scan_id)
-        return preceding.id if preceding else None
+        preceding = await ScanRepository(db).get_preceding_scans(scan_id, 1)
+        return preceding[0].id if preceding else None
 
     def test_the_newest_earlier_build_on_the_same_branch(self):
         result = asyncio.run(

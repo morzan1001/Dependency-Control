@@ -352,6 +352,66 @@ async def test_recommendations_recurrence_window_holds_the_newest_scans(
     assert recurring[0]["affected_components"] == ["lib"]
 
 
+async def _recurring_cards(client, headers, scan_id: str) -> list[dict]:
+    resp = await client.get(
+        "/api/v1/analytics/projects/p/recommendations", params={"scan_id": scan_id}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    return [r for r in resp.json()["recommendations"] if r["type"] == "recurring_vulnerability"]
+
+
+async def _seed_build(db, scan_id: str, hours_ago: int, cve: str | None, **fields) -> None:
+    await db.scans.insert_one(
+        {
+            "_id": scan_id,
+            "project_id": "p",
+            "branch": "main",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc) - timedelta(hours=hours_ago),
+            **fields,
+        }
+    )
+    if cve:
+        await db.findings.insert_one(_vuln_finding(f"f-{scan_id}", scan_id, cve=cve))
+
+
+@pytest.mark.asyncio
+async def test_recommendations_recurrence_window_stays_on_the_viewed_scans_branch(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    """Two feature-branch builds carrying a CVE make it recur there, not in the one main build that has it."""
+    from app.api.v1.endpoints.analytics import recommendations as rec_module
+
+    async def _no_enrichment(_cves):
+        return {}
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
+    await _seed_build(db, "main-old", 5, None)
+    await _seed_build(db, "main-head", 3, "CVE-2026-1111")
+    await _seed_build(db, "feat-1", 2, "CVE-2026-1111", branch="feature/x")
+    await _seed_build(db, "feat-2", 1, "CVE-2026-1111", branch="feature/x")
+
+    assert await _recurring_cards(client, owner_auth_headers_proj, "main-head") == []
+
+
+@pytest.mark.asyncio
+async def test_recommendations_recurrence_window_counts_a_rescanned_build_once(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    """Rescans re-analyse one build's commit, so the build and its rescans are one scan of the window."""
+    from app.api.v1.endpoints.analytics import recommendations as rec_module
+
+    async def _no_enrichment(_cves):
+        return {}
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
+    await _seed_build(db, "build", 3, "CVE-2026-3333")
+    for index in (1, 2):
+        await _seed_build(db, f"rescan-{index}", 3 - index, "CVE-2026-3333", is_rescan=True, original_scan_id="build")
+
+    assert await _recurring_cards(client, owner_auth_headers_proj, "build") == []
+
+
 @pytest.mark.asyncio
 async def test_scope_denied_unauth(client, db):
     resp = await client.get(_SCOPE_PATH)

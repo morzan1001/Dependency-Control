@@ -47,7 +47,8 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
-# Newest scans the recurrence count is taken over; the recommendation text names the window.
+# The viewed scan and the builds it succeeded, which the recurrence count is taken over; the
+# recommendation text names the window.
 _RECURRENCE_WINDOW_SCANS = 10
 
 _LICENSE_DRIFT_PROJECTION = {"name": 1, "purl": 1, "license": 1, "license_category": 1}
@@ -145,8 +146,9 @@ async def get_project_recommendations(
 
         previous = None
         previous_scan_dependencies = None
-        previous_scan = await scan_repo.get_preceding_scan(scan_id)
-        if previous_scan:
+        preceding = await scan_repo.get_preceding_scans(scan_id, _RECURRENCE_WINDOW_SCANS - 1)
+        if preceding:
+            previous_scan = preceding[0]
             previous = trends.PreviousScan()
             previous_query = {"scan_id": previous_scan.id, "waived": {"$ne": True}}
             async for doc in finding_repo.iterate_raw(previous_query, trends.PREVIOUS_SCAN_PROJECTION):
@@ -158,14 +160,7 @@ async def get_project_recommendations(
                 projection=_LICENSE_DRIFT_PROJECTION,
             )
 
-        recent_scan_ids = [
-            recent.id
-            for recent in await scan_repo.find_many(
-                {"project_id": project_id},
-                limit=_RECURRENCE_WINDOW_SCANS,
-                sort=[("created_at", -1)],
-            )
-        ]
+        recent_scan_ids = [scan_id, *(scan.id for scan in preceding)]
         cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
 
         cross_project_data = await gather_cross_project_data(user_projects, project_id, db)
