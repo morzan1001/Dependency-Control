@@ -7,8 +7,9 @@ import pytest
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry, _serialize_finding_for_llm
+from tests.helpers.auth import make_admin
 from tests.helpers.databases import DATABASES
-from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
+from tests.helpers.permission_presets import PRESET_USER
 
 pytestmark = pytest.mark.asyncio
 
@@ -130,8 +131,7 @@ async def _seed_head(db, findings: list[dict]) -> None:
 
 
 async def _call(db, tool: str, **args) -> dict:
-    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
-    return await ChatToolRegistry().execute_tool(tool, args, admin, db)
+    return await ChatToolRegistry().execute_tool(tool, args, make_admin(), db)
 
 
 @pytest.mark.parametrize("database", DATABASES)

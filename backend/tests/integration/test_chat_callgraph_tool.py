@@ -5,10 +5,9 @@ from datetime import datetime, timezone
 import pytest
 
 from app.models.callgraph import Callgraph, ModuleUsage
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.auth import make_admin
 from tests.helpers.databases import DATABASES
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("database", DATABASES)]
 
@@ -39,8 +38,7 @@ async def _seed(db, *callgraphs: dict) -> None:
 
 
 async def _call(db, **args) -> dict:
-    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
-    return await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT, **args}, admin, db)
+    return await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT, **args}, make_admin(), db)
 
 
 async def test_every_language_s_newest_graph_is_returned_with_its_branch(db, database):

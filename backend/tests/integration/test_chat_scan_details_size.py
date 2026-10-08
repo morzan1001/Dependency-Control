@@ -6,11 +6,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._helpers import MAX_TOOL_RESULT_BYTES
+from tests.helpers.auth import make_admin
 from tests.helpers.databases import DATABASES
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 pytestmark = pytest.mark.asyncio
 
@@ -68,9 +67,8 @@ async def _seed(db) -> None:
 @pytest.mark.parametrize("database", DATABASES)
 async def test_scan_details_fit_the_result_cap_and_carry_the_scan_summary(db, database):
     await _seed(db)
-    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
-    result = await ChatToolRegistry().execute_tool("get_scan_details", {"project_id": _PROJECT}, admin, db)
+    result = await ChatToolRegistry().execute_tool("get_scan_details", {"project_id": _PROJECT}, make_admin(), db)
     scan = result["scan"]
 
     assert len(json.dumps(result, default=str).encode()) <= MAX_TOOL_RESULT_BYTES

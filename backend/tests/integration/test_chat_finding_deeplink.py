@@ -7,10 +7,9 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
-from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.auth import make_admin
 from tests.helpers.databases import DATABASES
-from tests.helpers.permission_presets import PRESET_ADMIN
 
 pytestmark = pytest.mark.asyncio
 
@@ -54,9 +53,8 @@ async def _seed(db) -> None:
 @pytest.mark.parametrize("database", DATABASES)
 async def test_a_chat_finding_link_resolves_through_the_findings_search(db, database, client, admin_auth_headers):
     await _seed(db)
-    admin = User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
-    result = await ChatToolRegistry().execute_tool("search_findings", {"query": "docker"}, admin, db)
+    result = await ChatToolRegistry().execute_tool("search_findings", {"query": "docker"}, make_admin(), db)
     link = parse_qs(urlsplit(result["findings"][0]["url"]).query)["finding"][0]
     resp = await client.get(
         f"/api/v1/projects/scans/{_SCAN}/findings", params={"search": link, "limit": 200}, headers=admin_auth_headers
