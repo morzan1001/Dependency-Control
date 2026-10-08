@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any
 
@@ -9,6 +8,7 @@ from app.core.constants import (
     NOTIFICATION_CHANNEL_SLACK,
     NotificationEvent,
 )
+from app.core.http_utils import gather_bounded
 from app.models.project import Project
 from app.models.user import User
 from app.repositories.projects import ProjectRepository
@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 # Bounds how many recipients are held in memory at once, never how many are reached.
 _FAN_OUT_BATCH_SIZE = 500
+
+# Each send is an SMTP session or a chat request chain, and a relay refuses a client opening hundreds at once.
+_CONCURRENT_SENDS = 10
 
 _PROJECT_RECIPIENT_FIELDS = dict.fromkeys(
     (
@@ -88,7 +91,7 @@ class NotificationService:
                         props=mattermost_props,
                     )
                 )
-        for result in await asyncio.gather(*sends, return_exceptions=True):
+        for result in await gather_bounded(sends, lambda send: send, _CONCURRENT_SENDS):
             if isinstance(result, Exception):
                 logger.error("Notification send failed: %s", result)
 

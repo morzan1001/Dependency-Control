@@ -4,9 +4,12 @@ Nothing in a notification tells a recipient who else was told, so a ceiling on t
 ceiling on who learns about the change — and the ones past it never find out they were skipped.
 """
 
+import asyncio
+
 import pytest
 
-from app.services.notifications.service import _FAN_OUT_BATCH_SIZE, NotificationService
+from app.models.user import User
+from app.services.notifications.service import _CONCURRENT_SENDS, _FAN_OUT_BATCH_SIZE, NotificationService
 
 _PERMISSION = "system:manage"
 _EVENT = "policy_changed"
@@ -99,3 +102,26 @@ async def test_a_fan_out_to_only_deactivated_holders_sends_nothing(db):
     )
 
     assert recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_large_audience_is_sent_to_a_bounded_number_at_a_time(db):
+    audience = [User(id=f"u{i}", username=f"u{i}", email=f"u{i}@example.com") for i in range(50)]
+    service = NotificationService()
+    sent: list[str] = []
+    in_flight = peak = 0
+
+    async def send(destination, *_args, **_kwargs):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        sent.append(destination)
+        return True
+
+    service.email_provider.send = send  # type: ignore[method-assign]
+    await service.notify_users(audience, _EVENT, "s", "m", db=db, forced_channels=["email"])
+
+    assert sorted(sent) == sorted(user.email for user in audience)
+    assert peak <= _CONCURRENT_SENDS
