@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card'
@@ -36,6 +37,11 @@ function LifecycleBadge({ item }: { readonly item: ComponentItem }) {
 export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableProps>) {
   const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' })
+  const [pageBranch, setPageBranch] = useState(branch)
+  if (pageBranch !== branch) {
+    setPageBranch(branch)
+    setPage(1)
+  }
 
   const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryComponents(projectId, branch, {
     page, pageSize: DEFAULT_PAGE_SIZE, search: debouncedSearch || undefined, sortBy, sortOrder,

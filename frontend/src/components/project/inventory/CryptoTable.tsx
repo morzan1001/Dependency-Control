@@ -21,6 +21,11 @@ interface CryptoTableProps {
 
 export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
   const [page, setPage] = useState(1)
+  const [pageBranch, setPageBranch] = useState(branch)
+  if (pageBranch !== branch) {
+    setPageBranch(branch)
+    setPage(1)
+  }
 
   const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryCrypto(projectId, branch, {
     page, pageSize: DEFAULT_PAGE_SIZE,
