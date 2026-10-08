@@ -170,6 +170,30 @@ class TestOperatingSystemPackages:
                 {"package": {"purl": "pkg:deb/ubuntu/openssl@3.0.2?distro=ubuntu-22.04"}},
                 id="ubuntu_resolves_by_purl",
             ),
+            pytest.param(
+                {
+                    "name": "libssl3",
+                    "version": "3.0.2-0ubuntu1.10",
+                    "purl": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1.10?arch=amd64&distro=ubuntu-22.04&upstream=openssl",
+                },
+                {"package": {"ecosystem": "Ubuntu:22.04:LTS", "name": "openssl"}, "version": "3.0.2-0ubuntu1.10"},
+                id="syft_ubuntu_lts",
+            ),
+            pytest.param(
+                {
+                    "name": "zlib1g",
+                    "version": "1:1.2.13.dfsg-1ubuntu4",
+                    "purl": "pkg:deb/ubuntu/zlib1g@1.2.13.dfsg-1ubuntu4?arch=amd64&distro=ubuntu-23.04&epoch=1",
+                    "properties": {
+                        "aquasecurity:trivy:SrcName": "zlib",
+                        "aquasecurity:trivy:SrcVersion": "1.2.13.dfsg",
+                        "aquasecurity:trivy:SrcRelease": "1ubuntu4",
+                        "aquasecurity:trivy:SrcEpoch": "1",
+                    },
+                },
+                {"package": {"ecosystem": "Ubuntu:23.04", "name": "zlib"}, "version": "1:1.2.13.dfsg-1ubuntu4"},
+                id="trivy_ubuntu_interim",
+            ),
         ],
     )
     async def test_the_package_is_asked_for_in_its_release_ecosystem(self, cache, monkeypatch, component, expected):

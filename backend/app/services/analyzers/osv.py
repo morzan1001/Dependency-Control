@@ -78,10 +78,18 @@ _PURL_TYPE = re.compile(r"[a-z][a-z0-9.+-]*")
 _REJECTED_QUERY = re.compile(r"error in query at index (\d+)")
 # Resends after OSV rejected a query; bisection doubles the requests at each of these levels.
 _MAX_REJECTION_RESENDS = 4
-# OSV resolves Debian and Alpine packages only by release-scoped ecosystem and source package name.
+
+
+def _ubuntu_ecosystem(release: str) -> str:
+    major, _, minor = release.partition(".")
+    return f"Ubuntu:{release}:LTS" if minor == "04" and int(major) % 2 == 0 else f"Ubuntu:{release}"
+
+
+# OSV resolves Debian, Alpine and Ubuntu advisories by release-scoped ecosystem and source package name.
 _OS_ECOSYSTEMS = {
-    ("deb", "debian"): (re.compile(r"^(?:debian-)?(\d+)"), "Debian:{}"),
-    ("apk", "alpine"): (re.compile(r"^(?:alpine-)?(\d+\.\d+)"), "Alpine:v{}"),
+    ("deb", "debian"): (re.compile(r"^(?:debian-)?(\d+)"), "Debian:{}".format),
+    ("apk", "alpine"): (re.compile(r"^(?:alpine-)?(\d+\.\d+)"), "Alpine:v{}".format),
+    ("deb", "ubuntu"): (re.compile(r"^(?:ubuntu-)?(\d+\.\d+)"), _ubuntu_ecosystem),
 }
 _TRIVY = "aquasecurity:trivy:"
 
@@ -114,15 +122,17 @@ def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
     parsed = parse_purl(purl)
     if parsed is None or not parsed.name or not _PURL_TYPE.fullmatch(parsed.type) or _INVALID_ESCAPE.search(purl):
         return None
-    rule = _OS_ECOSYSTEMS.get((parsed.type, (parsed.namespace or "").lower()))
+    distro = (parsed.namespace or "").lower()
+    rule = _OS_ECOSYSTEMS.get((parsed.type, distro))
     if rule is None:
         return {"package": {"purl": purl}}
     release_pattern, ecosystem = rule
     release = release_pattern.match(parsed.qualifiers.get("distro", ""))
     source = _os_source_package(parsed, component)
     if release is None or source is None:
-        return None
-    return {"package": {"ecosystem": ecosystem.format(release[1]), "name": source[0]}, "version": source[1]}
+        # OSV still resolves an Ubuntu purl, by binary name, which finds packages named like their source.
+        return {"package": {"purl": purl}} if distro == "ubuntu" else None
+    return {"package": {"ecosystem": ecosystem(release[1]), "name": source[0]}, "version": source[1]}
 
 
 def _os_source_package(parsed: ParsedPURL, component: dict[str, Any]) -> tuple[str, str | None] | None:
