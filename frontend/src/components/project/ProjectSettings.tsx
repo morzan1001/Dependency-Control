@@ -7,7 +7,6 @@ import { useClickOutside } from '@/hooks/use-click-outside'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
-import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-schemas'
 import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
@@ -198,7 +197,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const { data: appConfig } = useAppConfig();
   // A project without its own schedule runs on the global one, so that is what it shows.
   const effectiveRescanEnabled = (rescanEnabled ?? appConfig?.global_rescan_enabled) === true
-  const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
+  const { data: webhooks, isLoading: isLoadingWebhooks } = useProjectWebhooks(projectId);
 
   const { data: gitlabInstances } = useGitLabInstances({ active_only: true }, isSystemManager);
   const { data: githubInstances } = useGitHubInstances({ active_only: true }, isSystemManager);
@@ -254,23 +253,9 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   })
 
 
-  const createProjectWebhookMutation = useCreateProjectWebhook()
+  const createWebhookMutation = useCreateProjectWebhook()
   const updateWebhookMutation = useUpdateWebhook()
   const deleteWebhookMutation = useDeleteWebhook()
-
-  const createWebhookMutation = {
-    mutateAsync: (data: WebhookCreate) => 
-      createProjectWebhookMutation.mutateAsync({ projectId, data }).then(result => {
-        refetchWebhooks()
-        return result
-      }),
-    isPending: createProjectWebhookMutation.isPending,
-  }
-
-  const handleDeleteWebhook = async (id: string) => {
-    await deleteWebhookMutation.mutateAsync(id)
-    refetchWebhooks()
-  }
 
   // An owning team the caller cannot see is still an owner, and leaving it out of the options
   // would have the whole-set save drop it without anyone choosing to.
@@ -774,9 +759,9 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       <WebhookManager 
         webhooks={webhooks || []} 
         isLoading={isLoadingWebhooks}
-        onCreate={createWebhookMutation.mutateAsync}
+        onCreate={data => createWebhookMutation.mutateAsync({ projectId, data })}
         onUpdate={(id, data) => updateWebhookMutation.mutateAsync({ id, data })}
-        onDelete={handleDeleteWebhook}
+        onDelete={id => deleteWebhookMutation.mutateAsync(id)}
         createPermission={canCreateWh}
         deletePermission={canDeleteWh}
         updatePermission={canUpdateWh}
