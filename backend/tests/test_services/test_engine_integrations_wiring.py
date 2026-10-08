@@ -61,21 +61,3 @@ def test_the_notifier_counts_the_analyzers_but_not_the_enrichments():
         )
 
     assert notify.await_args.kwargs["analyzer_count"] == 2
-
-
-def test_nothing_runs_without_a_project_id():
-    from app.services.analysis import engine
-
-    with (
-        patch.object(engine, "decorate_gitlab_mr", new_callable=AsyncMock) as gitlab,
-        patch.object(engine, "decorate_github_pr", new_callable=AsyncMock) as github,
-        patch.object(engine, "send_scan_notifications", new_callable=AsyncMock),
-    ):
-        asyncio.run(
-            engine._send_integrations_and_notifications(
-                None, "s1", None, Stats(), SCAN_STATUS_COMPLETED, None, [], [], {}, _db_with_project()
-            )
-        )
-
-    gitlab.assert_not_awaited()
-    github.assert_not_awaited()
