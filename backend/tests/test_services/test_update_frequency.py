@@ -4,8 +4,9 @@ import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -1398,6 +1399,33 @@ class TestStreamingOrchestrator:
         assert m.upstream_days_between_releases_median is None
         assert m.upstream_days_since_latest_release_median is None
         assert m.adoption_latency_days_median is None
+
+    @pytest.mark.asyncio
+    async def test_a_rollback_to_an_old_version_is_no_adoption(self):
+        """Returning to a years-old release must not add years to the adoption latency."""
+        scans = [_scan_days_ago("s1", 60), _scan_days_ago("s2", 30), _scan_days_ago("s3", 0)]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "2.0.0")],
+            "s3": [_make_dep("s3", "pkg-a", "1.0.0")],
+        }
+        history: ReleaseHistory = {
+            ("pypi", "pkg-a"): [
+                ReleaseInfo(version="1.0.0", published_at=scans[0]["created_at"] - timedelta(days=1400)),
+                ReleaseInfo(version="2.0.0", published_at=scans[1]["created_at"] - timedelta(days=12)),
+            ],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
+            release_fetcher=SimpleNamespace(fetch=AsyncMock(return_value=history)),
+        )
+        assert m.downgrade_updates == 1
+        assert m.adoption_latency_days_median == 12.0
 
     @pytest.mark.asyncio
     async def test_release_fetcher_populates_upstream_metrics(self):

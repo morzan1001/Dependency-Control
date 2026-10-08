@@ -640,7 +640,8 @@ class _AccumulatorState:
     def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
         for e, identity in events:
             self.type_counter[e.update_type] += 1
-            if len(self.first_seen_versions) < _MAX_OBSERVATIONS:
+            # Returning to an old release is no adoption of it.
+            if e.update_type != "downgrade" and len(self.first_seen_versions) < _MAX_OBSERVATIONS:
                 key = (identity, e.new_version)
                 if key not in self.first_seen_versions:
                     self.first_seen_versions[key] = curr_scan_date
