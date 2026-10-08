@@ -95,16 +95,17 @@ async def test_a_language_without_callgraph_support_is_refused(db, database):
     assert "unsupported callgraph language" in result["error"]
 
 
-async def test_a_graph_past_the_answer_budget_is_summarised_by_its_busiest_modules(db, database):
+def _graph(modules: int, details: int) -> dict:
+    """A python graph whose module pkg-{i} is imported and called i times, each with `details` files and symbols."""
     usage = {
         f"pkg-{i}": ModuleUsage(
             module=f"pkg-{i}",
             import_count=i,
             call_count=i,
-            import_locations=[f"src/module_{i}/file_{j}.py" for j in range(5)],
-            used_symbols=[f"symbol_{j}" for j in range(5)],
+            import_locations=[f"src/module_{i}/file_{j}.py" for j in range(details)],
+            used_symbols=[f"symbol_{j}" for j in range(details)],
         )
-        for i in range(60)
+        for i in range(modules)
     }
     stored = Callgraph(
         project_id=_PROJECT,
@@ -114,7 +115,23 @@ async def test_a_graph_past_the_answer_budget_is_summarised_by_its_busiest_modul
         analyzed_modules=sorted(usage),
         created_at=_MARCH,
     ).model_dump(by_alias=True)
-    await _seed(db, {**stored, "updated_at": _MARCH})
+    return {**stored, "updated_at": _MARCH}
+
+
+async def test_a_graph_within_the_answer_budget_keeps_every_module_s_files_and_symbols(db, database):
+    stored = _graph(30, 1)
+    await _seed(db, stored)
+
+    [graph] = (await _call(db))["callgraphs"]
+
+    assert len(graph["module_usage"]) == 30
+    assert graph["module_usage"]["pkg-0"]["import_locations"] == ["src/module_0/file_0.py"]
+    assert graph["module_usage"]["pkg-0"]["used_symbols"] == ["symbol_0"]
+    assert graph["analyzed_modules"] == stored["analyzed_modules"]
+
+
+async def test_a_graph_past_the_answer_budget_is_summarised_by_its_busiest_modules(db, database):
+    await _seed(db, _graph(60, 5))
 
     [graph] = (await _call(db))["callgraphs"]
 

@@ -81,11 +81,13 @@ from app.services.recommendation.common import live_advisories, max_advisory_cvs
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
+    MAX_TOOL_RESULT_BYTES,
     RANKED_FINDING_PROJECTION,
     _breaking_risk,
     _clip_value,
     _ensure_list,
     _inject_urls,
+    _json_size,
     _number,
     _serialize_doc,
     _serialize_finding_for_llm,
@@ -1489,7 +1491,10 @@ class ChatToolRegistry:
         ]
         newest = await ctx.db["callgraphs"].aggregate(pipeline).to_list(length=None)
         repo = CallgraphRepository(ctx.db)
-        return {"callgraphs": [_serialize_doc(_callgraph_summary(await repo.load_graph(doc))) for doc in newest]}
+        answer = {"callgraphs": [_serialize_doc(await repo.load_graph(doc)) for doc in newest]}
+        if _json_size(answer) > MAX_TOOL_RESULT_BYTES:
+            answer["callgraphs"] = [_callgraph_summary(graph) for graph in answer["callgraphs"]]
+        return answer
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
         finding = await self._require_finding(ctx, await self._require_project(ctx))
