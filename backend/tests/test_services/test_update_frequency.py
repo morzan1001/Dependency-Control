@@ -948,18 +948,6 @@ class TestUnmeasuredScans:
         assert [e.outdated_count for e in m.scan_timeline] == [3, None]
 
     @pytest.mark.asyncio
-    async def test_a_partial_analysis_is_not_a_measured_backlog(self):
-        # deps.dev failed for pkg-b, so the analyzer could not flag it: that is no resolution.
-        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
-        deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
-        partial = _backlog_outdated("s2", ["pkg-a", "pkg-c"])
-        partial["result"]["partial_components_skipped"] = 1
-        m = await self._compute(scans, deps, [_backlog_outdated("s1"), partial])
-        assert m.outdated_resolved == 0
-        assert m.update_coverage_pct == 0.0
-        assert [e.outdated_count for e in m.scan_timeline] == [3, None]
-
-    @pytest.mark.asyncio
     async def test_coverage_is_none_when_no_scan_measured_a_backlog(self):
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
@@ -1010,6 +998,63 @@ class TestUnmeasuredScans:
         assert [e.outdated_count for e in m.scan_timeline] == [10, 10, 10, 10, 10, None]
         assert m.trend_direction == "stable"
         assert "~10 outdated" in m.trend_detail
+
+
+class TestFailedLookups:
+    """A package whose deps.dev lookup failed went unmeasured; the rest of its scan did not."""
+
+    @staticmethod
+    async def _walk_and_ledger(
+        flagged: dict[str, list[str]], failed: dict[str, list[str]]
+    ) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics]:
+        """Both read paths over scans 30 days apart that each hold the backlog and ``flaky``."""
+        db = FakeDatabase()
+        for index, (scan_id, names) in enumerate(flagged.items()):
+            await db.scans.insert_one(_scan_days_ago(scan_id, 30 * (len(flagged) - 1 - index)))
+            await db.dependencies.insert_many(
+                [{"_id": f"{scan_id}:{name}", **_make_dep(scan_id, name, "1.0.0")} for name in (*_BACKLOG, "flaky")]
+            )
+            analysis = _backlog_outdated(scan_id, names)
+            if lost := failed.get(scan_id):
+                analysis["result"] |= {"partial_components_skipped": len(lost), "lookup_failed_components": lost}
+            await db.analysis_results.insert_one({"_id": f"{scan_id}:outdated", **analysis})
+            await record_scan_update_delta(db, scan_id)
+
+        live = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=ScanRepository(db),
+            dep_repo=DependencyRepository(db),
+            analysis_repo=AnalysisResultRepository(db),
+            branch="main",
+            window_days=90,
+        )
+        project = {"_id": "proj-1", "name": "Project", "default_branch": None, "deleted_branches": []}
+        rolled = await rollup_metrics(db, project, 90)
+        assert rolled is not None
+        return live, rolled
+
+    @pytest.mark.asyncio
+    async def test_a_package_whose_lookup_always_fails_leaves_the_backlog_measured(self):
+        flagged = {"s1": list(_BACKLOG), "s2": ["pkg-b", "pkg-c"], "s3": ["pkg-b"]}
+
+        live, rolled = await self._walk_and_ledger(flagged, failed={scan_id: ["flaky"] for scan_id in flagged})
+
+        for metrics in (live, rolled):
+            assert (metrics.update_coverage_pct, metrics.outdated_resolved) == (66.7, 2)
+            assert [e.outdated_count for e in metrics.scan_timeline] == [3, 2, 1]
+        assert (live.outdated_backlog, [p.name for p in live.slowest_packages]) == (1, ["pkg-b"])
+
+    @pytest.mark.asyncio
+    async def test_an_outdated_package_whose_lookup_failed_is_not_resolved(self):
+        # deps.dev failed for pkg-b in s2 only, and s3 shows it still outdated.
+        flagged = {"s1": list(_BACKLOG), "s2": ["pkg-c"], "s3": ["pkg-b"]}
+
+        live, rolled = await self._walk_and_ledger(flagged, failed={"s2": ["pkg-b"]})
+
+        for metrics in (live, rolled):
+            assert (metrics.update_coverage_pct, metrics.outdated_resolved) == (66.7, 2)
+            assert [e.outdated_count for e in metrics.scan_timeline] == [3, 1, 1]
 
 
 class TestAggregationAccuracy:
@@ -2126,7 +2171,11 @@ class TestOutdatedRowsPerScan:
                 {
                     "scan_id": "scan-1",
                     "analyzer_name": "outdated_packages",
-                    "result": {"outdated_dependencies": [{"component": f"pkg{i:03d}"}]},
+                    "result": {
+                        "outdated_dependencies": [{"component": f"pkg{i:03d}"}],
+                        "partial_components_skipped": 1,
+                        "lookup_failed_components": [f"lost{i:03d}"],
+                    },
                 }
                 for i in range(self._SBOMS_PER_SCAN)
             ]
@@ -2134,10 +2183,12 @@ class TestOutdatedRowsPerScan:
 
     @pytest.mark.asyncio
     async def test_a_monorepo_posting_many_sboms_keeps_every_backlog_row(self):
-        entries = await load_outdated_entries(self._repo(), "scan-1")
+        loaded = await load_outdated_entries(self._repo(), "scan-1")
 
-        assert entries is not None
+        assert loaded is not None
+        entries, failed = loaded
         assert [e["component"] for e in entries] == [f"pkg{i:03d}" for i in range(self._SBOMS_PER_SCAN)]
+        assert failed == {f"lost{i:03d}" for i in range(self._SBOMS_PER_SCAN)}
 
     @pytest.mark.asyncio
     async def test_a_scan_with_no_outdated_analysis_is_unmeasured_not_empty(self):

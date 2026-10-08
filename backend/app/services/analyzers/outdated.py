@@ -67,20 +67,21 @@ class OutdatedAnalyzer(Analyzer):
         components = parsed_components or []
         outdated: list[dict[str, Any]] = []
         ahead: list[dict[str, Any]] = []
-        skipped = 0
+        failed: list[str] = []
 
         # One deps.dev document per distinct package; every installed version is classified against it.
         infos = await self._resolve_package_infos(components)
 
         for component, info in zip(components, infos, strict=True):
             if isinstance(info, BaseException):
-                skipped += 1
+                failed.append(component.get("name", ""))
             elif info and info.get("default"):
                 self._classify_version(component, info["default"], outdated, ahead)
 
         result: dict[str, Any] = {"outdated_dependencies": outdated, "ahead_of_default": ahead}
-        if skipped:
-            result["partial_components_skipped"] = skipped
+        if failed:
+            result["partial_components_skipped"] = len(failed)
+            result["lookup_failed_components"] = sorted(set(failed))
         return result
 
     @staticmethod

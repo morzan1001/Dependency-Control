@@ -135,14 +135,14 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
 
 async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[str] | None]:
     deps = await load_scan_deps(DependencyRepository(db), scan.scan_id)
-    outdated = await _load_outdated(db, scan.scan_id)
+    outdated, failed = await _load_outdated(db, scan.scan_id)
 
     prev, prev_deps = await _resolve_predecessor(db, scan)
     if prev is None:
         diff = _Diff()
     else:
         prev_outdated = (await ScanOutdatedSetRepository(db).names_by_scan([prev["_id"]])).get(prev["_id"])
-        diff = _diff_scans(prev_deps, deps, prev_outdated, outdated)
+        diff = _diff_scans(prev_deps, deps, prev_outdated, outdated, failed)
 
     delta = ScanUpdateDelta(
         id=scan.scan_id,
@@ -224,6 +224,7 @@ def _diff_scans(
     curr_deps: dict[str, dict[str, str]],
     prev_outdated: set[str] | None,
     curr_outdated: set[str] | None,
+    curr_failed: set[str],
 ) -> _Diff:
     counts: Counter = Counter()
     samples: list[UpdateSample] = []
@@ -253,19 +254,20 @@ def _diff_scans(
         # went outdated across the unmeasured scan out of the coverage denominator.
         diff.outdated_added = sorted(curr_outdated)
         return diff
-    curr_names = {info["name"] for info in curr_deps.values()}
+    curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
     diff.outdated_added = sorted(curr_outdated - prev_outdated)
-    # A package that vanished was not brought up to date.
+    # A package that vanished, or whose lookup failed, was not brought up to date.
     diff.outdated_resolved = sorted((prev_outdated & curr_names) - curr_outdated)
     return diff
 
 
-async def _load_outdated(db: Any, scan_id: str) -> set[str] | None:
-    """Component names the scan flagged outdated, or None when it carries no such analysis."""
-    entries = await load_outdated_entries(AnalysisResultRepository(db), scan_id)
-    if entries is None:
-        return None
-    return {component for entry in entries if (component := entry.get("component", ""))}
+async def _load_outdated(db: Any, scan_id: str) -> tuple[set[str] | None, set[str]]:
+    """Component names the scan flagged outdated (None without the analysis) and those whose lookup failed."""
+    loaded = await load_outdated_entries(AnalysisResultRepository(db), scan_id)
+    if loaded is None:
+        return None, set()
+    entries, failed = loaded
+    return {component for entry in entries if (component := entry.get("component", ""))}, failed
 
 
 async def _persist(db: Any, delta: ScanUpdateDelta, outdated: set[str] | None) -> None:

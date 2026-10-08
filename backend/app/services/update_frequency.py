@@ -168,19 +168,21 @@ async def load_scan_deps(dep_repo: DependencyRepository, scan_id: str) -> dict[s
     return fold_scan_deps(await dep_repo.find_all_raw({"scan_id": scan_id}, DEP_PROJECTION))
 
 
-async def load_outdated_entries(analysis_repo: AnalysisResultRepository, scan_id: str) -> list[dict[str, Any]] | None:
-    """The scan's ``outdated_dependencies`` entries, or None when it carries no such analysis.
+async def load_outdated_entries(
+    analysis_repo: AnalysisResultRepository, scan_id: str
+) -> tuple[list[dict[str, Any]], set[str]] | None:
+    """The scan's ``outdated_dependencies`` entries and the components whose lookup failed; None without the analysis.
 
     An analyzer that raised leaves no document behind and one that failed stores a
     result without ``outdated_dependencies``; reading either as an empty backlog
     would report the whole backlog of the previous scan as brought up to date. A
-    result whose lookups partly failed leaves those packages unflagged, so one
-    such row leaves the whole scan unmeasured.
+    component whose lookup failed is merely unflagged, so it is returned apart.
 
     One row is stored per SBOM of the scan and the caller folds them into a set, so the
     cursor is walked whole: a bounded read would drop an arbitrary SBOM's backlog.
     """
     entries: list[dict[str, Any]] = []
+    failed: set[str] = set()
     measured = False
     async for doc in analysis_repo.iterate_raw(
         {"scan_id": scan_id, "analyzer_name": "outdated_packages"}, projection=RESULT_PROJECTION
@@ -189,27 +191,27 @@ async def load_outdated_entries(analysis_repo: AnalysisResultRepository, scan_id
         found = result.get("outdated_dependencies")
         if not isinstance(found, list):
             continue
-        if result.get("partial_components_skipped"):
-            return None
         measured = True
         entries.extend(found)
-    return entries if measured else None
+        failed.update(result.get("lookup_failed_components") or ())
+    return (entries, failed) if measured else None
 
 
 async def _load_outdated_for_scan(
     analysis_repo: AnalysisResultRepository,
     scan_id: str,
     package_latest_info: dict[str, dict[str, str]],
-) -> set[str] | None:
-    """Component names the scan flagged as outdated, or None when it carries no such analysis.
+) -> tuple[set[str] | None, set[str]]:
+    """Component names the scan flagged as outdated (None without the analysis) and those whose lookup failed.
 
     Updates ``package_latest_info`` in-place; later writes for the same
     package overwrite earlier ones, which is fine since ``slowest_packages``
     only needs one consistent current/latest pair per name.
     """
-    entries = await load_outdated_entries(analysis_repo, scan_id)
-    if entries is None:
-        return None
+    loaded = await load_outdated_entries(analysis_repo, scan_id)
+    if loaded is None:
+        return None, set()
+    entries, failed = loaded
     outdated_names: set[str] = set()
     for entry in entries:
         comp = entry.get("component", "")
@@ -220,7 +222,7 @@ async def _load_outdated_for_scan(
             "current_version": entry.get("current_version", ""),
             "latest_version": entry.get("latest_version", ""),
         }
-    return outdated_names
+    return outdated_names, failed
 
 
 def _measured_count(outdated: set[str] | None) -> int | None:
@@ -689,8 +691,9 @@ class _AccumulatorState:
         prev_outdated: set[str] | None,
         curr_outdated: set[str] | None,
         curr_deps: dict[str, dict[str, str]],
+        curr_failed: set[str],
     ) -> None:
-        """Resolved = still present but no longer flagged outdated.
+        """Resolved = still present, looked up, and no longer flagged outdated.
 
         A version bump that stays behind latest is not a resolution, and
         neither is removing the package. Both scans must carry an outdated
@@ -699,7 +702,7 @@ class _AccumulatorState:
         """
         if prev_outdated is None or curr_outdated is None:
             return
-        curr_names = {info["name"] for info in curr_deps.values()}
+        curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
         for pkg in prev_outdated:
             if pkg in curr_names and pkg not in curr_outdated:
                 self.ever_resolved.add(pkg)
@@ -913,7 +916,9 @@ async def compute_update_frequency(
             continue
         state.accumulate_types(curr_deps)
 
-        curr_outdated = await _load_outdated_for_scan(analysis_repo, curr_scan["_id"], state.package_latest_info)
+        curr_outdated, curr_failed = await _load_outdated_for_scan(
+            analysis_repo, curr_scan["_id"], state.package_latest_info
+        )
         state.record_outdated(curr_outdated)
 
         events: list[tuple[DependencyUpdateEvent, str]] = []
@@ -921,7 +926,7 @@ async def compute_update_frequency(
             prev_scan = analysed[-1]
             if not curr_scan["commit_hash"] or prev_scan["commit_hash"] != curr_scan["commit_hash"]:
                 _close_bar()
-            state.record_resolved(prev_outdated, curr_outdated, curr_deps)
+            state.record_resolved(prev_outdated, curr_outdated, curr_deps, curr_failed)
             events = _compare_scan_pair(
                 prev_deps, prev_scan["created_at"], curr_deps, curr_scan["created_at"], prev_outdated
             )
