@@ -18,16 +18,6 @@ class TestArchiveMetadata:
         assert metadata.s3_key == "proj-1/scan-1.json.gz"
         assert metadata.s3_bucket == "dc-archives"
 
-    def test_id_auto_generated(self):
-        metadata = ArchiveMetadata(
-            project_id="proj-1",
-            scan_id="scan-1",
-            s3_key="proj-1/scan-1.json.gz",
-            s3_bucket="dc-archives",
-        )
-        assert metadata.id is not None
-        assert len(metadata.id) > 0
-
     def test_archived_at_auto_set(self):
         metadata = ArchiveMetadata(
             project_id="proj-1",
@@ -82,34 +72,3 @@ class TestArchiveMetadata:
         assert metadata.commit_hash == "abc123"
         assert metadata.original_size_bytes == 5000
         assert metadata.compressed_size_bytes == 1000
-
-    def test_serialization_alias(self):
-        metadata = ArchiveMetadata(
-            project_id="proj-1",
-            scan_id="scan-1",
-            s3_key="proj-1/scan-1.json.gz",
-            s3_bucket="dc-archives",
-        )
-        dumped = metadata.model_dump(by_alias=True)
-        assert "_id" in dumped
-        assert "id" not in dumped
-
-    def test_validation_alias_accepts_underscore_id(self):
-        metadata = ArchiveMetadata(
-            _id="custom-id",
-            project_id="proj-1",
-            scan_id="scan-1",
-            s3_key="proj-1/scan-1.json.gz",
-            s3_bucket="dc-archives",
-        )
-        assert metadata.id == "custom-id"
-
-    def test_populate_by_name(self):
-        metadata = ArchiveMetadata(
-            id="my-id",
-            project_id="proj-1",
-            scan_id="scan-1",
-            s3_key="proj-1/scan-1.json.gz",
-            s3_bucket="dc-archives",
-        )
-        assert metadata.id == "my-id"

@@ -6,43 +6,6 @@ from typing import ClassVar
 import pytest
 
 
-class TestModelIdAlias:
-    """All MongoDB-backed models must accept _id and serialize it back as _id."""
-
-    @pytest.mark.parametrize(
-        "model_cls,kwargs",
-        [
-            pytest.param(
-                "app.models.project:Project",
-                {"name": "p", "owner_id": "u1"},
-                id="Project",
-            ),
-            pytest.param(
-                "app.models.github_instance:GitHubInstance",
-                {"name": "GH", "url": "https://token.actions.githubusercontent.com", "created_by": "admin"},
-                id="GitHubInstance",
-            ),
-        ],
-    )
-    def test_auto_id_and_alias_roundtrip(self, model_cls: str, kwargs: dict):
-        module_path, cls_name = model_cls.rsplit(":", 1)
-        import importlib
-
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, cls_name)
-
-        instance = cls(**kwargs)
-        assert instance.id is not None
-        assert len(instance.id) > 0
-
-        dumped = instance.model_dump(by_alias=True)
-        assert "_id" in dumped
-        assert dumped["_id"] == instance.id
-
-        reconstructed = cls(**dumped)
-        assert reconstructed.id == instance.id
-
-
 class TestUseEnumValues:
     """Finding and FindingRecord store enum values as plain strings."""
 
@@ -488,6 +451,36 @@ class TestMongoDocumentIdConsolidation:
             "url": "https://gitlab.com",
             "created_by": "admin",
         },
+        "app.models.github_instance:GitHubInstance": {
+            "name": "GH",
+            "url": "https://token.actions.githubusercontent.com",
+            "created_by": "admin",
+        },
+        "app.models.policy_audit_entry:PolicyAuditEntry": {
+            "policy_scope": "system",
+            "version": 1,
+            "action": "seed",
+            "timestamp": datetime.now(timezone.utc),
+            "snapshot": {},
+            "change_summary": "x",
+        },
+        "app.models.crypto_asset:CryptoAsset": {
+            "project_id": "p1",
+            "scan_id": "s1",
+            "bom_ref": "c1",
+            "name": "SHA-256",
+            "asset_type": "algorithm",
+            "primitive": "hash",
+        },
+        "app.models.compliance_report:ComplianceReport": {
+            "scope": "user",
+            "framework": "bsi-tr-02102",
+            "format": "csv",
+            "status": "pending",
+            "requested_by": "u1",
+            "requested_at": datetime.now(timezone.utc),
+        },
+        "app.models.project:Project": {"name": "p", "owner_id": "u1"},
         "app.models.project:Scan": {"project_id": "p1", "branch": "main"},
         "app.models.project:AnalysisResult": {
             "scan_id": "s1",
@@ -523,12 +516,13 @@ class TestMongoDocumentIdConsolidation:
 
         instance = cls(**kwargs)
         assert isinstance(instance.id, str) and len(instance.id) > 0
+        assert cls(**kwargs).id != instance.id
 
         dumped = instance.model_dump(by_alias=True)
         assert dumped["_id"] == instance.id
-
-        reconstructed = cls(**dumped)
-        assert reconstructed.id == instance.id
+        assert "id" not in dumped
+        assert cls(**dumped) == instance
+        assert cls(id="x", **kwargs).id == "x"
 
     def test_explicit_id_via_alias_is_honored(self):
         from app.models.user import User

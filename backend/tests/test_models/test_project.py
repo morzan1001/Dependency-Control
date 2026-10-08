@@ -21,11 +21,6 @@ class TestProjectModel:
         assert project.team_ids == []
         assert project.gitlab_mr_comments_enabled is False
 
-    def test_id_auto_generated(self):
-        project = Project(name="test", owner_id="user-1")
-        assert project.id is not None
-        assert len(project.id) > 0
-
 
 class TestProjectMemberModel:
     def test_default_role_is_viewer(self):
@@ -47,10 +42,6 @@ class TestScanModel:
         assert scan.received_results == []
         assert scan.sbom_refs == []
         assert scan.commit_hash is None
-
-    def test_id_auto_generated(self):
-        scan = Scan(project_id="proj-1", branch="main")
-        assert scan.id is not None
 
     def test_pinned_defaults_to_false(self):
         scan = Scan(project_id="proj-1", branch="main")

@@ -50,20 +50,10 @@ class TestTeamModel:
         assert team.members[0].role == "admin"
         assert team.members[1].role == TEAM_ROLE_MEMBER
 
-    def test_id_auto_generated(self):
-        a = Team(name="A")
-        b = Team(name="B")
-        assert a.id != b.id
-
     def test_timestamps_set(self):
         team = Team(name="T")
         assert team.created_at is not None
         assert team.updated_at is not None
-
-    def test_id_alias(self):
-        team = Team(name="T")
-        dumped = team.model_dump(by_alias=True)
-        assert "_id" in dumped
 
 
 class TestTeamBindings:

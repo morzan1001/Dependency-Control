@@ -49,13 +49,6 @@ class TestCallgraphModel:
         assert cg.language == "python"
         assert cg.tool == "ast"
 
-    def test_id_auto_generated(self):
-        a = self._make_callgraph()
-        b = self._make_callgraph()
-        assert a.id is not None
-        assert len(a.id) > 0
-        assert a.id != b.id
-
     def test_optional_fields_default_none(self):
         cg = self._make_callgraph()
         assert cg.pipeline_id is None
@@ -109,21 +102,6 @@ class TestCallgraphIdAlias:
         }
         defaults.update(overrides)
         return Callgraph(**defaults)
-
-    def test_model_dump_by_alias_contains_id(self):
-        cg = self._make_callgraph()
-        dumped = cg.model_dump(by_alias=True)
-        assert "_id" in dumped
-        assert dumped["_id"] == cg.id
-
-    def test_accepts_id_from_mongo(self):
-        cg = Callgraph(
-            _id="cg-custom-id",
-            project_id="p1",
-            language="go",
-            tool="go-list",
-        )
-        assert cg.id == "cg-custom-id"
 
     def test_roundtrip_via_model_dump(self):
         original = self._make_callgraph(

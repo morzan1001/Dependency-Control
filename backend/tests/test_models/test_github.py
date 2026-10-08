@@ -27,39 +27,6 @@ class TestGitHubInstanceModel:
         assert instance.description is None
         assert instance.last_modified_at is None
 
-    def test_id_auto_generated(self):
-        instance = GitHubInstance(
-            name="Test",
-            url="https://token.actions.githubusercontent.com",
-            created_by="admin",
-        )
-        assert instance.id is not None
-        assert len(instance.id) > 0
-
-    def test_unique_ids(self):
-        a = GitHubInstance(name="A", url="https://a.com", created_by="admin")
-        b = GitHubInstance(name="B", url="https://b.com", created_by="admin")
-        assert a.id != b.id
-
-    def test_serialization_alias(self):
-        instance = GitHubInstance(
-            name="Test",
-            url="https://token.actions.githubusercontent.com",
-            created_by="admin",
-        )
-        data = instance.model_dump(by_alias=True)
-        assert "_id" in data
-        assert data["_id"] == instance.id
-
-    def test_validation_alias(self):
-        instance = GitHubInstance(
-            _id="custom-id",
-            name="Test",
-            url="https://token.actions.githubusercontent.com",
-            created_by="admin",
-        )
-        assert instance.id == "custom-id"
-
     def test_optional_fields(self):
         instance = GitHubInstance(
             name="Full Instance",
