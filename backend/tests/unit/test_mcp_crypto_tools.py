@@ -100,7 +100,7 @@ async def test_an_unknown_report_framework_is_refused_rather_than_dropped(db):
 
 @pytest.mark.asyncio
 async def test_mcp_get_crypto_summary():
-    from app.services.chat.tools import get_crypto_summary
+    from app.services.chat.tools.crypto_tools import get_crypto_summary
 
     agg_results = [{"_id": "algorithm", "count": 1}]
     mock_col = create_mock_collection(aggregate=agg_results, count_documents=1)

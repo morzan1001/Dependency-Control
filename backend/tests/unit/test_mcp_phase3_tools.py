@@ -10,10 +10,10 @@ from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 @pytest.mark.asyncio
 async def test_generate_pqc_migration_plan_returns_response():
     from app.services.analytics.scopes import ResolvedScope
-    from app.services.chat.tools import generate_pqc_migration_plan
+    from app.services.chat.tools.crypto_tools import generate_pqc_migration_plan
 
     db = MagicMock()
-    with patch("app.services.chat.tools.PQCMigrationPlanGenerator") as gen_cls:
+    with patch("app.services.chat.tools.crypto_tools.PQCMigrationPlanGenerator") as gen_cls:
         gen_cls.return_value = MagicMock(
             generate=AsyncMock(
                 return_value=MagicMock(
@@ -31,10 +31,10 @@ async def test_generate_pqc_migration_plan_returns_response():
 
 @pytest.mark.asyncio
 async def test_list_compliance_reports_returns_metadata():
-    from app.services.chat.tools import list_compliance_reports
+    from app.services.chat.tools.crypto_tools import list_compliance_reports
 
     db = MagicMock()
-    with patch("app.services.chat.tools.ComplianceReportRepository") as repo_cls:
+    with patch("app.services.chat.tools.crypto_tools.ComplianceReportRepository") as repo_cls:
         repo_cls.return_value = MagicMock(
             list=AsyncMock(
                 return_value=[
@@ -53,10 +53,10 @@ async def test_list_compliance_reports_returns_metadata():
 
 @pytest.mark.asyncio
 async def test_list_policy_audit_entries_returns_timeline():
-    from app.services.chat.tools import list_policy_audit_entries
+    from app.services.chat.tools.crypto_tools import list_policy_audit_entries
 
     db = MagicMock()
-    with patch("app.services.chat.tools.PolicyAuditRepository") as repo_cls:
+    with patch("app.services.chat.tools.crypto_tools.PolicyAuditRepository") as repo_cls:
         repo_cls.return_value = MagicMock(
             list=AsyncMock(
                 return_value=[
@@ -115,10 +115,10 @@ async def _project_with_vulnerabilities_and_one_md5_finding(db):
 
 async def _chat_summary(db, framework):
     from app.services.analytics.scopes import ResolvedScope
-    from app.services.chat.tools import get_framework_evaluation_summary
+    from app.services.chat.tools.crypto_tools import get_framework_evaluation_summary
 
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    with patch("app.services.chat.tools.ScopeResolver") as scope_cls:
+    with patch("app.services.chat.tools.crypto_tools.ScopeResolver") as scope_cls:
         scope_cls.return_value = MagicMock(resolve=AsyncMock(return_value=resolved))
         return await get_framework_evaluation_summary(
             db, user=MagicMock(), scope="project", scope_id="p1", framework=framework

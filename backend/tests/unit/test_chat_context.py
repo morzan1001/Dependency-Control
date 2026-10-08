@@ -7,7 +7,8 @@ import pytest
 
 import app.services.chat.context as context_mod
 from app.services.chat.context import SYSTEM_PROMPT, build_messages, trim_to_token_budget
-from app.services.chat.tools import MAX_TOOL_RESULT_BYTES, ChatToolRegistry
+from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._helpers import MAX_TOOL_RESULT_BYTES
 from app.services.chat.tools._helpers import _truncate_if_too_large
 from app.services.chat.tools.definitions import TOOL_DEFINITIONS
 

@@ -6,7 +6,8 @@ import pytest
 
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, SCAN_STATUS_COMPLETED
 from app.models.user import User
-from app.services.chat.tools import ChatToolRegistry, _serialize_finding_for_llm
+from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._helpers import _serialize_finding_for_llm
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 
 _DATABASES = [

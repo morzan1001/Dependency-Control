@@ -8,7 +8,8 @@ from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.archive import ArchiveMetadata
 from app.models.user import User
-from app.services.chat.tools import ChatToolRegistry, _inject_urls
+from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._helpers import _inject_urls
 from app.services.chat.tools.definitions import TOOL_DEFINITIONS
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
