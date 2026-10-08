@@ -1,6 +1,6 @@
 """GET /chat/conversations/{id} serves stored messages, including ones written by older releases."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -43,3 +43,34 @@ async def test_a_legacy_message_is_served_without_its_images_and_token_count(cli
     assert message["content"] == "what is this?"
     assert "images" not in message
     assert "token_count" not in message
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_long_conversation_serves_its_newest_messages_in_order(client, db, monkeypatch):
+    monkeypatch.setattr(settings, "CHAT_ENABLED", True)
+    t0 = datetime.now(timezone.utc)
+    await db["chat_conversations"].insert_one(
+        {"_id": _CONVERSATION, "user_id": _USER, "title": "t", "created_at": t0, "updated_at": t0, "message_count": 120}
+    )
+    await db["chat_messages"].insert_many(
+        [
+            {
+                "_id": f"msg-{i}",
+                "conversation_id": _CONVERSATION,
+                "role": "user" if i % 2 == 0 else "assistant",
+                "content": f"message {i}",
+                "tool_calls": [],
+                "created_at": t0 + timedelta(seconds=i),
+            }
+            for i in range(120)
+        ]
+    )
+
+    resp = await client.get(
+        f"/api/v1/chat/conversations/{_CONVERSATION}",
+        headers=bearer_headers(_USER, [Permissions.CHAT_ACCESS, Permissions.CHAT_HISTORY_READ]),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert [m["content"] for m in resp.json()["messages"]] == [f"message {i}" for i in range(20, 120)]

@@ -87,15 +87,6 @@ class ChatRepository:
             return None
         return int(conversation["message_count"])
 
-    async def get_messages(self, conversation_id: str, limit: int = 100, skip: int = 0) -> list[dict[str, Any]]:
-        cursor = self.messages.find(
-            {"conversation_id": conversation_id},
-            sort=[("created_at", 1)],
-            skip=skip,
-            limit=limit,
-        )
-        return await cursor.to_list(length=limit)
-
     async def get_recent_messages(self, conversation_id: str, limit: int = 20) -> list[dict[str, Any]]:
         cursor = self.messages.find(
             {"conversation_id": conversation_id},

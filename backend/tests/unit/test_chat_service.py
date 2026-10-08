@@ -86,7 +86,6 @@ def _make_service() -> ChatService:
         return_value={"_id": "conv-new", "user_id": "user-1", "title": "New", "message_count": 0}
     )
     service.repo.delete_conversation = AsyncMock(return_value=True)
-    service.repo.get_messages = AsyncMock(return_value=[])
 
     service.tools = MagicMock()
     service.tools.get_available_tool_definitions = MagicMock(return_value=[])
@@ -396,16 +395,6 @@ async def test_delete_conversation_scoped_to_user():
     result = await service.delete_conversation("conv-1", user)
     assert result is True
     service.repo.delete_conversation.assert_awaited_once_with("conv-1", user_id="user-1")
-
-
-@pytest.mark.asyncio
-async def test_get_messages_reads_the_messages_without_rechecking_ownership():
-    service = _make_service()
-    stored = [{"_id": "m1", "role": "user", "content": "hi"}]
-    service.repo.get_messages = AsyncMock(return_value=stored)
-
-    assert await service.get_messages("conv-1") == stored
-    service.repo.get_messages.assert_awaited_once_with("conv-1")
 
 
 @pytest.mark.asyncio

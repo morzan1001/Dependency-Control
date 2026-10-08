@@ -103,7 +103,7 @@ async def get_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
-    messages = await service.get_messages(conversation_id)
+    messages = await service.repo.get_recent_messages(conversation_id, limit=100)
     return ConversationDetailResponse(
         conversation=ConversationResponse(
             id=conv["_id"],
