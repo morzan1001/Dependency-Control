@@ -332,3 +332,44 @@ describe('ProjectScans - the release filter on a project that does not release',
     expect(screen.queryByRole('button', { name: RELEASES_ONLY_BUTTON })).not.toBeInTheDocument()
   })
 })
+
+describe('ProjectScans - source links', () => {
+  const GITLAB = 'https://gitlab.example.com/acme/widget'
+  const COMMIT = 'abcdef1234567890abcdef1234567890abcdef12'
+
+  it('links pipeline, branch and commit to the SCM without opening the scan', () => {
+    renderScans([makeScan({
+      project_url: GITLAB, pipeline_id: 9001, pipeline_iid: 42, branch: 'feature/x', commit_hash: COMMIT,
+    })])
+
+    const pipeline = screen.getByRole('link', { name: '#42' })
+    const branch = screen.getByRole('link', { name: 'feature/x' })
+    const commit = screen.getByRole('link', { name: 'abcdef1' })
+    expect(pipeline).toHaveAttribute('href', `${GITLAB}/-/pipelines/9001`)
+    expect(branch).toHaveAttribute('href', `${GITLAB}/-/tree/feature/x`)
+    expect(commit).toHaveAttribute('href', `${GITLAB}/-/commit/${COMMIT}`)
+    expect(commit).toHaveAttribute('title', COMMIT)
+    for (const link of [pipeline, branch, commit]) {
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+      fireEvent.click(link)
+    }
+    expect(mockNavigate).not.toHaveBeenCalled()
+  })
+
+  it('shows the values as plain text when the SCM is unknown', () => {
+    renderScans([makeScan({ pipeline_iid: 42, branch: 'feature/x', commit_hash: COMMIT })])
+
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByText('#42')).toBeInTheDocument()
+    expect(screen.getByText('feature/x')).toBeInTheDocument()
+    expect(screen.getByText('abcdef1')).toBeInTheDocument()
+  })
+
+  it('says N/A for a scan without pipeline or commit', () => {
+    renderScans([makeScan({ project_url: GITLAB })])
+
+    expect(screen.getAllByText('N/A')).toHaveLength(2)
+  })
+})
+

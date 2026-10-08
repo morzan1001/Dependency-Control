@@ -396,3 +396,36 @@ describe('ScanDetails for a scan pinned by an archive restore', () => {
     expect(screen.queryByRole('button', UNPIN_BUTTON)).not.toBeInTheDocument()
   })
 })
+
+describe('ScanDetails source links', () => {
+  const GITLAB = 'https://gitlab.example.com/acme/widget'
+  const COMMIT = 'abcdef1234567890abcdef1234567890abcdef12'
+
+  it('links branch, commit and pipeline to the SCM in a new tab', () => {
+    mockUseScan.mockReturnValue({
+      data: { ...scan('completed'), project_url: GITLAB, pipeline_id: 9001, commit_hash: COMMIT },
+      isLoading: false,
+    })
+    renderPage()
+
+    expect(screen.getByRole('link', { name: 'main' })).toHaveAttribute('href', `${GITLAB}/-/tree/main`)
+    expect(screen.getByRole('link', { name: 'abcdef1' })).toHaveAttribute('href', `${GITLAB}/-/commit/${COMMIT}`)
+    expect(screen.getByRole('link', { name: '#9001' })).toHaveAttribute('href', `${GITLAB}/-/pipelines/9001`)
+    for (const name of ['main', 'abcdef1', '#9001']) {
+      expect(screen.getByRole('link', { name })).toHaveAttribute('target', '_blank')
+    }
+  })
+
+  it('shows branch and commit as text and no pipeline when the SCM is unknown', () => {
+    mockUseScan.mockReturnValue({
+      data: { ...scan('completed'), pipeline_id: 9001, commit_hash: COMMIT },
+      isLoading: false,
+    })
+    renderPage()
+
+    expect(screen.queryByRole('link', { name: 'main' })).toBeNull()
+    expect(screen.getByText('abcdef1')).toBeInTheDocument()
+    expect(screen.queryByText('#9001')).toBeNull()
+  })
+})
+
