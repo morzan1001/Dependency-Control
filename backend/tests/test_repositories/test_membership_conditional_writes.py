@@ -20,6 +20,7 @@ _PROJECT_ID = "project-1"
 _ADMIN_A = "admin-a"
 _ADMIN_B = "admin-b"
 _NEWCOMER = "newcomer"
+_PLAIN_MEMBER = "plain-member"
 
 
 def _team_doc(members: list[tuple[str, str]]) -> dict:
@@ -123,6 +124,23 @@ async def test_removing_a_plain_member_needs_no_second_admin() -> None:
 
     assert await TeamRepository(db).remove_member(_TEAM_ID, _NEWCOMER, _NOW) is True
     assert _members(await db.teams.find_one({"_id": _TEAM_ID})) == [(_ADMIN_A, TEAM_ROLE_ADMIN)]
+
+
+@pytest.mark.asyncio
+async def test_a_team_with_no_admin_can_still_lose_a_plain_member() -> None:
+    db = FakeDatabase()
+    await db.teams.insert_one(_team_doc([(_PLAIN_MEMBER, TEAM_ROLE_MEMBER), (_NEWCOMER, TEAM_ROLE_MEMBER)]))
+
+    assert await TeamRepository(db).remove_member(_TEAM_ID, _NEWCOMER, _NOW) is True
+    assert _members(await db.teams.find_one({"_id": _TEAM_ID})) == [(_PLAIN_MEMBER, TEAM_ROLE_MEMBER)]
+
+
+@pytest.mark.asyncio
+async def test_a_team_with_no_admin_can_still_set_a_plain_members_role() -> None:
+    db = FakeDatabase()
+    await db.teams.insert_one(_team_doc([(_PLAIN_MEMBER, TEAM_ROLE_MEMBER), (_NEWCOMER, TEAM_ROLE_MEMBER)]))
+
+    assert await TeamRepository(db).update_member_role(_TEAM_ID, _NEWCOMER, TEAM_ROLE_MEMBER, _NOW) is True
 
 
 @pytest.mark.asyncio
