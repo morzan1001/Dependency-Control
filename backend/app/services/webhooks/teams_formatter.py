@@ -20,6 +20,13 @@ def _facts(facts: Mapping[str, object]) -> dict:
     return {"type": "FactSet", "facts": [{"title": title, "value": str(value)} for title, value in facts.items()]}
 
 
+def policy_change_text(payload: Mapping[str, Any]) -> str:
+    scope = f"project {payload['project_id']}" if payload["project_id"] else payload["policy_scope"]
+    # SEED entries have no actor.
+    actor = payload["actor"]["display_name"] or "A user"
+    return f"{actor} updated the {scope} policy: {payload['change_summary']} (version {payload['version']})"
+
+
 class TeamsFormatter:
     @staticmethod
     def _wrap_card(body: list[dict], summary: str, link: tuple[str, str] | None = None) -> dict:
@@ -63,12 +70,7 @@ class TeamsFormatter:
 
     @staticmethod
     def build_policy_changed_card(event: str, payload: Mapping[str, Any]) -> dict:
-        scope = f"project {payload['project_id']}" if payload["project_id"] else payload["policy_scope"]
-        # SEED entries have no actor.
-        actor = payload["actor"]["display_name"] or "A user"
-        return TeamsFormatter.build_generic_card(
-            event, f"{actor} updated the {scope} policy: {payload['change_summary']} (version {payload['version']})"
-        )
+        return TeamsFormatter.build_generic_card(event, policy_change_text(payload))
 
     @staticmethod
     def build_scan_completed_card(payload: Mapping[str, Any]) -> dict:

@@ -831,7 +831,7 @@ WEBHOOK_VALID_EVENTS = [
 
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
 
-WebhookType = Literal["generic", "teams"]
+WebhookType = Literal["generic", "teams", "slack"]
 
 # Webhook HTTP headers
 WEBHOOK_HEADER_CONTENT_TYPE = "Content-Type"

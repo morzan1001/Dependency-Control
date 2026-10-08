@@ -43,6 +43,7 @@ from app.models.webhook import Webhook
 from app.repositories.projects import ProjectRepository
 from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
 from app.repositories.webhooks import WebhookRepository
+from app.services.webhooks.slack_formatter import build_slack_message, build_slack_test_message
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
@@ -198,6 +199,8 @@ class WebhookService:
         event_type: str,
         raw_payload: Mapping[str, Any],
     ) -> Mapping[str, Any]:
+        if webhook_type == "slack":
+            return build_slack_message(event_type, raw_payload)
         if webhook_type != "teams":
             return raw_payload
         if event_type == WEBHOOK_EVENT_SCAN_COMPLETED:
@@ -482,9 +485,10 @@ class WebhookService:
             "message": "This is a test webhook from DependencyControl",
         }
 
-        # Teams gets the test card: formatting test_payload's event would produce a scan card.
-        teams = webhook.webhook_type == "teams"
-        json_payload = json.dumps(TeamsFormatter.build_test_card() if teams else test_payload)
+        # Teams and Slack get a test message: formatting test_payload's event would produce a scan card.
+        test_messages = {"teams": TeamsFormatter.build_test_card, "slack": build_slack_test_message}
+        build = test_messages.get(webhook.webhook_type)
+        json_payload = json.dumps(build() if build else test_payload)
         headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
 
         start_time = time.monotonic()

@@ -57,6 +57,53 @@ async def _policy_payload(entry: PolicyAuditEntry) -> dict:
     return payload
 
 
+async def _vulnerability_payload() -> dict:
+    top = {"id": "CVE-2021-44228", "severity": "CRITICAL", "package": "log4j-core", "version": "2.14.1", "in_kev": True}
+    _event, payload = await delivered(
+        webhook_service.trigger_vulnerability_found(
+            MagicMock(), "scan-abc", "proj-1", "TestProject", 1, 0, 1, 0, 1, [top]
+        )
+    )
+    return payload
+
+
+async def _failed_payload() -> dict:
+    _event, payload = await delivered(
+        webhook_service.trigger_analysis_failed(MagicMock(), "scan-abc", "proj-1", "TestProject", "grype crashed")
+    )
+    return payload
+
+
+class TestFormatPayloadSlackWebhook:
+    """Slack's incoming webhooks answer a body without text with 400 no_text."""
+
+    @pytest.mark.asyncio
+    async def test_a_completed_scan_is_a_slack_message(self):
+        message = WebhookService()._format_payload("slack", "scan.completed", await _scan_payload())
+        assert "TestProject" in message["text"]
+        assert message["blocks"][0]["type"] == "header"
+
+    @pytest.mark.asyncio
+    async def test_a_vulnerability_alert_names_its_top_vulnerability(self):
+        message = WebhookService()._format_payload("slack", "vulnerability.found", await _vulnerability_payload())
+        assert "TestProject" in message["text"]
+        assert "CVE-2021-44228" in json.dumps(message["blocks"])
+
+    @pytest.mark.asyncio
+    async def test_a_failed_analysis_carries_its_error(self):
+        message = WebhookService()._format_payload("slack", "analysis.failed", await _failed_payload())
+        assert "TestProject" in message["text"]
+        assert "grype crashed" in json.dumps(message["blocks"])
+
+    @pytest.mark.asyncio
+    async def test_a_policy_change_names_the_actor_and_the_change(self):
+        payload = await _policy_payload(_policy_entry())
+        message = WebhookService()._format_payload("slack", WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, payload)
+        blocks = json.dumps(message["blocks"])
+        assert message["text"]
+        assert "Alice" in blocks and "Disallowed MD5" in blocks
+
+
 class TestFormatPayloadGenericWebhook:
     @pytest.mark.asyncio
     async def test_returns_raw_payload_unchanged(self):
@@ -222,6 +269,22 @@ class TestTestWebhookForTeams:
         card = sent["attachments"][0]["content"]
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "accent"
+
+    @pytest.mark.asyncio
+    async def test_a_slack_webhook_test_sends_a_slack_message(self):
+        webhook = make_webhook("slack")
+        webhook.url = "https://hooks.slack.com/services/T0/B0/x"
+
+        transport, requests = _recording_transport()
+
+        with patch(
+            "app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=transport)
+        ):
+            result = await WebhookService().test_webhook(webhook)
+
+        sent = json.loads(requests[0].content)
+        assert result["success"] is True
+        assert sent["text"] and sent["blocks"]
 
     @pytest.mark.asyncio
     async def test_a_teams_url_stored_as_generic_gets_the_raw_test_payload(self):
