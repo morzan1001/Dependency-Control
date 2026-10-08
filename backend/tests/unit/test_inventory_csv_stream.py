@@ -43,6 +43,17 @@ async def test_umlauts_and_commas_survive_quoting():
     assert next(reader) == ['Größe, "quoted"']
 
 
+@pytest.mark.asyncio
+async def test_rows_stream_in_batches_after_the_header():
+    items = [{"a": f"row-{i}"} for i in range(20_000)]
+
+    chunks = [chunk async for chunk in iter_csv(["a"], _rows(items))]
+
+    assert chunks[0] == "\ufeffa\r\n"
+    assert 1 < len(chunks) < 10
+    assert "".join(chunks[1:]) == "".join(f"row-{i}\r\n" for i in range(20_000))
+
+
 def test_format_cell_variants():
     assert format_cell(None) == ""
     assert format_cell(True) == "true"
