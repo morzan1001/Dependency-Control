@@ -130,10 +130,9 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             )
         )
 
-    low_score_packages = list(low_score_by_component.values())
-    low_score_shown, low_score_total = sample_components(low_score_by_component)
-    # Skip when unmaintained packages already cover these.
-    if low_score_packages and not unmaintained_packages:
+    low_score_packages = [p for c, p in low_score_by_component.items() if c not in unmaintained_by_component]
+    low_score_shown, low_score_total = sample_components(p["component"] for p in low_score_packages)
+    if low_score_packages:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SUPPLY_CHAIN_RISK,
