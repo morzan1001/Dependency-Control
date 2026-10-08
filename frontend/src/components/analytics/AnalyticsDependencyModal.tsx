@@ -50,14 +50,13 @@ import {
   Link2,
   ChevronDown,
   ChevronUp,
-  ArrowUp,
-  ArrowDown,
   Tag,
   Copy,
   Check,
 } from "lucide-react"
 import { getDisplayId, getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
+import { SortIcon } from './VulnerabilityHotspots'
 
 // Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
@@ -72,13 +71,6 @@ function formatEnrichmentSource(source: string): string {
   if (source === "deps_dev") return "deps.dev"
   if (source === "license_compliance") return "License Scanner"
   return source
-}
-
-const SortIcon = ({ field, sortBy, sortOrder }: { field: SortField, sortBy: SortField, sortOrder: 'asc'|'desc' }) => {
-  if (sortBy !== field) return null
-  return sortOrder === 'asc' 
-    ? <ArrowUp className="h-4 w-4 inline-block ml-1" />
-    : <ArrowDown className="h-4 w-4 inline-block ml-1" />
 }
 
 interface AnalyticsDependencyModalProps {

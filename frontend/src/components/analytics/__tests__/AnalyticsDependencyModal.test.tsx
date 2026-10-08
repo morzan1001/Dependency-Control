@@ -306,6 +306,22 @@ describe("AnalyticsDependencyModal findings list", () => {
     expect(screen.queryByText("pkg:1.0")).not.toBeInTheDocument();
   });
 
+  it("marks the column the findings are sorted by and the direction", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [finding("CVE-1", "HIGH")], total: 1 },
+      isLoading: false,
+    });
+
+    renderFindings();
+    const header = (name: string) => screen.getByText(name, { selector: "th" });
+    expect(header("Severity").querySelector("svg.lucide-arrow-down")).not.toBeNull();
+
+    fireEvent.click(header("Type"));
+
+    expect(header("Type").querySelector("svg.lucide-arrow-up")).not.toBeNull();
+    expect(header("Severity").querySelector("svg")).toBeNull();
+  });
+
   it("sorts the Finding column by the advisory it shows", () => {
     const rows = [
       { ...finding("a:1.0", "HIGH"), details: { vulnerabilities: [{ id: "CVE-2024-9" }] } },

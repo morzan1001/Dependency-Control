@@ -45,6 +45,18 @@ describe("ImpactAnalysis fix versions", () => {
     fireEvent.focus(container.querySelector("td .text-success")!);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(`Fix versions: ${SAMPLED.join(", ")} (+2 more)`);
   });
+
+  it("breaks each component's findings down by severity in the table", async () => {
+    vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([
+      { ...result, findings_by_severity: { critical: 1, high: 2, medium: 3, low: 0 } },
+    ]);
+    renderImpact();
+
+    expect((await screen.findByText("C:1")).className).toContain("text-xs");
+    expect(screen.getByText("H:2").className).toContain("text-xs bg-orange-500 hover:bg-orange-600");
+    expect(screen.getByText("M:3").className).toContain("text-xs bg-yellow-500 hover:bg-yellow-600 text-black");
+    expect(screen.queryByText(/^L:/)).not.toBeInTheDocument();
+  });
 });
 
 describe("ImpactAnalysis load error", () => {
