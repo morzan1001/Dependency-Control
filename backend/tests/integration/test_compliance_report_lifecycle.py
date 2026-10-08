@@ -1,54 +1,6 @@
 """HTTP contract and job-document transitions for compliance report lifecycle endpoints."""
 
-import asyncio
-
 import pytest
-
-
-@pytest.mark.asyncio
-async def test_report_post_then_get_then_download(
-    client,
-    db,
-    owner_auth_headers_proj,
-):
-    resp = await client.post(
-        "/api/v1/compliance/reports",
-        json={
-            "scope": "project",
-            "scope_id": "p",
-            "framework": "nist-sp-800-131a",
-            "format": "json",
-        },
-        headers=owner_auth_headers_proj,
-    )
-    assert resp.status_code == 202, resp.text
-    body = resp.json()
-    assert body["status"] == "pending"
-    report_id = body["report_id"]
-
-    data = None
-    for _ in range(50):
-        get = await client.get(
-            f"/api/v1/compliance/reports/{report_id}",
-            headers=owner_auth_headers_proj,
-        )
-        assert get.status_code == 200
-        data = get.json()
-        if data["status"] in ("completed", "failed"):
-            break
-        await asyncio.sleep(0.1)
-
-    # Fake DB may not support the full engine path; assert only that the job reached a terminal state.
-    assert data is not None
-    assert data["status"] in ("completed", "failed"), data
-
-    if data["status"] == "completed":
-        dl = await client.get(
-            f"/api/v1/compliance/reports/{report_id}/download",
-            headers=owner_auth_headers_proj,
-        )
-        # Fake DB may not support GridFS; a 410 or 5xx here is acceptable.
-        assert dl.status_code in (200, 410, 500)
 
 
 @pytest.mark.asyncio
@@ -65,9 +17,7 @@ async def test_list_reports(client, db, owner_auth_headers_proj):
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 200
-    body = resp.json()
-    assert "reports" in body
-    assert len(body["reports"]) >= 2
+    assert len(resp.json()["reports"]) == 2
 
 
 @pytest.mark.asyncio
@@ -83,7 +33,7 @@ async def test_delete_report(client, db, owner_auth_headers_proj):
         f"/api/v1/compliance/reports/{report_id}",
         headers=owner_auth_headers_proj,
     )
-    assert dele.status_code in (200, 204)
+    assert dele.status_code == 204
     followup = await client.get(
         f"/api/v1/compliance/reports/{report_id}",
         headers=owner_auth_headers_proj,

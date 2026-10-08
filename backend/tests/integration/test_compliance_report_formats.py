@@ -115,6 +115,7 @@ async def test_each_format_renders(
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 202, resp.text
+    assert resp.json()["status"] == "pending"
     report_id = resp.json()["report_id"]
 
     g = await _poll_until_terminal(client, report_id, owner_auth_headers_proj)
