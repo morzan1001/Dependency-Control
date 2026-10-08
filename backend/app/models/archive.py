@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 
 from pydantic import Field
 
-from app.core.constants import ARCHIVE_GRIDFS_CHUNK_FRAME, SCAN_SCOPED_COLLECTIONS
 from app.models.types import MongoDocument
 
 
@@ -11,7 +10,7 @@ class ArchiveMetadata(MongoDocument):
 
     project_id: str
     scan_id: str
-    s3_key: str  # e.g. "{project_id}/{scan_id}.json.gz"
+    s3_key: str
     s3_bucket: str
     archived_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -22,8 +21,6 @@ class ArchiveMetadata(MongoDocument):
     scan_completed_at: datetime | None = None
     scan_status: str | None = None
 
-    # Size info
-    original_size_bytes: int | None = None
     compressed_size_bytes: int | None = None
 
     # Content summary (for listing without downloading)
@@ -32,8 +29,3 @@ class ArchiveMetadata(MongoDocument):
     high_findings_count: int = 0
     dependencies_count: int = 0
     sbom_filenames: list[str] = Field(default_factory=list)
-
-    # Collections included in the archive bundle
-    collections_included: list[str] = Field(
-        default_factory=lambda: ["scans", *SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_CHUNK_FRAME]
-    )

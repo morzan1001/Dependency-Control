@@ -34,7 +34,6 @@ def _make_archive_metadata(**overrides):
         "scan_created_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
         "archived_at": datetime(2025, 6, 1, tzinfo=timezone.utc),
         "compressed_size_bytes": 1000,
-        "original_size_bytes": 5000,
         "findings_count": 5,
         "critical_findings_count": 1,
         "high_findings_count": 2,

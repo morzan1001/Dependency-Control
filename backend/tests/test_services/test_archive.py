@@ -47,7 +47,6 @@ def _make_archive_metadata(**overrides):
         "s3_bucket": "dc-archives",
         "branch": "main",
         "commit_hash": "abc123",
-        "original_size_bytes": 1000,
         "compressed_size_bytes": 200,
     }
     defaults.update(overrides)
