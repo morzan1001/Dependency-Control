@@ -92,7 +92,8 @@ export const useComponentFindings = (component: string, version?: string, releas
     return useQuery({
         queryKey: analyticsKeys.componentFindings(component, version, releaseEnvironment),
         queryFn: () => analyticsApi.getComponentFindings(component, version, releaseEnvironment),
-        enabled: !!component
+        enabled: !!component,
+        staleTime: 5 * 60 * 1000,
     });
 }
 
@@ -100,7 +101,8 @@ export const useDependencyMetadata = (component: string, version?: string, type?
     return useQuery({
         queryKey: analyticsKeys.dependencyMetadata(component, version, type, releaseEnvironment),
         queryFn: () => analyticsApi.getDependencyMetadata(component, version, type, releaseEnvironment),
-        enabled: !!component
+        enabled: !!component,
+        staleTime: 5 * 60 * 1000,
     });
 }
 
