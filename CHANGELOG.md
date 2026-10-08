@@ -1,3 +1,22 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.50. Run mongosh commands in-pod against the application database.
+
+## After the rollout: mark existing Slack webhooks
+
+Incoming-webhook URLs on `hooks.slack.com/services/` now get the `slack` type and receive Slack messages; Slack Workflow Builder URLs stay generic. Startup leaves stored webhooks as they are, so once every pod runs this release, mark the ones created earlier and clear their failure state:
+
+```js
+db.webhooks.updateMany(
+  { url: /^https:\/\/hooks\.slack\.com\/services\// },
+  { $set: { webhook_type: "slack", consecutive_failures: 0, circuit_breaker_until: null, last_failure_at: null } }
+)
+```
+
+A rollback to 1.9.50 or earlier cannot read the `slack` type, so set those webhooks back to `generic` first.
+
+
+
 # Release 1.9.50
 
 ## 📦 Build & CI
