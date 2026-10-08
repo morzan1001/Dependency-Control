@@ -19,6 +19,7 @@ from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.compliance.renderers.json_renderer import JsonRenderer
 from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.gridfs_maintenance import make_gridfs_ref
 from tests.helpers.findings import grype_findings
 
 _PROJECT = "sla-project"
@@ -33,7 +34,15 @@ async def test_a_cve_sla_report_evaluates_every_overdue_finding(db):
     await create_indexes(db)
     await seed_crypto_policies(db)
     await db.projects.insert_one(Project(id=_PROJECT, name="sla", latest_scan_id=_SCAN).model_dump(by_alias=True))
-    await ScanRepository(db).create(Scan(id=_SCAN, project_id=_PROJECT, branch="main", status=SCAN_STATUS_COMPLETED))
+    await ScanRepository(db).create(
+        Scan(
+            id=_SCAN,
+            project_id=_PROJECT,
+            branch="main",
+            status=SCAN_STATUS_COMPLETED,
+            sbom_refs=[make_gridfs_ref("sla-sbom", "sbom.json")],
+        )
+    )
     findings = grype_findings(
         ((f"brace-expansion-{i:06d}", "2.0.1", None) for i in range(_OVERDUE)), severity="Critical"
     )
@@ -60,5 +69,5 @@ async def test_a_cve_sla_report_evaluates_every_overdue_finding(db):
         requested_by="u",
         requested_at=datetime.now(timezone.utc),
     )
-    body, _, _ = JsonRenderer().render(evaluation, report)
+    body = JsonRenderer().render(evaluation, report)
     assert "findings" not in json.loads(body)["coverage"]

@@ -8,7 +8,7 @@ from app.schemas.compliance import (
     ControlStatus,
     FrameworkEvaluation,
 )
-from app.services.compliance.renderers.base import build_filename, coverage_statement
+from app.services.compliance.renderers.base import coverage_statement
 
 _SEVERITY_TO_LEVEL = {
     Severity.CRITICAL.value: "error",
@@ -40,7 +40,7 @@ class SarifRenderer:
         report: ComplianceReport,
         *,
         disclaimer: str | None = None,
-    ) -> tuple[bytes, str, str]:
+    ) -> bytes:
         rules = []
         results = []
 
@@ -99,12 +99,4 @@ class SarifRenderer:
                 },
             ],
         }
-        body = json.dumps(sarif_doc, indent=2, default=str).encode("utf-8")
-        filename = build_filename(
-            evaluation.framework_key,
-            report.scope,
-            report.scope_id,
-            report.requested_at,
-            self.extension,
-        )
-        return body, filename, self.mime_type
+        return json.dumps(sarif_doc, indent=2, default=str).encode("utf-8")

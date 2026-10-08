@@ -225,10 +225,7 @@ async def test_end_to_end_cbom_ingest_creates_findings(client, db, running_worke
     )
 
     fix = Path(__file__).parent.parent / "fixtures" / "cbom" / "legacy_crypto_mixed.json"
-    payload = {
-        "scan_metadata": {},
-        "cbom": json.loads(fix.read_text()),
-    }
+    payload = {"cbom": json.loads(fix.read_text())}
     resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
     assert resp.status_code == 202
     scan_id = resp.json()["scan_id"]

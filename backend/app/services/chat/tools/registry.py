@@ -6,6 +6,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 from typing import Any, ClassVar
 
 from fastapi import HTTPException
@@ -36,6 +37,7 @@ from app.core.constants import (
     max_severity,
 )
 from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
+from app.core.cache import cache_service
 from app.core.housekeeping import resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
@@ -80,11 +82,13 @@ from app.services.recommendation.common import live_advisories, max_advisory_cvs
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
+    MAX_TOOL_RESULT_BYTES,
     RANKED_FINDING_PROJECTION,
     _breaking_risk,
     _clip_value,
     _ensure_list,
     _inject_urls,
+    _json_size,
     _number,
     _serialize_doc,
     _serialize_finding_for_llm,
@@ -220,6 +224,33 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
     "total_imports": 1,
     "total_calls": 1,
 }
+_CALLGRAPH_MODULES_SHOWN = 25
+
+
+def _callgraph_summary(graph: dict[str, Any]) -> dict[str, Any]:
+    """Every module's import and call counts, busiest first, without the file and symbol lists."""
+    usage = graph.get("module_usage") or {}
+    busiest = sorted(
+        usage.items(), key=lambda m: (m[1].get("call_count", 0), m[1].get("import_count", 0)), reverse=True
+    )
+    graph["module_usage"] = {
+        name: {"import_count": u.get("import_count", 0), "call_count": u.get("call_count", 0)} for name, u in busiest
+    }
+    graph["module_usage_total"] = len(usage)
+    graph["analyzed_modules"] = _clip_value(graph.get("analyzed_modules") or [])
+    return graph
+
+
+async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject: str) -> dict[str, Any]:
+    """The waivers `query` selects, bounded, each marked with whether it is still active."""
+    now = datetime.now(timezone.utc)
+    waivers, waivers_total = await bounded_read(db["waivers"], query, subject=subject, limit=_WAIVER_READ)
+    return {
+        "waivers": [
+            {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
+        ],
+        "waivers_total": waivers_total,
+    }
 
 
 def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
@@ -623,9 +654,7 @@ class ChatToolRegistry:
 
     async def _tool_get_vulnerability_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
-        if not finding:
-            return {"error": _ERR_FINDING_NOT_FOUND}
+        finding = await self._require_finding(ctx, project)
         slim = _serialize_finding_for_llm(finding)
         slim["project_name"] = project.get("name", "")
         advisories = ranked_advisories(finding.get("details"))
@@ -818,7 +847,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_team_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         details = {
             "id": team.id,
             "name": team.name,
@@ -829,7 +858,7 @@ class ChatToolRegistry:
         return {"team": details}
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         query = and_filters(ctx.user_project_query, {"team_ids": team.id})
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
@@ -896,32 +925,14 @@ class ChatToolRegistry:
         return {"waived": False, "expired_waiver": {**_serialize_doc(lapsed), "is_active": False}}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await ctx.db["projects"].find_one({"_id": ctx.args.get("project_id")}, {"_id": 1})
+        project = await ctx.db["projects"].find_one({"_id": ctx.args["project_id"]}, {"_id": 1})
         if not project:
             return {"error": _ERR_PROJECT_NOT_FOUND}
         await _gated(authorize_waiver_read(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
-        now = datetime.now(timezone.utc)
-        waivers, waivers_total = await bounded_read(
-            ctx.db["waivers"], {"project_id": project["_id"]}, subject="waivers", limit=_WAIVER_READ
-        )
-        return {
-            "waivers": [
-                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
-            ],
-            "waivers_total": waivers_total,
-        }
+        return await _waiver_rows(ctx.db, {"project_id": project["_id"]}, "waivers")
 
     async def _tool_list_global_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        now = datetime.now(timezone.utc)
-        waivers, waivers_total = await bounded_read(
-            ctx.db["waivers"], {"project_id": None}, subject="global waivers", limit=_WAIVER_READ
-        )
-        return {
-            "waivers": [
-                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
-            ],
-            "waivers_total": waivers_total,
-        }
+        return await _waiver_rows(ctx.db, {"project_id": None}, "global waivers")
 
     async def _tool_get_top_priority_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         limit = ctx.args["limit"]
@@ -1217,7 +1228,7 @@ class ChatToolRegistry:
         head, names = await self._heads_in_scope(ctx)
         if not names:
             return {"matches": [], "message": "No accessible projects"}
-        wanted = (ctx.args["component_name"] or "").strip()
+        wanted = ctx.args["component_name"].strip()
         if not wanted:
             return {"matches": [], "count": 0, "matches_total": 0}
         by_name: list[dict[str, Any]] = [{"name": {"$regex": re.escape(wanted), "$options": "i"}}]
@@ -1382,13 +1393,9 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_expiring_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        from datetime import datetime as _dt
-        from datetime import timedelta as _td
-        from datetime import timezone as _tz
-
         days = ctx.args["days"]
-        now = _dt.now(_tz.utc)
-        cutoff = now + _td(days=days)
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(days=days)
         query: dict[str, Any] = {"expiration_date": {"$gte": now, "$lte": cutoff}}
         scope = await self._in_scope(ctx)
         if scope:
@@ -1418,7 +1425,7 @@ class ChatToolRegistry:
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
 
     async def _tool_get_team_risk_overview(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
             and_filters(ctx.user_project_query, {"team_ids": team.id}),
@@ -1484,18 +1491,22 @@ class ChatToolRegistry:
         ]
         newest = await ctx.db["callgraphs"].aggregate(pipeline).to_list(length=None)
         repo = CallgraphRepository(ctx.db)
-        return {"callgraphs": [_serialize_doc(await repo.load_graph(doc)) for doc in newest]}
+        answer = {"callgraphs": [_serialize_doc(await repo.load_graph(doc)) for doc in newest]}
+        # Shrinking each graph keeps every language; _truncate_if_too_large would drop whole graphs instead.
+        if _json_size(answer) > MAX_TOOL_RESULT_BYTES:
+            answer["callgraphs"] = [_callgraph_summary(graph) for graph in answer["callgraphs"]]
+        if _json_size(answer) > MAX_TOOL_RESULT_BYTES:
+            for graph in answer["callgraphs"]:
+                graph["module_usage"] = dict(islice(graph["module_usage"].items(), _CALLGRAPH_MODULES_SHOWN))
+        return answer
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
-        if not finding:
-            return {"error": _ERR_FINDING_NOT_FOUND}
+        finding = await self._require_finding(ctx, await self._require_project(ctx))
         reachability = (finding.get("details") or {}).get("reachability") or {}
         is_reachable = finding.get("reachable")
         analysis_level = finding.get("reachability_level")
         return {
-            "finding_id": finding["_id"],
+            "finding_id": finding.get("finding_id"),
             "is_reachable": is_reachable,
             "status": reachability_display_tier(is_reachable, analysis_level),
             "analysis_level": analysis_level,
@@ -1587,8 +1598,6 @@ class ChatToolRegistry:
         return {"settings": SystemSettingsResponse.model_validate(stored).model_dump(mode="json")}
 
     async def _tool_get_system_health(self, ctx: _ToolContext) -> dict[str, Any]:
-        from app.core.cache import cache_service
-
         return {"cache": await cache_service.health_check()}
 
     async def _tool_list_crypto_assets(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1781,6 +1790,15 @@ class ChatToolRegistry:
         """A `project_id` filter to the caller's projects; none for a caller who reads them all."""
         return {"project_id": {"$in": await self._get_authorized_project_ids(ctx)}} if ctx.user_project_query else {}
 
+    async def _require_finding(self, ctx: _ToolContext, project: dict[str, Any]) -> dict[str, Any]:
+        """The finding `finding_id` names: a row's id, or a finding_id in the project's head build."""
+        wanted = ctx.args["finding_id"]
+        named = [{"_id": wanted}, {"finding_id": wanted, "scan_id": await self._head_scan_id(project, ctx.db)}]
+        finding: dict[str, Any] | None = await ctx.db["findings"].find_one({"project_id": project["_id"], "$or": named})
+        if not finding:
+            raise _ToolRefusal(_ERR_FINDING_NOT_FOUND)
+        return finding
+
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
         """The scan representing the head of a project the caller already read and authorised."""
         return await ScanRepository(db).get_latest_active_scan_id(project)
@@ -1818,12 +1836,10 @@ class ChatToolRegistry:
 
     async def _heads_in_scope(self, ctx: _ToolContext) -> tuple[dict[str, str], dict[str, str]]:
         """Head scan ids and names by project id, for the `project_id` argument or the whole scope in one read."""
-        from app.services.releases import resolve_scan_ids
-
         if ctx.args.get("project_id"):
             project = await self._require_project(ctx)
             scan_id = await self._head_scan_id(project, ctx.db)
             return ({project["_id"]: scan_id} if scan_id else {}), {project["_id"]: project.get("name", "")}
         projects = await read_scope_projects(ctx.db, ctx.user_project_query)
-        heads = await resolve_scan_ids(ctx.db, [p.id for p in projects], projects=projects)
+        heads = await ScanRepository(ctx.db).get_latest_active_scan_ids(list(projects))
         return heads, {p.id: p.name for p in projects}

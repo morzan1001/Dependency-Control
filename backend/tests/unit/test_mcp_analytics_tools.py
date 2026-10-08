@@ -44,7 +44,7 @@ async def _seed_md5_scan(db):
 
 @pytest.mark.asyncio
 async def test_mcp_get_crypto_hotspots(db):
-    from app.services.chat.tools import get_crypto_hotspots
+    from app.services.chat.tools.crypto_tools import get_crypto_hotspots
 
     await _seed_md5_scan(db)
 
@@ -78,7 +78,7 @@ async def test_a_null_metric_trends_the_total_crypto_findings(db):
 
 @pytest.mark.asyncio
 async def test_mcp_get_crypto_trends_empty_range(db):
-    from app.services.chat.tools import get_crypto_trends
+    from app.services.chat.tools.crypto_tools import get_crypto_trends
 
     result = await get_crypto_trends(
         db,
@@ -94,7 +94,7 @@ async def test_mcp_get_crypto_trends_empty_range(db):
 @pytest.mark.asyncio
 async def test_a_repeated_trend_question_is_answered_from_the_cache_for_the_rest_of_the_day(db, monkeypatch):
     from app.services.analytics.crypto_trends import CryptoTrendService
-    from app.services.chat.tools import get_crypto_trends
+    from app.services.chat.tools.crypto_tools import get_crypto_trends
 
     builds = 0
     build = CryptoTrendService._build

@@ -12,6 +12,7 @@ import { HotspotTreemap } from "@/components/crypto/analytics/HotspotTreemap";
 import { TrendsTimeSeriesChart } from "@/components/crypto/analytics/TrendsTimeSeriesChart";
 import { PQCMigrationPanel } from "@/components/pqc/PQCMigrationPanel";
 import { ComplianceReportsPanel } from "@/components/compliance/ComplianceReportsPanel";
+import type { ReportFramework } from "@/types/compliance";
 import type { GroupingDimension, TrendBucket, TrendMetric } from "@/types/cryptoAnalytics";
 
 const GROUPINGS: GroupingDimension[] = [
@@ -62,8 +63,10 @@ function autoBucket(days: number): TrendBucket {
 }
 
 export function CryptoAnalyticsTab() {
+  const [tab, setTab] = useState("hotspots");
+  const [prefill, setPrefill] = useState<ReportFramework>();
   return (
-    <Tabs defaultValue="hotspots" className="space-y-4">
+    <Tabs value={tab} onValueChange={(v) => { setPrefill(undefined); setTab(v); }} className="space-y-4">
       <TabsList className="bg-transparent border-b border-border rounded-none w-full justify-start h-9 p-0 gap-6">
         <TabsTrigger value="hotspots" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Hotspots</TabsTrigger>
         <TabsTrigger value="trends" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Trends</TabsTrigger>
@@ -86,10 +89,10 @@ export function CryptoAnalyticsTab() {
         <FindingsSection />
       </TabsContent>
       <TabsContent value="pqc-migration">
-        <PQCMigrationPanel />
+        <PQCMigrationPanel onExport={() => { setPrefill("pqc-migration-plan"); setTab("compliance-reports"); }} />
       </TabsContent>
       <TabsContent value="compliance-reports">
-        <ComplianceReportsPanel />
+        <ComplianceReportsPanel defaultFramework={prefill} />
       </TabsContent>
     </Tabs>
   );

@@ -64,9 +64,9 @@ def status_from_score(score: int) -> MigrationItemStatus:
 
 
 def _score_exposure(asset: Any) -> float:
-    asset_type = _attr(asset, "asset_type") or ""
-    cert_format = _attr(asset, "certificate_format") or ""
-    detection_context = (_attr(asset, "detection_context") or "").lower()
+    asset_type = asset.asset_type or ""
+    cert_format = asset.certificate_format or ""
+    detection_context = (asset.detection_context or "").lower()
     if asset_type == "certificate" and cert_format:
         return EXPOSURE_CERTIFICATE
     if asset_type == "related-crypto-material":
@@ -79,7 +79,7 @@ def _score_exposure(asset: Any) -> float:
 
 
 def _score_key_weakness(asset: Any, source_family: str) -> float:
-    key_size = _attr(asset, "key_size_bits")
+    key_size = asset.key_size_bits
     minimum = _MIN_KEY_SIZE.get(source_family)
     if key_size is None or minimum is None:
         return 50.0
@@ -98,8 +98,6 @@ def _score_deadline(source_family: str, timelines: list[Timeline], now: datetime
     if not applicable:
         return 40.0
     nearest_days = min((t.deadline - now).days for t in applicable)
-    if nearest_days < 0:
-        return 100.0
     if nearest_days < 365:
         return 100.0
     if nearest_days < 365 * 3:
@@ -115,7 +113,3 @@ def _score_count(count: int) -> float:
         return 0.0
     raw = _COUNT_BASELINE + math.log10(count) * _COUNT_LOG_MULTIPLIER
     return min(100.0, raw)
-
-
-def _attr(obj: Any, name: str) -> Any:
-    return getattr(obj, name, None) if not isinstance(obj, dict) else obj.get(name)

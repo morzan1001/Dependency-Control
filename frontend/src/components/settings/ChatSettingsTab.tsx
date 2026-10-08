@@ -15,16 +15,10 @@ const MIN_RATE_LIMIT = 1;
 const MIN_TOOL_ROUNDS = 1;
 const MAX_TOOL_ROUNDS = 50;
 
-function clampRate(raw: string, fallback: number): number {
+function clampInt(raw: string, fallback: number, min: number, max: number): number {
   const parsed = Number.parseInt(raw, 10);
   if (Number.isNaN(parsed)) return fallback;
-  return Math.min(Math.max(parsed, MIN_RATE_LIMIT), MAX_RATE_LIMIT);
-}
-
-function clampRounds(raw: string, fallback: number): number {
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed)) return fallback;
-  return Math.min(Math.max(parsed, MIN_TOOL_ROUNDS), MAX_TOOL_ROUNDS);
+  return Math.min(Math.max(parsed, min), max);
 }
 
 export function ChatSettingsTab({
@@ -64,7 +58,7 @@ export function ChatSettingsTab({
                 onChange={(e) =>
                   handleInputChange(
                     'chat_rate_limit_per_minute',
-                    clampRate(e.target.value, perMinute),
+                    clampInt(e.target.value, perMinute, MIN_RATE_LIMIT, MAX_RATE_LIMIT),
                   )
                 }
               />
@@ -85,7 +79,7 @@ export function ChatSettingsTab({
                 onChange={(e) =>
                   handleInputChange(
                     'chat_rate_limit_per_hour',
-                    clampRate(e.target.value, perHour),
+                    clampInt(e.target.value, perHour, MIN_RATE_LIMIT, MAX_RATE_LIMIT),
                   )
                 }
               />
@@ -127,7 +121,7 @@ export function ChatSettingsTab({
               onChange={(e) =>
                 handleInputChange(
                   'chat_max_tool_rounds',
-                  clampRounds(e.target.value, maxRounds),
+                  clampInt(e.target.value, maxRounds, MIN_TOOL_ROUNDS, MAX_TOOL_ROUNDS),
                 )
               }
             />

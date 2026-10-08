@@ -1,5 +1,6 @@
 """Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
+import json
 from contextvars import ContextVar
 from operator import itemgetter
 from typing import Any
@@ -311,15 +312,16 @@ def _inject_urls(node: Any) -> None:
         _inject_urls(value)
 
 
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str).encode())
+
+
 def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     """Truncate the largest list in `result` so its JSON stays under MAX_TOOL_RESULT_BYTES."""
-    import json as _json
-
     try:
-        encoded = _json.dumps(result, ensure_ascii=False, default=str).encode()
+        if _json_size(result) <= MAX_TOOL_RESULT_BYTES:
+            return result
     except (TypeError, ValueError):
-        return result
-    if len(encoded) <= MAX_TOOL_RESULT_BYTES:
         return result
 
     biggest_key = None
@@ -338,7 +340,7 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     while lo < hi:
         mid = (lo + hi + 1) // 2
         result[biggest_key] = original[:mid]
-        if len(_json.dumps(result, ensure_ascii=False, default=str).encode()) <= MAX_TOOL_RESULT_BYTES:
+        if _json_size(result) <= MAX_TOOL_RESULT_BYTES:
             lo = mid
         else:
             hi = mid - 1

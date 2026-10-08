@@ -4,58 +4,28 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { deleteReport, downloadReport } from "@/api/compliance";
+import { getServerFile } from "@/api/client";
+import { deleteReport } from "@/api/compliance";
+import { useAuth } from "@/context/useAuth";
+import { useCurrentUser } from "@/hooks/queries/use-users";
 import { useDialogState } from "@/hooks/use-dialog-state";
+import { downloadServerFile } from "@/lib/download";
+import { Permissions } from "@/lib/permissions";
 import { formatDateTime, getErrorMessage } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
-import type { ComplianceReportMeta, ControlStatus, EvaluationCoverage, InputCoverage } from "@/types/compliance";
+import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
 
 interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
 
-function isComplete(input: InputCoverage): boolean {
-  return input.evaluated >= input.in_scope;
-}
-
-function inputSentence(input: InputCoverage, subject: string): string {
-  if (isComplete(input)) {
-    return `Evaluated all ${input.in_scope.toLocaleString()} ${subject} in scope.`;
-  }
-  return (
-    `Evaluated ${input.evaluated.toLocaleString()} of ${input.in_scope.toLocaleString()} ${subject} ` +
-    `in scope, a cap of ${input.limit.toLocaleString()} per report; the remaining ` +
-    `${(input.in_scope - input.evaluated).toLocaleString()} were not read.`
-  );
-}
-
-const GAPS_SHOWN = 5;
-
-function gapSentence(gaps: readonly string[]): string {
-  const shown = gaps.slice(0, GAPS_SHOWN).join(", ");
-  const rest = gaps.length - GAPS_SHOWN;
-  return (
-    "Inputs are missing for part of the scope, so every verdict that would have rested on finding " +
-    `no match is reported as not_evaluated: ${rest > 0 ? `${shown} and ${rest} more` : shown}.`
-  );
-}
-
-function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
-  const plan = coverage.plan_items;
-  const sentences = plan ? [inputSentence(plan, "migration plan items")] : [];
-  const gaps = coverage.gaps ?? [];
-  if (gaps.length > 0) sentences.push(gapSentence(gaps));
-  if (sentences.length === 0) return null;
-  const capped = plan ? !isComplete(plan) : false;
-  if (capped) {
-    sentences.push(
-      "Every verdict that would have rested on finding no match in a capped input is reported as " +
-        "not_evaluated instead. Failures stand. Narrow the scope and regenerate before handing this to an auditor.",
-    );
-  }
+function CoverageNotice({ report }: { readonly report: ComplianceReportMeta }) {
+  const plan = report.coverage?.plan_items;
+  const gaps = report.coverage?.gaps ?? [];
+  if (!report.coverage_statement || (!plan && gaps.length === 0)) return null;
   const tone =
-    capped || gaps.length > 0
+    gaps.length > 0 || (plan && plan.evaluated < plan.in_scope)
       ? "rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200"
       : "text-xs text-muted-foreground";
-  return <div className={tone}>{sentences.join(" ")}</div>;
+  return <div className={tone}>{report.coverage_statement}</div>;
 }
 
 const WITHHELD_KEY: ControlStatus = "not_evaluated";
@@ -74,6 +44,8 @@ function SummaryRow({ label, value }: { readonly label: string; readonly value: 
 export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
+  const { hasPermission } = useAuth();
+  const { data: me } = useCurrentUser();
 
   const del = useMutation({
     mutationFn: (id: string) => deleteReport(id),
@@ -90,10 +62,11 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
 
   const dl = useMutation({
     mutationFn: (r: ComplianceReportMeta) =>
-      downloadReport(r._id, r.artifact_filename ?? `compliance-report-${r._id}`),
-    onError: (e: unknown) => {
-      toast.error(`Failed to download: ${getErrorMessage(e)}`);
-    },
+      downloadServerFile(
+        () => getServerFile(`/compliance/reports/${r._id}/download`),
+        r.artifact_filename ?? `compliance-report-${r._id}`,
+        "Failed to download report",
+      ),
   });
 
   return (
@@ -122,7 +95,7 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                     {report.error_message}
                   </div>
                 )}
-                {report.coverage && <CoverageNotice coverage={report.coverage} />}
+                <CoverageNotice report={report} />
                 {Object.keys(report.summary || {}).length > 0 && (
                   <dl className="mt-3 grid grid-cols-2 gap-y-1">
                     {Object.entries(report.summary).map(([k, v]) => (
@@ -148,16 +121,18 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                   </div>
                 )}
               </div>
-              <DialogFooter className="mt-4">
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={confirm.openDialog}
-                  disabled={del.isPending}
-                >
-                  Delete report
-                </Button>
-              </DialogFooter>
+              {(report.requested_by === me?.id || hasPermission(Permissions.SYSTEM_MANAGE)) && (
+                <DialogFooter className="mt-4">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={confirm.openDialog}
+                    disabled={del.isPending}
+                  >
+                    Delete report
+                  </Button>
+                </DialogFooter>
+              )}
             </>
           )}
         </DialogContent>

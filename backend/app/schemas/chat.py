@@ -25,8 +25,6 @@ class ConversationListResponse(BaseModel):
     conversations: list[ConversationResponse]
     total: int
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
 
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
@@ -53,5 +51,3 @@ class MessageResponse(BaseModel):
 class ConversationDetailResponse(BaseModel):
     conversation: ConversationResponse
     messages: list[MessageResponse]
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)

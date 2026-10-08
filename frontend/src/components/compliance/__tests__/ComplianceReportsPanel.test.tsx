@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createReport, listReports } from '@/api/compliance'
-import type { ComplianceReportMeta, ReportStatus } from '@/types/compliance'
+import type { ComplianceReportMeta, ReportFramework, ReportStatus } from '@/types/compliance'
 
 import { ComplianceReportsPanel } from '../ComplianceReportsPanel'
 
@@ -12,9 +12,9 @@ vi.mock('@/api/compliance', () => ({
   listReports: vi.fn(),
   createReport: vi.fn(),
   deleteReport: vi.fn(),
-  downloadReport: vi.fn(),
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: () => false }) }))
+vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'lena' } }) }))
 
 function report(status: ReportStatus): ComplianceReportMeta {
   return {
@@ -24,17 +24,16 @@ function report(status: ReportStatus): ComplianceReportMeta {
   }
 }
 
-function renderPanel() {
+function renderPanel(defaultFramework?: ReportFramework) {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ComplianceReportsPanel />
+      <ComplianceReportsPanel defaultFramework={defaultFramework} />
     </QueryClientProvider>,
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  localStorage.clear()
   vi.mocked(createReport).mockResolvedValue({ report_id: 'r2', status: 'pending' })
 })
 
@@ -57,16 +56,19 @@ describe('ComplianceReportsPanel', () => {
 
   it('queues the framework another tab asked for', async () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [] })
-    renderPanel()
-    await screen.findByText('No reports yet')
+    renderPanel('pqc-migration-plan')
 
-    localStorage.setItem('prefill_compliance_framework', 'pqc-migration-plan')
-    act(() => {
-      globalThis.dispatchEvent(new CustomEvent('goto-compliance-reports-tab'))
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate' }))
 
     await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ framework: 'pqc-migration-plan' })))
+  })
+
+  it('lists every report the caller may open, not only personal ones', async () => {
+    vi.mocked(listReports).mockResolvedValue({ reports: [{ ...report('completed'), scope: 'project', scope_id: 'p1' }] })
+    renderPanel()
+
+    expect(await screen.findByText('project:p1')).toBeInTheDocument()
+    expect(listReports).toHaveBeenCalledWith({ limit: 50 })
   })
 
   it('opens an empty form again after a cancelled draft', async () => {

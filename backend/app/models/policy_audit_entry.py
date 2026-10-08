@@ -13,14 +13,7 @@ PolicyType = Literal["crypto", "license"]
 
 
 class PolicyAuditEntry(MongoDocument):
-    policy_type: PolicyType = Field(
-        default="crypto",
-        description=(
-            "Which policy subsystem this entry belongs to. Defaults to "
-            "'crypto' for backward compatibility with entries written "
-            "before the discriminator was added."
-        ),
-    )
+    policy_type: PolicyType = Field(default="crypto", description="Which policy subsystem this entry belongs to")
     policy_scope: Literal["system", "project"] = Field(..., description="Scope of the audited policy")
     project_id: str | None = Field(None, description="Project ID when scope='project', None for system policy")
     version: int = Field(..., ge=0, description="Version of the audited policy at time of save")

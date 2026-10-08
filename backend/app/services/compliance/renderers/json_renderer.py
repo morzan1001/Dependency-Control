@@ -4,7 +4,7 @@ import json
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation
-from app.services.compliance.renderers.base import build_filename, coverage_statement
+from app.services.compliance.renderers.base import coverage_statement
 
 
 class JsonRenderer:
@@ -17,7 +17,7 @@ class JsonRenderer:
         report: ComplianceReport,
         *,
         disclaimer: str | None = None,
-    ) -> tuple[bytes, str, str]:
+    ) -> bytes:
         payload: dict = {
             "framework": evaluation.framework_key,
             "framework_name": evaluation.framework_name,
@@ -37,12 +37,4 @@ class JsonRenderer:
         }
         if disclaimer:
             payload["disclaimer"] = disclaimer
-        body = json.dumps(payload, indent=2, default=str).encode("utf-8")
-        filename = build_filename(
-            evaluation.framework_key,
-            report.scope,
-            report.scope_id,
-            report.requested_at,
-            self.extension,
-        )
-        return body, filename, self.mime_type
+        return json.dumps(payload, indent=2, default=str).encode("utf-8")

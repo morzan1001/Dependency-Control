@@ -5,14 +5,13 @@ from typing import Any
 from ._helpers import _clamp_limit
 from .definitions import TOOL_DEFINITIONS
 
-_DECLARED_PROPERTIES: dict[str, dict[str, dict[str, Any]]] = {
-    definition["function"]["name"]: definition["function"]["parameters"].get("properties", {})
-    for definition in TOOL_DEFINITIONS
+_DECLARED_PARAMETERS: dict[str, dict[str, Any]] = {
+    definition["function"]["name"]: definition["function"]["parameters"] for definition in TOOL_DEFINITIONS
 }
 
 
 class ToolArgumentError(ValueError):
-    """An argument whose type or value differs from what its tool declares."""
+    """An argument missing, or of a type or value other than its tool declares."""
 
 
 def _conforms(schema: dict[str, Any], value: Any) -> bool:
@@ -45,10 +44,11 @@ def _checked(name: str, schema: dict[str, Any], value: Any) -> Any:
 
 
 def checked_arguments(tool_name: str, arguments: Any) -> dict[str, Any]:
-    """Declared arguments typed, defaulted and clamped; extra keys are dropped so the model still gets an answer."""
+    """Declared arguments typed, defaulted, clamped and present; extra keys are dropped so the model still gets an answer."""
     if not isinstance(arguments, dict):
         raise ToolArgumentError("Tool arguments must be a JSON object")
-    declared = _DECLARED_PROPERTIES.get(tool_name, {})
+    parameters = _DECLARED_PARAMETERS.get(tool_name, {})
+    declared = parameters.get("properties", {})
     checked: dict[str, Any] = {
         name: None if value is None else _checked(name, declared[name], value)
         for name, value in arguments.items()
@@ -59,4 +59,7 @@ def checked_arguments(tool_name: str, arguments: Any) -> dict[str, Any]:
             checked[name] = _clamp_limit(checked.get(name), schema["default"], schema["maximum"])
         elif "default" in schema and not checked.get(name):
             checked[name] = schema["default"]
+    missing = [name for name in parameters.get("required", []) if checked.get(name) is None]
+    if missing:
+        raise ToolArgumentError(f"Missing required argument(s): {', '.join(missing)}")
     return checked

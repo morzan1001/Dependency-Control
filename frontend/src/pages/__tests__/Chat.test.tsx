@@ -32,7 +32,6 @@ vi.mock('@/hooks/useChatStream', () => ({
     streamingContent: '',
     streamingToolCalls: [],
     pendingUserMessage: null,
-    clearPendingUserMessage: vi.fn(),
     isStreaming: false,
     activeToolCall: null,
     error: null,

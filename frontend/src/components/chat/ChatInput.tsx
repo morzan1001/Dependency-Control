@@ -7,13 +7,12 @@ import { Textarea } from '@/components/ui/textarea';
 interface ChatInputProps {
   readonly onSend: (content: string) => void;
   readonly disabled?: boolean;
-  readonly placeholder?: string;
 }
 
 const MIN_HEIGHT = 48;
 const MAX_HEIGHT = 200;
 
-export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
+export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -52,7 +51,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder ?? 'Ask about your security data…'}
+          placeholder="Ask about your security data…"
           disabled={disabled}
           rows={1}
           style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}

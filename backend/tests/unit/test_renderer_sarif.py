@@ -7,10 +7,7 @@ from tests.unit.test_renderer_json import _evaluation, _report
 
 def test_sarif_renderer_outputs_sarif_2_1_0():
     r = SarifRenderer()
-    out, filename, mime = r.render(_evaluation(), _report())
-    assert mime == "application/sarif+json"
-    assert filename.endswith((".sarif.json", ".sarif"))
-    data = json.loads(out)
+    data = json.loads(r.render(_evaluation(), _report()))
     assert data["version"] == "2.1.0"
     assert data["$schema"].endswith("sarif-schema-2.1.0.json")
     runs = data["runs"]
@@ -24,7 +21,7 @@ def test_sarif_renderer_outputs_sarif_2_1_0():
 
 
 def test_sarif_failed_control_carries_its_severity_as_the_result_level():
-    out, _, _ = SarifRenderer().render(_evaluation(), _report())
+    out = SarifRenderer().render(_evaluation(), _report())
     result = json.loads(out)["runs"][0]["results"][0]
     assert result["level"] == "error"
     assert "kind" not in result
@@ -32,13 +29,13 @@ def test_sarif_failed_control_carries_its_severity_as_the_result_level():
 
 def test_sarif_driver_properties_carry_the_framework_disclaimer():
     disclaimer = "Algorithm-level conformance only."
-    out, _, _ = SarifRenderer().render(_evaluation(), _report(), disclaimer=disclaimer)
+    out = SarifRenderer().render(_evaluation(), _report(), disclaimer=disclaimer)
     properties = json.loads(out)["runs"][0]["tool"]["driver"]["properties"]
     assert properties["disclaimer"] == disclaimer
 
 
 def test_sarif_driver_properties_omit_the_disclaimer_when_the_framework_has_none():
-    out, _, _ = SarifRenderer().render(_evaluation(), _report())
+    out = SarifRenderer().render(_evaluation(), _report())
     properties = json.loads(out)["runs"][0]["tool"]["driver"]["properties"]
     assert "disclaimer" not in properties
 
@@ -79,7 +76,7 @@ def test_sarif_passed_control_emits_pass_result():
         coverage=EvaluationCoverage(),
     )
     r = SarifRenderer()
-    out, _, _ = r.render(eval_, _report())
+    out = r.render(eval_, _report())
     data = json.loads(out)
     results = data["runs"][0]["results"]
     assert results[0]["kind"] == "pass"

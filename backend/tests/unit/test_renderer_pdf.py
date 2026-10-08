@@ -27,9 +27,7 @@ def test_pdf_renderer_produces_pdf_bytes():
     evaluation.coverage = _partial_coverage()
     rep = _report()
     rep.format = ReportFormat.PDF
-    out, filename, mime = PdfRenderer().render(evaluation, rep)
-    assert mime == "application/pdf"
-    assert filename.endswith(".pdf")
+    out = PdfRenderer().render(evaluation, rep)
     assert out[:4] == b"%PDF"
     assert len(out) > _MINIMUM_PDF_BYTES
 
@@ -42,5 +40,5 @@ def test_pdf_includes_disclaimer_when_provided():
     r = PdfRenderer()
     rep = _report()
     rep.format = ReportFormat.PDF
-    out, _, _ = r.render(_evaluation(), rep, disclaimer="Module-level CMVP out of scope")
+    out = r.render(_evaluation(), rep, disclaimer="Module-level CMVP out of scope")
     assert out[:4] == b"%PDF"

@@ -1,6 +1,6 @@
 """Renderer protocol — each format implements render(eval, report) → bytes."""
 
-from datetime import datetime
+import re
 from typing import Protocol
 
 from app.models.compliance_report import ComplianceReport
@@ -57,22 +57,10 @@ class Renderer(Protocol):
         report: ComplianceReport,
         *,
         disclaimer: str | None = None,
-    ) -> tuple[bytes, str, str]:
-        """Return (artifact_bytes, filename, mime_type)."""
-        ...
+    ) -> bytes: ...
 
 
-def build_filename(
-    framework_key: str,
-    scope: str,
-    scope_id: str | None,
-    requested_at: datetime,
-    extension: str,
-) -> str:
-    """Construct a filesystem-safe filename, e.g. nist-sp-800-131a_project-p1_20260420T100000Z.pdf."""
-    scope_part = f"{scope}" + (f"-{scope_id}" if scope_id else "")
-    import re
-
-    scope_part = re.sub(r"[^A-Za-z0-9\-]", "_", scope_part)
-    ts = requested_at.strftime("%Y%m%dT%H%M%SZ")
-    return f"{framework_key}_{scope_part}_{ts}.{extension}"
+def build_filename(report: ComplianceReport, extension: str) -> str:
+    """A filesystem-safe filename, e.g. nist-sp-800-131a_project-p1_20260420T100000Z.pdf."""
+    scope = re.sub(r"[^A-Za-z0-9\-]", "_", f"{report.scope}-{report.scope_id}" if report.scope_id else report.scope)
+    return f"{report.framework}_{scope}_{report.requested_at:%Y%m%dT%H%M%SZ}.{extension}"

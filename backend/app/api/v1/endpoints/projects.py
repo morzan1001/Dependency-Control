@@ -543,7 +543,6 @@ async def _audit_license_policy_change(
             new_policy=license_policy_from_settings(new_entry).model_dump(),
             action=PolicyAuditAction.UPDATE if old_entry else PolicyAuditAction.CREATE,
             actor=actor,
-            comment=None,
         )
     except Exception:  # pragma: no cover - defensive
         logger.exception("License-policy audit for project %s failed (non-blocking)", sanitize_for_log(project_id))

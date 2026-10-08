@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from app.services.pqc_migration.mappings_loader import load_mappings
+from app.services.pqc_migration.mappings_loader import load_mappings, normalise_family
 
 
 def test_all_quantum_vulnerable_families_have_a_mapping():
@@ -14,11 +14,9 @@ def test_all_quantum_vulnerable_families_have_a_mapping():
     vulnerable_families = set(rule["match_name_patterns"])
 
     m = load_mappings()
-    canonical_covered = {mp.source_family for mp in m.mappings}
-    aliased_covered = set(m.family_aliases.keys())
-    covered = canonical_covered | aliased_covered
+    canonical = {mp.source_family for mp in m.mappings}
 
-    missing = vulnerable_families - covered
+    missing = {family for family in vulnerable_families if normalise_family(family, m) not in canonical}
     assert not missing, (
         f"Families listed as quantum-vulnerable in Phase-1 seed are missing "
         f"from mappings.yaml: {sorted(missing)}. "

@@ -61,10 +61,7 @@ def test_json_renderer_outputs_valid_json():
     r = JsonRenderer()
     eval_ = _evaluation()
     rep = _report()
-    out, filename, mime = r.render(eval_, rep)
-    assert mime == "application/json"
-    assert filename.endswith(".json")
-    data = json.loads(out)
+    data = json.loads(r.render(eval_, rep))
     assert data["framework"] == "nist-sp-800-131a"
     assert data["summary"]["failed"] == 1
     assert len(data["controls"]) == 1
@@ -77,6 +74,6 @@ def test_json_renderer_disclaimer_included_if_present():
     eval_ = _evaluation()
     eval_disclaimer = "test disclaimer"
     rep = _report()
-    out, _, _ = r.render(eval_, rep, disclaimer=eval_disclaimer)
+    out = r.render(eval_, rep, disclaimer=eval_disclaimer)
     data = json.loads(out)
     assert data["disclaimer"] == "test disclaimer"

@@ -3,7 +3,7 @@ name, primitive, asset_type, weakness_tag, or severity.
 """
 
 from datetime import datetime, timezone
-from typing import Any, get_args
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -13,8 +13,6 @@ from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
 
-# The chat tool passes an unchecked string, so this is its only validation.
-_SUPPORTED_GROUPINGS = frozenset(get_args(GroupBy))
 # Asset-first groupings: the asset field grouped on and the findings field joined to it. Names group bare,
 # because findings carry details.asset_name == asset.name without the variant. The other groupings live
 # on findings alone.
@@ -56,10 +54,6 @@ class CryptoHotspotService:
         scan_id: str | None = None,
         limit: int = 100,
     ) -> HotspotResponse:
-        if group_by not in _SUPPORTED_GROUPINGS:
-            raise ValueError(f"unsupported group_by: {group_by!r}")
-        limit = max(1, min(limit, 500))
-
         latest_scan_ids = await self._pick_scan_ids(resolved, scan_id)
         scope = (resolved.scope, resolved.scope_id, scope_digest(resolved.project_ids))
         key = ("crypto-hotspots", *scope, group_by, scope_digest(latest_scan_ids), limit)

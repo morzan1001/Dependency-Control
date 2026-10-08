@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED
 from app.models.crypto_asset import CryptoAsset
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analytics.scopes import ResolvedScope
@@ -116,6 +116,8 @@ async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
     for pid in ("p1", "p2"):
         _scanned_project(db, pid, [(f"scan-{pid}", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
         _store(db, _asset(project_id=pid, scan_id=f"scan-{pid}"))
+    _scanned_project(db, "p3", [("scan-p3", _DEFAULT_BRANCH, SCAN_STATUS_FAILED, 1)])
+    _store(db, _asset(project_id="p3", scan_id="scan-p3"))
 
     assets = await PQCMigrationPlanGenerator(db)._list_vulnerable_assets(
         ResolvedScope(scope="global", scope_id=None, project_ids=None)

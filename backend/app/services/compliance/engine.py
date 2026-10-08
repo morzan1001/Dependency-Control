@@ -16,6 +16,7 @@ from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.scans import HAS_SBOM_MATCH
 from app.schemas.compliance import (
     EvaluationCoverage,
     FrameworkEvaluation,
@@ -24,6 +25,7 @@ from app.schemas.compliance import (
     ReportStatus,
 )
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
+from app.schemas.projections import ProjectWithScanId
 from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, VULNERABILITY_ANALYZERS
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver, read_scope_projects
 from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VERSION
@@ -33,6 +35,7 @@ from app.services.compliance.frameworks.cve_remediation_sla import SLA_DAYS
 from app.services.compliance.frameworks.fips_140_3 import AlgorithmConformanceFramework
 from app.services.compliance.frameworks.license_audit import LICENSE_AUDIT_CATEGORIES
 from app.services.compliance.renderers import RENDERER_REGISTRY
+from app.services.compliance.renderers.base import build_filename
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
@@ -41,9 +44,7 @@ _REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
 # A large-scope PDF layout peaks at hundreds of MB, and under the GIL parallel renders finish no sooner.
 _RENDER_SLOT = asyncio.Semaphore(1)
 
-_NON_CRYPTO_FRAMEWORKS = frozenset(
-    {ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT, ReportFramework.PQC_MIGRATION_PLAN}
-)
+_NON_CRYPTO_FRAMEWORKS = frozenset({ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT})
 _BASE_FINDING_FIELDS = ("type", "severity", "scan_id", "waived", "waiver_reason")
 _CRYPTO_FINDING_FIELDS = ("details.rule_id", "details.matched_rules.rule_id", "details.bom_ref")
 _CRYPTO_ASSET_FIELDS = (
@@ -142,14 +143,29 @@ class ComplianceReportEngine:
     ) -> EvaluationInput:
         finding_query = self._finding_type_filter(framework)
         clause, fields, producers = finding_query or ({}, (), frozenset())
-        scan_by_project, gaps = await self._pick_scan_ids(db, resolved, producers)
+        scan_by_project, gaps, projects = await self._pick_scan_ids(db, resolved, producers)
         scan_ids = list(scan_by_project.values())
         findings: list[dict] = []
         if finding_query:
             findings = await self._collect_findings(db, scan_ids, clause, fields)
         assets: list[CryptoAsset] = []
-        if framework.key not in _NON_CRYPTO_FRAMEWORKS:
-            assets = await self._collect_crypto_assets(db, scan_by_project)
+        if framework.key in _NON_CRYPTO_FRAMEWORKS:
+            inventory = "SBOM"
+            inventoried = set(await db.scans.distinct("_id", {"_id": {"$in": scan_ids}, **HAS_SBOM_MATCH}))
+        else:
+            inventory = "crypto assets"
+            asset_query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": scan_ids}}
+            if framework.key == ReportFramework.PQC_MIGRATION_PLAN:
+                # The plan generator reads its own assets; the gap needs only the scans holding one.
+                inventoried = set(await db.crypto_assets.distinct("scan_id", asset_query))
+            else:
+                assets = await self._collect_crypto_assets(db, asset_query)
+                inventoried = {asset.scan_id for asset in assets}
+        gaps += [
+            f"project '{project.name}' has no {inventory} in scan {scan_id}"
+            for project in projects
+            if (scan_id := scan_by_project.get(project.id)) and scan_id not in inventoried
+        ]
         project_ids = resolved.project_ids or []
         if resolved.scope == "project" and len(project_ids) == 1:
             effective = await CryptoPolicyResolver(db).resolve(project_ids[0])
@@ -180,8 +196,8 @@ class ComplianceReportEngine:
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
         producers: frozenset[str],
-    ) -> tuple[dict[str, str], list[str]]:
-        """project_id -> evaluated scan, plus the gaps: no usable scan, a failed producing analyzer, or none running."""
+    ) -> tuple[dict[str, str], list[str], list[ProjectWithScanId]]:
+        """project_id -> evaluated scan, the gaps (no project, no usable scan, a failed or no producer), the projects."""
         from app.services.releases import resolve_scan_ids
 
         projects = resolved.projects
@@ -197,7 +213,7 @@ class ComplianceReportEngine:
             ).to_list(length=len(scan_by_project))
             failed_by_scan = {doc["_id"]: sorted(producers.intersection(doc["failed_analyzers"])) for doc in docs}
         switchable = producers & SELECTABLE_ANALYZERS
-        gaps: list[str] = []
+        gaps = [] if projects else ["the scope has no projects"]
         for project in projects:
             scan_id = scan_by_project.get(project.id)
             if scan_id is None:
@@ -206,14 +222,9 @@ class ComplianceReportEngine:
                 gaps.append(f"project '{project.name}': {', '.join(failed)} failed in scan {scan_id}")
             elif switchable and switchable.isdisjoint(project.active_analyzers):
                 gaps.append(f"project '{project.name}' runs none of {', '.join(sorted(switchable))}")
-        return scan_by_project, gaps
+        return scan_by_project, gaps, projects
 
-    async def _collect_crypto_assets(
-        self,
-        db: AsyncIOMotorDatabase,
-        scan_by_project: dict[str, str],
-    ) -> list[CryptoAsset]:
-        query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": list(scan_by_project.values())}}
+    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[CryptoAsset]:
         docs = await CryptoAssetRepository(db).find_all_raw(query, dict.fromkeys(_CRYPTO_ASSET_FIELDS, 1))
         return [CryptoAsset.model_validate(doc) for doc in docs]
 
@@ -280,7 +291,9 @@ class ComplianceReportEngine:
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
     ) -> tuple[bytes, str, str]:
-        return RENDERER_REGISTRY[fmt].render(evaluation, report, disclaimer=framework.disclaimer)
+        renderer = RENDERER_REGISTRY[fmt]
+        body = renderer.render(evaluation, report, disclaimer=framework.disclaimer)
+        return body, build_filename(report, renderer.extension), renderer.mime_type
 
     async def _store_artifact(
         self,

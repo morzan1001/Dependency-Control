@@ -50,6 +50,7 @@ export interface ComplianceReportMeta {
   artifact_mime_type: string | null;
   summary: ControlStatusCounts;
   coverage?: EvaluationCoverage | null;
+  coverage_statement?: string | null;
   error_message: string | null;
   expires_at: string | null;
 }

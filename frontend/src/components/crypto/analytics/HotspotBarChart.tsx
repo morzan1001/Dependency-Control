@@ -10,14 +10,13 @@ interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
-  scanId?: string;
   topN?: number;
 }
 
-export function HotspotBarChart({ scope, scopeId, groupBy, scanId, topN = 20 }: Readonly<Props>) {
+export function HotspotBarChart({ scope, scopeId, groupBy, topN = 20 }: Readonly<Props>) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId, topN],
-    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId, limit: topN }),
+    queryKey: ["crypto-hotspots", scope, scopeId, groupBy, topN],
+    queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, limit: topN }),
   });
   if (isLoading) return <div className="p-4 text-sm">Loading…</div>;
   if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load hotspot data.</div>;

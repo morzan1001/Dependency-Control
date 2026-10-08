@@ -11,7 +11,6 @@ export interface ToolCall {
   tool_name: string;
   arguments: Record<string, unknown>;
   result: Record<string, unknown>;
-  duration_ms: number;
 }
 
 export interface Message {

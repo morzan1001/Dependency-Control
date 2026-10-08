@@ -1,8 +1,4 @@
-"""Standalone async tool functions for crypto / CBOM / compliance / PQC migration.
-
-Collaborators are resolved through the parent package namespace at call time so
-test patches on ``app.services.chat.tools.<NAME>`` keep working.
-"""
+"""Standalone async tool functions for crypto / CBOM / compliance / PQC migration."""
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -14,18 +10,23 @@ from app.core.constants import ScopeName
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.policy_audit_entry import PolicyType
 from app.models.user import User
+from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.policy_audit_entry import PolicyAuditRepository
+from app.schemas.analytics import GroupBy, Metric
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ReportFramework
 from app.schemas.finding_details import all_rule_ids
+from app.services.analytics.crypto_hotspots import CryptoHotspotService
+from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket
+from app.services.analytics.scopes import ResolvedScope, ScopeResolver
+from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
+from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 _NOISY_RULE_SAMPLE = 10
-
-
-def _pkg() -> Any:
-    """Return the parent package module so collaborators resolve via the namespace tests patch."""
-    from app.services.chat import tools as _tools_pkg
-
-    return _tools_pkg
 
 
 async def list_crypto_assets(
@@ -39,9 +40,6 @@ async def list_crypto_assets(
     skip: int = 0,
     limit: int,
 ) -> dict[str, Any]:
-    from app.repositories.crypto_asset import CryptoAssetRepository
-    from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-
     filters: dict[str, Any] = {
         "asset_type": CryptoAssetType(asset_type) if asset_type else None,
         "primitive": CryptoPrimitive(primitive) if primitive else None,
@@ -61,8 +59,6 @@ async def get_crypto_asset_details(
     project_id: str,
     asset_id: str,
 ) -> dict[str, Any] | None:
-    from app.repositories.crypto_asset import CryptoAssetRepository
-
     asset = await CryptoAssetRepository(db).get(project_id, asset_id)
     return asset.model_dump(by_alias=True) if asset else None
 
@@ -73,8 +69,6 @@ async def get_crypto_summary(
     project_id: str,
     scan_id: str,
 ) -> dict[str, Any]:
-    from app.repositories.crypto_asset import CryptoAssetRepository
-
     return await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
 
 
@@ -129,11 +123,7 @@ async def get_crypto_hotspots(
     group_by: str,
     limit: int,
 ) -> dict[str, Any]:
-    from app.schemas.analytics import GroupBy
-    from app.services.analytics.crypto_hotspots import CryptoHotspotService
-
-    pkg = _pkg()
-    resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
+    resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     group_by_lit = cast(GroupBy, group_by)
     resp = await CryptoHotspotService(db).hotspots(
         resolved=resolved,
@@ -150,11 +140,7 @@ async def get_crypto_trends(
     metric: str,
     days: int,
 ) -> dict[str, Any]:
-    from app.schemas.analytics import Metric
-    from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket
-
-    pkg = _pkg()
-    resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
+    resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     # A range ending at the next UTC midnight keeps today's scans and repeats the cache key all day.
     range_end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     series = await CryptoTrendService(db).trend(
@@ -174,9 +160,8 @@ async def generate_pqc_migration_plan(
     limit: int,
 ) -> dict[str, Any]:
     """Generate the PQC migration plan for one project the caller already authorised."""
-    pkg = _pkg()
-    resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
-    gen = pkg.PQCMigrationPlanGenerator(db)
+    resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
+    gen = PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
     dumped: dict[str, Any] = resp.model_dump()
     return dumped
@@ -190,9 +175,8 @@ async def list_compliance_reports(
     limit: int,
 ) -> dict[str, Any]:
     """Recent compliance reports among those ``visibility`` admits (metadata only, no artifacts)."""
-    pkg = _pkg()
-    fw = pkg.ReportFramework(framework) if framework else None
-    reports = await pkg.ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
+    fw = ReportFramework(framework) if framework else None
+    reports = await ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
 
@@ -204,8 +188,7 @@ async def list_policy_audit_entries(
     policy_type: PolicyType,
     limit: int,
 ) -> dict[str, Any]:
-    pkg = _pkg()
-    entries = await pkg.PolicyAuditRepository(db).list(
+    entries = await PolicyAuditRepository(db).list(
         policy_scope=cast(Literal["system", "project"], policy_scope),
         project_id=project_id,
         policy_type=policy_type,
@@ -223,16 +206,15 @@ async def get_framework_evaluation_summary(
     framework: str,
 ) -> dict[str, Any]:
     """Run compliance evaluation in-process and return summary counts."""
-    pkg = _pkg()
-    fw_enum = pkg.ReportFramework(framework)
-    resolver = pkg.ScopeResolver(db, user)
+    fw_enum = ReportFramework(framework)
+    resolver = ScopeResolver(db, user)
     resolved = await resolver.resolve(
         scope=cast(ScopeName, scope),
         scope_id=scope_id,
     )
 
-    framework_obj = pkg.FRAMEWORK_REGISTRY[fw_enum]
-    _, eval_result = await pkg.ComplianceReportEngine().evaluate(db, resolved, framework_obj)
+    framework_obj = FRAMEWORK_REGISTRY[fw_enum]
+    _, eval_result = await ComplianceReportEngine().evaluate(db, resolved, framework_obj)
     return {
         "framework": framework,
         "framework_name": eval_result.framework_name,

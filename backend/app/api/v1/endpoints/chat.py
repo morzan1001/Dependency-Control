@@ -12,6 +12,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.user import User
+from app.repositories.chat import ChatRepository
 from app.schemas.chat import (
     ConversationCreate,
     ConversationDetailResponse,
@@ -19,7 +20,7 @@ from app.schemas.chat import (
     ConversationResponse,
     MessageCreate,
 )
-from app.services.chat.rate_limiter import CHAT_PREFIX, enforce_rate_limit
+from app.services.chat.rate_limiter import enforce_rate_limit
 from app.services.chat.service import ChatService
 
 _MSG_CONVERSATION_NOT_FOUND = "Conversation not found"
@@ -51,16 +52,8 @@ async def create_conversation(
     """Create a new chat conversation."""
     _check_chat_enabled()
 
-    service = ChatService(db)
-    conv = await service.create_conversation(current_user, title=body.title)
-    return ConversationResponse(
-        id=conv["_id"],
-        user_id=conv["user_id"],
-        title=conv["title"],
-        created_at=conv["created_at"],
-        updated_at=conv["updated_at"],
-        message_count=conv["message_count"],
-    )
+    conv = await ChatService(db).create_conversation(current_user, title=body.title)
+    return ConversationResponse.model_validate(conv)
 
 
 @router.get("/conversations", responses=RESP_AUTH, dependencies=_REQUIRES_CHAT_ACCESS)
@@ -71,22 +64,8 @@ async def list_conversations(
     """List the current user's chat conversations."""
     _check_chat_enabled()
 
-    service = ChatService(db)
-    convs = await service.list_conversations(current_user)
-    return ConversationListResponse(
-        conversations=[
-            ConversationResponse(
-                id=c["_id"],
-                user_id=c["user_id"],
-                title=c["title"],
-                created_at=c["created_at"],
-                updated_at=c["updated_at"],
-                message_count=c["message_count"],
-            )
-            for c in convs
-        ],
-        total=len(convs),
-    )
+    convs = await ChatRepository(db).list_conversations(user_id=str(current_user.id))
+    return ConversationListResponse(conversations=convs, total=len(convs))
 
 
 @router.get("/conversations/{conversation_id}", responses=RESP_AUTH_404, dependencies=_REQUIRES_CHAT_ACCESS)
@@ -98,23 +77,13 @@ async def get_conversation(
     """Get a conversation with its messages."""
     _check_chat_enabled()
 
-    service = ChatService(db)
-    conv = await service.get_conversation(conversation_id, current_user)
+    repo = ChatRepository(db)
+    conv = await repo.get_conversation(conversation_id, user_id=str(current_user.id))
     if not conv:
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
-    messages = await service.get_messages(conversation_id)
-    return ConversationDetailResponse(
-        conversation=ConversationResponse(
-            id=conv["_id"],
-            user_id=conv["user_id"],
-            title=conv["title"],
-            created_at=conv["created_at"],
-            updated_at=conv["updated_at"],
-            message_count=conv["message_count"],
-        ),
-        messages=messages,
-    )
+    messages = await repo.get_recent_messages(conversation_id, limit=100)
+    return ConversationDetailResponse(conversation=conv, messages=messages)
 
 
 @router.delete("/conversations/{conversation_id}", responses=RESP_AUTH_404)
@@ -126,9 +95,7 @@ async def delete_conversation(
     """Delete a conversation and all its messages."""
     _check_chat_enabled()
 
-    service = ChatService(db)
-    deleted = await service.delete_conversation(conversation_id, current_user)
-    if not deleted:
+    if not await ChatRepository(db).delete_conversation(conversation_id, user_id=str(current_user.id)):
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
     return {"detail": "Conversation deleted"}
@@ -147,13 +114,12 @@ async def send_message(
 
     await enforce_rate_limit(
         str(current_user.id),
-        prefix=CHAT_PREFIX,
         per_minute=system_settings.chat_rate_limit_per_minute,
         per_hour=system_settings.chat_rate_limit_per_hour,
     )
 
     service = ChatService(db)
-    conv = await service.get_conversation(conversation_id, current_user)
+    conv = await service.repo.get_conversation(conversation_id, user_id=str(current_user.id))
     if not conv:
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 

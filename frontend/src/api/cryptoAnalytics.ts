@@ -8,7 +8,6 @@ export interface GetHotspotsParams {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
-  scanId?: string;
   limit?: number;
 }
 
@@ -18,7 +17,6 @@ export async function getCryptoHotspots(p: GetHotspotsParams): Promise<HotspotRe
       scope: p.scope,
       scope_id: p.scopeId,
       group_by: p.groupBy,
-      scan_id: p.scanId,
       limit: p.limit ?? 100,
     },
   });

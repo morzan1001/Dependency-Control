@@ -1,4 +1,4 @@
-"""Crypto and license entries share crypto_policy_history; a document without policy_type is a crypto one."""
+"""Crypto and license entries share crypto_policy_history, told apart by policy_type."""
 
 from datetime import datetime
 from typing import Any, Literal
@@ -7,13 +7,6 @@ from pymongo import DESCENDING
 
 from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
 from app.repositories.base import BaseRepository
-
-
-def _policy_type_filter(policy_type: PolicyType) -> dict[str, Any]:
-    """crypto also matches docs missing the field (treated as crypto)."""
-    if policy_type == "crypto":
-        return {"$or": [{"policy_type": "crypto"}, {"policy_type": {"$exists": False}}]}
-    return {"policy_type": policy_type}
 
 
 class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
@@ -32,7 +25,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
-            **_policy_type_filter(policy_type),
+            "policy_type": policy_type,
         }
         # Timestamps are stored to the millisecond and two saves can share one, so version —
         # which only ever grows within a scope — decides which of them is the later change.
@@ -57,7 +50,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "policy_scope": policy_scope,
             "project_id": project_id,
             "version": version,
-            **_policy_type_filter(policy_type),
+            "policy_type": policy_type,
         }
         # Older histories hold duplicate versions; the newest entry is the revision a reader means.
         doc = await self.collection.find_one(query, sort=[("timestamp", DESCENDING)])
@@ -73,7 +66,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
-            **_policy_type_filter(policy_type),
+            "policy_type": policy_type,
         }
         doc = await self.collection.find_one(query, {"version": 1}, sort=[("version", DESCENDING)])
         return doc["version"] if doc else 0
@@ -90,7 +83,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "policy_scope": policy_scope,
             "project_id": project_id,
             "timestamp": {"$lt": cutoff},
-            **_policy_type_filter(policy_type),
+            "policy_type": policy_type,
         }
         result = await self.collection.delete_many(query)
         return result.deleted_count

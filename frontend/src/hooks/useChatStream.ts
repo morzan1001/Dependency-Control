@@ -10,7 +10,7 @@ interface StreamState {
 
 export function useChatStream(
   conversationId: string | null,
-  onMessageComplete: () => void,
+  onMessageComplete: () => Promise<unknown>,
 ) {
   const [streamState, setStreamState] = useState<StreamState>({
     isStreaming: false,
@@ -54,13 +54,9 @@ export function useChatStream(
                   tool_name: event.tool_name,
                   arguments: event.arguments,
                   result: event.result,
-                  duration_ms: 0,
                 },
               ]);
               setStreamState((prev) => ({ ...prev, activeToolCall: null }));
-              break;
-            case 'done':
-              onMessageComplete();
               break;
             case 'error':
               setStreamState((prev) => ({ ...prev, error: event.message }));
@@ -75,7 +71,9 @@ export function useChatStream(
           }));
         }
       } finally {
+        await onMessageComplete();
         isStreamingRef.current = false;
+        setPendingUserMessage(null);
         setStreamState((prev) => ({ ...prev, isStreaming: false, activeToolCall: null }));
       }
     },
@@ -86,17 +84,12 @@ export function useChatStream(
     abortControllerRef.current?.abort();
   }, []);
 
-  const clearPendingUserMessage = useCallback(() => {
-    setPendingUserMessage(null);
-  }, []);
-
   return {
     sendMessage,
     abort,
     streamingContent,
     streamingToolCalls,
     pendingUserMessage,
-    clearPendingUserMessage,
     ...streamState,
   };
 }

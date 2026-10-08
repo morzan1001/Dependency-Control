@@ -12,7 +12,8 @@ from app.core.init_db import create_indexes
 from app.models.callgraph import Callgraph
 from app.models.project import Project
 from app.models.user import User
-from app.services.chat.tools import MAX_TOOL_RESULT_BYTES, ChatToolRegistry
+from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._helpers import MAX_TOOL_RESULT_BYTES
 from app.services.reachability_enrichment import fetch_callgraphs
 from app.services.scan_manager import deterministic_scan_id
 from tests.helpers.permission_presets import PRESET_ADMIN
@@ -118,7 +119,8 @@ async def test_a_callgraph_over_16_mib_and_200k_entries_is_stored_and_enriches_t
     assert len(callgraph.module_usage) == 2_000
     assert (await db.findings.find_one({"_id": "f-CVE-1"}))["reachable"] is True
     chat = await ChatToolRegistry().execute_tool("get_callgraph", {"project_id": _PROJECT_ID}, _ADMIN, db)
-    assert chat["_truncated"] is True
+    [chat_graph] = chat["callgraphs"]
+    assert (chat_graph["module_usage_total"], len(chat_graph["module_usage"])) == (2_000, 25)
     assert len(json.dumps(chat).encode()) <= MAX_TOOL_RESULT_BYTES
 
 

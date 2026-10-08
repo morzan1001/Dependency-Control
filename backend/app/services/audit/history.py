@@ -185,8 +185,7 @@ async def record_license_policy_change(
     old_policy: dict[str, Any],
     new_policy: dict[str, Any],
     action: PolicyAuditAction,
-    actor: User | None,
-    comment: str | None = None,
+    actor: User,
 ) -> PolicyAuditEntry | None:
     """Persist a license-policy audit entry (best-effort); returns None if no effective change. Version continues the highest audited one since the project doc has no version column."""
     if old_policy == new_policy:
@@ -201,12 +200,11 @@ async def record_license_policy_change(
         project_id=project_id,
         version=version,
         action=action,
-        actor_user_id=actor.id if actor else None,
-        actor_display_name=(actor.username or actor.email) if actor else None,
+        actor_user_id=actor.id,
+        actor_display_name=actor.username or actor.email,
         timestamp=datetime.now(timezone.utc),
         snapshot=new_policy,
         change_summary=compute_license_policy_change_summary(old_policy, new_policy),
-        comment=comment,
     )
     await _persist_and_announce(db, entry)
     return entry

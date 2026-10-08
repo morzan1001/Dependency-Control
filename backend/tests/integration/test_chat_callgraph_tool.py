@@ -93,3 +93,48 @@ async def test_a_language_without_callgraph_support_is_refused(db, database):
     result = await _call(db, language="cobol")
 
     assert "unsupported callgraph language" in result["error"]
+
+
+def _graph(modules: int, details: int) -> dict:
+    """A python graph whose module pkg-{i} is imported and called i times, each with `details` files and symbols."""
+    usage = {
+        f"pkg-{i}": ModuleUsage(
+            module=f"pkg-{i}",
+            import_count=i,
+            call_count=i,
+            import_locations=[f"src/module_{i}/file_{j}.py" for j in range(details)],
+            used_symbols=[f"symbol_{j}" for j in range(details)],
+        )
+        for i in range(modules)
+    }
+    stored = Callgraph(
+        project_id=_PROJECT,
+        language="python",
+        tool="generic",
+        module_usage=usage,
+        analyzed_modules=sorted(usage),
+        created_at=_MARCH,
+    ).model_dump(by_alias=True)
+    return {**stored, "updated_at": _MARCH}
+
+
+async def test_a_graph_within_the_answer_budget_keeps_every_module_s_files_and_symbols(db, database):
+    stored = _graph(30, 1)
+    await _seed(db, stored)
+
+    [graph] = (await _call(db))["callgraphs"]
+
+    assert len(graph["module_usage"]) == 30
+    assert graph["module_usage"]["pkg-0"]["import_locations"] == ["src/module_0/file_0.py"]
+    assert graph["module_usage"]["pkg-0"]["used_symbols"] == ["symbol_0"]
+    assert graph["analyzed_modules"] == stored["analyzed_modules"]
+
+
+async def test_a_graph_past_the_answer_budget_lists_every_module_s_counts_busiest_first(db, database):
+    await _seed(db, _graph(60, 5))
+
+    [graph] = (await _call(db))["callgraphs"]
+
+    assert graph["module_usage_total"] == len(graph["module_usage"]) == 60
+    assert list(graph["module_usage"])[:2] == ["pkg-59", "pkg-58"]
+    assert graph["module_usage"]["pkg-59"] == {"import_count": 59, "call_count": 59}

@@ -1,8 +1,14 @@
 """HTTP contract and job-document transitions for compliance report lifecycle endpoints."""
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
+
+from app.models.compliance_report import ComplianceReport
+from app.repositories.compliance_report import ComplianceReportRepository
+from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
+from app.services.compliance.renderers.base import coverage_statement
 
 
 @pytest.mark.asyncio
@@ -89,3 +95,28 @@ async def test_delete_report(client, db, owner_auth_headers_proj):
         headers=owner_auth_headers_proj,
     )
     assert followup.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_report_is_served_with_the_coverage_sentence_its_artifact_prints(client, db, member_auth_headers):
+    gapped, bare = (
+        ComplianceReport(
+            scope="user",
+            framework=ReportFramework.CVE_REMEDIATION_SLA,
+            format=ReportFormat.PDF,
+            status=ReportStatus.COMPLETED,
+            requested_by="testuser",
+            requested_at=datetime.now(timezone.utc),
+            coverage=coverage,
+        )
+        for coverage in (EvaluationCoverage(gaps=["project 'payments' has no usable scan"]), None)
+    )
+    for report in (gapped, bare):
+        await ComplianceReportRepository(db).create(report)
+
+    one = await client.get(f"/api/v1/compliance/reports/{gapped.id}", headers=member_auth_headers)
+    listed = await client.get("/api/v1/compliance/reports", headers=member_auth_headers)
+
+    statements = {r["_id"]: r["coverage_statement"] for r in listed.json()["reports"]}
+    assert one.json()["coverage_statement"] == coverage_statement(gapped.coverage) == statements[gapped.id]
+    assert statements[bare.id] is None

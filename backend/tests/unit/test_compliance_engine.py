@@ -32,10 +32,12 @@ from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.normalizers.license import normalize_license
 from tests.helpers.analyzers import analyze_cyclonedx
 from tests.helpers.compliance import evaluation_input
 from tests.helpers.findings import aggregated_vulnerability
+from tests.unit.test_renderer_json import _evaluation
 
 
 def _report(**overrides):
@@ -226,14 +228,21 @@ async def test_engine_counts_a_crashed_report_under_the_error_status():
     assert _reports_counted("error") == before + 1
 
 
-async def _store_project(db, pid, *, scanned=True, failed_analyzers=None, **fields):
+async def _store_project(db, pid, *, scanned=True, sbom=True, failed_analyzers=None, **fields):
     """The project and its head scan as ingest and the analysis engine leave them."""
     scan_id = f"scan-{pid}" if scanned else None
     project = Project(id=pid, name=f"name-{pid}", latest_scan_id=scan_id, members=[{"user_id": "u1"}], **fields)
     await db.projects.insert_one(project.model_dump(by_alias=True))
     if scanned:
         status = SCAN_STATUS_COMPLETED_WITH_ERRORS if failed_analyzers else SCAN_STATUS_COMPLETED
-        scan = Scan(id=scan_id, project_id=pid, branch="main", status=status, failed_analyzers=failed_analyzers)
+        scan = Scan(
+            id=scan_id,
+            project_id=pid,
+            branch="main",
+            status=status,
+            failed_analyzers=failed_analyzers,
+            sbom_refs=[make_gridfs_ref(f"sbom-{pid}", "sbom.json")] if sbom else [],
+        )
         await db.scans.insert_one(scan.model_dump(by_alias=True))
     return scan_id
 
@@ -277,7 +286,8 @@ async def _gather(db, resolved, key):
 @pytest.mark.asyncio
 async def test_engine_gather_inputs_builds_evaluation_input(db):
     await seed_crypto_policies(db)
-    await _store_project(db, "p1")
+    scan_id = await _store_project(db, "p1")
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     result = await _gather(db, await _user_scope(db), ReportFramework.NIST_SP_800_131A)
 
@@ -314,7 +324,8 @@ async def test_an_unscanned_project_withholds_a_cve_pass(db):
 )
 async def test_a_failed_analyzer_is_a_gap_only_for_the_framework_it_feeds(db, failed, gap_in, no_gap_in):
     await seed_crypto_policies(db)
-    await _store_project(db, "p1", failed_analyzers=[failed, "end_of_life"])
+    scan_id = await _store_project(db, "p1", failed_analyzers=[failed, "end_of_life"])
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     affected = await _gather(db, _project_scope(), gap_in)
     unaffected = await _gather(db, _project_scope(), no_gap_in)
@@ -399,7 +410,7 @@ async def test_a_crypto_framework_reads_only_the_finding_types_its_controls_map_
 
 
 @pytest.mark.asyncio
-async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
+async def test_the_pqc_plan_loads_neither_findings_nor_assets(db):
     await seed_crypto_policies(db)
     await _store_project(db, "p1")
     finding_reads, asset_reads = _reads(db.findings), _reads(db.crypto_assets)
@@ -407,6 +418,36 @@ async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
     await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
 
     assert finding_reads == asset_reads == []
+
+
+_AES = CryptoAsset(
+    project_id="p1",
+    scan_id="scan-p1",
+    bom_ref="crypto/algorithm/aes",
+    name="AES",
+    asset_type=CryptoAssetType.ALGORITHM,
+    primitive=CryptoPrimitive.BLOCK_CIPHER,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("assets", "gaps"),
+    [([], ["project 'name-p1' has no crypto assets in scan scan-p1"]), ([_AES], [])],
+    ids=["no-inventory", "nothing-quantum-vulnerable"],
+)
+async def test_the_pqc_plan_names_a_scan_without_crypto_inventory_as_a_gap(db, assets, gaps):
+    await seed_crypto_policies(db)
+    scan_id = await _store_project(db, "p1")
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, assets)
+
+    _, evaluation = await ComplianceReportEngine().evaluate(
+        db, _project_scope(), FRAMEWORK_REGISTRY[ReportFramework.PQC_MIGRATION_PLAN]
+    )
+
+    assert evaluation.controls == []
+    assert evaluation.coverage.gaps == gaps
+    assert evaluation.coverage.complete is not gaps
 
 
 @pytest.mark.asyncio
@@ -432,6 +473,62 @@ def _rsa(pid, scan_id, key_size_bits):
         key_size_bits=key_size_bits,
         occurrence_locations=["src/tls.py"],
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key", [ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT, ReportFramework.NIST_SP_800_131A]
+)
+async def test_an_empty_scope_withholds_every_verdict_its_absence_would_carry(db, key):
+    await seed_crypto_policies(db)
+
+    inputs, evaluation = await ComplianceReportEngine().evaluate(db, await _user_scope(db), FRAMEWORK_REGISTRY[key])
+
+    assert inputs.coverage.gaps == ["the scope has no projects"]
+    assert {control.status for control in evaluation.controls} == {ControlStatus.NOT_EVALUATED.value}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", sorted(engine_module._NON_CRYPTO_FRAMEWORKS))
+async def test_a_scan_without_an_sbom_withholds_every_verdict_its_absence_would_carry(db, key):
+    """A CBOM-only head scan: no vulnerability or license analyzer ever read a dependency of it."""
+    await seed_crypto_policies(db)
+    scan_id = await _store_project(db, "p1", sbom=False)
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
+
+    inputs, evaluation = await ComplianceReportEngine().evaluate(db, _project_scope(), FRAMEWORK_REGISTRY[key])
+
+    assert inputs.coverage.gaps == ["project 'name-p1' has no SBOM in scan scan-p1"]
+    assert {control.status for control in evaluation.controls} == {ControlStatus.NOT_EVALUATED.value}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key",
+    [
+        k
+        for k in ReportFramework
+        if k not in engine_module._NON_CRYPTO_FRAMEWORKS and k is not ReportFramework.PQC_MIGRATION_PLAN
+    ],
+)
+async def test_a_scan_without_crypto_inventory_withholds_all_but_the_policy_disabled_verdicts(db, key):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    framework = FRAMEWORK_REGISTRY[key]
+
+    inputs, evaluation = await ComplianceReportEngine().evaluate(db, _project_scope(), framework)
+
+    disabled = {rule.rule_id for rule in inputs.policy_rules if not rule.enabled}
+    policy_off = {
+        c.control_id for c in framework.controls if c.maps_to_rule_ids and set(c.maps_to_rule_ids) <= disabled
+    }
+    assert inputs.coverage.gaps == ["project 'name-p1' has no crypto assets in scan scan-p1"]
+    assert {c.control_id: c.status for c in evaluation.controls} == {
+        c.control_id: ControlStatus.NOT_APPLICABLE.value
+        if c.control_id in policy_off
+        else ControlStatus.NOT_EVALUATED.value
+        for c in evaluation.controls
+    }
 
 
 @pytest.mark.asyncio
@@ -463,6 +560,24 @@ async def test_a_stored_rsa_key_size_reaches_the_key_size_control(db):
 
     rsa = next(c for c in evaluation.controls if c.control_id == "NIST-131A-nist-131a-rsa-min-2048")
     assert rsa.status == ControlStatus.PASSED.value
+
+
+@pytest.mark.parametrize(
+    ("fmt", "suffix", "mime"),
+    [
+        (ReportFormat.JSON, "json", "application/json"),
+        (ReportFormat.CSV, "csv", "text/csv"),
+        (ReportFormat.SARIF, "sarif.json", "application/sarif+json"),
+    ],
+)
+def test_the_artifact_is_named_after_the_report_and_typed_by_its_format(fmt, suffix, mime):
+    report = _report(scope="team", scope_id="t/1 a", requested_at=datetime(2026, 4, 20, 10, 5, tzinfo=timezone.utc))
+    framework = FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A]
+
+    body, filename, mime_type = ComplianceReportEngine()._render(fmt, framework, _evaluation(), report)
+
+    assert body
+    assert (filename, mime_type) == (f"nist-sp-800-131a_team-t_1_a_20260420T100500Z.{suffix}", mime)
 
 
 @pytest.mark.asyncio

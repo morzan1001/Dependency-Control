@@ -154,7 +154,7 @@ class TestComplianceReportsVisibility:
         repo_instance = MagicMock()
         repo_instance.list = AsyncMock(return_value=[])
         with patch(
-            "app.services.chat.tools.ComplianceReportRepository",
+            "app.services.chat.tools.crypto_tools.ComplianceReportRepository",
             return_value=repo_instance,
         ):
             await _dispatch("list_compliance_reports", {}, plain_user, db)
