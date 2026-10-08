@@ -43,7 +43,6 @@ function clickSource(source: string, scanContext?: ScanContext): string | null {
       <MemoryRouter>
         <FindingDetailsModal
           finding={finding([source])}
-          isOpen
           onClose={() => {}}
           projectId="p1"
           scanId="s1"

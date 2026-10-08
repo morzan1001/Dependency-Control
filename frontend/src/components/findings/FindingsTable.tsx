@@ -433,7 +433,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     projectId={projectId}
                     scanId={scanId}
                     scanContext={scanContext}
-                    isOpen={!!selectedFinding}
                     onClose={closeSelectedFinding}
                     onSelectFinding={async (id) => {
                         // Prefer a match among the already-loaded rows.

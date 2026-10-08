@@ -498,7 +498,6 @@ export function AnalyticsDependencyModal({
   const [sortBy, setSortBy] = useState<SortField>('severity')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedFinding, setSelectedFinding] = useState<ComponentFinding | null>(null)
-  const [findingModalOpen, setFindingModalOpen] = useState(false)
 
   const enabledComponent = open ? component : ''
   // The mode the table that opened this modal rendered from, so the drill-down cannot report a
@@ -638,10 +637,7 @@ export function AnalyticsDependencyModal({
                     <TableRow
                       key={`${finding.type}:${finding.id}:${finding.version}:${finding.scan_id}`}
                       className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => {
-                        setSelectedFinding(finding)
-                        setFindingModalOpen(true)
-                      }}
+                      onClick={() => setSelectedFinding(finding)}
                     >
                       <TableCell className="font-mono text-xs truncate">
                         {getDisplayId(finding) || '-'}
@@ -680,11 +676,7 @@ export function AnalyticsDependencyModal({
         {selectedFinding && (
           <FindingDetailsModal
             finding={selectedFinding}
-            isOpen={findingModalOpen}
-            onClose={() => {
-              setFindingModalOpen(false)
-              setSelectedFinding(null)
-            }}
+            onClose={() => setSelectedFinding(null)}
             projectId={selectedFinding.project_id}
             scanId={selectedFinding.scan_id}
             onSelectFinding={(id) => {
@@ -695,7 +687,6 @@ export function AnalyticsDependencyModal({
               }
             }}
             onNavigate={() => {
-              setFindingModalOpen(false)
               setSelectedFinding(null)
               onOpenChange(false)
             }}

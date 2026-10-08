@@ -24,12 +24,6 @@ import { WaiverForm } from './details/WaiverForm'
 import { SastDetailsView, ScanContext } from './details/SastDetailsView'
 import { DetailSection, FileLocation, BadgeList } from './details/shared'
 import { ReachabilityEvidence } from './details/ReachabilityEvidence'
-import {
-  getFindingId,
-  getFindingPackage,
-  getFindingTitle,
-  getFindingVersion,
-} from './details/finding-details-helpers'
 
 const REACHABILITY_STYLES: Record<ReachabilityVerdict, { className: string; icon: LucideIcon }> = {
     reachable: { className: 'bg-red-500/10 text-severity-critical', icon: AlertTriangle },
@@ -90,8 +84,7 @@ function AliasList({ aliases }: Readonly<{ aliases: string[] }>) {
 }
 
 interface FindingDetailsModalProps {
-    finding: Finding | null
-    isOpen: boolean
+    finding: Finding
     onClose: () => void
     projectId: string
     scanId?: string
@@ -100,7 +93,7 @@ interface FindingDetailsModalProps {
     onNavigate?: () => void
 }
 
-export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, scanContext, onSelectFinding, onNavigate }: Readonly<FindingDetailsModalProps>) {
+export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanContext, onSelectFinding, onNavigate }: Readonly<FindingDetailsModalProps>) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
     const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
     const { hasPermission, permissions } = useAuth()
@@ -112,9 +105,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
         : hasPermission('waiver:manage')
 
     // Prefill the re-waive form with the lapsed waiver's reason/status/expiration.
-    const { data: lapsedWaiver } = useWaiverById(finding?.lapsed_waiver_id)
-
-    if (!finding) return null
+    const { data: lapsedWaiver } = useWaiverById(finding.lapsed_waiver_id)
 
     const handleWaive = (vulnId?: string) => {
         setSelectedVulnId(vulnId || null)
@@ -133,7 +124,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
     }
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <Dialog open onOpenChange={(open) => !open && onClose()}>
                 <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
                 <DialogHeader className="pb-1">
                     <DialogTitle className="flex items-center gap-2 leading-normal">
@@ -142,7 +133,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 {finding.severity}
                             </Badge>
                         )}
-                        <span className="truncate leading-normal">{getFindingTitle(finding)}</span>
+                        <span className="truncate leading-normal">{finding.id || 'Finding Details'}</span>
                     </DialogTitle>
                     <DialogDescription className="flex flex-wrap items-center gap-2">
                         <span className="flex items-center gap-1">
@@ -175,16 +166,16 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                       <div className="space-y-6 pt-2 pb-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <DetailSection label="Component" compact>
-                                    <p className="font-medium">{getFindingPackage(finding)}</p>
+                                    <p className="font-medium">{finding.component || 'Unknown'}</p>
                                 </DetailSection>
                                 <DetailSection label="Version" compact>
-                                    <p className="font-medium">{getFindingVersion(finding)}</p>
+                                    <p className="font-medium">{finding.version}</p>
                                 </DetailSection>
                                 <DetailSection label="Fixed Version" compact>
                                     <p className="font-medium text-success">{finding.details?.fixed_version || "None"}</p>
                                 </DetailSection>
                                 <DetailSection label="ID" compact>
-                                    <p className="font-mono text-sm">{getFindingId(finding)}</p>
+                                    <p className="font-mono text-sm">{finding.id}</p>
                                 </DetailSection>
                                 {finding.scanners && finding.scanners.length > 0 && (
                                     <div className="col-span-2">
@@ -372,11 +363,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 </div>
                             )}
 
-                            {finding.type === 'sast' && (
-                                <SastDetailsView finding={finding} scanContext={scanContext} />
-                            )}
-
-                            {finding.type === 'iac' && (
+                            {(finding.type === 'sast' || finding.type === 'iac') && (
                                 <SastDetailsView finding={finding} scanContext={scanContext} />
                             )}
 
@@ -390,14 +377,15 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                             <div className="space-y-4">
                                                 {vulns.length > 1 && (
                                                     <p className="text-sm text-muted-foreground mb-2">
-                                                        Found {vulns.length} vulnerabilities in {getFindingPackage(finding)}
+                                                        Found {vulns.length} vulnerabilities in {finding.component || 'Unknown'}
                                                     </p>
                                                 )}
 
                                                 <ContextBannersSection finding={finding} />
                                                 
                                                 {vulns.map((vuln: NestedVulnerability) => {
-                                                    const vulnId = vuln.id || getFindingId(finding);
+                                                    const vulnId = vuln.id || finding.id;
+                                                    const reachability = vuln.reachability ?? finding.details?.reachability;
                                                     const isCve = vulnId?.startsWith('CVE-');
                                                     const isGhsa = vulnId?.startsWith('GHSA-');
                                                     const resolvedCve = vuln.resolved_cve;
@@ -459,7 +447,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 {vuln.waived ? (
                                                                     <Badge variant="secondary" title={vuln.waiver_reason ?? undefined}>Waived</Badge>
                                                                 ) : canCreateWaiver && (
-                                                                    <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vuln.id || getFindingId(finding))}>
+                                                                    <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vulnId)}>
                                                                         <ShieldAlert className="h-3 w-3 mr-1" />
                                                                         Waive
                                                                     </Button>
@@ -468,7 +456,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                         </div>
                                                         <div className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground">
                                                             <ReactMarkdown>
-                                                                {vuln.description || (finding.details?.vulnerabilities ? "" : finding.description) || "No description available."}
+                                                                {vuln.description || "No description available."}
                                                             </ReactMarkdown>
                                                         </div>
                                                         
@@ -500,25 +488,21 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                                 )
                                                             })()}
-                                                            {vuln.in_kev && (() => {
-                                                                const kevDateAdded = vuln.kev_date_added
-                                                                return (
+                                                            {vuln.in_kev && (
                                                                 <div className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 text-red-600 rounded-md flex-wrap">
                                                                     <AlertTriangle className="h-3 w-3" />
                                                                     <span className="font-medium">Known Exploited</span>
                                                                     {vuln.kev_ransomware_use && (
                                                                         <Badge variant="destructive" className="text-[10px] py-0 h-4">Ransomware</Badge>
                                                                     )}
-                                                                    {kevDateAdded && (
+                                                                    {vuln.kev_date_added && (
                                                                         <span className="text-muted-foreground text-[10px] ml-1">
-                                                                            (since {formatDate(kevDateAdded)})
+                                                                            (since {formatDate(vuln.kev_date_added)})
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                )
-                                                            })()}
-                                                            {(vuln.reachability ?? finding.details?.reachability) && (() => {
-                                                                const reachability = (vuln.reachability ?? finding.details?.reachability)!
+                                                            )}
+                                                            {reachability && (() => {
                                                                 const { verdict, label } = getReachabilityDisplay(reachability)
                                                                 const { className, icon: ReachabilityIcon } = REACHABILITY_STYLES[verdict]
                                                                 const confidenceScore = reachability.confidence_score
@@ -539,12 +523,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                                 )
                                                             })()}
-                                                            {(vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []).length > 0 && (
-                                                                <MatchedSymbolsList symbols={vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []} />
-                                                            )}
-                                                            {(vuln.reachability?.message ?? finding.details?.reachability?.message) && (
-                                                                <ReachabilityEvidence reachability={(vuln.reachability ?? finding.details?.reachability)!} />
-                                                            )}
+                                                            {reachability?.matched_symbols?.length ? (
+                                                                <MatchedSymbolsList symbols={reachability.matched_symbols} />
+                                                            ) : null}
+                                                            {reachability?.message && <ReachabilityEvidence reachability={reachability} />}
                                                             {vuln.kev_required_action && (
                                                                 <div className="flex items-center gap-2 w-full">
                                                                     <span className="font-medium text-muted-foreground">Required Action:</span>
@@ -604,11 +586,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 </>
                             )}
 
-                            {finding.type === 'outdated' && (
-                                <ContextBannersSection finding={finding} />
-                            )}
-
-                            {finding.type === 'eol' && (
+                            {(finding.type === 'outdated' || finding.type === 'eol') && (
                                 <ContextBannersSection finding={finding} />
                             )}
 

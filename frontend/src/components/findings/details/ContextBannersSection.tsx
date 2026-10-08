@@ -20,10 +20,7 @@ interface ContextBannersSectionProps {
 export function ContextBannersSection({ finding }: Readonly<ContextBannersSectionProps>) {
   const banners: React.ReactNode[] = []
 
-  const hasAggregatedQualityIssues =
-    finding.type === 'quality' &&
-    Array.isArray((finding.details as Record<string, unknown> | undefined)?.quality_issues) &&
-    ((finding.details as Record<string, unknown>).quality_issues as unknown[]).length > 0
+  const hasAggregatedQualityIssues = finding.type === 'quality' && (finding.details?.quality_issues?.length ?? 0) > 0
 
   if (finding.details?.outdated_info?.is_outdated) {
     const info = finding.details.outdated_info
@@ -112,13 +109,7 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
   }
 
   if (finding.details?.scorecard_context) {
-    const ctx = finding.details.scorecard_context as {
-      overall_score?: number
-      maintenance_risk?: boolean
-      has_vulnerabilities_issue?: boolean
-      critical_issues?: string[]
-      project_url?: string
-    }
+    const ctx = finding.details.scorecard_context
 
     const hasValidScore = ctx.overall_score !== undefined && ctx.overall_score !== null && !Number.isNaN(ctx.overall_score)
     const isLowScore = hasValidScore && ctx.overall_score! < 5
