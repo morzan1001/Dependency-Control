@@ -129,7 +129,8 @@ async def window_scans_by_branch(
     branch the other would not, and both can tell how much of the window their numbers
     actually cover.
     """
-    scoped = usable_scan_match(since)
+    # A findings-only scan holds no dependencies to compare; $ne keeps scans older than sbom_refs.
+    scoped = {**usable_scan_match(since), "sbom_refs": {"$ne": []}}
 
     activity: dict[tuple[str, str], BranchWindowActivity] = {}
     for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):

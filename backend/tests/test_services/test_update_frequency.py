@@ -1920,6 +1920,33 @@ class TestBranchRuleDifferential:
         assert live.branch == "old"
         assert (live.scan_count, live.total_updates, live.minor_updates, live.major_updates) == (3, 2, 1, 1)
 
+    @pytest.mark.asyncio
+    async def test_a_branch_scanned_only_for_findings_wins_on_neither_path(self):
+        # A findings-only pipeline stores no dependencies, so its commits compare nothing.
+        db = FakeDatabase()
+        for i, version in enumerate(("1.0.0", "1.1.0", "2.0.0")):
+            await self._seed(db, f"m{i}", 30 - i * 10, "main", version)
+        for i in range(5):
+            await db.scans.insert_one(
+                {
+                    "_id": f"sast{i}",
+                    "project_id": self._PROJECT,
+                    "branch": "develop",
+                    "created_at": datetime.now(tz=timezone.utc) - timedelta(days=5 - i),
+                    "commit_hash": f"commit-sast{i}",
+                    "status": "completed",
+                    "is_rescan": False,
+                    "sbom_refs": [],
+                }
+            )
+        for scan in sorted(await db.scans.find({}).to_list(None), key=lambda s: (s["created_at"], s["_id"])):
+            await record_scan_update_delta(db, scan["_id"])
+
+        live = await self._live(db)
+        assert (live.branch, live.total_updates) == ("main", 2)
+        rolled = await self._rollup(db)
+        assert (rolled.branch, rolled.total_updates) == ("main", 2)
+
 
 class TestTheLiveWalkIsAlwaysFullyCovered:
     """The walk reads the scans coverage is measured against, so it never reports partial."""
