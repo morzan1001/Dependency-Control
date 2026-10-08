@@ -41,6 +41,7 @@ _MSG_MISSING_BEARER = "Missing Bearer token"
 # Unknown, revoked and expired share one message: distinguishing them would confirm to a caller
 # holding a rejected token that the token once existed.
 _MSG_OPAQUE_KEY = "Invalid, revoked, or expired API key"
+_MSG_RETIRED_KEY = "This API key format is retired. Create a dck_ key under Profile > API Keys and use it instead."
 
 # Asserting on the key collection alone leaves a usage or audit collection free to be read.
 _USERS_COL = "users"
@@ -142,6 +143,18 @@ async def test_an_unresolvable_token_is_401_with_one_shared_message():
     assert exc.value.detail == _MSG_OPAQUE_KEY
     # A distinguishing signal outside the body would be just as much of an oracle.
     assert exc.value.headers is None
+
+
+@pytest.mark.parametrize("retired", ["mcp_" + "a" * _TOKEN_BODY_CHARS, "dca_" + "b" * _TOKEN_BODY_CHARS])
+@pytest.mark.asyncio
+async def test_a_retired_key_format_is_401_naming_the_key_that_replaced_it(retired):
+    db, _ = _db_with_key(None)
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(API_KEY_SURFACE_MCP, db, authorization=f"Bearer {retired}")
+
+    assert exc.value.status_code == _UNAUTHORIZED
+    assert exc.value.detail == _MSG_RETIRED_KEY
 
 
 @pytest.mark.asyncio

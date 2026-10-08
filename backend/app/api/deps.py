@@ -531,6 +531,9 @@ SURFACE_PERMISSIONS: dict[str, str] = {
 
 # One message for unknown, revoked and expired, so a rejected token does not learn it once existed.
 _MSG_UNRESOLVED_KEY = "Invalid, revoked, or expired API key"
+# The formats the dck_ key replaced; naming one tells the holder only what the token itself shows.
+_RETIRED_KEY_PREFIXES = ("mcp_", "dca_")
+_MSG_RETIRED_KEY = "This API key format is retired. Create a dck_ key under Profile > API Keys and use it instead."
 
 
 def _bearer_token(authorization: str, surface: str) -> str:
@@ -568,7 +571,8 @@ async def _admit_unified_key(
     key_repo = ApiKeyRepository(db)
     key_doc = await key_repo.get_by_plaintext(token)
     if not key_doc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_MSG_UNRESOLVED_KEY)
+        detail = _MSG_RETIRED_KEY if token.startswith(_RETIRED_KEY_PREFIXES) else _MSG_UNRESOLVED_KEY
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
 
     user = await _key_owner(db, key_doc)
     if surface not in key_doc["surfaces"]:
