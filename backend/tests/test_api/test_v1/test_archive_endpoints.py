@@ -391,7 +391,6 @@ class TestDownloadArchive:
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
         ):
             result = asyncio.run(
@@ -821,19 +820,20 @@ class TestDownloadStripsPlaintextSecrets:
             db.findings.insert_many = AsyncMock()
             db.analysis_results.insert_many = AsyncMock()
             reason, _ = await _replay_bundle(db, "scan-1", _aiter([bundle]))
-            return bundle, reason, db
+            return response, bundle, reason, db
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=encrypted),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
             patch("app.core.s3.get_s3_client", lambda: fake_get_s3_client(s3)),
             patch("app.core.encryption.settings") as encryption_settings,
         ):
             encryption_settings.ARCHIVE_ENCRYPTION_KEY = "0" * 64
-            bundle, reason, db = asyncio.run(run_download_and_restore())
+            response, bundle, reason, db = asyncio.run(run_download_and_restore())
 
+        assert response.media_type == "application/gzip"
+        assert response.headers["Content-Disposition"] == 'attachment; filename="scan-1.json.gz"'
         assert s3.buckets_read == ["dc-archives"]
         assert _LEGACY_SECRET.encode() not in bundle
         assert reason is None

@@ -16,7 +16,6 @@ from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.core.constants import PROJECT_ROLE_ADMIN
-from app.core.encryption import is_encryption_enabled
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_failures_total,
@@ -209,13 +208,10 @@ async def download_archive(
             archive_operations_total.labels(operation="download", status="failure").inc()
             raise
 
-    suffix = ".bundle" if is_encryption_enabled() else ".json.gz"
-    media_type = "application/octet-stream" if is_encryption_enabled() else "application/gzip"
-
     return StreamingResponse(
         _stream(),
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{scan_id}{suffix}"'},
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{scan_id}.json.gz"'},
     )
 
 
