@@ -122,10 +122,15 @@ function changedFields(webhook: Webhook, form: WebhookFormState): WebhookUpdate 
   if (form.removeSecret) changes.secret = null
   else if (form.secret) changes.secret = form.secret
   if (form.isActive !== webhook.is_active) changes.is_active = form.isActive
-  // The server detects the type of a new URL sent without one, so only the Teams opt-out needs naming.
+  // The server detects the type of a new URL sent without one, so only the Teams opt-out and a type set over the API need naming.
   const mustNameType = urlChanged ? form.sendJson : form.sendJson !== sendsJsonToTeams(webhook)
-  if (mustNameType && detectWebhookType(form.url) === "teams") {
+  const newType = detectWebhookType(form.url)
+  const storedType = webhook.webhook_type ?? "generic"
+  const typeSetOverApi = storedType !== "generic" && storedType !== detectWebhookType(webhook.url)
+  if (mustNameType && newType === "teams") {
     changes.webhook_type = form.sendJson ? "generic" : "teams"
+  } else if (urlChanged && typeSetOverApi && newType === "generic") {
+    changes.webhook_type = storedType
   }
   return changes
 }

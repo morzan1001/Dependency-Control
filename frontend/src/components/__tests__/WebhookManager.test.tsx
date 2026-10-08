@@ -177,6 +177,7 @@ describe("WebhookManager", () => {
     };
     const teamsCards: Webhook = { ...stored, url: TEAMS_URL, webhook_type: "teams" };
     const teamsJson: Webhook = { ...stored, url: TEAMS_URL, webhook_type: "generic" };
+    const apiTeams: Webhook = { ...stored, webhook_type: "teams" };
 
     beforeEach(() => vi.clearAllMocks());
 
@@ -288,6 +289,24 @@ describe("WebhookManager", () => {
         teamsJson,
         () => fireEvent.change(urlInput(), { target: { value: SLACK_URL } }),
         { url: SLACK_URL },
+      ],
+      [
+        "a plain URL leaves the opt-out to the server",
+        teamsJson,
+        () => fireEvent.change(urlInput(), { target: { value: "https://example.com/fixed" } }),
+        { url: "https://example.com/fixed" },
+      ],
+      [
+        "a new URL keeps a type set over the API",
+        apiTeams,
+        () => fireEvent.change(urlInput(), { target: { value: "https://example.com/fixed" } }),
+        { url: "https://example.com/fixed", webhook_type: "teams" },
+      ],
+      [
+        "a new Teams URL leaves a type set over the API to the server",
+        apiTeams,
+        () => fireEvent.change(urlInput(), { target: { value: TEAMS_URL } }),
+        { url: TEAMS_URL },
       ],
     ])("%s", async (_case, webhook, edit, expected) => {
       const onUpdate = renderEditor(webhook);
