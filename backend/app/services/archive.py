@@ -30,7 +30,7 @@ from app.core.constants import (
     SCAN_ACTIVE_STATUSES,
     SCAN_SCOPED_COLLECTIONS,
 )
-from app.core.encryption import EncryptionStreamWriter, decrypt_stream, is_encryption_enabled
+from app.core.encryption import decrypt_stream, encrypt_stream, is_encryption_enabled
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
@@ -165,36 +165,6 @@ async def _gzip_decompress_stream(source: AsyncIterator[bytes]) -> AsyncIterator
         yield tail
 
 
-async def _encrypt_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-    """Wrap a byte stream in chunked AES-GCM via a producer task + bounded queue."""
-    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=4)
-
-    async def sink(chunk: bytes) -> None:
-        await queue.put(chunk)
-
-    async def producer() -> None:
-        writer = EncryptionStreamWriter(sink)
-        try:
-            await writer.start()
-            async for chunk in source:
-                await writer.write(chunk)
-            await writer.aclose()
-        finally:
-            await queue.put(None)
-
-    task = asyncio.create_task(producer())
-    try:
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            yield item
-        await task
-    except BaseException:
-        task.cancel()
-        raise
-
-
 def _build_archive_payload(
     db: Any,
     scan_doc: dict[str, Any],
@@ -215,7 +185,7 @@ def _build_archive_payload(
     )
     gzipped = _gzip_compress_stream(frames)
     if is_encryption_enabled():
-        return _encrypt_stream(gzipped), "application/octet-stream"
+        return encrypt_stream(gzipped), "application/octet-stream"
     return gzipped, "application/gzip"
 
 

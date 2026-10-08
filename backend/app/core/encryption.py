@@ -23,7 +23,7 @@ callers requiring active-adversary resistance must add an outer MAC or sequence-
 import hashlib
 import os
 import struct
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -51,55 +51,25 @@ def _get_key() -> bytes:
     return hashlib.sha256(raw.encode("utf-8")).digest()
 
 
-SinkFn = Callable[[bytes], Awaitable[None]]
+def _seal(aesgcm: AESGCM, plaintext: bytes) -> bytes:
+    nonce = os.urandom(NONCE_SIZE)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+    return struct.pack(">I", len(ciphertext)) + nonce + ciphertext
 
 
-class EncryptionStreamWriter:
-    """Streaming AES-GCM encryptor; buffers to CHUNK_SIZE then emits chunks. aclose() flushes."""
-
-    def __init__(self, sink: SinkFn, chunk_size: int = ENCRYPTION_CHUNK_SIZE):
-        self._sink = sink
-        self._chunk_size = chunk_size
-        self._aesgcm = AESGCM(_get_key())
-        self._buffer = bytearray()
-        self._started = False
-        self._closed = False
-
-    async def start(self) -> None:
-        if self._started:
-            return
-        header = ENCRYPTION_MAGIC + bytes([ENCRYPTION_FORMAT_VERSION]) + struct.pack(">I", self._chunk_size)
-        await self._sink(header)
-        self._started = True
-
-    async def write(self, data: bytes) -> None:
-        if self._closed:
-            raise RuntimeError("EncryptionStreamWriter is closed")
-        if not self._started:
-            await self.start()
-        if not data:
-            return
-        self._buffer.extend(data)
-        while len(self._buffer) >= self._chunk_size:
-            chunk = bytes(self._buffer[: self._chunk_size])
-            del self._buffer[: self._chunk_size]
-            await self._emit_chunk(chunk)
-
-    async def aclose(self) -> None:
-        if self._closed:
-            return
-        if not self._started:
-            await self.start()
-        if self._buffer:
-            await self._emit_chunk(bytes(self._buffer))
-            self._buffer.clear()
-        await self._sink(struct.pack(">I", 0))  # terminator: LEN=0
-        self._closed = True
-
-    async def _emit_chunk(self, plaintext: bytes) -> None:
-        nonce = os.urandom(NONCE_SIZE)
-        ciphertext = self._aesgcm.encrypt(nonce, plaintext, None)
-        await self._sink(struct.pack(">I", len(ciphertext)) + nonce + ciphertext)
+async def encrypt_stream(source: AsyncIterator[bytes], chunk_size: int = ENCRYPTION_CHUNK_SIZE) -> AsyncIterator[bytes]:
+    """Encrypt a byte stream: the header, one frame per chunk_size of plaintext, then the LEN=0 terminator."""
+    aesgcm = AESGCM(_get_key())
+    yield ENCRYPTION_MAGIC + bytes([ENCRYPTION_FORMAT_VERSION]) + struct.pack(">I", chunk_size)
+    buffer = bytearray()
+    async for data in source:
+        buffer.extend(data)
+        while len(buffer) >= chunk_size:
+            yield _seal(aesgcm, bytes(buffer[:chunk_size]))
+            del buffer[:chunk_size]
+    if buffer:
+        yield _seal(aesgcm, bytes(buffer))
+    yield struct.pack(">I", 0)
 
 
 class _StreamReader:
