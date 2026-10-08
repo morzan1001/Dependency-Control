@@ -483,7 +483,7 @@ class TestDistinctSeverityCounts:
             "project_ids": ["p1"],
             "first_seen": None,
         }
-        hotspot = _build_hotspot(group, {}, {}, {}, {"p1": "p1"}, ["p1"])
+        hotspot = _build_hotspot(group, {}, {}, {}, {"p1": "p1"})
 
         assert hotspot.finding_count == hotspot.cve_count == sum(hotspot.severity_breakdown.model_dump().values()) == 3
 

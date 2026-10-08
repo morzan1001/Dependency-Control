@@ -46,7 +46,6 @@ def _hotspot(*, project_count: int, cve_count: int, fix_versions: list[str]):
         {},
         {},
         {pid: pid for pid in accessible},
-        accessible,
     )
 
 
