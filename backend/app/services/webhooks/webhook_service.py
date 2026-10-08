@@ -138,7 +138,7 @@ class WebhookService:
     async def _update_webhook_status(
         self,
         db: AsyncIOMotorDatabase,
-        webhook_id: str,
+        webhook: Webhook,
         success: bool,
     ) -> None:
         """Track delivery state in DB with circuit-breaker — required for multi-pod
@@ -147,19 +147,19 @@ class WebhookService:
             repo = WebhookRepository(db)
             now = datetime.now(timezone.utc)
             if success:
-                await repo.record_success(webhook_id, now)
+                await repo.record_success(webhook, now)
                 return
             circuit_until = now + _CIRCUIT_BREAKER_DURATION
-            opened = await repo.record_failure(webhook_id, now, _CIRCUIT_BREAKER_THRESHOLD, circuit_until)
+            opened = await repo.record_failure(webhook, now, _CIRCUIT_BREAKER_THRESHOLD, circuit_until)
             if opened:
                 logger.warning(
                     "Circuit breaker activated for webhook %s after %s consecutive failures. Will retry after %s",
-                    webhook_id,
+                    webhook.id,
                     opened.get("consecutive_failures", 0),
                     circuit_until.isoformat(),
                 )
         except Exception as e:
-            logger.exception("Failed to update webhook status for %s: %s", webhook_id, e)
+            logger.exception("Failed to update webhook status for %s: %s", webhook.id, e)
 
     async def _log_webhook_delivery(
         self,
@@ -286,7 +286,7 @@ class WebhookService:
             await asyncio.sleep(max(retry_delay, WEBHOOK_BACKOFF_BASE ** (attempt - 1)))
 
         success = error is None
-        await self._update_webhook_status(db, webhook.id, success=success)
+        await self._update_webhook_status(db, webhook, success=success)
         await self._log_webhook_delivery(
             db,
             webhook.id,

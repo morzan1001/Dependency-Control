@@ -11,10 +11,18 @@ from app.repositories.base import BaseRepository, and_filters
 logger = logging.getLogger(__name__)
 
 GLOBAL_WEBHOOK_SCOPE: dict[str, Any] = {"project_id": None, "team_id": None}
+DELIVERY_FIELDS = ("url", "webhook_type", "secret", "headers")
 
 
 def _circuit_closed(now: datetime) -> dict[str, Any]:
     return {"$or": [{"circuit_breaker_until": None}, {"circuit_breaker_until": {"$lte": now}}]}
+
+
+def _delivered_with(webhook: Webhook) -> dict[str, Any]:
+    """Matches only while the webhook still has the settings this delivery went out with."""
+    sent_with = {field: getattr(webhook, field) for field in DELIVERY_FIELDS}
+    # Webhooks stored before the type field existed lack it and read as generic.
+    return {"_id": webhook.id, **sent_with, "webhook_type": {"$in": [webhook.webhook_type, None]}}
 
 
 class WebhookRepository(BaseRepository[Webhook]):
@@ -43,9 +51,9 @@ class WebhookRepository(BaseRepository[Webhook]):
                 logger.exception("Skipping unreadable webhook %s", doc.get("_id"))
         return webhooks
 
-    async def record_success(self, webhook_id: str, now: datetime) -> None:
+    async def record_success(self, webhook: Webhook, now: datetime) -> None:
         await self.collection.update_one(
-            {"_id": webhook_id},
+            _delivered_with(webhook),
             {
                 "$set": {"last_triggered_at": now, "consecutive_failures": 0, "circuit_breaker_until": None},
                 "$inc": {"total_deliveries": 1},
@@ -53,15 +61,15 @@ class WebhookRepository(BaseRepository[Webhook]):
         )
 
     async def record_failure(
-        self, webhook_id: str, now: datetime, threshold: int, open_until: datetime
+        self, webhook: Webhook, now: datetime, threshold: int, open_until: datetime
     ) -> dict[str, Any] | None:
         """Count the failure; returns the document only from the failure that opened the circuit."""
         await self.collection.update_one(
-            {"_id": webhook_id},
+            _delivered_with(webhook),
             {"$set": {"last_failure_at": now}, "$inc": {"consecutive_failures": 1, "total_failures": 1}},
         )
         opened: dict[str, Any] | None = await self.collection.find_one_and_update(
-            {"_id": webhook_id, "consecutive_failures": {"$gte": threshold}, **_circuit_closed(now)},
+            {**_delivered_with(webhook), "consecutive_failures": {"$gte": threshold}, **_circuit_closed(now)},
             {"$set": {"circuit_breaker_until": open_until}},
             return_document=True,
         )

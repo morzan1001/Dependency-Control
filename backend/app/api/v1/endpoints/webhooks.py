@@ -15,7 +15,7 @@ from app.api.v1.helpers import (
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
 from app.core.permissions import Permissions
 from app.models.webhook import Webhook
-from app.repositories.webhooks import GLOBAL_WEBHOOK_SCOPE, WebhookRepository
+from app.repositories.webhooks import DELIVERY_FIELDS, GLOBAL_WEBHOOK_SCOPE, WebhookRepository
 from app.schemas.webhook import (
     WebhookCreate,
     WebhookResponse,
@@ -27,8 +27,6 @@ from app.schemas.webhook import (
 from app.services.webhooks.webhook_service import webhook_service
 
 router = CustomAPIRouter()
-
-_DELIVERY_FIELDS = ("url", "webhook_type", "secret", "headers")
 
 
 async def _create_scoped(
@@ -162,7 +160,7 @@ async def update_webhook(
         update_data["webhook_type"] = detect_webhook_type(update_data["url"])
 
     # Results under the old delivery settings would misreport the new ones and keep an old circuit open.
-    if any(field in update_data and update_data[field] != getattr(webhook, field) for field in _DELIVERY_FIELDS):
+    if any(field in update_data and update_data[field] != getattr(webhook, field) for field in DELIVERY_FIELDS):
         update_data.update(
             consecutive_failures=0, circuit_breaker_until=None, last_failure_at=None, last_triggered_at=None
         )
