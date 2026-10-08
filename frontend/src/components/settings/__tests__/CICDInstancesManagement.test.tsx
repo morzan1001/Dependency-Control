@@ -14,6 +14,8 @@ const mockGitHubDelete = vi.fn().mockResolvedValue({})
 const mockGitLabCreate = vi.fn().mockResolvedValue({})
 const mockGitLabUpdate = vi.fn().mockResolvedValue({})
 const mockGitLabDelete = vi.fn().mockResolvedValue({})
+const mockGitHubTest = vi.fn()
+const mockGitLabTest = vi.fn()
 const mockUseGitHubInstances = vi.fn()
 const mockUseGitLabInstances = vi.fn()
 
@@ -22,7 +24,7 @@ vi.mock('@/api/gitlab-instances', () => ({
     create: (...args: unknown[]) => mockGitLabCreate(...args),
     update: (...args: unknown[]) => mockGitLabUpdate(...args),
     delete: (...args: unknown[]) => mockGitLabDelete(...args),
-    testConnection: vi.fn(),
+    testConnection: (...args: unknown[]) => mockGitLabTest(...args),
   },
 }))
 vi.mock('@/api/github-instances', () => ({
@@ -30,7 +32,7 @@ vi.mock('@/api/github-instances', () => ({
     create: (...args: unknown[]) => mockGitHubCreate(...args),
     update: (...args: unknown[]) => mockGitHubUpdate(...args),
     delete: (...args: unknown[]) => mockGitHubDelete(...args),
-    testConnection: vi.fn(),
+    testConnection: (...args: unknown[]) => mockGitHubTest(...args),
   },
 }))
 vi.mock('@/hooks/queries/use-instances', () => ({
@@ -505,5 +507,86 @@ describe('CICDInstancesManagement optional fields', () => {
 
     await waitFor(() => expect(mockGitLabUpdate).toHaveBeenCalled())
     expect(mockGitLabUpdate.mock.calls[0][1]).toMatchObject({ description: null })
+  })
+})
+
+describe('CICDInstancesManagement outcomes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue(githubInstance())
+  })
+
+  it.each([
+    ['GitLab instance created successfully', ['gitlab-instances'], () => fillCreateForm('GitLab')],
+    ['GitHub instance created successfully', ['github-instances'], () => fillCreateForm('GitHub')],
+    ['GitLab instance updated successfully', ['gitlab-instances'], () => updateFrom(/Internal GitLab/)],
+    ['GitHub instance updated successfully', ['github-instances'], () => updateFrom(/GitHub\.com/)],
+    ['GitLab instance deleted successfully', ['gitlab-instances'], () => deleteFrom(/Internal GitLab/)],
+    ['GitHub instance deleted successfully', ['github-instances'], () => deleteFrom(/GitHub\.com/)],
+  ])('reports "%s", refreshes that provider\'s list and closes the dialog', async (message, key, act) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CICDInstancesManagement />
+      </QueryClientProvider>,
+    )
+
+    act()
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(message))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  function testRow(row: RegExp) {
+    fireEvent.click(within(screen.getByRole('row', { name: row })).getAllByRole('button')[0])
+  }
+
+  it('names the GitLab version a successful test reached', async () => {
+    mockGitLabTest.mockResolvedValue({ success: true, message: 'ok', gitlab_version: '17.4.1' })
+    renderManagement()
+
+    testRow(/Internal GitLab/)
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Connection successful!', { description: 'GitLab version: 17.4.1' }),
+    )
+    expect(mockGitLabTest).toHaveBeenCalledWith('gl-1')
+  })
+
+  it('passes the server message on for a successful GitHub test', async () => {
+    mockGitHubTest.mockResolvedValue({ success: true, message: 'Authenticated as acme-bot' })
+    renderManagement()
+
+    testRow(/GitHub\.com/)
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Connection successful!', { description: 'Authenticated as acme-bot' }),
+    )
+    expect(mockGitHubTest).toHaveBeenCalledWith('gh-1')
+  })
+
+  it('reports a failed test with the server message and frees the button again', async () => {
+    mockGitLabTest.mockResolvedValue({ success: false, message: '401 Unauthorized' })
+    renderManagement()
+
+    testRow(/Internal GitLab/)
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connection failed', { description: '401 Unauthorized' }))
+    const row = screen.getByRole('row', { name: /Internal GitLab/ })
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Test' })).toBeEnabled())
+  })
+
+  it('reports a test request that could not be made and frees the button again', async () => {
+    mockGitHubTest.mockRejectedValue(new Error('Network Error'))
+    renderManagement()
+
+    testRow(/GitHub\.com/)
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connection test failed'))
+    const row = screen.getByRole('row', { name: /GitHub\.com/ })
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Test' })).toBeEnabled())
   })
 })

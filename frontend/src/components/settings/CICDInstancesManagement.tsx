@@ -58,6 +58,10 @@ interface InstanceFormData {
   allowed_owner_ids: string;
 }
 
+const INSTANCE_API = { gitlab: gitlabInstancesApi, github: githubInstancesApi };
+const INSTANCE_KEYS = { gitlab: gitlabInstanceKeys, github: githubInstanceKeys };
+const PROVIDER_LABEL: Record<InstanceType, string> = { gitlab: "GitLab", github: "GitHub" };
+
 const emptyFormData: InstanceFormData = {
   type: "gitlab",
   name: "",
@@ -103,107 +107,47 @@ export function CICDInstancesManagement() {
     [gitlabData, githubData]
   );
 
-  const createGitLabMutation = useMutation({
-    mutationFn: (data: GitLabInstanceCreate) => gitlabInstancesApi.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
-      toast.success("GitLab instance created successfully");
-      closeCreateDialog();
-    },
+  const settle = (type: InstanceType, done: string, close: () => void) => {
+    queryClient.invalidateQueries({ queryKey: INSTANCE_KEYS[type].all });
+    toast.success(`${PROVIDER_LABEL[type]} instance ${done} successfully`);
+    close();
+  };
+
+  const createMutation = useMutation({
+    mutationFn: ({ type, data }: { type: InstanceType; data: GitLabInstanceCreate | GitHubInstanceCreate }): Promise<unknown> =>
+      INSTANCE_API[type].create(data),
+    onSuccess: (_, { type }) => settle(type, "created", closeCreateDialog),
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const updateGitLabMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: GitLabInstanceUpdate }) =>
-      gitlabInstancesApi.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
-      toast.success("GitLab instance updated successfully");
-      closeEditDialog();
-    },
+  const updateMutation = useMutation({
+    mutationFn: ({ type, id, data }: { type: InstanceType; id: string; data: GitLabInstanceUpdate | GitHubInstanceUpdate }): Promise<unknown> =>
+      INSTANCE_API[type].update(id, data),
+    onSuccess: (_, { type }) => settle(type, "updated", closeEditDialog),
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const deleteGitLabMutation = useMutation({
-    mutationFn: (id: string) => gitlabInstancesApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
-      toast.success("GitLab instance deleted successfully");
-      setDeleteInstance(null);
-    },
+  const deleteMutation = useMutation({
+    mutationFn: ({ _type, id }: UnifiedInstance) => INSTANCE_API[_type].delete(id),
+    onSuccess: (_, { _type }) => settle(_type, "deleted", () => setDeleteInstance(null)),
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
-  const testGitLabMutation = useMutation({
-    mutationFn: (id: string) => gitlabInstancesApi.testConnection(id),
-    onSuccess: (data) => {
-      if (data.success) {
-        toast.success("Connection successful!", {
-          description: data.gitlab_version
-            ? `GitLab version: ${data.gitlab_version}`
-            : undefined,
-        });
-      } else {
+  const testMutation = useMutation({
+    mutationFn: ({ _type, id }: UnifiedInstance) => INSTANCE_API[_type].testConnection(id),
+    onSuccess: (data, { _type }) => {
+      if (!data.success) {
         toast.error("Connection failed", { description: data.message });
-      }
-      setTestingInstanceId(null);
-    },
-    onError: () => {
-      toast.error("Connection test failed");
-      setTestingInstanceId(null);
-    },
-  });
-
-  const createGitHubMutation = useMutation({
-    mutationFn: (data: GitHubInstanceCreate) => githubInstancesApi.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
-      toast.success("GitHub instance created successfully");
-      closeCreateDialog();
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
-  const updateGitHubMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: GitHubInstanceUpdate }) =>
-      githubInstancesApi.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
-      toast.success("GitHub instance updated successfully");
-      closeEditDialog();
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
-  const deleteGitHubMutation = useMutation({
-    mutationFn: (id: string) => githubInstancesApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
-      toast.success("GitHub instance deleted successfully");
-      setDeleteInstance(null);
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
-  const testGitHubMutation = useMutation({
-    mutationFn: (id: string) => githubInstancesApi.testConnection(id),
-    onSuccess: (data) => {
-      if (data.success) {
+      } else if (_type === "github") {
         toast.success("Connection successful!", { description: data.message });
       } else {
-        toast.error("Connection failed", { description: data.message });
+        const version = "gitlab_version" in data ? data.gitlab_version : undefined;
+        toast.success("Connection successful!", { description: version ? `GitLab version: ${version}` : undefined });
       }
-      setTestingInstanceId(null);
     },
-    onError: () => {
-      toast.error("Connection test failed");
-      setTestingInstanceId(null);
-    },
+    onError: () => toast.error("Connection test failed"),
+    onSettled: () => setTestingInstanceId(null),
   });
-
-  const isCreatePending = createGitLabMutation.isPending || createGitHubMutation.isPending;
-  const isUpdatePending = updateGitLabMutation.isPending || updateGitHubMutation.isPending;
-  const isDeletePending = deleteGitLabMutation.isPending || deleteGitHubMutation.isPending;
 
   const closeCreateDialog = () => {
     setIsCreateDialogOpen(false);
@@ -230,7 +174,7 @@ export function CICDInstancesManagement() {
         is_active: formData.is_active,
         allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
-      createGitLabMutation.mutate(data);
+      createMutation.mutate({ type: "gitlab", data });
     } else {
       const data: GitHubInstanceCreate = {
         name: formData.name,
@@ -244,7 +188,7 @@ export function CICDInstancesManagement() {
         access_token: formData.access_token || undefined,
         allowed_owner_ids: parseAllowlist(formData.allowed_owner_ids),
       };
-      createGitHubMutation.mutate(data);
+      createMutation.mutate({ type: "github", data });
     }
   };
 
@@ -264,7 +208,7 @@ export function CICDInstancesManagement() {
         is_active: formData.is_active,
         allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
-      updateGitLabMutation.mutate({ id: editingInstance.id, data });
+      updateMutation.mutate({ type: "gitlab", id: editingInstance.id, data });
     } else {
       const data: GitHubInstanceUpdate = {
         name: formData.name,
@@ -278,7 +222,7 @@ export function CICDInstancesManagement() {
         access_token: formData.access_token || undefined,
         allowed_owner_ids: parseAllowlist(formData.allowed_owner_ids),
       };
-      updateGitHubMutation.mutate({ id: editingInstance.id, data });
+      updateMutation.mutate({ type: "github", id: editingInstance.id, data });
     }
   };
 
@@ -302,25 +246,13 @@ export function CICDInstancesManagement() {
     setIsEditDialogOpen(true);
   };
 
-  const handleDelete = (instance: UnifiedInstance) => {
-    if (instance._type === "gitlab") {
-      deleteGitLabMutation.mutate(instance.id);
-    } else {
-      deleteGitHubMutation.mutate(instance.id);
-    }
-  };
-
   const handleTestConnection = (instance: UnifiedInstance) => {
     setTestingInstanceId(instance.id);
-    if (instance._type === "gitlab") {
-      testGitLabMutation.mutate(instance.id);
-    } else {
-      testGitHubMutation.mutate(instance.id);
-    }
+    testMutation.mutate(instance);
   };
 
   const isCreateDisabled = () => {
-    if (isCreatePending || !formData.name || !formData.url || !formData.oidc_audience.trim()) return true;
+    if (createMutation.isPending || !formData.name || !formData.url || !formData.oidc_audience.trim()) return true;
     if (formData.sync_teams && !formData.access_token) return true;
     return lacksRequiredAllowlist(formData);
   };
@@ -373,7 +305,7 @@ export function CICDInstancesManagement() {
                       variant={instance._type === "gitlab" ? "default" : "secondary"}
                       className="text-xs"
                     >
-                      {instance._type === "gitlab" ? "GitLab" : "GitHub"}
+                      {PROVIDER_LABEL[instance._type]}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -470,7 +402,7 @@ export function CICDInstancesManagement() {
               Cancel
             </Button>
             <Button onClick={handleCreate} disabled={isCreateDisabled()}>
-              {isCreatePending ? "Creating..." : "Create Instance"}
+              {createMutation.isPending ? "Creating..." : "Create Instance"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -480,7 +412,7 @@ export function CICDInstancesManagement() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              Edit {editingInstance?._type === "gitlab" ? "GitLab" : "GitHub"} Instance
+              Edit {editingInstance && PROVIDER_LABEL[editingInstance._type]} Instance
             </DialogTitle>
             <DialogDescription>
               Update the configuration for {editingInstance?.name}.
@@ -493,9 +425,9 @@ export function CICDInstancesManagement() {
             </Button>
             <Button
               onClick={handleUpdate}
-              disabled={isUpdatePending || !formData.name || !formData.url || !formData.oidc_audience.trim()}
+              disabled={updateMutation.isPending || !formData.name || !formData.url || !formData.oidc_audience.trim()}
             >
-              {isUpdatePending ? "Updating..." : "Update Instance"}
+              {updateMutation.isPending ? "Updating..." : "Update Instance"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -507,9 +439,9 @@ export function CICDInstancesManagement() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} Instance?</DialogTitle>
+            <DialogTitle>Delete {deleteInstance && PROVIDER_LABEL[deleteInstance._type]} Instance?</DialogTitle>
             <DialogDescription>
-              This permanently removes the {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} instance
+              This permanently removes the {deleteInstance && PROVIDER_LABEL[deleteInstance._type]} instance
               "{deleteInstance?.name}", its team bindings and every team membership its sync added. A team
               whose only admin came from this sync is left without one, and re-creating the instance does not
               restore the bindings. An instance that projects still link to is refused; edit it in place
@@ -522,10 +454,10 @@ export function CICDInstancesManagement() {
             </Button>
             <Button
               variant="destructive"
-              onClick={() => deleteInstance && handleDelete(deleteInstance)}
-              disabled={isDeletePending}
+              onClick={() => deleteInstance && deleteMutation.mutate(deleteInstance)}
+              disabled={deleteMutation.isPending}
             >
-              {isDeletePending ? "Deleting..." : "Delete"}
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -579,7 +511,7 @@ function InstanceForm({
         <div className="flex items-center gap-2">
           <Label>Provider Type</Label>
           <Badge variant={formData.type === "gitlab" ? "default" : "secondary"}>
-            {formData.type === "gitlab" ? "GitLab" : "GitHub"}
+            {PROVIDER_LABEL[formData.type]}
           </Badge>
         </div>
       )}
