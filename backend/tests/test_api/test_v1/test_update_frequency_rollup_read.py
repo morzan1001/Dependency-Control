@@ -145,9 +145,6 @@ async def _rollup(db: FakeDatabase, project: dict[str, Any] | None = None) -> Up
     return await _rollup_project_metrics(db, Project(**project), WINDOW_DAYS, *await _elected(db, project))
 
 
-# Fields both paths must agree on. dominant_ecosystem is excluded on purpose:
-# the live path folds every scan's dependency types, the rollup reports what the
-# newest scan holds.
 _SHARED_FIELDS = (
     "branch",
     "scan_count",
@@ -170,6 +167,7 @@ _SHARED_FIELDS = (
     "trend_direction",
     "trend_detail",
     "scan_timeline",
+    "dominant_ecosystem",
 )
 
 
@@ -237,6 +235,19 @@ class TestDifferentialNormalHistory:
         _assert_same_metrics(live, rolled)
         assert live.downgrade_updates == 1
         assert live.total_updates == 1
+
+    @pytest.mark.asyncio
+    async def test_a_migrated_project_reports_its_new_ecosystem_on_both_paths(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {f"js{i}": "1.0.0" for i in range(4)}, (), ecosystem="npm")
+        await _seed_scan(db, "s2", _days_ago(50), {f"py{i}": "1.0.0" for i in range(4)}, ())
+        await _build_ledger(db)
+
+        live = await _live(db)
+        rolled = await _rollup(db)
+
+        _assert_same_metrics(live, rolled)
+        assert live.dominant_ecosystem == "pypi"
 
     @pytest.mark.asyncio
     async def test_same_commit_retries_share_one_bar_in_both_paths(self):

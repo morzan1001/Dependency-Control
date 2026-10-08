@@ -398,6 +398,7 @@ def _aggregate_metrics(
     final_versions: dict[str, str] | None = None,
     window_days: int | None = None,
     window_scan_cap: int | None = None,
+    dominant_ecosystem: str | None = None,
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     downgrade_total = type_counter.get("downgrade", 0)
@@ -471,7 +472,7 @@ def _aggregate_metrics(
             upstream.upstream_days_since_latest_release_median if upstream else None
         ),
         adoption_latency_days_median=(upstream.adoption_latency_days_median if upstream else None),
-        dominant_ecosystem=_dominant_ecosystem(dep_type_map),
+        dominant_ecosystem=dominant_ecosystem,
     )
 
 
@@ -559,17 +560,21 @@ _MAX_OBSERVATIONS = 10_000
 ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
 
 
-def _dominant_ecosystem(dep_type_map: dict[str, str]) -> str | None:
-    """Ecosystem owning ≥70% of classified deps; ``"mixed"`` otherwise; ``None`` if empty.
+def ecosystem_counts(deps: dict[str, dict[str, str]]) -> dict[str, int]:
+    return dict(Counter(info["type"] for info in deps.values()))
 
-    Excludes ``"unknown"`` so missing-PURL noise doesn't tilt the result.
+
+def dominant_ecosystem(eco: Mapping[str, Any]) -> str | None:
+    """Ecosystem owning >=70% of the newest scan's classified deps; ``"mixed"`` otherwise.
+
+    Only the newest scan counts: dominance describes what the project holds now,
+    while summing the window would let long-removed deps sway it.
     """
-    classified = [t for t in dep_type_map.values() if t and t != "unknown"]
-    if not classified:
+    counts = {name: int(n) for name, n in eco.items() if name and name != "unknown" and int(n) > 0}
+    if not counts:
         return None
-    counts = Counter(classified)
-    top_type, top_count = counts.most_common(1)[0]
-    if top_count / len(classified) >= ECOSYSTEM_DOMINANCE_THRESHOLD:
+    top_type, top_count = max(counts.items(), key=lambda item: item[1])
+    if top_count / sum(counts.values()) >= ECOSYSTEM_DOMINANCE_THRESHOLD:
         return top_type
     return "mixed"
 
@@ -900,6 +905,7 @@ async def compute_update_frequency(
         final_versions=_final_versions_by_name(prev_deps),
         window_days=rate_days,
         window_scan_cap=hard_limit if truncated else None,
+        dominant_ecosystem=dominant_ecosystem(ecosystem_counts(prev_deps)),
     )
 
 

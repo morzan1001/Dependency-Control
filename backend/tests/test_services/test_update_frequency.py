@@ -28,7 +28,6 @@ from app.services.update_frequency import (
     READY_COVERAGE_RATIO,
     _aggregate_metrics,
     _build_slowest_packages,
-    _dominant_ecosystem,
     _empty_metrics,
     classify_version_change,
     compute_trend,
@@ -155,37 +154,6 @@ class TestClassifyVersionChange:
         # Local versions (1.0.0+build123) are common in private registries.
         result = classify_version_change("1.0.0", "1.0.0+build123")
         assert result != "none"
-
-
-class TestDominantEcosystem:
-    """Pin the >=70% threshold for assigning a single ecosystem label."""
-
-    def test_pure_single_type(self):
-        assert _dominant_ecosystem({"a": "pypi", "b": "pypi", "c": "pypi"}) == "pypi"
-
-    def test_clear_majority_returns_majority(self):
-        # 8 pypi + 1 npm + 1 maven = 80% pypi, above the threshold.
-        deps = {f"py{i}": "pypi" for i in range(8)}
-        deps["js"] = "npm"
-        deps["mv"] = "maven"
-        assert _dominant_ecosystem(deps) == "pypi"
-
-    def test_balanced_mix_returns_mixed(self):
-        # 5 pypi + 5 npm = 50/50, below the 70% bar.
-        deps = {f"p{i}": "pypi" for i in range(5)}
-        deps.update({f"n{i}": "npm" for i in range(5)})
-        assert _dominant_ecosystem(deps) == "mixed"
-
-    def test_empty_returns_none(self):
-        # Nothing to classify — surface as None rather than inventing a default.
-        assert _dominant_ecosystem({}) is None
-
-    def test_unknown_types_excluded_from_majority(self):
-        # "unknown" never wins a majority; it's noise from missing PURL data.
-        deps = {f"p{i}": "pypi" for i in range(3)}
-        deps.update({f"u{i}": "unknown" for i in range(7)})
-        # 3 known (all pypi) -> pypi is 100% of *classified* deps.
-        assert _dominant_ecosystem(deps) == "pypi"
 
 
 def _baseline_entry() -> ScanTimelineEntry:
@@ -1270,6 +1238,24 @@ class TestAggregationAccuracy:
         )
         assert m.dominant_ecosystem == "maven"
         assert m.recent_updates[0].package_type == "maven"
+
+    @pytest.mark.asyncio
+    async def test_dominant_ecosystem_is_what_the_newest_scan_holds(self):
+        # Packages the project dropped two scans ago must not keep it "mixed" after a migration.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [_make_dep("s1", f"js{i}", "1.0.0", "npm") for i in range(4)],
+            "s2": [_make_dep("s2", "js0", "1.0.0", "npm")] + [_make_dep("s2", f"py{i}", "1.0.0") for i in range(4)],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            branch="main",
+        )
+        assert m.dominant_ecosystem == "pypi"
 
 
 class TestStreamingOrchestrator:

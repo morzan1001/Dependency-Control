@@ -21,8 +21,8 @@ from app.schemas.analytics import (
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import (
-    ECOSYSTEM_DOMINANCE_THRESHOLD,
     compute_trend,
+    dominant_ecosystem,
     fold_runs_into_bars,
     granularity_ratio,
     same_commit_runs,
@@ -282,7 +282,7 @@ def fold_window(
         update_coverage_pct=(round(resolved_count / len(ever_outdated) * 100, 1) if ever_outdated else None),
         trend_direction=trend_direction,
         trend_detail=trend_detail,
-        dominant_ecosystem=_dominant_ecosystem(window[-1].get("eco") or {}),
+        dominant_ecosystem=dominant_ecosystem(window[-1].get("eco") or {}),
         scan_timeline=timeline,
         recent_updates=_recent_updates(window[1:]),
     )
@@ -382,21 +382,6 @@ def _timeline_entry(delta: dict[str, Any], *, baseline: bool) -> ScanTimelineEnt
         unknown=counts["unknown"],
         downgrades=int(updates.get("downgrade", 0)),
     )
-
-
-def _dominant_ecosystem(eco: dict[str, Any]) -> str | None:
-    """Ecosystem owning >=70% of the newest scan's classified deps; ``"mixed"`` otherwise.
-
-    Only the newest scan counts: dominance describes what the project holds now,
-    while summing the window would let long-removed deps sway it.
-    """
-    counts = {name: int(n) for name, n in eco.items() if name and name != "unknown" and int(n) > 0}
-    if not counts:
-        return None
-    top_type, top_count = max(counts.items(), key=lambda item: item[1])
-    if top_count / sum(counts.values()) >= ECOSYSTEM_DOMINANCE_THRESHOLD:
-        return top_type
-    return "mixed"
 
 
 def _recent_updates(deltas: Sequence[dict[str, Any]]) -> list[DependencyUpdateEvent]:

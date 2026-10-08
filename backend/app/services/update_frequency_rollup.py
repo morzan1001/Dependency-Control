@@ -21,6 +21,7 @@ from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.services.update_frequency import (
     classify_version_change,
+    ecosystem_counts,
     load_scan_deps,
     load_outdated_entries,
 )
@@ -157,7 +158,7 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         outdated_count=len(outdated) if outdated is not None else None,
         outdated_added=diff.outdated_added,
         outdated_resolved=diff.outdated_resolved,
-        eco=_eco_counts(deps),
+        eco=ecosystem_counts(deps),
         updates_sample=diff.samples,
     )
     return delta, outdated
@@ -264,10 +265,6 @@ def _diff_scans(
     # A package that vanished was not brought up to date.
     diff.outdated_resolved = sorted((prev_outdated & curr_names) - curr_outdated)
     return diff
-
-
-def _eco_counts(deps: dict[str, dict[str, str]]) -> dict[str, int]:
-    return dict(Counter(info["type"] for info in deps.values()))
 
 
 async def _load_outdated(db: Any, scan_id: str) -> set[str] | None:
