@@ -23,7 +23,6 @@ vi.mock('@/context/useAuth', () => ({
   useAuth: () => ({ permissions: ['team:update'], hasPermission: (p: string) => p === 'team:update' }),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
-vi.mock('@/components/teams/CreateTeamDialog', () => ({ CreateTeamDialog: () => null }))
 vi.mock('@/components/teams/TeamMembersDialog', () => ({ TeamMembersDialog: () => null }))
 vi.mock('@/components/teams/AddMemberDialog', () => ({ AddMemberDialog: () => null }))
 vi.mock('@/components/teams/DeleteTeamDialog', () => ({ DeleteTeamDialog: () => null }))

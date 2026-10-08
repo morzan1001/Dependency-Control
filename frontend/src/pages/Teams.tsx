@@ -6,9 +6,8 @@ import { usePaginationState } from '@/hooks/use-pagination-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { CreateTeamDialog } from '@/components/teams/CreateTeamDialog';
+import { TeamFormDialog } from '@/components/teams/TeamFormDialog';
 import { TeamCard } from '@/components/teams/TeamCard';
-import { EditTeamDialog } from '@/components/teams/EditTeamDialog';
 import { TeamMembersDialog } from '@/components/teams/TeamMembersDialog';
 import { AddMemberDialog } from '@/components/teams/AddMemberDialog';
 import { DeleteTeamDialog } from '@/components/teams/DeleteTeamDialog';
@@ -127,7 +126,7 @@ export default function TeamsPage() {
           >
             {sortOrder === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
           </Button>
-          {hasPermission('team:create') && <CreateTeamDialog />}
+          {hasPermission('team:create') && <TeamFormDialog />}
         </div>
       </div>
 
@@ -146,8 +145,8 @@ export default function TeamsPage() {
         ))}
       </div>
 
-      {isEditOpen && (
-        <EditTeamDialog team={selectedTeam} onClose={() => setIsEditOpen(false)} />
+      {isEditOpen && selectedTeam && (
+        <TeamFormDialog team={selectedTeam} onClose={() => setIsEditOpen(false)} />
       )}
 
       <TeamBindingDialog
