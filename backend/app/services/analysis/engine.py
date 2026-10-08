@@ -910,10 +910,20 @@ async def _finalize_scan_and_project(
 async def _filter_out_waived_findings(
     findings: list[dict[str, Any]], scan_id: str, db: Database
 ) -> list[dict[str, Any]]:
-    """Drop the records waived in this scan, re-read from the DB because waivers are applied only there."""
-    finding_repo = FindingRepository(db)
-    waived = {doc["_id"] async for doc in finding_repo.iterate_raw({"scan_id": scan_id, "waived": True}, {"_id": 1})}
-    return [record for record in findings if record["_id"] not in waived]
+    """The records without what this scan's waivers cover, re-read from the DB because waivers are applied only there."""
+    query = {"scan_id": scan_id, "$or": [{"waived": True}, {"details.vulnerabilities.waived": True}]}
+    projection = {"waived": 1, "details.vulnerabilities.waived": 1}
+    stored = {doc["_id"]: doc async for doc in FindingRepository(db).iterate_raw(query, projection)}
+    announced = []
+    for record in findings:
+        doc = stored.get(record["_id"])
+        if doc is None:
+            announced.append(record)
+        elif not doc.get("waived"):
+            flags = [entry.get("waived") for entry in doc["details"]["vulnerabilities"]]
+            live = [a for a, waived in zip(record["details"]["vulnerabilities"], flags, strict=True) if not waived]
+            announced.append({**record, "details": {**record["details"], "vulnerabilities": live}})
+    return announced
 
 
 async def _send_integrations_and_notifications(

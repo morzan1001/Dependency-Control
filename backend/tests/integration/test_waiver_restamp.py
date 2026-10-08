@@ -14,12 +14,15 @@ from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.adhoc import apply_global_waivers_in_memory
 from app.services.analysis.engine import (
+    _filter_out_waived_findings,
     _finalize_scan_and_project,
     _persist_findings_and_waivers,
     _prepare_finding_records,
 )
+from app.services.analysis.notifications import _categorize_vulnerabilities
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.stats import recalculate_project_stats
+from tests.helpers.findings import aggregated_vulnerability
 from tests.mocks.fake_mongo import FakeDatabase
 
 pytestmark = pytest.mark.asyncio
@@ -193,6 +196,29 @@ async def test_the_stored_scan_and_the_adhoc_gate_agree_on_the_same_waivers(db, 
         return doc.get("waived"), doc.get("waiver_reason"), doc.get("severity")
 
     assert outcome(stored) == outcome(record) == (True, _FIELD_REASON, "LOW")
+
+
+@pytest.mark.parametrize("_database", _DATABASES)
+async def test_the_alert_names_only_the_advisories_no_waiver_covers(db, _database):
+    await WaiverRepository(db).create(_partial_cve_waiver())
+    await WaiverRepository(db).create(
+        Waiver(project_id=_PROJECT, finding_id="left-pad:1.0.0", package_name="left-pad", reason="x", created_by="u")
+    )
+    findings = [
+        aggregated_vulnerability(
+            "express",
+            "4.18.2",
+            {"id": _CVE_CRITICAL, "severity": "CRITICAL"},
+            {"id": "CVE-2024-0003", "severity": "HIGH"},
+        ),
+        aggregated_vulnerability("left-pad", "1.0.0", {"id": "CVE-2024-0004", "severity": "CRITICAL"}),
+    ]
+    records, _ = _prepare_finding_records(findings, _FEATURE, _PROJECT, datetime.now(timezone.utc))
+    await _persist_findings_and_waivers(records, _FEATURE, _PROJECT, FindingRepository(db), db)
+
+    announced = await _filter_out_waived_findings(records, _FEATURE, db)
+
+    assert [vuln.id for vuln in _categorize_vulnerabilities(announced)[2]] == ["CVE-2024-0003"]
 
 
 class _WriteCounter:
