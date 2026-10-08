@@ -13,8 +13,9 @@ from app.services.component_identity import build_component_index, lookup_compon
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     ModelOrDict,
-    live_cves,
+    cve_severities,
     get_attr,
+    live_advisories,
     sample_components,
     sampled,
     scorecard_details,
@@ -56,25 +57,25 @@ def correlate_scorecard_with_vulnerabilities(
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
-        severity = str(get_attr(vf, "severity", "")).upper()
-
         scorecard = lookup_component(scorecard_index, component)
         if not scorecard:
             continue
 
         score = scorecard["overall_score"]
         is_unmaintained = scorecard["has_maintenance_issues"]
+        severities = cve_severities(live_advisories(get_attr(vf, "details")))
+        risky = {cve: severity for cve, severity in severities.items() if severity in ("CRITICAL", "HIGH")}
 
         # A score exists only where deps_dev flagged it under the project's own threshold.
-        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score is not None):
+        if risky and (is_unmaintained or score is not None):
             high_risk_vulns.append(
                 {
                     "component": component,
                     "version": get_attr(vf, "version"),
-                    "vuln_severity": severity,
+                    "cve_severities": list(risky.values()),
                     "scorecard_score": score,
                     "unmaintained": is_unmaintained,
-                    **sampled("cves", live_cves([get_attr(vf, "details")]), _RISKY_PACKAGE_CVES_SAMPLED),
+                    **sampled("cves", list(risky), _RISKY_PACKAGE_CVES_SAMPLED),
                     "project_url": scorecard.get("project_url"),
                 }
             )
@@ -91,7 +92,8 @@ def correlate_scorecard_with_vulnerabilities(
             for v in high_risk_vulns
         )
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
-        low_score_count = len(high_risk_vulns) - unmaintained_count
+        cve_count = sum(v["cves_total"] for v in high_risk_vulns)
+        unmaintained_cves = sum(v["cves_total"] for v in high_risk_vulns if v["unmaintained"])
 
         recommendations.append(
             Recommendation(
@@ -99,14 +101,14 @@ def correlate_scorecard_with_vulnerabilities(
                 priority=Priority.CRITICAL,
                 title="Critical Vulnerabilities in Poorly Maintained Packages",
                 description=(
-                    f"Found {len(high_risk_vulns)} critical/high vulnerabilities in packages "
+                    f"Found {cve_count} critical/high vulnerabilities in packages "
                     f"with concerning OpenSSF Scorecard ratings. "
-                    f"{unmaintained_count} are in unmaintained packages, "
-                    f"{low_score_count} are in packages flagged by OpenSSF Scorecard. "
+                    f"{unmaintained_cves} are in unmaintained packages, "
+                    f"{cve_count - unmaintained_cves} are in packages flagged by OpenSSF Scorecard. "
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={
-                    **severity_impact(v["vuln_severity"] for v in high_risk_vulns),
+                    **severity_impact(severity for v in high_risk_vulns for severity in v["cve_severities"]),
                     "unmaintained_count": unmaintained_count,
                 },
                 affected_components=risky_shown,

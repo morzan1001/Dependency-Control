@@ -13,6 +13,7 @@ from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
+    cve_severities,
     get_attr,
     live_advisories,
     name_some,
@@ -194,6 +195,7 @@ def detect_known_exploits(
             high_epss_vulns.append(f)
             high_epss_cves |= epss.keys()
             max_epss = max(max_epss, *epss.values())
+    severity = cve_severities(a for f in vuln_findings for a in live_advisories(get_attr(f, "details", {})))
 
     if ransomware_vulns:
         packages, packages_shown, packages_total = _package_evidence(ransomware_vulns)
@@ -205,13 +207,13 @@ def detect_known_exploits(
                 priority=Priority.CRITICAL,
                 title="URGENT: Ransomware Campaign Vulnerabilities",
                 description=(
-                    f"Found {len(ransomware_vulns)} vulnerabilities known to be used in ransomware campaigns. "
+                    f"Found {len(ransomware_cves)} vulnerabilities known to be used in ransomware campaigns. "
                     f"These CVEs are actively targeted by ransomware groups and require immediate remediation. "
                     f"Affected: {name_some(cves, _CVES_NAMED)}"
                 ),
                 impact={
-                    **severity_impact(get_attr(f, "severity") for f in ransomware_vulns),
-                    "kev_ransomware_count": len(ransomware_vulns),
+                    **severity_impact(severity[cve] for cve in ransomware_cves),
+                    "kev_ransomware_count": len(ransomware_cves),
                 },
                 affected_components=packages_shown,
                 affected_components_total=packages_total,
@@ -242,11 +244,11 @@ def detect_known_exploits(
                 priority=Priority.CRITICAL,
                 title="CISA KEV: Actively Exploited Vulnerabilities",
                 description=(
-                    f"Found {len(kev_vulns)} vulnerabilities in CISA's Known Exploited Vulnerabilities catalog. "
+                    f"Found {len(kev_cves)} vulnerabilities in CISA's Known Exploited Vulnerabilities catalog. "
                     f"These are being actively exploited in real-world attacks. "
                     f"Federal agencies are required to patch these within specific timeframes."
                 ),
-                impact={**severity_impact(get_attr(f, "severity") for f in kev_vulns), "kev_count": len(kev_vulns)},
+                impact={**severity_impact(severity[cve] for cve in kev_cves), "kev_count": len(kev_cves)},
                 affected_components=packages_shown,
                 affected_components_total=packages_total,
                 action={
@@ -274,13 +276,13 @@ def detect_known_exploits(
                 priority=Priority.CRITICAL,
                 title="Very High Exploitation Probability",
                 description=(
-                    f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}. "
+                    f"Found {len(high_epss_cves)} vulnerabilities with EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}. "
                     f"These have a very high probability of being exploited in the next 30 days. "
                     f"Highest EPSS: {max_epss * 100:.1f}%"
                 ),
                 impact={
-                    **severity_impact(get_attr(f, "severity") for f in high_epss_vulns),
-                    "high_epss_count": len(high_epss_vulns),
+                    **severity_impact(severity[cve] for cve in high_epss_cves),
+                    "high_epss_count": len(high_epss_cves),
                     "max_epss": max_epss,
                 },
                 affected_components=packages_shown,

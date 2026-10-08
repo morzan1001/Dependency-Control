@@ -1,5 +1,7 @@
 """Tests for incident detection: malware, typosquatting, and known exploits."""
 
+import pytest
+
 from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Priority, RecommendationType
@@ -11,6 +13,7 @@ from app.services.recommendation.incidents import (
     process_malware,
     process_typosquatting,
 )
+from tests.helpers.findings import stored_vulnerability
 
 # The smallest EPSS decrement that stays on the other side of the threshold.
 _EPSS_STEP = 0.01
@@ -55,7 +58,7 @@ def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, ep
         "severity": severity,
         "component": component,
         "version": _COMPONENT_VERSION,
-        "details": {**flags, "vulnerabilities": [{"id": cve_id, **flags}]},
+        "details": {**flags, "vulnerabilities": [{"id": cve_id, "severity": severity, **flags}]},
         "id": f"{component}:{_COMPONENT_VERSION}",
         "aliases": [],
     }
@@ -616,3 +619,38 @@ def test_the_epss_card_states_the_threshold_it_compares_with():
     [card] = detect_known_exploits([_vuln("pkg", epss_score=EPSS_VERY_HIGH_THRESHOLD)])
 
     assert f"EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}" in card.description
+
+
+_LOG4J_KEV_CVES = (("CVE-2021-44228", "CRITICAL"), ("CVE-2021-45046", "CRITICAL"), ("CVE-2021-45105", "HIGH"))
+
+
+def _log4j(**marks):
+    """One stored package version carrying three CVEs that share the given marks."""
+    return stored_vulnerability(
+        "log4j-core", "2.14.0", [{"id": cve, "severity": severity, **marks} for cve, severity in _LOG4J_KEV_CVES]
+    )
+
+
+class TestIncidentCardsCountCvesNotPackageVersions:
+    @pytest.mark.parametrize(
+        ("marks", "headline", "count_key"),
+        [
+            ({"in_kev": True}, "Found 3 vulnerabilities in CISA's Known Exploited", "kev_count"),
+            (
+                {"in_kev": True, "kev_ransomware_use": True},
+                "Found 3 vulnerabilities known to be used",
+                "kev_ransomware_count",
+            ),
+            ({"epss_score": 0.9}, "Found 3 vulnerabilities with EPSS score", "high_epss_count"),
+        ],
+    )
+    def test_each_cve_of_a_package_version_is_counted_with_its_own_severity(self, marks, headline, count_key):
+        [card] = detect_known_exploits([_log4j(**marks)])
+
+        assert card.description.startswith(headline)
+        assert {key: card.impact[key] for key in ("critical", "high", "total", count_key)} == {
+            "critical": 2,
+            "high": 1,
+            "total": 3,
+            count_key: 3,
+        }

@@ -26,6 +26,7 @@ from app.services.analytics.findings_delta import (
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
+    cve_severities,
     get_attr,
     live_advisories,
     sample_components,
@@ -143,13 +144,12 @@ async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, A
     """Fold vulnerability findings of a scan window into the scan set and worst advisory severity of each CVE."""
     recurrence: dict[str, CveRecurrence] = defaultdict(CveRecurrence)
     async for finding in vulnerability_findings:
-        for entry in (finding.get("details") or {}).get("vulnerabilities") or []:
-            for cve in counted_cves(entry):
-                row = recurrence[cve]
-                row.scans.add(finding["scan_id"])
-                if component := finding.get("component"):
-                    row.components.add(component)
-                row.severity = max_severity(row.severity, entry.get("severity"))
+        for cve, severity in cve_severities((finding.get("details") or {}).get("vulnerabilities") or []).items():
+            row = recurrence[cve]
+            row.scans.add(finding["scan_id"])
+            if component := finding.get("component"):
+                row.components.add(component)
+            row.severity = max_severity(row.severity, severity)
     return recurrence
 
 

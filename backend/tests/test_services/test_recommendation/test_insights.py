@@ -7,6 +7,7 @@ from app.services.recommendation.insights import (
     analyze_cross_project_patterns,
     correlate_scorecard_with_vulnerabilities,
 )
+from tests.helpers.findings import stored_vulnerability
 
 
 def _vuln_finding(
@@ -21,7 +22,7 @@ def _vuln_finding(
         "component": component,
         "version": version,
         "id": finding_id,
-        "details": {"vulnerabilities": [{"id": finding_id}], "fixed_version": None},
+        "details": {"vulnerabilities": [{"id": finding_id, "severity": severity}], "fixed_version": None},
     }
 
 
@@ -409,8 +410,8 @@ def test_scorecard_correlation_does_not_guess_an_ambiguous_artifact_name():
 def test_scorecard_correlation_names_an_advisory_by_its_cve():
     finding = _vuln_finding(component="log4j-core")
     finding["details"]["vulnerabilities"] = [
-        {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]},
-        {"id": "CVE-2021-45046", "waived": True},
+        {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"], "severity": "CRITICAL"},
+        {"id": "CVE-2021-45046", "severity": "CRITICAL", "waived": True},
     ]
 
     [rec] = correlate_scorecard_with_vulnerabilities([finding], [_quality_finding(component="log4j-core")])
@@ -446,3 +447,33 @@ class TestCorrelateScorecardUnmaintainedWithoutScorecard:
         rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
 
         assert [p["name"] for p in rec.action["packages"]] == ["scored", "unscored"]
+
+
+def test_scorecard_correlation_counts_each_live_critical_and_high_cve_of_a_package():
+    log4j = stored_vulnerability(
+        "log4j-core",
+        "2.14.0",
+        [
+            {"id": "CVE-2021-44228", "severity": "CRITICAL"},
+            {"id": "CVE-2021-45046", "severity": "CRITICAL"},
+            {"id": "CVE-2021-45105", "severity": "HIGH"},
+            {"id": "CVE-2021-44832", "severity": "MEDIUM"},
+            {"id": "CVE-2022-23302", "severity": "HIGH", "waived": True},
+        ],
+    )
+
+    [rec] = correlate_scorecard_with_vulnerabilities(
+        [log4j], [_quality_finding(component="log4j-core", critical_issues=["Maintained"])]
+    )
+
+    assert rec.description.startswith(
+        "Found 3 critical/high vulnerabilities in packages with concerning OpenSSF Scorecard ratings. "
+        "3 are in unmaintained packages, 0 are in packages flagged by OpenSSF Scorecard."
+    )
+    assert {key: rec.impact[key] for key in ("critical", "high", "medium", "total")} == {
+        "critical": 2,
+        "high": 1,
+        "medium": 0,
+        "total": 3,
+    }
+    assert rec.action["packages"][0]["cves_total"] == 3

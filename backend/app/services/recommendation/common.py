@@ -14,8 +14,9 @@ from app.core.constants import (
     REACHABILITY_SCORING_WEIGHTS,
     RECOMMENDATION_SCORING_WEIGHTS,
     RECOMMENDATION_TYPE_BONUSES,
+    max_severity,
 )
-from app.core.cve import canonical_cves
+from app.core.cve import canonical_cves, counted_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import is_actionable_vulnerability
 from app.schemas.recommendation import Priority, Recommendation
@@ -187,6 +188,15 @@ def max_advisory_cvss(details: dict[str, Any]) -> float | None:
 def live_cves(details_list: Iterable[Any]) -> list[str]:
     """Distinct CVEs across advisory lists that no per-CVE waiver covers."""
     return canonical_cves([{"vulnerabilities": live_advisories(details)} for details in details_list])
+
+
+def cve_severities(advisories: Iterable[dict[str, Any]]) -> dict[str, str | None]:
+    """Each CVE the advisories name, at the worst severity any of them gives it."""
+    worst: dict[str, str | None] = {}
+    for advisory in advisories:
+        for cve in counted_cves(advisory):
+            worst[cve] = max_severity(worst.get(cve), advisory.get("severity"))
+    return worst
 
 
 # Versions named per package inside an action block; version_count carries the population.
