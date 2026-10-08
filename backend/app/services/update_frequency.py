@@ -7,7 +7,7 @@ Streaming model — one scan pair at a time so peak memory stays at
 import asyncio
 import logging
 from collections import Counter, defaultdict, deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from itertools import chain, islice
@@ -232,48 +232,46 @@ def _update_sample_order(event: DependencyUpdateEvent) -> tuple[int, str, str]:
     return (UPDATE_SAMPLE_RANK[event.update_type], event.package_name, event.new_version)
 
 
+def version_changes(
+    prev_deps: dict[str, dict[str, str]], curr_deps: dict[str, dict[str, str]]
+) -> Iterator[tuple[str, dict[str, str], dict[str, str], UpdateKind]]:
+    """``(identity, previous, current, kind)`` of every dependency whose version moved between two scans."""
+    for identity, curr in curr_deps.items():
+        prev = prev_deps.get(identity)
+        if prev is None or prev["version"] == curr["version"]:
+            continue
+        kind = classify_version_change(prev["version"], curr["version"])
+        if kind != "none":  # "none" is one PEP 440 identity spelled twice, e.g. v1.0.0 vs 1.0.0
+            yield identity, prev, curr, kind
+
+
 def _compare_scan_pair(
-    deps_by_scan: dict[str, dict[str, dict[str, str]]],
-    prev_scan_id: str,
+    prev_deps: dict[str, dict[str, str]],
     prev_scan_date: datetime,
-    curr_scan_id: str,
+    curr_deps: dict[str, dict[str, str]],
     curr_scan_date: datetime,
     prev_outdated: set[str] | None,
 ) -> list[tuple[DependencyUpdateEvent, str]]:
     """Compare two consecutive scans, returning ``(event, identity)`` pairs."""
     days_between = max(1, (curr_scan_date - prev_scan_date).days)
-
-    prev_deps = deps_by_scan.get(prev_scan_id, {})
-    curr_deps = deps_by_scan.get(curr_scan_id, {})
-
-    events: list[tuple[DependencyUpdateEvent, str]] = []
-    for identity, curr_info in curr_deps.items():
-        prev_info = prev_deps.get(identity)
-        if not prev_info or curr_info["version"] == prev_info["version"]:
-            continue
-
-        update_type = classify_version_change(prev_info["version"], curr_info["version"])
-        if update_type == "none":  # same PEP 440 identity, e.g. v1.0.0 vs 1.0.0
-            continue
-
-        events.append(
-            (
-                DependencyUpdateEvent(
-                    package_name=curr_info["display"],
-                    package_type=curr_info["type"],
-                    purl=curr_info["purl"] or None,
-                    old_version=prev_info["version"],
-                    new_version=curr_info["version"],
-                    update_type=update_type,
-                    scan_date=curr_scan_date.isoformat(),
-                    previous_scan_date=prev_scan_date.isoformat(),
-                    days_between_scans=days_between,
-                    was_outdated=prev_info["name"] in (prev_outdated or ()),
-                ),
-                identity,
-            )
+    return [
+        (
+            DependencyUpdateEvent(
+                package_name=curr["display"],
+                package_type=curr["type"],
+                purl=curr["purl"] or None,
+                old_version=prev["version"],
+                new_version=curr["version"],
+                update_type=kind,
+                scan_date=curr_scan_date.isoformat(),
+                previous_scan_date=prev_scan_date.isoformat(),
+                days_between_scans=days_between,
+                was_outdated=prev["name"] in (prev_outdated or ()),
+            ),
+            identity,
         )
-    return events
+        for identity, prev, curr, kind in version_changes(prev_deps, curr_deps)
+    ]
 
 
 def _build_timeline_entry(
@@ -925,12 +923,7 @@ async def compute_update_frequency(
                 _close_bar()
             state.record_resolved(prev_outdated, curr_outdated, curr_deps)
             events = _compare_scan_pair(
-                {prev_scan["_id"]: prev_deps, curr_scan["_id"]: curr_deps},
-                prev_scan["_id"],
-                prev_scan["created_at"],
-                curr_scan["_id"],
-                curr_scan["created_at"],
-                prev_outdated,
+                prev_deps, prev_scan["created_at"], curr_deps, curr_scan["created_at"], prev_outdated
             )
             state.absorb_events(events, curr_scan["created_at"])
         state.scan_timeline.append(

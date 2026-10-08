@@ -20,10 +20,10 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.services.update_frequency import (
-    classify_version_change,
     ecosystem_counts,
     load_scan_deps,
     load_outdated_entries,
+    version_changes,
 )
 
 logger = logging.getLogger(__name__)
@@ -227,14 +227,7 @@ def _diff_scans(
 ) -> _Diff:
     counts: Counter = Counter()
     samples: list[UpdateSample] = []
-
-    for identity, curr in curr_deps.items():
-        prev = prev_deps.get(identity)
-        if prev is None or prev["version"] == curr["version"]:
-            continue
-        kind = classify_version_change(prev["version"], curr["version"])
-        if kind == "none":  # same PEP 440 identity, e.g. v1.0.0 vs 1.0.0
-            continue
+    for _identity, prev, curr, kind in version_changes(prev_deps, curr_deps):
         counts[kind] += 1
         samples.append(
             UpdateSample(
