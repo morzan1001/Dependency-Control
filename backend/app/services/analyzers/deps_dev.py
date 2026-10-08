@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict[str, Any] | None:
-    """A deps.dev document, or None when deps.dev does not know it; any other failure raises so nothing is cached."""
+    """The JSON document at url, or None on 404; any other failure raises so nothing is cached."""
     response = await client.get(url, follow_redirects=True)
     if response.status_code == 404:
         return None
