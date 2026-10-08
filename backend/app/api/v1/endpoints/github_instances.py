@@ -354,7 +354,7 @@ async def test_connection(
     github_service = GitHubService(instance)
 
     try:
-        jwks = await github_service.get_jwks()
+        jwks = await github_service.refresh_jwks()
 
         if not jwks or not jwks.get("keys"):
             return _failed_test(instance, "JWKS endpoint unreachable or returned no signing keys")

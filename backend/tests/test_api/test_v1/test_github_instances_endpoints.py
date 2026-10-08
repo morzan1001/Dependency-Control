@@ -2,8 +2,10 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -198,7 +200,7 @@ def _run_test_connection(instance, current_user, jwks, orgs=None, team_counts=No
 
     with (
         patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
-        patch.object(GitHubService, "get_jwks", new=AsyncMock(return_value=jwks)),
+        patch.object(GitHubService, "refresh_jwks", new=AsyncMock(return_value=jwks)),
         patch.object(GitHubService, "get_viewer_organisations", new=org_probe),
         patch.object(GitHubService, "count_org_teams", new=team_probe),
         patch.object(GitHubService, "get_core_rate_limit", new=rate_limit_probe),
@@ -206,6 +208,29 @@ def _run_test_connection(instance, current_user, jwks, orgs=None, team_counts=No
         result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=current_user))
 
     return result, org_probe, team_probe, rate_limit_probe
+
+
+class TestConnectionAsksTheIssuerNow:
+    def test_a_cached_key_set_does_not_answer_for_an_unreachable_issuer(self, admin_user, fake_cache, monkeypatch):
+        from app.api.v1.endpoints.github_instances import test_connection
+
+        def _unreachable(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("issuer down", request=request)
+
+        instance = make_github_instance(id="gh-1")
+        monkeypatch.setattr("app.services.github.cache_service", fake_cache)
+        monkeypatch.setattr("app.services.oidc_utils.cache_service", fake_cache)
+        monkeypatch.setattr(
+            httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(_unreachable))
+        )
+        jwks_key = GitHubService(instance)._get_cache_key(f"jwks:{instance.url}")
+        asyncio.run(fake_cache.set(jwks_key, {"keys": [{"kid": "k1"}]}))
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)):
+            result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert result.success is False
+        assert result.message == "JWKS endpoint unreachable or returned no signing keys"
 
 
 class TestConnectionChecksTheToken:
