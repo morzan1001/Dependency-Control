@@ -174,7 +174,9 @@ async def list_waivers(
     global_only: Annotated[bool, Query(description="Only return global waivers (project_id=None)")] = False,
     finding_id: str | None = None,
     package_name: str | None = None,
-    search: Annotated[str | None, Query(description="Search in package name, reason, or finding ID")] = None,
+    search: Annotated[
+        str | None, Query(description="Search in package name, reason, finding ID or vulnerability ID")
+    ] = None,
     active: Annotated[bool, Query(description="Only return waivers that have not expired")] = False,
     orphaned: Annotated[
         bool, Query(description="Only return orphaned waivers (evaluated but matching 0 findings)")
@@ -209,7 +211,8 @@ async def list_waivers(
     if search:
         search_query = {"$regex": re.escape(search), "$options": "i"}
         query = and_filters(
-            query, {"$or": [{field: search_query} for field in ("package_name", "reason", "finding_id")]}
+            query,
+            {"$or": [{field: search_query} for field in ("package_name", "reason", "finding_id", "vulnerability_id")]},
         )
 
     if active or orphaned:

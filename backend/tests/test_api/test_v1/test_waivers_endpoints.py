@@ -703,6 +703,19 @@ class TestListFilters:
         assert sorted(item["id"] for item in result["items"]) == ["w-finding", "w-package", "w-reason"]
         assert result["total"] == 3
 
+    def test_a_search_finds_a_global_advisory_waiver_by_its_vulnerability_id(self, admin_user):
+        """The global waiver dialog stores an advisory id as vulnerability_id, with no finding or package."""
+        db = FakeDatabase()
+        for waiver in (
+            _make_waiver(id="w-advisory", project_id=None, vulnerability_id="CVE-2024-1234"),
+            _make_waiver(id="w-other", project_id=None, vulnerability_id="CVE-2023-9999"),
+        ):
+            db.waivers._docs[waiver.id] = waiver.model_dump(by_alias=True)
+
+        result = _call_list_waivers(admin_user, db=db, search="cve-2024-1234")
+
+        assert [item["id"] for item in result["items"]] == ["w-advisory"]
+
     def test_the_evaluation_state_is_exposed_on_each_item(self, admin_user):
         db = self._db()
 
