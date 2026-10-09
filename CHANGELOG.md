@@ -4,17 +4,15 @@ These notes cover the upgrade from 1.9.52. Run mongosh commands in-pod against t
 
 ## Before the rollout (gate): read-only counts
 
-Startup no longer normalises project owners or backfills their GitLab provenance, member lists resolve users by their string id, and the crypto policy timeline reads only entries that name their policy type. Each count must be 0:
+Startup no longer normalises project owners, member lists resolve users by their string id, and the crypto policy timeline reads only entries that name their policy type. Each count must be 0:
 
 ```js
 db.projects.countDocuments({ team_ids: { $in: [null] } })
-db.projects.countDocuments({ $expr: { $gt: [{ $size: { $setDifference: [{ $ifNull: ["$team_ids", []] }, { $map: { input: { $objectToArray: { $ifNull: ["$team_sources", {}] } }, in: "$$this.k" } }] } }, 0] } })
-db.projects.countDocuments({ $expr: { $gt: [{ $size: { $filter: { input: { $objectToArray: { $ifNull: ["$team_sources", {}] } }, cond: { $eq: ["$$this.v", null] } } } }, 0] } })
 db.users.countDocuments({ _id: { $type: "objectId" } })
 db.crypto_policy_history.countDocuments({ policy_type: { $exists: false } })
 ```
 
-A non-zero first count is fixed with `db.projects.updateMany({ team_ids: { $in: [null] } }, { $set: { team_ids: [] } })`, a non-zero last one with `db.crypto_policy_history.updateMany({ policy_type: { $exists: false } }, { $set: { policy_type: "crypto" } })`. For any other non-zero count, stay on 1.9.52.
+A non-zero first count is fixed with `db.projects.updateMany({ team_ids: { $in: [null] } }, { $set: { team_ids: [] } })`, a non-zero last one with `db.crypto_policy_history.updateMany({ policy_type: { $exists: false } }, { $set: { policy_type: "crypto" } })`. If the user count is not 0, stay on 1.9.52.
 
 ## Roll out backend and frontend together
 

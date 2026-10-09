@@ -10,6 +10,8 @@ from app.core.constants import (
     FINDINGS_SCAN_COMPONENT_INDEX,
     FINDINGS_SCAN_TYPE_INDEX,
     SCANS_TIP_SORT,
+    TEAM_SOURCE_GITLAB,
+    team_source,
 )
 from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
@@ -46,6 +48,78 @@ RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
 ]
 # The index order left once project_id is matched by equality.
 RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
+
+
+async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
+    """Idempotent provenance backfill: stamp the GitLab instance that holds the group on the owner
+    entry of projects owned by a gitlab-synced team, but only where that entry is unset.
+
+    A team bound to more than one GitLab instance is skipped rather than attributed to one of
+    them: a value naming the wrong instance hands the owner to that instance's next ingest to
+    delete.
+
+    Members are intentionally left unstamped: stamping existing members "gitlab" would put
+    manually-added members inside the gitlab subset the next sync's merge replaces, silently
+    removing them. Unstamped members default to "manual" on read, which the merge preserves.
+    """
+    teams = database["teams"]
+    projects = database["projects"]
+
+    cursor = teams.find(
+        {"bindings": {"$elemMatch": {"provider": TEAM_SOURCE_GITLAB}}},
+        {"_id": 1, "bindings": 1},
+    )
+    synced_teams = await cursor.to_list(None)
+
+    projects_stamped = 0
+    unattributable = 0
+    failed = 0
+    for team in synced_teams:
+        team_id = team.get("_id")
+        # Per-team isolation: this runs before index creation, so an unhandled raise
+        # would crash startup for every other team/project.
+        try:
+            instances = {
+                binding.get("instance_id")
+                for binding in team.get("bindings") or []
+                if binding.get("provider") == TEAM_SOURCE_GITLAB
+            }
+            if len(instances) != 1:
+                unattributable += 1
+                continue
+            (instance_id,) = tuple(instances)
+
+            # Per owner, not per project: a project can hold several, and only this one's entry
+            # is known to have come from GitLab. Without it the next sync sees no owner of its
+            # own to replace and leaves a transferred project owned by both teams.
+            provenance = f"team_sources.{team_id}"
+            # Absent and null, and nothing else: any stored value already names a source, and
+            # overwriting one would move an owner between instances on a startup.
+            result = await projects.update_many(
+                {"team_ids": team_id, provenance: {"$in": [None]}},
+                {"$set": {provenance: team_source(TEAM_SOURCE_GITLAB, instance_id)}},
+            )
+            projects_stamped += getattr(result, "modified_count", 0) or 0
+        except Exception:
+            failed += 1
+            logger.exception(
+                "Provenance backfill: failed to process synced team %s; skipping it and "
+                "continuing. It can be reconciled on the next live sync.",
+                team_id,
+            )
+            continue
+
+    if synced_teams:
+        logger.info(
+            "Provenance backfill complete: %d project(s) stamped an owner with its GitLab instance "
+            "across %d synced team(s), %d team(s) named no single instance and were left unstamped, "
+            "%d team(s) failed and skipped. "
+            "(Members intentionally left unstamped so manually-added members survive merges.)",
+            projects_stamped,
+            len(synced_teams),
+            unattributable,
+            failed,
+        )
 
 
 TEAM_BINDING_KEY_FIELD = "bindings.key"
@@ -88,6 +162,8 @@ async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """Create indexes for all collections."""
     logger.info("Creating database indexes...")
+
+    await _backfill_member_and_team_provenance(database)
 
     # Users
     await database["users"].create_index("username", unique=True)
