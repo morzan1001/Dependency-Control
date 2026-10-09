@@ -677,3 +677,57 @@ async def test_mark_and_unmark_reject_unauthenticated_callers(client, db):
 
     assert (await _mark(client, {}, commit_hash=_COMMIT)).status_code == 401
     assert (await _unmark(client, {}, "rel")).status_code == 401
+
+
+async def _environments(client, headers):
+    return await client.get(f"/api/v1/projects/{_PROJECT}/releases/environments", headers=headers)
+
+
+async def _seed_release(db, scan_id, environment, project_id=_PROJECT):
+    await ReleaseRepository(db).record(
+        Release(project_id=project_id, environment=environment, scan_id=scan_id, released_at=_NOW)
+    )
+
+
+@pytest.mark.asyncio
+async def test_environments_name_each_environment_of_the_project_once(client, db, member_auth_headers):
+    for scan_id, environment in (
+        ("first", _STAGING),
+        ("second", _STAGING),
+        ("first", _CANARY),
+        ("first", DEFAULT_RELEASE_ENVIRONMENT),
+    ):
+        await _seed_release(db, scan_id, environment)
+
+    resp = await _environments(client, member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == [_CANARY, DEFAULT_RELEASE_ENVIRONMENT, _STAGING]
+
+
+@pytest.mark.asyncio
+async def test_environments_leave_out_those_of_other_projects(client, db, member_auth_headers):
+    await _seed_release(db, "rel", _STAGING)
+    await _seed_release(db, "foreign", _CANARY, project_id=_OTHER_PROJECT)
+
+    resp = await _environments(client, member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == [_STAGING]
+
+
+@pytest.mark.asyncio
+async def test_environments_of_a_project_without_releases_are_empty(client, db, member_auth_headers):
+    resp = await _environments(client, member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_environments_are_refused_to_a_user_outside_the_project(client, db):
+    await _seed_release(db, "rel", _STAGING)
+
+    resp = await _environments(client, bearer_headers("outsider", [Permissions.PROJECT_READ]))
+
+    assert resp.status_code == 403

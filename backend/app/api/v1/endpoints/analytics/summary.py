@@ -23,6 +23,7 @@ from app.core.permissions import Permissions
 from app.core.purl import package_identity_expr
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
+from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     AnalyticsScope,
@@ -68,12 +69,11 @@ async def get_analytics_scope(
         return AnalyticsScope(release_environments=[], resolved_projects=0, projects_without_release=0)
 
     project_ids = [p.id for p in projects]
-    environments: list[str] = sorted(await db.releases.distinct("environment", {"project_id": {"$in": project_ids}}))
     scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
 
     return AnalyticsScope(
-        release_environments=environments,
+        release_environments=await ReleaseRepository(db).environments(project_ids),
         resolved_projects=resolved_projects,
         projects_without_release=projects_without_release,
         oldest_analysis_at=await ScanRepository(db).oldest_analysis_at(scan_ids),

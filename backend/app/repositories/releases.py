@@ -62,6 +62,9 @@ class ReleaseRepository(BaseRepository[Release]):
     async def released_among(self, scan_ids: Sequence[str]) -> set[str]:
         return set(await self.collection.distinct("scan_id", {"scan_id": {"$in": list(scan_ids)}}))
 
+    async def environments(self, project_ids: Sequence[str]) -> list[str]:
+        return sorted(await self.collection.distinct("environment", {"project_id": {"$in": list(project_ids)}}))
+
     async def latest_for_environment(self, project_id: str, environment: str) -> dict[str, Any] | None:
         return await self.collection.find_one(
             {"project_id": project_id, "environment": environment}, sort=RELEASES_LATEST_SORT

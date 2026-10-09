@@ -190,3 +190,10 @@ async def list_releases(
         query, skip=skip, limit=limit, sort_by="released_at", sort_order=pymongo.DESCENDING
     )
     return Page[ReleaseItem](items=await _to_items(db, rows), **page_meta(total, skip, limit))
+
+
+@router.get("/{project_id}/releases/environments", summary="List release environments", responses=RESP_AUTH_404)
+async def list_release_environments(project_id: str, current_user: CurrentUserDep, db: DatabaseDep) -> list[str]:
+    """The environments the project's release records name, sorted."""
+    await check_project_access(project_id, current_user, db)
+    return await ReleaseRepository(db).environments([project_id])
