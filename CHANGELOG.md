@@ -1,3 +1,15 @@
+# Release 1.9.53
+
+## 🧪 Tests
+
+- test: pass make_admin() where three modules still built the admin inline (#0)
+
+## 📦 Build & CI
+
+- chore(release): 1.9.53 ships the simplification pass with its bug fixes, cbomkit uploads and scanner 1.3.2 (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.52. Run mongosh commands in-pod against the application database.
