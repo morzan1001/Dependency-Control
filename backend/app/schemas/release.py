@@ -1,15 +1,18 @@
 """Request and response models for marking, unmarking and listing releases."""
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_environment
+from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, RELEASE_VERSION_MAX_LENGTH, validate_release_environment
+
+_Version = Annotated[str, StringConstraints(strip_whitespace=True, max_length=RELEASE_VERSION_MAX_LENGTH)]
 
 
 class ReleaseMarkRequest(BaseModel):
     commit_hash: str = Field(..., min_length=1, description="Commit whose newest scan becomes the release")
-    version: str | None = Field(None, description="Release name; falls back to the scan's commit_tag")
+    version: _Version | None = Field(None, description="Release name; blank falls back to the scan's commit_tag")
     environment: str | None = Field(None, description=f"Slug; falls back to {DEFAULT_RELEASE_ENVIRONMENT}")
     released_at: datetime | None = Field(None, description="Release time; falls back to server time")
 

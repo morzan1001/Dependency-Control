@@ -8,9 +8,11 @@ from app.models.project import Scan
 from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
 from app.schemas.ingest import SBOMIngest
+from app.schemas.release import ReleaseMarkRequest
 from tests.mocks.fake_mongo import FakeDatabase
 
 _MAX_ENVIRONMENT_LENGTH = 32
+_MAX_VERSION_LENGTH = 128
 _PIPELINE_ID = 1
 _COMMIT = "a" * 40
 _BRANCH = "main"
@@ -122,3 +124,13 @@ def test_release_fields_name_the_keys_of_a_release_document():
         _SCAN_ID,
         now,
     )
+
+
+def test_a_mark_takes_a_version_as_long_as_the_bound():
+    request = ReleaseMarkRequest(commit_hash=_COMMIT, version="v" * _MAX_VERSION_LENGTH)
+    assert request.version == "v" * _MAX_VERSION_LENGTH
+
+
+def test_a_mark_refuses_a_version_past_the_bound():
+    with pytest.raises(ValidationError):
+        ReleaseMarkRequest(commit_hash=_COMMIT, version="v" * (_MAX_VERSION_LENGTH + 1))

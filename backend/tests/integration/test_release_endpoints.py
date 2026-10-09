@@ -43,6 +43,7 @@ _CANARY = "canary"
 _VERSION = "v2.1.0"
 _OTHER_VERSION = "v3.0.0"
 _BLANK_TAG = ""
+_BLANK_VERSION = "   "
 _BRANCH = "main"
 _INVALID_ENVIRONMENT = "Prod.EU"
 # Two marks of one instant; the row inserted first is the one insertion order alone would list first.
@@ -193,6 +194,27 @@ async def test_mark_of_a_branch_build_records_no_version_rather_than_a_blank_one
     assert resp.json()["version"] is None
     row = await db.releases.find_one({"scan_id": "branch-build"})
     assert row.get("version") is None
+
+
+@pytest.mark.asyncio
+async def test_mark_records_the_version_without_the_whitespace_around_it(client, db, api_key_headers):
+    await _seed_scan(db, "rel")
+
+    resp = await _mark(client, api_key_headers, commit_hash=_COMMIT, version=f"  {_VERSION}  ")
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] == _VERSION
+    assert (await db.releases.find_one({"scan_id": "rel"}))["version"] == _VERSION
+
+
+@pytest.mark.asyncio
+async def test_a_blank_version_falls_back_to_the_commit_tag(client, db, api_key_headers):
+    await _seed_scan(db, "tagged", commit_tag=_VERSION)
+
+    resp = await _mark(client, api_key_headers, commit_hash=_COMMIT, version=_BLANK_VERSION)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] == _VERSION
 
 
 @pytest.mark.asyncio

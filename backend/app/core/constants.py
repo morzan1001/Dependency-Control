@@ -1132,6 +1132,8 @@ CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
 # Environments are used as index and query keys, so the slug shape is enforced, not normalised.
 RELEASE_ENVIRONMENT_PATTERN: str = r"^[a-z0-9][a-z0-9_-]{0,31}$"
 DEFAULT_RELEASE_ENVIRONMENT: str = "production"
+# Docker's tag limit, so a version that doubles as the image tag always fits.
+RELEASE_VERSION_MAX_LENGTH: int = 128
 
 
 def validate_release_environment(value: str | None) -> str | None:
