@@ -22,7 +22,7 @@ The report drawer reads the coverage statement the backend now sends, archive do
 
 Once every pod runs this release:
 
-- Required: remove the retired `user:read` permission. Until then, changing the permissions of an account that still holds it fails with "Cannot revoke permissions you don't hold".
+- Required, after both the backend and the frontend rollout finished: remove the retired `user:read` permission. Until then, changing the permissions of an account that still holds it fails with "Cannot revoke permissions you don't hold". Admins reload open tabs afterwards, since a 1.9.52 bundle still offers presets with `user:read`.
 
   ```js
   db.users.updateMany({ permissions: "user:read" }, { $pull: { permissions: "user:read" } })
@@ -56,12 +56,16 @@ Once every pod runs this release:
 - Optional: a project waiver that names a package could bind to the same finding id in another file, and the restamp keeps such a binding. List them, and after review unset `match` with the same filter so the next restamp binds them in the named file:
 
   ```js
-  const misbound = { project_id: { $ne: null }, scope: "finding", package_name: { $ne: null }, "match.file_key": { $exists: true }, $expr: { $ne: ["$match.file_key", "$package_name"] } }
+  const misbound = { project_id: { $ne: null }, scope: { $in: ["finding", null] }, package_name: { $ne: null }, "match.file_key": { $exists: true }, $expr: { $ne: ["$match.file_key", "$package_name"] } }
   db.waivers.find(misbound, { project_id: 1, finding_id: 1, package_name: 1, "match.file_key": 1 })
   db.waivers.updateMany(misbound, { $unset: { match: "" } })
   ```
 
-- Global waivers no longer bind a signature: `db.waivers.countDocuments({ project_id: null, match: { $ne: null } })` should be 0; otherwise unset `match` on those rows.
+- Global waivers no longer bind a signature: `db.waivers.countDocuments({ project_id: null, match: { $ne: null } })` should be 0. Unsetting `match` on such a waiver switches it from its bound location to its criteria in every project, so recreate it as a project waiver first where that is too wide.
+
+## Rolling back to 1.9.52
+
+After the `user:read` cleanup, give it back to the accounts that manage permissions before rolling back, or 1.9.52's presets fail for them: `db.users.updateMany({ permissions: "user:manage_permissions" }, { $addToSet: { permissions: "user:read" } })`. A 1.9.52 pod recreates the dropped indexes at startup; the largest of their collections is `scans`.
 
 ## Behaviour changes
 
