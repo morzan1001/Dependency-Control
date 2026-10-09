@@ -13,11 +13,12 @@ import {
   useLatestProjectRelease,
   useMarkRelease,
   useProjectReleases,
+  useReleaseEnvironments,
   useUnmarkRelease,
 } from "../use-releases";
 
 vi.mock("@/api/releases", () => ({
-  releaseApi: { list: vi.fn(), mark: vi.fn(), unmark: vi.fn() },
+  releaseApi: { list: vi.fn(), mark: vi.fn(), unmark: vi.fn(), environments: vi.fn() },
 }));
 
 const PROJECT_ID = "p1";
@@ -210,6 +211,55 @@ describe("useLatestProjectRelease", () => {
 
     await waitFor(() => expect(client.getQueryCache().getAll()).toHaveLength(SINGLE_ITEM_TOTAL));
     expect(releaseApi.list).toHaveBeenCalledTimes(SINGLE_ITEM_TOTAL);
+  });
+});
+
+describe("useReleaseEnvironments", () => {
+  const FETCHED_ONCE = 1;
+  const FETCHED_AGAIN = 2;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(releaseApi.environments).mockResolvedValue([PRODUCTION, STAGING]);
+  });
+
+  it("asks nothing until the caller needs the environments", () => {
+    renderHook(() => useReleaseEnvironments(PROJECT_ID, false), { wrapper: wrapperFor(makeClient()) });
+
+    expect(releaseApi.environments).not.toHaveBeenCalled();
+  });
+
+  it("answers with the project's environments", async () => {
+    const { result } = renderHook(() => useReleaseEnvironments(PROJECT_ID, true), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await waitFor(() => expect(result.current.data).toEqual([PRODUCTION, STAGING]));
+    expect(releaseApi.environments).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
+  it("asks again once a mark may have added an environment", async () => {
+    const client = makeClient();
+    const wrapper = wrapperFor(client);
+    vi.mocked(releaseApi.mark).mockResolvedValue({
+      scan_id: SCAN_ID,
+      project_id: PROJECT_ID,
+      environment: STAGING,
+      version: null,
+      released_at: RELEASED_AT,
+      commit_hash: COMMIT_HASH,
+      branch: BRANCH,
+      scan_status: SCAN_STATUS_COMPLETED,
+      analysis_scan_id: SCAN_ID,
+      analysis_chain_bounded: false,
+    });
+    renderHook(() => useReleaseEnvironments(PROJECT_ID, true), { wrapper });
+    await waitFor(() => expect(releaseApi.environments).toHaveBeenCalledTimes(FETCHED_ONCE));
+
+    const { result } = renderHook(() => useMarkRelease(), { wrapper });
+    result.current.mutate({ projectId: PROJECT_ID, payload: { commit_hash: COMMIT_HASH, environment: STAGING } });
+
+    await waitFor(() => expect(releaseApi.environments).toHaveBeenCalledTimes(FETCHED_AGAIN));
   });
 });
 

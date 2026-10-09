@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 
 import { useMarkRelease, useUnmarkRelease } from '@/hooks/queries/use-releases'
 import { formatDateTime } from '@/lib/utils'
+import type { MarkReleasePayload } from '@/types/release'
 import type { ScanWithReleases } from '@/types/scan'
 
 const MARKED_SCAN_LINK = 'Open the marked scan'
@@ -11,8 +12,12 @@ const MARKED_ELSEWHERE_TOAST_MS = 15_000
 const UNCOVERED_RELEASE_TOAST_MS = 15_000
 const UNCOVERED_SCAN_LINK = 'Open that release'
 
+function markedAs(environment: string, version: string | null): string {
+  return version ? `Marked as release ${version} in ${environment}` : `Marked as release in ${environment}`
+}
+
 export interface ReleaseActions {
-  mark: (environment: string, onMarked?: () => void) => void
+  mark: (environment: string, version: string, onMarked?: () => void) => void
   withdraw: (environment: string) => void
   markPending: boolean
   withdrawPending: boolean
@@ -23,21 +28,23 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
   const markRelease = useMarkRelease()
   const unmarkRelease = useUnmarkRelease()
 
-  const mark = (environment: string, onMarked?: () => void) => {
+  const mark = (environment: string, version: string, onMarked?: () => void) => {
     if (!scan.commit_hash) return
+    const payload: MarkReleasePayload = { commit_hash: scan.commit_hash, environment }
+    const named = version.trim()
+    if (named) payload.version = named
     markRelease.mutate(
-      // No version: the backend falls back to the scan's commit_tag, which is what CI built.
-      { projectId, payload: { commit_hash: scan.commit_hash, environment } },
+      { projectId, payload },
       {
         onSuccess: (release) => {
           onMarked?.()
           // The mark resolves the commit to its newest analysis, and a re-run pipeline on the same
           // commit makes a second one, so the row can land on a scan other than the one open here.
           if (release.scan_id === scan.id) {
-            toast.success(`Marked as release in ${environment}`)
+            toast.success(markedAs(environment, release.version))
             return
           }
-          toast.success(`Marked as release in ${environment}, on a newer scan of this commit`, {
+          toast.success(`${markedAs(environment, release.version)}, on a newer scan of this commit`, {
             description: `Recorded against scan ${release.scan_id}, which this page is not showing.`,
             duration: MARKED_ELSEWHERE_TOAST_MS,
             action: {

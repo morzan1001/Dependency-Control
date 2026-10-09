@@ -15,11 +15,18 @@ const MARKED_SCAN_LINK = 'Open the marked scan'
 const COMMIT_HASH = 'a'.repeat(40)
 const PRODUCTION = 'production'
 const STAGING = 'staging'
+const CANARY = 'canary'
+const VERSION_LIKE_ENVIRONMENT = '1-0-6'
 const PRODUCTION_VERSION = 'v1.2.3'
 const STAGING_VERSION = 'v1.3.0-rc1'
 const PRODUCTION_RELEASED_AT = '2026-09-01T10:00:00Z'
 const MARK_BUTTON = 'Mark as release'
 const ENVIRONMENT_FIELD = 'Environment to release to'
+const VERSION_FIELD = 'Version'
+const COMMIT_TAG = 'v2.0.0'
+const NEXT_COMMIT_TAG = 'v2.1.0'
+const TYPED_VERSION = '1.0.6'
+const VERSION_LIKE_HINT = /looks like a version/i
 const OFF_PATTERN_ENVIRONMENT = 'Pre-Prod!'
 const OFF_PATTERN_HINT = /lowercase letters/i
 const RESCAN_NOTE = /releases are held by the original scan/i
@@ -27,10 +34,12 @@ const ORIGINAL_SCAN_LINK = 'Open the original scan'
 
 const mockMark = vi.fn()
 const mockUnmark = vi.fn()
+let mockProjectEnvironments: string[] | undefined
 
 vi.mock('@/hooks/queries/use-releases', () => ({
   useMarkRelease: () => ({ mutate: mockMark, isPending: false }),
   useUnmarkRelease: () => ({ mutate: mockUnmark, isPending: false }),
+  useReleaseEnvironments: () => ({ data: mockProjectEnvironments }),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
@@ -50,12 +59,12 @@ function makeScan(overrides: Partial<ScanWithReleases> = {}): ScanWithReleases {
 }
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
-function markResponse(scanId: string): ReleaseItem {
+function markResponse(scanId: string, version: string | null): ReleaseItem {
   return {
     scan_id: scanId,
     project_id: PROJECT_ID,
     environment: PRODUCTION,
-    version: PRODUCTION_VERSION,
+    version,
     released_at: PRODUCTION_RELEASED_AT,
     commit_hash: COMMIT_HASH,
     branch: 'main',
@@ -93,15 +102,30 @@ function openDialog(scan: ScanWithReleases) {
   return within(screen.getByRole('dialog'))
 }
 
-function markAndResolveTo(scanId: string) {
+function markAndResolveTo(scanId: string, version: string | null = null) {
   const dialog = openDialog(makeScan())
   fireEvent.click(dialog.getByRole('button', { name: MARK_BUTTON }))
   const handlers = mockMark.mock.calls[0][1] as { onSuccess: (release: ReleaseItem) => void }
   // Resolving outside React's event system: act() flushes the close that onSuccess triggers.
-  act(() => handlers.onSuccess(markResponse(scanId)))
+  act(() => handlers.onSuccess(markResponse(scanId, version)))
 }
 
-beforeEach(() => vi.clearAllMocks())
+function suggestionsIn(dialog: ReturnType<typeof within>): string[] {
+  const listId = dialog.getByLabelText(ENVIRONMENT_FIELD).getAttribute('list') ?? ''
+  return Array.from(document.getElementById(listId)?.querySelectorAll('option') ?? [], (option) => option.value)
+}
+
+function markWithVersion(scan: ScanWithReleases, typed: string) {
+  const dialog = openDialog(scan)
+  fireEvent.change(dialog.getByLabelText(VERSION_FIELD), { target: { value: typed } })
+  fireEvent.click(dialog.getByRole('button', { name: MARK_BUTTON }))
+  return mockMark.mock.calls[0][0].payload
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockProjectEnvironments = undefined
+})
 
 describe('MarkReleaseButton', () => {
   it('keeps the page quiet until the button is pressed', () => {
@@ -192,6 +216,106 @@ describe('MarkReleaseButton', () => {
     markAndResolveTo(SCAN_ID)
 
     expect(toast.success).toHaveBeenCalledWith(`Marked as release in ${PRODUCTION}`)
+  })
+
+  it('names the version the release was recorded under', () => {
+    // No version was typed: the backend's fallback named it, and the toast says what it stored.
+    markAndResolveTo(SCAN_ID, PRODUCTION_VERSION)
+
+    expect(toast.success).toHaveBeenCalledWith(`Marked as release ${PRODUCTION_VERSION} in ${PRODUCTION}`)
+  })
+
+  it('opens with the default as a placeholder, so the browser lists every suggestion unfiltered', () => {
+    const dialog = openDialog(makeScan())
+
+    expect(dialog.getByLabelText(ENVIRONMENT_FIELD)).toHaveValue('')
+    expect(dialog.getByLabelText(ENVIRONMENT_FIELD)).toHaveAttribute('placeholder', PRODUCTION)
+  })
+
+  it('suggests the default and every environment the project released to, each once', () => {
+    mockProjectEnvironments = [CANARY, PRODUCTION, STAGING]
+
+    const dialog = openDialog(makeScan())
+
+    expect(suggestionsIn(dialog)).toEqual([PRODUCTION, CANARY, STAGING])
+  })
+
+  it('suggests the default before the project has released anywhere', () => {
+    const dialog = openDialog(makeScan())
+
+    expect(suggestionsIn(dialog)).toEqual([PRODUCTION])
+  })
+
+  it('does not suggest an environment that looks like a version', () => {
+    mockProjectEnvironments = [VERSION_LIKE_ENVIRONMENT, STAGING]
+
+    const dialog = openDialog(makeScan())
+
+    expect(suggestionsIn(dialog)).toEqual([PRODUCTION, STAGING])
+  })
+
+  it("prefills the version with the scan's tag and sends it", () => {
+    const dialog = openDialog(makeScan({ commit_tag: COMMIT_TAG }))
+
+    expect(dialog.getByLabelText(VERSION_FIELD)).toHaveValue(COMMIT_TAG)
+    fireEvent.click(dialog.getByRole('button', { name: MARK_BUTTON }))
+    expect(mockMark).toHaveBeenCalledWith(
+      { projectId: PROJECT_ID, payload: { commit_hash: COMMIT_HASH, environment: PRODUCTION, version: COMMIT_TAG } },
+      expect.anything(),
+    )
+  })
+
+  it('prefills the tag of the scan on screen after the page swapped scans', () => {
+    const { rerender } = renderButton(makeScan({ commit_tag: COMMIT_TAG }))
+    rerender(
+      <MemoryRouter>
+        <MarkReleaseButton projectId={PROJECT_ID} scan={makeScan({ id: NEWER_SCAN_ID, commit_tag: NEXT_COMMIT_TAG })} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
+
+    expect(within(screen.getByRole('dialog')).getByLabelText(VERSION_FIELD)).toHaveValue(NEXT_COMMIT_TAG)
+  })
+
+  it('sends a typed version without the whitespace around it', () => {
+    expect(markWithVersion(makeScan(), `  ${TYPED_VERSION}  `)).toEqual({
+      commit_hash: COMMIT_HASH,
+      environment: PRODUCTION,
+      version: TYPED_VERSION,
+    })
+  })
+
+  it('leaves a cleared version out, so the backend falls back to the tag', () => {
+    expect(markWithVersion(makeScan({ commit_tag: COMMIT_TAG }), '   ')).not.toHaveProperty('version')
+  })
+
+  it.each(['1.0.6', VERSION_LIKE_ENVIRONMENT, 'v2.3', '1_0_6'])('warns that %s looks like a version', (typed) => {
+    const dialog = openDialog(makeScan())
+
+    fireEvent.change(dialog.getByLabelText(ENVIRONMENT_FIELD), { target: { value: typed } })
+
+    expect(dialog.getByText(VERSION_LIKE_HINT)).toBeInTheDocument()
+  })
+
+  it.each([PRODUCTION, 'eu-1', 'prod2', 'stage-2'])('does not take %s for a version', (typed) => {
+    const dialog = openDialog(makeScan())
+
+    fireEvent.change(dialog.getByLabelText(ENVIRONMENT_FIELD), { target: { value: typed } })
+
+    expect(dialog.queryByText(VERSION_LIKE_HINT)).not.toBeInTheDocument()
+  })
+
+  it('still marks into an environment that looks like a version', () => {
+    const dialog = openDialog(makeScan())
+
+    fireEvent.change(dialog.getByLabelText(ENVIRONMENT_FIELD), { target: { value: VERSION_LIKE_ENVIRONMENT } })
+    fireEvent.click(dialog.getByRole('button', { name: MARK_BUTTON }))
+
+    expect(mockMark).toHaveBeenCalledWith(
+      { projectId: PROJECT_ID, payload: { commit_hash: COMMIT_HASH, environment: VERSION_LIKE_ENVIRONMENT } },
+      expect.anything(),
+    )
   })
 
   it('names the scan that took the mark when a newer analysis of the commit won it', () => {

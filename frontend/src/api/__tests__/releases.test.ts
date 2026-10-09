@@ -57,6 +57,15 @@ describe("releaseApi", () => {
     });
   });
 
+  it("asks for the project's release environments", async () => {
+    mocked(api.get).mockResolvedValue({ data: [PRODUCTION, STAGING] });
+
+    const environments = await releaseApi.environments(PROJECT_ID);
+
+    expect(api.get).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/releases/environments`);
+    expect(environments).toEqual([PRODUCTION, STAGING]);
+  });
+
   it("withdraws a scan from the named environment only", async () => {
     mocked(api.delete).mockResolvedValue({
       data: {

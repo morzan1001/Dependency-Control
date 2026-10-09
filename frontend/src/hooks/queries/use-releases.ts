@@ -18,6 +18,7 @@ export const releaseKeys = {
     project: (projectId: string) => [...releaseKeys.all, 'project', projectId] as const,
     list: (projectId: string, environment?: string, limit: number = SMALL_PAGE_SIZE) =>
         [...releaseKeys.project(projectId), 'list', environment ?? null, limit] as const,
+    environments: (projectId: string) => [...releaseKeys.project(projectId), 'environments'] as const,
 };
 
 // Analytics in release mode and the scan list's release filter both read what a mark just changed.
@@ -37,6 +38,15 @@ export const useProjectReleases = (
         queryKey: releaseKeys.list(projectId, environment, limit),
         queryFn: () => releaseApi.list(projectId, { environment, limit }),
         enabled: !!projectId,
+        staleTime: RELEASES_STALE_TIME_MS,
+    });
+}
+
+export const useReleaseEnvironments = (projectId: string, enabled: boolean) => {
+    return useQuery({
+        queryKey: releaseKeys.environments(projectId),
+        queryFn: () => releaseApi.environments(projectId),
+        enabled: enabled && !!projectId,
         staleTime: RELEASES_STALE_TIME_MS,
     });
 }

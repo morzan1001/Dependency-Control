@@ -23,6 +23,11 @@ export const releaseApi = {
     return response.data;
   },
 
+  environments: async (projectId: string): Promise<string[]> => {
+    const response = await api.get<string[]>(`/projects/${projectId}/releases/environments`);
+    return response.data;
+  },
+
   mark: async (projectId: string, payload: MarkReleasePayload): Promise<ReleaseItem> => {
     const response = await api.post<ReleaseItem>(`/projects/${projectId}/releases`, payload);
     return response.data;
