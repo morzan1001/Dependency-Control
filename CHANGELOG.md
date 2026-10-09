@@ -1,3 +1,82 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.52. Run mongosh commands in-pod against the application database.
+
+## Before the rollout (gate): read-only counts
+
+Startup no longer normalises project owners or backfills their GitLab provenance, member lists resolve users by their string id, and the crypto policy timeline reads only entries that name their policy type. Each count must be 0:
+
+```js
+db.projects.countDocuments({ team_ids: { $in: [null] } })
+db.projects.countDocuments({ $expr: { $gt: [{ $size: { $setDifference: [{ $ifNull: ["$team_ids", []] }, { $map: { input: { $objectToArray: { $ifNull: ["$team_sources", {}] } }, in: "$$this.k" } }] } }, 0] } })
+db.projects.countDocuments({ $expr: { $gt: [{ $size: { $filter: { input: { $objectToArray: { $ifNull: ["$team_sources", {}] } }, cond: { $eq: ["$$this.v", null] } } } }, 0] } })
+db.users.countDocuments({ _id: { $type: "objectId" } })
+db.crypto_policy_history.countDocuments({ policy_type: { $exists: false } })
+```
+
+A non-zero first count is fixed with `db.projects.updateMany({ team_ids: { $in: [null] } }, { $set: { team_ids: [] } })`, a non-zero last one with `db.crypto_policy_history.updateMany({ policy_type: { $exists: false } }, { $set: { policy_type: "crypto" } })`. For any other non-zero count, stay on 1.9.52.
+
+## Roll out backend and frontend together
+
+The report drawer reads the coverage statement the backend now sends, archive downloads take the server's file name, and the permission presets no longer carry `user:read`.
+
+## After the rollout
+
+Once every pod runs this release:
+
+- Required: remove the retired `user:read` permission. Until then, changing the permissions of an account that still holds it fails with "Cannot revoke permissions you don't hold".
+
+  ```js
+  db.users.updateMany({ permissions: "user:read" }, { $pull: { permissions: "user:read" } })
+  ```
+
+- The admin preset now includes `analyze:adhoc`. Existing admin accounts keep the list stored when they were created, so grant it to them:
+
+  ```js
+  db.users.updateMany({ permissions: "system:manage" }, { $addToSet: { permissions: "analyze:adhoc" } })
+  ```
+
+- Startup no longer creates these indexes: prefixes of wider compounds, and indexes on fields nothing reads. Drop the ones present; the hinted indexes listed in the 1.9.49 notes stay.
+
+  ```js
+  const drops = {
+    projects: ["owner_id_1"], waivers: ["project_id_1"], webhooks: ["project_id_1"], archive_metadata: ["project_id_1"],
+    scans: ["project_id_1_status_1"], token_blacklist: ["jti_1"], chat_messages: ["conversation_cascade_delete"],
+    crypto_assets: ["project_id_1_scan_id_1", "project_id_1_asset_type_1"],
+    crypto_policy_history: ["policy_scope_1_project_id_1_version_-1", "actor_user_id_1_timestamp_-1"],
+    finding_records: ["project_id_1_finding.component_1", "project_id_1_finding.component_1_finding.type_1", "scan_id_1_finding.type_1"],
+  }
+  for (const [coll, names] of Object.entries(drops)) {
+    const present = db.getCollection(coll).getIndexes().map((i) => i.name)
+    names.filter((n) => present.includes(n)).forEach((n) => { db.getCollection(coll).dropIndex(n); print(`dropped ${coll}.${n}`) })
+  }
+  ```
+
+  The backend still writes `jti` on blacklisted tokens while `jti_1` exists; a later release drops that write.
+
+- Optional: `crypto_assets` rows written before this release keep an always-empty `related_dependency_purls`, which the model ignores: `db.crypto_assets.updateMany({ related_dependency_purls: { $exists: true } }, { $unset: { related_dependency_purls: "" } })`.
+- Optional: a project waiver that names a package could bind to the same finding id in another file, and the restamp keeps such a binding. List them, and after review unset `match` with the same filter so the next restamp binds them in the named file:
+
+  ```js
+  const misbound = { project_id: { $ne: null }, scope: "finding", package_name: { $ne: null }, "match.file_key": { $exists: true }, $expr: { $ne: ["$match.file_key", "$package_name"] } }
+  db.waivers.find(misbound, { project_id: 1, finding_id: 1, package_name: 1, "match.file_key": 1 })
+  db.waivers.updateMany(misbound, { $unset: { match: "" } })
+  ```
+
+- Global waivers no longer bind a signature: `db.waivers.countDocuments({ project_id: null, match: { $ne: null } })` should be 0; otherwise unset `match` on those rows.
+
+## Behaviour changes
+
+- Crypto findings take their ids and labels from the asset's content (`sha-…`) instead of the random ref CBOMkit draws on every run, so their ids, waivers and first-seen dates stay stable across runs. A `CRYPTO-` waiver created before this release names a ref that never recurs; create it again on the new id.
+- Projects can enable "CBOMkit (Crypto)" under Analyzers. The CBOM pipeline template uploads only for projects that list `cbomkit`, a name the backend refused until now.
+- Scanner 1.3.2 ships with this backend, and both pipeline examples pin it. Its `callgraph` command uploads the call graph that 1.3.1 never sent, from JavaScript/TypeScript (madge), Python and Go producers. Switch pipelines after the deploy, with the hash from `/api/v1/scripts/scanner.sh/hash?v=1.3.2`.
+- Compliance reports read `not_evaluated` where their input is missing, naming the gap: no crypto assets for the crypto frameworks, no SBOM for CVE-SLA and license audit, no projects in the scope.
+- The update-frequency backfill has to run from this release's image. A delta computed by an older image credits a failed package as resolved, and the reconcile cannot see that. Re-derive the last 365 days before enabling `updateFrequencyReconcileEnabled` or `updateFrequencyUseRollup`.
+- `auth_token_validations_total` no longer has a `blacklisted` series; logged-out access tokens count as `revoked`.
+- A local backend `.env` that still sets `OPEN_SOURCE_MALWARE_API_KEY` must drop that line, because settings reject unknown keys.
+
+
+
 # Release 1.9.52
 
 ## 📦 Build & CI
