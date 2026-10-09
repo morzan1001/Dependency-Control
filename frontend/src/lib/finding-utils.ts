@@ -165,7 +165,6 @@ interface FindingWithDetails {
   }
 }
 
-// Aggregated findings show "Multiple …"; a single issue shows its id; else the finding's own id.
 export function getDisplayId(finding: FindingWithDetails): string | undefined {
   const vulnCount = finding.details?.vulnerabilities?.length ?? 0
   if (finding.type === 'vulnerability') {

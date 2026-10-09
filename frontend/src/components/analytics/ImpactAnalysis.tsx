@@ -285,7 +285,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               </div>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Fix versions: {withRemainder(r.fix_versions, r.fix_version_count) || 'Available'}</p>
+                              <p>Fix versions: {withRemainder(r.fix_versions, r.fix_version_count)}</p>
                             </TooltipContent>
                           </Tooltip>
                       ) : (

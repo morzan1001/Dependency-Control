@@ -158,16 +158,11 @@ def _severed(entry: LedgerEntry, owed: frozenset[str], ledger: dict[str, LedgerE
 
 
 def _skip_links(ledger: dict[str, LedgerEntry], owed: frozenset[str]) -> set[str]:
-    """Deltas diffed against another scan than the comparable one before them.
-
-    Two ingests racing for one predecessor, or a recompute that failed under its successor,
-    leave such a link, and the fold truncates its window there while every census agrees.
-    The oldest delta is not judged, since its predecessor may lie before the window, nor is
-    one diffed against an orphan, which reaches the writer as a dependent once deleted.
-    """
+    """Deltas diffed against a scan other than the comparable one before them, as racing ingests leave."""
     chain = sorted(
         (entry.scan_created_at, scan_id) for scan_id, entry in ledger.items() if scan_id in owed and entry.comparable
     )
+    # The oldest delta's predecessor may predate the window; an orphan's dependent is repaired once it is deleted.
     return {
         scan_id
         for (_, before), (_, scan_id) in pairwise(chain)

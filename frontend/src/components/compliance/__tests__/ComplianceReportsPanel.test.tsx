@@ -63,6 +63,18 @@ describe('ComplianceReportsPanel', () => {
     await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ framework: 'pqc-migration-plan' })))
   })
 
+  it('starts a later report from the default framework after a handed-over one is cancelled', async () => {
+    vi.mocked(listReports).mockResolvedValue({ reports: [] })
+    renderPanel('pqc-migration-plan')
+    await screen.findByText('No reports yet')
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate report' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
+
+    await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ framework: 'nist-sp-800-131a' })))
+  })
+
   it('lists every report the caller may open, not only personal ones', async () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [{ ...report('completed'), scope: 'project', scope_id: 'p1' }] })
     renderPanel()

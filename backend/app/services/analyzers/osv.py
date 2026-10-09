@@ -188,10 +188,7 @@ def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, s
 
 
 def _affected_entries(record: dict[str, Any], query: dict[str, Any], installed: str) -> list[dict[str, Any]]:
-    """The record's ``affected`` entries for the queried package, narrowed to those listing the installed version.
-
-    Ubuntu's releases and Pro archives share a purl; only the listed versions tell them apart.
-    """
+    """The package's ``affected`` entries listing ``installed``, else all; Ubuntu releases and Pro share a purl."""
     parsed = parse_purl(query["package"].get("purl") or "")
     purl_type = parsed.type if parsed else None
     key = _package_key(query["package"], purl_type)

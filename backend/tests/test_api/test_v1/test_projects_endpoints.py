@@ -697,12 +697,6 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
             "opengrep", "kics", "bearer", "trufflehog", "cbomkit",
         } == SELECTABLE_ANALYZERS  # fmt: skip
 
-    def test_the_cbom_pipeline_switch_is_accepted(self):
-        """cboms.yml uploads only for a project that lists cbomkit among its active analyzers."""
-        from app.api.v1.helpers.projects import reject_unknown_analyzers
-
-        reject_unknown_analyzers(["trivy", "cbomkit"])
-
 
 def test_the_scan_findings_table_ranks_severity_like_every_other_surface():
     """A hand-written copy ranked INFO above NEGLIGIBLE, the reverse of SEVERITY_ORDER."""

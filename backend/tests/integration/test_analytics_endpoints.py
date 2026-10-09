@@ -412,40 +412,22 @@ async def test_recommendations_recurrence_window_holds_the_releases_of_a_project
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_enrichment")
 async def test_recommendations_recurrence_counts_only_usable_builds_of_the_viewed_branch(
-    client, db, owner_auth_headers_proj, monkeypatch
+    client, db, owner_auth_headers_proj
 ):
-    from app.api.v1.endpoints.analytics import recommendations as rec_module
-
-    async def _no_enrichment(_cves):
-        return {}
-
-    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
-
-    now = datetime.now(timezone.utc)
     window = [
-        ("main-old", {"branch": "main"}),
+        ("main-old", {}),
         ("feature-1", {"branch": "feature"}),
         ("feature-2", {"branch": "feature"}),
-        ("main-rescan", {"branch": "main", "is_rescan": True, "original_scan_id": "main-old"}),
-        ("main-failed", {"branch": "main", "status": "failed"}),
-        ("main-head", {"branch": "main"}),
+        ("main-rescan", {"is_rescan": True, "original_scan_id": "main-old"}),
+        ("main-failed", {"status": "failed"}),
+        ("main-head", {}),
     ]
-    for position, (scan_id, fields) in enumerate(window):
-        created_at = now - timedelta(hours=len(window) - position)
-        await db.scans.insert_one(
-            {"_id": scan_id, "project_id": "p", "status": "completed", "created_at": created_at} | fields
-        )
-        await db.findings.insert_one(_vuln_finding(f"f-{scan_id}", scan_id, cve="CVE-2026-7777"))
+    for hours_ago, (scan_id, fields) in zip(range(len(window), 0, -1), window, strict=True):
+        await _seed_build(db, scan_id, hours_ago, "CVE-2026-7777", **fields)
 
-    resp = await client.get(
-        "/api/v1/analytics/projects/p/recommendations",
-        params={"scan_id": "main-head"},
-        headers=owner_auth_headers_proj,
-    )
-
-    assert resp.status_code == 200, resp.text
-    assert [r for r in resp.json()["recommendations"] if r["type"] == "recurring_vulnerability"] == []
+    assert await _recurring_cards(client, owner_auth_headers_proj, "main-head") == []
 
 
 @pytest.mark.asyncio

@@ -509,11 +509,7 @@ def summarise_window(
     rate_days: int | None,
     ecosystem: str | None,
 ) -> FoldedWindow:
-    """The metrics of a window of at least two bars, from the movement summed over its scan pairs.
-
-    Both read paths end here, so the walk and the ledger fold derive every number alike.
-    ``rate_days`` is the stretch the monthly rate divides by, or None without a calendar window.
-    """
+    """Metrics of a window of two or more bars for both read paths; rate_days is None without a calendar window."""
     total_updates = sum(kinds.get(kind, 0) for kind in COUNTED_UPDATE_KINDS)
     num_intervals = len(bars) - 1
 

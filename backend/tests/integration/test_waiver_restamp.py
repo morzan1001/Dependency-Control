@@ -193,20 +193,20 @@ async def test_the_alert_names_only_the_advisories_no_waiver_covers(db, _databas
     await WaiverRepository(db).create(
         Waiver(project_id=_PROJECT, finding_id="left-pad:1.0.0", package_name="left-pad", reason="x", created_by="u")
     )
-    findings = [
-        aggregated_vulnerability(
-            "express",
-            "4.18.2",
-            {"id": _CVE_CRITICAL, "severity": "CRITICAL"},
-            {"id": "CVE-2024-0003", "severity": "HIGH"},
-        ),
-        aggregated_vulnerability("left-pad", "1.0.0", {"id": "CVE-2024-0004", "severity": "CRITICAL"}),
-    ]
-    await persist_findings(db, _FEATURE, _PROJECT, findings, datetime.now(timezone.utc))
+    express = aggregated_vulnerability(
+        "express",
+        "4.18.2",
+        {"id": _CVE_CRITICAL, "severity": "CRITICAL"},
+        {"id": "CVE-2024-0003", "severity": "HIGH"},
+    )
+    for advisory in express.details["vulnerabilities"]:
+        advisory["in_kev"] = advisory["id"] == _CVE_CRITICAL
+    left_pad = aggregated_vulnerability("left-pad", "1.0.0", {"id": "CVE-2024-0004", "severity": "CRITICAL"})
+    await persist_findings(db, _FEATURE, _PROJECT, [express, left_pad], datetime.now(timezone.utc))
 
-    announced = await _unwaived_findings(_FEATURE, db)
+    kev, _, priority = _categorize_vulnerabilities(await _unwaived_findings(_FEATURE, db))
 
-    assert [vuln.id for vuln in _categorize_vulnerabilities(announced)[2]] == ["CVE-2024-0003"]
+    assert (kev, [vuln.id for vuln in priority]) == ([], ["CVE-2024-0003"])
 
 
 class _WriteCounter:
