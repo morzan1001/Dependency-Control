@@ -16,12 +16,14 @@ import { Label } from '@/components/ui/label'
 import { useReleaseEnvironments } from '@/hooks/queries/use-releases'
 import { useDialogState } from '@/hooks/use-dialog-state'
 import { useReleaseActions } from '@/hooks/use-release-actions'
-import { DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN } from '@/lib/constants'
+import { DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN, RELEASE_VERSION_MAX_LENGTH } from '@/lib/constants'
 import type { ScanWithReleases } from '@/types/scan'
 
 const MARK_BUTTON = 'Mark as release'
 const ENVIRONMENT_LABEL = 'Environment to release to'
 const ENVIRONMENT_SUGGESTIONS = 'release-environment-suggestions'
+const REJECTION_HINT_ID = 'release-environment-rejection'
+const VERSION_LIKE_HINT_ID = 'release-environment-version-like'
 const VERSION_LABEL = 'Version'
 const VERSION_PLACEHOLDER = 'e.g. 1.0.6'
 const OFF_PATTERN_HINT = 'Lowercase letters, digits, - and _ only, up to 32 characters.'
@@ -56,17 +58,20 @@ export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButto
   const [version, setVersion] = useState('')
   const { open, setOpen, closeDialog } = useDialogState()
   const { mark, markPending } = useReleaseActions(projectId, scan)
-  const { data: projectEnvironments = [] } = useReleaseEnvironments(projectId, open)
+  const { data: projectEnvironments = [] } = useReleaseEnvironments(projectId, open && !scan.is_rescan)
 
   const target = environment || DEFAULT_RELEASE_ENVIRONMENT
   const rejection = rejectionFor(target, scan.releases.map((release) => release.environment))
+  const versionLike = VERSION_LIKE.test(environment)
+  const hintIds = [rejection && REJECTION_HINT_ID, versionLike && VERSION_LIKE_HINT_ID].filter(Boolean).join(' ')
   const suggestions = [...new Set([DEFAULT_RELEASE_ENVIRONMENT, ...projectEnvironments])].filter(
     (name) => !VERSION_LIKE.test(name),
   )
 
   const openMarkDialog = () => {
-    // The scan page swaps scans without remounting this button, so the tag is read on opening.
-    setVersion(scan.commit_tag ?? '')
+    // The scan prop can change without a remount, so the tag is read on opening.
+    const tag = scan.commit_tag ?? ''
+    setVersion(tag.length <= RELEASE_VERSION_MAX_LENGTH ? tag : '')
     setOpen(true)
   }
 
@@ -102,6 +107,7 @@ export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButto
                   id="release-environment"
                   aria-label={ENVIRONMENT_LABEL}
                   aria-invalid={rejection?.malformed === true}
+                  aria-describedby={hintIds || undefined}
                   list={ENVIRONMENT_SUGGESTIONS}
                   placeholder={DEFAULT_RELEASE_ENVIRONMENT}
                   value={environment}
@@ -113,12 +119,15 @@ export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButto
                   ))}
                 </datalist>
                 {rejection && (
-                  <span className={`text-xs ${rejection.malformed ? 'text-destructive' : 'text-muted-foreground'}`}>
+                  <span
+                    id={REJECTION_HINT_ID}
+                    className={`text-xs ${rejection.malformed ? 'text-destructive' : 'text-muted-foreground'}`}
+                  >
                     {rejection.reason}
                   </span>
                 )}
-                {VERSION_LIKE.test(environment) && (
-                  <span className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                {versionLike && (
+                  <span id={VERSION_LIKE_HINT_ID} className="flex items-start gap-1.5 text-xs text-muted-foreground">
                     <AlertTriangle className="mt-px h-3 w-3 shrink-0 text-warning" />
                     {VERSION_LIKE_HINT}
                   </span>
@@ -128,6 +137,7 @@ export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButto
                 <Label htmlFor="release-version">{VERSION_LABEL}</Label>
                 <Input
                   id="release-version"
+                  maxLength={RELEASE_VERSION_MAX_LENGTH}
                   placeholder={scan.commit_tag || VERSION_PLACEHOLDER}
                   value={version}
                   onChange={(event) => setVersion(event.target.value)}

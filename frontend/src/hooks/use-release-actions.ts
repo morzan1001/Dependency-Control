@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { useMarkRelease, useUnmarkRelease } from '@/hooks/queries/use-releases'
-import { formatDateTime } from '@/lib/utils'
+import { formatDateTime, getErrorMessage } from '@/lib/utils'
 import type { MarkReleasePayload } from '@/types/release'
 import type { ScanWithReleases } from '@/types/scan'
 
@@ -53,7 +53,8 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
             },
           })
         },
-        onError: () => toast.error(`Could not mark this scan as a release in ${environment}`),
+        onError: (error) =>
+          toast.error(`Could not mark this scan as a release in ${environment}`, { description: getErrorMessage(error) }),
       },
     )
   }

@@ -25,21 +25,28 @@ const ENVIRONMENT_FIELD = 'Environment to release to'
 const VERSION_FIELD = 'Version'
 const COMMIT_TAG = 'v2.0.0'
 const NEXT_COMMIT_TAG = 'v2.1.0'
+const LONGEST_COMMIT_TAG = 'v'.repeat(128)
+const OVERLONG_COMMIT_TAG = `${LONGEST_COMMIT_TAG}v`
 const TYPED_VERSION = '1.0.6'
 const VERSION_LIKE_HINT = /looks like a version/i
 const OFF_PATTERN_ENVIRONMENT = 'Pre-Prod!'
 const OFF_PATTERN_HINT = /lowercase letters/i
+const TOO_LONG_REFUSAL = 'String should have at most 128 characters'
 const RESCAN_NOTE = /releases are held by the original scan/i
 const ORIGINAL_SCAN_LINK = 'Open the original scan'
 
 const mockMark = vi.fn()
 const mockUnmark = vi.fn()
+const mockEnvironmentsHook = vi.fn()
 let mockProjectEnvironments: string[] | undefined
 
 vi.mock('@/hooks/queries/use-releases', () => ({
   useMarkRelease: () => ({ mutate: mockMark, isPending: false }),
   useUnmarkRelease: () => ({ mutate: mockUnmark, isPending: false }),
-  useReleaseEnvironments: () => ({ data: mockProjectEnvironments }),
+  useReleaseEnvironments: (...args: unknown[]) => {
+    mockEnvironmentsHook(...args)
+    return { data: mockProjectEnvironments }
+  },
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
@@ -164,7 +171,7 @@ describe('MarkReleaseButton', () => {
 
     expect(dialog.getByRole('button', { name: MARK_BUTTON })).toBeDisabled()
     expect(dialog.getByText(`Already released to ${PRODUCTION}.`)).toBeInTheDocument()
-    // An untouched field holding the default is not a value the user got wrong.
+    // An untouched field stands for the default, which is not a value the user got wrong.
     expect(dialog.getByLabelText(ENVIRONMENT_FIELD)).not.toHaveAttribute('aria-invalid', 'true')
   })
 
@@ -199,6 +206,14 @@ describe('MarkReleaseButton', () => {
     expect(mockMark).not.toHaveBeenCalled()
   })
 
+  it('announces why the environment is refused to a screen reader', () => {
+    const dialog = openDialog(makeScan())
+
+    fireEvent.change(dialog.getByLabelText(ENVIRONMENT_FIELD), { target: { value: OFF_PATTERN_ENVIRONMENT } })
+
+    expect(dialog.getByLabelText(ENVIRONMENT_FIELD)).toHaveAccessibleDescription(OFF_PATTERN_HINT)
+  })
+
   it('cannot open the dialog for a scan that has no commit', () => {
     renderButton(makeScan({ commit_hash: undefined }))
 
@@ -223,6 +238,18 @@ describe('MarkReleaseButton', () => {
     markAndResolveTo(SCAN_ID, PRODUCTION_VERSION)
 
     expect(toast.success).toHaveBeenCalledWith(`Marked as release ${PRODUCTION_VERSION} in ${PRODUCTION}`)
+  })
+
+  it('says why the backend refused the mark', () => {
+    const dialog = openDialog(makeScan())
+    fireEvent.click(dialog.getByRole('button', { name: MARK_BUTTON }))
+    const handlers = mockMark.mock.calls[0][1] as { onError: (error: unknown) => void }
+
+    handlers.onError({ response: { data: { detail: [{ msg: TOO_LONG_REFUSAL }] } } })
+
+    expect(toast.error).toHaveBeenCalledWith(`Could not mark this scan as a release in ${PRODUCTION}`, {
+      description: TOO_LONG_REFUSAL,
+    })
   })
 
   it('opens with the default as a placeholder, so the browser lists every suggestion unfiltered', () => {
@@ -254,6 +281,21 @@ describe('MarkReleaseButton', () => {
     expect(suggestionsIn(dialog)).toEqual([PRODUCTION, STAGING])
   })
 
+  it("fetches the project's environments only once the dialog is open", () => {
+    renderButton(makeScan())
+    expect(mockEnvironmentsHook).toHaveBeenLastCalledWith(PROJECT_ID, false)
+
+    fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
+
+    expect(mockEnvironmentsHook).toHaveBeenLastCalledWith(PROJECT_ID, true)
+  })
+
+  it('does not fetch environments for a re-scan, whose dialog has no environment field', () => {
+    openDialog(makeScan({ is_rescan: true, original_scan_id: ORIGINAL_SCAN_ID }))
+
+    expect(mockEnvironmentsHook).toHaveBeenLastCalledWith(PROJECT_ID, false)
+  })
+
   it("prefills the version with the scan's tag and sends it", () => {
     const dialog = openDialog(makeScan({ commit_tag: COMMIT_TAG }))
 
@@ -278,6 +320,26 @@ describe('MarkReleaseButton', () => {
     expect(within(screen.getByRole('dialog')).getByLabelText(VERSION_FIELD)).toHaveValue(NEXT_COMMIT_TAG)
   })
 
+  it('prefills a tag of exactly the length the backend accepts', () => {
+    const dialog = openDialog(makeScan({ commit_tag: LONGEST_COMMIT_TAG }))
+
+    expect(dialog.getByLabelText(VERSION_FIELD)).toHaveValue(LONGEST_COMMIT_TAG)
+  })
+
+  it('leaves a tag too long for a version to the backend, which falls back to it', () => {
+    const dialog = openDialog(makeScan({ commit_tag: OVERLONG_COMMIT_TAG }))
+
+    expect(dialog.getByLabelText(VERSION_FIELD)).toHaveValue('')
+    fireEvent.click(dialog.getByRole('button', { name: MARK_BUTTON }))
+    expect(mockMark.mock.calls[0][0].payload).not.toHaveProperty('version')
+  })
+
+  it('stops a typed version at the length the backend accepts', () => {
+    const dialog = openDialog(makeScan())
+
+    expect(dialog.getByLabelText(VERSION_FIELD)).toHaveAttribute('maxlength', '128')
+  })
+
   it('sends a typed version without the whitespace around it', () => {
     expect(markWithVersion(makeScan(), `  ${TYPED_VERSION}  `)).toEqual({
       commit_hash: COMMIT_HASH,
@@ -296,6 +358,14 @@ describe('MarkReleaseButton', () => {
     fireEvent.change(dialog.getByLabelText(ENVIRONMENT_FIELD), { target: { value: typed } })
 
     expect(dialog.getByText(VERSION_LIKE_HINT)).toBeInTheDocument()
+  })
+
+  it('announces the version warning to a screen reader', () => {
+    const dialog = openDialog(makeScan())
+
+    fireEvent.change(dialog.getByLabelText(ENVIRONMENT_FIELD), { target: { value: VERSION_LIKE_ENVIRONMENT } })
+
+    expect(dialog.getByLabelText(ENVIRONMENT_FIELD)).toHaveAccessibleDescription(VERSION_LIKE_HINT)
   })
 
   it.each([PRODUCTION, 'eu-1', 'prod2', 'stage-2'])('does not take %s for a version', (typed) => {

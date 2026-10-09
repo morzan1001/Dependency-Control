@@ -72,6 +72,8 @@ export const POST_PROCESSOR_ANALYZERS = ['epss_kev', 'reachability'] as const;
 // backend/app/core/constants.py.
 export const RELEASE_ENVIRONMENT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 export const DEFAULT_RELEASE_ENVIRONMENT = 'production';
+// Must match `RELEASE_VERSION_MAX_LENGTH` in backend/app/core/constants.py.
+export const RELEASE_VERSION_MAX_LENGTH = 128;
 
 // Per-user notification events. Must match `NOTIFICATION_EVENTS` in
 // backend/app/core/constants.py.
