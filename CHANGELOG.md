@@ -1,3 +1,11 @@
+# Release 1.9.54
+
+## 📦 Build & CI
+
+- chore(release): 1.9.54 suggests release environments and takes a version in the release dialog (#0)
+
+
+
 # Release 1.9.53
 
 ## 🧪 Tests
