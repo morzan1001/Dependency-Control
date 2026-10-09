@@ -28,12 +28,6 @@ Once every pod runs this release:
   db.users.updateMany({ permissions: "user:read" }, { $pull: { permissions: "user:read" } })
   ```
 
-- The admin preset now includes `analyze:adhoc`. Existing admin accounts keep the list stored when they were created, so grant it to them:
-
-  ```js
-  db.users.updateMany({ permissions: "system:manage" }, { $addToSet: { permissions: "analyze:adhoc" } })
-  ```
-
 - Startup no longer creates these indexes: prefixes of wider compounds, and indexes on fields nothing reads. Drop the ones present; the hinted indexes listed in the 1.9.49 notes stay.
 
   ```js
