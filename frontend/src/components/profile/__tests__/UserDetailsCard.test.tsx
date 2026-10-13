@@ -394,6 +394,21 @@ describe('UserDetailsCard', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
 
+  it('shows only why a malformed address was refused, in place of the pending note', async () => {
+    const reason = 'An email address must have an @-sign.'
+    const malformed = { type: 'value_error', loc: ['body', 'email'], msg: `value is not a valid email address: ${reason}` }
+    changeEmail.mockRejectedValue({ response: { status: 422, data: { detail: [malformed] } } })
+    renderCard({ ...LOCAL_USER, pending_email: NEW_EMAIL })
+
+    type('Email', 'lena.corp.com')
+    save()
+
+    expect((await screen.findByRole('alert')).textContent).toBe(reason)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    type('Email', 'lena@corp.co')
+    expect(await screen.findByRole('status')).toHaveTextContent(PENDING_NOTICE)
+  })
+
   it('saves a new name and a new address with one click', async () => {
     updateMe.mockResolvedValue({ ...LOCAL_USER, username: 'lena.k' })
     changeEmail.mockResolvedValue({ ...PENDING_RESULT, username: 'lena.k' })

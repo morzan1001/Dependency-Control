@@ -31,7 +31,9 @@ export function getErrorMessage(error: unknown): string {
     if (Array.isArray(detail)) {
       // A validation entry can reach us without msg; show the raw entry instead of throwing.
       return detail
-        .map((validationErr: ValidationError) => (validationErr.msg ?? JSON.stringify(validationErr)).replace('Value error, ', ''))
+        .map((validationErr: ValidationError) =>
+          (validationErr.msg ?? JSON.stringify(validationErr)).replace(/^(Value error, |value is not a valid email address: )/, ''),
+        )
         .join('\n');
     }
     if (typeof detail === 'string') {

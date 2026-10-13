@@ -137,7 +137,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
                 {emailError && (
                   <p id="email-error" role="alert" className="text-xs text-destructive">{emailError}</p>
                 )}
-                {pendingEmail && (
+                {!emailError && pendingEmail && (
                   <output className="text-xs text-muted-foreground">
                     Open the link sent to <span className="font-medium">{pendingEmail}</span> to confirm the change. Until then, {user?.email} stays your address.
                   </output>

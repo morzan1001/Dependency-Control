@@ -40,6 +40,12 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toBe('Name is required\nEmail is invalid')
   })
 
+  it('strips the "value is not a valid email address: " prefix of a malformed address', () => {
+    const msg = 'value is not a valid email address: An email address must have an @-sign.'
+    const error = { response: { data: { detail: [{ type: 'value_error', loc: ['body', 'email'], msg }] } } }
+    expect(getErrorMessage(error)).toBe('An email address must have an @-sign.')
+  })
+
   it('serializes a validation entry that carries no msg', () => {
     const error = { response: { data: { detail: [{ type: 'missing', loc: ['body', 'name'] }] } } }
     expect(getErrorMessage(error)).toBe('{"type":"missing","loc":["body","name"]}')
