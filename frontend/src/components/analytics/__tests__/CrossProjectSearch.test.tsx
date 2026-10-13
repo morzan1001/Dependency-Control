@@ -121,6 +121,7 @@ describe("CrossProjectSearch later page error", () => {
 
     expect(screen.getByText("lodash-0")).toBeInTheDocument();
     expect(search.mock.calls.map(([, options]) => options?.skip)).toEqual([0, 3]);
+    expect(screen.getByRole("alert")).toHaveTextContent("Failed to load more dependencies");
     expect(screen.getByRole("alert")).toHaveTextContent("Request failed with status code 504");
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));

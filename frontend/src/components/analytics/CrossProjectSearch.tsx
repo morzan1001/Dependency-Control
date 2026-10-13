@@ -377,7 +377,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               </Table>
             </div>
             {nextPageFailed && (
-              <AnalyticsErrorCard title="Failed to load more packages" error={error} onRetry={() => fetchNextPage()} />
+              <AnalyticsErrorCard title="Failed to load more dependencies" error={error} onRetry={() => fetchNextPage()} />
             )}
           </div>
               )
