@@ -61,7 +61,11 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
       profileMutation.mutate(profileChanges, {
         onSuccess: (saved, sent) => {
           setUsername((draft) => (draft.trim() === sent.username ? saved.username : draft));
-          toast.success("Profile updated");
+          if (sent.username !== undefined && isLocalAccount) {
+            toast.success("Profile updated", { description: `You now sign in as ${saved.username}.` });
+          } else {
+            toast.success("Profile updated");
+          }
         },
         onError: (error, sent) => {
           if (!refusesUsername(sent, error)) toast.error("Error", { description: getErrorMessage(error) });
@@ -72,7 +76,11 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
       emailMutation.mutate(nextEmail, {
         onSuccess: (saved, sent) => {
           setEmail((draft) => (draft.trim() === sent ? saved.email : draft));
-          toast.success(saved.email_change === 'changed' ? "Email changed" : "Confirmation link sent");
+          if (saved.email_change === 'changed') {
+            toast.success("Email changed", { description: "The address is not verified." });
+          } else {
+            toast.success("Confirmation link sent");
+          }
         },
         onError: (error) => {
           if (!refusesEmail(error)) toast.error("Error", { description: getErrorMessage(error) });
@@ -81,7 +89,6 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     }
   };
 
-  const sentUsername = profileMutation.variables?.username !== undefined;
   const usernameRefusal =
     profileMutation.isError && refusesUsername(profileMutation.variables, profileMutation.error)
       ? getErrorMessage(profileMutation.error)
@@ -115,11 +122,6 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
             {usernameError && (
               <p id="username-error" role="alert" className="text-xs text-destructive">{usernameError}</p>
             )}
-            {sentUsername && profileMutation.isSuccess && isLocalAccount && (
-              <output className="text-xs text-muted-foreground">
-                You now sign in as {profileMutation.data.username}.
-              </output>
-            )}
           </div>
 
           <div className="grid gap-2">
@@ -144,11 +146,6 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
                 {!emailError && pendingEmail && (
                   <output className="text-xs text-muted-foreground">
                     Open the link sent to <span className="font-medium">{pendingEmail}</span> to confirm the change. Until then, {user?.email} stays your address.
-                  </output>
-                )}
-                {emailMutation.data?.email_change === 'changed' && (
-                  <output className="text-xs text-muted-foreground">
-                    Email changed to {emailMutation.data.email}. The address is not verified.
                   </output>
                 )}
               </>

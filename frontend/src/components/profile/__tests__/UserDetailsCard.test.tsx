@@ -35,6 +35,8 @@ const LOCAL_USER: User = {
 }
 const IDP_USER: User = { ...LOCAL_USER, id: 'u-otto', username: 'otto', email: 'otto@corp.com', auth_provider: 'gitlab' }
 const PENDING_RESULT = { ...LOCAL_USER, pending_email: NEW_EMAIL, email_change: 'pending_confirmation' }
+const RENAMED = ['Profile updated', { description: 'You now sign in as lena.k.' }] as const
+const CHANGED_AT_ONCE = ['Email changed', { description: 'The address is not verified.' }] as const
 
 function renderCard(user: User, notificationChannels = ['slack']) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
@@ -131,18 +133,18 @@ describe('UserDetailsCard', () => {
     expect(updateMe.mock.calls).toEqual([[{ slack_username: null }]])
   })
 
-  it('renames a local account and tells it to sign in with the new name', async () => {
+  it('renames a local account and tells it in the toast to sign in with the new name', async () => {
     updateMe.mockResolvedValue({ ...LOCAL_USER, username: 'lena.k' })
     renderCard(LOCAL_USER)
 
     type('Username', ' lena.k ')
     save()
 
-    expect(await screen.findByRole('status')).toHaveTextContent('You now sign in as lena.k.')
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(...RENAMED))
+    expect(toast.success).toHaveBeenCalledTimes(1)
     expect(updateMe.mock.calls).toEqual([[{ username: 'lena.k' }]])
     expect(screen.getByLabelText('Username')).toHaveValue('lena.k')
-    expect(toast.success).toHaveBeenCalledTimes(1)
-    expect(toast.success).toHaveBeenCalledWith('Profile updated')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
   it('confirms the rename of an identity-provider account without a sign-in note', async () => {
@@ -154,7 +156,6 @@ describe('UserDetailsCard', () => {
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Profile updated'))
     expect(updateMe.mock.calls).toEqual([[{ username: 'otto.k' }]])
-    expect(screen.queryByText(/sign in as/i)).not.toBeInTheDocument()
   })
 
   it('saves a new name and new chat IDs in one request', async () => {
@@ -165,7 +166,7 @@ describe('UserDetailsCard', () => {
     type('Slack Member ID', 'U123')
     save()
 
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Profile updated'))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(...RENAMED))
     expect(updateMe.mock.calls).toEqual([[{ username: 'lena.k', slack_username: 'U123' }]])
   })
 
@@ -239,8 +240,8 @@ describe('UserDetailsCard', () => {
   })
 
   it.each([
-    { field: 'Username', sent: 'lena.k', typed: 'lena.kx', confirmation: 'Profile updated' },
-    { field: 'Email', sent: NEW_EMAIL, typed: 'lena.x@corp.com', confirmation: 'Confirmation link sent' },
+    { field: 'Username', sent: 'lena.k', typed: 'lena.kx', confirmation: RENAMED },
+    { field: 'Email', sent: NEW_EMAIL, typed: 'lena.x@corp.com', confirmation: ['Confirmation link sent'] as const },
   ])('stays busy saving the $field and keeps what is typed meanwhile', async ({ field, sent, typed, confirmation }) => {
     let finish: () => void = () => undefined
     const finished = new Promise<void>((resolve) => (finish = resolve))
@@ -256,7 +257,7 @@ describe('UserDetailsCard', () => {
 
     expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
     finish()
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(confirmation))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(...confirmation))
     expect(screen.getByLabelText(field)).toHaveValue(typed)
   })
 
@@ -361,20 +362,17 @@ describe('UserDetailsCard', () => {
     expect(changeEmail).toHaveBeenCalledTimes(1)
   })
 
-  it('says the address changed and is not verified when no mail server can confirm it', async () => {
+  it('says in the toast that the address changed and is not verified when no mail server can confirm it', async () => {
     changeEmail.mockResolvedValue({ ...LOCAL_USER, email: NEW_EMAIL, is_verified: false, email_change: 'changed' })
     renderCard(LOCAL_USER)
 
     type('Email', NEW_EMAIL)
     save()
 
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      `Email changed to ${NEW_EMAIL}. The address is not verified.`,
-    )
-    expect(screen.getByLabelText('Email')).toHaveValue(NEW_EMAIL)
-    expect(screen.queryByText(/open the link/i)).not.toBeInTheDocument()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(...CHANGED_AT_ONCE))
     expect(toast.success).toHaveBeenCalledTimes(1)
-    expect(toast.success).toHaveBeenCalledWith('Email changed')
+    expect(screen.getByLabelText('Email')).toHaveValue(NEW_EMAIL)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
   it('drops the notice of an earlier pending change once the address changed at once', async () => {
@@ -385,7 +383,7 @@ describe('UserDetailsCard', () => {
     type('Email', changed)
     save()
 
-    expect(await screen.findByText(`Email changed to ${changed}. The address is not verified.`)).toBeInTheDocument()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(...CHANGED_AT_ONCE))
     expect(screen.queryByText(/open the link/i)).not.toBeInTheDocument()
   })
 
@@ -440,14 +438,11 @@ describe('UserDetailsCard', () => {
     save()
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(2))
-    expect(toast.success).toHaveBeenCalledWith('Profile updated')
+    expect(toast.success).toHaveBeenCalledWith(...RENAMED)
     expect(toast.success).toHaveBeenCalledWith('Confirmation link sent')
     expect(updateMe.mock.calls).toEqual([[{ username: 'lena.k' }]])
     expect(changeEmail.mock.calls).toEqual([[NEW_EMAIL]])
-    expect(screen.getAllByRole('status').map((note) => note.textContent)).toEqual([
-      'You now sign in as lena.k.',
-      PENDING_NOTICE,
-    ])
+    expect(screen.getByRole('status')).toHaveTextContent(PENDING_NOTICE)
   })
 
   it('keeps a saved address waiting for its link when the new name is refused', async () => {
@@ -480,10 +475,9 @@ describe('UserDetailsCard', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(REFUSAL)
     expect(screen.getByLabelText('Email')).toHaveAccessibleDescription(REFUSAL)
-    expect(await screen.findByRole('status')).toHaveTextContent('You now sign in as lena.k.')
-    expect(screen.getByLabelText('Email')).toHaveValue(NEW_EMAIL)
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(...RENAMED))
     expect(toast.success).toHaveBeenCalledTimes(1)
-    expect(toast.success).toHaveBeenCalledWith('Profile updated')
+    expect(screen.getByLabelText('Email')).toHaveValue(NEW_EMAIL)
   })
 
   it('confirms a saved chat ID when the new address is refused', async () => {
