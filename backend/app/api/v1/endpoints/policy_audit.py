@@ -19,10 +19,12 @@ from app.api.v1.helpers.responses import (
     RESP_403_404,
     RESP_404,
 )
+from app.api.v1.helpers.users import resolve_usernames
 from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import MAX_POLICY_AUDIT_PAGE, PROJECT_ROLE_ADMIN
 from app.models.crypto_policy import CryptoPolicy
+from app.models.policy_audit_entry import PolicyAuditEntry
 from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
@@ -41,6 +43,11 @@ PruneCutoff = Annotated[
 ]
 
 
+async def _with_actor_names(db: AsyncIOMotorDatabase, entries: list[PolicyAuditEntry]) -> list[dict[str, Any]]:
+    rows = [entry.model_dump(by_alias=True) for entry in entries]
+    return await resolve_usernames(db, rows, "actor_display_name", id_field="actor_user_id")
+
+
 @router.get("/crypto-policies/system/audit", responses=RESP_403)
 async def list_system_audit(
     current_user: SystemManagerDep,
@@ -54,7 +61,7 @@ async def list_system_audit(
         skip=skip,
         limit=limit,
     )
-    return {"entries": [e.model_dump(by_alias=True) for e in entries]}
+    return {"entries": await _with_actor_names(db, entries)}
 
 
 @router.get("/crypto-policies/system/audit/{version}", responses=RESP_403_404)
@@ -71,7 +78,7 @@ async def get_system_audit_entry(
     )
     if entry is None:
         raise HTTPException(status_code=404, detail="Audit entry not found")
-    return entry.model_dump(by_alias=True)
+    return (await _with_actor_names(db, [entry]))[0]
 
 
 @router.post("/crypto-policies/system/revert", responses=RESP_400_403_404)
@@ -123,7 +130,7 @@ async def list_project_audit(
         skip=skip,
         limit=limit,
     )
-    return {"entries": [e.model_dump(by_alias=True) for e in entries]}
+    return {"entries": await _with_actor_names(db, entries)}
 
 
 @router.get("/projects/{project_id}/crypto-policy/audit/{version}", responses=RESP_404)
@@ -142,7 +149,7 @@ async def get_project_audit_entry(
     )
     if entry is None:
         raise HTTPException(status_code=404, detail="Audit entry not found")
-    return entry.model_dump(by_alias=True)
+    return (await _with_actor_names(db, [entry]))[0]
 
 
 @router.post("/projects/{project_id}/crypto-policy/revert", responses=RESP_400_403_404)
@@ -200,7 +207,7 @@ async def list_project_license_audit(
         skip=skip,
         limit=limit,
     )
-    return {"entries": [e.model_dump(by_alias=True) for e in entries]}
+    return {"entries": await _with_actor_names(db, entries)}
 
 
 @router.get("/projects/{project_id}/license-policy/audit/{version}", responses=RESP_404)
@@ -220,7 +227,7 @@ async def get_project_license_audit_entry(
     )
     if entry is None:
         raise HTTPException(status_code=404, detail=f"License-policy version {version} not found")
-    return entry.model_dump(by_alias=True)
+    return (await _with_actor_names(db, [entry]))[0]
 
 
 # revert/prune for license-policy audit omitted: overwriting license settings would need a non-trivial merge with peer analyzer settings.

@@ -7,8 +7,10 @@ import pytest
 import pytest_asyncio
 from fastapi import BackgroundTasks
 
-from app.api.v1.endpoints import invitations, waivers
+from app.api.v1.endpoints import invitations, policy_audit, waivers
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.models.policy_audit_entry import PolicyAuditEntry
+from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.waiver import WaiverCreate, WaiverUpdate
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
@@ -138,3 +140,73 @@ class TestInvitations:
         pending = await invitations.read_system_invitations(db, ADMIN)
 
         assert {i["_id"]: i["invited_by"] for i in pending} == SHOWN
+
+
+# Each entry keeps the actor's name from the time of the change next to the actor's id.
+AUDIT_ACTORS = {3: ("u-ada", "ada"), 2: ("u-gone", "gone.user"), 1: (None, None)}
+AUDIT_SHOWN = [(3, "ada.lovelace"), (2, "gone.user"), (1, None)]
+AUDITED_POLICIES = {
+    "system-crypto": ("system", None, "crypto"),
+    "project-crypto": ("project", PROJECT, "crypto"),
+    "project-license": ("project", PROJECT, "license"),
+}
+LIST_AUDIT = {
+    "system-crypto": lambda db: policy_audit.list_system_audit(ADMIN, db, skip=0, limit=50),
+    "project-crypto": lambda db: policy_audit.list_project_audit(PROJECT, ADMIN, db, skip=0, limit=50),
+    "project-license": lambda db: policy_audit.list_project_license_audit(PROJECT, ADMIN, db, skip=0, limit=50),
+}
+GET_AUDIT = {
+    "system-crypto": lambda db, version: policy_audit.get_system_audit_entry(version, ADMIN, db),
+    "project-crypto": lambda db, version: policy_audit.get_project_audit_entry(PROJECT, version, ADMIN, db),
+    "project-license": lambda db, version: policy_audit.get_project_license_audit_entry(PROJECT, version, ADMIN, db),
+}
+
+
+@pytest_asyncio.fixture
+async def audited(db):
+    for policy_scope, project_id, policy_type in AUDITED_POLICIES.values():
+        for version, (actor_user_id, actor_display_name) in AUDIT_ACTORS.items():
+            entry = PolicyAuditEntry(
+                policy_type=policy_type,
+                policy_scope=policy_scope,
+                project_id=project_id,
+                version=version,
+                action=PolicyAuditAction.SEED if actor_user_id is None else PolicyAuditAction.UPDATE,
+                actor_user_id=actor_user_id,
+                actor_display_name=actor_display_name,
+                timestamp=NOW + timedelta(minutes=version),
+                snapshot={"rules": []},
+                change_summary=f"v{version}",
+            )
+            await db.crypto_policy_history.insert_one(entry.model_dump(by_alias=True))
+    return db
+
+
+class TestPolicyAudit:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("policy", list(LIST_AUDIT))
+    async def test_the_history_names_each_actor_as_they_are_named_now(self, audited, policy):
+        result = await LIST_AUDIT[policy](audited)
+
+        assert [(e["version"], e["actor_display_name"]) for e in result["entries"]] == AUDIT_SHOWN
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("policy", list(GET_AUDIT))
+    async def test_one_entry_names_its_actor_as_they_are_named_now(self, audited, policy):
+        shown = [(version, (await GET_AUDIT[policy](audited, version))["actor_display_name"]) for version in (3, 2, 1)]
+
+        assert shown == AUDIT_SHOWN
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("policy", list(AUDITED_POLICIES))
+    async def test_the_chat_history_names_each_actor_as_they_are_named_now(self, audited, policy):
+        policy_scope, project_id, policy_type = AUDITED_POLICIES[policy]
+        args = {
+            "policy_scope": policy_scope,
+            "policy_type": policy_type,
+            **({"project_id": project_id} if project_id else {}),
+        }
+
+        result = await _tool(audited, "list_policy_audit_entries", **args)
+
+        assert [(e["version"], e["actor_display_name"]) for e in result["entries"]] == AUDIT_SHOWN
