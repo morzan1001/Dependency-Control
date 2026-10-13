@@ -163,6 +163,21 @@ describe("WebhookManager", () => {
     expect(onDelete).not.toHaveBeenCalled();
   });
 
+  it("ends the create dialog in an outline Cancel before Create Webhook and keeps the draft it closes on", () => {
+    const onCreate = vi.fn();
+    render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://example.com/draft" } });
+
+    expect(screen.getByRole("button", { name: "Create Webhook" })).not.toHaveClass("w-full");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+
+    expect(screen.getByLabelText("URL")).toHaveValue("https://example.com/draft");
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
   it("creates one webhook when Create is clicked twice while the first request runs", () => {
     const onCreate = vi.fn(() => new Promise<never>(() => undefined));
     render(<WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onUpdate={vi.fn()} onDelete={vi.fn()} />);
@@ -235,7 +250,7 @@ describe("WebhookManager", () => {
     };
     const urlInput = () => screen.getByLabelText("URL");
     const optOut = () => screen.queryByLabelText(/send the event JSON instead/i);
-    const saveButton = () => screen.getByRole("button", { name: "Save changes" });
+    const saveButton = () => screen.getByRole("button", { name: "Save Changes" });
 
     const saved = async (onUpdate: ReturnType<typeof vi.fn>) => {
       fireEvent.click(saveButton());
@@ -243,7 +258,7 @@ describe("WebhookManager", () => {
       return onUpdate.mock.calls[0];
     };
 
-    it("opens prefilled with the webhook and offers Save only after a change", () => {
+    it("opens prefilled with the webhook and offers Save Changes before anything changed, like the other edit dialogs", () => {
       renderEditor(stored);
 
       expect(urlInput()).toHaveValue("https://example.com/hook");
@@ -252,7 +267,38 @@ describe("WebhookManager", () => {
       expect(screen.getByLabelText(/Vulnerability found/i)).not.toBeChecked();
       expect(screen.getByLabelText(/^Secret/)).toHaveValue("");
       expect(screen.getByRole("switch", { name: "Active" })).toBeChecked();
-      expect(saveButton()).toBeDisabled();
+      expect(saveButton()).toBeEnabled();
+    });
+
+    it("ends in an outline Cancel before Save Changes, like the other edit dialogs", () => {
+      renderEditor(stored);
+
+      expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("border");
+      expect(saveButton()).not.toHaveClass("w-full");
+      expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    });
+
+    it("saves a webhook with nothing changed by resending its active state, and confirms like the other Save buttons", async () => {
+      const onUpdate = renderEditor(stored);
+
+      const [id, data] = await saved(onUpdate);
+
+      expect(id).toBe("w-edit");
+      expect(data).toStrictEqual({ is_active: true });
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Webhook updated"));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    it("closes through Cancel without saving and drops the edits", () => {
+      const onUpdate = renderEditor(stored);
+      fireEvent.change(urlInput(), { target: { value: "https://example.com/abandoned" } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(onUpdate).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Edit webhook" }));
+      expect(urlInput()).toHaveValue("https://example.com/hook");
     });
 
     it.each([
@@ -309,13 +355,14 @@ describe("WebhookManager", () => {
       expect(urlInput()).toHaveValue("https://example.com/hook");
     });
 
-    it("treats an event unticked and ticked again as unchanged", () => {
-      renderEditor(stored);
+    it("treats an event unticked and ticked again as unchanged", async () => {
+      const onUpdate = renderEditor(stored);
 
       fireEvent.click(screen.getByLabelText(/Scan completed/i));
       fireEvent.click(screen.getByLabelText(/Scan completed/i));
+      const [, data] = await saved(onUpdate);
 
-      expect(saveButton()).toBeDisabled();
+      expect(data).toStrictEqual({ is_active: true });
     });
 
     it.each([
@@ -412,7 +459,7 @@ describe("WebhookManager", () => {
       fireEvent.click(screen.getByRole("switch", { name: "Active" }));
       await saved(onUpdate);
 
-      await waitFor(() => expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Save Changes" })).not.toBeInTheDocument());
       expect(toast.success).toHaveBeenCalledWith("Webhook updated");
     });
 

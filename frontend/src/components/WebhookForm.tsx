@@ -3,7 +3,7 @@ import { Webhook, WebhookCreate, WebhookType, WebhookUpdate } from "@/types/webh
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { SecretInput } from "@/components/settings/SecretInput"
@@ -79,6 +79,9 @@ interface WebhookFormState {
   isActive: boolean
 }
 
+const CREATE_LABELS = { title: "Add Webhook", submit: "Create Webhook", pending: "Creating..." }
+const EDIT_LABELS = { title: "Edit Webhook", submit: "Save Changes", pending: "Saving..." }
+
 const EMPTY_FORM: WebhookFormState = {
   url: "",
   events: [],
@@ -145,13 +148,15 @@ export function WebhookForm(props: WebhookFormProps) {
   const [saving, setSaving] = useState(false)
   const patchForm = (patch: Partial<WebhookFormState>) => setForm(prev => ({ ...prev, ...patch }))
   const isTeamsUrl = detectWebhookType(form.url) === "teams"
-  const unchanged = webhook !== undefined && Object.keys(changedFields(webhook, form)).length === 0
+  const labels = webhook ? EDIT_LABELS : CREATE_LABELS
 
   const handleSubmit = async () => {
     setSaving(true)
     try {
       if (props.webhook) {
-        await props.onUpdate(changedFields(props.webhook, form))
+        const changes = changedFields(props.webhook, form)
+        // The server refuses an empty update, so a save with nothing changed resends the unchanged active state.
+        await props.onUpdate(Object.keys(changes).length > 0 ? changes : { is_active: form.isActive })
         toast.success("Webhook updated")
       } else {
         await props.onCreate(createPayload(form))
@@ -180,7 +185,7 @@ export function WebhookForm(props: WebhookFormProps) {
   return (
     <DialogContent>
       <DialogHeader>
-        <DialogTitle>{webhook ? "Edit Webhook" : "Add Webhook"}</DialogTitle>
+        <DialogTitle>{labels.title}</DialogTitle>
       </DialogHeader>
       <div className="space-y-4 py-4">
         {webhook && (
@@ -247,10 +252,15 @@ export function WebhookForm(props: WebhookFormProps) {
             ))}
           </div>
         </div>
-        <Button onClick={handleSubmit} className="w-full" disabled={saving || !form.url || form.events.length === 0 || unchanged}>
-          {webhook ? "Save changes" : "Create Webhook"}
-        </Button>
       </div>
+      <DialogFooter>
+        <DialogClose asChild>
+          <Button type="button" variant="outline">Cancel</Button>
+        </DialogClose>
+        <Button onClick={handleSubmit} disabled={saving || !form.url || form.events.length === 0}>
+          {saving ? labels.pending : labels.submit}
+        </Button>
+      </DialogFooter>
     </DialogContent>
   )
 }
