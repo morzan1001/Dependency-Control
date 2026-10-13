@@ -321,6 +321,16 @@ describe('UserDetailsCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it.each([
+    { user: LOCAL_USER, provider: 'local' },
+    { user: IDP_USER, provider: 'gitlab' },
+  ])('names the read-only authentication provider $provider by its label', ({ user, provider }) => {
+    renderCard(user)
+
+    expect(screen.getByLabelText('Authentication Provider')).toHaveValue(provider)
+    expect(screen.getByLabelText('Authentication Provider')).toBeDisabled()
+  })
+
   it('keeps the email of an identity-provider account read-only', () => {
     renderCard(IDP_USER)
 

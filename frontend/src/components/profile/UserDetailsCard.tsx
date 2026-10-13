@@ -158,12 +158,8 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
           </div>
 
           <div className="grid gap-2">
-            <Label>Authentication Provider</Label>
-            <Input 
-              value={user?.auth_provider || 'local'} 
-              disabled 
-              className="bg-muted capitalize"
-            />
+            <Label htmlFor="auth-provider">Authentication Provider</Label>
+            <Input id="auth-provider" value={user?.auth_provider || 'local'} disabled className="bg-muted capitalize" />
           </div>
           
           {notificationChannels?.includes('slack') && (
