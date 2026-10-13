@@ -134,11 +134,11 @@ export default function AcceptInvite() {
               </div>
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="password">Password</Label>
-                <Input id="password" name="password" type="password" required />
+                <Input id="password" name="password" type="password" autoComplete="new-password" required />
               </div>
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="confirmPassword">Confirm Password</Label>
-                <Input id="confirmPassword" name="confirmPassword" type="password" required />
+                <Input id="confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" required />
               </div>
               {error && (
                 <div role="alert" className="text-sm text-destructive">

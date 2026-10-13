@@ -181,4 +181,11 @@ describe('PasswordUpdateCard', () => {
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  it('lets a password manager offer a new password for both new fields', () => {
+    renderProfile()
+
+    expect(screen.getByLabelText('New Password')).toHaveAttribute('autocomplete', 'new-password')
+    expect(screen.getByLabelText('Confirm New Password')).toHaveAttribute('autocomplete', 'new-password')
+  })
 })

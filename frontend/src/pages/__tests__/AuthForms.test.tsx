@@ -87,3 +87,15 @@ describe('auth page announcements', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Passwords do not match')
   })
 })
+
+describe('auth form autofill', () => {
+  it.each([
+    { name: 'Signup', page: <Signup />, path: '/signup' },
+    { name: 'AcceptInvite', page: <AcceptInvite />, path: '/accept-invite?token=t1' },
+  ])('lets a password manager offer a new password for both fields on $name', ({ page, path }) => {
+    render(<MemoryRouter initialEntries={[path]}>{page}</MemoryRouter>)
+
+    expect(screen.getByLabelText('Password')).toHaveAttribute('autocomplete', 'new-password')
+    expect(screen.getByLabelText('Confirm Password')).toHaveAttribute('autocomplete', 'new-password')
+  })
+})
