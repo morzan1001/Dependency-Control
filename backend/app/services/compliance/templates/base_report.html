@@ -67,7 +67,7 @@
         <td>{{ c.title }}</td>
         <td class="status">{{ c.status }}</td>
         <td class="severity">{{ c.severity }}</td>
-        <td>{{ c.evidence_finding_ids|length + c.evidence_asset_bom_refs|length }}</td>
+        <td>{{ c.evidence_count }}</td>
       </tr>
       {% endfor %}
     </tbody>

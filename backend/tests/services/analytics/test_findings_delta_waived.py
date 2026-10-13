@@ -296,6 +296,17 @@ async def test_a_new_record_carrying_a_waived_entry_is_a_code_difference(db):
 
 
 @pytest.mark.asyncio
+async def test_an_item_names_a_live_cve_rather_than_a_waived_one(db):
+    await db.findings.insert_one(
+        _aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _WAIVED_CVE, "waived": True}, {"id": _LIVE_CVE}])
+    )
+
+    result = await _delta(db)
+
+    assert [item.cve_id for item in result.items] == [_LIVE_CVE]
+
+
+@pytest.mark.asyncio
 async def test_a_second_version_under_one_license_finding_is_a_code_difference(db):
     def license_finding(scan_id: str, version: str) -> dict:
         doc = _finding(_SHARED_FINDING, scan_id, component=_WAIVED_COMPONENT, waived=None)

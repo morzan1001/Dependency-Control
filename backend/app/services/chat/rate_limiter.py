@@ -1,33 +1,25 @@
 """Redis sliding-window rate limiter for chat requests."""
 
-import functools
 import logging
 import time
 
-import redis.asyncio as redis
 from fastapi import HTTPException, status
 
-from app.core.config import settings
+from app.core.cache import CacheService, cache_service
 from app.core.metrics import chat_rate_limited_total
 
 logger = logging.getLogger(__name__)
 
-CHAT_PREFIX = "dc:chat:rl:"
-
-
-@functools.cache
-def _client() -> redis.Redis:
-    return redis.from_url(settings.REDIS_URL)
+CHAT_PREFIX = "chat:rl:"
 
 
 async def rate_limit_retry_after(owner_id: str, *, per_minute: int, per_hour: int) -> int:
     """Seconds until the owner's window admits a request, 0 when it admits this one; a Redis outage admits it."""
-    limiter = ChatRateLimiter(_client())
-    try:
-        allowed, retry_after = await limiter.check_rate_limit(owner_id, per_minute=per_minute, per_hour=per_hour)
-    except redis.RedisError:
+    verdict = await ChatRateLimiter(cache_service).check_rate_limit(owner_id, per_minute=per_minute, per_hour=per_hour)
+    if verdict is None:
         logger.warning("Redis unavailable for chat rate limiting, allowing request")
         return 0
+    allowed, retry_after = verdict
     return 0 if allowed else retry_after
 
 
@@ -75,30 +67,23 @@ redis.call('EXPIRE', KEYS[1], math.floor(window * 2))
 return {1, max_reqs - count - 1}
 """
 
-    def __init__(self, redis_client: redis.Redis):
-        self.redis = redis_client
+    def __init__(self, cache: CacheService):
+        self.cache = cache
 
-    async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int]:
-        """Return (allowed, retry_after_seconds).
+    async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int] | None:
+        """Return (allowed, retry_after_seconds), or None while Redis is unreachable.
 
         The minute window is consumed before the hour window is checked, so an hour-limit
         denial still spends a minute slot — an acceptable asymmetry as the hour limit rarely triggers.
         """
         now = time.time()
         member = f"{user_id}:{now}"
-
-        minute_key = f"{CHAT_PREFIX}{user_id}:minute"
-        result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)
-        allowed, retry_or_remaining = int(result[0]), int(result[1])
-        if not allowed:
-            chat_rate_limited_total.inc()
-            return False, retry_or_remaining
-
-        hour_key = f"{CHAT_PREFIX}{user_id}:hour"
-        result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)
-        allowed, retry_or_remaining = int(result[0]), int(result[1])
-        if not allowed:
-            chat_rate_limited_total.inc()
-            return False, retry_or_remaining
-
+        for window, seconds, limit in (("minute", 60, per_minute), ("hour", 3600, per_hour)):
+            key = f"{CHAT_PREFIX}{user_id}:{window}"
+            result = await self.cache.eval(self._WINDOW_LUA, key, str(now), str(seconds), str(limit), member)
+            if result is None:
+                return None
+            if not int(result[0]):
+                chat_rate_limited_total.inc()
+                return False, int(result[1])
         return True, 0

@@ -3,7 +3,7 @@ import secrets
 from typing import Any
 
 import pymongo
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
@@ -31,6 +31,8 @@ RELEASES_UPSERT_KEY_NAME = "releases_upsert_key"
 RELEASES_UPSERT_KEY_FIELDS: tuple[str, ...] = ("project_id", "environment", "scan_id")
 
 RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
+
+GITLAB_PROJECT_KEY_NAME = "projects_gitlab_key"
 
 # BSON dates are milliseconds, so a date-ordered pick tie-breaks on _id. Each sort is the trailing
 # keys of its index: sorting on anything else turns an indexed seek into a blocking sort.
@@ -135,28 +137,34 @@ TEAM_BINDING_KEY_FIELD = "bindings.key"
 TEAM_BINDING_KEY_PARTIAL_FILTER = {TEAM_BINDING_KEY_FIELD: {MONGO_TYPE: "string"}}
 
 
-async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """The teams keys, including the one that keeps a binding to a single holder."""
-    await database["teams"].create_index("members.user_id")
-    # Guarded so a pre-existing duplicate can't crash startup into CrashLoopBackOff —
-    # the offending key is logged and the index skipped, degrading gracefully.
+async def _create_unique_index(
+    collection: AsyncIOMotorCollection[Any], keys: list[tuple[str, int]], label: str, **options: Any
+) -> None:
+    """Logged and skipped on failure, so a pre-existing duplicate can't crash startup into CrashLoopBackOff."""
     try:
-        await database["teams"].create_index(
-            [(TEAM_BINDING_KEY_FIELD, pymongo.ASCENDING)],
-            unique=True,
-            partialFilterExpression=TEAM_BINDING_KEY_PARTIAL_FILTER,
-        )
+        await collection.create_index(keys, unique=True, **options)
     except pymongo.errors.OperationFailure as exc:
         # Named "response" rather than "details": the Finding.details contract test reads any
         # local of that name as a finding-details access.
         response = exc.details or {}
         logger.exception(
-            "Skipping unique teams %s index, build failed with %s; the key stays unenforced "
+            "Skipping unique %s index, build failed with %s; the key stays unenforced "
             "until it is built. Server response: %s",
-            TEAM_BINDING_KEY_FIELD,
+            label,
             response.get("codeName", type(exc).__name__),
             response or exc,
         )
+
+
+async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
+    """The teams keys, including the one that keeps a binding to a single holder."""
+    await database["teams"].create_index("members.user_id")
+    await _create_unique_index(
+        database["teams"],
+        [(TEAM_BINDING_KEY_FIELD, pymongo.ASCENDING)],
+        f"teams {TEAM_BINDING_KEY_FIELD}",
+        partialFilterExpression=TEAM_BINDING_KEY_PARTIAL_FILTER,
+    )
 
 
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
@@ -237,13 +245,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ]
     )
 
-    # GitLab compound index: project_id must be unique per instance.
-    await database["projects"].create_index(
+    # GitLab compound index: project_id must be unique per instance; "int" would match int32 alone.
+    await _create_unique_index(
+        database["projects"],
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
-        unique=True,
+        GITLAB_PROJECT_KEY_NAME,
+        name=GITLAB_PROJECT_KEY_NAME,
         partialFilterExpression={
             "gitlab_instance_id": {MONGO_TYPE: "string"},
-            "gitlab_project_id": {MONGO_TYPE: "int"},
+            "gitlab_project_id": {MONGO_TYPE: "number"},
         },
     )
     await database["projects"].create_index("gitlab_instance_id")
@@ -356,26 +366,17 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["callgraphs"].create_index("graph_gridfs_id", sparse=True)
     # One callgraph per language per scan. The type filter keeps rows with a null scan_id
-    # (pipeline-only uploads) out of the uniqueness scope. Guarded like the teams index so a
-    # pre-existing duplicate cannot crash startup.
-    try:
-        await database["callgraphs"].create_index(
-            [
-                ("project_id", pymongo.ASCENDING),
-                ("language", pymongo.ASCENDING),
-                ("scan_id", pymongo.ASCENDING),
-            ],
-            unique=True,
-            partialFilterExpression={"scan_id": {MONGO_TYPE: "string"}},
-        )
-    except (pymongo.errors.DuplicateKeyError, pymongo.errors.OperationFailure) as exc:
-        key_info = getattr(exc, "details", None) or str(exc)
-        logger.error(
-            "Skipping unique callgraphs (project_id, language, scan_id) index: build failed "
-            "(likely a pre-existing duplicate). Startup continues without it; reconcile the "
-            "duplicate and re-run. Offending key/error: %s",
-            key_info,
-        )
+    # (pipeline-only uploads) out of the uniqueness scope.
+    await _create_unique_index(
+        database["callgraphs"],
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("language", pymongo.ASCENDING),
+            ("scan_id", pymongo.ASCENDING),
+        ],
+        "callgraphs (project_id, language, scan_id)",
+        partialFilterExpression={"scan_id": {MONGO_TYPE: "string"}},
+    )
 
     # System Invitations
     await database["system_invitations"].create_index("token", unique=True)

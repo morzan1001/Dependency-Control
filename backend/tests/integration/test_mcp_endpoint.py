@@ -4,9 +4,7 @@ The route resolves its caller through the MCP key dependency, so only a request 
 proves the tool surface is behind a key at all.
 """
 
-import fakeredis.aioredis
 import pytest
-import pytest_asyncio
 
 from app.api.v1.endpoints.mcp import MCP_MAX_BATCH_SIZE
 from app.core import metrics
@@ -43,14 +41,11 @@ _INTERNAL_ERROR = -32603
 _BOTH_SURFACES = (Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC)
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def limiter_redis(monkeypatch):
+@pytest.fixture(autouse=True)
+def limiter_cache(fake_cache, monkeypatch):
     """A fresh window store per test, running the limiter's real script."""
-    redis = fakeredis.aioredis.FakeRedis()
-    monkeypatch.setattr(rate_limiter, "_client", lambda: redis)
-    yield redis
-    await redis.flushdb()
-    await redis.aclose()
+    monkeypatch.setattr(rate_limiter, "cache_service", fake_cache)
+    return fake_cache
 
 
 async def _seed_owner(db, permissions):

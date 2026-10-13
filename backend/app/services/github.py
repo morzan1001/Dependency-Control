@@ -23,7 +23,7 @@ from app.core.constants import (
     team_binding_key,
     team_source,
 )
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, quota_lifts_at
 from app.core.log_utils import sanitize_for_log
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
@@ -313,6 +313,8 @@ class GitHubService:
         else:
             # A GHES issuer without a web URL names no API host; its token is sent nowhere.
             self.api_url = None
+        # When the rate limit GitHub last refused with lifts; nothing is sent before then.
+        self.rate_limited_until: datetime | None = None
 
     def _get_cache_key(self, suffix: str) -> str:
         """Generate cache key for this specific instance."""
@@ -323,9 +325,24 @@ class GitHubService:
             raise ValueError(f"No access token configured for GitHub instance '{self.instance.name}'")
         return {"Authorization": f"Bearer {self.instance.access_token}", "Accept": accept}
 
+    async def _note_rate_limit(self, response: httpx.Response) -> None:
+        """Async only because httpx.AsyncClient awaits its event hooks."""
+        if (lifts_at := quota_lifts_at(response)) is not None:
+            self.rate_limited_until = datetime.fromtimestamp(lifts_at, tz=timezone.utc)
+            logger.warning(
+                "GitHub rate-limited the token of instance '%s' until %s; no call goes out before then.",
+                self.instance.name,
+                f"{self.rate_limited_until:%Y-%m-%d %H:%M:%S UTC}",
+            )
+
+    def _rate_limited(self) -> bool:
+        return self.rate_limited_until is not None and datetime.now(timezone.utc) < self.rate_limited_until
+
     @asynccontextmanager
     async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
-        async with InstrumentedAsyncClient("GitHub API", timeout=_GITHUB_API_TIMEOUT) as client:
+        async with InstrumentedAsyncClient(
+            "GitHub API", timeout=_GITHUB_API_TIMEOUT, event_hooks={"response": [self._note_rate_limit]}
+        ) as client:
             yield client
 
     async def _api_request(
@@ -337,7 +354,7 @@ class GitHubService:
         json_data: dict[str, Any] | None = None,
         accept: str = _DEFAULT_ACCEPT,
     ) -> httpx.Response | None:
-        if not self.instance.access_token or self.api_url is None:
+        if not self.instance.access_token or self.api_url is None or self._rate_limited():
             return None
 
         try:
@@ -362,7 +379,7 @@ class GitHubService:
         self, endpoint: str, params: dict[str, Any] | None = None
     ) -> AsyncGenerator[list[dict[str, Any]] | None]:
         """Each page of a paginated GET, then a final None if one failed."""
-        if not self.instance.access_token or self.api_url is None:
+        if not self.instance.access_token or self.api_url is None or self._rate_limited():
             yield None
             return
         headers = self._get_auth_headers()
@@ -623,7 +640,7 @@ class GitHubService:
         """The token's core budget, or None when it cannot be read (GHES answers 404 with rate limiting off).
 
         GitHub does not charge this endpoint against the budget, so it keeps answering 200 while every
-        other call 403s -- which is the only way to tell an exhausted token from an unauthorised one.
+        other call 403s -- which tells an exhausted token from an unauthorised one when the refusal did not.
         """
         response = await self._api_get("/rate_limit")
         if response is None or response.status_code != 200:

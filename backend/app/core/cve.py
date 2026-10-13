@@ -51,6 +51,9 @@ def canonical_cves(details_list: list[Any]) -> list[str]:
 
 
 def display_vulnerability_id(details: Any) -> str | None:
-    """The one id a vulnerability finding is shown under: its first advisory CVE, else its first advisory's id."""
-    ids = canonical_cves([details])
+    """The one id a vulnerability finding is shown under: its first CVE, else its first advisory's id, a waived
+    advisory only once every one is."""
+    entries = (details.get("vulnerabilities") or []) if isinstance(details, dict) else []
+    live = [entry for entry in entries if isinstance(entry, dict) and not entry.get("waived")]
+    ids = canonical_cves([{"vulnerabilities": live or entries}])
     return next((i for i in ids if i.startswith("CVE-")), next(iter(ids), None))

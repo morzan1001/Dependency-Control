@@ -47,8 +47,7 @@ class CsvRenderer:
                     "title": c.title,
                     "status": c.status,
                     "severity": c.severity,
-                    # Evidence may land in either list depending on the evaluator.
-                    "evidence_count": (len(c.evidence_finding_ids) + len(c.evidence_asset_bom_refs)),
+                    "evidence_count": c.evidence_count,
                     "waived": "true" if c.status == ControlStatus.WAIVED else "false",
                     "status_reason": c.status_reason or "",
                     "remediation": c.remediation,
