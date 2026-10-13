@@ -32,6 +32,8 @@ RELEASES_UPSERT_KEY_FIELDS: tuple[str, ...] = ("project_id", "environment", "sca
 
 RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
 
+GITLAB_PROJECT_KEY_NAME = "projects_gitlab_key"
+
 # BSON dates are milliseconds, so a date-ordered pick tie-breaks on _id. Each sort is the trailing
 # keys of its index: sorting on anything else turns an indexed seek into a blocking sort.
 RELEASES_LATEST_SORT: list[tuple[str, int]] = [("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
@@ -243,13 +245,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ]
     )
 
-    # GitLab compound index: project_id must be unique per instance.
-    await database["projects"].create_index(
+    # GitLab compound index: project_id must be unique per instance; "int" would match int32 alone.
+    await _create_unique_index(
+        database["projects"],
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
-        unique=True,
+        GITLAB_PROJECT_KEY_NAME,
+        name=GITLAB_PROJECT_KEY_NAME,
         partialFilterExpression={
             "gitlab_instance_id": {MONGO_TYPE: "string"},
-            "gitlab_project_id": {MONGO_TYPE: "int"},
+            "gitlab_project_id": {MONGO_TYPE: "number"},
         },
     )
     await database["projects"].create_index("gitlab_instance_id")
