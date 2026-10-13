@@ -30,7 +30,7 @@ async function* readSseStream(
 
   while (true) {
     if (signal?.aborted) {
-      reader.cancel();
+      await reader.cancel();
       break;
     }
 

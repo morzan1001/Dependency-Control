@@ -130,3 +130,24 @@ describe('chatApi.sendMessage token refresh (delegates to shared client helper)'
     vi.unstubAllGlobals();
   });
 });
+
+describe('chatApi.sendMessage after the request was aborted', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    localStorage.setItem('token', 'access');
+  });
+
+  it('ends the stream with the abort the caller already handles', async () => {
+    const aborted = new DOMException('This operation was aborted', 'AbortError');
+    // An aborted fetch errors its body, so cancelling the reader rejects with the abort.
+    const body = new ReadableStream<Uint8Array>({ start: (controller) => controller.error(aborted) });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 200 })));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(drain(chatApi.sendMessage('conv-1', 'hi', controller.signal))).rejects.toBe(aborted);
+
+    vi.unstubAllGlobals();
+  });
+});
