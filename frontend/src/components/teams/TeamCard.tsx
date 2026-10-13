@@ -109,7 +109,7 @@ export function TeamCard({
         </div>
       </CardHeader>
       <CardContent className="flex-1">
-        <div className="text-2xl font-bold">{team.members.length} Members</div>
+        <div className="text-2xl font-bold">{team.members.length} Member{team.members.length === 1 ? '' : 's'}</div>
         <p className="text-xs text-muted-foreground mt-1">
           {team.description || "No description"}
         </p>

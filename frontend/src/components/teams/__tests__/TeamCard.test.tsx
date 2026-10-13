@@ -130,3 +130,15 @@ describe("TeamCard actions", () => {
     expect(onDelete).toHaveBeenCalledWith(TEAM.id);
   });
 });
+
+describe("TeamCard member count", () => {
+  it("counts one member in the singular", () => {
+    renderCard();
+    expect(screen.getByText("1 Member")).toBeInTheDocument();
+  });
+
+  it("counts two members in the plural", () => {
+    renderCard(vi.fn(), { ...TEAM, members: [...TEAM.members, { user_id: "u-2", role: "member" }] });
+    expect(screen.getByText("2 Members")).toBeInTheDocument();
+  });
+});
