@@ -74,6 +74,9 @@ _org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str,
     weakref.WeakKeyDictionary()
 )
 
+# Per pod is enough: branch sync, which builds a service per project, runs on one pod under its lock.
+_rate_limit_holds: dict[str, datetime] = {}
+
 
 def split_repo_path(path: str | None) -> tuple[str, str] | None:
     """``owner/repo`` as its two parts, or None unless both are present."""
@@ -313,8 +316,12 @@ class GitHubService:
         else:
             # A GHES issuer without a web URL names no API host; its token is sent nowhere.
             self.api_url = None
-        # When the rate limit GitHub last refused with lifts; nothing is sent before then.
-        self.rate_limited_until: datetime | None = None
+
+    @property
+    def rate_limited_until(self) -> datetime | None:
+        """When the rate limit GitHub refused this instance's token with lifts; None once it has."""
+        lifts_at = _rate_limit_holds.get(self._instance_id)
+        return lifts_at if lifts_at is not None and datetime.now(timezone.utc) < lifts_at else None
 
     def _get_cache_key(self, suffix: str) -> str:
         """Generate cache key for this specific instance."""
@@ -327,16 +334,20 @@ class GitHubService:
 
     async def _note_rate_limit(self, response: httpx.Response) -> None:
         """Async only because httpx.AsyncClient awaits its event hooks."""
-        if (lifts_at := quota_lifts_at(response)) is not None:
-            self.rate_limited_until = datetime.fromtimestamp(lifts_at, tz=timezone.utc)
-            logger.warning(
-                "GitHub rate-limited the token of instance '%s' until %s; no call goes out before then.",
-                self.instance.name,
-                f"{self.rate_limited_until:%Y-%m-%d %H:%M:%S UTC}",
-            )
+        if (lifts_at := quota_lifts_at(response)) is None:
+            return
+        refused_until = datetime.fromtimestamp(lifts_at, tz=timezone.utc)
+        # Requests already in flight answer in any order; the later lift is the one still in force.
+        until = max(refused_until, _rate_limit_holds.get(self._instance_id, refused_until))
+        _rate_limit_holds[self._instance_id] = until
+        logger.warning(
+            "GitHub rate-limited the token of instance '%s' until %s; no call goes out before then.",
+            self.instance.name,
+            f"{until:%Y-%m-%d %H:%M:%S UTC}",
+        )
 
     def _rate_limited(self) -> bool:
-        return self.rate_limited_until is not None and datetime.now(timezone.utc) < self.rate_limited_until
+        return self.rate_limited_until is not None
 
     @asynccontextmanager
     async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:

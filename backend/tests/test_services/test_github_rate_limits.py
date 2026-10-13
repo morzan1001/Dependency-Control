@@ -81,3 +81,39 @@ async def test_nothing_is_sent_before_the_retry_after_has_run(monkeypatch):
     assert await service.count_org_teams("acme") is None
     assert await service.get_current_user_id() is None
     assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_every_service_of_the_instance_waits_out_the_retry_after(monkeypatch):
+    """Branch sync builds a service per project, so a hold one service kept to itself would not stop the next."""
+    seen = _serve(monkeypatch, httpx.Response(429, headers={"Retry-After": "60"}, json=_SECONDARY_LIMIT))
+
+    await _service().get_viewer_organisations()
+
+    assert await _service().list_branches("acme", "api") is None
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_shorter_refusal_does_not_cut_a_longer_hold_short():
+    """Requests already in flight when the quota ran out answer in any order."""
+    reset = int(time.time()) + 600
+    spent, throttled = _service(), _service()
+
+    await spent._note_rate_limit(
+        httpx.Response(403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(reset)})
+    )
+    await throttled._note_rate_limit(httpx.Response(429, headers={"Retry-After": "60"}))
+
+    assert spent.rate_limited_until == datetime.fromtimestamp(reset, tz=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_a_hold_whose_time_has_passed_is_no_rate_limit(monkeypatch):
+    """A connection test long after the refusal must not still blame the rate limit."""
+    _serve(monkeypatch, httpx.Response(429, headers={"Retry-After": "0"}, json=_SECONDARY_LIMIT))
+    service = _service()
+
+    await service.get_viewer_organisations()
+
+    assert service.rate_limited_until is None

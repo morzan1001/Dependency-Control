@@ -73,6 +73,16 @@ def _isolate_analytics_cache():
     get_delta_cache().clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_github_rate_limit_holds():
+    """A rate-limit hold lasts per process and instance id, and the tests share both."""
+    from app.services.github import _rate_limit_holds
+
+    _rate_limit_holds.clear()
+    yield
+    _rate_limit_holds.clear()
+
+
 @pytest.fixture
 def db():
     return FakeDatabase()
