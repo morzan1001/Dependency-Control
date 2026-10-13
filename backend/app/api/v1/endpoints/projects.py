@@ -1384,7 +1384,7 @@ async def export_project_sbom(
     # The spool's file I/O and DEFLATE run in worker threads, so a large export leaves the event loop free.
     with ExitStack() as close_on_error:
         spool = close_on_error.enter_context(
-            await asyncio.to_thread(SpooledTemporaryFile, max_size=_EXPORT_SPOOL_MAX_MEMORY)
+            SpooledTemporaryFile(max_size=_EXPORT_SPOOL_MAX_MEMORY)  # NOSONAR the constructor allocates memory only
         )
         with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED) as archive:
             for index, ref in enumerate(scan.sbom_refs):
