@@ -25,9 +25,10 @@ import { Shield, User as UserIcon, Eye, X } from 'lucide-react';
 interface UserPermissionsDialogProps {
   user: User | null;
   onOpenChange: (open: boolean) => void;
+  onUserUpdated?: (user: User) => void;
 }
 
-export function UserPermissionsDialog({ user, onOpenChange }: Readonly<UserPermissionsDialogProps>) {
+export function UserPermissionsDialog({ user, onOpenChange, onUserUpdated }: Readonly<UserPermissionsDialogProps>) {
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user?.permissions || []);
 
   const updateUserMutation = useUpdateUser();
@@ -70,7 +71,8 @@ export function UserPermissionsDialog({ user, onOpenChange }: Readonly<UserPermi
       id: user.id,
       data: { permissions: selectedPermissions }
     }, {
-      onSuccess: () => {
+      onSuccess: (updated) => {
+        onUserUpdated?.(updated);
         toast.success("Success", {
           description: "User permissions updated successfully.",
         });

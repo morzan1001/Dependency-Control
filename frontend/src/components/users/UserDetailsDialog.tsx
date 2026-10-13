@@ -58,9 +58,10 @@ interface UserDetailsDialogProps {
   user: User | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onUserUpdated?: (user: User) => void;
 }
 
-export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDetailsDialogProps>) {
+export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: Readonly<UserDetailsDialogProps>) {
   const { hasPermission } = useAuth();
 
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
@@ -79,7 +80,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleUpdate = (id: string, data: UserUpdate) => {
     updateUserMutation.mutate({ id, data }, {
-        onSuccess: () => {
+        onSuccess: (updated) => {
+             onUserUpdated?.(updated);
              toast.success("Success", { description: "User updated successfully." });
         },
         onError: (error) => {
@@ -90,7 +92,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleMigrate = (userId: string) => {
       migrateUserMutation.mutate(userId, {
-          onSuccess: () => {
+          onSuccess: (migrated) => {
+              onUserUpdated?.(migrated);
               toast.success("User Migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
           },
           onError: (error) => {
@@ -116,7 +119,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleDisable2FA = (userId: string) => {
       disable2FAMutation.mutate(userId, {
-          onSuccess: () => {
+          onSuccess: (updated) => {
+              onUserUpdated?.(updated);
               toast.success("2FA Disabled", { description: "Two-Factor Authentication has been disabled for this user." });
           },
           onError: (error) => {
@@ -366,7 +370,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
       </Dialog>
 
       {isPermissionDialogOpen && (
-        <UserPermissionsDialog user={user} onOpenChange={setIsPermissionDialogOpen} />
+        <UserPermissionsDialog user={user} onOpenChange={setIsPermissionDialogOpen} onUserUpdated={onUserUpdated} />
       )}
     </>
   );
