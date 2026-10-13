@@ -40,16 +40,62 @@ describe('UserDetailsCard', () => {
     vi.clearAllMocks()
   })
 
-  it('shows the username read-only and saves the profile without identity fields', async () => {
+  it('saves the notification identities without the username', async () => {
     updateMe.mockResolvedValue(LOCAL_USER)
     renderCard(LOCAL_USER)
 
-    expect(screen.getByLabelText('Username')).toBeDisabled()
     fireEvent.change(screen.getByLabelText('Slack Member ID'), { target: { value: 'U123' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(updateMe).toHaveBeenCalledTimes(1))
     expect(updateMe.mock.calls[0][0]).toEqual({ slack_username: 'U123', mattermost_username: null })
+  })
+
+  it('renames a local account and tells it to sign in with the new name', async () => {
+    updateMe.mockResolvedValue({ ...LOCAL_USER, username: 'lena.k' })
+    renderCard(LOCAL_USER)
+    const save = screen.getByRole('button', { name: 'Save username' })
+
+    expect(save).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: ' lena.k ' } })
+    fireEvent.click(save)
+
+    await waitFor(() => expect(updateMe).toHaveBeenCalledTimes(1))
+    expect(updateMe.mock.calls[0][0]).toEqual({ username: 'lena.k' })
+    expect(await screen.findByRole('status')).toHaveTextContent('You now sign in as lena.k.')
+  })
+
+  it('confirms the rename of an identity-provider account without a sign-in note', async () => {
+    updateMe.mockResolvedValue({ ...IDP_USER, username: 'otto.k' })
+    renderCard(IDP_USER)
+
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'otto.k' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save username' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Username changed.')
+    expect(screen.queryByText(/sign in as/i)).not.toBeInTheDocument()
+  })
+
+  it('shows under the field why a new name was refused', async () => {
+    updateMe.mockRejectedValue({ response: { data: { detail: 'Username already taken' } } })
+    renderCard(LOCAL_USER)
+
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'otto' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save username' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Username already taken')
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'otto2' } })
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('offers no save while the name is unchanged or blank', () => {
+    renderCard(LOCAL_USER)
+    const save = screen.getByRole('button', { name: 'Save username' })
+
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: ' lena ' } })
+    expect(save).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: '   ' } })
+    expect(save).toBeDisabled()
   })
 
   it('removes a stored Slack member ID when the field is emptied', async () => {

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { UsernameForm } from '@/components/users/UsernameForm';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
@@ -88,6 +89,13 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     }
   });
 
+  const renameMutation = useMutation({
+    mutationFn: (username: string) => userApi.updateMe({ username }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+    },
+  });
+
   const handleProfileUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     updateProfileMutation.mutate();
@@ -102,10 +110,21 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
         <CardDescription>Your account information</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-2">
-          <Label htmlFor="username">Username</Label>
-          <Input id="username" value={user?.username || ''} disabled className="bg-muted" />
-        </div>
+        <UsernameForm
+          username={user?.username || ''}
+          isPending={renameMutation.isPending}
+          onSave={(username) => renameMutation.mutate(username)}
+          onEdit={renameMutation.reset}
+        >
+          {renameMutation.isError && (
+            <p role="alert" className="text-xs text-destructive">{getErrorMessage(renameMutation.error)}</p>
+          )}
+          {renameMutation.isSuccess && (
+            <p role="status" className="text-xs text-muted-foreground">
+              {isLocalAccount ? `You now sign in as ${renameMutation.data.username}.` : 'Username changed.'}
+            </p>
+          )}
+        </UsernameForm>
         <div className="grid gap-2">
           <Label htmlFor="email">Email</Label>
           <Input id="email" type="email" value={user?.email || ''} disabled className="bg-muted" />

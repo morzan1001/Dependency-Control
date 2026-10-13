@@ -23,11 +23,13 @@ export interface UserCreate {
 }
 
 export interface UserUpdate {
+  username?: string;
   permissions?: string[];
   is_active?: boolean;
 }
 
 export interface UserUpdateMe {
+  username?: string;
   slack_username?: string | null;
   mattermost_username?: string | null;
   notification_preferences?: Record<string, string[]>;

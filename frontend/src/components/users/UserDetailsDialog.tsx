@@ -23,6 +23,7 @@ import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
+import { UsernameForm } from './UsernameForm';
 
 interface AsyncListSectionProps {
   isLoading: boolean;
@@ -149,6 +150,9 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
   };
 
   const canUpdateUser = hasPermission('user:update');
+  // Mirrors the server: a caller manages only accounts whose every permission they hold, unless system:manage.
+  const canRenameUser =
+    canUpdateUser && !!user && (hasPermission('system:manage') || user.permissions.every((p) => hasPermission(p)));
   const userProjects = user ? getUserProjects(user.id) : [];
   const userTeams = user ? getUserTeams(user.id) : [];
   const isLocalAuth = user?.auth_provider === 'local';
@@ -164,6 +168,21 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
           {user && (
             <div className="grid gap-6 py-4">
               <div className="grid grid-cols-2 gap-4">
+                <div>
+                  {canRenameUser ? (
+                    <UsernameForm
+                      key={user.username}
+                      username={user.username}
+                      isPending={updateUserMutation.isPending}
+                      onSave={(username) => handleUpdate(user.id, { username })}
+                    />
+                  ) : (
+                    <>
+                      <Label>Username</Label>
+                      <div className="text-sm font-medium">{user.username}</div>
+                    </>
+                  )}
+                </div>
                 <div>
                   <Label>Email</Label>
                   <div className="text-sm font-medium">{user.email}</div>
