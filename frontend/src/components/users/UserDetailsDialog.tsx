@@ -23,7 +23,7 @@ import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
-import { InlineFieldForm } from './InlineFieldForm';
+import { RenameUserDialog } from './RenameUserDialog';
 
 interface AsyncListSectionProps {
   isLoading: boolean;
@@ -65,6 +65,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
   const { hasPermission } = useAuth();
 
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
 
   // Fetch all projects (paged) so membership isn't truncated in large orgs.
   const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown({ enabled: open });
@@ -173,20 +174,20 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
             <div className="grid gap-6 py-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  {canRenameUser ? (
-                    <InlineFieldForm
-                      key={user.username}
-                      label="Username"
-                      value={user.username}
-                      isPending={updateUserMutation.isPending}
-                      onSave={(username) => handleUpdate(user.id, { username })}
-                    />
-                  ) : (
-                    <>
-                      <Label>Username</Label>
-                      <div className="text-sm font-medium">{user.username}</div>
-                    </>
-                  )}
+                  <Label>Username</Label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{user.username}</span>
+                    {canRenameUser && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs ml-2"
+                        onClick={() => setIsRenameDialogOpen(true)}
+                      >
+                        Rename
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label>Email</Label>
@@ -371,6 +372,10 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
 
       {isPermissionDialogOpen && (
         <UserPermissionsDialog user={user} onOpenChange={setIsPermissionDialogOpen} onUserUpdated={onUserUpdated} />
+      )}
+
+      {isRenameDialogOpen && user && (
+        <RenameUserDialog user={user} onOpenChange={setIsRenameDialogOpen} onUserUpdated={onUserUpdated} />
       )}
     </>
   );

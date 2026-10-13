@@ -47,8 +47,10 @@ async function renameLenaOffThePage(user: User) {
   vi.mocked(userApi.getAll).mockResolvedValueOnce([user]).mockResolvedValue([])
   vi.mocked(userApi.update).mockResolvedValueOnce({ ...user, username: 'zoe' })
   await openLena()
-  fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'zoe' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save username' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
+  const rename = screen.getByRole('dialog', { name: 'Rename lena' })
+  fireEvent.change(within(rename).getByLabelText('Username'), { target: { value: 'zoe' } })
+  fireEvent.click(within(rename).getByRole('button', { name: 'Save Changes' }))
   return screen.findByRole('dialog', { name: 'User Details: zoe' })
 }
 
