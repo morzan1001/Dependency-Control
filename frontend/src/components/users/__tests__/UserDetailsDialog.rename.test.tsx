@@ -87,6 +87,18 @@ describe('UserDetailsDialog - username', () => {
     expect(save).toBeEnabled()
   })
 
+  it.each(['', '   '])('offers no save for the blank name %j', (blank) => {
+    auth.granted = MANAGER
+    renderDialog()
+    const { field, save } = openRename()
+
+    fireEvent.change(field, { target: { value: blank } })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('drops the typed name when the rename is cancelled', () => {
     auth.granted = MANAGER
     renderDialog()

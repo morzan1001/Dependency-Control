@@ -200,12 +200,19 @@ describe('UserDetailsCard', () => {
     expect(await screen.findByRole('button', { name: 'Save Changes' })).toBeInTheDocument()
   })
 
-  it('offers no save while the name is unchanged and sends no blank name', async () => {
+  it('offers no save while the name is unchanged', () => {
     renderCard(LOCAL_USER)
 
     type('Username', ' lena ')
+
     expect(saveButton()).toBeDisabled()
-    type('Username', '')
+  })
+
+  it.each(['', '   '])('offers no save for the blank name %j', async (blank) => {
+    renderCard(LOCAL_USER)
+
+    type('Username', blank)
+    expect(saveButton()).toBeDisabled()
     save()
     await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 

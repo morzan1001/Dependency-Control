@@ -69,7 +69,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={updateUserMutation.isPending || nextUsername === user.username}>
+            <Button type="submit" disabled={updateUserMutation.isPending || !nextUsername || nextUsername === user.username}>
               {updateUserMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
