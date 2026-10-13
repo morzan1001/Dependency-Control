@@ -39,7 +39,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
     }, {
       onSuccess: (updated) => {
         onUserUpdated?.(updated);
-        toast.success("Username updated");
+        if (updated.username !== user.username) toast.success("Username updated");
         onOpenChange(false);
       },
       onError: (error, { data }) => {

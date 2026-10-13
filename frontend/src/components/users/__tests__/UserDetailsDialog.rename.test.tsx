@@ -79,7 +79,7 @@ describe('UserDetailsDialog - username', () => {
     expect(toast.success).toHaveBeenCalledWith('Username updated')
   })
 
-  it('saves the name as it stands, like the other edits', async () => {
+  it('saves the name as it stands, like the other edits, and claims no update', async () => {
     auth.granted = MANAGER
     update.mockResolvedValue(TARGET)
     const onUserUpdated = renderDialog()
@@ -91,6 +91,7 @@ describe('UserDetailsDialog - username', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename target' })).not.toBeInTheDocument())
     expect(update.mock.calls).toEqual([['u-target', { username: 'target' }]])
     expect(onUserUpdated).toHaveBeenCalledWith(TARGET)
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it.each(['', '   '])('offers no save for the blank name %j', (blank) => {
