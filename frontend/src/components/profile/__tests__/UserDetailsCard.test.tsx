@@ -6,15 +6,17 @@ import type { User } from '@/types/user'
 
 import { UserDetailsCard } from '../UserDetailsCard'
 
-const { updateMe, requestEmailChange } = vi.hoisted(() => ({
+const { updateMe, changeEmail } = vi.hoisted(() => ({
   updateMe: vi.fn(),
-  requestEmailChange: vi.fn(),
+  changeEmail: vi.fn(),
 }))
 
-vi.mock('@/api/users', () => ({ userApi: { updateMe, requestEmailChange } }))
+vi.mock('@/api/users', () => ({ userApi: { updateMe, changeEmail } }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const NEW_EMAIL = 'lena.new@corp.com'
+const PENDING_NOTICE = `Open the link sent to ${NEW_EMAIL} to confirm the change. Until then, lena@corp.com stays your address.`
+const REFUSAL = 'Email verification is required, but no mail server is configured to confirm a new address'
 const LOCAL_USER: User = {
   id: 'u-lena',
   username: 'lena',
@@ -114,33 +116,71 @@ describe('UserDetailsCard', () => {
 
     expect(screen.getByLabelText('Email')).toBeDisabled()
     expect(screen.getByText('Managed by your identity provider.')).toBeInTheDocument()
-    expect(screen.queryByLabelText('New email')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save email' })).not.toBeInTheDocument()
   })
 
-  it('sends a confirmation link to the new address of a local account', async () => {
-    requestEmailChange.mockResolvedValue({ ...LOCAL_USER, pending_email: NEW_EMAIL })
+  it('asks a local account to confirm the new address through the link mailed to it', async () => {
+    changeEmail.mockResolvedValue({ ...LOCAL_USER, pending_email: NEW_EMAIL, email_change: 'pending_confirmation' })
+    renderCard(LOCAL_USER)
+    const save = screen.getByRole('button', { name: 'Save email' })
+
+    expect(save).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: NEW_EMAIL } })
+    fireEvent.click(save)
+
+    await waitFor(() => expect(changeEmail).toHaveBeenCalledTimes(1))
+    expect(changeEmail.mock.calls[0][0]).toBe(NEW_EMAIL)
+    expect(await screen.findByRole('status')).toHaveTextContent(PENDING_NOTICE)
+    expect(updateMe).not.toHaveBeenCalled()
+  })
+
+  it('says the address changed and is not verified when no mail server can confirm it', async () => {
+    changeEmail.mockResolvedValue({ ...LOCAL_USER, email: NEW_EMAIL, is_verified: false, email_change: 'changed' })
     renderCard(LOCAL_USER)
 
-    expect(screen.getByLabelText('Email')).toBeDisabled()
-    fireEvent.change(screen.getByLabelText('New email'), { target: { value: NEW_EMAIL } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send confirmation link' }))
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: NEW_EMAIL } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save email' }))
 
-    await waitFor(() => expect(requestEmailChange).toHaveBeenCalledTimes(1))
-    expect(requestEmailChange.mock.calls[0][0]).toBe(NEW_EMAIL)
-    expect(updateMe).not.toHaveBeenCalled()
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      `Email changed to ${NEW_EMAIL}. The address is not verified.`,
+    )
+    expect(screen.queryByText(/open the link/i)).not.toBeInTheDocument()
+  })
+
+  it('drops the notice of an earlier pending change once the address changed at once', async () => {
+    const changed = 'lena.k@corp.com'
+    changeEmail.mockResolvedValue({ ...LOCAL_USER, email: changed, pending_email: null, email_change: 'changed' })
+    renderCard({ ...LOCAL_USER, pending_email: NEW_EMAIL })
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: changed } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save email' }))
+
+    expect(await screen.findByText(`Email changed to ${changed}. The address is not verified.`)).toBeInTheDocument()
+    expect(screen.queryByText(/open the link/i)).not.toBeInTheDocument()
+  })
+
+  it('shows under the field why a new address was refused', async () => {
+    changeEmail.mockRejectedValue({ response: { data: { detail: REFUSAL } } })
+    renderCard(LOCAL_USER)
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: NEW_EMAIL } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save email' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(REFUSAL)
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'lena.other@corp.com' } })
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
 
   it('shows a pending change while the current address stays in place', () => {
     renderCard({ ...LOCAL_USER, pending_email: NEW_EMAIL })
 
     expect(screen.getByLabelText('Email')).toHaveValue('lena@corp.com')
-    expect(screen.getByText(NEW_EMAIL)).toBeInTheDocument()
-    expect(screen.getByText(/waiting for confirmation/i)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(PENDING_NOTICE)
   })
 
   it('offers no pending notice when nothing is pending', () => {
     renderCard(LOCAL_USER)
 
-    expect(screen.queryByText(/waiting for confirmation/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/open the link/i)).not.toBeInTheDocument()
   })
 })

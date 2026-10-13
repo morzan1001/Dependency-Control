@@ -17,55 +17,6 @@ interface UserDetailsCardProps {
   notificationChannels: string[] | undefined;
 }
 
-function EmailChangeForm({ pendingEmail }: Readonly<{ pendingEmail: string | null | undefined }>) {
-  const queryClient = useQueryClient();
-  const [newEmail, setNewEmail] = useState('');
-
-  const requestMutation = useMutation({
-    mutationFn: () => userApi.requestEmailChange(newEmail),
-    onSuccess: (updated) => {
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      setNewEmail('');
-      toast.success("Confirmation link sent", {
-        description: `Open the link sent to ${updated.pending_email} to finish the change.`,
-      });
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
-    }
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    requestMutation.mutate();
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="grid gap-2">
-      {pendingEmail && (
-        <p className="text-xs text-muted-foreground">
-          Waiting for confirmation of <span className="font-medium">{pendingEmail}</span>. Open the link sent there to finish the change.
-        </p>
-      )}
-      <Label htmlFor="new-email">New email</Label>
-      <div className="flex gap-2">
-        <Input
-          id="new-email"
-          type="email"
-          value={newEmail}
-          onChange={(e) => setNewEmail(e.target.value)}
-          required
-        />
-        <Button type="submit" variant="outline" disabled={requestMutation.isPending || !newEmail}>
-          {requestMutation.isPending ? 'Sending...' : 'Send confirmation link'}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
 export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDetailsCardProps>) {
   const queryClient = useQueryClient();
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
@@ -96,12 +47,20 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     },
   });
 
+  const emailMutation = useMutation({
+    mutationFn: (email: string) => userApi.changeEmail(email),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+    },
+  });
+
   const handleProfileUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     updateProfileMutation.mutate();
   };
 
   const isLocalAccount = (user?.auth_provider || 'local') === 'local';
+  const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
 
   return (
     <Card>
@@ -126,14 +85,36 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
             </p>
           )}
         </InlineFieldForm>
-        <div className="grid gap-2">
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" value={user?.email || ''} disabled className="bg-muted" />
-          {!isLocalAccount && (
+        {isLocalAccount ? (
+          <InlineFieldForm
+            label="Email"
+            type="email"
+            value={user?.email || ''}
+            isPending={emailMutation.isPending}
+            onSave={(email) => emailMutation.mutate(email)}
+            onEdit={emailMutation.reset}
+          >
+            {emailMutation.isError && (
+              <p role="alert" className="text-xs text-destructive">{getErrorMessage(emailMutation.error)}</p>
+            )}
+            {pendingEmail && (
+              <p role="status" className="text-xs text-muted-foreground">
+                Open the link sent to <span className="font-medium">{pendingEmail}</span> to confirm the change. Until then, {user?.email} stays your address.
+              </p>
+            )}
+            {emailMutation.data?.email_change === 'changed' && (
+              <p role="status" className="text-xs text-muted-foreground">
+                Email changed to {emailMutation.data.email}. The address is not verified.
+              </p>
+            )}
+          </InlineFieldForm>
+        ) : (
+          <div className="grid gap-2">
+            <Label htmlFor="email">Email</Label>
+            <Input id="email" type="email" value={user?.email || ''} disabled className="bg-muted" />
             <p className="text-xs text-muted-foreground">Managed by your identity provider.</p>
-          )}
-        </div>
-        {isLocalAccount && <EmailChangeForm pendingEmail={user?.pending_email} />}
+          </div>
+        )}
 
         <form onSubmit={handleProfileUpdate} className="space-y-4">
           <div className="grid gap-2">

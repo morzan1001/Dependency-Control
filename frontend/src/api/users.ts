@@ -1,5 +1,5 @@
 import { api, buildQueryParams } from '@/api/client';
-import { User, UserUpdate, UserUpdateMe, SystemInvitation } from '@/types/user';
+import { EmailChangeResult, User, UserUpdate, UserUpdateMe, SystemInvitation } from '@/types/user';
 
 export const userApi = {
   getAll: async (skip = 0, limit = 20, search?: string, sortBy = 'username', sortOrder = 'asc'): Promise<User[]> => {
@@ -24,8 +24,8 @@ export const userApi = {
     return response.data;
   },
 
-  requestEmailChange: async (email: string): Promise<User> => {
-    const response = await api.post<User>('/users/me/email', { email });
+  changeEmail: async (email: string): Promise<EmailChangeResult> => {
+    const response = await api.post<EmailChangeResult>('/users/me/email', { email });
     return response.data;
   },
 

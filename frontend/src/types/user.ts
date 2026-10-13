@@ -14,6 +14,10 @@ export interface User {
   status?: 'active' | 'invited';
 }
 
+export interface EmailChangeResult extends User {
+  email_change: 'pending_confirmation' | 'changed';
+}
+
 export interface UserCreate {
   username: string;
   email: string;
