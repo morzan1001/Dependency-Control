@@ -40,23 +40,28 @@ function sendInvitation(email = 'new@test.com') {
 
 async function inviteAndCopyLink() {
   sendInvitation()
-  fireEvent.click(await screen.findByRole('button', { name: 'Copy Link' }))
+  const copy = await screen.findByRole('button', { name: 'Copy invitation link' })
+  fireEvent.click(copy)
+  return copy
 }
 
 describe('InviteUserDialog copy link', () => {
-  it('confirms the copy once the clipboard holds the link', async () => {
+  it('shows the link in a read-only field, like the project API keys, and marks the button once the clipboard holds it', async () => {
     writeText.mockResolvedValue(undefined)
 
-    await inviteAndCopyLink()
+    const copy = await inviteAndCopyLink()
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Invitation link copied to clipboard'))
     expect(writeText.mock.calls).toEqual([[INVITE_LINK]])
+    expect(copy.querySelector('.lucide-check')).toBeInTheDocument()
+    expect(screen.getByDisplayValue(INVITE_LINK)).toHaveAttribute('readonly')
+    expect(screen.queryByRole('button', { name: 'Copy Link' })).not.toBeInTheDocument()
   })
 
-  it('tells the admin to copy the link by hand when the clipboard refuses', async () => {
+  it('tells the admin to copy the link by hand and leaves the button unmarked when the clipboard refuses', async () => {
     writeText.mockRejectedValue(new Error('denied'))
 
-    await inviteAndCopyLink()
+    const copy = await inviteAndCopyLink()
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Could not reach the clipboard', {
@@ -64,7 +69,8 @@ describe('InviteUserDialog copy link', () => {
       }),
     )
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
-    expect(screen.getByText(INVITE_LINK)).toBeInTheDocument()
+    expect(copy.querySelector('.lucide-check')).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue(INVITE_LINK)).toBeInTheDocument()
   })
 })
 
@@ -80,7 +86,7 @@ describe('InviteUserDialog footer', () => {
     expect(screen.getByLabelText('Email')).toHaveValue('')
   })
 
-  it('closes the link with Close beside Copy Link and opens again on the form', async () => {
+  it('closes the link with the footer Close and opens again on the form', async () => {
     writeText.mockResolvedValue(undefined)
     await inviteAndCopyLink()
 
@@ -88,7 +94,7 @@ describe('InviteUserDialog footer', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Invite User/ }))
 
-    expect(screen.queryByText(INVITE_LINK)).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue(INVITE_LINK)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Send Invitation' })).toBeInTheDocument()
   })
 })

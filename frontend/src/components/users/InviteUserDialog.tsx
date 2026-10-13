@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { refusesEmail, useInviteUser } from '@/hooks/queries/use-users';
 import { useAppConfig } from '@/hooks/queries/use-system';
-import { copyWithToast } from '@/hooks/use-copy-to-clipboard';
 import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { CopyField } from '@/components/ui/copy-field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Mail } from 'lucide-react';
@@ -85,19 +85,14 @@ export function InviteUserDialog() {
         </DialogHeader>
         
         {inviteLink ? (
-          <div className="space-y-4">
-            <div className="p-4 bg-muted rounded-md break-all text-sm font-mono">
-              {inviteLink}
-            </div>
+          <>
+            <CopyField value={inviteLink} what="invitation link" />
             <DialogFooter>
-              <Button variant="outline" onClick={() => void copyWithToast(inviteLink, 'invitation link')}>
-                Copy Link
-              </Button>
               <DialogClose asChild>
                 <Button>Close</Button>
               </DialogClose>
             </DialogFooter>
-          </div>
+          </>
         ) : (
           <form onSubmit={handleInviteUser} className="space-y-4" noValidate>
             <div className="grid gap-2">

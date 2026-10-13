@@ -1,5 +1,5 @@
 import { format, formatDistanceToNow } from 'date-fns';
-import { Copy, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { CopyField } from '@/components/ui/copy-field';
 import {
   Dialog,
   DialogClose,
@@ -37,7 +38,6 @@ import {
   useCreateApiKey,
   useRevokeApiKey,
 } from '@/hooks/queries/use-api-keys';
-import { copyWithToast } from '@/hooks/use-copy-to-clipboard';
 import { getErrorMessage } from '@/lib/utils';
 import { Permissions } from '@/lib/permissions';
 import type { ApiKey, ApiKeySurface } from '@/types/apiKey';
@@ -155,10 +155,6 @@ export function ApiKeysCard() {
     } catch (err) {
       toast.error('Error', { description: getErrorMessage(err) });
     }
-  };
-
-  const copyToken = () => {
-    if (revealedToken) void copyWithToast(revealedToken, 'token');
   };
 
   const dismissRevealedToken = () => {
@@ -364,18 +360,10 @@ export function ApiKeysCard() {
               prefix.
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-md border bg-muted/40 p-3">
-            <code className="block break-all font-mono text-xs">
-              {revealedToken}
-            </code>
-          </div>
+          <CopyField value={revealedToken ?? ''} what="token" />
           <DialogFooter>
-            <Button variant="outline" onClick={copyToken}>
-              <Copy className="mr-2 h-4 w-4" />
-              Copy to clipboard
-            </Button>
             <DialogClose asChild>
-              <Button>I have stored the key</Button>
+              <Button>Close</Button>
             </DialogClose>
           </DialogFooter>
         </DialogContent>

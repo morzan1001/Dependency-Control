@@ -216,8 +216,8 @@ describe("ApiKeysCard", () => {
   it("shows the minted token exactly once and closes the create dialog", async () => {
     await mintKey();
 
-    expect(await screen.findByText(PLAINTEXT_TOKEN)).toBeInTheDocument();
-    expect(screen.getAllByText(PLAINTEXT_TOKEN)).toHaveLength(SHOWN_ONCE);
+    expect(await screen.findByDisplayValue(PLAINTEXT_TOKEN)).toHaveAttribute("readonly");
+    expect(screen.getAllByDisplayValue(PLAINTEXT_TOKEN)).toHaveLength(SHOWN_ONCE);
     expect(createKey).toHaveBeenCalledWith({
       name: MCP_KEY_NAME,
       surfaces: ["mcp"],
@@ -226,17 +226,15 @@ describe("ApiKeysCard", () => {
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
   });
 
-  it("drops the minted token from the mutation cache when the reveal is dismissed", async () => {
+  it("drops the minted token from the mutation cache when the reveal is closed", async () => {
     await mintKey();
-    await screen.findByText(PLAINTEXT_TOKEN);
+    await screen.findByDisplayValue(PLAINTEXT_TOKEN);
     expect(mutationCacheHoldsToken()).toBe(true);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /I have stored the key/i }),
-    );
+    fireEvent.click(screen.getByText("Close", { selector: "button" }));
 
     await waitFor(() =>
-      expect(screen.queryByText(PLAINTEXT_TOKEN)).not.toBeInTheDocument(),
+      expect(screen.queryByDisplayValue(PLAINTEXT_TOKEN)).not.toBeInTheDocument(),
     );
     await waitFor(() => expect(mutationCacheHoldsToken()).toBe(false));
   });
@@ -436,30 +434,36 @@ describe("ApiKeysCard", () => {
     );
   });
 
-  it("hands the clipboard the minted token and nothing else", async () => {
+  it("hands the clipboard the minted token and nothing else, then marks the copy button like the project keys", async () => {
     await mintKey();
-    await screen.findByText(PLAINTEXT_TOKEN);
+    await screen.findByDisplayValue(PLAINTEXT_TOKEN);
 
-    fireEvent.click(screen.getByRole("button", { name: /Copy to clipboard/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy token" }));
 
     await waitFor(() =>
       expect(toastSuccess).toHaveBeenCalledWith("Token copied to clipboard"),
     );
     expect(writeText.mock.calls).toEqual([[PLAINTEXT_TOKEN]]);
+    expect(
+      screen.getByRole("button", { name: "Copy token" }).querySelector(".lucide-check"),
+    ).toBeInTheDocument();
   });
 
   it("tells the user to copy by hand when the clipboard refuses", async () => {
     writeText.mockRejectedValue(new Error("denied"));
     await mintKey();
-    await screen.findByText(PLAINTEXT_TOKEN);
+    await screen.findByDisplayValue(PLAINTEXT_TOKEN);
 
-    fireEvent.click(screen.getByRole("button", { name: /Copy to clipboard/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy token" }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Could not reach the clipboard", {
         description: expect.stringMatching(/copy it by hand/i),
       }),
     );
-    expect(screen.getByText(PLAINTEXT_TOKEN)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy token" }).querySelector(".lucide-check"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue(PLAINTEXT_TOKEN)).toBeInTheDocument();
   });
 });

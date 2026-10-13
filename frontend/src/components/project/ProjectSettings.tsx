@@ -4,7 +4,6 @@ import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useClickOutside } from '@/hooks/use-click-outside'
-import { copyWithToast } from '@/hooks/use-copy-to-clipboard'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
@@ -25,15 +24,16 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { CopyField } from '@/components/ui/copy-field'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { WebhookManager } from '@/components/WebhookManager'
 import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
-import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings, Check, ChevronDown } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Trash2, Info, Settings, Check, ChevronDown } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
-import { COPY_FEEDBACK_DELAY_MS, NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
+import { NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
 import { AnalyzerChecklist } from './AnalyzerChecklist'
 import {
   Select,
@@ -169,7 +169,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   }
 
   const [apiKey, setApiKey] = useState<string | null>(null)
-  const [hasCopiedKey, setHasCopiedKey] = useState(false)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
@@ -231,13 +230,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   })
 
   const updateNotificationSettingsMutation = useUpdateProjectNotifications()
-
-  const copyApiKey = async () => {
-    if (await copyWithToast(apiKey || '', 'API key')) {
-      setHasCopiedKey(true)
-      setTimeout(() => setHasCopiedKey(false), COPY_FEEDBACK_DELAY_MS)
-    }
-  }
 
   const rotateKeyMutation = useMutation({
     mutationFn: () => projectApi.rotateApiKey(projectId),
@@ -821,12 +813,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     Please copy your new API key. It will not be shown again.
                 </DialogDescription>
             </DialogHeader>
-            <div className="flex items-center space-x-2 mt-4">
-                <Input value={apiKey || ''} readOnly className="font-mono bg-muted" />
-                <Button size="icon" variant="outline" aria-label="Copy API key" onClick={() => void copyApiKey()}>
-                    {hasCopiedKey ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
-            </div>
+            <CopyField value={apiKey || ''} what="API key" />
             <DialogFooter>
                 <Button onClick={() => setIsApiKeyDialogOpen(false)}>Close</Button>
             </DialogFooter>

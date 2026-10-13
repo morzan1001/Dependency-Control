@@ -3,12 +3,11 @@ import { getErrorMessage } from "@/lib/utils";
 import { useCreateProject } from "@/hooks/queries/use-projects";
 import { useTeams } from "@/hooks/queries/use-teams";
 import { useAppConfig } from "@/hooks/queries/use-system";
-import { copyWithToast } from "@/hooks/use-copy-to-clipboard";
-import { COPY_FEEDBACK_DELAY_MS } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
+import { CopyField } from "@/components/ui/copy-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Copy, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { toast } from "sonner";
 import { AnalyzerChecklist } from "./AnalyzerChecklist";
 import {
@@ -48,7 +47,6 @@ export function CreateProjectDialog({
     api_key: string;
     note: string;
   } | null>(null);
-  const [hasCopied, setHasCopied] = useState(false);
 
   const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: open });
   const { data: appConfig } = useAppConfig({ enabled: open });
@@ -89,15 +87,7 @@ export function CreateProjectDialog({
       setRetentionDays(90);
       setRetentionAction("delete");
       setPickedAnalyzers(null);
-      setHasCopied(false);
     }, 300);
-  };
-
-  const copyToClipboard = async (text: string) => {
-    if (await copyWithToast(text, "API key")) {
-      setHasCopied(true);
-      setTimeout(() => setHasCopied(false), COPY_FEEDBACK_DELAY_MS);
-    }
   };
 
   const toggleAnalyzer = (id: string) => {
@@ -139,25 +129,7 @@ export function CreateProjectDialog({
 
             <div className="space-y-2">
               <Label>API Key</Label>
-              <div className="flex items-center space-x-2">
-                <Input
-                  value={createdProjectData.api_key}
-                  readOnly
-                  className="font-mono bg-muted"
-                />
-                <Button
-                  size="icon"
-                  variant="outline"
-                  aria-label="Copy API key"
-                  onClick={() => void copyToClipboard(createdProjectData.api_key)}
-                >
-                  {hasCopied ? (
-                    <Check className="h-4 w-4" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
+              <CopyField value={createdProjectData.api_key} what="API key" />
               <p className="text-sm text-muted-foreground text-red-500 font-medium">
                 Make sure to copy your API Key now. You won't be able to see it
                 again!
