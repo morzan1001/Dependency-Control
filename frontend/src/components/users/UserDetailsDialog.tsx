@@ -170,7 +170,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                 <div>
                   <Label>Username</Label>
                   <div className="flex items-center gap-2">
-                    <span className="break-all text-sm font-medium">{user.username}</span>
+                    <span className="wrap-anywhere text-sm font-medium">{user.username}</span>
                     {canUpdateUser && (
                       <Button
                         variant="outline"
@@ -185,7 +185,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                 </div>
                 <div>
                   <Label>Email</Label>
-                  <div className="break-all text-sm font-medium">{user.email}</div>
+                  <div className="wrap-anywhere text-sm font-medium">{user.email}</div>
                 </div>
                 <div>
                   <Label>Auth Provider</Label>

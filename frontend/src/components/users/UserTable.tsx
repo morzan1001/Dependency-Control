@@ -260,7 +260,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
               {isInvitation ? (
                 `Revoke the invitation for ${userToDelete?.email}?`
               ) : (
-                <>Are you sure you want to delete user <strong className="break-all">{userToDelete?.username}</strong>? This action cannot be undone.</>
+                <>Are you sure you want to delete user <strong className="wrap-anywhere">{userToDelete?.username}</strong>? This action cannot be undone.</>
               )}
             </DialogDescription>
           </DialogHeader>

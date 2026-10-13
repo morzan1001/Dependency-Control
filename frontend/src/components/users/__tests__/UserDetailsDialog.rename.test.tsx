@@ -161,6 +161,16 @@ describe('UserDetailsDialog - username', () => {
     expect(field).toHaveValue('otto')
   })
 
+  it('wraps the username by the one rule of the user dialog titles wherever these dialogs show it', () => {
+    auth.granted = MANAGER
+    renderDialog()
+
+    expect(screen.getByRole('heading', { name: 'User Details: target' })).toHaveClass('wrap-anywhere')
+    expect(screen.getByText('target', { selector: 'span' })).toHaveClass('wrap-anywhere')
+    expect(screen.getByText('target@corp.com')).toHaveClass('wrap-anywhere')
+    expect(within(openRename().dialog).getByRole('heading', { name: 'Rename target' })).toHaveClass('wrap-anywhere')
+  })
+
   it('offers a rename wherever it offers Deactivate, also for a user who holds a permission the caller lacks', () => {
     auth.granted = ['user:update']
     renderDialog()

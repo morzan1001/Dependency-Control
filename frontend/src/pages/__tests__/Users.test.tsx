@@ -135,6 +135,19 @@ describe('UsersPage - removing a row', () => {
     expect(mockDeleteUser).not.toHaveBeenCalled()
   })
 
+  it('names the user to delete in bold, wrapped like the username in the user dialogs', () => {
+    mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })
+
+    render(<UsersPage />)
+
+    const row = screen.getByText('user0').closest('tr') as HTMLElement
+    const buttons = within(row).getAllByRole('button')
+    fireEvent.click(buttons[buttons.length - 1])
+
+    expect(within(screen.getByRole('dialog')).getByText('user0', { selector: 'strong' })).toHaveClass('wrap-anywhere')
+  })
+
   it('deletes a user through a Delete button', () => {
     mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
     mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })
