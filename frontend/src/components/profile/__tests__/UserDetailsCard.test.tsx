@@ -72,15 +72,15 @@ describe('UserDetailsCard', () => {
     },
   )
 
-  it('sends nothing and claims no update for a save with nothing changed', async () => {
+  it('sends an empty profile request and confirms a save with nothing changed, like the other Save buttons', async () => {
+    updateMe.mockResolvedValue(LOCAL_USER)
     renderCard(LOCAL_USER)
 
     type('Username', ' lena ')
     save()
-    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
-    expect(toast.success).not.toHaveBeenCalled()
-    expect(updateMe).not.toHaveBeenCalled()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Profile updated'))
+    expect(updateMe.mock.calls).toEqual([[{}]])
     expect(changeEmail).not.toHaveBeenCalled()
   })
 
@@ -337,6 +337,7 @@ describe('UserDetailsCard', () => {
 
   it('shows the current address again once the saved change waits for its link', async () => {
     changeEmail.mockResolvedValue(PENDING_RESULT)
+    updateMe.mockResolvedValue({ ...LOCAL_USER, pending_email: NEW_EMAIL })
     const { showRefetched } = renderCard(LOCAL_USER)
 
     type('Email', NEW_EMAIL)
@@ -347,9 +348,10 @@ describe('UserDetailsCard', () => {
     expect(screen.getByLabelText('Email')).toHaveValue('lena@corp.com')
     expect(screen.getByRole('status')).toHaveTextContent(PENDING_NOTICE)
     save()
-    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(2))
+    expect(toast.success).toHaveBeenLastCalledWith('Profile updated')
+    expect(updateMe.mock.calls).toEqual([[{}]])
     expect(changeEmail).toHaveBeenCalledTimes(1)
-    expect(toast.success).toHaveBeenCalledTimes(1)
   })
 
   it('says the address changed and is not verified when no mail server can confirm it', async () => {

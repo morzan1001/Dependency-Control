@@ -51,7 +51,8 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
 
   const handleSubmit = (e: React.SubmitEvent) => {
     e.preventDefault();
-    if (savesProfile) {
+    // A save with nothing changed still sends the profile request, so it confirms like every other Save.
+    if (savesProfile || !savesEmail) {
       profileMutation.mutate(profileChanges, {
         onSuccess: (saved, sent) => {
           setUsername((draft) => (draft.trim() === sent.username ? saved.username : draft));
