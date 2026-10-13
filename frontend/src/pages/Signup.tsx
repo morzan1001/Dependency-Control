@@ -81,7 +81,7 @@ export default function Signup() {
                 <Input id="confirmPassword" name="confirmPassword" type="password" required />
               </div>
               {error && (
-                <div className="text-sm text-destructive">
+                <div role="alert" className="text-sm text-destructive">
                   {error}
                 </div>
               )}

@@ -75,7 +75,7 @@ describe('forgot password', () => {
 
     requestLinkFor('bob@test.com', 'Send Reset Email')
 
-    expect(await screen.findByText('Email server not configured')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Email server not configured')
   })
 
   it('tells single sign-on users that their identity provider resets their password', async () => {

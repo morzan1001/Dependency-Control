@@ -51,8 +51,8 @@ export default function VerifyEmail({ verifyToken }: Readonly<VerifyEmailProps>)
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center">
-            {displayStatus === 'error' && <p className="text-sm text-destructive">{errorMessage}</p>}
-            {displayStatus === 'success' && <p className="text-sm text-muted-foreground">{errorMessage}</p>}
+            {displayStatus === 'error' && <p role="alert" className="text-sm text-destructive">{errorMessage}</p>}
+            {displayStatus === 'success' && <output className="text-sm text-success">{errorMessage}</output>}
         </CardContent>
         <CardFooter className="flex justify-center">
           <Button asChild>

@@ -118,7 +118,7 @@ export default function Login() {
                 </div>
               )}
               {error && (
-                <div className="text-sm text-destructive">
+                <div role="alert" className="text-sm text-destructive">
                   {error}
                   {showResendLink && (
                     <div className="mt-1">
@@ -130,9 +130,9 @@ export default function Login() {
                 </div>
               )}
               {message && (
-                <div className="text-sm text-success">
+                <output className="text-sm text-success">
                   {message}
-                </div>
+                </output>
               )}
             </div>
 

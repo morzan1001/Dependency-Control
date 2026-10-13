@@ -46,7 +46,7 @@ export default function RequestEmailLink({ title, description, submitLabel, requ
                 </output>
               )}
               {error && (
-                <div className="text-sm text-destructive">
+                <div role="alert" className="text-sm text-destructive">
                   {getErrorMessage(error)}
                 </div>
               )}

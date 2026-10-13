@@ -21,7 +21,7 @@ describe('VerifyEmail', () => {
 
     renderPage('/confirm-email?token=abc.def', verifyToken)
 
-    expect(await screen.findByText('Your email address has been changed')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Your email address has been changed')
     expect(verifyToken.mock.calls[0][0]).toBe('abc.def')
   })
 
@@ -30,7 +30,7 @@ describe('VerifyEmail', () => {
 
     renderPage('/confirm-email', verifyToken)
 
-    expect(screen.getByText('No verification token provided.')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('No verification token provided.')
     expect(verifyToken).not.toHaveBeenCalled()
   })
 })
