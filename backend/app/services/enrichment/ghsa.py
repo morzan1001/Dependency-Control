@@ -10,7 +10,7 @@ from app.core.constants import (
     GHSA_CONCURRENT_REQUESTS_AUTHENTICATED,
     GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED,
 )
-from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded, quota_lifts_at
 from app.schemas.enrichment import GHSAData
 from app.services.github import github_api_headers
 
@@ -47,16 +47,8 @@ class GHSAProvider:
             if response.status_code == 404:
                 # 404 is authoritative: cache the unresolved placeholder for the GHSA TTL, not the 1 h failure TTL.
                 return GHSAData(ghsa_id=ghsa_id).model_dump()
-            # A secondary limit sends Retry-After, which GitHub ranks above the primary quota's reset.
-            retry_after = response.headers.get("Retry-After")
-            if response.status_code in (403, 429) and (
-                retry_after or response.headers.get("X-RateLimit-Remaining") == "0"
-            ):
-                self._rate_limited_until[authenticated] = (
-                    time.time() + float(retry_after)
-                    if retry_after
-                    else float(response.headers.get("X-RateLimit-Reset") or 0)
-                )
+            if (lifts_at := quota_lifts_at(response)) is not None:
+                self._rate_limited_until[authenticated] = lifts_at
             response.raise_for_status()
             return _parse_ghsa_advisory(response.json(), ghsa_id).model_dump()
 

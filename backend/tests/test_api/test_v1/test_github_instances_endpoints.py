@@ -276,6 +276,71 @@ class TestConnectionChecksTheToken:
         team_probe.assert_not_called()
 
 
+_SECONDARY_LIMIT = {
+    "message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."
+}
+
+
+def _serve_github_api(monkeypatch, answers: dict[str, httpx.Response]) -> None:
+    """api.github.com answering each path from ``answers``, behind the real service and HTTP client."""
+    transport = httpx.MockTransport(lambda request: answers[request.url.path])
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=transport))
+
+
+def _core_budget(remaining: int) -> dict:
+    return {
+        "resources": {"core": {"remaining": remaining, "reset": int(datetime.now(timezone.utc).timestamp()) + 3600}}
+    }
+
+
+class TestASecondaryRateLimitIsNotReadAsAScopeProblem:
+    """A secondary limit leaves the core budget standing, so only the refusal's own Retry-After names it."""
+
+    def test_the_connection_test_reports_the_wait(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import test_connection
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user/orgs": httpx.Response(403, headers={"Retry-After": "120"}, json=_SECONDARY_LIMIT),
+                "/rate_limit": httpx.Response(200, json=_core_budget(remaining=4999)),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-test-token", sync_teams=True)
+
+        with (
+            patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
+            patch.object(GitHubService, "refresh_jwks", new=AsyncMock(return_value={"keys": [{}]})),
+        ):
+            result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert result.success is False
+        assert "rate limit is exhausted" in result.message
+        assert "read:org" not in result.message
+        assert "2 minute(s)" in result.message
+
+    def test_the_organisation_picker_reports_the_wait(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user/orgs": httpx.Response(429, headers={"Retry-After": "300"}, json=_SECONDARY_LIMIT),
+                "/rate_limit": httpx.Response(200, json=_core_budget(remaining=4999)),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-test-token")
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert excinfo.value.status_code == 502
+        assert "rate limit is exhausted" in excinfo.value.detail
+        assert "read:org" not in excinfo.value.detail
+        assert "5 minute(s)" in excinfo.value.detail
+
+
 class TestConnectionProbesEveryOrganisation:
     """The owner runs several organisations; a token green on one and blind on another is the §8 failure."""
 
@@ -336,7 +401,7 @@ class TestBindingPickerListings:
     def _run(endpoint, instance, **service_returns):
         """Drive a picker route; returns (result, the stubbed service) so its probes can be asserted on."""
         mock_repo = _make_repo_mock(get_by_id=instance)
-        service = MagicMock()
+        service = MagicMock(rate_limited_until=None)
         # An intact budget unless the test is about the budget: a refusal under it is a scope refusal.
         for name, value in {"get_core_rate_limit": _HEALTHY_BUDGET, **service_returns}.items():
             setattr(service, name, AsyncMock(return_value=value))

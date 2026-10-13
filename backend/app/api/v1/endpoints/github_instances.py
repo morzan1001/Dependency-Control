@@ -151,19 +151,23 @@ class _Refusal(Enum):
 
 
 async def _why_refused(github_service: GitHubService) -> tuple[_Refusal, str]:
-    """What refused a read, and -- when the budget did -- the moment it comes back.
+    """What refused a read, and -- when a rate limit did -- the moment it lifts.
 
-    A throttled token 403s exactly like one missing read:org, and only GET /rate_limit -- which GitHub
-    does not charge -- separates them. Called on a failure path alone, so a green read costs nothing.
+    A throttled token 403s exactly like one missing read:org. The refusal's Retry-After or spent quota
+    names the limit, a secondary one included; else GET /rate_limit, which GitHub does not charge, reads
+    the core budget. Called on a failure path alone, so a green read costs nothing.
     """
-    limit = await github_service.get_core_rate_limit()
-    if limit is None:
-        return _Refusal.UNDETERMINED, ""
-    if limit.remaining > 0:
-        return _Refusal.SCOPE, ""
-    minutes = math.ceil((limit.reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
+    reset_at = github_service.rate_limited_until
+    if reset_at is None:
+        limit = await github_service.get_core_rate_limit()
+        if limit is None:
+            return _Refusal.UNDETERMINED, ""
+        if limit.remaining > 0:
+            return _Refusal.SCOPE, ""
+        reset_at = limit.reset_at
+    minutes = math.ceil((reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
     due = f"about {minutes} minute(s) from now" if minutes > 0 else "any moment now"
-    return _Refusal.BUDGET, f"{limit.reset_at:%Y-%m-%d %H:%M UTC}, {due}"
+    return _Refusal.BUDGET, f"{reset_at:%Y-%m-%d %H:%M UTC}, {due}"
 
 
 async def _refused_listing(github_service: GitHubService, subject: str, scope_hint: str) -> HTTPException:
