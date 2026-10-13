@@ -44,6 +44,7 @@ from app.repositories.teams import TeamRepository
 from app.repositories.users import IdentityTakenError, UserRepository
 from app.schemas.user import UserResponse
 from app.schemas.user import (
+    EmailChangeResponse,
     User2FADisable,
     User2FASetup,
     User2FAVerify,
@@ -171,19 +172,23 @@ async def update_user_me(
     return await get_user_or_404(current_user.id, db)
 
 
-@router.post("/me/email", response_model=UserResponse, responses=RESP_AUTH_400_501)
-async def request_email_change(
+@router.post("/me/email", response_model=EmailChangeResponse, responses=RESP_AUTH_400_501)
+async def change_email(
     email_in: UserEmailChange,
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    """Park a new email as pending and mail it a confirmation link (local accounts only)."""
+    """Change a local account's email: pending a mailed link, or at once and unverified without a mail server."""
     if not current_user.is_local:
         raise HTTPException(status_code=400, detail="Your email is managed by your identity provider")
 
     system_settings = await deps.get_system_settings(db)
-    require_email_configured(system_settings)
+    if system_settings.enforce_email_verification and not system_settings.email_configured:
+        raise HTTPException(
+            status_code=501,
+            detail="Email verification is required, but no mail server is configured to confirm a new address",
+        )
 
     if email_in.email == current_user.email.lower():
         raise HTTPException(status_code=400, detail="This is already your email address")
@@ -192,10 +197,16 @@ async def request_email_change(
     if await user_repo.exists_by_email(email_in.email):
         raise IdentityTakenError("email")
 
-    await user_repo.update(current_user.id, {"pending_email": email_in.email})
-    send_email_change_email(background_tasks, current_user.id, email_in.email, system_settings)
+    if system_settings.email_configured:
+        await user_repo.update(current_user.id, {"pending_email": email_in.email})
+        send_email_change_email(background_tasks, current_user.id, email_in.email, system_settings)
+        email_change = "pending_confirmation"
+    else:
+        # Clearing pending_email voids the link of an earlier request.
+        await user_repo.update(current_user.id, {"email": email_in.email, "pending_email": None, "is_verified": False})
+        email_change = "changed"
 
-    return await get_user_or_404(current_user.id, db)
+    return {**await get_user_or_404(current_user.id, db), "email_change": email_change}
 
 
 @router.get("/{user_id}", response_model=UserResponse, responses=RESP_AUTH_404)

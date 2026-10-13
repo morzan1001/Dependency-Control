@@ -1,5 +1,5 @@
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
 
@@ -123,6 +123,10 @@ class UserResponse(BaseModel):
     pending_email: str | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class EmailChangeResponse(UserResponse):
+    email_change: Literal["pending_confirmation", "changed"]
 
 
 class User2FASetup(BaseModel):

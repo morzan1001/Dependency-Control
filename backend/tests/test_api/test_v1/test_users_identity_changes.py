@@ -1,4 +1,4 @@
-"""Identity fields: a new username follows one rule whoever picks it, email changes are proven by the new mailbox, and emails compare case-insensitively."""
+"""Identity fields: a new username follows one rule whoever picks it, a new email is proven by its mailbox whenever mail can be sent, and emails compare case-insensitively."""
 
 import logging
 import re
@@ -60,6 +60,8 @@ ADMIN = {
 PASSWORD = "Sup3r!Secret"
 MAIL = SystemSettings(smtp_host="smtp.test", allow_public_registration=True)
 NO_MAIL = SystemSettings(smtp_host=None, allow_public_registration=True)
+MAIL_ENFORCED = MAIL.model_copy(update={"enforce_email_verification": True})
+NO_MAIL_ENFORCED = NO_MAIL.model_copy(update={"enforce_email_verification": True})
 
 
 @pytest_asyncio.fixture
@@ -96,10 +98,10 @@ def _renames(caplog):
     return [r.getMessage() for r in caplog.records if r.levelno == logging.INFO and " renamed " in r.getMessage()]
 
 
-async def _request_change(db, caller, new_email, settings=MAIL):
+async def _change_email(db, caller, new_email, settings=MAIL):
     background_tasks = BackgroundTasks()
     with _system(settings):
-        result = await users.request_email_change(
+        result = await users.change_email(
             user_schemas.UserEmailChange(email=new_email), background_tasks, User(**caller), db
         )
     return result, background_tasks
@@ -267,57 +269,89 @@ class TestUpdateUserIdentityFields:
         User(username="u", email="u@corp.com", **cleared)
 
 
-class TestEmailChangeRequest:
+class TestEmailChange:
     @pytest.mark.asyncio
-    async def test_a_local_account_gets_a_pending_address_and_a_link_mailed_to_it(self, db):
-        result, background_tasks = await _request_change(db, LOCAL, "Lena.New@Corp.com")
+    @pytest.mark.parametrize("settings", [MAIL, MAIL_ENFORCED], ids=["mail", "mail-verification-enforced"])
+    async def test_with_a_mail_server_the_new_address_waits_for_the_link_mailed_to_it(self, db, settings):
+        result, background_tasks = await _change_email(db, LEGACY, "Tara.New@Corp.com", settings)
 
-        stored = await _stored(db, LOCAL_ID)
+        stored = await _stored(db, LEGACY_ID)
         assert (stored["email"], stored["pending_email"], stored["is_verified"]) == (
-            "lena@corp.com",
-            "lena.new@corp.com",
-            False,
+            "Tara@Corp.com",
+            "tara.new@corp.com",
+            True,
         )
-        assert result["pending_email"] == "lena.new@corp.com"
+        assert (result["pending_email"], result["email_change"]) == ("tara.new@corp.com", "pending_confirmation")
         destination, _ = _mailed_token(background_tasks)
-        assert destination == "lena.new@corp.com"
+        assert destination == "tara.new@corp.com"
 
     @pytest.mark.asyncio
-    async def test_an_idp_account_cannot_request_one(self, db):
+    async def test_without_a_mail_server_the_new_address_applies_at_once_unverified(self, db):
+        result, background_tasks = await _change_email(db, LEGACY, "Tara.New@Corp.com", NO_MAIL)
+
+        stored = await _stored(db, LEGACY_ID)
+        assert (stored["email"], stored["pending_email"], stored["is_verified"]) == ("tara.new@corp.com", None, False)
+        assert (result["email"], result["is_verified"], result["email_change"]) == (
+            "tara.new@corp.com",
+            False,
+            "changed",
+        )
+        assert background_tasks.tasks == []
+
+    @pytest.mark.asyncio
+    async def test_without_a_mail_server_an_earlier_pending_change_and_its_link_are_dropped(self, db):
+        _, mailed = await _change_email(db, LOCAL, "lena.first@corp.com")
+        await _change_email(db, LOCAL, "lena.second@corp.com", NO_MAIL)
+
         with pytest.raises(HTTPException) as exc_info:
-            await _request_change(db, IDP, "otto.new@corp.com")
+            await auth.confirm_email_change(_mailed_token(mailed)[1], db)
+
+        assert exc_info.value.status_code == 400
+        stored = await _stored(db, LOCAL_ID)
+        assert (stored["email"], stored["pending_email"]) == ("lena.second@corp.com", None)
+
+    @pytest.mark.asyncio
+    async def test_with_verification_enforced_and_no_mail_server_the_change_is_refused(self, db):
+        with pytest.raises(HTTPException) as exc_info:
+            await _change_email(db, LEGACY, "tara.new@corp.com", NO_MAIL_ENFORCED)
+
+        assert (exc_info.value.status_code, exc_info.value.detail) == (
+            501,
+            "Email verification is required, but no mail server is configured to confirm a new address",
+        )
+        assert await _stored(db, LEGACY_ID) == LEGACY
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("settings", [MAIL, NO_MAIL], ids=["mail", "no-mail"])
+    async def test_an_idp_account_cannot_change_it(self, db, settings):
+        with pytest.raises(HTTPException) as exc_info:
+            await _change_email(db, IDP, "otto.new@corp.com", settings)
 
         assert exc_info.value.status_code == 400
         assert await _stored(db, IDP_ID) == IDP
 
     @pytest.mark.asyncio
-    async def test_someone_elses_address_in_any_case_is_refused(self, db):
+    @pytest.mark.parametrize("settings", [MAIL, NO_MAIL], ids=["mail", "no-mail"])
+    async def test_someone_elses_address_in_any_case_is_refused(self, db, settings):
         with pytest.raises(IdentityTakenError, match="Email already registered"):
-            await _request_change(db, LOCAL, "TARA@corp.com")
+            await _change_email(db, LOCAL, "TARA@corp.com", settings)
 
-        assert await _stored(db, LOCAL["_id"]) == LOCAL
+        assert await _stored(db, LOCAL_ID) == LOCAL
 
     @pytest.mark.asyncio
-    async def test_the_own_address_in_any_case_is_refused(self, db):
+    @pytest.mark.parametrize("settings", [MAIL, NO_MAIL], ids=["mail", "no-mail"])
+    async def test_the_own_address_in_any_case_is_refused(self, db, settings):
         with pytest.raises(HTTPException) as exc_info:
-            await _request_change(db, LEGACY, "tara@corp.com")
+            await _change_email(db, LEGACY, "tara@corp.com", settings)
 
         assert (exc_info.value.status_code, exc_info.value.detail) == (400, "This is already your email address")
-        assert await _stored(db, LEGACY["_id"]) == LEGACY
-
-    @pytest.mark.asyncio
-    async def test_without_a_mail_server_it_is_refused(self, db):
-        with pytest.raises(HTTPException) as exc_info:
-            await _request_change(db, LOCAL, "lena.new@corp.com", settings=NO_MAIL)
-
-        assert exc_info.value.status_code == 501
-        assert await _stored(db, LOCAL_ID) == LOCAL
+        assert await _stored(db, LEGACY_ID) == LEGACY
 
 
 class TestEmailChangeConfirm:
     @pytest.mark.asyncio
     async def test_the_mailed_link_swaps_in_the_new_address_as_verified(self, db):
-        _, background_tasks = await _request_change(db, LOCAL, "lena.new@corp.com")
+        _, background_tasks = await _change_email(db, LOCAL, "lena.new@corp.com")
         _, token = _mailed_token(background_tasks)
 
         await auth.confirm_email_change(token, db)
@@ -327,8 +361,8 @@ class TestEmailChangeConfirm:
 
     @pytest.mark.asyncio
     async def test_a_link_for_a_superseded_request_is_refused(self, db):
-        _, first = await _request_change(db, LOCAL, "lena.first@corp.com")
-        await _request_change(db, LOCAL, "lena.second@corp.com")
+        _, first = await _change_email(db, LOCAL, "lena.first@corp.com")
+        await _change_email(db, LOCAL, "lena.second@corp.com")
 
         with pytest.raises(HTTPException) as exc_info:
             await auth.confirm_email_change(_mailed_token(first)[1], db)
@@ -339,7 +373,7 @@ class TestEmailChangeConfirm:
 
     @pytest.mark.asyncio
     async def test_a_link_works_only_once(self, db):
-        _, background_tasks = await _request_change(db, LOCAL, "lena.new@corp.com")
+        _, background_tasks = await _change_email(db, LOCAL, "lena.new@corp.com")
         _, token = _mailed_token(background_tasks)
         await auth.confirm_email_change(token, db)
 
@@ -350,7 +384,7 @@ class TestEmailChangeConfirm:
 
     @pytest.mark.asyncio
     async def test_a_link_is_refused_once_someone_else_registered_the_address(self, db):
-        _, background_tasks = await _request_change(db, LOCAL, "lena.new@corp.com")
+        _, background_tasks = await _change_email(db, LOCAL, "lena.new@corp.com")
         await UserRepository(db).create_raw({"_id": "u-late", "username": "late", "email": "Lena.New@corp.com"})
 
         with pytest.raises(IdentityTakenError):
