@@ -31,7 +31,7 @@ def _gitlab_key_calls(failure: Exception | None = None) -> list[dict]:
 
 
 def test_the_key_is_unique_over_every_numeric_type():
-    """$type "int" matches int32 alone, so an id stored as a long or a double escaped the constraint."""
+    """$type "number" keeps int32, int64 and double ids under one constraint."""
     (options,) = _gitlab_key_calls()
 
     assert options["unique"] is True
@@ -42,7 +42,7 @@ def test_the_key_is_unique_over_every_numeric_type():
     }
 
 
-def test_a_duplicate_the_old_filter_admitted_is_logged_and_startup_continues(caplog):
+def test_a_duplicate_key_is_logged_and_startup_continues(caplog):
     duplicate = pymongo.errors.DuplicateKeyError(
         "E11000 duplicate key error",
         11000,
