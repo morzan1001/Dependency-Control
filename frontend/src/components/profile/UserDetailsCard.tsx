@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
+import { useUpdateMe } from '@/hooks/queries/use-users';
 import { User } from '@/types/user';
 import { ApiError } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -40,12 +41,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     }
   });
 
-  const renameMutation = useMutation({
-    mutationFn: (username: string) => userApi.updateMe({ username }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-    },
-  });
+  const renameMutation = useUpdateMe();
 
   const emailMutation = useMutation({
     mutationFn: (email: string) => userApi.changeEmail(email),
@@ -73,7 +69,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
           label="Username"
           value={user?.username || ''}
           isPending={renameMutation.isPending}
-          onSave={(username) => renameMutation.mutate(username)}
+          onSave={(username) => renameMutation.mutate({ username })}
           onEdit={renameMutation.reset}
         >
           {renameMutation.isError && (
