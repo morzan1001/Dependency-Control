@@ -49,7 +49,7 @@ export function ChatSettingsTab({
         <CardContent className="space-y-4">
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor="chat-rate-per-minute">Messages per minute</Label>
+              <Label htmlFor="chat-rate-per-minute">Messages per Minute</Label>
               <Input
                 id="chat-rate-per-minute"
                 type="number"
@@ -70,7 +70,7 @@ export function ChatSettingsTab({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="chat-rate-per-hour">Messages per hour</Label>
+              <Label htmlFor="chat-rate-per-hour">Messages per Hour</Label>
               <Input
                 id="chat-rate-per-hour"
                 type="number"
@@ -113,7 +113,7 @@ export function ChatSettingsTab({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2 sm:max-w-xs">
-            <Label htmlFor="chat-max-tool-rounds">Max tool-call rounds</Label>
+            <Label htmlFor="chat-max-tool-rounds">Max Tool-Call Rounds</Label>
             <Input
               id="chat-max-tool-rounds"
               type="number"

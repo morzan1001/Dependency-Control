@@ -236,7 +236,7 @@ Dependency Control exposes its tool suite over [Model Context Protocol](https://
 }
 ```
 
-Tool calls are rate limited per user at the chat's message limits times its *Max tool-call rounds*, so the defaults allow 200 calls a minute and 1,200 an hour. A JSON-RPC batch holds at most 20 requests.
+Tool calls are rate limited per user at the chat's message limits times its *Max Tool-Call Rounds*, so the defaults allow 200 calls a minute and 1,200 an hour. A JSON-RPC batch holds at most 20 requests.
 
 ## 🔬 Ad-hoc Analysis
 

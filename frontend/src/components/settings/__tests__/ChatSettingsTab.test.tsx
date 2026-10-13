@@ -19,12 +19,12 @@ function renderTab(isPending = false) {
 
 describe('ChatSettingsTab', () => {
   it.each([
-    ['Messages per minute', '5000', 'chat_rate_limit_per_minute', 1000],
-    ['Messages per minute', '0', 'chat_rate_limit_per_minute', 1],
-    ['Messages per hour', '-3', 'chat_rate_limit_per_hour', 1],
-    ['Max tool-call rounds', '99', 'chat_max_tool_rounds', 50],
-    ['Max tool-call rounds', '0', 'chat_max_tool_rounds', 1],
-    ['Max tool-call rounds', '7', 'chat_max_tool_rounds', 7],
+    ['Messages per Minute', '5000', 'chat_rate_limit_per_minute', 1000],
+    ['Messages per Minute', '0', 'chat_rate_limit_per_minute', 1],
+    ['Messages per Hour', '-3', 'chat_rate_limit_per_hour', 1],
+    ['Max Tool-Call Rounds', '99', 'chat_max_tool_rounds', 50],
+    ['Max Tool-Call Rounds', '0', 'chat_max_tool_rounds', 1],
+    ['Max Tool-Call Rounds', '7', 'chat_max_tool_rounds', 7],
   ])('holds %s typed as %s to its bounds', (label, typed, field, stored) => {
     const handleInputChange = renderTab()
 
@@ -55,7 +55,7 @@ describe('ChatSettingsTab', () => {
   it('keeps the current value when the field is cleared', () => {
     const handleInputChange = renderTab()
 
-    fireEvent.change(screen.getByLabelText('Messages per hour'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Messages per Hour'), { target: { value: '' } })
 
     expect(handleInputChange).toHaveBeenCalledWith('chat_rate_limit_per_hour', 60)
   })
