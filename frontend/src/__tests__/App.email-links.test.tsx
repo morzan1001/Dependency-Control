@@ -50,9 +50,9 @@ describe('forgot password', () => {
 
     fireEvent.click(await screen.findByRole('link', { name: 'Forgot password?' }))
     expect(await screen.findByRole('heading', { name: 'Forgot Password' })).toBeInTheDocument()
-    requestLinkFor('bob@test.com', 'Send Reset Link')
+    requestLinkFor('bob@test.com', 'Send Reset Email')
 
-    expect(await screen.findByText(NEUTRAL_ANSWER)).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent(NEUTRAL_ANSWER)
     expect(requestsSent()).toEqual([['post', '/forgot-password', { email: 'bob@test.com' }]])
   })
 
@@ -73,7 +73,7 @@ describe('forgot password', () => {
     }
     await renderAppAt('/forgot-password')
 
-    requestLinkFor('bob@test.com', 'Send Reset Link')
+    requestLinkFor('bob@test.com', 'Send Reset Email')
 
     expect(await screen.findByText('Email server not configured')).toBeInTheDocument()
   })

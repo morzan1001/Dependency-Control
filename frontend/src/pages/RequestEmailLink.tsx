@@ -41,9 +41,9 @@ export default function RequestEmailLink({ title, description, submitLabel, requ
                 <Input id="email" name="email" type="email" required />
               </div>
               {data && (
-                <div className="text-sm text-success">
+                <output className="text-sm text-success">
                   {data.message}
-                </div>
+                </output>
               )}
               {error && (
                 <div className="text-sm text-destructive">

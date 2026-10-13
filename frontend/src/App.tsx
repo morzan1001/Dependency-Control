@@ -101,7 +101,7 @@ function ForgotPasswordRoute() {
     <RequestEmailLink
       title="Forgot Password"
       description={`Enter your email to receive a password reset link.${ssoNote}`}
-      submitLabel="Send Reset Link"
+      submitLabel="Send Reset Email"
       requestLink={authApi.forgotPassword}
     />
   );
