@@ -19,10 +19,16 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [mismatch, setMismatch] = useState(false);
   const queryClient = useQueryClient();
   const { logout } = useAuth();
 
   const isLocalUser = user?.auth_provider === 'local';
+  // The server refuses a wrong current password with 400 and a new one outside the rule with 422.
+  const refusesField = (error: ApiError) => {
+    const status = error.response?.status;
+    return (isLocalUser && status === 400) || status === 422;
+  };
 
   const updatePasswordMutation = useMutation({
     mutationFn: () => userApi.updatePassword(currentPassword, newPassword),
@@ -33,9 +39,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
       logout();
     },
     onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
+      if (!refusesField(error)) toast.error("Error", { description: getErrorMessage(error) });
     }
   });
 
@@ -50,18 +54,26 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
       queryClient.invalidateQueries({ queryKey: ['me'] });
     },
     onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
+      if (!refusesField(error)) toast.error("Error", { description: getErrorMessage(error) });
     }
   });
+
+  const isSaving = updatePasswordMutation.isPending || migrateToLocalMutation.isPending;
+  const refusal = updatePasswordMutation.error ?? migrateToLocalMutation.error;
+  const status = refusal?.response?.status;
+  const currentPasswordError = isLocalUser && status === 400 ? getErrorMessage(refusal) : null;
+  const newPasswordError = status === 422 ? getErrorMessage(refusal) : null;
+
+  const resetRefusal = () => {
+    if (isSaving) return;
+    updatePasswordMutation.reset();
+    migrateToLocalMutation.reset();
+  };
 
   const handlePasswordUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
-      toast.error("Error", {
-        description: "New passwords do not match",
-      });
+      setMismatch(true);
       return;
     }
 
@@ -101,9 +113,17 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
                 id="current-password"
                 type="password"
                 value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
+                onChange={(e) => {
+                  setCurrentPassword(e.target.value);
+                  resetRefusal();
+                }}
+                aria-invalid={!!currentPasswordError}
+                aria-describedby={currentPasswordError ? 'current-password-error' : undefined}
                 required
               />
+              {currentPasswordError && (
+                <p id="current-password-error" role="alert" className="text-xs text-destructive">{currentPasswordError}</p>
+              )}
             </div>
           )}
           <div className="grid gap-2">
@@ -112,9 +132,18 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
               id="new-password"
               type="password"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={(e) => {
+                setNewPassword(e.target.value);
+                setMismatch(false);
+                resetRefusal();
+              }}
+              aria-invalid={!!newPasswordError}
+              aria-describedby={newPasswordError ? 'new-password-error' : undefined}
               required
             />
+            {newPasswordError && (
+              <p id="new-password-error" role="alert" className="text-xs text-destructive">{newPasswordError}</p>
+            )}
             <p className="text-xs text-muted-foreground">
               Must be at least 8 characters and contain uppercase, lowercase, digit, and special character.
             </p>
@@ -125,16 +154,25 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
               id="confirm-password"
               type="password"
               value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                setMismatch(false);
+                resetRefusal();
+              }}
+              aria-invalid={mismatch}
+              aria-describedby={mismatch ? 'confirm-password-error' : undefined}
               required
             />
+            {mismatch && (
+              <p id="confirm-password-error" role="alert" className="text-xs text-destructive">Passwords do not match</p>
+            )}
           </div>
           <Button
             type="submit"
-            disabled={updatePasswordMutation.isPending || migrateToLocalMutation.isPending}
+            disabled={isSaving}
           >
             {(() => {
-              if (updatePasswordMutation.isPending || migrateToLocalMutation.isPending) return "Updating..."
+              if (isSaving) return "Updating..."
               if (isLocalUser) return "Update Password"
               return "Set Password & Migrate"
             })()}
