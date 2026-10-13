@@ -214,6 +214,21 @@ class TestRenames:
         assert (stored["username"], stored["slack_username"], stored["is_active"]) == ("Nora Neu", "U1", False)
         assert _renames(caplog) == []
 
+    @pytest.mark.asyncio
+    async def test_a_new_name_and_chat_ids_save_in_one_profile_request(self, db):
+        changes = {"username": "lena.k", "slack_username": "U1", "mattermost_username": "lena-mm"}
+        await _patch_me(db, LOCAL, **changes)
+
+        stored = await _stored(db, LOCAL_ID)
+        assert {field: stored[field] for field in changes} == changes
+
+    @pytest.mark.asyncio
+    async def test_a_refused_name_leaves_the_chat_ids_of_its_request_unsaved(self, db):
+        with pytest.raises(IdentityTakenError):
+            await _patch_me(db, LOCAL, username="otto", slack_username="U1")
+
+        assert await _stored(db, LOCAL_ID) == LOCAL
+
 
 class TestUpdateUserIdentityFields:
     @pytest.mark.asyncio
