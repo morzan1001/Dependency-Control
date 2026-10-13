@@ -30,6 +30,9 @@ const TARGET: User = {
   totp_enabled: false,
 }
 const MANAGER = ['user:update', 'project:read']
+const OUTSIDE_RULE =
+  'A username has 2 to 64 letters, digits, dots, underscores or hyphens and starts with a letter or digit'
+const NOT_MANAGEABLE = "Cannot manage a user who holds permissions you don't hold"
 
 function renderDialog() {
   const onUserUpdated = vi.fn()
@@ -73,6 +76,7 @@ describe('UserDetailsDialog - username', () => {
     expect(update.mock.calls).toEqual([['u-target', { username: 'target2' }]])
     expect(onUserUpdated).toHaveBeenCalledWith({ ...TARGET, username: 'target2' })
     expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(toast.success).toHaveBeenCalledWith('Username updated')
   })
 
   it('saves the name as it stands, like the other edits', async () => {
@@ -114,19 +118,42 @@ describe('UserDetailsDialog - username', () => {
     expect(openRename().field).toHaveValue('target')
   })
 
-  it('keeps the rename open and says why the name was refused', async () => {
+  it.each([
+    { status: 400, reason: 'Username already taken' },
+    { status: 422, reason: OUTSIDE_RULE },
+  ])('keeps the rename open and says under the field why the name was refused with $status', async ({ status, reason }) => {
     auth.granted = MANAGER
-    update.mockRejectedValue({ response: { data: { detail: 'Username already taken' } } })
+    update.mockRejectedValue({ response: { status, data: { detail: reason } } })
     const onUserUpdated = renderDialog()
     const { dialog, field, save } = openRename()
 
     fireEvent.change(field, { target: { value: 'otto' } })
     fireEvent.click(save)
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: 'Username already taken' }))
-    expect(dialog).toBeInTheDocument()
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(reason)
+    expect(field).toHaveAccessibleDescription(reason)
     expect(field).toHaveValue('otto')
     expect(onUserUpdated).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+    fireEvent.change(field, { target: { value: 'otto2' } })
+    await waitFor(() => expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it.each([
+    { error: { response: { status: 403, data: { detail: NOT_MANAGEABLE } } }, message: NOT_MANAGEABLE },
+    { error: new Error('Network Error'), message: 'Network Error' },
+  ])('toasts a rename that failed for another reason: $message', async ({ error, message }) => {
+    auth.granted = MANAGER
+    update.mockRejectedValue(error)
+    renderDialog()
+    const { dialog, field, save } = openRename()
+
+    fireEvent.change(field, { target: { value: 'otto' } })
+    fireEvent.click(save)
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: message }))
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    expect(field).toHaveValue('otto')
   })
 
   it('lets a system manager rename a user who holds a permission the manager lacks', () => {

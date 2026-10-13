@@ -1,6 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
+import type { ApiError } from '@/api/client';
 import { UserUpdate, UserUpdateMe } from '@/types/user';
+
+// A save that carries a new name is refused with 400 when the name is taken and 422 when it breaks the rule.
+export const refusesUsername = (sent: UserUpdate | UserUpdateMe | undefined, error: unknown) => {
+  const status = (error as ApiError).response?.status;
+  return sent?.username !== undefined && (status === 400 || status === 422);
+};
 
 export const userKeys = {
   all: ['users'] as const,

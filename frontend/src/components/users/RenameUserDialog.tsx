@@ -1,6 +1,6 @@
 import { User } from '@/types/user';
 import { getErrorMessage } from '@/lib/utils';
-import { useUpdateUser } from '@/hooks/queries/use-users';
+import { refusesUsername, useUpdateUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +26,10 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
   const nextUsername = username.trim();
 
   const updateUserMutation = useUpdateUser();
+  const usernameError =
+    updateUserMutation.isError && refusesUsername(updateUserMutation.variables?.data, updateUserMutation.error)
+      ? getErrorMessage(updateUserMutation.error)
+      : null;
 
   const handleSave = (e: React.SubmitEvent) => {
     e.preventDefault();
@@ -35,15 +39,11 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
     }, {
       onSuccess: (updated) => {
         onUserUpdated?.(updated);
-        toast.success("Success", {
-          description: "Username updated successfully.",
-        });
+        toast.success("Username updated");
         onOpenChange(false);
       },
-      onError: (error) => {
-        toast.error("Error", {
-          description: getErrorMessage(error),
-        });
+      onError: (error, { data }) => {
+        if (!refusesUsername(data, error)) toast.error("Error", { description: getErrorMessage(error) });
       },
     });
   };
@@ -63,9 +63,17 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
             <Input
               id="rename-username"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => {
+                setUsername(e.target.value);
+                if (!updateUserMutation.isPending) updateUserMutation.reset();
+              }}
+              aria-invalid={!!usernameError}
+              aria-describedby={usernameError ? 'rename-username-error' : undefined}
               required
             />
+            {usernameError && (
+              <p id="rename-username-error" role="alert" className="text-xs text-destructive">{usernameError}</p>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
