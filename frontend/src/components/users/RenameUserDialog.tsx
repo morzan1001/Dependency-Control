@@ -49,7 +49,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
         onOpenChange(false);
       },
       onError: (error, { data }) => {
-        if (!refusesUsername(data, error)) toast.error("Error", { description: getErrorMessage(error) });
+        if (!refusesUsername(data, error)) toast.error("Failed to update username", { description: getErrorMessage(error) });
       },
     });
   };

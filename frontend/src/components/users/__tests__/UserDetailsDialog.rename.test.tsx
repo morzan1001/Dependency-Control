@@ -169,7 +169,7 @@ describe('UserDetailsDialog - username', () => {
     fireEvent.change(field, { target: { value: 'otto' } })
     fireEvent.click(save)
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: message }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update username', { description: message }))
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
     expect(field).toHaveValue('otto')
   })
