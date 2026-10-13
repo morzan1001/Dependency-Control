@@ -70,6 +70,7 @@ else print("projects_gitlab_key is missing: keep the old index, reconcile the du
 - The chat and MCP tool for findings by CVE lists every affected project with its occurrence count and takes an optional `project_id`.
 - The login page offers "Forgot password?" when a mail server is configured; `/system/public-config` carries `password_reset_enabled`.
 - The GitHub connection test also tries the configured token, and a GitHub secondary rate limit is reported as such and honoured until it lifts.
+- The UI follows one pattern in more places: one Save Changes button per card, edit dialogs ending in Cancel and Save Changes (team and webhook dialogs included), field errors under their field (also for blank or malformed input), toast titles that name what happened, one card layout for every sign-in page (the reset page and the forced 2FA setup included), one copy field for keys and links shown once, and one status pill for users, invitations and API keys.
 
 
 
