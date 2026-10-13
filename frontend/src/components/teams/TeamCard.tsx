@@ -83,6 +83,7 @@ export function TeamCard({
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
+                aria-label="Edit team"
                 onClick={(e: React.MouseEvent) => {
                   e.stopPropagation();
                   onEdit(team);
@@ -96,6 +97,7 @@ export function TeamCard({
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8 text-destructive hover:text-destructive/90"
+                aria-label="Delete team"
                 onClick={(e: React.MouseEvent) => {
                   e.stopPropagation();
                   onDelete(team.id);

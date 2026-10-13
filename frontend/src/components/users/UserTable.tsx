@@ -212,6 +212,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                           variant="ghost" 
                           size="icon" 
                           className="text-destructive hover:text-destructive/90"
+                          aria-label={user.status === 'invited' ? 'Revoke invitation' : 'Delete user'}
                           onClick={() => {
                               setUserToDelete(user);
                               setIsDeleteDialogOpen(true);

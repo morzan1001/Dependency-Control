@@ -135,6 +135,18 @@ describe('UsersPage - removing a row', () => {
     expect(mockDeleteUser).not.toHaveBeenCalled()
   })
 
+  it("names each row's remove button by what it removes, like the other icon buttons", () => {
+    mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [makeInvitation(0)], isLoading: false })
+
+    render(<UsersPage />)
+
+    const userRow = screen.getByText('user0').closest('tr') as HTMLElement
+    const invitationRow = screen.getAllByText('invite0@example.com')[0].closest('tr') as HTMLElement
+    expect(within(userRow).getByRole('button', { name: 'Delete user' })).toBeInTheDocument()
+    expect(within(invitationRow).getByRole('button', { name: 'Revoke invitation' })).toBeInTheDocument()
+  })
+
   it('names the user to delete in bold, wrapped like the username in the user dialogs', () => {
     mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
     mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })

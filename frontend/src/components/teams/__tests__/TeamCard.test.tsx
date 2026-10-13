@@ -106,3 +106,27 @@ describe("TeamCard webhooks", () => {
     expect(screen.queryByRole("button", { name: "Team webhooks" })).not.toBeInTheDocument();
   });
 });
+
+describe("TeamCard actions", () => {
+  it("names its edit and delete buttons, like its binding and webhook buttons", () => {
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <TeamCard
+        team={TEAM}
+        onEdit={onEdit}
+        onManageMembers={vi.fn()}
+        onAddMember={vi.fn()}
+        onDelete={onDelete}
+        onManageWebhooks={vi.fn()}
+        onManageBinding={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit team" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete team" }));
+
+    expect(onEdit).toHaveBeenCalledWith(TEAM);
+    expect(onDelete).toHaveBeenCalledWith(TEAM.id);
+  });
+});
