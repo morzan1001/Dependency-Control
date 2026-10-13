@@ -75,6 +75,9 @@ export default function Signup() {
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="password">Password</Label>
                 <Input id="password" name="password" type="password" autoComplete="new-password" required />
+                <p className="text-xs text-muted-foreground">
+                  Must be at least 8 characters and contain uppercase, lowercase, digit, and special character.
+                </p>
               </div>
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="confirmPassword">Confirm Password</Label>

@@ -111,3 +111,16 @@ describe('auth form navigation', () => {
     expect(screen.getByRole('link', { name: 'Login' })).toHaveAttribute('href', '/login')
   })
 })
+
+describe('auth form guidance', () => {
+  it.each([
+    { name: 'Signup', page: <Signup />, path: '/signup' },
+    { name: 'AcceptInvite', page: <AcceptInvite />, path: '/accept-invite?token=t1' },
+  ])('states the password rule under the password on $name, as the reset page does', ({ page, path }) => {
+    render(<MemoryRouter initialEntries={[path]}>{page}</MemoryRouter>)
+
+    expect(screen.getByLabelText('Password').parentElement).toHaveTextContent(
+      'Must be at least 8 characters and contain uppercase, lowercase, digit, and special character.',
+    )
+  })
+})
