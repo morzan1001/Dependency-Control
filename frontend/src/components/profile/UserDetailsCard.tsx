@@ -42,7 +42,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
 
   const saveProfile = () =>
     profileMutation.mutateAsync(profileChanges).then(
-      (saved) => setUsername(saved.username),
+      (saved) => setUsername((draft) => (draft.trim() === profileChanges.username ? saved.username : draft)),
       (error: unknown) => {
         // A refused new name shows under the username field instead.
         if (profileChanges.username === undefined) toast.error("Error", { description: getErrorMessage(error) });
@@ -50,7 +50,8 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
       },
     );
 
-  const saveEmail = () => emailMutation.mutateAsync(nextEmail).then((saved) => setEmail(saved.email));
+  const saveEmail = () =>
+    emailMutation.mutateAsync(nextEmail).then((saved) => setEmail((draft) => (draft.trim() === nextEmail ? saved.email : draft)));
 
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
@@ -81,7 +82,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
               value={username}
               onChange={(e) => {
                 setUsername(e.target.value);
-                profileMutation.reset();
+                if (!profileMutation.isPending) profileMutation.reset();
               }}
               aria-invalid={!!usernameError}
               aria-describedby={usernameError ? 'username-error' : undefined}
@@ -107,7 +108,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);
-                    emailMutation.reset();
+                    if (!emailMutation.isPending) emailMutation.reset();
                   }}
                   aria-invalid={!!emailError}
                   aria-describedby={emailError ? 'email-error' : undefined}

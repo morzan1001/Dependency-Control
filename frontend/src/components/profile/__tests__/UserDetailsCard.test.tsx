@@ -210,6 +210,28 @@ describe('UserDetailsCard', () => {
     expect(await screen.findByRole('button', { name: 'Save Changes' })).toBeInTheDocument()
   })
 
+  it.each([
+    { field: 'Username', sent: 'lena.k', typed: 'lena.kx' },
+    { field: 'Email', sent: NEW_EMAIL, typed: 'lena.x@corp.com' },
+  ])('stays busy saving the $field and keeps what is typed meanwhile', async ({ field, sent, typed }) => {
+    let finish: () => void = () => undefined
+    const finished = new Promise<void>((resolve) => (finish = resolve))
+    updateMe.mockImplementation(() => finished.then(() => ({ ...LOCAL_USER, username: 'lena.k' })))
+    changeEmail.mockImplementation(() => finished.then(() => PENDING_RESULT))
+    renderCard(LOCAL_USER)
+
+    type(field, sent)
+    save()
+    await screen.findByRole('button', { name: 'Saving...' })
+    type(field, typed)
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+    finish()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Profile updated'))
+    expect(screen.getByLabelText(field)).toHaveValue(typed)
+  })
+
   it.each(['', '   '])('offers no save for the blank name %j', async (blank) => {
     renderCard(LOCAL_USER)
 
