@@ -1,4 +1,5 @@
 import { useState, useCallback, type MouseEvent } from 'react'
+import { toast } from 'sonner'
 import { COPY_FEEDBACK_DELAY_MS } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 
@@ -25,4 +26,14 @@ export function useCopyToClipboard(): UseCopyToClipboardReturn {
   }, [])
 
   return { copied, copy }
+}
+
+// An insecure context or a denied permission rejects the write; the user must learn that while the text is on screen.
+export async function copyWithToast(text: string, what: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.success(`Copied the ${what} to the clipboard.`)
+  } catch {
+    toast.error(`Could not reach the clipboard. Select the ${what} and copy it by hand.`)
+  }
 }

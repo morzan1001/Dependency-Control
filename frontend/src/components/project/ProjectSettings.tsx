@@ -4,6 +4,7 @@ import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useClickOutside } from '@/hooks/use-click-outside'
+import { copyWithToast } from '@/hooks/use-copy-to-clipboard'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
@@ -814,10 +815,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             </DialogHeader>
             <div className="flex items-center space-x-2 mt-4">
                 <Input value={apiKey || ''} readOnly />
-                <Button size="icon" onClick={() => {
-                    navigator.clipboard.writeText(apiKey || '')
-                    toast.success("Copied to clipboard")
-                }}>
+                <Button size="icon" aria-label="Copy API key" onClick={() => void copyWithToast(apiKey || '', 'API key')}>
                     <Copy className="h-4 w-4" />
                 </Button>
             </div>
