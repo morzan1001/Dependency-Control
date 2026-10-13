@@ -99,6 +99,9 @@ export default function Setup2FA() {
                 <Input
                   id="otp"
                   placeholder="123456"
+                  maxLength={6}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value)}
                   required

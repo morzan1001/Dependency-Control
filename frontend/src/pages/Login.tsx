@@ -84,11 +84,12 @@ export default function Login() {
             <div className="grid w-full items-center gap-4">
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="username">Username</Label>
-                <Input 
-                  id="username" 
-                  name="username" 
-                  required 
-                  disabled={showOTP} 
+                <Input
+                  id="username"
+                  name="username"
+                  autoComplete="username"
+                  required
+                  disabled={showOTP}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                 />
@@ -114,7 +115,17 @@ export default function Login() {
               {showOTP && (
                 <div className="flex flex-col space-y-1.5 animate-accordion-down">
                   <Label htmlFor="otp">2FA Code</Label>
-                  <Input id="otp" name="otp" type="text" placeholder="123456" required autoFocus />
+                  <Input
+                    id="otp"
+                    name="otp"
+                    type="text"
+                    placeholder="123456"
+                    maxLength={6}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    required
+                    autoFocus
+                  />
                 </div>
               )}
               {error && (

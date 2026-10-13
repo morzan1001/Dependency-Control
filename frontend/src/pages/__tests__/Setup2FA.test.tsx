@@ -33,4 +33,20 @@ describe('Setup2FA', () => {
 
     expect(screen.getByAltText('2FA QR Code')).toHaveAttribute('src', `data:image/png;base64,${SETUP.qr_code}`)
   })
+
+  it('lets the device offer the code from an authenticator, like the profile setup dialog', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <Setup2FA />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Setup' }))
+
+    expect(screen.getByLabelText('Verification Code')).toHaveAttribute('autocomplete', 'one-time-code')
+    expect(screen.getByLabelText('Verification Code')).toHaveAttribute('inputmode', 'numeric')
+    expect(screen.getByLabelText('Verification Code')).toHaveAttribute('maxlength', '6')
+  })
 })

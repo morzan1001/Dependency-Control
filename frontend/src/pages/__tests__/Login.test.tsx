@@ -21,15 +21,26 @@ function renderLogin() {
   )
 }
 
+function reachTwoFactorStep() {
+  loginMutate.mockImplementation((_credentials, opts: { onError: (error: unknown) => void }) =>
+    opts.onError({ response: { status: 401, data: { detail: '2FA required' } } }),
+  )
+  renderLogin()
+  fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'lena' } })
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Correct-Horse-1' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Login' }))
+}
+
 describe('Login', () => {
   beforeEach(() => {
     loginMutate.mockReset()
     config.current = { password_reset_enabled: true }
   })
 
-  it('lets a password manager fill in the stored password', () => {
+  it('lets a password manager fill in the stored username and password', () => {
     renderLogin()
 
+    expect(screen.getByLabelText('Username')).toHaveAttribute('autocomplete', 'username')
     expect(screen.getByLabelText('Password')).toHaveAttribute('autocomplete', 'current-password')
   })
 
@@ -41,16 +52,17 @@ describe('Login', () => {
     expect(screen.getByText(/Don't have an account\?/)).toContainElement(screen.getByRole('link', { name: 'Sign Up' }))
   })
 
-  it('leaves the 2FA step through a Cancel link under a full-width Verify', () => {
-    loginMutate.mockImplementation((_credentials, opts: { onError: (error: unknown) => void }) =>
-      opts.onError({ response: { status: 401, data: { detail: '2FA required' } } }),
-    )
-    renderLogin()
-    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'lena' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Correct-Horse-1' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Login' }))
+  it('lets the device offer the 2FA code from an authenticator, like the profile setup dialog', () => {
+    reachTwoFactorStep()
 
-    expect(screen.getByLabelText('2FA Code')).toBeInTheDocument()
+    expect(screen.getByLabelText('2FA Code')).toHaveAttribute('autocomplete', 'one-time-code')
+    expect(screen.getByLabelText('2FA Code')).toHaveAttribute('inputmode', 'numeric')
+    expect(screen.getByLabelText('2FA Code')).toHaveAttribute('maxlength', '6')
+  })
+
+  it('leaves the 2FA step through a Cancel link under a full-width Verify', () => {
+    reachTwoFactorStep()
+
     expect(screen.getByRole('button', { name: 'Verify' })).toHaveClass('w-full')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
