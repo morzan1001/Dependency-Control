@@ -93,6 +93,19 @@ describe('UserDetailsCard', () => {
     expect(changeEmail).not.toHaveBeenCalled()
   })
 
+  it('saves the chat IDs of an account whose stored address the browser would refuse', async () => {
+    const jorg = { ...LOCAL_USER, email: 'jörg@corp.com' }
+    updateMe.mockResolvedValue({ ...jorg, slack_username: 'U1' })
+    renderCard(jorg)
+
+    type('Slack Member ID', 'U1')
+    save()
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Profile updated'))
+    expect(updateMe.mock.calls).toEqual([[{ slack_username: 'U1' }]])
+    expect(changeEmail).not.toHaveBeenCalled()
+  })
+
   it('saves the Mattermost username where it is the only chat field', async () => {
     updateMe.mockResolvedValue({ ...LOCAL_USER, mattermost_username: 'lena-mm' })
     renderCard(LOCAL_USER, ['email', 'mattermost'])

@@ -83,7 +83,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
         <CardDescription>Your account information</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div className="grid gap-2">
             <Label htmlFor="username">Username</Label>
             <Input
