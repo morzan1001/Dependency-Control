@@ -90,7 +90,7 @@ export function UserPermissionsDialog({ user, onOpenChange, onUserUpdated }: Rea
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Manage Permissions for {user?.username}</DialogTitle>
+          <DialogTitle className="wrap-anywhere">Manage Permissions for {user?.username}</DialogTitle>
           <DialogDescription>
               Select the permissions you want to assign to this user.
           </DialogDescription>
