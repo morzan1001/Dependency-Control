@@ -3,16 +3,18 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useCurrentUser, userKeys } from '@/hooks/queries/use-users'
 import type { User } from '@/types/user'
 
 import { UserDetailsCard } from '../UserDetailsCard'
 
-const { updateMe, changeEmail } = vi.hoisted(() => ({
+const { updateMe, changeEmail, getMe } = vi.hoisted(() => ({
   updateMe: vi.fn(),
   changeEmail: vi.fn(),
+  getMe: vi.fn(),
 }))
 
-vi.mock('@/api/users', () => ({ userApi: { updateMe, changeEmail } }))
+vi.mock('@/api/users', () => ({ userApi: { updateMe, changeEmail, getMe } }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const NEW_EMAIL = 'lena.new@corp.com'
@@ -40,6 +42,11 @@ function renderCard(user: User, notificationChannels = ['slack']) {
   )
   const { rerender } = render(card(user))
   return { showRefetched: (refetched: User) => rerender(card(refetched)) }
+}
+
+function SignedInCard() {
+  const { data } = useCurrentUser()
+  return <UserDetailsCard user={data} notificationChannels={['slack']} />
 }
 
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
@@ -164,6 +171,33 @@ describe('UserDetailsCard', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: 'Network Error' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { field: 'Username', value: 'lena.k', refetched: { ...LOCAL_USER, username: 'lena.k' } },
+    { field: 'Email', value: NEW_EMAIL, refetched: { ...LOCAL_USER, pending_email: NEW_EMAIL } },
+  ])('stays busy saving the $field until the refetched account arrives', async ({ field, value, refetched }) => {
+    updateMe.mockResolvedValue({ ...LOCAL_USER, username: 'lena.k' })
+    changeEmail.mockResolvedValue(PENDING_RESULT)
+    let answerRefetch: (user: User) => void = () => undefined
+    getMe.mockReturnValue(new Promise((resolve) => (answerRefetch = resolve)))
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+    client.setQueryData(userKeys.me, LOCAL_USER)
+    render(
+      <QueryClientProvider client={client}>
+        <SignedInCard />
+      </QueryClientProvider>,
+    )
+
+    type(field, value)
+    save()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(getMe).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+
+    answerRefetch(refetched)
+    expect(await screen.findByRole('button', { name: 'Save Changes' })).toBeInTheDocument()
   })
 
   it('offers no save while the name is unchanged and sends no blank name', async () => {

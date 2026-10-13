@@ -26,9 +26,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   const profileMutation = useUpdateMe();
   const emailMutation = useMutation({
     mutationFn: (email: string) => userApi.changeEmail(email),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['me'] }),
   });
 
   const isLocalAccount = (user?.auth_provider || 'local') === 'local';
