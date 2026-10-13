@@ -1,3 +1,45 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.54. Run mongosh commands in-pod against the application database.
+
+## After the rollout: point stored usernames at their accounts
+
+Waivers and system invitations now store the user id of their creator and inviter, and every read shows that account's current username. Rows written before this release hold a username, which keeps showing as stored. Rewrite them right after the rollout, before users start renaming themselves: a renamed account's old name matches nobody, and a name another account took meanwhile would match the wrong one. Run both blocks in one mongosh session. The counts are read-only, and a value that already is a user id is left alone:
+
+```js
+const users = db.users.find({}, { username: 1 }).toArray()
+const idByName = new Map(users.map((u) => [u.username, u._id]))
+const legacy = (field) => ({ [field]: { $in: [...idByName.keys()], $nin: users.map((u) => u._id) } })
+db.waivers.countDocuments(legacy("created_by"))
+db.system_invitations.countDocuments(legacy("invited_by"))
+```
+
+Then rewrite each value to the id of the account with exactly that username, and run the counts again; both should be 0:
+
+```js
+for (const [coll, field] of [["waivers", "created_by"], ["system_invitations", "invited_by"]]) {
+  const ops = db.getCollection(coll).find(legacy(field), { [field]: 1 }).toArray().map((d) => ({
+    updateOne: { filter: { _id: d._id, [field]: d[field] }, update: { $set: { [field]: idByName.get(d[field]) } } },
+  }))
+  if (ops.length) print(`${coll}: ${db.getCollection(coll).bulkWrite(ops).modifiedCount} rewritten`)
+}
+```
+
+A value that matches no current username, such as the name of a deleted account, stays and keeps showing as stored.
+
+## Rolling back to 1.9.54
+
+1.9.54 shows a waiver's creator as stored, so the global waiver list shows the user id for rows rewritten above and for waivers created since the rollout.
+
+## Behaviour changes
+
+- Every user can change their username in the profile. Administrators rename the accounts they may manage (`user:update` and every permission the account holds, or `system:manage`) in the user dialog, themselves included. A local account signs in with the new name, or its email, from then on. Each rename is logged at INFO with actor id, target id, old and new name.
+- A username someone picks (a rename, an account an administrator creates, a public signup, an accepted invitation) has 2 to 64 letters, digits, dots, underscores or hyphens, starts with a letter or digit, and is no other account's in any letter case. Existing usernames stay valid unchanged, and SSO first login names new accounts as before.
+- Policy audit entries show the actor's current username, and the name stored with the change once that account is gone.
+- Reports and queries that read `waivers.created_by` or `system_invitations.invited_by` straight from the database get user ids for rows written from now on; join `users` on `_id` for the name. The API keeps answering with usernames.
+
+
+
 # Release 1.9.54
 
 ## 📦 Build & CI
