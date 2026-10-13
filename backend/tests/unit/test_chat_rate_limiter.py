@@ -1,13 +1,14 @@
 """Unit tests for ChatRateLimiter, exercising the real Lua script via fakeredis."""
 
+import asyncio
 import logging
+from unittest.mock import AsyncMock
 
-import fakeredis.aioredis
 import pytest
-import pytest_asyncio
 import redis.asyncio as redis
 from fastapi import HTTPException
 
+import app.core.cache as cache_mod
 import app.services.chat.rate_limiter as rate_limiter_mod
 from app.core.metrics import REGISTRY
 from app.services.chat.rate_limiter import ChatRateLimiter, enforce_rate_limit
@@ -35,17 +36,9 @@ def clock(monkeypatch):
     return frozen
 
 
-@pytest_asyncio.fixture
-async def redis_client():
-    client = fakeredis.aioredis.FakeRedis()
-    yield client
-    await client.flushdb()
-    await client.aclose()
-
-
-@pytest_asyncio.fixture
-async def limiter(redis_client):
-    return ChatRateLimiter(redis_client)
+@pytest.fixture
+def limiter(fake_cache):
+    return ChatRateLimiter(fake_cache)
 
 
 @pytest.mark.asyncio
@@ -117,17 +110,9 @@ async def test_a_check_adds_no_metric_series_per_user(limiter):
 
 
 @pytest.fixture
-def built_clients(monkeypatch):
-    built: list[fakeredis.aioredis.FakeRedis] = []
-
-    def _from_url(*_args, **_kwargs):
-        built.append(fakeredis.aioredis.FakeRedis())
-        return built[-1]
-
-    monkeypatch.setattr(redis, "from_url", _from_url)
-    rate_limiter_mod._client.cache_clear()
-    yield built
-    rate_limiter_mod._client.cache_clear()
+def shared_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr(rate_limiter_mod, "cache_service", fake_cache)
+    return fake_cache
 
 
 async def _enforce(owner_id: str = "owner-1", per_minute: int = 5) -> None:
@@ -135,15 +120,15 @@ async def _enforce(owner_id: str = "owner-1", per_minute: int = 5) -> None:
 
 
 @pytest.mark.asyncio
-async def test_every_request_checks_against_one_redis_client(built_clients):
-    await _enforce()
+async def test_the_windows_live_in_the_shared_cache(shared_cache):
+    """A client of its own would bypass the cache's operation timeout and its pause after an outage."""
     await _enforce()
 
-    assert len(built_clients) == 1
+    assert await shared_cache._client.exists(shared_cache._make_key("chat:rl:owner-1:minute"))
 
 
 @pytest.mark.asyncio
-async def test_a_request_over_the_window_is_refused_with_retry_after(built_clients):
+async def test_a_request_over_the_window_is_refused_with_retry_after(shared_cache):
     await _enforce(per_minute=1)
 
     with pytest.raises(HTTPException) as refused:
@@ -158,11 +143,20 @@ class _UnreachableRedis:
         raise redis.ConnectionError("redis down")
 
 
+class _HungRedis:
+    async def eval(self, *_args):
+        await asyncio.Event().wait()
+
+
 @pytest.mark.asyncio
-async def test_a_redis_outage_lets_the_request_through(monkeypatch, caplog):
-    monkeypatch.setattr(rate_limiter_mod, "_client", _UnreachableRedis)
+@pytest.mark.parametrize("lost", [_UnreachableRedis, _HungRedis], ids=["unreachable", "hung"])
+async def test_a_lost_redis_lets_the_request_through_and_pauses_the_cache(shared_cache, monkeypatch, caplog, lost):
+    monkeypatch.setattr(shared_cache, "get_client", AsyncMock(return_value=lost()))
+    monkeypatch.setattr(cache_mod, "REDIS_OPERATION_TIMEOUT_SECONDS", 0.05)
 
     with caplog.at_level(logging.WARNING, logger=rate_limiter_mod.__name__):
-        await _enforce()
+        await asyncio.wait_for(_enforce(), timeout=2)
 
     assert "allowing request" in caplog.text
+    # Paused, the next request is admitted without waiting on Redis again.
+    assert shared_cache._available is False

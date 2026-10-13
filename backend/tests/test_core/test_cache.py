@@ -482,6 +482,13 @@ class TestAtomicPrimitives:
         assert await fake_cache.pop("oidc_state:s") is True
         assert await fake_cache.pop("oidc_state:s") is None
 
+    @pytest.mark.asyncio
+    async def test_eval_runs_its_script_over_the_prefixed_key(self, fake_cache):
+        script = "redis.call('SET', KEYS[1], ARGV[1]) return redis.call('GET', KEYS[1])"
+
+        assert await fake_cache.eval(script, "chat:rl:u:minute", "v") == "v"
+        assert await fake_cache._client.get(fake_cache._make_key("chat:rl:u:minute")) == "v"
+
 
 _OPERATIONS = {
     "get": (lambda c: c.get("k"), None),
@@ -490,6 +497,7 @@ _OPERATIONS = {
     "mset": (lambda c: c.mset({"k": 1}), False),
     "incr": (lambda c: c.incr("n", 60), None),
     "pop": (lambda c: c.pop("k"), None),
+    "eval": (lambda c: c.eval("return 1", "k"), None),
 }
 
 
