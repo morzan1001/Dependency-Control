@@ -373,18 +373,18 @@ describe("ApiKeysCard", () => {
     expect(screen.getByText("last used 3 days ago")).toBeInTheDocument();
   });
 
-  it("calls a live key active", async () => {
+  it("calls a live key active in the green status pill of the users table", async () => {
     renderCard([mcpKey]);
     await screen.findByText(MCP_KEY_NAME);
 
-    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Active")).toHaveClass("rounded-full", "bg-green-100", "dark:bg-green-900/30");
   });
 
   it("calls a revoked key revoked and stops offering to revoke it", async () => {
     renderCard([revokedKey]);
     await screen.findByText(REVOKED_KEY_NAME);
 
-    expect(screen.getByText("Revoked")).toBeInTheDocument();
+    expect(screen.getByText("Revoked")).toHaveClass("rounded-full", "bg-red-100", "dark:bg-red-900/30");
     expect(
       screen.queryByRole("button", { name: REVOKED_REVOKE_LABEL }),
     ).not.toBeInTheDocument();
@@ -394,7 +394,7 @@ describe("ApiKeysCard", () => {
     renderCard([expiredKey]);
     await screen.findByText(EXPIRED_KEY_NAME);
 
-    expect(screen.getByText("Expired")).toBeInTheDocument();
+    expect(screen.getByText("Expired")).toHaveClass("rounded-full", "bg-red-100", "dark:bg-red-900/30");
     expect(screen.getByText("expired 7 months ago")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: EXPIRED_REVOKE_LABEL }),

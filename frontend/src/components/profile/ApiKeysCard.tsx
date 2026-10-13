@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatusPill } from '@/components/users/UserStatusBadge';
 import { useAuth } from '@/context';
 import {
   useApiKeys,
@@ -44,7 +45,6 @@ import type { ApiKey, ApiKeySurface } from '@/types/apiKey';
 
 const DEFAULT_EXPIRY_DAYS = 90;
 const MAX_NAME_LENGTH = 80;
-const MUTED_TONE = 'text-muted-foreground';
 
 const EXPIRY_OPTIONS = [
   { value: 30, label: '30 days' },
@@ -72,12 +72,12 @@ const SURFACE_PERMISSIONS: Record<ApiKeySurface, string> = {
   adhoc: Permissions.ANALYZE_ADHOC,
 };
 
-function statusLabel(key: ApiKey): { text: string; tone: string } {
-  if (key.revoked_at) return { text: 'Revoked', tone: MUTED_TONE };
+function statusLabel(key: ApiKey) {
+  if (key.revoked_at) return { text: 'Revoked', tone: 'red' } as const;
   if (new Date(key.expires_at).getTime() < Date.now()) {
-    return { text: 'Expired', tone: MUTED_TONE };
+    return { text: 'Expired', tone: 'red' } as const;
   }
-  return { text: 'Active', tone: 'text-emerald-600 dark:text-emerald-400' };
+  return { text: 'Active', tone: 'green' } as const;
 }
 
 // One button per row, so the label has to name the key a screen-reader user is about to kill.
@@ -200,7 +200,7 @@ export function ApiKeysCard() {
                   <span>{usageText(key)}</span>
                 </div>
               </div>
-              <span className={`text-xs font-medium ${status.tone}`}>{status.text}</span>
+              <StatusPill tone={status.tone}>{status.text}</StatusPill>
               {/* Expiry stops a key authenticating but does not clear it away. */}
               {!key.revoked_at && (
                 <Button
