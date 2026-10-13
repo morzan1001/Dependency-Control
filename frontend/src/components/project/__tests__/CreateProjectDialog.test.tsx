@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { CreateProjectDialog } from '../CreateProjectDialog'
@@ -81,5 +82,47 @@ describe('CreateProjectDialog after a project was created', () => {
     await waitFor(() => expect(screen.getByText('Create New Project')).toBeInTheDocument())
     expect(screen.queryByDisplayValue(API_KEY)).not.toBeInTheDocument()
     expect(screen.getByLabelText('Project Name')).toHaveValue('')
+  })
+
+  describe('copying the API key', () => {
+    const writeText = vi.fn()
+
+    beforeEach(() => {
+      vi.mocked(toast.success).mockClear()
+      vi.mocked(toast.error).mockClear()
+      // jsdom ships no Clipboard API.
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+      mockMutate.mockImplementation((_vars, options: { onSuccess: (data: unknown) => void }) =>
+        options.onSuccess({ project_id: 'p-new', api_key: API_KEY, note: 'Save the key' }),
+      )
+    })
+
+    function createAndCopyKey() {
+      render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+      submit()
+      const copy = screen.getByRole('button', { name: 'Copy API key' })
+      fireEvent.click(copy)
+      return copy
+    }
+
+    it('confirms the copy and marks the button once the clipboard holds the key', async () => {
+      writeText.mockResolvedValue(undefined)
+
+      const copy = createAndCopyKey()
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/copied/i)))
+      expect(writeText.mock.calls).toEqual([[API_KEY]])
+      expect(copy.querySelector('.lucide-check')).toBeInTheDocument()
+    })
+
+    it('tells the user to copy the key by hand and leaves the button unmarked when the clipboard refuses', async () => {
+      writeText.mockRejectedValue(new Error('denied'))
+
+      const copy = createAndCopyKey()
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/copy it by hand/i)))
+      expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
+      expect(copy.querySelector('.lucide-check')).not.toBeInTheDocument()
+    })
   })
 })

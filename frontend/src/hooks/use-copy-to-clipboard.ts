@@ -29,11 +29,13 @@ export function useCopyToClipboard(): UseCopyToClipboardReturn {
 }
 
 // An insecure context or a denied permission rejects the write; the user must learn that while the text is on screen.
-export async function copyWithToast(text: string, what: string): Promise<void> {
+export async function copyWithToast(text: string, what: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
     toast.success(`Copied the ${what} to the clipboard.`)
+    return true
   } catch {
     toast.error(`Could not reach the clipboard. Select the ${what} and copy it by hand.`)
+    return false
   }
 }

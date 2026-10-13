@@ -3,6 +3,8 @@ import { getErrorMessage } from "@/lib/utils";
 import { useCreateProject } from "@/hooks/queries/use-projects";
 import { useTeams } from "@/hooks/queries/use-teams";
 import { useAppConfig } from "@/hooks/queries/use-system";
+import { copyWithToast } from "@/hooks/use-copy-to-clipboard";
+import { COPY_FEEDBACK_DELAY_MS } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -92,10 +94,10 @@ export function CreateProjectDialog({
   };
 
   const copyToClipboard = async (text: string) => {
-    await navigator.clipboard.writeText(text);
-    setHasCopied(true);
-    toast.success("API Key copied to clipboard");
-    setTimeout(() => setHasCopied(false), 2000);
+    if (await copyWithToast(text, "API key")) {
+      setHasCopied(true);
+      setTimeout(() => setHasCopied(false), COPY_FEEDBACK_DELAY_MS);
+    }
   };
 
   const toggleAnalyzer = (id: string) => {
@@ -147,7 +149,8 @@ export function CreateProjectDialog({
                 <Button
                   size="icon"
                   variant="outline"
-                  onClick={() => copyToClipboard(createdProjectData.api_key)}
+                  aria-label="Copy API key"
+                  onClick={() => void copyToClipboard(createdProjectData.api_key)}
                 >
                   {hasCopied ? (
                     <Check className="h-4 w-4" />
