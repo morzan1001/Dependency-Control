@@ -182,6 +182,12 @@ describe('PasswordUpdateCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('names the identity provider capitalised, as the User Details and 2FA cards beside it do', () => {
+    renderProfile(SSO_USER)
+
+    expect(screen.getByText('gitlab', { selector: 'strong' })).toHaveClass('capitalize')
+  })
+
   it('lets a password manager offer a new password for both new fields', () => {
     renderProfile()
 

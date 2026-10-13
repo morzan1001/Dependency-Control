@@ -99,7 +99,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
       <CardContent>
         {!isLocalUser && (
           <div className="bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200 rounded-md p-4 mb-4 text-sm">
-            You are currently authenticated via <strong>{user?.auth_provider}</strong>.
+            You are currently authenticated via <strong className="capitalize">{user.auth_provider}</strong>.
             You cannot change your password using the standard form.
             However, you can set a local password below to migrate your account to a local account.
             After migration, you will be able to login with your email and password.
