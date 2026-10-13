@@ -31,11 +31,13 @@ const IDP_USER: User = { ...LOCAL_USER, id: 'u-otto', username: 'otto', email: '
 
 function renderCard(user: User, notificationChannels = ['slack']) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
-  render(
+  const card = (shown: User) => (
     <QueryClientProvider client={client}>
-      <UserDetailsCard user={user} notificationChannels={notificationChannels} />
-    </QueryClientProvider>,
+      <UserDetailsCard user={shown} notificationChannels={notificationChannels} />
+    </QueryClientProvider>
   )
+  const { rerender } = render(card(user))
+  return { showRefetched: (refetched: User) => rerender(card(refetched)) }
 }
 
 describe('UserDetailsCard', () => {
@@ -149,6 +151,20 @@ describe('UserDetailsCard', () => {
     expect(changeEmail.mock.calls[0][0]).toBe(NEW_EMAIL)
     expect(await screen.findByRole('status')).toHaveTextContent(PENDING_NOTICE)
     expect(updateMe).not.toHaveBeenCalled()
+  })
+
+  it('shows the current address again once the saved change waits for its link', async () => {
+    changeEmail.mockResolvedValue({ ...LOCAL_USER, pending_email: NEW_EMAIL, email_change: 'pending_confirmation' })
+    const { showRefetched } = renderCard(LOCAL_USER)
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: NEW_EMAIL } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save email' }))
+    await screen.findByRole('status')
+    showRefetched({ ...LOCAL_USER, pending_email: NEW_EMAIL })
+
+    expect(screen.getByLabelText('Email')).toHaveValue('lena@corp.com')
+    expect(screen.getByRole('button', { name: 'Save email' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent(PENDING_NOTICE)
   })
 
   it('says the address changed and is not verified when no mail server can confirm it', async () => {

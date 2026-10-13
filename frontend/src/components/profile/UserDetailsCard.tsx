@@ -73,6 +73,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
         </InlineFieldForm>
         {isLocalAccount ? (
           <InlineFieldForm
+            key={`${user?.email}|${user?.pending_email ?? ''}`}
             label="Email"
             type="email"
             value={user?.email || ''}
