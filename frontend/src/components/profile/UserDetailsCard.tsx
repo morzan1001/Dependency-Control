@@ -58,7 +58,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     if (savesProfile) saves.push(saveProfile());
     if (savesEmail) saves.push(saveEmail());
     const outcomes = await Promise.allSettled(saves);
-    if (outcomes.every(({ status }) => status === 'fulfilled')) toast.success("Profile updated");
+    if (outcomes.length === 0 || outcomes.some(({ status }) => status === 'fulfilled')) toast.success("Profile updated");
   };
 
   const sentUsername = profileMutation.variables?.username !== undefined;

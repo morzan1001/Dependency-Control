@@ -332,7 +332,8 @@ describe('UserDetailsCard', () => {
     expect(screen.getByLabelText('Username')).toHaveAccessibleDescription(TAKEN)
     expect(screen.getByLabelText('Username')).toHaveValue('otto')
     expect(screen.getByLabelText('Email')).toHaveValue('lena@corp.com')
-    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(toast.success).toHaveBeenCalledWith('Profile updated')
   })
 
   it('keeps a saved name when the new address is refused', async () => {
@@ -348,7 +349,23 @@ describe('UserDetailsCard', () => {
     expect(screen.getByLabelText('Email')).toHaveAccessibleDescription(REFUSAL)
     expect(await screen.findByRole('status')).toHaveTextContent('You now sign in as lena.k.')
     expect(screen.getByLabelText('Email')).toHaveValue(NEW_EMAIL)
-    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(toast.success).toHaveBeenCalledWith('Profile updated')
+  })
+
+  it('confirms a saved chat ID when the new address is refused', async () => {
+    updateMe.mockResolvedValue({ ...LOCAL_USER, slack_username: 'U123' })
+    changeEmail.mockRejectedValue(refused(REFUSAL))
+    renderCard(LOCAL_USER)
+
+    type('Slack Member ID', 'U123')
+    type('Email', NEW_EMAIL)
+    save()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(REFUSAL)
+    expect(updateMe.mock.calls).toEqual([[{ slack_username: 'U123' }]])
+    expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(toast.success).toHaveBeenCalledWith('Profile updated')
   })
 
   it('shows a pending change while the current address stays in place', () => {
