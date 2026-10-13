@@ -4,12 +4,16 @@ The route resolves its caller through the MCP key dependency, so only a request 
 proves the tool surface is behind a key at all.
 """
 
+import fakeredis.aioredis
 import pytest
+import pytest_asyncio
 
+from app.api.v1.endpoints.mcp import MCP_MAX_BATCH_SIZE
 from app.core import metrics
 from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
 from app.core.permissions import Permissions
 from app.repositories.api_keys import ApiKeyRepository
+from app.services.chat import rate_limiter
 from app.services.chat.tools import ChatToolRegistry
 
 _MCP = "/api/v1/mcp/"
@@ -25,9 +29,11 @@ _TOOLS_LIST = {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "tools/list", "par
 
 _OK = 200
 _ACCEPTED = 202
+_BAD_REQUEST = 400
 _UNAUTHORIZED = 401
 _FORBIDDEN = 403
 
+_RATE_LIMITED = -32000
 _INVALID_REQUEST = -32600
 _METHOD_NOT_FOUND = -32601
 _INVALID_PARAMS = -32602
@@ -35,6 +41,16 @@ _INTERNAL_ERROR = -32603
 
 # An owner holding both permissions leaves the key itself as the only thing that can refuse.
 _BOTH_SURFACES = (Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def limiter_redis(monkeypatch):
+    """A fresh window store per test, running the limiter's real script."""
+    redis = fakeredis.aioredis.FakeRedis()
+    monkeypatch.setattr(rate_limiter, "_client", lambda: redis)
+    yield redis
+    await redis.flushdb()
+    await redis.aclose()
 
 
 async def _seed_owner(db, permissions):
@@ -241,3 +257,101 @@ async def test_initialize_reports_the_release_version(client, db):
     resp = await _rpc(client, db, {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "initialize", "params": {}})
 
     assert resp.json()["result"]["serverInfo"]["version"] == metrics.APP_VERSION
+
+
+def _tool_call(request_id):
+    return {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "list_projects"}}
+
+
+async def _admit_one_chat_message(db, tool_rounds, window="chat_rate_limit_per_minute"):
+    await db.system_settings.insert_one({"_id": "current", window: 1, "chat_max_tool_rounds": tool_rounds})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("length", [0, MCP_MAX_BATCH_SIZE + 1])
+async def test_a_batch_outside_the_cap_is_refused_whole_as_an_invalid_request(client, db, monkeypatch, length):
+    executed: list[str] = []
+
+    async def _record(_self, name, *_args):
+        executed.append(name)
+        return {}
+
+    monkeypatch.setattr(ChatToolRegistry, "execute_tool", _record)
+
+    resp = await _rpc(client, db, [_tool_call(i) for i in range(length)])
+
+    assert resp.status_code == _BAD_REQUEST, resp.text
+    body = resp.json()
+    assert (body["id"], body["error"]["code"]) == (None, _INVALID_REQUEST)
+    assert str(MCP_MAX_BATCH_SIZE) in body["error"]["message"]
+    assert executed == []
+
+
+@pytest.mark.asyncio
+async def test_a_batch_at_the_cap_is_answered_in_full(client, db):
+    resp = await _rpc(client, db, [{"jsonrpc": "2.0", "id": i, "method": "ping"} for i in range(MCP_MAX_BATCH_SIZE)])
+
+    assert resp.status_code == _OK, resp.text
+    assert [item["id"] for item in resp.json()] == list(range(MCP_MAX_BATCH_SIZE))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window", ["chat_rate_limit_per_minute", "chat_rate_limit_per_hour"])
+async def test_tool_calls_beyond_the_owners_window_get_a_json_rpc_error_each(client, db, window):
+    """One chat message may run chat_max_tool_rounds tool rounds, so it buys that many calls."""
+    await _admit_one_chat_message(db, tool_rounds=2, window=window)
+
+    resp = await _rpc(client, db, [_tool_call(1), _tool_call(2), _tool_call(3)])
+
+    assert resp.status_code == _OK, resp.text
+    first, second, third = resp.json()
+    assert "result" in first and "result" in second
+    assert third["id"] == 3
+    assert third["error"]["code"] == _RATE_LIMITED
+    assert "retry in" in third["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_owner_still_completes_the_handshake(client, db):
+    await _admit_one_chat_message(db, tool_rounds=1)
+    _doc, token = await _issue_unified_key(db)
+    await client.post(_MCP, json=_tool_call(1), headers=_bearer(token))
+
+    resp = await client.post(
+        _MCP,
+        json=[
+            {"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}},
+            _TOOLS_LIST,
+            {"jsonrpc": "2.0", "id": 3, "method": "ping"},
+            _tool_call(4),
+        ],
+        headers=_bearer(token),
+    )
+
+    initialize, tools, ping, call = resp.json()
+    assert "result" in initialize and "result" in tools and "result" in ping
+    assert call["error"]["code"] == _RATE_LIMITED
+
+
+@pytest.mark.asyncio
+async def test_every_key_of_one_owner_draws_on_the_owners_window(client, db):
+    await _admit_one_chat_message(db, tool_rounds=1)
+    _first_doc, first = await _issue_unified_key(db)
+    _second_doc, second = await _issue_unified_key(db)
+
+    allowed = await client.post(_MCP, json=_tool_call(1), headers=_bearer(first))
+    refused = await client.post(_MCP, json=_tool_call(2), headers=_bearer(second))
+
+    assert "result" in allowed.json()
+    assert refused.json()["error"]["code"] == _RATE_LIMITED
+
+
+@pytest.mark.asyncio
+async def test_spending_the_mcp_window_leaves_the_chat_window_untouched(client, db):
+    await _admit_one_chat_message(db, tool_rounds=1)
+    _doc, token = await _issue_unified_key(db)
+    await client.post(_MCP, json=_tool_call(1), headers=_bearer(token))
+    refused = await client.post(_MCP, json=_tool_call(2), headers=_bearer(token))
+    assert refused.json()["error"]["code"] == _RATE_LIMITED
+
+    assert await rate_limiter.rate_limit_retry_after(_OWNER, per_minute=1, per_hour=1) == 0
