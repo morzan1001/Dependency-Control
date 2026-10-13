@@ -75,16 +75,18 @@ describe('UserDetailsDialog - username', () => {
     expect(toast.success).toHaveBeenCalledTimes(1)
   })
 
-  it('offers no save while the name is unchanged', () => {
+  it('saves the name as it stands, like the other edits', async () => {
     auth.granted = MANAGER
-    renderDialog()
-    const { field, save } = openRename()
+    update.mockResolvedValue(TARGET)
+    const onUserUpdated = renderDialog()
+    const { save } = openRename()
 
-    expect(save).toBeDisabled()
-    fireEvent.change(field, { target: { value: ' target ' } })
-    expect(save).toBeDisabled()
-    fireEvent.change(field, { target: { value: 'target2' } })
     expect(save).toBeEnabled()
+    fireEvent.click(save)
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename target' })).not.toBeInTheDocument())
+    expect(update.mock.calls).toEqual([['u-target', { username: 'target' }]])
+    expect(onUserUpdated).toHaveBeenCalledWith(TARGET)
   })
 
   it.each(['', '   '])('offers no save for the blank name %j', (blank) => {

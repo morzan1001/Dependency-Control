@@ -60,16 +60,26 @@ describe('UserDetailsCard', () => {
   })
 
   it.each([[['email']], [['email', 'mattermost']], [['slack', 'mattermost']]])(
-    'offers one Save Changes button, idle until a field changes, with channels %j',
+    'offers one Save Changes button with channels %j',
     (channels) => {
       renderCard(LOCAL_USER, channels)
 
       expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Save Changes'])
-      expect(saveButton()).toBeDisabled()
-      type('Username', 'lena.k')
       expect(saveButton()).toBeEnabled()
     },
   )
+
+  it('confirms a save with nothing changed without sending anything', async () => {
+    renderCard(LOCAL_USER)
+
+    type('Username', ' lena ')
+    save()
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Profile updated'))
+    expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(updateMe).not.toHaveBeenCalled()
+    expect(changeEmail).not.toHaveBeenCalled()
+  })
 
   it('saves only the chat ID that changed', async () => {
     updateMe.mockResolvedValue({ ...LOCAL_USER, slack_username: 'U123', mattermost_username: 'lena-mm' })
@@ -200,14 +210,6 @@ describe('UserDetailsCard', () => {
     expect(await screen.findByRole('button', { name: 'Save Changes' })).toBeInTheDocument()
   })
 
-  it('offers no save while the name is unchanged', () => {
-    renderCard(LOCAL_USER)
-
-    type('Username', ' lena ')
-
-    expect(saveButton()).toBeDisabled()
-  })
-
   it.each(['', '   '])('offers no save for the blank name %j', async (blank) => {
     renderCard(LOCAL_USER)
 
@@ -251,8 +253,10 @@ describe('UserDetailsCard', () => {
     showRefetched({ ...LOCAL_USER, pending_email: NEW_EMAIL })
 
     expect(screen.getByLabelText('Email')).toHaveValue('lena@corp.com')
-    expect(saveButton()).toBeDisabled()
     expect(screen.getByRole('status')).toHaveTextContent(PENDING_NOTICE)
+    save()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(2))
+    expect(changeEmail).toHaveBeenCalledTimes(1)
   })
 
   it('says the address changed and is not verified when no mail server can confirm it', async () => {

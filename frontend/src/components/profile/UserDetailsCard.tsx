@@ -181,7 +181,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
               )}
             </div>
           </div>
-          <Button type="submit" disabled={isSaving || !nextUsername || !(savesProfile || savesEmail)}>
+          <Button type="submit" disabled={isSaving || !nextUsername}>
             {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
         </form>
