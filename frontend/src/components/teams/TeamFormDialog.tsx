@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Plus } from 'lucide-react';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -18,7 +19,7 @@ import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
 const CREATE = { title: 'Create Team', blurb: 'Create a new team to manage projects and members.', submit: 'Create Team', pending: 'Creating...', idPrefix: '' };
-const EDIT = { title: 'Edit Team', blurb: 'Update team details.', submit: 'Update Team', pending: 'Updating...', idPrefix: 'edit-' };
+const EDIT = { title: 'Edit Team', blurb: 'Update team details.', submit: 'Save Changes', pending: 'Saving...', idPrefix: 'edit-' };
 
 // Create mode owns its trigger and open state, so an unsent draft survives closing the dialog.
 export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClose?: () => void }>) {
@@ -69,38 +70,33 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="sm:max-w-[425px]">
-        <form onSubmit={handleSubmit}>
+      <DialogContent>
+        <form onSubmit={handleSubmit} className="grid gap-4">
           <DialogHeader>
             <DialogTitle>{mode.title}</DialogTitle>
             <DialogDescription>{mode.blurb}</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor={`${mode.idPrefix}name`} className="text-right">
-                Name
-              </Label>
-              <Input
-                id={`${mode.idPrefix}name`}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="col-span-3"
-                required
-              />
-            </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor={`${mode.idPrefix}description`} className="text-right">
-                Description
-              </Label>
-              <Input
-                id={`${mode.idPrefix}description`}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="col-span-3"
-              />
-            </div>
+          <div className="grid gap-2">
+            <Label htmlFor={`${mode.idPrefix}name`}>Name</Label>
+            <Input
+              id={`${mode.idPrefix}name`}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor={`${mode.idPrefix}description`}>Description</Label>
+            <Input
+              id={`${mode.idPrefix}description`}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </div>
           <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="outline">Cancel</Button>
+            </DialogClose>
             <Button type="submit" disabled={isPending}>
               {isPending ? mode.pending : mode.submit}
             </Button>

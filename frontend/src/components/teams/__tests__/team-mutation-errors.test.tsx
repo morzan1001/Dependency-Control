@@ -95,7 +95,7 @@ describe("team mutations show the server's refusal", () => {
     teamApi.update.mockRejectedValue(apiError(404, "Team not found"));
     renderWithClient(<TeamFormDialog team={TEAM} onClose={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Update Team" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Failed to update team", { description: "Team not found" }),

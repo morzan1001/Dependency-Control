@@ -67,7 +67,7 @@ describe('TeamsPage edit dialog', () => {
 
     const dialog = editTeam()
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Team Gamma' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Team' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() =>
       expect(teamApi.update).toHaveBeenCalledWith(TEAM.id, { name: 'Team Gamma', description: TEAM.description }),
@@ -92,12 +92,12 @@ describe('TeamsPage edit dialog', () => {
     await renderPage()
     const dialog = editTeam()
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: renamed.name } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Team' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save Changes' }))
     // The save runs on microtasks only, so a dialog that closes on the PUT alone is gone after one task.
     await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(teamApi.getAll).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('button', { name: 'Updating...' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
 
     answerRefetch([renamed])
     await screen.findByText(renamed.name)
