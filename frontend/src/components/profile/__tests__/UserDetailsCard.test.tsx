@@ -21,6 +21,9 @@ const NEW_EMAIL = 'lena.new@corp.com'
 const PENDING_NOTICE = `Open the link sent to ${NEW_EMAIL} to confirm the change. Until then, lena@corp.com stays your address.`
 const REFUSAL = 'Email verification is required, but no mail server is configured to confirm a new address'
 const TAKEN = 'Username already taken'
+const OUTSIDE_RULE =
+  'A username has 2 to 64 letters, digits, dots, underscores or hyphens and starts with a letter or digit'
+const SERVER_FAILURE = 'Internal Server Error. Please check the logs for more details.'
 const LOCAL_USER: User = {
   id: 'u-lena',
   username: 'lena',
@@ -52,7 +55,7 @@ function SignedInCard() {
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
 const saveButton = () => screen.getByRole('button', { name: 'Save Changes' })
 const save = () => fireEvent.click(saveButton())
-const refused = (detail: string) => ({ response: { data: { detail } } })
+const refused = (detail: string, status = 400) => ({ response: { status, data: { detail } } })
 
 describe('UserDetailsCard', () => {
   beforeEach(() => {
@@ -166,16 +169,19 @@ describe('UserDetailsCard', () => {
     expect(updateMe.mock.calls).toEqual([[{ username: 'lena.k', slack_username: 'U123' }]])
   })
 
-  it('shows under the field why a new name was refused and keeps what was typed', async () => {
-    updateMe.mockRejectedValue(refused(TAKEN))
+  it.each([
+    { status: 400, reason: TAKEN },
+    { status: 422, reason: OUTSIDE_RULE },
+  ])('shows under the field why a new name was refused with $status and keeps what was typed', async ({ status, reason }) => {
+    updateMe.mockRejectedValue(refused(reason, status))
     renderCard(LOCAL_USER)
 
     type('Username', 'otto')
     type('Slack Member ID', 'U123')
     save()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(TAKEN)
-    expect(screen.getByLabelText('Username')).toHaveAccessibleDescription(TAKEN)
+    expect(await screen.findByRole('alert')).toHaveTextContent(reason)
+    expect(screen.getByLabelText('Username')).toHaveAccessibleDescription(reason)
     expect(screen.getByLabelText('Username')).toHaveValue('otto')
     expect(screen.getByLabelText('Slack Member ID')).toHaveValue('U123')
     expect(toast.success).not.toHaveBeenCalled()
@@ -184,15 +190,21 @@ describe('UserDetailsCard', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
 
-  it('reports a failed chat ID save', async () => {
-    updateMe.mockRejectedValue(new Error('Network Error'))
+  it.each([
+    { field: 'Slack Member ID', value: 'U123', error: new Error('Network Error'), message: 'Network Error' },
+    { field: 'Slack Member ID', value: 'U123', error: refused('Inactive user'), message: 'Inactive user' },
+    { field: 'Username', value: 'lena.k', error: new Error('Network Error'), message: 'Network Error' },
+    { field: 'Username', value: 'lena.k', error: refused(SERVER_FAILURE, 500), message: SERVER_FAILURE },
+  ])('reports a failed save of the $field without blaming the field: $message', async ({ field, value, error, message }) => {
+    updateMe.mockRejectedValue(error)
     renderCard(LOCAL_USER)
 
-    type('Slack Member ID', 'U123')
+    type(field, value)
     save()
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: 'Network Error' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: message }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(field)).toHaveValue(value)
     expect(toast.success).not.toHaveBeenCalled()
   })
 
@@ -366,7 +378,7 @@ describe('UserDetailsCard', () => {
   })
 
   it('shows under the field why a new address was refused', async () => {
-    changeEmail.mockRejectedValue(refused(REFUSAL))
+    changeEmail.mockRejectedValue(refused(REFUSAL, 501))
     renderCard(LOCAL_USER)
 
     type('Email', NEW_EMAIL)
@@ -418,7 +430,7 @@ describe('UserDetailsCard', () => {
 
   it('keeps a saved name when the new address is refused', async () => {
     updateMe.mockResolvedValue({ ...LOCAL_USER, username: 'lena.k' })
-    changeEmail.mockRejectedValue(refused(REFUSAL))
+    changeEmail.mockRejectedValue(refused(REFUSAL, 501))
     renderCard(LOCAL_USER)
 
     type('Username', 'lena.k')
@@ -435,7 +447,7 @@ describe('UserDetailsCard', () => {
 
   it('confirms a saved chat ID when the new address is refused', async () => {
     updateMe.mockResolvedValue({ ...LOCAL_USER, slack_username: 'U123' })
-    changeEmail.mockRejectedValue(refused(REFUSAL))
+    changeEmail.mockRejectedValue(refused(REFUSAL, 501))
     renderCard(LOCAL_USER)
 
     type('Slack Member ID', 'U123')

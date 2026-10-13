@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
+import type { ApiError } from '@/api/client';
 import { useUpdateMe } from '@/hooks/queries/use-users';
 import { User, UserUpdateMe } from '@/types/user';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -15,6 +16,12 @@ interface UserDetailsCardProps {
   user: User | undefined;
   notificationChannels: string[] | undefined;
 }
+
+// In a profile request only the name can be refused: 400 when it is taken, 422 when it breaks the rule.
+const refusesUsername = (sent: UserUpdateMe | undefined, error: unknown) => {
+  const status = (error as ApiError).response?.status;
+  return sent?.username !== undefined && (status === 400 || status === 422);
+};
 
 export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDetailsCardProps>) {
   const queryClient = useQueryClient();
@@ -53,8 +60,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     profileMutation.mutateAsync(profileChanges).then(
       (saved) => setUsername((draft) => (draft.trim() === profileChanges.username ? saved.username : draft)),
       (error: unknown) => {
-        // A refused new name shows under the username field instead.
-        if (profileChanges.username === undefined) toast.error("Error", { description: getErrorMessage(error) });
+        if (!refusesUsername(profileChanges, error)) toast.error("Error", { description: getErrorMessage(error) });
         throw error;
       },
     );
@@ -72,7 +78,10 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   };
 
   const sentUsername = profileMutation.variables?.username !== undefined;
-  const usernameError = sentUsername && profileMutation.isError ? getErrorMessage(profileMutation.error) : null;
+  const usernameError =
+    profileMutation.isError && refusesUsername(profileMutation.variables, profileMutation.error)
+      ? getErrorMessage(profileMutation.error)
+      : null;
   const emailError = emailMutation.isError ? getErrorMessage(emailMutation.error) : null;
   const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
 
