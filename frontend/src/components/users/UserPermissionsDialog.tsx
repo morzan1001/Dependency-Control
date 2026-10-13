@@ -73,15 +73,11 @@ export function UserPermissionsDialog({ user, onOpenChange, onUserUpdated }: Rea
     }, {
       onSuccess: (updated) => {
         onUserUpdated?.(updated);
-        toast.success("Success", {
-          description: "User permissions updated successfully.",
-        });
+        toast.success("Permissions updated");
         onOpenChange(false);
       },
       onError: (error) => {
-        toast.error("Error", {
-          description: getErrorMessage(error),
-        });
+        toast.error("Failed to update permissions", { description: getErrorMessage(error) });
       },
     });
   };

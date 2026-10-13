@@ -184,4 +184,30 @@ describe('UsersPage user details toasts', () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(failure, { description: 'Network Error' }))
   })
+
+  it('confirms a permission save by name', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([lena(['project:read'])])
+    vi.mocked(userApi.update).mockResolvedValue(lena([...PRESET_VIEWER]))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage Permissions' }))
+    fireEvent.click(screen.getByRole('button', { name: /Viewer/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Permissions updated'))
+  })
+
+  it('names a permission save that failed and why', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([lena(['project:read'])])
+    vi.mocked(userApi.update).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage Permissions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Failed to update permissions', { description: 'Network Error' }),
+    )
+    expect(screen.getByRole('dialog', { name: 'Manage Permissions for lena' })).toBeInTheDocument()
+  })
 })
