@@ -40,18 +40,20 @@ def _retry_after_seconds(outcome: httpx.Response | httpx.TransportError) -> floa
 
 
 def quota_lifts_at(response: httpx.Response) -> float | None:
-    """The epoch second a 403/429 quota refusal lifts, Retry-After ranked above the quota's reset as GitHub
-    ranks them; None for any other answer, a 403 without either header included."""
+    """The epoch second a 403/429 quota refusal lifts, the later of its Retry-After and a spent quota's reset;
+    None for any other answer, a 403 without either header included."""
     status, headers = response.status_code, response.headers
     spent = headers.get("X-RateLimit-Remaining") == "0"
     if status != 429 and not (status == 403 and ("Retry-After" in headers or spent)):
         return None
-    with suppress(ValueError):
-        if "Retry-After" in headers:
-            return time.time() + float(headers["Retry-After"])
-        if spent and "X-RateLimit-Reset" in headers:
-            return float(headers["X-RateLimit-Reset"])
-    return time.time() + _UNNAMED_QUOTA_WAIT_SECONDS
+    now = time.time()
+    lifts: list[float] = []
+    with suppress(KeyError, ValueError):
+        lifts.append(now + float(headers["Retry-After"]))
+    with suppress(KeyError, ValueError):
+        if spent:
+            lifts.append(float(headers["X-RateLimit-Reset"]))
+    return max(lifts, default=now + _UNNAMED_QUOTA_WAIT_SECONDS)
 
 
 class InstrumentedAsyncClient:

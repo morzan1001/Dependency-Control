@@ -215,14 +215,26 @@ _NOW = 1_800_000_000.0
         pytest.param(
             429,
             {"Retry-After": "30", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(_RESET)},
-            30,
-            id="retry-after-ranks-above-the-reset",
+            _RESET - _NOW,
+            id="a-reset-outlasting-the-retry-after",
+        ),
+        pytest.param(
+            429,
+            {"Retry-After": "120", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(_NOW) + 30)},
+            120,
+            id="a-retry-after-outlasting-the-reset",
         ),
         pytest.param(
             403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(_RESET)}, _RESET - _NOW, id="spent-quota"
         ),
         pytest.param(429, {}, 60, id="unnamed-wait-is-a-minute"),
         pytest.param(403, {"Retry-After": "soon"}, 60, id="unreadable-retry-after"),
+        pytest.param(
+            403,
+            {"Retry-After": "soon", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(_RESET)},
+            _RESET - _NOW,
+            id="unreadable-retry-after-on-a-spent-quota",
+        ),
         pytest.param(403, {"X-RateLimit-Remaining": "0"}, 60, id="spent-quota-without-a-reset"),
         pytest.param(403, {}, None, id="permission-refusal"),
         pytest.param(503, {"Retry-After": "5"}, None, id="server-error"),
