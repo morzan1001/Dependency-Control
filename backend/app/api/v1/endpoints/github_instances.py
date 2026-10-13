@@ -230,6 +230,14 @@ def _failed_test(instance: GitHubInstance, message: str) -> GitHubInstanceTestCo
     )
 
 
+def _budget_failure(instance: GitHubInstance, blocked: str, reset: str) -> GitHubInstanceTestConnectionResponse:
+    return _failed_test(
+        instance,
+        f"OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so {blocked}. The limit "
+        f"resets at {reset}. Wait for it, or stop sharing this identity with another workload, then test again.",
+    )
+
+
 async def _probe_token(
     github_service: GitHubService, instance: GitHubInstance
 ) -> GitHubInstanceTestConnectionResponse | str:
@@ -245,12 +253,7 @@ async def _probe_token(
         return " The access token authenticates."
     cause, reset = await _why_refused(github_service)
     if cause is _Refusal.BUDGET:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so the token "
-            f"could not be tried. The limit resets at {reset}. Wait for it, or stop sharing this "
-            "identity with another workload.",
-        )
+        return _budget_failure(instance, "the token could not be tried", reset)
     return _failed_test(
         instance,
         "OIDC endpoint reachable, but GitHub refused the access token on GET /user, so pull-request "
@@ -265,12 +268,7 @@ async def _refused_org_listing(
     """The failure the org probe's refusal established, or None to leave it to the scope message."""
     cause, reset = await _why_refused(github_service)
     if cause is _Refusal.BUDGET:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so its "
-            f"organisations could not be listed. The limit resets at {reset}. Wait for it, or stop "
-            "sharing this identity with another workload; the token itself was not tested.",
-        )
+        return _budget_failure(instance, "its organisations could not be listed", reset)
     if cause is _Refusal.UNDETERMINED:
         return _failed_test(
             instance,
@@ -289,12 +287,7 @@ async def _refused_team_listing(
     # Exhaustion mid-loop makes every organisation after it look unreadable, so naming any of them
     # would accuse organisations the token may well be able to read.
     if cause is _Refusal.BUDGET:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so its "
-            f"team access could not be checked. The limit resets at {reset}. Wait for it, or stop "
-            "sharing this identity with another workload, then test again.",
-        )
+        return _budget_failure(instance, "its team access could not be checked", reset)
     if cause is _Refusal.UNDETERMINED:
         return _failed_test(
             instance,

@@ -621,6 +621,8 @@ class TestConnectionTellsAThrottledTokenFromAScopeProblem:
         assert "read:org" not in result.message
         assert f"{budget.reset_at:%Y-%m-%d %H:%M UTC}" in result.message
         assert "20 minute(s)" in result.message
+        # GET /user already answered for the token.
+        assert "not tested" not in result.message
         rate_probe.assert_awaited_once()
 
     def test_a_refused_org_probe_still_reports_the_scope(self, admin_user):
