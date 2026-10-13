@@ -10,7 +10,7 @@ import pytest
 from pymongo.errors import AutoReconnect
 
 from app.core.constants import INSTANCE_ID
-from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder, run_holding_lock
+from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -130,3 +130,49 @@ async def test_work_that_finishes_despite_a_lost_lock_keeps_its_result():
         return "done"
 
     assert await run_holding_lock(AsyncMock(return_value=False), 0.3, swallow_one_cancel()) == "done"
+
+
+def _cancellable_work(started: asyncio.Event, cancelled: asyncio.Event):
+    async def work() -> None:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    return work()
+
+
+@pytest.mark.asyncio
+async def test_losing_the_lock_cancels_the_work_and_raises_lock_lost():
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    with pytest.raises(LockLost):
+        await run_holding_lock(AsyncMock(return_value=False), 0.3, _cancellable_work(started, cancelled))
+
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_holder_cancels_the_work_and_propagates_the_cancellation():
+    started, cancelled = asyncio.Event(), asyncio.Event()
+    holder = asyncio.create_task(
+        run_holding_lock(AsyncMock(return_value=True), 30, _cancellable_work(started, cancelled))
+    )
+    await started.wait()
+
+    holder.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await holder
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_an_error_in_the_work_reaches_the_holder():
+    async def failing() -> None:
+        raise ValueError("work failed")
+
+    with pytest.raises(ValueError, match="work failed"):
+        await run_holding_lock(AsyncMock(return_value=True), 30, failing())

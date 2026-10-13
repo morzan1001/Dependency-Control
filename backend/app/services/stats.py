@@ -8,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
 from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
+from app.core.log_utils import sanitize_for_log
 from app.models.project import Project
 from app.models.stats import Stats
 from app.models.waiver import Waiver
@@ -90,7 +91,9 @@ async def _acquire_with_backoff(lock_repo: DistributedLocksRepository, lock_name
                 f"Lock contention on {lock_name}; retrying in {delay:.2f}s (attempt {attempt + 1}/{_LOCK_MAX_RETRIES})."
             )
             await asyncio.sleep(delay)
-    logger.warning(f"Could not acquire {lock_name} after {_LOCK_MAX_RETRIES} retries; stats may be stale")
+    logger.warning(
+        "Could not acquire %s after %d retries; stats may be stale", sanitize_for_log(lock_name), _LOCK_MAX_RETRIES
+    )
     return False
 
 

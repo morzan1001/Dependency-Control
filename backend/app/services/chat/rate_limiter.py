@@ -20,15 +20,20 @@ def _client() -> redis.Redis:
     return redis.from_url(settings.REDIS_URL)
 
 
-async def enforce_rate_limit(owner_id: str, *, per_minute: int, per_hour: int) -> None:
-    """Raise 429 with Retry-After once the owner's window is spent; a Redis outage admits the request."""
+async def rate_limit_retry_after(owner_id: str, *, per_minute: int, per_hour: int) -> int:
+    """Seconds until the owner's window admits a request, 0 when it admits this one; a Redis outage admits it."""
     limiter = ChatRateLimiter(_client())
     try:
         allowed, retry_after = await limiter.check_rate_limit(owner_id, per_minute=per_minute, per_hour=per_hour)
     except redis.RedisError:
         logger.warning("Redis unavailable for chat rate limiting, allowing request")
-        return
-    if not allowed:
+        return 0
+    return 0 if allowed else retry_after
+
+
+async def enforce_rate_limit(owner_id: str, *, per_minute: int, per_hour: int) -> None:
+    """Raise 429 with Retry-After once the owner's window is spent."""
+    if retry_after := await rate_limit_retry_after(owner_id, per_minute=per_minute, per_hour=per_hour):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded",

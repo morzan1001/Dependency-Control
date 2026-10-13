@@ -10,10 +10,11 @@ from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import DatabaseDep, McpKeyDep
+from app.api.deps import DatabaseDep, McpKeyDep, get_system_settings
 from app.api.router import CustomAPIRouter
 from app.core import metrics
 from app.models.user import User
+from app.services.chat.rate_limiter import rate_limit_retry_after
 from app.services.chat.tools import ChatToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,9 @@ router = CustomAPIRouter()
 SERVER_NAME = "dependency-control"
 SERVER_VERSION = metrics.APP_VERSION
 MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_MAX_BATCH_SIZE = 20
 
+_RATE_LIMITED = -32000
 _PARSE_ERROR = -32700
 _INVALID_REQUEST = -32600
 _METHOD_NOT_FOUND = -32601
@@ -69,6 +72,16 @@ async def _handle_tool_call(
     available = registry.get_available_tool_names(user.permissions)
     if name not in available:
         raise _RpcError(_METHOD_NOT_FOUND, f"Tool '{name}' is not available")
+
+    limits = await get_system_settings(db)
+    # A chat message may run chat_max_tool_rounds tool rounds, so every message the chat admits buys that many calls.
+    retry_after = await rate_limit_retry_after(
+        f"mcp:{user.id}",
+        per_minute=limits.chat_rate_limit_per_minute * limits.chat_max_tool_rounds,
+        per_hour=limits.chat_rate_limit_per_hour * limits.chat_max_tool_rounds,
+    )
+    if retry_after:
+        raise _RpcError(_RATE_LIMITED, f"Rate limit exceeded, retry in {retry_after} seconds")
 
     result = await registry.execute_tool(name, arguments, user, db)
     text = json.dumps(result, default=str, ensure_ascii=False, indent=2)
@@ -162,6 +175,11 @@ async def mcp_rpc(
 
     # Spec allows a JSON array of batched requests; handle uniformly.
     batched = isinstance(payload, list)
+    if batched and not 0 < len(payload) <= MCP_MAX_BATCH_SIZE:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=_rpc_error(_INVALID_REQUEST, f"A batch holds 1 to {MCP_MAX_BATCH_SIZE} requests"),
+        )
     requests = payload if batched else [payload]
 
     responses = [r for item in requests if (r := await _handle_request(item, user, db)) is not None]

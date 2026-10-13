@@ -3,6 +3,7 @@
 import logging
 import re
 import time
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -92,6 +93,7 @@ from ._helpers import (
     _number,
     _serialize_doc,
     _serialize_finding_for_llm,
+    _trim_inner_lists,
     _truncate_if_too_large,
     advisory_view,
     begin_limit_ledger,
@@ -181,6 +183,11 @@ _RANKING_SAMPLED = (
     "State this caveat in your answer: the {tier} tier holds {total} findings and only "
     "{cap} were read, so these are {tier} findings but not necessarily the worst {tier} ones. "
     "Narrow the question — a single project, or a finding type — for an exact answer."
+)
+
+_CVE_SAMPLE_NOTE = (
+    "Every affected project carries its full occurrence count; a findings list shorter than that count is a "
+    "sample. Pass a project_id to sample only that project."
 )
 
 # Scan stats and REST analytics leave waived findings out, so every chat count and priority list does too.
@@ -1275,36 +1282,46 @@ class ChatToolRegistry:
         head, names = await self._heads_in_scope(ctx)
         if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        rows, rows_total = await bounded_read(
-            ctx.db["findings"],
-            {
-                "scan_id": {"$in": list(head.values())},
-                **advisory_match(cve),
-            },
-            subject=f"findings naming {cve}",
-            limit=_CVE_OCCURRENCE_READ,
+        query = {"scan_id": {"$in": list(head.values())}, **advisory_match(cve)}
+        counts = await (
+            ctx.db["findings"]
+            .aggregate(
+                [
+                    {"$match": query},
+                    {"$group": {"_id": "$project_id", "occurrences": {"$sum": 1}}},
+                    {"$sort": {"occurrences": -1, "_id": 1}},
+                ]
+            )
+            .to_list(length=None)
         )
-        by_project: dict[str, dict[str, Any]] = {}
+        rows = await ctx.db["findings"].find(query, limit=_CVE_OCCURRENCE_READ).to_list(length=_CVE_OCCURRENCE_READ)
+        samples: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
         for f in rows:
-            pid = _row_project_id(f)
-            slot = by_project.setdefault(
-                pid,
+            samples[_row_project_id(f)].append(_serialize_finding_for_llm(f, cve=cve))
+        affected = []
+        for count in counts:
+            pid = _row_project_id({"project_id": count["_id"]})
+            affected.append(
                 {
                     "project_id": pid,
                     "project_name": names.get(pid, ""),
-                    "findings": [],
-                },
+                    "occurrences": count["occurrences"],
+                    "findings": samples[pid],
+                }
             )
-            slot["findings"].append(_serialize_finding_for_llm(f, cve=cve))
-        return {
+        total = sum(count["occurrences"] for count in counts)
+        answer = {
             "cve_id": cve,
-            "affected_projects": list(by_project.values()),
-            # Projects and occurrences among the rows read; total_occurrences is the whole
-            # population, so the two disagree exactly when the read saturated.
-            "project_count": len(by_project),
-            "occurrences_read": len(rows),
-            "total_occurrences": rows_total,
+            "affected_projects": affected,
+            "project_count": len(affected),
+            "total_occurrences": total,
         }
+        # Sized with the links execute_tool would add after this trim.
+        _inject_urls(answer)
+        if len(rows) < total or _json_size(answer) > MAX_TOOL_RESULT_BYTES:
+            answer["_occurrences_note"] = _CVE_SAMPLE_NOTE
+            _trim_inner_lists(answer, "affected_projects", "findings")
+        return answer
 
     async def _tool_get_cve_details(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""

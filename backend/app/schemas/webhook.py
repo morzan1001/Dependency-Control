@@ -31,9 +31,9 @@ _RESERVED_HEADER_NAMES = frozenset(
 
 
 def is_blocked_ip(ip: IPAddress) -> bool:
-    return bool(
-        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
-    )
+    site_local = isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local
+    # is_global is False for carrier-grade NAT but True for multicast, reserved IPv6 blocks and site-local fec0::/10.
+    return not ip.is_global or ip.is_multicast or ip.is_reserved or site_local
 
 
 def _parse_ip(host: str) -> IPAddress | None:

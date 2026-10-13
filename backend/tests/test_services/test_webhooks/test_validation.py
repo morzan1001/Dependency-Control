@@ -7,6 +7,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.core.constants import WEBHOOK_VALID_EVENTS
 from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.webhook import (
@@ -21,6 +22,9 @@ from app.services.webhooks.validation import (
     _resolve_and_vet,
     build_pinned_transport,
 )
+
+
+_LOOPBACK_URLS = ["http://localhost:8080/hook", "http://127.0.0.1:8080/hook", "http://[::1]:8080/hook"]
 
 
 def _resolving(*sockaddrs, seen: list[str] | None = None):
@@ -39,14 +43,24 @@ class TestValidateWebhookUrl:
         "url",
         [
             "https://example.com/webhook",
-            "http://localhost:8080/hook",
-            "http://127.0.0.1:8080/hook",
-            "http://[::1]:8080/hook",
             "HTTPS://example.com/hook",
+            # The public neighbours of the shared address space 100.64.0.0/10.
+            "https://100.63.255.255/hook",
+            "https://100.128.0.0/hook",
         ],
     )
     def test_accepted_url_is_returned_unchanged(self, url):
         assert validate_webhook_url(url) == url
+
+    @pytest.mark.parametrize("url", _LOOPBACK_URLS)
+    def test_a_loopback_target_is_refused_by_default(self, url):
+        with pytest.raises(ValueError, match="Localhost"):
+            validate_webhook_url(url)
+
+    @pytest.mark.parametrize("url", _LOOPBACK_URLS)
+    def test_a_loopback_target_is_accepted_where_local_development_allows_it(self, url):
+        with patch.object(settings, "WEBHOOK_ALLOW_LOCALHOST", True):
+            assert validate_webhook_url(url) == url
 
     @pytest.mark.parametrize(
         "url",
@@ -86,6 +100,12 @@ class TestValidateWebhookUrl:
             "https://[fe80::1]/hook",
             "https://0.0.0.0/hook",
             "https://224.0.0.1/hook",
+            # Carrier-grade NAT, which is_private leaves out.
+            "https://100.64.0.1/hook",
+            "https://100.127.255.254/hook",
+            "https://[::ffff:100.64.0.1]/hook",
+            # Deprecated IPv6 site-local, which is_global counts as global.
+            "https://[fec0::1]/hook",
         ],
     )
     def test_private_and_reserved_ip_literals_rejected(self, url):
@@ -116,14 +136,6 @@ class TestValidateWebhookUrl:
         with pytest.raises(ValueError, match="not an allowed target"):
             validate_webhook_url(f"https://{host}/latest/meta-data/")
 
-    def test_localhost_disabled_via_setting(self):
-        with patch("app.schemas.webhook.settings") as s:
-            s.WEBHOOK_ALLOW_LOCALHOST = False
-            with pytest.raises(ValueError, match="Localhost"):
-                validate_webhook_url("http://localhost:8080/hook")
-            with pytest.raises(ValueError, match="Localhost"):
-                validate_webhook_url("http://127.0.0.1/hook")
-
 
 class TestResolveAndVet:
     @pytest.mark.asyncio
@@ -138,6 +150,8 @@ class TestResolveAndVet:
             pytest.param(("10.0.0.5", 0), "attacker.example.com", id="private-ipv4"),
             pytest.param(("169.254.169.254", 0), "metadata-spoof.example.com", id="metadata-ipv4"),
             pytest.param(("4000::1", 0, 0, 0), "attacker.example.com", id="reserved-ipv6"),
+            pytest.param(("100.64.0.1", 0), "cgnat.example.com", id="shared-address-space-ipv4"),
+            pytest.param(("fec0::1", 0, 0, 0), "site.example.com", id="site-local-ipv6"),
         ],
     )
     async def test_a_name_resolving_to_a_blocked_address_is_refused(self, sockaddr, host):
@@ -233,15 +247,23 @@ class TestBuildPinnedTransport:
         assert transport._ip == "93.184.216.34"
 
     @pytest.mark.asyncio
+    async def test_a_stored_loopback_url_is_refused_by_default(self):
+        with pytest.raises(WebhookTargetBlocked) as refused:
+            await build_pinned_transport("http://localhost:8080/hook")
+        assert "Localhost" in refused.value.detail
+
+    @pytest.mark.asyncio
     async def test_loopback_returns_plain_transport(self):
-        transport = await build_pinned_transport("http://localhost:8080/hook")
+        with patch.object(settings, "WEBHOOK_ALLOW_LOCALHOST", True):
+            transport = await build_pinned_transport("http://localhost:8080/hook")
         assert type(transport) is httpx.AsyncHTTPTransport
         assert not isinstance(transport, _PinnedIPTransport)
 
     @pytest.mark.asyncio
     async def test_pinned_and_plain_transports_reuse_the_http_clients_ssl_context(self):
         pinned = await build_pinned_transport("https://93.184.216.34/hook")
-        plain = await build_pinned_transport("http://localhost:8080/hook")
+        with patch.object(settings, "WEBHOOK_ALLOW_LOCALHOST", True):
+            plain = await build_pinned_transport("http://localhost:8080/hook")
 
         async with InstrumentedAsyncClient("SslShared") as client:
             shared = client._client._transport._pool._ssl_context

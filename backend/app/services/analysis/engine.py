@@ -233,7 +233,8 @@ async def process_analyzer(
         analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
         if isinstance(analyzer, CLIAnalyzer):
-            assert sbom_path is not None
+            if sbom_path is None:
+                raise RuntimeError(f"{analyzer_name} scans the SBOM file, which was not written")
             result = await analyzer.analyze_file(sbom_path, sbom_format)
         else:
             result = await analyzer.analyze({}, settings=settings, parsed_components=parsed_components)

@@ -242,9 +242,10 @@ async def test_the_occurrence_count_for_a_cve_is_the_population_not_the_page(see
 
     result = await ChatToolRegistry().execute_tool("get_findings_by_cve", {"cve_id": _CVE}, admin_user, seeded)
 
-    assert result["occurrences_read"] == _CVE_OCCURRENCE_READ
     assert result["total_occurrences"] == population
-    assert result["_bounded_read"] is True
+    assert result["affected_projects"][0]["occurrences"] == population
+    assert len(result["affected_projects"][0]["findings"]) <= _CVE_OCCURRENCE_READ
+    assert "_occurrences_note" in result
 
 
 @pytest.mark.asyncio

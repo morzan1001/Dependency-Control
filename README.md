@@ -236,6 +236,8 @@ Dependency Control exposes its tool suite over [Model Context Protocol](https://
 }
 ```
 
+Tool calls are rate limited per user at the chat's message limits times its *Max tool-call rounds*, so the defaults allow 200 calls a minute and 1,200 an hour. A JSON-RPC batch holds at most 20 requests.
+
 ## 🔬 Ad-hoc Analysis
 
 `POST /api/v1/analyze` analyses SBOMs (and optionally scanner output) without a project or a stored scan, for example from a laptop or the pipeline of a repository that is not onboarded. It needs the `analyze:adhoc` permission, which the **Admin** preset in the user permission editor includes. Create a key under **Profile → API Keys** with the **Ad-hoc analysis** surface ticked, then queue the job and fetch its result:
