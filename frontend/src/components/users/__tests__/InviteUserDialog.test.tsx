@@ -94,6 +94,28 @@ describe('InviteUserDialog footer', () => {
 })
 
 describe('InviteUserDialog refusals', () => {
+  it.each(['', '   '])('says under the field that the blank address %j needs an email address and sends nothing', async (blank) => {
+    sendInvitation(blank)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address.')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address.')
+    expect(invite).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'lena@corp.com' } })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows under the field why the server refused a malformed address, as the profile card does', async () => {
+    const reason = 'An email address must have an @-sign.'
+    const malformed = { type: 'value_error', loc: ['body', 'email'], msg: `value is not a valid email address: ${reason}` }
+    invite.mockRejectedValue({ response: { status: 422, data: { detail: [malformed] } } })
+
+    sendInvitation('lena.corp.com')
+
+    expect((await screen.findByRole('alert')).textContent).toBe(reason)
+    expect(invite.mock.calls).toEqual([['lena.corp.com']])
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
   it('shows under the field that the address is registered, without a toast', async () => {
     invite.mockRejectedValue({ response: { status: 400, data: { detail: REGISTERED } } })
 

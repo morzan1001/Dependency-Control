@@ -321,6 +321,36 @@ describe('UserDetailsCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it.each(['', ' '])('says under the field that the blank address %j needs an email address and sends nothing', async (blank) => {
+    renderCard(LOCAL_USER)
+
+    type('Email', blank)
+    type('Slack Member ID', 'U123')
+    save()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address.')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address.')
+    expect(updateMe).not.toHaveBeenCalled()
+    expect(changeEmail).not.toHaveBeenCalled()
+    type('Email', NEW_EMAIL)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('says under both fields that a blank name and a blank address need a value', async () => {
+    renderCard(LOCAL_USER)
+
+    type('Username', '')
+    type('Email', '')
+    save()
+
+    expect((await screen.findAllByRole('alert')).map((alert) => alert.textContent)).toEqual([
+      'Enter a username.',
+      'Enter an email address.',
+    ])
+    expect(updateMe).not.toHaveBeenCalled()
+    expect(changeEmail).not.toHaveBeenCalled()
+  })
+
   it.each([
     { user: LOCAL_USER, provider: 'local' },
     { user: IDP_USER, provider: 'gitlab' },

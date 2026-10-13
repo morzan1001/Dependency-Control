@@ -94,25 +94,12 @@ describe('UserDetailsDialog - username', () => {
     expect(toast.success).toHaveBeenCalledWith('Username updated')
   })
 
-  it('leaves an empty name to the browser, which refuses a required field', () => {
-    auth.granted = MANAGER
-    renderDialog()
-    const { field, save } = openRename()
-
-    fireEvent.change(field, { target: { value: '' } })
-    expect(save).toBeEnabled()
-    fireEvent.click(save)
-
-    expect(field).toBeInvalid()
-    expect(update).not.toHaveBeenCalled()
-  })
-
-  it('says under the field that a name of spaces needs a username and sends nothing', async () => {
+  it.each(['', '   '])('says under the field that the blank name %j needs a username and sends nothing, like the profile card', async (blank) => {
     auth.granted = MANAGER
     renderDialog()
     const { dialog, field, save } = openRename()
 
-    fireEvent.change(field, { target: { value: '   ' } })
+    fireEvent.change(field, { target: { value: blank } })
     expect(save).toBeEnabled()
     fireEvent.click(save)
 

@@ -22,17 +22,24 @@ import { toast } from "sonner"
 export function InviteUserDialog() {
   const [isOpen, setIsOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [blankEmail, setBlankEmail] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
 
   const { data: appConfig } = useAppConfig({ enabled: isOpen });
 
   const inviteUserMutation = useInviteUser();
-  const emailError =
+  const emailRefusal =
     inviteUserMutation.isError && refusesEmail(inviteUserMutation.error) ? getErrorMessage(inviteUserMutation.error) : null;
+  const emailError = blankEmail ? 'Enter an email address.' : emailRefusal;
 
   const handleInviteUser = (e: React.FormEvent) => {
     e.preventDefault();
-    inviteUserMutation.mutate(inviteEmail, {
+    const nextEmail = inviteEmail.trim();
+    if (!nextEmail) {
+      setBlankEmail(true);
+      return;
+    }
+    inviteUserMutation.mutate(nextEmail, {
       onSuccess: (data) => {
         if (!appConfig?.notifications.email && data.link) {
           setInviteLink(data.link);
@@ -59,6 +66,7 @@ export function InviteUserDialog() {
       if (!open) {
         setInviteLink(null);
         setInviteEmail("");
+        setBlankEmail(false);
         if (!inviteUserMutation.isPending) inviteUserMutation.reset();
       }
     }}>
@@ -91,7 +99,7 @@ export function InviteUserDialog() {
             </DialogFooter>
           </div>
         ) : (
-          <form onSubmit={handleInviteUser} className="space-y-4">
+          <form onSubmit={handleInviteUser} className="space-y-4" noValidate>
             <div className="grid gap-2">
               <Label htmlFor="invite-email">Email</Label>
               <Input
@@ -100,6 +108,7 @@ export function InviteUserDialog() {
                 value={inviteEmail}
                 onChange={(e) => {
                   setInviteEmail(e.target.value);
+                  setBlankEmail(false);
                   if (!inviteUserMutation.isPending) inviteUserMutation.reset();
                 }}
                 aria-invalid={!!emailError}

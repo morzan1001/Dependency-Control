@@ -57,7 +57,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent>
-        <form onSubmit={handleSave} className="grid gap-4">
+        <form onSubmit={handleSave} className="grid gap-4" noValidate>
           <DialogHeader>
             <DialogTitle className="wrap-anywhere">Rename {user.username}</DialogTitle>
             <DialogDescription>
