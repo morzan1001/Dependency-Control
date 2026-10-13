@@ -128,9 +128,25 @@ describe('UsersPage - removing a row', () => {
     const row = screen.getAllByText('invite0@example.com')[0].closest('tr') as HTMLElement
     const buttons = within(row).getAllByRole('button')
     fireEvent.click(buttons[buttons.length - 1])
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }))
 
     expect(mockRevokeInvitation).toHaveBeenCalledWith('invite-0', expect.anything())
     expect(mockDeleteUser).not.toHaveBeenCalled()
+  })
+
+  it('deletes a user through a Delete button', () => {
+    mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })
+
+    render(<UsersPage />)
+
+    const row = screen.getByText('user0').closest('tr') as HTMLElement
+    const buttons = within(row).getAllByRole('button')
+    fireEvent.click(buttons[buttons.length - 1])
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(mockDeleteUser).toHaveBeenCalledWith('user-0', expect.anything())
+    expect(mockRevokeInvitation).not.toHaveBeenCalled()
   })
 })

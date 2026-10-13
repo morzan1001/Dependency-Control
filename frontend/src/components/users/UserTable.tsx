@@ -51,6 +51,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
   const resendInviteMutation = useInviteUser();
   const isInvitation = userToDelete?.status === 'invited';
   const removeMutation = isInvitation ? revokeInvitationMutation : deleteUserMutation;
+  const removeLabel = isInvitation ? { idle: "Revoke", pending: "Revoking..." } : { idle: "Delete", pending: "Deleting..." };
 
   const handleDeleteUser = (userId: string) => {
       removeMutation.mutate(userId, {
@@ -270,7 +271,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                 onClick={() => userToDelete && handleDeleteUser(userToDelete.id)}
                 disabled={removeMutation.isPending}
             >
-              {removeMutation.isPending ? "Deleting..." : "Delete"}
+              {removeMutation.isPending ? removeLabel.pending : removeLabel.idle}
             </Button>
           </DialogFooter>
         </DialogContent>
