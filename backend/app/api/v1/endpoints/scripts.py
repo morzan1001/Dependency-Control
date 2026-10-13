@@ -11,6 +11,7 @@ from fastapi import HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from app.api.router import CustomAPIRouter
+from app.core.log_utils import sanitize_for_log
 from app.schemas.scripts import ScriptInfo, ScriptManifest
 
 logger = logging.getLogger(__name__)
@@ -172,7 +173,7 @@ async def get_script(
     try:
         content, version, sha256_hash = get_script_content(script_name, version=v)
     except FileNotFoundError as exc:
-        logger.exception("Script file not found: %s (version=%s)", script_name, v or "latest")
+        logger.exception("Script file not found: %s (version=%s)", script_name, sanitize_for_log(v or "latest"))
         raise HTTPException(
             status_code=404,
             detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
