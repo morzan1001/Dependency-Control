@@ -33,7 +33,7 @@ import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePa
 import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings, Check, ChevronDown } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
-import { NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
+import { COPY_FEEDBACK_DELAY_MS, NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
 import { AnalyzerChecklist } from './AnalyzerChecklist'
 import {
   Select,
@@ -169,6 +169,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   }
 
   const [apiKey, setApiKey] = useState<string | null>(null)
+  const [hasCopiedKey, setHasCopiedKey] = useState(false)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
@@ -230,6 +231,13 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   })
 
   const updateNotificationSettingsMutation = useUpdateProjectNotifications()
+
+  const copyApiKey = async () => {
+    if (await copyWithToast(apiKey || '', 'API key')) {
+      setHasCopiedKey(true)
+      setTimeout(() => setHasCopiedKey(false), COPY_FEEDBACK_DELAY_MS)
+    }
+  }
 
   const rotateKeyMutation = useMutation({
     mutationFn: () => projectApi.rotateApiKey(projectId),
@@ -814,9 +822,9 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 </DialogDescription>
             </DialogHeader>
             <div className="flex items-center space-x-2 mt-4">
-                <Input value={apiKey || ''} readOnly />
-                <Button size="icon" aria-label="Copy API key" onClick={() => void copyWithToast(apiKey || '', 'API key')}>
-                    <Copy className="h-4 w-4" />
+                <Input value={apiKey || ''} readOnly className="font-mono bg-muted" />
+                <Button size="icon" variant="outline" aria-label="Copy API key" onClick={() => void copyApiKey()}>
+                    {hasCopiedKey ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 </Button>
             </div>
             <DialogFooter>

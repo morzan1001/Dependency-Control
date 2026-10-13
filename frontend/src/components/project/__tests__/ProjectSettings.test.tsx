@@ -434,6 +434,7 @@ describe('ProjectSettings API key rotation', () => {
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('API key copied to clipboard'))
     expect(writeText.mock.calls).toEqual([['dc_rotated_key']])
+    expect(screen.getByRole('button', { name: 'Copy API key' }).querySelector('.lucide-check')).toBeInTheDocument()
   })
 
   it('tells the admin to copy the new key by hand when the clipboard refuses', async () => {
@@ -447,5 +448,6 @@ describe('ProjectSettings API key rotation', () => {
       }),
     )
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
+    expect(screen.getByRole('button', { name: 'Copy API key' }).querySelector('.lucide-check')).not.toBeInTheDocument()
   })
 })
