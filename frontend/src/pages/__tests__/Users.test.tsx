@@ -148,6 +148,21 @@ describe('UsersPage - removing a row', () => {
     expect(within(screen.getByRole('dialog')).getByText('user0', { selector: 'strong' })).toHaveClass('wrap-anywhere')
   })
 
+  it('names the invitation to revoke in bold, like the user to delete', () => {
+    mockUseUsers.mockReturnValue({ data: [], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [makeInvitation(0)], isLoading: false })
+
+    render(<UsersPage />)
+
+    const row = screen.getAllByText('invite0@example.com')[0].closest('tr') as HTMLElement
+    const buttons = within(row).getAllByRole('button')
+    fireEvent.click(buttons[buttons.length - 1])
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('invite0@example.com', { selector: 'strong' })).toHaveClass('wrap-anywhere')
+    expect(within(dialog).getByText(/Revoke the invitation for/)).toHaveTextContent('Revoke the invitation for invite0@example.com?')
+  })
+
   it('deletes a user through a Delete button', () => {
     mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
     mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })
