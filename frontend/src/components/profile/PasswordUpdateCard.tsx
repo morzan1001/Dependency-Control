@@ -95,7 +95,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
         )}
         <form onSubmit={handlePasswordUpdate} className="space-y-4">
           {isLocalUser && (
-            <div className="space-y-2">
+            <div className="grid gap-2">
               <Label htmlFor="current-password">Current Password</Label>
               <Input
                 id="current-password"
@@ -106,7 +106,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
               />
             </div>
           )}
-          <div className="space-y-2">
+          <div className="grid gap-2">
             <Label htmlFor="new-password">New Password</Label>
             <Input
               id="new-password"
@@ -119,7 +119,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
               Must be at least 8 characters and contain uppercase, lowercase, digit, and special character.
             </p>
           </div>
-          <div className="space-y-2">
+          <div className="grid gap-2">
             <Label htmlFor="confirm-password">Confirm New Password</Label>
             <Input
               id="confirm-password"
