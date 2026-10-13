@@ -3,18 +3,28 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-interface UsernameFormProps {
-  username: string;
+interface InlineFieldFormProps {
+  label: string;
+  value: string;
+  type?: React.HTMLInputTypeAttribute;
   isPending: boolean;
-  onSave: (username: string) => void;
+  onSave: (value: string) => void;
   onEdit?: () => void;
   children?: React.ReactNode;
 }
 
-export function UsernameForm({ username, isPending, onSave, onEdit, children }: Readonly<UsernameFormProps>) {
+export function InlineFieldForm({
+  label,
+  value,
+  type,
+  isPending,
+  onSave,
+  onEdit,
+  children,
+}: Readonly<InlineFieldFormProps>) {
   const inputId = useId();
-  const [value, setValue] = useState(username);
-  const next = value.trim();
+  const [draft, setDraft] = useState(value);
+  const next = draft.trim();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,21 +33,22 @@ export function UsernameForm({ username, isPending, onSave, onEdit, children }: 
 
   return (
     <form onSubmit={handleSubmit} className="grid gap-2">
-      <Label htmlFor={inputId}>Username</Label>
+      <Label htmlFor={inputId}>{label}</Label>
       <div className="flex gap-2">
         <Input
           id={inputId}
-          value={value}
+          type={type}
+          value={draft}
           onChange={(e) => {
-            setValue(e.target.value);
+            setDraft(e.target.value);
             onEdit?.();
           }}
         />
         <Button
           type="submit"
           variant="outline"
-          aria-label="Save username"
-          disabled={isPending || !next || next === username}
+          aria-label={`Save ${label.toLowerCase()}`}
+          disabled={isPending || !next || next === value}
         >
           {isPending ? 'Saving...' : 'Save'}
         </Button>

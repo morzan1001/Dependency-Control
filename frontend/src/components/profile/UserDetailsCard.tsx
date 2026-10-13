@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { UsernameForm } from '@/components/users/UsernameForm';
+import { InlineFieldForm } from '@/components/users/InlineFieldForm';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
@@ -110,8 +110,9 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
         <CardDescription>Your account information</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <UsernameForm
-          username={user?.username || ''}
+        <InlineFieldForm
+          label="Username"
+          value={user?.username || ''}
           isPending={renameMutation.isPending}
           onSave={(username) => renameMutation.mutate(username)}
           onEdit={renameMutation.reset}
@@ -124,7 +125,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
               {isLocalAccount ? `You now sign in as ${renameMutation.data.username}.` : 'Username changed.'}
             </p>
           )}
-        </UsernameForm>
+        </InlineFieldForm>
         <div className="grid gap-2">
           <Label htmlFor="email">Email</Label>
           <Input id="email" type="email" value={user?.email || ''} disabled className="bg-muted" />

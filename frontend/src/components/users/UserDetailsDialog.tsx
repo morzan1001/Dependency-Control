@@ -23,7 +23,7 @@ import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
-import { UsernameForm } from './UsernameForm';
+import { InlineFieldForm } from './InlineFieldForm';
 
 interface AsyncListSectionProps {
   isLoading: boolean;
@@ -170,9 +170,10 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   {canRenameUser ? (
-                    <UsernameForm
+                    <InlineFieldForm
                       key={user.username}
-                      username={user.username}
+                      label="Username"
+                      value={user.username}
                       isPending={updateUserMutation.isPending}
                       onSave={(username) => handleUpdate(user.id, { username })}
                     />
