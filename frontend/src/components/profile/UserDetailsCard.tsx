@@ -22,6 +22,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   const [email, setEmail] = useState(user?.email || '');
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
+  const [blankUsername, setBlankUsername] = useState(false);
   // Untouched fields follow a refetched account, so a save sends only what was edited.
   const [prevUser, setPrevUser] = useState(user);
   if (user !== prevUser) {
@@ -51,6 +52,10 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
 
   const handleSubmit = (e: React.SubmitEvent) => {
     e.preventDefault();
+    if (!nextUsername) {
+      setBlankUsername(true);
+      return;
+    }
     // A save with nothing changed still sends the profile request, so it confirms like every other Save.
     if (savesProfile || !savesEmail) {
       profileMutation.mutate(profileChanges, {
@@ -77,10 +82,11 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   };
 
   const sentUsername = profileMutation.variables?.username !== undefined;
-  const usernameError =
+  const usernameRefusal =
     profileMutation.isError && refusesUsername(profileMutation.variables, profileMutation.error)
       ? getErrorMessage(profileMutation.error)
       : null;
+  const usernameError = blankUsername ? 'Enter a username.' : usernameRefusal;
   const emailError = emailMutation.isError && refusesEmail(emailMutation.error) ? getErrorMessage(emailMutation.error) : null;
   const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
 
@@ -99,6 +105,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
               value={username}
               onChange={(e) => {
                 setUsername(e.target.value);
+                setBlankUsername(false);
                 if (!profileMutation.isPending) profileMutation.reset();
               }}
               aria-invalid={!!usernameError}
@@ -195,7 +202,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
               {user && <UserStatusBadge user={user} />}
             </div>
           </div>
-          <Button type="submit" disabled={isSaving || !nextUsername}>
+          <Button type="submit" disabled={isSaving}>
             {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
         </form>

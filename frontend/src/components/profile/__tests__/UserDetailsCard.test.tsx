@@ -305,15 +305,19 @@ describe('UserDetailsCard', () => {
     expect(screen.getByLabelText('Mattermost Username')).toHaveValue('lena-x')
   })
 
-  it.each(['', '   '])('offers no save for the blank name %j', async (blank) => {
+  it.each(['', '   '])('says under the field that the blank name %j needs a username and sends nothing', async (blank) => {
     renderCard(LOCAL_USER)
 
     type('Username', blank)
-    expect(saveButton()).toBeDisabled()
+    expect(saveButton()).toBeEnabled()
     save()
-    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a username.')
+    expect(screen.getByLabelText('Username')).toHaveAccessibleDescription('Enter a username.')
     expect(updateMe).not.toHaveBeenCalled()
+    expect(changeEmail).not.toHaveBeenCalled()
+    type('Username', 'lena.k')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('keeps the email of an identity-provider account read-only', () => {

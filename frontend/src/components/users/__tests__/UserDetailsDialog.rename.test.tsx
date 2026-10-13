@@ -94,16 +94,33 @@ describe('UserDetailsDialog - username', () => {
     expect(toast.success).toHaveBeenCalledWith('Username updated')
   })
 
-  it.each(['', '   '])('offers no save for the blank name %j', (blank) => {
+  it('leaves an empty name to the browser, which refuses a required field', () => {
     auth.granted = MANAGER
     renderDialog()
     const { field, save } = openRename()
 
-    fireEvent.change(field, { target: { value: blank } })
-    expect(save).toBeDisabled()
+    fireEvent.change(field, { target: { value: '' } })
+    expect(save).toBeEnabled()
     fireEvent.click(save)
 
+    expect(field).toBeInvalid()
     expect(update).not.toHaveBeenCalled()
+  })
+
+  it('says under the field that a name of spaces needs a username and sends nothing', async () => {
+    auth.granted = MANAGER
+    renderDialog()
+    const { dialog, field, save } = openRename()
+
+    fireEvent.change(field, { target: { value: '   ' } })
+    expect(save).toBeEnabled()
+    fireEvent.click(save)
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Enter a username.')
+    expect(field).toHaveAccessibleDescription('Enter a username.')
+    expect(update).not.toHaveBeenCalled()
+    fireEvent.change(field, { target: { value: 'target2' } })
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('drops the typed name when the rename is cancelled', () => {

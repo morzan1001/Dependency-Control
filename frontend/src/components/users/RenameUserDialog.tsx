@@ -23,16 +23,22 @@ interface RenameUserDialogProps {
 
 export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly<RenameUserDialogProps>) {
   const [username, setUsername] = useState(user.username);
+  const [blankUsername, setBlankUsername] = useState(false);
   const nextUsername = username.trim();
 
   const updateUserMutation = useUpdateUser();
-  const usernameError =
+  const usernameRefusal =
     updateUserMutation.isError && refusesUsername(updateUserMutation.variables?.data, updateUserMutation.error)
       ? getErrorMessage(updateUserMutation.error)
       : null;
+  const usernameError = blankUsername ? 'Enter a username.' : usernameRefusal;
 
   const handleSave = (e: React.SubmitEvent) => {
     e.preventDefault();
+    if (!nextUsername) {
+      setBlankUsername(true);
+      return;
+    }
     updateUserMutation.mutate({
       id: user.id,
       data: { username: nextUsername }
@@ -65,6 +71,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
               value={username}
               onChange={(e) => {
                 setUsername(e.target.value);
+                setBlankUsername(false);
                 if (!updateUserMutation.isPending) updateUserMutation.reset();
               }}
               aria-invalid={!!usernameError}
@@ -77,7 +84,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={updateUserMutation.isPending || !nextUsername}>
+            <Button type="submit" disabled={updateUserMutation.isPending}>
               {updateUserMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
