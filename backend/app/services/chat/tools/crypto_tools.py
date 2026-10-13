@@ -6,6 +6,7 @@ from typing import Any, Literal, cast
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import ScopeName
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.policy_audit_entry import PolicyType
@@ -194,7 +195,8 @@ async def list_policy_audit_entries(
         policy_type=policy_type,
         limit=limit,
     )
-    return {"entries": [e.model_dump(by_alias=True, exclude={"snapshot"}) for e in entries]}
+    rows = [e.model_dump(by_alias=True, exclude={"snapshot"}) for e in entries]
+    return {"entries": await resolve_usernames(db, rows, "actor_display_name", id_field="actor_user_id")}
 
 
 async def get_framework_evaluation_summary(

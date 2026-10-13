@@ -30,8 +30,8 @@ def test_eight_characters_is_the_shortest_accepted_password():
 @pytest.mark.parametrize(
     "build",
     [
-        pytest.param(lambda p: UserCreate(email="a@b.co", username="u", password=p), id="UserCreate"),
-        pytest.param(lambda p: UserSignup(email="a@b.co", username="u", password=p), id="UserSignup"),
+        pytest.param(lambda p: UserCreate(email="a@b.co", username="user", password=p), id="UserCreate"),
+        pytest.param(lambda p: UserSignup(email="a@b.co", username="user", password=p), id="UserSignup"),
         pytest.param(
             lambda p: UserPasswordUpdate(current_password="whatever", new_password=p), id="UserPasswordUpdate"
         ),

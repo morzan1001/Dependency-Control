@@ -12,6 +12,39 @@ db.projects.aggregate([{ $match: { gitlab_instance_id: { $type: "string" }, gitl
 
 Reconcile any hit first, so that one project per hit keeps the GitLab link; `db.projects.find({ gitlab_instance_id: "<i>", gitlab_project_id: <p> }, { name: 1, created_at: 1 })` lists the projects of one hit.
 
+## Before the rollout (read-only): no webhook aimed at a local address
+
+Webhook targets on loopback, carrier-grade NAT (`100.64.0.0/10`) and IPv6 site-local addresses are now refused by default, also for stored webhooks at delivery time. This should return nothing; resolve any hit with its owner first, since it stops delivering after the rollout:
+
+```js
+db.webhooks.find({ url: /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|\[fe[c-f])/i }, { url: 1 })
+```
+
+## Before the rollout, and again right after it: point stored usernames at their accounts
+
+Waivers and system invitations now store the user id of their creator and inviter, and every read shows that account's current username. Rows written before this release hold a username, which keeps showing as stored. Rewrite them before the rollout, while 1.9.54 still refuses self-renames and only displays these fields: once users rename themselves, a renamed account's old name matches nobody, and a name another account took meanwhile would match the wrong one. Until the rollout, 1.9.54 shows the user id for the rewritten rows, as after a rollback. Right after the rollout, run the same blocks again for the rows the 1.9.54 pods wrote while it ran. Each time, run both blocks in one mongosh session. The counts are read-only, and a value that already is a user id is left alone:
+
+```js
+const users = db.users.find({}, { username: 1 }).toArray()
+const idByName = new Map(users.map((u) => [u.username, u._id]))
+const legacy = (field) => ({ [field]: { $in: [...idByName.keys()], $nin: users.map((u) => u._id) } })
+db.waivers.countDocuments(legacy("created_by"))
+db.system_invitations.countDocuments(legacy("invited_by"))
+```
+
+Then rewrite each value to the id of the account with exactly that username, and run the counts again; both should be 0:
+
+```js
+for (const [coll, field] of [["waivers", "created_by"], ["system_invitations", "invited_by"]]) {
+  const ops = db.getCollection(coll).find(legacy(field), { [field]: 1 }).toArray().map((d) => ({
+    updateOne: { filter: { _id: d._id, [field]: d[field] }, update: { $set: { [field]: idByName.get(d[field]) } } },
+  }))
+  if (ops.length) print(`${coll}: ${db.getCollection(coll).bulkWrite(ops).modifiedCount} rewritten`)
+}
+```
+
+A value that matches no current username, such as the name of a deleted account, stays and keeps showing as stored.
+
 ## After the rollout
 
 Once every pod runs this release, drop the old index, but only once `db.projects.getIndexes()` lists `projects_gitlab_key`; until then the old index is the only one keeping the key unique:
@@ -20,6 +53,24 @@ Once every pod runs this release, drop the old index, but only once `db.projects
 if (db.projects.getIndexes().some((i) => i.name === "projects_gitlab_key")) db.projects.dropIndex("gitlab_instance_id_1_gitlab_project_id_1")
 else print("projects_gitlab_key is missing: keep the old index, reconcile the duplicate the startup log names, and restart a pod")
 ```
+
+## Rolling back to 1.9.54
+
+1.9.54 shows a waiver's creator as stored, so the global waiver list shows the user id for rows rewritten above and for waivers created since the rollout.
+
+## Behaviour changes
+
+- Every user can change their username in the profile. Administrators rename the accounts they may manage (`user:update` and every permission the account holds, or `system:manage`) in the user dialog, themselves included. A local account signs in with the new name, or its email, from then on. Each rename is logged at INFO with actor id, target id, old and new name.
+- A username someone picks (a rename, an account an administrator creates, a public signup, an accepted invitation) has 2 to 64 letters, digits, dots, underscores or hyphens, starts with a letter or digit, and is no other account's in any letter case. Existing usernames stay valid unchanged, and SSO first login names new accounts as before.
+- A local account changes its email in the profile's email field. With a mail server configured, the new address waits for the link mailed to it and the old one stays until then, as before. Without one, `POST /users/me/email` no longer answers 501: the address changes at once and the account becomes unverified, so team sync and CI project creation stop matching it, and an earlier pending change is dropped together with its link. Nothing confirms such an address, so a local user can take one nobody registered yet: until an administrator changes that account's email (`PUT /users/{id}`) or deletes the account, nobody can be invited, created or signed up with the address, and with SSO on, the person it belongs to is refused at their first SSO sign-in. With `enforce_email_verification` on and no mail server, the change is refused with 501, because the new address could never be verified and the account could no longer sign in. The answer is the account plus `email_change`, `pending_confirmation` or `changed`.
+- Policy audit entries show the actor's current username, and the name stored with the change once that account is gone.
+- Reports and queries that read `waivers.created_by` or `system_invitations.invited_by` straight from the database get user ids for rows written from now on; join `users` on `_id` for the name. The API keeps answering with usernames.
+- `WEBHOOK_ALLOW_LOCALHOST` defaults to false; docker-compose sets it to true for local receivers.
+- The MCP endpoint takes batches of 1 to 20 requests and rate limits `tools/call` per user under its own budget: the chat limits multiplied by the maximum tool-call rounds (200 a minute and 1,200 an hour by default).
+- The chat and MCP tool for findings by CVE lists every affected project with its occurrence count and takes an optional `project_id`.
+- The login page offers "Forgot password?" when a mail server is configured; `/system/public-config` carries `password_reset_enabled`.
+- The GitHub connection test also tries the configured token, and a GitHub secondary rate limit is reported as such and honoured until it lifts.
+
 
 
 

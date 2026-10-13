@@ -17,11 +17,11 @@ _REQUESTS = [
     pytest.param(lambda p: UserUpdate(notification_preferences=p), id="UserUpdate"),
     pytest.param(lambda p: UserUpdateMe(notification_preferences=p), id="UserUpdateMe"),
     pytest.param(
-        lambda p: UserSignup(email="a@b.co", username="u", password="Str0ng!pass", notification_preferences=p),
+        lambda p: UserSignup(email="a@b.co", username="user", password="Str0ng!pass", notification_preferences=p),
         id="UserSignup",
     ),
     pytest.param(
-        lambda p: UserCreate(email="a@b.co", username="u", password="Str0ng!pass", notification_preferences=p),
+        lambda p: UserCreate(email="a@b.co", username="user", password="Str0ng!pass", notification_preferences=p),
         id="UserCreate",
     ),
     pytest.param(lambda p: ProjectNotificationSettings(notification_preferences=p), id="ProjectNotificationSettings"),

@@ -23,6 +23,7 @@ import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
+import { RenameUserDialog } from './RenameUserDialog';
 
 interface AsyncListSectionProps {
   isLoading: boolean;
@@ -57,12 +58,14 @@ interface UserDetailsDialogProps {
   user: User | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onUserUpdated?: (user: User) => void;
 }
 
-export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDetailsDialogProps>) {
+export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: Readonly<UserDetailsDialogProps>) {
   const { hasPermission } = useAuth();
 
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
 
   // Fetch all projects (paged) so membership isn't truncated in large orgs.
   const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown({ enabled: open });
@@ -78,7 +81,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleUpdate = (id: string, data: UserUpdate) => {
     updateUserMutation.mutate({ id, data }, {
-        onSuccess: () => {
+        onSuccess: (updated) => {
+             onUserUpdated?.(updated);
              toast.success("Success", { description: "User updated successfully." });
         },
         onError: (error) => {
@@ -89,7 +93,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleMigrate = (userId: string) => {
       migrateUserMutation.mutate(userId, {
-          onSuccess: () => {
+          onSuccess: (migrated) => {
+              onUserUpdated?.(migrated);
               toast.success("User Migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
           },
           onError: (error) => {
@@ -115,7 +120,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleDisable2FA = (userId: string) => {
       disable2FAMutation.mutate(userId, {
-          onSuccess: () => {
+          onSuccess: (updated) => {
+              onUserUpdated?.(updated);
               toast.success("2FA Disabled", { description: "Two-Factor Authentication has been disabled for this user." });
           },
           onError: (error) => {
@@ -149,6 +155,9 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
   };
 
   const canUpdateUser = hasPermission('user:update');
+  // Mirrors the server: a caller manages only accounts whose every permission they hold, unless system:manage.
+  const canRenameUser =
+    canUpdateUser && !!user && (hasPermission('system:manage') || user.permissions.every((p) => hasPermission(p)));
   const userProjects = user ? getUserProjects(user.id) : [];
   const userTeams = user ? getUserTeams(user.id) : [];
   const isLocalAuth = user?.auth_provider === 'local';
@@ -164,6 +173,22 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
           {user && (
             <div className="grid gap-6 py-4">
               <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Username</Label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{user.username}</span>
+                    {canRenameUser && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs ml-2"
+                        onClick={() => setIsRenameDialogOpen(true)}
+                      >
+                        Rename
+                      </Button>
+                    )}
+                  </div>
+                </div>
                 <div>
                   <Label>Email</Label>
                   <div className="text-sm font-medium">{user.email}</div>
@@ -346,7 +371,11 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
       </Dialog>
 
       {isPermissionDialogOpen && (
-        <UserPermissionsDialog user={user} onOpenChange={setIsPermissionDialogOpen} />
+        <UserPermissionsDialog user={user} onOpenChange={setIsPermissionDialogOpen} onUserUpdated={onUserUpdated} />
+      )}
+
+      {isRenameDialogOpen && user && (
+        <RenameUserDialog user={user} onOpenChange={setIsRenameDialogOpen} onUserUpdated={onUserUpdated} />
       )}
     </>
   );

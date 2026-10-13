@@ -14,6 +14,10 @@ export interface User {
   status?: 'active' | 'invited';
 }
 
+export interface EmailChangeResult extends User {
+  email_change: 'pending_confirmation' | 'changed';
+}
+
 export interface UserCreate {
   username: string;
   email: string;
@@ -23,11 +27,13 @@ export interface UserCreate {
 }
 
 export interface UserUpdate {
+  username?: string;
   permissions?: string[];
   is_active?: boolean;
 }
 
 export interface UserUpdateMe {
+  username?: string;
   slack_username?: string | null;
   mattermost_username?: string | null;
   notification_preferences?: Record<string, string[]>;

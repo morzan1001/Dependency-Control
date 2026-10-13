@@ -20,9 +20,9 @@ class IdentityTakenError(Exception):
         super().__init__(_TAKEN[field])
 
 
-def _email_query(email: str) -> dict[str, Any]:
-    """Case-insensitive: emails stored before normalisation keep their case and the index isn't collated."""
-    return {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+def _case_insensitive(field: str, value: str) -> dict[str, Any]:
+    """Match ``value`` in any case: stored values keep their case and the unique indexes aren't collated."""
+    return {field: {"$regex": f"^{re.escape(value)}$", "$options": "i"}}
 
 
 @contextmanager
@@ -48,7 +48,9 @@ class UserRepository(BaseRepository[User]):
             return await super().create(model)
 
     async def update(self, id: str, update_data: dict[str, Any]) -> User | None:
-        if "email" in update_data and await self.exists({"_id": {"$ne": id}, **_email_query(update_data["email"])}):
+        if "email" in update_data and await self.exists(
+            {"_id": {"$ne": id}, **_case_insensitive("email", update_data["email"])}
+        ):
             raise IdentityTakenError("email")
         with _unique_index_as_identity_taken():
             return await super().update(id, update_data)
@@ -63,11 +65,11 @@ class UserRepository(BaseRepository[User]):
         return await self.find_one_raw({"username": username})
 
     async def get_raw_by_email(self, email: str) -> dict[str, Any] | None:
-        return await self.find_one_raw(_email_query(email))
+        return await self.find_one_raw(_case_insensitive("email", email))
 
     async def get_raw_by_verified_email(self, email: str) -> dict[str, Any] | None:
         """The lookup identity matching must use: an unverified address names whoever typed it."""
-        return await self.find_one_raw({**_email_query(email), "is_verified": True})
+        return await self.find_one_raw({**_case_insensitive("email", email), "is_verified": True})
 
     async def verified_users_by_email(self, emails: Iterable[str]) -> dict[str, dict[str, Any]]:
         """Lower-cased email -> the verified account it names, matched as ``get_raw_by_verified_email`` does."""
@@ -89,5 +91,13 @@ class UserRepository(BaseRepository[User]):
     async def exists_by_username(self, username: str) -> bool:
         return await self.exists({"username": username})
 
+    async def ensure_username_free(self, username: str, except_id: str | None = None) -> None:
+        """A name someone picks must be no other account's in any case."""
+        query = _case_insensitive("username", username)
+        if except_id is not None:
+            query["_id"] = {"$ne": except_id}
+        if await self.exists(query):
+            raise IdentityTakenError("username")
+
     async def exists_by_email(self, email: str) -> bool:
-        return await self.exists(_email_query(email))
+        return await self.exists(_case_insensitive("email", email))

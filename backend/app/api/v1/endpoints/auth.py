@@ -281,7 +281,9 @@ async def create_user(
         is_verified=False,
         auth_provider=AUTH_PROVIDER_LOCAL,
     )
-    await UserRepository(db).create(new_user)
+    user_repo = UserRepository(db)
+    await user_repo.ensure_username_free(new_user.username)
+    await user_repo.create(new_user)
 
     send_verification_email(background_tasks, new_user.email, system_config)
 

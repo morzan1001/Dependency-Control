@@ -22,6 +22,7 @@ from app.api.v1.helpers.teams import (
     team_refs,
     visible_teams_filter,
 )
+from app.api.v1.helpers.users import resolve_usernames
 from app.api.v1.helpers.webhooks import (
     check_webhook_permission,
 )
@@ -252,6 +253,7 @@ async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject:
     """The waivers `query` selects, bounded, each marked with whether it is still active."""
     now = datetime.now(timezone.utc)
     waivers, waivers_total = await bounded_read(db["waivers"], query, subject=subject, limit=_WAIVER_READ)
+    waivers = await resolve_usernames(db, waivers, "created_by")
     return {
         "waivers": [
             {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
@@ -919,6 +921,7 @@ class ChatToolRegistry:
             {"$and": [named, non_expired_waiver_filter(datetime.now(timezone.utc))]}, sort=[("project_id", -1)]
         )
         if active:
+            [active] = await resolve_usernames(ctx.db, [active], "created_by")
             return {
                 "waived": False,
                 "waiver_present": True,
@@ -929,6 +932,7 @@ class ChatToolRegistry:
         lapsed = await waivers.find_one(named, sort=[("expiration_date", -1)])
         if not lapsed:
             return {"waived": False}
+        [lapsed] = await resolve_usernames(ctx.db, [lapsed], "created_by")
         return {"waived": False, "expired_waiver": {**_serialize_doc(lapsed), "is_active": False}}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:

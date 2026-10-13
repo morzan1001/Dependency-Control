@@ -13,7 +13,7 @@ import { usePaginationState } from '@/hooks/use-pagination-state';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
 
 export default function UsersPage() {
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<User | null>(null);
   const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState({ defaultSort: 'username', defaultOrder: 'asc' });
   const limit = SMALL_PAGE_SIZE;
@@ -49,7 +49,7 @@ export default function UsersPage() {
   }));
 
   const activeUsers: User[] = (users || []).map(u => ({ ...u, status: 'active' as const }));
-  const selectedUser = activeUsers.find(u => u.id === selectedUserId) ?? null;
+  const selectedUser = activeUsers.find(u => u.id === selected?.id) ?? selected;
 
   const showInvitations = page === 1 && invitationUsers.length > 0;
 
@@ -129,7 +129,7 @@ export default function UsersPage() {
                 page={page - 1}
                 limit={limit}
                 onPageChange={(p) => setPage(p + 1)}
-                onSelectUser={(user) => setSelectedUserId(user.id)}
+                onSelectUser={setSelected}
                 sortBy={sortBy}
                 sortOrder={sortOrder}
                 onSort={(column) => {
@@ -149,7 +149,8 @@ export default function UsersPage() {
       <UserDetailsDialog 
         user={selectedUser} 
         open={!!selectedUser} 
-        onOpenChange={(open) => !open && setSelectedUserId(null)}
+        onOpenChange={(open) => !open && setSelected(null)}
+        onUserUpdated={setSelected}
       />
     </div>
   );

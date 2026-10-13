@@ -58,7 +58,7 @@ class TestReadAll:
     @pytest.mark.asyncio
     async def test_opens_a_project_waiver_without_project_access(self):
         waiver = await waivers.get_waiver("w-project", await _db(), _user(Permissions.WAIVER_READ_ALL))
-        assert waiver.id == "w-project"
+        assert waiver["id"] == "w-project"
 
     @pytest.mark.asyncio
     async def test_filters_by_a_project_without_project_access(self):
@@ -69,7 +69,7 @@ class TestReadOnly:
     @pytest.mark.asyncio
     async def test_opens_a_global_waiver(self):
         waiver = await waivers.get_waiver("w-global", await _db(), _user(Permissions.WAIVER_READ))
-        assert waiver.id == "w-global"
+        assert waiver["id"] == "w-global"
 
     @pytest.mark.asyncio
     async def test_lists_global_waivers_only(self):

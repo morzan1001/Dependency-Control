@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
-import { User } from '@/types/user';
-import { ApiError } from '@/api/client';
+import type { ApiError } from '@/api/client';
+import { useUpdateMe } from '@/hooks/queries/use-users';
+import { User, UserUpdateMe } from '@/types/user';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,84 +17,73 @@ interface UserDetailsCardProps {
   notificationChannels: string[] | undefined;
 }
 
-function EmailChangeForm({ pendingEmail }: Readonly<{ pendingEmail: string | null | undefined }>) {
-  const queryClient = useQueryClient();
-  const [newEmail, setNewEmail] = useState('');
-
-  const requestMutation = useMutation({
-    mutationFn: () => userApi.requestEmailChange(newEmail),
-    onSuccess: (updated) => {
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      setNewEmail('');
-      toast.success("Confirmation link sent", {
-        description: `Open the link sent to ${updated.pending_email} to finish the change.`,
-      });
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
-    }
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    requestMutation.mutate();
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="grid gap-2">
-      {pendingEmail && (
-        <p className="text-xs text-muted-foreground">
-          Waiting for confirmation of <span className="font-medium">{pendingEmail}</span>. Open the link sent there to finish the change.
-        </p>
-      )}
-      <Label htmlFor="new-email">New email</Label>
-      <div className="flex gap-2">
-        <Input
-          id="new-email"
-          type="email"
-          value={newEmail}
-          onChange={(e) => setNewEmail(e.target.value)}
-          required
-        />
-        <Button type="submit" variant="outline" disabled={requestMutation.isPending || !newEmail}>
-          {requestMutation.isPending ? 'Sending...' : 'Send confirmation link'}
-        </Button>
-      </div>
-    </form>
-  );
-}
+// In a profile request only the name can be refused: 400 when it is taken, 422 when it breaks the rule.
+const refusesUsername = (sent: UserUpdateMe | undefined, error: unknown) => {
+  const status = (error as ApiError).response?.status;
+  return sent?.username !== undefined && (status === 400 || status === 422);
+};
 
 export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDetailsCardProps>) {
   const queryClient = useQueryClient();
+  const [username, setUsername] = useState(user?.username || '');
+  const [email, setEmail] = useState(user?.email || '');
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
+  // Untouched fields follow a refetched account, so a save sends only what was edited.
+  const [prevUser, setPrevUser] = useState(user);
+  if (user !== prevUser) {
+    setPrevUser(user);
+    if (username === (prevUser?.username || '')) setUsername(user?.username || '');
+    if (email === (prevUser?.email || '')) setEmail(user?.email || '');
+    if (slackUsername === (prevUser?.slack_username || '')) setSlackUsername(user?.slack_username || '');
+    if (mattermostUsername === (prevUser?.mattermost_username || '')) setMattermostUsername(user?.mattermost_username || '');
+  }
 
-  const updateProfileMutation = useMutation({
-    mutationFn: () => userApi.updateMe({
-      slack_username: slackUsername || null,
-      mattermost_username: mattermostUsername || null
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      toast.success("Profile updated", {
-        description: "Your profile has been updated successfully.",
-      });
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
-    }
+  const profileMutation = useUpdateMe();
+  const emailMutation = useMutation({
+    mutationFn: (email: string) => userApi.changeEmail(email),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['me'] }),
   });
 
-  const handleProfileUpdate = (e: React.FormEvent) => {
+  const isLocalAccount = (user?.auth_provider || 'local') === 'local';
+  const nextUsername = username.trim();
+  const nextEmail = email.trim();
+  const profileChanges: UserUpdateMe = {};
+  if (nextUsername !== (user?.username || '')) profileChanges.username = nextUsername;
+  if (slackUsername !== (user?.slack_username || '')) profileChanges.slack_username = slackUsername || null;
+  if (mattermostUsername !== (user?.mattermost_username || '')) profileChanges.mattermost_username = mattermostUsername || null;
+  const savesProfile = Object.keys(profileChanges).length > 0;
+  const savesEmail = isLocalAccount && nextEmail !== (user?.email || '');
+  const isSaving = profileMutation.isPending || emailMutation.isPending;
+
+  const saveProfile = () =>
+    profileMutation.mutateAsync(profileChanges).then(
+      (saved) => setUsername((draft) => (draft.trim() === profileChanges.username ? saved.username : draft)),
+      (error: unknown) => {
+        if (!refusesUsername(profileChanges, error)) toast.error("Error", { description: getErrorMessage(error) });
+        throw error;
+      },
+    );
+
+  const saveEmail = () =>
+    emailMutation.mutateAsync(nextEmail).then((saved) => setEmail((draft) => (draft.trim() === nextEmail ? saved.email : draft)));
+
+  const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
-    updateProfileMutation.mutate();
+    const saves = [];
+    if (savesProfile) saves.push(saveProfile());
+    if (savesEmail) saves.push(saveEmail());
+    const outcomes = await Promise.allSettled(saves);
+    if (outcomes.length === 0 || outcomes.some(({ status }) => status === 'fulfilled')) toast.success("Profile updated");
   };
 
-  const isLocalAccount = (user?.auth_provider || 'local') === 'local';
+  const sentUsername = profileMutation.variables?.username !== undefined;
+  const usernameError =
+    profileMutation.isError && refusesUsername(profileMutation.variables, profileMutation.error)
+      ? getErrorMessage(profileMutation.error)
+      : null;
+  const emailError = emailMutation.isError ? getErrorMessage(emailMutation.error) : null;
+  const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
 
   return (
     <Card>
@@ -101,21 +91,69 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
         <CardTitle>User Details</CardTitle>
         <CardDescription>Your account information</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-2">
-          <Label htmlFor="username">Username</Label>
-          <Input id="username" value={user?.username || ''} disabled className="bg-muted" />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" value={user?.email || ''} disabled className="bg-muted" />
-          {!isLocalAccount && (
-            <p className="text-xs text-muted-foreground">Managed by your identity provider.</p>
-          )}
-        </div>
-        {isLocalAccount && <EmailChangeForm pendingEmail={user?.pending_email} />}
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <div className="grid gap-2">
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
+              value={username}
+              onChange={(e) => {
+                setUsername(e.target.value);
+                if (!profileMutation.isPending) profileMutation.reset();
+              }}
+              aria-invalid={!!usernameError}
+              aria-describedby={usernameError ? 'username-error' : undefined}
+              required
+            />
+            {usernameError && (
+              <p id="username-error" role="alert" className="text-xs text-destructive">{usernameError}</p>
+            )}
+            {sentUsername && profileMutation.isSuccess && isLocalAccount && (
+              <output className="text-xs text-muted-foreground">
+                You now sign in as {profileMutation.data.username}.
+              </output>
+            )}
+          </div>
 
-        <form onSubmit={handleProfileUpdate} className="space-y-4">
+          <div className="grid gap-2">
+            <Label htmlFor="email">Email</Label>
+            {isLocalAccount ? (
+              <>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (!emailMutation.isPending) emailMutation.reset();
+                  }}
+                  aria-invalid={!!emailError}
+                  aria-describedby={emailError ? 'email-error' : undefined}
+                  required
+                />
+                {emailError && (
+                  <p id="email-error" role="alert" className="text-xs text-destructive">{emailError}</p>
+                )}
+                {pendingEmail && (
+                  <output className="text-xs text-muted-foreground">
+                    Open the link sent to <span className="font-medium">{pendingEmail}</span> to confirm the change. Until then, {user?.email} stays your address.
+                  </output>
+                )}
+                {emailMutation.data?.email_change === 'changed' && (
+                  <output className="text-xs text-muted-foreground">
+                    Email changed to {emailMutation.data.email}. The address is not verified.
+                  </output>
+                )}
+              </>
+            ) : (
+              <>
+                <Input id="email" type="email" value={user?.email || ''} disabled className="bg-muted" />
+                <p className="text-xs text-muted-foreground">Managed by your identity provider.</p>
+              </>
+            )}
+          </div>
+
           <div className="grid gap-2">
             <Label>Authentication Provider</Label>
             <Input 
@@ -162,8 +200,8 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
               )}
             </div>
           </div>
-          <Button type="submit" disabled={updateProfileMutation.isPending}>
-            {updateProfileMutation.isPending ? 'Saving...' : 'Save Changes'}
+          <Button type="submit" disabled={isSaving || !nextUsername}>
+            {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
         </form>
       </CardContent>

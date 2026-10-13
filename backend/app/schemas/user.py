@@ -1,5 +1,5 @@
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
 
@@ -24,15 +24,23 @@ def validate_password_strength(password: str) -> str:
     return password
 
 
-def _not_email_shaped(username: str) -> str:
-    # Login resolves the username before the email, so an email-shaped name would shadow that account.
-    if "@" in username:
-        raise ValueError("A username must not contain '@'")
+# No '@': login resolves the username before the email, so an email-shaped name would shadow that account.
+_NEW_USERNAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,63}")
+_USERNAME_RULE = (
+    "A username has 2 to 64 letters, digits, dots, underscores or hyphens and starts with a letter or digit"
+)
+
+
+def check_new_username(username: str) -> str:
+    if not _NEW_USERNAME.fullmatch(username):
+        raise ValueError(_USERNAME_RULE)
     return username
 
 
 LowercaseEmail = Annotated[EmailStr, AfterValidator(str.lower)]
-Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1), AfterValidator(_not_email_shaped)]
+# A stored name stays valid as it is; only a name someone picks has to follow the rule.
+Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+NewUsername = Annotated[Username, AfterValidator(check_new_username)]
 StrongPassword = Annotated[str, AfterValidator(validate_password_strength)]
 
 
@@ -42,7 +50,7 @@ class UserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: LowercaseEmail
-    username: Username
+    username: NewUsername
     password: StrongPassword
     is_active: bool = True
     permissions: list[str] = []
@@ -53,7 +61,7 @@ class UserCreate(BaseModel):
 
 class UserSignup(BaseModel):
     email: LowercaseEmail
-    username: Username
+    username: NewUsername
     password: StrongPassword
     slack_username: str | None = None
     mattermost_username: str | None = None
@@ -77,9 +85,12 @@ class UserUpdate(BaseModel):
 class UserUpdateMe(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    username: Username | None = None
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: StrictNotificationPreferences = None
+
+    _not_null = field_validator("username")(reject_null)
 
 
 class UserEmailChange(BaseModel):
@@ -112,6 +123,10 @@ class UserResponse(BaseModel):
     pending_email: str | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class EmailChangeResponse(UserResponse):
+    email_change: Literal["pending_confirmation", "changed"]
 
 
 class User2FASetup(BaseModel):
