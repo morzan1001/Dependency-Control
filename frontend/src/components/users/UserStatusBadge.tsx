@@ -2,9 +2,9 @@ import { cn } from '@/lib/utils';
 import type { User } from '@/types/user';
 
 const TONES = {
-  Invited: 'bg-yellow-100 text-yellow-800',
-  Active: 'bg-green-100 text-green-800',
-  Inactive: 'bg-red-100 text-red-800',
+  Invited: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200',
+  Active: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200',
+  Inactive: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200',
 };
 
 export function UserStatusBadge({ user }: Readonly<{ user: Pick<User, 'is_active' | 'status'> }>) {

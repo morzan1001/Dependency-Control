@@ -515,11 +515,11 @@ describe('UserDetailsCard', () => {
   })
 
   it.each([
-    { is_active: true, status: 'Active', tone: 'bg-green-100' },
-    { is_active: false, status: 'Inactive', tone: 'bg-red-100' },
-  ])('shows the status $status in the pill of the users table', ({ is_active, status, tone }) => {
+    { is_active: true, status: 'Active', tone: 'bg-green-100', darkTone: 'dark:bg-green-900/30' },
+    { is_active: false, status: 'Inactive', tone: 'bg-red-100', darkTone: 'dark:bg-red-900/30' },
+  ])('shows the status $status in the pill of the users table, in both themes', ({ is_active, status, tone, darkTone }) => {
     renderCard({ ...LOCAL_USER, is_active })
 
-    expect(screen.getByText(status)).toHaveClass('rounded-full', tone)
+    expect(screen.getByText(status)).toHaveClass('rounded-full', tone, darkTone)
   })
 })

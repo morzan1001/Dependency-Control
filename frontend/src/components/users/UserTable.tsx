@@ -128,7 +128,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                   <div className="flex items-center gap-2">
                     {user.username}
                     {user.auth_provider && user.auth_provider !== 'local' && (
-                      <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800 capitalize">
+                      <span className="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-2.5 py-0.5 text-xs font-medium text-blue-800 dark:text-blue-200 capitalize">
                         {user.auth_provider}
                       </span>
                     )}
@@ -145,7 +145,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 capitalize cursor-help">
+                                <span className="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 text-xs font-medium text-blue-800 dark:text-blue-200 capitalize cursor-help">
                                   {user.auth_provider}
                                 </span>
                               </TooltipTrigger>
