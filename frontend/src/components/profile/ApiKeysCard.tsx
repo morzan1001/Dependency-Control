@@ -141,7 +141,7 @@ export function ApiKeysCard() {
       setCreateOpen(false);
     } catch (err) {
       // The refusal names the surface the caller cannot reach; a generic message would hide it.
-      toast.error(getErrorMessage(err));
+      toast.error('Error', { description: getErrorMessage(err) });
     }
   };
 
@@ -153,7 +153,7 @@ export function ApiKeysCard() {
       await revokeMutation.mutateAsync(keyId);
       toast.success('Key revoked');
     } catch (err) {
-      toast.error(getErrorMessage(err));
+      toast.error('Error', { description: getErrorMessage(err) });
     }
   };
 
@@ -343,7 +343,7 @@ export function ApiKeysCard() {
               <Button variant="outline">Cancel</Button>
             </DialogClose>
             <Button onClick={handleCreate} disabled={!canSubmit || createMutation.isPending}>
-              {createMutation.isPending ? 'Creating…' : 'Create key'}
+              {createMutation.isPending ? 'Creating...' : 'Create key'}
             </Button>
           </DialogFooter>
         </DialogContent>

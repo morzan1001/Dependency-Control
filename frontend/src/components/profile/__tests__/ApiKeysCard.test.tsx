@@ -273,7 +273,7 @@ describe("ApiKeysCard", () => {
     await mintKey();
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith(SURFACE_REFUSED),
+      expect(toastError).toHaveBeenCalledWith("Error", { description: SURFACE_REFUSED }),
     );
   });
 
@@ -292,6 +292,20 @@ describe("ApiKeysCard", () => {
 
     await waitFor(() => expect(revokeKey).toHaveBeenCalledWith(MCP_KEY_ID));
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Key revoked"));
+  });
+
+  it("titles a failed revoke like the other Profile cards and names the reason", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    revokeKey.mockRejectedValueOnce({ response: { data: { detail: "API key not found" } } });
+    renderCard([mcpKey]);
+    await screen.findByText(MCP_KEY_NAME);
+
+    fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Error", { description: "API key not found" }),
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("says how many keys the listing left out when its page saturated", async () => {
