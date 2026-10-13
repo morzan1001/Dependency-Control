@@ -40,6 +40,21 @@ class WaiverRepository(BaseRepository[Waiver]):
             ordered=False,
         )
 
+    async def find_many_by_creator_name(
+        self, query: dict[str, Any], skip: int, limit: int, sort_order: int
+    ) -> list[Waiver]:
+        """A page ordered by the name each waiver shows for its creator: the account's username, else what it stored."""
+        pipeline: list[dict[str, Any]] = [
+            {"$match": query},
+            {"$lookup": {"from": "users", "localField": "created_by", "foreignField": "_id", "as": "_creator"}},
+            {"$set": {"_creator": {"$ifNull": [{"$arrayElemAt": ["$_creator.username", 0]}, "$created_by"]}}},
+            {"$sort": {"_creator": sort_order, "_id": 1}},
+            {"$skip": skip},
+            {"$limit": limit},
+            {"$unset": "_creator"},
+        ]
+        return self._to_model_list(await self.aggregate(pipeline, limit))
+
     async def find_active_for_project(self, project_id: str) -> list[Waiver]:
         """Active (non-expired) waivers that apply to a project: its own and the global ones (project_id=None)."""
         return self._to_model_list(await self.collection.find(_active_for_project_filter(project_id)).to_list(None))

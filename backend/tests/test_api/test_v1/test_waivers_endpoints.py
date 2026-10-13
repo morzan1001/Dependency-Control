@@ -82,7 +82,8 @@ def _run_create(user, db, fields) -> SimpleNamespace:
             )
         except HTTPException as exc:
             outcome = exc
-    return SimpleNamespace(outcome=outcome, repo=repo, recalc=recalc, access=access, bg=bg)
+    stored = repo.create.call_args.args[0] if repo.create.call_args else None
+    return SimpleNamespace(outcome=outcome, stored=stored, repo=repo, recalc=recalc, access=access, bg=bg)
 
 
 def _create(user, db=None, **fields) -> SimpleNamespace:
@@ -105,9 +106,8 @@ class TestCreateWaiver:
     def test_admin_can_create_global_waiver(self, admin_user):
         run = _create(admin_user, project_id=None, package_name="requests", reason="Global waiver")
 
-        assert run.outcome.project_id is None
-        assert run.outcome.created_by == admin_user.username
-        assert run.recalc.await_args.args[1] is run.outcome
+        assert (run.stored.project_id, run.stored.created_by) == (None, admin_user.id)
+        assert run.recalc.await_args.args[1] is run.stored
         assert [t.func for t in run.bg.tasks] == [run_waiver_recalc]
 
 
@@ -226,7 +226,7 @@ class TestCreateWaiverValidatesFindingMatch:
             package_name="src/file.rb",
             scope=scope,
             reason="future",
-        ).outcome
+        ).stored
 
         assert created.rule_id == "ruby_lang_weak-hash"
 
@@ -385,7 +385,7 @@ class TestCreateWaiverValidatesFindingMatch:
             package_name="a.py",
             scope="finding",
             reason="test match snapshot",
-        ).outcome
+        ).stored
 
         assert created.match is not None
         assert created.match.anchor == "fp1"
@@ -403,7 +403,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         created = _create(
             admin_user, db, project_id="proj-1", finding_type="secret", package_name="values.yaml", reason="fixtures"
-        ).outcome
+        ).stored
 
         assert created.match is None
 
@@ -438,8 +438,8 @@ class TestCreateWaiverValidatesFindingMatch:
             reason="branch only",
         )
 
-        assert run.outcome.match is not None and run.outcome.match.anchor == "fp-branch"
-        assert "scan_id" not in run.outcome.model_dump()
+        assert run.stored.match is not None and run.stored.match.anchor == "fp-branch"
+        assert "scan_id" not in run.stored.model_dump()
         assert run.recalc.call_args.kwargs == {"restamp": [_BRANCH_SCAN]}
 
     def test_a_scan_of_another_project_is_refused(self, admin_user):
@@ -482,8 +482,7 @@ class TestGetWaiver:
                     )
                 )
 
-        assert result.id == "waiver-42"
-        assert result.reason == "Known issue"
+        assert (result["id"], result["reason"]) == ("waiver-42", "Known issue")
         mock_repo.get_by_id.assert_called_once_with("waiver-42")
 
     def test_get_waiver_returns_404_when_not_found(self, admin_user):

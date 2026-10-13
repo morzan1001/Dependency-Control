@@ -16,6 +16,7 @@ from app.api.v1.helpers import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.sorting import SortOrderQuery
+from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR, WAIVER_SCOPE_FILE, WAIVER_SCOPE_FINDING
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import LOCATION_FINDING_TYPES
@@ -122,6 +123,10 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 _MSG_WAIVER_NOT_FOUND = "Waiver not found"
 
 
+async def _with_creator_names(db: AsyncIOMotorDatabase, waivers: list[Waiver]) -> list[dict[str, Any]]:
+    return await resolve_usernames(db, [WaiverResponse.model_validate(w).model_dump() for w in waivers], "created_by")
+
+
 async def _authorize_waiver_write(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> Project | None:
     """A project waiver is written by a project editor, a global one by a waiver:manage holder; returns the project."""
     if project_id:
@@ -137,7 +142,7 @@ async def create_waiver(
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
     current_user: CurrentUserDep,
-) -> Waiver:
+) -> dict[str, Any]:
     """Create a new waiver/exception for a vulnerability."""
     project = await _authorize_waiver_write(waiver_in.project_id, current_user, db)
 
@@ -146,7 +151,7 @@ async def create_waiver(
     scan_id = await _named_scan_id(waiver_in, db)
     if waiver_in.scope != WAIVER_SCOPE_FINDING:
         await _resolve_widened_rule(waiver_in, db)
-    waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
+    waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.id)
     if not waiver.vulnerability_id and not waiver_query(waiver):
         raise HTTPException(status_code=422, detail=_MSG_NO_CRITERIA)
     matched_finding = await _ensure_waiver_matches_finding(waiver, project, scan_id, db)
@@ -163,7 +168,7 @@ async def create_waiver(
         await restamp_single_scan(db, project.id, scan_id)
     background_tasks.add_task(run_waiver_recalc, db)
 
-    return waiver
+    return (await _with_creator_names(db, [waiver]))[0]
 
 
 @router.get("/", responses=RESP_AUTH)
@@ -226,10 +231,12 @@ async def list_waivers(
 
     total = await waiver_repo.count(query)
     sort_direction = parse_sort_direction(sort_order)
-    waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
+    if sort_by == "created_by":
+        waivers = await waiver_repo.find_many_by_creator_name(query, skip, limit, sort_direction)
+    else:
+        waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
 
-    items = [WaiverResponse.model_validate(w).model_dump() for w in waivers]
-    return build_pagination_response(items, total, skip, limit)
+    return build_pagination_response(await _with_creator_names(db, waivers), total, skip, limit)
 
 
 @router.get("/{waiver_id}", response_model=WaiverResponse, responses=RESP_AUTH_404)
@@ -237,7 +244,7 @@ async def get_waiver(
     waiver_id: str,
     db: DatabaseDep,
     current_user: CurrentUserDep,
-) -> Waiver:
+) -> dict[str, Any]:
     """Retrieve a single waiver by ID."""
     # Refused before the read, so a caller with no waiver permission cannot probe which ids exist.
     await authorize_waiver_read(None, current_user, db)
@@ -247,7 +254,7 @@ async def get_waiver(
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
     await authorize_waiver_read(waiver.project_id, current_user, db)
-    return waiver
+    return (await _with_creator_names(db, [waiver]))[0]
 
 
 @router.patch("/{waiver_id}", response_model=WaiverResponse, responses=RESP_AUTH_404)
@@ -257,7 +264,7 @@ async def update_waiver(
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
     current_user: CurrentUserDep,
-) -> Waiver:
+) -> dict[str, Any]:
     """Update a waiver (reason, status, expiration_date)."""
     waiver_repo = WaiverRepository(db)
     waiver = await waiver_repo.get_by_id(waiver_id)
@@ -277,7 +284,7 @@ async def update_waiver(
     await request_waiver_recalc(db, updated)
     background_tasks.add_task(run_waiver_recalc, db)
 
-    return updated
+    return (await _with_creator_names(db, [updated]))[0]
 
 
 @router.delete("/{waiver_id}", status_code=204, responses=RESP_AUTH_404)

@@ -1,5 +1,6 @@
 """Shared utilities for user-related operations."""
 
+from collections.abc import Sequence
 from typing import Any
 
 from fastapi import HTTPException
@@ -8,6 +9,15 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.users import UserRepository
+
+
+async def resolve_usernames(
+    db: AsyncIOMotorDatabase, rows: Sequence[dict[str, Any]], field: str, id_field: str | None = None
+) -> list[dict[str, Any]]:
+    """Rows with ``field`` set to the current username of the user id in ``id_field`` (default ``field``), else as stored."""
+    id_field = id_field or field
+    names = await UserRepository(db).usernames_by_id(row[id_field] for row in rows if row.get(id_field))
+    return [{**row, field: names[row[id_field]]} if row.get(id_field) in names else row for row in rows]
 
 
 async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> dict[str, Any]:
