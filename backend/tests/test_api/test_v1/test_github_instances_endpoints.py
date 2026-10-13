@@ -182,14 +182,13 @@ def _spent_budget(minutes_until_reset=20):
 
 
 _HEALTHY_BUDGET = GitHubCoreRateLimit(remaining=4999, reset_at=datetime.now(timezone.utc) + timedelta(minutes=42))
+_TOKEN_USER_ID = 4242
 
 
-def _run_test_connection(instance, current_user, jwks, orgs=None, team_counts=None, rate_limit=_HEALTHY_BUDGET):
-    """Drive test_connection with the outbound calls stubbed; returns (response, org, team, rate-limit probes).
-
-    An intact budget is the default because it is the state a test about anything else assumes: a
-    probe refused under it is refused on its own merits.
-    """
+def _run_test_connection(
+    instance, current_user, jwks, orgs=None, team_counts=None, rate_limit=_HEALTHY_BUDGET, token_probe=None
+):
+    """Drive test_connection with stubs; an intact budget and an accepted token keep any refusal the test's own."""
     from app.api.v1.endpoints.github_instances import test_connection
 
     mock_repo = _make_repo_mock(get_by_id=instance)
@@ -201,6 +200,11 @@ def _run_test_connection(instance, current_user, jwks, orgs=None, team_counts=No
     with (
         patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
         patch.object(GitHubService, "refresh_jwks", new=AsyncMock(return_value=jwks)),
+        patch.object(
+            GitHubService,
+            "_api_get",
+            new=token_probe or AsyncMock(return_value=httpx.Response(200, json={"id": _TOKEN_USER_ID})),
+        ),
         patch.object(GitHubService, "get_viewer_organisations", new=org_probe),
         patch.object(GitHubService, "count_org_teams", new=team_probe),
         patch.object(GitHubService, "get_core_rate_limit", new=rate_limit_probe),
@@ -276,6 +280,152 @@ class TestConnectionChecksTheToken:
         team_probe.assert_not_called()
 
 
+class TestConnectionTriesTheTokenWithoutTeamSync:
+    """Pull-request decoration and branch housekeeping send the token whether or not teams are synced."""
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_token_github_refuses_fails_the_test(self, admin_user, status):
+        """A refused token cannot read GET /rate_limit either, so the budget stays unread."""
+        instance = make_github_instance(access_token="ghp-revoked", sync_teams=False)
+        token_probe = AsyncMock(return_value=httpx.Response(status, json={"message": "Bad credentials"}))
+
+        result, org_probe, *_ = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, rate_limit=None, token_probe=token_probe
+        )
+
+        assert result.success is False
+        assert "refused the access token" in result.message
+        token_probe.assert_awaited_once()
+        org_probe.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "answer", [None, httpx.Response(502), httpx.Response(503)], ids=["no-answer", "bad-gateway", "unavailable"]
+    )
+    def test_a_token_check_github_did_not_answer_blames_no_token(self, admin_user, answer):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
+
+        result, *_ = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, rate_limit=None, token_probe=AsyncMock(return_value=answer)
+        )
+
+        assert result.success is False
+        assert "could not be determined" in result.message
+        assert "unreachable" in result.message
+        assert "refused the access token" not in result.message
+
+    def test_a_token_github_answers_for_passes(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
+        token_probe = AsyncMock(return_value=httpx.Response(200, json={"id": _TOKEN_USER_ID}))
+
+        result, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, token_probe=token_probe)
+
+        assert result.success is True
+        assert "access token authenticates" in result.message
+        token_probe.assert_awaited_once()
+
+    def test_an_instance_without_a_token_is_not_asked_about_one(self, admin_user):
+        instance = make_github_instance(sync_teams=False)
+        token_probe = AsyncMock(return_value=None)
+
+        result, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, token_probe=token_probe)
+
+        assert result.success is True
+        token_probe.assert_not_called()
+
+    def test_a_throttled_token_reports_the_wait_rather_than_a_refusal(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
+        budget = _spent_budget(minutes_until_reset=9)
+        spent = httpx.Response(403, headers={"X-RateLimit-Remaining": "0"})
+
+        result, *_ = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, rate_limit=budget, token_probe=AsyncMock(return_value=spent)
+        )
+
+        assert result.success is False
+        assert "rate limit is exhausted" in result.message
+        assert "refused the access token" not in result.message
+        assert "9 minute(s)" in result.message
+
+    def test_a_ghes_token_without_a_web_url_is_reported_as_sent_nowhere(self, admin_user):
+        """Without the web URL a GHES issuer names no API host, so every call that needs the token is skipped."""
+        instance = make_github_instance(
+            url="https://github.corp.example.com/_services/token", github_url=None, access_token="ghp-test-token"
+        )
+        token_probe = AsyncMock(return_value=None)
+
+        result, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, token_probe=token_probe)
+
+        assert result.success is False
+        assert "web URL" in result.message
+        token_probe.assert_not_called()
+
+
+_SECONDARY_LIMIT = {
+    "message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."
+}
+
+
+def _serve_github_api(monkeypatch, answers: dict[str, httpx.Response]) -> None:
+    """api.github.com answering each path from ``answers``, behind the real service and HTTP client."""
+    transport = httpx.MockTransport(lambda request: answers[request.url.path])
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=transport))
+
+
+def _core_budget(remaining: int) -> dict:
+    return {
+        "resources": {"core": {"remaining": remaining, "reset": int(datetime.now(timezone.utc).timestamp()) + 3600}}
+    }
+
+
+class TestASecondaryRateLimitIsNotReadAsAScopeProblem:
+    """A secondary limit leaves the core budget standing, so only the refusal's own Retry-After names it."""
+
+    def test_the_connection_test_reports_the_wait(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import test_connection
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user": httpx.Response(200, json={"id": _TOKEN_USER_ID, "login": "dc-bot"}),
+                "/user/orgs": httpx.Response(403, headers={"Retry-After": "120"}, json=_SECONDARY_LIMIT),
+                "/rate_limit": httpx.Response(200, json=_core_budget(remaining=4999)),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-test-token", sync_teams=True)
+
+        with (
+            patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
+            patch.object(GitHubService, "refresh_jwks", new=AsyncMock(return_value={"keys": [{}]})),
+        ):
+            result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert result.success is False
+        assert "rate limit is exhausted" in result.message
+        assert "read:org" not in result.message
+        assert "2 minute(s)" in result.message
+
+    def test_the_organisation_picker_reports_the_wait(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user/orgs": httpx.Response(429, headers={"Retry-After": "300"}, json=_SECONDARY_LIMIT),
+                "/rate_limit": httpx.Response(200, json=_core_budget(remaining=4999)),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-test-token")
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert excinfo.value.status_code == 502
+        assert "rate limit is exhausted" in excinfo.value.detail
+        assert "read:org" not in excinfo.value.detail
+        assert "5 minute(s)" in excinfo.value.detail
+
+
 class TestConnectionProbesEveryOrganisation:
     """The owner runs several organisations; a token green on one and blind on another is the §8 failure."""
 
@@ -336,7 +486,7 @@ class TestBindingPickerListings:
     def _run(endpoint, instance, **service_returns):
         """Drive a picker route; returns (result, the stubbed service) so its probes can be asserted on."""
         mock_repo = _make_repo_mock(get_by_id=instance)
-        service = MagicMock()
+        service = MagicMock(rate_limited_until=None)
         # An intact budget unless the test is about the budget: a refusal under it is a scope refusal.
         for name, value in {"get_core_rate_limit": _HEALTHY_BUDGET, **service_returns}.items():
             setattr(service, name, AsyncMock(return_value=value))
@@ -495,6 +645,8 @@ class TestConnectionTellsAThrottledTokenFromAScopeProblem:
         assert "read:org" not in result.message
         assert f"{budget.reset_at:%Y-%m-%d %H:%M UTC}" in result.message
         assert "20 minute(s)" in result.message
+        # GET /user already answered for the token.
+        assert "not tested" not in result.message
         rate_probe.assert_awaited_once()
 
     def test_a_refused_org_probe_still_reports_the_scope(self, admin_user):

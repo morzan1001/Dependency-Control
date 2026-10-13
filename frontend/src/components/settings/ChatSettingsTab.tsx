@@ -41,7 +41,9 @@ export function ChatSettingsTab({
           <CardDescription>
             Per-user sliding-window limits applied on every chat message. The
             Ollama GPU node has finite throughput — use these to prevent a
-            single user from starving the rest.
+            single user from starving the rest. They also cap MCP tool calls,
+            at these limits times the max tool-call rounds, in one window that
+            all of a user's API keys share.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -105,7 +107,8 @@ export function ChatSettingsTab({
             How many rounds of LLM ↔ tool-call iteration the assistant is
             allowed per message before we give up and show a fallback.
             Higher values let the model chain more tools but increase the
-            worst-case latency.
+            worst-case latency. The MCP tool-call limits are the rate limits
+            times this value.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

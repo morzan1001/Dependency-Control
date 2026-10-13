@@ -18,8 +18,8 @@ def test_csv_renderer_outputs_rows_per_control():
     assert rows[0]["control_id"] == "NIST-131A-01"
     assert rows[0]["status"] == "failed"
     assert rows[0]["severity"] == "HIGH"
-    # evidence_count must sum finding_ids and asset_bom_refs, since some evaluators emit only the latter.
-    assert rows[0]["evidence_count"] == "2"
+    # f1 is the finding on asset a1, so the two are one piece of evidence.
+    assert rows[0]["evidence_count"] == "1"
 
 
 def test_csv_marks_a_waived_control_in_the_waived_column():

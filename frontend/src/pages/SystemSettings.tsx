@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { useSystemSettings, useUpdateSystemSettings, useAppConfig, systemKeys } from "@/hooks/queries/use-system"
+import { useSystemSettings, useUpdateSystemSettings, systemKeys } from "@/hooks/queries/use-system"
 import { useGlobalWebhooks, useCreateGlobalWebhook, useUpdateWebhook, useDeleteWebhook } from "@/hooks/queries/use-webhooks"
 import { SystemSettings as SystemSettingsType } from "@/types/system"
 import { useAuth } from "@/context/useAuth"
@@ -19,8 +19,6 @@ import {
 import { CryptoPolicyPage } from "@/pages/admin/CryptoPolicyPage"
 
 function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsType }>) {
-  const { data: appConfig } = useAppConfig();
-  const chatEnabled = appConfig?.chat_enabled ?? false;
   const [formData, setFormData] = useState<Partial<SystemSettingsType>>(settings)
   // Re-sync formData when the server settings reference changes (e.g. Slack OAuth refetch),
   // without clobbering in-progress edits while nothing changed.
@@ -95,7 +93,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="crypto-policy">Crypto Policy</TabsTrigger>
-          {chatEnabled && <TabsTrigger value="chat">Chat</TabsTrigger>}
+          <TabsTrigger value="chat">Chat &amp; MCP</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general">
@@ -128,11 +126,9 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
           <CryptoPolicyPage />
         </TabsContent>
 
-        {chatEnabled && (
-          <TabsContent value="chat">
-            <ChatSettingsTab {...tabProps} />
-          </TabsContent>
-        )}
+        <TabsContent value="chat">
+          <ChatSettingsTab {...tabProps} />
+        </TabsContent>
       </Tabs>
     </div>
   )

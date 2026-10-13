@@ -224,13 +224,13 @@ class ScanRepository:
         if worker_id:
             query["worker_id"] = worker_id
         now = datetime.now(timezone.utc)
+        run = {"scan_id": scan_id, "status": SCAN_STATUS_FAILED, "completed_at": now}
         failed = await self.collection.find_one_and_update(
             query,
-            {"$set": {"status": SCAN_STATUS_FAILED, "error": error, "completed_at": now}},
+            {"$set": {"status": SCAN_STATUS_FAILED, "error": error, "completed_at": now, "latest_run": run}},
             projection={"original_scan_id": 1, "sbom_generation": 1},
         )
         if failed and failed.get("original_scan_id"):
-            run = {"scan_id": scan_id, "status": SCAN_STATUS_FAILED, "completed_at": now}
             await self.report_rescan_run(failed["original_scan_id"], failed.get("sbom_generation"), {"latest_run": run})
         return failed is not None
 

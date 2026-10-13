@@ -1,3 +1,28 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.54. Run mongosh commands in-pod against the application database.
+
+## Before the rollout (gate): no GitLab project linked twice
+
+Startup builds the unique GitLab project key as a new index, `projects_gitlab_key`, over every numeric type of `gitlab_project_id`; the old index covered int32 ids alone. A duplicate makes startup log `Skipping unique projects_gitlab_key index` and leave the new index unbuilt, so this must return nothing:
+
+```js
+db.projects.aggregate([{ $match: { gitlab_instance_id: { $type: "string" }, gitlab_project_id: { $type: "number" } } }, { $group: { _id: { i: "$gitlab_instance_id", p: "$gitlab_project_id" }, n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }])
+```
+
+Reconcile any hit first, so that one project per hit keeps the GitLab link; `db.projects.find({ gitlab_instance_id: "<i>", gitlab_project_id: <p> }, { name: 1, created_at: 1 })` lists the projects of one hit.
+
+## After the rollout
+
+Once every pod runs this release, drop the old index, but only once `db.projects.getIndexes()` lists `projects_gitlab_key`; until then the old index is the only one keeping the key unique:
+
+```js
+if (db.projects.getIndexes().some((i) => i.name === "projects_gitlab_key")) db.projects.dropIndex("gitlab_instance_id_1_gitlab_project_id_1")
+else print("projects_gitlab_key is missing: keep the old index, reconcile the duplicate the startup log names, and restart a pod")
+```
+
+
+
 # Release 1.9.54
 
 ## 📦 Build & CI

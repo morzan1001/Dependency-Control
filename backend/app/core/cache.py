@@ -393,6 +393,17 @@ class CacheService:
             return json.loads(data) if data else None
         return None
 
+    async def eval(self, script: str, key: str, *args: str) -> Any | None:
+        """Run a Lua script over one key; None while Redis is unreachable."""
+        if not await self._ensure_available():
+            return None
+
+        with _CacheOp(self, "eval"):
+            client = await self.get_client()
+            reply = cast(Awaitable[Any], client.eval(script, 1, self._make_key(key), *args))
+            return await asyncio.wait_for(reply, timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
+        return None
+
     async def get_or_fetch_with_lock(
         self,
         key: str,

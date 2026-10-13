@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useInviteUser } from '@/hooks/queries/use-users';
 import { useAppConfig } from '@/hooks/queries/use-system';
+import { copyWithToast } from '@/hooks/use-copy-to-clipboard';
 import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -79,10 +80,7 @@ export function InviteUserDialog() {
             </div>
             <Button 
               className="w-full" 
-              onClick={() => {
-                navigator.clipboard.writeText(inviteLink);
-                toast.success("Link copied to clipboard");
-              }}
+              onClick={() => void copyWithToast(inviteLink, 'invitation link')}
             >
               Copy Link
             </Button>

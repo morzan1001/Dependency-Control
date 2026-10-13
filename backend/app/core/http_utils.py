@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from types import TracebackType
 from typing import Any
 
@@ -26,6 +26,9 @@ SSL_CONTEXT = httpx.create_ssl_context()
 
 _MAX_RETRY_AFTER_SECONDS = 60.0
 
+# GitHub's advice for a rate-limit refusal that names no wait.
+_UNNAMED_QUOTA_WAIT_SECONDS = 60.0
+
 
 def _retry_after_seconds(outcome: httpx.Response | httpx.TransportError) -> float | None:
     if not isinstance(outcome, httpx.Response):
@@ -34,6 +37,23 @@ def _retry_after_seconds(outcome: httpx.Response | httpx.TransportError) -> floa
         return min(float(outcome.headers["Retry-After"]), _MAX_RETRY_AFTER_SECONDS)
     except (KeyError, ValueError):
         return None
+
+
+def quota_lifts_at(response: httpx.Response) -> float | None:
+    """The epoch second a 403/429 quota refusal lifts, the later of its Retry-After and a spent quota's reset;
+    None for any other answer, a 403 without either header included."""
+    status, headers = response.status_code, response.headers
+    spent = headers.get("X-RateLimit-Remaining") == "0"
+    if status != 429 and not (status == 403 and ("Retry-After" in headers or spent)):
+        return None
+    now = time.time()
+    lifts: list[float] = []
+    with suppress(KeyError, ValueError):
+        lifts.append(now + float(headers["Retry-After"]))
+    with suppress(KeyError, ValueError):
+        if spent:
+            lifts.append(float(headers["X-RateLimit-Reset"]))
+    return max(lifts, default=now + _UNNAMED_QUOTA_WAIT_SECONDS)
 
 
 class InstrumentedAsyncClient:
@@ -81,14 +101,12 @@ class InstrumentedAsyncClient:
         external_api_errors_total.labels(service=self.service_name).inc()
 
     def _record_answer(self, response: httpx.Response) -> None:
-        status, headers = response.status_code, response.headers
+        status = response.status_code
         # A 404 or another 4xx is an expected negative answer, not an upstream failure.
         if status >= 500 or status in (401, 403, 429):
             self._record_error()
         # GitHub answers an exhausted primary or secondary quota with 403 as well as 429.
-        if status == 429 or (
-            status == 403 and ("Retry-After" in headers or headers.get("X-RateLimit-Remaining") == "0")
-        ):
+        if quota_lifts_at(response) is not None:
             external_api_rate_limit_hits_total.labels(service=self.service_name).inc()
 
     async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:

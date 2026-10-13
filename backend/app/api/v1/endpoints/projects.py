@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import uuid
@@ -1380,14 +1381,17 @@ async def export_project_sbom(
             await _open_gridfs(db, gridfs_ref_id(scan.sbom_refs[0]), "SBOM"), f"project_{project_id}_sbom.json"
         )
 
+    # The spool's file I/O and DEFLATE run in worker threads, so a large export leaves the event loop free.
     with ExitStack() as close_on_error:
-        spool = close_on_error.enter_context(SpooledTemporaryFile(max_size=_EXPORT_SPOOL_MAX_MEMORY))
+        spool = close_on_error.enter_context(
+            SpooledTemporaryFile(max_size=_EXPORT_SPOOL_MAX_MEMORY)  # NOSONAR the constructor allocates memory only
+        )
         with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED) as archive:
             for index, ref in enumerate(scan.sbom_refs):
                 stream = await _open_gridfs(db, gridfs_ref_id(ref), "SBOM")
                 with archive.open(f"sbom-{index + 1}.json", "w", force_zip64=True) as entry:
                     async for chunk in iter_gridfs_chunks(stream):
-                        entry.write(chunk)
+                        await asyncio.to_thread(entry.write, chunk)
         close_on_error.pop_all()
     spool.seek(0)
     return StreamingResponse(

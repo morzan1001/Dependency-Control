@@ -445,7 +445,10 @@ def _extract_oidc_issuer(oidc_token: str) -> str:
         raise HTTPException(status_code=403, detail="Invalid Token format. Expected a JWT (OIDC) token.")
 
     try:
-        issuer = jwt.decode(oidc_token, options={"verify_signature": False}).get("iss")
+        issuer = jwt.decode(
+            oidc_token,
+            options={"verify_signature": False},  # NOSONAR iss only picks the instance whose JWKS verifies the token
+        ).get("iss")
     except jwt.PyJWTError as e:
         logger.warning("Undecodable OIDC token: %s", e)
         raise HTTPException(status_code=403, detail="Invalid OIDC token format") from e

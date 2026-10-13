@@ -75,7 +75,7 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       }
     }
 
-    initAuth()
+    void initAuth()
     // Mount-only: logout is read via logoutRef so navigation identity changes don't re-fire getMe.
   }, [])
 

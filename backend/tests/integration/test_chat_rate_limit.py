@@ -28,10 +28,11 @@ class _DenyingRedis:
 
 
 @pytest.mark.asyncio
-async def test_a_chat_user_over_the_window_gets_429_with_retry_after(client, monkeypatch):
+async def test_a_chat_user_over_the_window_gets_429_with_retry_after(client, monkeypatch, fake_cache):
     monkeypatch.setattr(settings, "CHAT_ENABLED", True)
     keys: list[str] = []
-    monkeypatch.setattr(rate_limiter, "_client", lambda: _DenyingRedis(keys))
+    fake_cache._client = _DenyingRedis(keys)
+    monkeypatch.setattr(rate_limiter, "cache_service", fake_cache)
     denials_before = REGISTRY.get_sample_value(_CHAT_DENIALS) or 0.0
 
     resp = await client.post(

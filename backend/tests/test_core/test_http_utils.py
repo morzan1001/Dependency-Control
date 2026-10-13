@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
+import time
 
 import httpx
 import pytest
 
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, quota_lifts_at
 from app.core.metrics import (
     external_api_duration_seconds,
     external_api_errors_total,
@@ -201,6 +202,51 @@ async def test_each_rate_limited_answer_counts_one_hit(status, headers, hits):
         await client.get("https://example.test")
 
     assert _counter_value(external_api_rate_limit_hits_total, service) == before + hits
+
+
+_RESET = 1_900_000_000
+_NOW = 1_800_000_000.0
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "lifts_in"),
+    [
+        pytest.param(403, {"Retry-After": "120", "X-RateLimit-Remaining": "4990"}, 120, id="secondary-limit"),
+        pytest.param(
+            429,
+            {"Retry-After": "30", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(_RESET)},
+            _RESET - _NOW,
+            id="a-reset-outlasting-the-retry-after",
+        ),
+        pytest.param(
+            429,
+            {"Retry-After": "120", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(_NOW) + 30)},
+            120,
+            id="a-retry-after-outlasting-the-reset",
+        ),
+        pytest.param(
+            403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(_RESET)}, _RESET - _NOW, id="spent-quota"
+        ),
+        pytest.param(429, {}, 60, id="unnamed-wait-is-a-minute"),
+        pytest.param(403, {"Retry-After": "soon"}, 60, id="unreadable-retry-after"),
+        pytest.param(
+            403,
+            {"Retry-After": "soon", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(_RESET)},
+            _RESET - _NOW,
+            id="unreadable-retry-after-on-a-spent-quota",
+        ),
+        pytest.param(403, {"X-RateLimit-Remaining": "0"}, 60, id="spent-quota-without-a-reset"),
+        pytest.param(403, {}, None, id="permission-refusal"),
+        pytest.param(503, {"Retry-After": "5"}, None, id="server-error"),
+        pytest.param(200, {"X-RateLimit-Remaining": "0"}, None, id="last-answered-request"),
+    ],
+)
+def test_a_quota_refusal_names_when_it_lifts(monkeypatch, status, headers, lifts_in):
+    monkeypatch.setattr(time, "time", lambda: _NOW)
+
+    lifts_at = quota_lifts_at(httpx.Response(status, headers=headers))
+
+    assert lifts_at == (None if lifts_in is None else _NOW + lifts_in)
 
 
 @pytest.mark.asyncio

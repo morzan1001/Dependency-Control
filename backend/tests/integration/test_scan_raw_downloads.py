@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import tempfile
+import threading
 import tracemalloc
 import zipfile
 from datetime import datetime, timezone
@@ -157,6 +158,26 @@ async def test_a_multi_sbom_export_zips_each_stored_file_byte_for_byte_in_bounde
         entries = {name: _sha(archive.read(name)) for name in archive.namelist()}
     assert entries == {"sbom-1.json": stored[0], "sbom-2.json": stored[1]}
     assert peak < _STREAM_PEAK_BOUND < len(_large_sbom())
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_multi_sbom_export_compresses_its_entries_off_the_event_loop(db, monkeypatch):
+    await db.projects.insert_one(Project(id=_PROJECT_ID, name="shop").model_dump(by_alias=True))
+    await _scan_with_sboms(db, _fixture("npmpeer.syft.cdx.json"), _fixture("uvdev.syft.cdx.json"))
+    writers: set[threading.Thread] = set()
+    write = zipfile._ZipWriteFile.write
+
+    def recording_write(entry, data):
+        writers.add(threading.current_thread())
+        return write(entry, data)
+
+    monkeypatch.setattr(zipfile._ZipWriteFile, "write", recording_write)
+
+    await _drain_measured(projects.export_project_sbom(_PROJECT_ID, current_user=_AUDITOR, db=db))
+
+    assert writers
+    assert threading.current_thread() not in writers
 
 
 @pytest.mark.asyncio

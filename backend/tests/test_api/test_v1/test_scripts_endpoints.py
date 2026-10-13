@@ -1,6 +1,7 @@
 """Tests for the /api/v1/scripts endpoints (versioned scanner serving): whitelist + path-traversal rejection, ?v= regex, unknown-version 404s, hash/content endpoints, manifest enumeration, and the frozen-read lru_cache."""
 
 import asyncio
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -184,6 +185,16 @@ class TestHandlers:
         with pytest.raises(HTTPException) as exc:
             asyncio.run(scripts_module.get_script("scanner.sh", v="9.9.9"))
         assert exc.value.status_code == 404
+
+    def test_a_missing_script_is_logged_on_one_line_whatever_version_was_asked(self, scripts_layout, caplog):
+        with (
+            patch.object(scripts_module, "get_script_content", side_effect=FileNotFoundError("gone")),
+            caplog.at_level(logging.ERROR, logger=MODULE),
+            pytest.raises(HTTPException),
+        ):
+            asyncio.run(scripts_module.get_script("scanner.sh", v="1.0.0\nforged entry"))
+
+        assert "\n" not in caplog.records[-1].getMessage()
 
     def test_list_scripts_enumerates_latest_plus_frozen(self, scripts_layout):
         manifest = asyncio.run(scripts_module.list_scripts())

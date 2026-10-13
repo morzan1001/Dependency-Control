@@ -11,7 +11,7 @@ from app.core.constants import (
     HIGH_RISK_SCORE_THRESHOLD,
     sort_by_severity,
 )
-from app.core.cve import canonical_cve, display_vulnerability_id
+from app.core.cve import canonical_cve
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import (
     ACTIVELY_EXPLOITED_MATURITY,
@@ -47,7 +47,7 @@ from app.services.analysis.types import (
     ReachabilitySummary,
     VulnerabilityInfo,
 )
-from app.services.recommendation.common import live_advisories
+from app.services.recommendation.common import display_vulnerability_id, live_advisories
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     build_component_language_map,

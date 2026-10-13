@@ -61,6 +61,7 @@ export interface PublicConfig {
   enforce_email_verification: boolean;
   oidc_enabled?: boolean;
   oidc_provider_name?: string;
+  password_reset_enabled: boolean;
 }
 
 export interface NotificationChannels {

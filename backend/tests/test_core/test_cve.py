@@ -2,9 +2,10 @@
 
 import pytest
 
-from app.core.cve import canonical_cve, canonical_cves, display_vulnerability_id
+from app.core.cve import canonical_cve, canonical_cves
 from app.services.aggregation.merging import dedupe_vulnerability_entries
 from app.services.analysis.stats import build_epss_kev_summary
+from app.services.recommendation.common import display_vulnerability_id
 
 
 @pytest.mark.parametrize(
@@ -66,6 +67,9 @@ def test_the_kev_row_names_the_cve_the_analytics_pages_count():
     assert row["cve"] == canonical_cve(entry) == "CVE-2024-0002"
 
 
+_WAIVED = {"id": "CVE-2024-1", "waived": True}
+
+
 @pytest.mark.parametrize(
     ("entries", "expected"),
     [
@@ -73,6 +77,9 @@ def test_the_kev_row_names_the_cve_the_analytics_pages_count():
         pytest.param([{"id": "GHSA-x", "aliases": ["CVE-2024-2"]}], "CVE-2024-2", id="cve-alias"),
         pytest.param([{"id": "GHSA-ABCD"}, {"id": "RUSTSEC-1"}], "GHSA-abcd", id="no-cve-first-advisory"),
         pytest.param([], None, id="no-advisory"),
+        pytest.param([_WAIVED, {"id": "CVE-2024-2"}], "CVE-2024-2", id="a-waived-cve-yields-to-a-live-one"),
+        pytest.param([_WAIVED, {"id": "GHSA-x"}], "GHSA-x", id="a-live-ghsa-wins-over-a-waived-cve"),
+        pytest.param([_WAIVED], "CVE-2024-1", id="a-fully-waived-finding-keeps-its-id"),
     ],
 )
 def test_a_finding_is_shown_under_its_first_cve(entries, expected):

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -5,7 +6,9 @@ import pytest_asyncio
 
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.waiver import WaiverCreate
+from app.services import stats
 from app.services.stats import recalculate_project_stats
 from app.services.waivers.matching import may_bind_signature, route_waiver
 from tests.mocks.fake_mongo import FakeDatabase
@@ -784,3 +787,19 @@ class TestWhatAWaiverMatchesOn:
         await recalculate_project_stats(PROJECT_ID, seeded_db)
 
         assert (await seeded_db.findings.find_one({"_id": "f-license"}))["waived"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_stats_lock_that_stays_held_is_reported_one_line_per_record(monkeypatch, caplog):
+    monkeypatch.setattr(stats, "_LOCK_MAX_RETRIES", 1)
+    monkeypatch.setattr(stats, "_LOCK_RETRY_BASE_DELAY", 0)
+    locks = DistributedLocksRepository(FakeDatabase())
+    lock_name = "stats_recalc:p-1\nforged entry"
+    await locks.acquire_lock(lock_name, "other-pod", 300)
+
+    with caplog.at_level(logging.DEBUG, logger=stats.__name__):
+        assert await stats._acquire_with_backoff(locks, lock_name, "this-pod") is False
+
+    contention, gave_up = (record.getMessage() for record in caplog.records if record.name == stats.__name__)
+    assert "\n" not in contention
+    assert "\n" not in gave_up

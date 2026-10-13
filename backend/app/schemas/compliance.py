@@ -75,6 +75,11 @@ class ControlResult(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True)
 
+    @property
+    def evidence_count(self) -> int:
+        # A finding names the asset it flags, so the longer list counts each piece of evidence once.
+        return max(len(self.evidence_finding_ids), len(self.evidence_asset_bom_refs))
+
 
 class ResidualRisk(BaseModel):
     control_id: str

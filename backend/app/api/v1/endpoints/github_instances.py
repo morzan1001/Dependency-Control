@@ -151,19 +151,18 @@ class _Refusal(Enum):
 
 
 async def _why_refused(github_service: GitHubService) -> tuple[_Refusal, str]:
-    """What refused a read, and -- when the budget did -- the moment it comes back.
-
-    A throttled token 403s exactly like one missing read:org, and only GET /rate_limit -- which GitHub
-    does not charge -- separates them. Called on a failure path alone, so a green read costs nothing.
-    """
-    limit = await github_service.get_core_rate_limit()
-    if limit is None:
-        return _Refusal.UNDETERMINED, ""
-    if limit.remaining > 0:
-        return _Refusal.SCOPE, ""
-    minutes = math.ceil((limit.reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
+    """What refused a read, from its rate-limit headers or the uncharged GET /rate_limit, and when a limit lifts."""
+    reset_at = github_service.rate_limited_until
+    if reset_at is None:
+        limit = await github_service.get_core_rate_limit()
+        if limit is None:
+            return _Refusal.UNDETERMINED, ""
+        if limit.remaining > 0:
+            return _Refusal.SCOPE, ""
+        reset_at = limit.reset_at
+    minutes = math.ceil((reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
     due = f"about {minutes} minute(s) from now" if minutes > 0 else "any moment now"
-    return _Refusal.BUDGET, f"{limit.reset_at:%Y-%m-%d %H:%M UTC}, {due}"
+    return _Refusal.BUDGET, f"{reset_at:%Y-%m-%d %H:%M UTC}, {due}"
 
 
 async def _refused_listing(github_service: GitHubService, subject: str, scope_hint: str) -> HTTPException:
@@ -231,18 +230,53 @@ def _failed_test(instance: GitHubInstance, message: str) -> GitHubInstanceTestCo
     )
 
 
+def _budget_failure(instance: GitHubInstance, blocked: str, reset: str) -> GitHubInstanceTestConnectionResponse:
+    return _failed_test(
+        instance,
+        f"OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so {blocked}. The limit "
+        f"resets at {reset}. Wait for it, or stop sharing this identity with another workload, then test again.",
+    )
+
+
+async def _probe_token(
+    github_service: GitHubService, instance: GitHubInstance
+) -> GitHubInstanceTestConnectionResponse | str:
+    """A failure response, or the sentence saying GitHub accepts the token."""
+    if github_service.api_url is None:
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the access token is sent nowhere: a GitHub Enterprise instance "
+            "names its API host only through the GitHub web URL. Set it, or pull-request decoration and "
+            "branch housekeeping never call the API.",
+        )
+    response = await github_service._api_get("/user")
+    if response is not None and response.status_code == 200:
+        return " The access token authenticates."
+    cause, reset = await _why_refused(github_service)
+    if cause is _Refusal.BUDGET:
+        return _budget_failure(instance, "the token could not be tried", reset)
+    if response is not None and response.status_code in (401, 403):
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but GitHub refused the access token on GET /user, so pull-request "
+            "decoration, branch housekeeping and team sync cannot use it. Check that it is valid and has "
+            "not expired or been revoked.",
+        )
+    answer = "got no answer" if response is None else f"answered HTTP {response.status_code}"
+    return _failed_test(
+        instance,
+        f"OIDC endpoint reachable, but GET /user {answer}, so whether GitHub accepts the access token could "
+        "not be determined: the API host may be unreachable, or GitHub may be failing. Check both, then test again.",
+    )
+
+
 async def _refused_org_listing(
     github_service: GitHubService, instance: GitHubInstance
 ) -> GitHubInstanceTestConnectionResponse | None:
     """The failure the org probe's refusal established, or None to leave it to the scope message."""
     cause, reset = await _why_refused(github_service)
     if cause is _Refusal.BUDGET:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so its "
-            f"organisations could not be listed. The limit resets at {reset}. Wait for it, or stop "
-            "sharing this identity with another workload; the token itself was not tested.",
-        )
+        return _budget_failure(instance, "its organisations could not be listed", reset)
     if cause is _Refusal.UNDETERMINED:
         return _failed_test(
             instance,
@@ -261,12 +295,7 @@ async def _refused_team_listing(
     # Exhaustion mid-loop makes every organisation after it look unreadable, so naming any of them
     # would accuse organisations the token may well be able to read.
     if cause is _Refusal.BUDGET:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so its "
-            f"team access could not be checked. The limit resets at {reset}. Wait for it, or stop "
-            "sharing this identity with another workload, then test again.",
-        )
+        return _budget_failure(instance, "its team access could not be checked", reset)
     if cause is _Refusal.UNDETERMINED:
         return _failed_test(
             instance,
@@ -319,7 +348,7 @@ async def test_connection(
     db: DatabaseDep,
     current_user: deps.SystemManagerDep,
 ) -> GitHubInstanceTestConnectionResponse:
-    """Fetch the JWKS from the configured issuer and, for a team-syncing instance, exercise the token."""
+    """Fetch the JWKS from the configured issuer, try a configured token, and check a team-syncing one's team access."""
     instance_repo = GitHubInstanceRepository(db)
     instance = await get_or_404(instance_repo, instance_id, _LABEL)
 
@@ -332,6 +361,11 @@ async def test_connection(
             return _failed_test(instance, "JWKS endpoint unreachable or returned no signing keys")
 
         message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+        if instance.access_token:
+            token_check = await _probe_token(github_service, instance)
+            if isinstance(token_check, GitHubInstanceTestConnectionResponse):
+                return token_check
+            message += token_check
         # Only an instance that syncs teams needs organisation access; demanding it of a
         # pure-ingest instance would fail a perfectly good setup.
         if instance.sync_teams:

@@ -37,6 +37,7 @@ import {
   useCreateApiKey,
   useRevokeApiKey,
 } from '@/hooks/queries/use-api-keys';
+import { copyWithToast } from '@/hooks/use-copy-to-clipboard';
 import { getErrorMessage } from '@/lib/utils';
 import { Permissions } from '@/lib/permissions';
 import type { ApiKey, ApiKeySurface } from '@/types/apiKey';
@@ -156,16 +157,8 @@ export function ApiKeysCard() {
     }
   };
 
-  const copyToken = async () => {
-    if (!revealedToken) return;
-    try {
-      await navigator.clipboard.writeText(revealedToken);
-      toast.success('Token copied to clipboard.');
-    } catch {
-      // An insecure context or a denied permission rejects the write; the token is shown once, so
-      // the user has to learn the copy failed while it is still on screen.
-      toast.error('Could not reach the clipboard. Select the token above and copy it by hand.');
-    }
+  const copyToken = () => {
+    if (revealedToken) void copyWithToast(revealedToken, 'token');
   };
 
   const dismissRevealedToken = () => {

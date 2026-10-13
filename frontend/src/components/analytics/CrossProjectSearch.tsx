@@ -64,6 +64,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    isFetchNextPageError,
     isLoading,
     error,
     refetch,
@@ -91,6 +92,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
 
   const allResults = data ? data.pages.flatMap((d) => d.items) : []
   const totalCount = data?.pages[0]?.total ?? 0
+  const nextPageFailed = isFetchNextPageError && !isFetchingNextPage
 
   const scrollObserver = useMemo(
     () => createScrollObserver(scrollContainer, tableOffsetRef),
@@ -99,7 +101,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
-    count: hasNextPage ? allResults.length + 1 : allResults.length,
+    count: hasNextPage && !nextPageFailed ? allResults.length + 1 : allResults.length,
     getScrollElement: () => scrollContainer,
     estimateSize: () => 52,
     overscan: VIRTUAL_SCROLL_OVERSCAN,
@@ -114,12 +116,13 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
   const virtualItems = rowVirtualizer.getVirtualItems()
   const lastItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]?.index : -1
 
+  // A failed page waits for Retry; requesting it again on the next render would loop.
   useEffect(() => {
     if (lastItemIndex === -1) return
-    if (lastItemIndex >= allResults.length - 1 && hasNextPage && !isFetchingNextPage) {
+    if (lastItemIndex >= allResults.length - 1 && hasNextPage && !isFetchingNextPage && !nextPageFailed) {
       fetchNextPage()
     }
-  }, [hasNextPage, fetchNextPage, allResults.length, isFetchingNextPage, lastItemIndex])
+  }, [hasNextPage, fetchNextPage, allResults.length, isFetchingNextPage, nextPageFailed, lastItemIndex])
 
   const clearFilters = () => {
     setVersion('')
@@ -373,6 +376,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                 </TableBody>
               </Table>
             </div>
+            {nextPageFailed && (
+              <AnalyticsErrorCard title="Failed to load more packages" error={error} onRetry={() => fetchNextPage()} />
+            )}
           </div>
               )
             }

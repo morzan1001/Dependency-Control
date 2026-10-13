@@ -23,7 +23,6 @@ vi.mock('@/hooks/queries/use-system', async (importOriginal) => {
     ...actual,
     useSystemSettings: () => mockUseSystemSettings(),
     useUpdateSystemSettings: () => ({ mutate: mockMutate, isPending: false }),
-    useAppConfig: () => ({ data: { chat_enabled: false } }),
   }
 })
 
@@ -135,5 +134,15 @@ describe('SystemSettings - Slack connect refresh', () => {
       expect.objectContaining({ slack_bot_token: 'new' }),
       expect.anything(),
     )
+  })
+})
+
+describe('SystemSettings - Chat & MCP tab', () => {
+  it('offers the rate limits whether or not chat is enabled, since they also cap MCP tool calls', () => {
+    mockUseSystemSettings.mockReturnValue({ data: makeSettings(), isLoading: false })
+
+    renderPage()
+
+    expect(screen.getByRole('tab', { name: 'Chat & MCP' })).toBeInTheDocument()
   })
 })

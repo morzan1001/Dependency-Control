@@ -175,6 +175,13 @@ def test_a_capped_non_ascii_result_fits_the_byte_cap_and_keeps_what_fits():
     assert len(result["rows"]) >= 30
 
 
+def test_a_capped_result_fits_the_byte_cap_together_with_its_truncation_note():
+    result = _truncate_if_too_large({"rows": ["x" * 100 for _ in range(200)]})
+
+    assert "from 200 to" in result["_truncation_note"]
+    assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_TOOL_RESULT_BYTES
+
+
 @pytest.mark.parametrize("registry", [{t["function"]["name"] for t in TOOL_DEFINITIONS}, ChatToolRegistry._HANDLERS])
 def test_every_tool_the_system_prompt_names_is_a_declared_tool(registry):
     declared = {t["function"]["name"] for t in TOOL_DEFINITIONS}

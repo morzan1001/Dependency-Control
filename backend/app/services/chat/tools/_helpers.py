@@ -334,27 +334,42 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
         result["_truncated"] = True
         return result
 
-    # Binary-search for the largest prefix that fits.
     original = result[biggest_key]
+    # The list may already be a page of a larger set; naming its length would report the page
+    # as the population the byte cap cut from.
+    population = result.get(f"{biggest_key}{_TOTAL_SUFFIX}")
+    total = population if isinstance(population, int) else biggest_len
+
+    def keep(count: int) -> None:
+        result[biggest_key] = original[:count]
+        result["_truncation_note"] = (
+            f"Result truncated from {total} to {count} entries in '{biggest_key}'. "
+            f"Call this tool with a smaller limit or a narrower filter for more data."
+        )
+
+    # Binary-search for the largest prefix that fits beside the note naming it.
+    result["_truncated"] = True
     lo, hi = 0, len(original)
     while lo < hi:
         mid = (lo + hi + 1) // 2
-        result[biggest_key] = original[:mid]
+        keep(mid)
         if _json_size(result) <= MAX_TOOL_RESULT_BYTES:
             lo = mid
         else:
             hi = mid - 1
-    result[biggest_key] = original[:lo]
-    result["_truncated"] = True
-    # The list may already be a page of a larger set; naming its length would report the page
-    # as the population the byte cap cut from.
-    population = result.get(f"{biggest_key}{_TOTAL_SUFFIX}")
-    result["_truncation_note"] = (
-        f"Result truncated from {population if isinstance(population, int) else biggest_len} "
-        f"to {lo} entries in '{biggest_key}'. "
-        f"Call this tool with a smaller limit or a narrower filter for more data."
-    )
+    keep(lo)
     return result
+
+
+def _trim_inner_lists(result: dict[str, Any], rows_key: str, items_key: str) -> None:
+    """Drop items from the longest `items_key` list under `result[rows_key]` until `result` fits; every row stays."""
+    rows = result[rows_key]
+    while _json_size(result) > MAX_TOOL_RESULT_BYTES:
+        # Of equally long lists the last row's gives way, so the leading rows keep theirs.
+        longest = max(reversed(rows), key=lambda row: len(row[items_key]))
+        if not longest[items_key]:
+            return
+        longest[items_key].pop()
 
 
 def _serialize_doc(doc: dict[str, Any] | None, fields: list[str] | None = None) -> dict[str, Any]:
