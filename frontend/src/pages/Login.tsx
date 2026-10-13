@@ -122,7 +122,7 @@ export default function Login() {
                   {error}
                   {showResendLink && (
                     <div className="mt-1">
-                      <Link to="/resend-verification" className="underline hover:text-destructive/80">
+                      <Link to="/resend-verification" className="text-primary hover:underline">
                         Resend verification email
                       </Link>
                     </div>

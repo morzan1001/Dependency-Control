@@ -91,7 +91,7 @@ export default function ResetPassword() {
                   {error}
                   {offersNewLink && (
                     <div className="mt-1">
-                      <Link to="/forgot-password" className="underline hover:text-destructive/80">
+                      <Link to="/forgot-password" className="text-primary hover:underline">
                         Request a new link
                       </Link>
                     </div>
