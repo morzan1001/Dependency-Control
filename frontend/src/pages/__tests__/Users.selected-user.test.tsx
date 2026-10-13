@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { userApi } from '@/api/users'
@@ -153,5 +154,34 @@ describe('UsersPage user details', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Manage Permissions' }))
 
     expect(screen.getByText('Selected: 1 permission')).toBeInTheDocument()
+  })
+})
+
+describe('UsersPage user details toasts', () => {
+  it.each([
+    { is_active: true, action: 'Deactivate', confirmation: 'User deactivated' },
+    { is_active: false, action: 'Activate', confirmation: 'User activated' },
+  ])('names what $action did', async ({ is_active, action, confirmation }) => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), is_active }])
+    vi.mocked(userApi.update).mockResolvedValue({ ...lena([]), is_active: !is_active })
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: action }))
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(confirmation))
+    expect(userApi.update).toHaveBeenCalledWith('u-lena', { is_active: !is_active })
+  })
+
+  it.each([
+    { is_active: true, action: 'Deactivate', failure: 'Failed to deactivate user' },
+    { is_active: false, action: 'Activate', failure: 'Failed to activate user' },
+  ])('names the $action that failed and why', async ({ is_active, action, failure }) => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), is_active }])
+    vi.mocked(userApi.update).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: action }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(failure, { description: 'Network Error' }))
   })
 })

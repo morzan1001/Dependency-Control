@@ -1,4 +1,4 @@
-import { User, UserUpdate } from '@/types/user';
+import { User } from '@/types/user';
 import { getErrorMessage } from '@/lib/utils';
 import { useProjectsDropdown } from '@/hooks/queries/use-projects';
 import { useTeams } from '@/hooks/queries/use-teams';
@@ -80,18 +80,6 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
   const resetPasswordMutation = useAdminResetPassword();
   const disable2FAMutation = useAdminDisable2FA();
 
-  const handleUpdate = (id: string, data: UserUpdate) => {
-    updateUserMutation.mutate({ id, data }, {
-        onSuccess: (updated) => {
-             onUserUpdated?.(updated);
-             toast.success("Success", { description: "User updated successfully." });
-        },
-        onError: (error) => {
-             toast.error("Error", { description: getErrorMessage(error) });
-        }
-    });
-  };
-
   const handleMigrate = (userId: string) => {
       migrateUserMutation.mutate(userId, {
           onSuccess: (migrated) => {
@@ -133,8 +121,16 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
 
   const handleToggleStatus = () => {
     if (!user) return;
-    const newStatus = !user.is_active;
-    handleUpdate(user.id, { is_active: newStatus });
+    const activates = !user.is_active;
+    updateUserMutation.mutate({ id: user.id, data: { is_active: activates } }, {
+      onSuccess: (updated) => {
+        onUserUpdated?.(updated);
+        toast.success(activates ? "User activated" : "User deactivated");
+      },
+      onError: (error) => {
+        toast.error(activates ? "Failed to activate user" : "Failed to deactivate user", { description: getErrorMessage(error) });
+      },
+    });
   };
 
   const getUserProjects = (userId: string) => {
