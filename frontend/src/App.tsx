@@ -4,7 +4,7 @@ import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
 import Signup from './pages/Signup'
 import VerifyEmail from './pages/VerifyEmail'
-import ResendVerification from './pages/ResendVerification'
+import RequestEmailLink from './pages/RequestEmailLink'
 import Setup2FA from './pages/Setup2FA'
 import AcceptInvite from './pages/AcceptInvite'
 import LoginCallback from './pages/LoginCallback'
@@ -93,6 +93,20 @@ function SignupRoute() {
   return <Signup />;
 }
 
+function ForgotPasswordRoute() {
+  const { data: config } = usePublicConfig();
+  const ssoNote = config?.oidc_enabled ? ' Single sign-on accounts reset their password with their identity provider.' : '';
+
+  return (
+    <RequestEmailLink
+      title="Forgot Password"
+      description={`Enter your email to receive a password reset link.${ssoNote}`}
+      submitLabel="Send Reset Link"
+      requestLink={authApi.forgotPassword}
+    />
+  );
+}
+
 function PageLoader() {
   return (
     <div className="flex h-screen items-center justify-center">
@@ -114,7 +128,15 @@ function AppRoutes() {
       <Route path="/signup" element={<SignupRoute />} />
       <Route path="/verify-email" element={<VerifyEmail verifyToken={authApi.verifyEmail} />} />
       <Route path="/confirm-email" element={<VerifyEmail verifyToken={authApi.confirmEmailChange} />} />
-      <Route path="/resend-verification" element={<ResendVerification />} />
+      <Route path="/forgot-password" element={<ForgotPasswordRoute />} />
+      <Route path="/resend-verification" element={
+        <RequestEmailLink
+          title="Resend Verification"
+          description="Enter your email to receive a new verification link."
+          submitLabel="Send Verification Email"
+          requestLink={authApi.resendVerificationEmail}
+        />
+      } />
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/setup-2fa" element={
         <ProtectedRoute>

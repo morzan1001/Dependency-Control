@@ -14,12 +14,6 @@ export const useSignup = () => {
     })
 }
 
-export const useResendVerificationEmail = () => {
-    return useMutation({
-        mutationFn: authApi.resendVerificationEmail
-    })
-}
-
 export const useResetPassword = () => {
     return useMutation({
         mutationFn: ({ token, newPassword }: { token: string; newPassword: string }) => 

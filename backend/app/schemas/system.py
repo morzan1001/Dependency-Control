@@ -128,6 +128,7 @@ class PublicConfig(BaseModel):
     enforce_email_verification: bool = False
     oidc_enabled: bool = False
     oidc_provider_name: str = "GitLab"
+    password_reset_enabled: bool = False
 
 
 class AppConfig(BaseModel):
