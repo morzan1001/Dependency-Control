@@ -8,6 +8,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep, SystemManagerDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access, ensure_crypto_overrides_writable
 from app.api.v1.helpers.responses import RESP_404
+from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
@@ -27,7 +28,8 @@ async def get_system_policy(
     policy = await CryptoPolicyRepository(db).get_system_policy()
     if policy is None:
         raise HTTPException(status_code=404, detail="System crypto policy not found")
-    return policy.model_dump(by_alias=True)
+    [view] = await resolve_usernames(db, [policy.model_dump(by_alias=True)], "updated_by")
+    return view
 
 
 @router.put("/crypto-policies/system")

@@ -7,8 +7,9 @@ import pytest
 import pytest_asyncio
 from fastapi import BackgroundTasks
 
-from app.api.v1.endpoints import invitations, policy_audit, waivers
+from app.api.v1.endpoints import crypto_policies, invitations, policy_audit, waivers
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.waiver import WaiverCreate, WaiverUpdate
@@ -210,3 +211,21 @@ class TestPolicyAudit:
         result = await _tool(audited, "list_policy_audit_entries", **args)
 
         assert [(e["version"], e["actor_display_name"]) for e in result["entries"]] == AUDIT_SHOWN
+
+
+class TestCryptoPolicy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("updated_by", "shown"),
+        [("u-ada", "ada.lovelace"), ("u-gone", "u-gone"), (None, None)],
+        ids=["renamed", "gone", "seeded"],
+    )
+    async def test_the_system_policy_names_its_last_editor_as_they_are_named_now(self, db, updated_by, shown):
+        await db.crypto_policies.insert_one(
+            CryptoPolicy(scope="system", updated_by=updated_by).model_dump(by_alias=True)
+        )
+
+        policy = await crypto_policies.get_system_policy(ADMIN, db)
+
+        assert policy["updated_by"] == shown
+        assert (await db.crypto_policies.find_one({"scope": "system"}))["updated_by"] == updated_by
