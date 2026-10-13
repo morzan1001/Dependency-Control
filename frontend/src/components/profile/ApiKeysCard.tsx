@@ -151,7 +151,7 @@ export function ApiKeysCard() {
     }
     try {
       await revokeMutation.mutateAsync(keyId);
-      toast.success('Key revoked.');
+      toast.success('Key revoked');
     } catch (err) {
       toast.error(getErrorMessage(err));
     }

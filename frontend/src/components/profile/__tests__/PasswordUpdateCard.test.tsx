@@ -147,6 +147,17 @@ describe('PasswordUpdateCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('confirms a migration to a local account', async () => {
+    renderProfile(SSO_USER)
+
+    migrate()
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Account migrated', {
+      description: 'Your account has been migrated to local authentication. You can now login with your password.',
+    }))
+    expect(sentUrls).toEqual(['/users/me/migrate'])
+  })
+
   it('shows a migration password outside the rule under the new password', async () => {
     refuseWith(422, [{ loc: ['body', 'new_password'], msg: `Value error, ${WEAK}` }])
     renderProfile(SSO_USER)

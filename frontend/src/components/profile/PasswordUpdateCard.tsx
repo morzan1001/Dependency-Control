@@ -46,7 +46,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
   const migrateToLocalMutation = useMutation({
     mutationFn: () => userApi.migrateToLocal(newPassword),
     onSuccess: () => {
-      toast.success("Account Migrated", {
+      toast.success("Account migrated", {
         description: "Your account has been migrated to local authentication. You can now login with your password.",
       });
       setNewPassword('');

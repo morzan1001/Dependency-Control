@@ -38,7 +38,7 @@ export function TwoFADisableDialog({ isOpen, onClose }: Readonly<TwoFADisableDia
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
       handleClose();
-      toast.success("2FA Disabled", {
+      toast.success("2FA disabled", {
         description: "Two-factor authentication has been disabled.",
       });
     },

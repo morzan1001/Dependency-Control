@@ -291,6 +291,7 @@ describe("ApiKeysCard", () => {
     fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
 
     await waitFor(() => expect(revokeKey).toHaveBeenCalledWith(MCP_KEY_ID));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Key revoked"));
   });
 
   it("says how many keys the listing left out when its page saturated", async () => {

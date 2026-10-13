@@ -43,7 +43,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
       handleClose();
-      toast.success("2FA Enabled", {
+      toast.success("2FA enabled", {
         description: "Two-factor authentication has been enabled.",
       });
     },

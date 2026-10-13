@@ -38,6 +38,15 @@ describe('TwoFADisableDialog', () => {
     vi.clearAllMocks()
   })
 
+  it('confirms that two-factor authentication is disabled', async () => {
+    disable2FA.mockResolvedValue({})
+    disable()
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('2FA disabled', { description: 'Two-factor authentication has been disabled.' }),
+    )
+  })
+
   it('shows a wrong current password under its field and clears it once the field changes', async () => {
     disable2FA.mockRejectedValue(refused('Invalid password'))
     disable()

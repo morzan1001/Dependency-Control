@@ -96,7 +96,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
       migrateUserMutation.mutate(userId, {
           onSuccess: (migrated) => {
               onUserUpdated?.(migrated);
-              toast.success("User Migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
+              toast.success("User migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
           },
           onError: (error) => {
               toast.error("Migration Failed", { description: getErrorMessage(error) });
@@ -123,7 +123,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
       disable2FAMutation.mutate(userId, {
           onSuccess: (updated) => {
               onUserUpdated?.(updated);
-              toast.success("2FA Disabled", { description: "Two-Factor Authentication has been disabled for this user." });
+              toast.success("2FA disabled", { description: "Two-Factor Authentication has been disabled for this user." });
           },
           onError: (error) => {
               toast.error("Action Failed", { description: getErrorMessage(error) });

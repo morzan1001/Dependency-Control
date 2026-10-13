@@ -48,7 +48,7 @@ export default function Setup2FA() {
     e.preventDefault()
     enableMutation.mutate({ code: otpCode, password }, {
        onSuccess: () => {
-        toast.success("2FA Enabled", {
+        toast.success("2FA enabled", {
            description: "Two-factor authentication has been successfully enabled."
         })
         queryClient.invalidateQueries({ queryKey: ['me'] })

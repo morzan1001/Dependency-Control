@@ -39,6 +39,15 @@ describe('TwoFASetupDialog', () => {
     vi.clearAllMocks()
   })
 
+  it('confirms that two-factor authentication is enabled', async () => {
+    enable2FA.mockResolvedValue({})
+    enable()
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('2FA enabled', { description: 'Two-factor authentication has been enabled.' }),
+    )
+  })
+
   it.each([
     { field: 'Current Password', reason: 'Invalid password' },
     { field: 'Authenticator Code', reason: 'Invalid OTP code' },
