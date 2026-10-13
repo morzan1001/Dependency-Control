@@ -39,6 +39,17 @@ describe('TwoFASetupDialog', () => {
     vi.clearAllMocks()
   })
 
+  it('shows the QR code and the secret like the forced setup page', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SetupDialog />
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByAltText('2FA QR Code')).toBeInTheDocument()
+    expect(screen.getByText('ABC', { selector: 'code' })).toHaveClass('bg-muted')
+  })
+
   it('confirms that two-factor authentication is enabled', async () => {
     enable2FA.mockResolvedValue({})
     enable()

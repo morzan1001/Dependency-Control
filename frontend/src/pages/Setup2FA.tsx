@@ -7,6 +7,7 @@ import { TwoFASetup } from '@/types/user'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { TwoFAEnableFields } from '@/components/profile/TwoFAEnableFields'
+import { TwoFASecret } from '@/components/profile/TwoFASecret'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { getErrorMessage } from "@/lib/utils"
@@ -99,14 +100,7 @@ export default function Setup2FA() {
           <form onSubmit={handleVerify}>
             <CardContent>
               <div className="grid w-full items-center gap-4">
-                <div className="flex justify-center p-4 bg-white rounded-lg border">
-                  <img src={`data:image/png;base64,${setupData.qr_code}`} alt="2FA QR Code" className="w-48 h-48" />
-                </div>
-
-                <div className="text-center text-sm font-mono bg-muted p-2 rounded">
-                  Secret: {setupData.secret}
-                </div>
-
+                <TwoFASecret setup={setupData} />
                 <TwoFAEnableFields
                   code={otpCode}
                   password={password}

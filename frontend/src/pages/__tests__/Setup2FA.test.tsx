@@ -68,6 +68,13 @@ describe('Setup2FA', () => {
     expect(container.firstElementChild).toHaveClass('flex h-screen items-center-safe justify-center bg-muted/50', { exact: true })
   })
 
+  it('shows the QR code and the secret like the profile setup dialog', async () => {
+    await startSetup()
+
+    expect(screen.getByText(SETUP.secret, { selector: 'code' })).toHaveClass('bg-muted')
+    expect(screen.getByAltText('2FA QR Code').parentElement).not.toHaveClass('border')
+  })
+
   it('renders the enrolment QR code from the base64 the server sends', async () => {
     await startSetup()
 

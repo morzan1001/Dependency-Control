@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 import { TwoFAEnableFields } from './TwoFAEnableFields';
+import { TwoFASecret } from './TwoFASecret';
 
 interface TwoFASetupDialogProps {
   setupData: TwoFASetup | null;
@@ -68,12 +69,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col items-center gap-4 py-4">
-          {setupData?.qr_code && (
-            <img src={`data:image/png;base64,${setupData.qr_code}`} alt="QR Code" className="w-48 h-48" />
-          )}
-          <div className="text-sm text-muted-foreground">
-            Secret: <code className="bg-muted px-1 py-0.5 rounded">{setupData?.secret}</code>
-          </div>
+          {setupData && <TwoFASecret setup={setupData} />}
           <div className="w-full space-y-4">
             <TwoFAEnableFields
               code={otpCode}
