@@ -82,11 +82,13 @@ describe('ResetPassword', () => {
     expect(await screen.findByText('forgot password page')).toBeInTheDocument()
   })
 
-  it('offers a new link for a link that carries no token', async () => {
+  it('shows the error card of the other link pages for a link that carries no token, with a new link on offer', async () => {
     renderResetPage('/reset-password')
 
-    expect(screen.getByRole('alert')).toHaveTextContent('The password reset link is invalid or missing a token.')
-    expect(screen.getByRole('button', { name: 'Reset Password' })).toBeDisabled()
+    expect(screen.getByRole('heading', { name: 'Error' })).toBeInTheDocument()
+    expect(screen.getByText('The password reset link is invalid or missing a token.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to Login' })).toHaveAttribute('href', '/login')
+    expect(screen.queryByRole('button', { name: 'Reset Password' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('link', { name: 'Request a new link' }))
     expect(await screen.findByText('forgot password page')).toBeInTheDocument()
   })

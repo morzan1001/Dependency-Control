@@ -15,13 +15,12 @@ export default function ResetPassword() {
   const token = searchParams.get('token')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [error, setError] = useState<string | null>(token ? null : 'The password reset link is invalid or missing a token.')
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   const resetPasswordMutation = useResetPassword();
   const isLoading = resetPasswordMutation.isPending
-  const isDisabled = isLoading || !token
-  const offersNewLink = !token || error === INVALID_RESET_TOKEN
+  const offersNewLink = error === INVALID_RESET_TOKEN
 
   function onSubmit(event: React.SubmitEvent) {
     event.preventDefault()
@@ -42,6 +41,27 @@ export default function ResetPassword() {
       },
       onError: (err) => setError(getErrorMessage(err)),
     })
+  }
+
+  if (!token) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-muted/50">
+        <Card className="w-[350px]">
+          <CardHeader className="text-center">
+            <CardTitle className="text-destructive">Error</CardTitle>
+            <CardDescription>The password reset link is invalid or missing a token.</CardDescription>
+          </CardHeader>
+          <CardFooter className="flex flex-col gap-2">
+            <Button asChild>
+              <Link to="/login">Go to Login</Link>
+            </Button>
+            <div className="text-sm text-center text-muted-foreground">
+              <Link to="/forgot-password" className="text-primary hover:underline">Request a new link</Link>
+            </div>
+          </CardFooter>
+        </Card>
+      </div>
+    )
   }
 
   return (
@@ -67,7 +87,7 @@ export default function ResetPassword() {
                   autoComplete="new-password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  disabled={isDisabled}
+                  disabled={isLoading}
                   required
                 />
                 <p className="text-xs text-muted-foreground">
@@ -82,7 +102,7 @@ export default function ResetPassword() {
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  disabled={isDisabled}
+                  disabled={isLoading}
                   required
                 />
               </div>
@@ -101,7 +121,7 @@ export default function ResetPassword() {
             </div>
           </CardContent>
           <CardFooter className="flex flex-col gap-2">
-            <Button type="submit" className="w-full" disabled={isDisabled}>
+            <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? "Resetting..." : "Reset Password"}
             </Button>
             <div className="text-sm text-center text-muted-foreground">
