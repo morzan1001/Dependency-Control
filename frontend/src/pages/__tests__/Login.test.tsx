@@ -60,6 +60,26 @@ describe('Login', () => {
     expect(screen.getByLabelText('2FA Code')).toHaveAttribute('maxlength', '6')
   })
 
+  it('asks for the 2FA code in the card description, like the other auth prompts, instead of as an error', () => {
+    reachTwoFactorStep()
+
+    expect(screen.getByText('Enter your 2FA code.')).toHaveClass('text-muted-foreground')
+    expect(screen.queryByText('Enter your credentials to access the dashboard.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows a refused 2FA code as an error', () => {
+    reachTwoFactorStep()
+    loginMutate.mockImplementation((_credentials, opts: { onError: (error: unknown) => void }) =>
+      opts.onError({ response: { status: 401, data: { detail: 'Invalid 2FA code' } } }),
+    )
+
+    fireEvent.change(screen.getByLabelText('2FA Code'), { target: { value: '000000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid 2FA code')
+  })
+
   it('leaves the 2FA step through a Cancel link under a full-width Verify', () => {
     reachTwoFactorStep()
 
@@ -68,5 +88,6 @@ describe('Login', () => {
 
     expect(screen.queryByLabelText('2FA Code')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument()
+    expect(screen.getByText('Enter your credentials to access the dashboard.')).toBeInTheDocument()
   })
 })

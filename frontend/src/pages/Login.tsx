@@ -51,7 +51,6 @@ export default function Login() {
 
           if (detail === '2FA required') {
             setShowOTP(true)
-            setError('Please enter your 2FA code')
             return
           }
 
@@ -76,7 +75,7 @@ export default function Login() {
           </div>
           <CardTitle>Dependency Control</CardTitle>
           <CardDescription>
-            Enter your credentials to access the dashboard.
+            {showOTP ? 'Enter your 2FA code.' : 'Enter your credentials to access the dashboard.'}
           </CardDescription>
         </CardHeader>
         <form onSubmit={onSubmit}>
