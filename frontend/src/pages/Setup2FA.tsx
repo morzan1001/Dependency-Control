@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useSetup2FA, useEnable2FA } from '@/hooks/queries/use-auth'
+import type { ApiError } from '@/api/client'
+import { INVALID_OTP_CODE, INVALID_PASSWORD, useSetup2FA, useEnable2FA } from '@/hooks/queries/use-auth'
 import { useCurrentUser } from '@/hooks/queries/use-users'
 import { TwoFASetup } from '@/types/user'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { TwoFAEnableFields } from '@/components/profile/TwoFAEnableFields'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { getErrorMessage } from "@/lib/utils"
@@ -30,6 +30,10 @@ export default function Setup2FA() {
   const setupMutation = useSetup2FA();
   const enableMutation = useEnable2FA();
 
+  const resetRefusal = () => {
+    if (!enableMutation.isPending) enableMutation.reset()
+  }
+
   const handleStartSetup = () => {
     setupMutation.mutate(undefined, {
        onSuccess: (data) => {
@@ -49,15 +53,16 @@ export default function Setup2FA() {
     enableMutation.mutate({ code: otpCode, password }, {
        onSuccess: () => {
         toast.success("2FA enabled", {
-           description: "Two-factor authentication has been successfully enabled."
+           description: "Two-factor authentication has been enabled."
         })
         queryClient.invalidateQueries({ queryKey: ['me'] })
         navigate('/login', { state: { message: '2FA enabled. Please login again.' } })
       },
       onError: (error) => {
-        toast.error("Failed to enable 2FA", {
-          description: getErrorMessage(error)
-        })
+        const detail = (error as ApiError).response?.data?.detail
+        if (detail !== INVALID_OTP_CODE && detail !== INVALID_PASSWORD) {
+          toast.error("Failed to enable 2FA", { description: getErrorMessage(error) })
+        }
       }
     })
   }
@@ -94,34 +99,22 @@ export default function Setup2FA() {
                 Secret: {setupData.secret}
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="otp">Verification Code</Label>
-                <Input
-                  id="otp"
-                  placeholder="123456"
-                  maxLength={6}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value)}
-                  required
-                />
-              </div>
+              <TwoFAEnableFields
+                code={otpCode}
+                password={password}
+                error={enableMutation.error}
+                onCodeChange={(code) => {
+                  setOtpCode(code)
+                  resetRefusal()
+                }}
+                onPasswordChange={(value) => {
+                  setPassword(value)
+                  resetRefusal()
+                }}
+              />
 
-              <div className="space-y-2">
-                <Label htmlFor="password">Confirm Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Current Password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-
-              <Button type="submit" className="w-full" disabled={enableMutation.isPending}>
-                {enableMutation.isPending ? "Verifying..." : "Verify and Enable"}
+              <Button type="submit" className="w-full" disabled={!otpCode || !password || enableMutation.isPending}>
+                {enableMutation.isPending ? "Enabling..." : "Enable 2FA"}
               </Button>
             </form>
           )}

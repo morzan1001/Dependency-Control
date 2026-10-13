@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { authApi } from '@/api/auth';
 import { ApiError } from '@/api/client';
+import { INVALID_OTP_CODE, INVALID_PASSWORD } from '@/hooks/queries/use-auth';
 import { TwoFASetup } from '@/types/user';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -16,9 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
-
-const INVALID_CODE = 'Invalid OTP code';
-const INVALID_PASSWORD = 'Invalid password';
+import { TwoFAEnableFields } from './TwoFAEnableFields';
 
 interface TwoFASetupDialogProps {
   setupData: TwoFASetup | null;
@@ -49,13 +46,9 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
     },
     onError: (error: ApiError) => {
       const detail = error.response?.data?.detail;
-      if (detail !== INVALID_CODE && detail !== INVALID_PASSWORD) toast.error("Error", { description: getErrorMessage(error) });
+      if (detail !== INVALID_OTP_CODE && detail !== INVALID_PASSWORD) toast.error("Error", { description: getErrorMessage(error) });
     }
   });
-
-  const refusal = enable2FAMutation.error?.response?.data?.detail;
-  const codeError = refusal === INVALID_CODE ? refusal : null;
-  const passwordError = refusal === INVALID_PASSWORD ? refusal : null;
 
   const resetRefusal = () => {
     if (!enable2FAMutation.isPending) enable2FAMutation.reset();
@@ -82,44 +75,19 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
             Secret: <code className="bg-muted px-1 py-0.5 rounded">{setupData?.secret}</code>
           </div>
           <div className="w-full space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor="otp">Authenticator Code</Label>
-              <Input
-                id="otp"
-                value={otpCode}
-                onChange={(e) => {
-                  setOtpCode(e.target.value);
-                  resetRefusal();
-                }}
-                placeholder="123456"
-                maxLength={6}
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                aria-invalid={!!codeError}
-                aria-describedby={codeError ? 'otp-error' : undefined}
-              />
-              {codeError && (
-                <p id="otp-error" role="alert" className="text-xs text-destructive">{codeError}</p>
-              )}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="password-2fa">Current Password</Label>
-              <Input
-                id="password-2fa"
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  resetRefusal();
-                }}
-                placeholder="Confirm your password"
-                aria-invalid={!!passwordError}
-                aria-describedby={passwordError ? 'password-2fa-error' : undefined}
-              />
-              {passwordError && (
-                <p id="password-2fa-error" role="alert" className="text-xs text-destructive">{passwordError}</p>
-              )}
-            </div>
+            <TwoFAEnableFields
+              code={otpCode}
+              password={password}
+              error={enable2FAMutation.error}
+              onCodeChange={(code) => {
+                setOtpCode(code);
+                resetRefusal();
+              }}
+              onPasswordChange={(value) => {
+                setPassword(value);
+                resetRefusal();
+              }}
+            />
           </div>
         </div>
         <DialogFooter>

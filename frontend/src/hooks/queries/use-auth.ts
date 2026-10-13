@@ -1,6 +1,10 @@
 import { useMutation } from '@tanstack/react-query';
 import { authApi } from '@/api/auth';
 
+// The 2FA endpoints refuse a wrong code or password with these details; every other refusal belongs to no field.
+export const INVALID_OTP_CODE = 'Invalid OTP code';
+export const INVALID_PASSWORD = 'Invalid password';
+
 export const useLogin = () => {
   return useMutation({
     mutationFn: ({ username, password, otp }: { username: string; password: string; otp?: string }) => 
