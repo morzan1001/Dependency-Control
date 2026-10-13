@@ -168,7 +168,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>User Details: {user?.username}</DialogTitle>
+            <DialogTitle className="wrap-anywhere">User Details: {user?.username}</DialogTitle>
           </DialogHeader>
           
           {user && (
@@ -177,7 +177,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                 <div>
                   <Label>Username</Label>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{user.username}</span>
+                    <span className="break-all text-sm font-medium">{user.username}</span>
                     {canRenameUser && (
                       <Button
                         variant="outline"
@@ -192,7 +192,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                 </div>
                 <div>
                   <Label>Email</Label>
-                  <div className="text-sm font-medium">{user.email}</div>
+                  <div className="break-all text-sm font-medium">{user.email}</div>
                 </div>
                 <div>
                   <Label>Auth Provider</Label>

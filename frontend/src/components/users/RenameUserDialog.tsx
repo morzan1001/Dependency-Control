@@ -53,7 +53,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
       <DialogContent className="sm:max-w-[425px]">
         <form onSubmit={handleSave} className="grid gap-4">
           <DialogHeader>
-            <DialogTitle>Rename {user.username}</DialogTitle>
+            <DialogTitle className="wrap-anywhere">Rename {user.username}</DialogTitle>
             <DialogDescription>
               Enter the new username for this user.
             </DialogDescription>
