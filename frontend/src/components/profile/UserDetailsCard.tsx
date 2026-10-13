@@ -56,25 +56,27 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   const savesEmail = isLocalAccount && nextEmail !== (user?.email || '');
   const isSaving = profileMutation.isPending || emailMutation.isPending;
 
-  const saveProfile = () =>
-    profileMutation.mutateAsync(profileChanges).then(
-      (saved) => setUsername((draft) => (draft.trim() === profileChanges.username ? saved.username : draft)),
-      (error: unknown) => {
-        if (!refusesUsername(profileChanges, error)) toast.error("Error", { description: getErrorMessage(error) });
-        throw error;
-      },
-    );
-
-  const saveEmail = () =>
-    emailMutation.mutateAsync(nextEmail).then((saved) => setEmail((draft) => (draft.trim() === nextEmail ? saved.email : draft)));
-
-  const handleSubmit = async (e: React.SubmitEvent) => {
+  const handleSubmit = (e: React.SubmitEvent) => {
     e.preventDefault();
-    const saves = [];
-    if (savesProfile) saves.push(saveProfile());
-    if (savesEmail) saves.push(saveEmail());
-    const outcomes = await Promise.allSettled(saves);
-    if (outcomes.length === 0 || outcomes.some(({ status }) => status === 'fulfilled')) toast.success("Profile updated");
+    if (savesProfile) {
+      profileMutation.mutate(profileChanges, {
+        onSuccess: (saved, sent) => {
+          setUsername((draft) => (draft.trim() === sent.username ? saved.username : draft));
+          toast.success("Profile updated");
+        },
+        onError: (error, sent) => {
+          if (!refusesUsername(sent, error)) toast.error("Error", { description: getErrorMessage(error) });
+        },
+      });
+    }
+    if (savesEmail) {
+      emailMutation.mutate(nextEmail, {
+        onSuccess: (saved, sent) => {
+          setEmail((draft) => (draft.trim() === sent ? saved.email : draft));
+          toast.success(saved.email_change === 'changed' ? "Email changed" : "Confirmation link sent");
+        },
+      });
+    }
   };
 
   const sentUsername = profileMutation.variables?.username !== undefined;
