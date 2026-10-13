@@ -88,7 +88,11 @@ async def _acquire_with_backoff(lock_repo: DistributedLocksRepository, lock_name
         if attempt < _LOCK_MAX_RETRIES:
             delay = _LOCK_RETRY_BASE_DELAY * (2**attempt)
             logger.debug(
-                f"Lock contention on {lock_name}; retrying in {delay:.2f}s (attempt {attempt + 1}/{_LOCK_MAX_RETRIES})."
+                "Lock contention on %s; retrying in %.2fs (attempt %d/%d).",
+                sanitize_for_log(lock_name),
+                delay,
+                attempt + 1,
+                _LOCK_MAX_RETRIES,
             )
             await asyncio.sleep(delay)
     logger.warning(

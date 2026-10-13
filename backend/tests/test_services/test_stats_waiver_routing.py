@@ -790,13 +790,16 @@ class TestWhatAWaiverMatchesOn:
 
 
 @pytest.mark.asyncio
-async def test_a_stats_lock_that_stays_held_is_reported_on_one_log_line(monkeypatch, caplog):
-    monkeypatch.setattr(stats, "_LOCK_MAX_RETRIES", 0)
+async def test_a_stats_lock_that_stays_held_is_reported_one_line_per_record(monkeypatch, caplog):
+    monkeypatch.setattr(stats, "_LOCK_MAX_RETRIES", 1)
+    monkeypatch.setattr(stats, "_LOCK_RETRY_BASE_DELAY", 0)
     locks = DistributedLocksRepository(FakeDatabase())
     lock_name = "stats_recalc:p-1\nforged entry"
     await locks.acquire_lock(lock_name, "other-pod", 300)
 
-    with caplog.at_level(logging.WARNING, logger=stats.__name__):
+    with caplog.at_level(logging.DEBUG, logger=stats.__name__):
         assert await stats._acquire_with_backoff(locks, lock_name, "this-pod") is False
 
-    assert "\n" not in caplog.records[-1].getMessage()
+    contention, gave_up = (record.getMessage() for record in caplog.records if record.name == stats.__name__)
+    assert "\n" not in contention
+    assert "\n" not in gave_up
