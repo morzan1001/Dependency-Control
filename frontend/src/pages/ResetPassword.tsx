@@ -8,77 +8,58 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
+const INVALID_RESET_TOKEN = 'Invalid or expired reset token'
+
 export default function ResetPassword() {
+  const [searchParams] = useSearchParams()
+  const token = searchParams.get('token')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [searchParams] = useSearchParams()
+  const [error, setError] = useState<string | null>(token ? null : 'The password reset link is invalid or missing a token.')
   const navigate = useNavigate()
-  
-  const token = searchParams.get('token')
+
   const resetPasswordMutation = useResetPassword();
   const isLoading = resetPasswordMutation.isPending
+  const isDisabled = isLoading || !token
+  const offersNewLink = !token || error === INVALID_RESET_TOKEN
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function onSubmit(event: React.SubmitEvent) {
     event.preventDefault()
-    
-    if (!token) {
-        toast.error("Invalid Link", { description: "Missing reset token." })
-        return
-    }
+    if (!token) return
+    setError(null)
 
     if (newPassword !== confirmPassword) {
-        toast.error("Error", { description: "Passwords do not match" })
-        return
+      setError("Passwords do not match")
+      return
     }
 
     resetPasswordMutation.mutate({ token, newPassword }, {
-         onSuccess: () => {
-             toast.success("Password Reset Successful", {
-                description: "You can now login with your new password.",
-             })
-             navigate('/login')
-         },
-         onError: (err) => {
-             toast.error("Reset Failed", {
-                description: getErrorMessage(err),
-             })
-         }
+      onSuccess: () => {
+        toast.success("Password Reset Successful", {
+          description: "You can now login with your new password.",
+        })
+        navigate('/login')
+      },
+      onError: (err) => setError(getErrorMessage(err)),
     })
   }
 
-  if (!token) {
-      return (
-        <div className="flex min-h-screen items-center justify-center bg-muted/50 px-4 py-12 sm:px-6 lg:px-8">
-            <Card className="w-full max-w-md">
-                <CardHeader>
-                    <CardTitle className="text-center text-destructive">Invalid Link</CardTitle>
-                    <CardDescription className="text-center">
-                        The password reset link is invalid or missing a token.
-                    </CardDescription>
-                </CardHeader>
-                <CardFooter className="flex justify-center">
-                    <Button variant="link" asChild>
-                        <Link to="/login">Back to Login</Link>
-                    </Button>
-                </CardFooter>
-            </Card>
-        </div>
-      )
-  }
-
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/50 px-4 py-12 sm:px-6 lg:px-8">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-center">Reset Password</CardTitle>
-          <CardDescription className="text-center">
+    <div className="flex h-screen items-center justify-center bg-muted/50">
+      <Card className="w-[350px]">
+        <CardHeader className="text-center">
+          <div className="flex justify-center mb-2">
+            <img src="/logo.png" alt="Logo" className="h-12 w-auto object-contain" />
+          </div>
+          <CardTitle>Reset Password</CardTitle>
+          <CardDescription>
             Enter your new password below.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit}>
-            <div className="grid gap-4">
-              <div className="grid gap-2">
+        <form onSubmit={onSubmit}>
+          <CardContent>
+            <div className="grid w-full items-center gap-4">
+              <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="new-password">New Password</Label>
                 <Input
                   id="new-password"
@@ -86,14 +67,14 @@ export default function ResetPassword() {
                   autoComplete="new-password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  disabled={isLoading}
+                  disabled={isDisabled}
                   required
                 />
                 <p className="text-xs text-muted-foreground">
-                    Must be at least 8 characters and contain uppercase, lowercase, digit, and special character.
+                  Must be at least 8 characters and contain uppercase, lowercase, digit, and special character.
                 </p>
               </div>
-              <div className="grid gap-2">
+              <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="confirm-password">Confirm New Password</Label>
                 <Input
                   id="confirm-password"
@@ -101,21 +82,33 @@ export default function ResetPassword() {
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  disabled={isLoading}
+                  disabled={isDisabled}
                   required
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={isLoading}>
-                {isLoading ? "Resetting..." : "Reset Password"}
-              </Button>
+              {error && (
+                <div role="alert" className="text-sm text-destructive">
+                  {error}
+                  {offersNewLink && (
+                    <div className="mt-1">
+                      <Link to="/forgot-password" className="underline hover:text-destructive/80">
+                        Request a new link
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          </form>
-        </CardContent>
-        <CardFooter className="flex justify-center">
-            <Button variant="link" asChild>
-                <Link to="/login">Back to Login</Link>
+          </CardContent>
+          <CardFooter className="flex flex-col gap-2">
+            <Button type="submit" className="w-full" disabled={isDisabled}>
+              {isLoading ? "Resetting..." : "Reset Password"}
             </Button>
-        </CardFooter>
+            <div className="text-sm text-center text-muted-foreground">
+              <Link to="/login" className="text-primary hover:underline">Back to Login</Link>
+            </div>
+          </CardFooter>
+        </form>
       </Card>
     </div>
   )
