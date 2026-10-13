@@ -612,14 +612,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_findings_by_cve",
             "description": (
-                "Find every finding that refers to a specific CVE across the user's "
-                "projects. Use when the user mentions a concrete CVE ID. Matches the exact "
+                "List every one of the user's projects a specific CVE occurs in, with its occurrence "
+                "count and sample findings. Use when the user mentions a concrete CVE ID. Matches the exact "
                 "id under any of an advisory's identifiers (id, aliases, resolved CVE), not free-text."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "cve_id": {"type": "string", "description": "e.g. 'CVE-2024-12345'."},
+                    "project_id": {"type": "string", "description": _DESC_OPTIONAL_SINGLE_PROJECT},
                 },
                 "required": ["cve_id"],
             },

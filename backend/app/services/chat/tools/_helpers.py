@@ -361,6 +361,17 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _trim_inner_lists(result: dict[str, Any], rows_key: str, items_key: str) -> None:
+    """Drop items from the longest `items_key` list under `result[rows_key]` until `result` fits; every row stays."""
+    rows = result[rows_key]
+    while _json_size(result) > MAX_TOOL_RESULT_BYTES:
+        # Of equally long lists the last row's gives way, so the leading rows keep theirs.
+        longest = max(reversed(rows), key=lambda row: len(row[items_key]))
+        if not longest[items_key]:
+            return
+        longest[items_key].pop()
+
+
 def _serialize_doc(doc: dict[str, Any] | None, fields: list[str] | None = None) -> dict[str, Any]:
     """Serialize a MongoDB doc for LLM consumption (renames _id and isoformats datetimes)."""
     if doc is None:
