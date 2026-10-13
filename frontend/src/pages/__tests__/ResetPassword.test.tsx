@@ -109,6 +109,17 @@ describe('ResetPassword', () => {
     })
   })
 
+  it('keeps the fields open while the reset is sent, like the other auth forms', async () => {
+    api.defaults.adapter = () => new Promise(() => undefined)
+    renderResetPage()
+
+    submit('Battery-Staple-2')
+
+    expect(await screen.findByRole('button', { name: 'Resetting...' })).toBeDisabled()
+    expect(screen.getByLabelText('New Password')).toBeEnabled()
+    expect(screen.getByLabelText('Confirm New Password')).toBeEnabled()
+  })
+
   it('lets a password manager offer a new password for both fields', () => {
     renderResetPage()
 

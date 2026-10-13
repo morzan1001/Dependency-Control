@@ -87,7 +87,6 @@ export default function ResetPassword() {
                   autoComplete="new-password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  disabled={isLoading}
                   required
                 />
                 <p className="text-xs text-muted-foreground">
@@ -102,7 +101,6 @@ export default function ResetPassword() {
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  disabled={isLoading}
                   required
                 />
               </div>
