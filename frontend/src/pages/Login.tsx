@@ -95,17 +95,18 @@ export default function Login() {
               </div>
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="password">Password</Label>
-                <Input 
-                  id="password" 
-                  name="password" 
-                  type="password" 
-                  required 
-                  disabled={showOTP} 
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  disabled={showOTP}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
                 {config?.password_reset_enabled && (
-                  <Link to="/forgot-password" className="self-end text-sm text-muted-foreground hover:underline">
+                  <Link to="/forgot-password" className="self-end text-sm text-primary hover:underline">
                     Forgot password?
                   </Link>
                 )}

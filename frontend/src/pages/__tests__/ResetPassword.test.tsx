@@ -66,4 +66,17 @@ describe('ResetPassword', () => {
       ['post', '/reset-password', { token, new_password: 'Battery-Staple-2' }],
     ])
   })
+
+  it('lets a password manager offer a new password for both fields', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={['/reset-password?token=t1']}>
+          <ResetPassword />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByLabelText('New Password')).toHaveAttribute('autocomplete', 'new-password')
+    expect(screen.getByLabelText('Confirm New Password')).toHaveAttribute('autocomplete', 'new-password')
+  })
 })
