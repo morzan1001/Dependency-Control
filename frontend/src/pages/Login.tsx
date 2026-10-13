@@ -159,25 +159,26 @@ export default function Login() {
               </div>
             )}
           </CardContent>
-          <CardFooter className="flex justify-between">
-            {showOTP ? (
-              <Button variant="ghost" type="button" onClick={() => setShowOTP(false)}>
-                Cancel
-              </Button>
-            ) : (
-              signupEnabled && (
-                <Button variant="ghost" type="button" asChild>
-                  <Link to="/signup">Sign Up</Link>
-                </Button>
-              )
-            )}
-            <Button type="submit" disabled={isLoading} className={!showOTP && !signupEnabled ? "ml-auto" : ""}>
+          <CardFooter className="flex flex-col gap-2">
+            <Button type="submit" className="w-full" disabled={isLoading}>
               {(() => {
                 if (isLoading) return "Logging in..."
                 if (showOTP) return "Verify"
                 return "Login"
               })()}
             </Button>
+            {showOTP && (
+              <div className="text-sm text-center text-muted-foreground">
+                <button type="button" className="text-primary hover:underline" onClick={() => setShowOTP(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
+            {!showOTP && signupEnabled && (
+              <div className="text-sm text-center text-muted-foreground">
+                Don't have an account? <Link to="/signup" className="text-primary hover:underline">Sign Up</Link>
+              </div>
+            )}
           </CardFooter>
         </form>
       </Card>
