@@ -2,9 +2,10 @@
 
 import pytest
 
-from app.core.cve import canonical_cve, canonical_cves, display_vulnerability_id
+from app.core.cve import canonical_cve, canonical_cves
 from app.services.aggregation.merging import dedupe_vulnerability_entries
 from app.services.analysis.stats import build_epss_kev_summary
+from app.services.recommendation.common import display_vulnerability_id
 
 
 @pytest.mark.parametrize(

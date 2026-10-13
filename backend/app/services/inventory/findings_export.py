@@ -7,11 +7,12 @@ from typing import Any, NamedTuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import DETAILS_KEY_IN_KEV
-from app.core.cve import canonical_cves, display_vulnerability_id
+from app.core.cve import canonical_cves
 from app.models.finding import FindingType, Severity
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.services.component_identity import build_component_index, lookup_component
+from app.services.recommendation.common import display_vulnerability_id
 
 
 class ExportedScan(NamedTuple):

@@ -186,6 +186,12 @@ def live_cves(details_list: Iterable[Any]) -> list[str]:
     return canonical_cves([{"vulnerabilities": live_advisories(details)} for details in details_list])
 
 
+def display_vulnerability_id(details: Any) -> str | None:
+    """The id a finding is shown under: its first CVE, else its first advisory's id; a waived one once all are."""
+    ids = live_cves([details]) or canonical_cves([details])
+    return next((i for i in ids if i.startswith("CVE-")), next(iter(ids), None))
+
+
 def cve_severities(advisories: Iterable[dict[str, Any]]) -> dict[str, str | None]:
     """Each CVE the advisories name, at the worst severity any of them gives it."""
     worst: dict[str, str | None] = {}
