@@ -2,9 +2,9 @@
 
 These notes cover the upgrade from 1.9.54. Run mongosh commands in-pod against the application database.
 
-## After the rollout: point stored usernames at their accounts
+## Before the rollout, and again right after it: point stored usernames at their accounts
 
-Waivers and system invitations now store the user id of their creator and inviter, and every read shows that account's current username. Rows written before this release hold a username, which keeps showing as stored. Rewrite them right after the rollout, before users start renaming themselves: a renamed account's old name matches nobody, and a name another account took meanwhile would match the wrong one. Run both blocks in one mongosh session. The counts are read-only, and a value that already is a user id is left alone:
+Waivers and system invitations now store the user id of their creator and inviter, and every read shows that account's current username. Rows written before this release hold a username, which keeps showing as stored. Rewrite them before the rollout, while 1.9.54 still refuses self-renames and only displays these fields: once users rename themselves, a renamed account's old name matches nobody, and a name another account took meanwhile would match the wrong one. Until the rollout, 1.9.54 shows the user id for the rewritten rows, as after a rollback. Right after the rollout, run the same blocks again for the rows the 1.9.54 pods wrote while it ran. Each time, run both blocks in one mongosh session. The counts are read-only, and a value that already is a user id is left alone:
 
 ```js
 const users = db.users.find({}, { username: 1 }).toArray()
