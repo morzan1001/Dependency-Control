@@ -9,7 +9,7 @@ export const refusesUsername = (sent: UserUpdate | UserUpdateMe | undefined, err
   return sent?.username !== undefined && (status === 400 || status === 422);
 };
 
-// A new address is refused with 400 when taken or unchanged, 422 when malformed and 501 when no mail server can confirm it.
+// An address is refused with 400 when taken or already the account's, 422 when malformed and 501 when no mail server can confirm it.
 export const refusesEmail = (error: unknown) => {
   const status = (error as ApiError).response?.status;
   return status === 400 || status === 422 || status === 501;

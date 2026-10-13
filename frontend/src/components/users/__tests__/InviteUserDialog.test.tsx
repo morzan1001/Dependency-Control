@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -5,14 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { InviteUserDialog } from '../InviteUserDialog'
 
 const INVITE_LINK = 'https://dc.example/accept-invite?token=t1'
+const REGISTERED = 'Email already registered'
+const { invite } = vi.hoisted(() => ({ invite: vi.fn() }))
 const writeText = vi.fn()
 
-vi.mock('@/hooks/queries/use-users', () => ({
-  useInviteUser: () => ({
-    mutate: (_email: string, opts: { onSuccess: (data: { link: string }) => void }) => opts.onSuccess({ link: INVITE_LINK }),
-    isPending: false,
-  }),
-}))
+vi.mock('@/api/users', () => ({ userApi: { invite } }))
 vi.mock('@/hooks/queries/use-system', () => ({
   useAppConfig: () => ({ data: { notifications: { email: false } } }),
 }))
@@ -20,23 +18,36 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 beforeEach(() => {
   vi.clearAllMocks()
+  invite.mockResolvedValue({ message: 'Invitation created', link: INVITE_LINK })
   // jsdom ships no Clipboard API.
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
 })
 
-function inviteAndCopyLink() {
-  render(<InviteUserDialog />)
+function openDialog() {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
+      <InviteUserDialog />
+    </QueryClientProvider>,
+  )
   fireEvent.click(screen.getByRole('button', { name: /Invite User/ }))
-  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@test.com' } })
+}
+
+function sendInvitation(email = 'new@test.com') {
+  openDialog()
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: email } })
   fireEvent.click(screen.getByRole('button', { name: 'Send Invitation' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Copy Link' }))
+}
+
+async function inviteAndCopyLink() {
+  sendInvitation()
+  fireEvent.click(await screen.findByRole('button', { name: 'Copy Link' }))
 }
 
 describe('InviteUserDialog copy link', () => {
   it('confirms the copy once the clipboard holds the link', async () => {
     writeText.mockResolvedValue(undefined)
 
-    inviteAndCopyLink()
+    await inviteAndCopyLink()
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Invitation link copied to clipboard'))
     expect(writeText.mock.calls).toEqual([[INVITE_LINK]])
@@ -45,7 +56,7 @@ describe('InviteUserDialog copy link', () => {
   it('tells the admin to copy the link by hand when the clipboard refuses', async () => {
     writeText.mockRejectedValue(new Error('denied'))
 
-    inviteAndCopyLink()
+    await inviteAndCopyLink()
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Could not reach the clipboard', {
@@ -59,8 +70,7 @@ describe('InviteUserDialog copy link', () => {
 
 describe('InviteUserDialog footer', () => {
   it('closes the form with Cancel and opens again on an empty field', () => {
-    render(<InviteUserDialog />)
-    fireEvent.click(screen.getByRole('button', { name: /Invite User/ }))
+    openDialog()
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@test.com' } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -70,9 +80,9 @@ describe('InviteUserDialog footer', () => {
     expect(screen.getByLabelText('Email')).toHaveValue('')
   })
 
-  it('closes the link with Close beside Copy Link and opens again on the form', () => {
+  it('closes the link with Close beside Copy Link and opens again on the form', async () => {
     writeText.mockResolvedValue(undefined)
-    inviteAndCopyLink()
+    await inviteAndCopyLink()
 
     fireEvent.click(screen.getByText('Close', { selector: 'button' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -80,5 +90,42 @@ describe('InviteUserDialog footer', () => {
 
     expect(screen.queryByText(INVITE_LINK)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Send Invitation' })).toBeInTheDocument()
+  })
+})
+
+describe('InviteUserDialog refusals', () => {
+  it('shows under the field that the address is registered, without a toast', async () => {
+    invite.mockRejectedValue({ response: { status: 400, data: { detail: REGISTERED } } })
+
+    sendInvitation('lena@corp.com')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(REGISTERED)
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription(REGISTERED)
+    expect(toast.error).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'lena.k@corp.com' } })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('names a failure that belongs to no field in a toast', async () => {
+    invite.mockRejectedValue(new Error('Network Error'))
+
+    sendInvitation()
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Failed to send invitation', { description: 'Network Error' }),
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('opens again without the refusal shown before it was closed', async () => {
+    invite.mockRejectedValue({ response: { status: 400, data: { detail: REGISTERED } } })
+    sendInvitation('lena@corp.com')
+    await screen.findByRole('alert')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: /Invite User/ }))
+
+    expect(screen.getByLabelText('Email')).toHaveValue('')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useInviteUser } from '@/hooks/queries/use-users';
+import { refusesEmail, useInviteUser } from '@/hooks/queries/use-users';
 import { useAppConfig } from '@/hooks/queries/use-system';
 import { copyWithToast } from '@/hooks/use-copy-to-clipboard';
 import { getErrorMessage } from '@/lib/utils';
@@ -27,6 +27,8 @@ export function InviteUserDialog() {
   const { data: appConfig } = useAppConfig({ enabled: isOpen });
 
   const inviteUserMutation = useInviteUser();
+  const emailError =
+    inviteUserMutation.isError && refusesEmail(inviteUserMutation.error) ? getErrorMessage(inviteUserMutation.error) : null;
 
   const handleInviteUser = (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,9 +48,7 @@ export function InviteUserDialog() {
         }
       },
       onError: (error) => {
-          toast.error("Error", {
-            description: getErrorMessage(error),
-          });
+        if (!refusesEmail(error)) toast.error("Failed to send invitation", { description: getErrorMessage(error) });
       }
     });
   };
@@ -59,6 +59,7 @@ export function InviteUserDialog() {
       if (!open) {
         setInviteLink(null);
         setInviteEmail("");
+        if (!inviteUserMutation.isPending) inviteUserMutation.reset();
       }
     }}>
       <DialogTrigger asChild>
@@ -97,9 +98,17 @@ export function InviteUserDialog() {
                 id="invite-email"
                 type="email"
                 value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
+                onChange={(e) => {
+                  setInviteEmail(e.target.value);
+                  if (!inviteUserMutation.isPending) inviteUserMutation.reset();
+                }}
+                aria-invalid={!!emailError}
+                aria-describedby={emailError ? 'invite-email-error' : undefined}
                 required
               />
+              {emailError && (
+                <p id="invite-email-error" role="alert" className="text-xs text-destructive">{emailError}</p>
+              )}
             </div>
             <DialogFooter>
               <DialogClose asChild>
