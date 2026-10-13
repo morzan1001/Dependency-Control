@@ -12,6 +12,7 @@ import { getErrorMessage } from '@/lib/utils'
 export default function Login() {
   const location = useLocation()
   const [error, setError] = useState<string | null>(location.state?.error ?? null)
+  const [message, setMessage] = useState<string | null>(location.state?.message ?? null)
   const [showOTP, setShowOTP] = useState(false)
   const [showResendLink, setShowResendLink] = useState(false)
   
@@ -25,13 +26,13 @@ export default function Login() {
   const [password, setPassword] = useState('')
 
   const { login } = useAuth()
-  const message = location.state?.message
   const loginMutation = useLogin();
   const isLoading = loginMutation.isPending
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    setMessage(null)
     setShowResendLink(false)
 
     const formData = new FormData(event.currentTarget)

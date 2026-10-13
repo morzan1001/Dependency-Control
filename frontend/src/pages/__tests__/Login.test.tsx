@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,19 +13,19 @@ vi.mock('@/hooks/queries/use-auth', () => ({ useLogin: () => ({ mutate: loginMut
 vi.mock('@/hooks/queries/use-system', () => ({ usePublicConfig: () => ({ data: config.current }) }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ login: vi.fn() }) }))
 
-function renderLogin() {
+function renderLogin(state?: { message: string }) {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[{ pathname: '/login', state }]}>
       <Login />
     </MemoryRouter>,
   )
 }
 
-function reachTwoFactorStep() {
+function reachTwoFactorStep(state?: { message: string }) {
   loginMutate.mockImplementation((_credentials, opts: { onError: (error: unknown) => void }) =>
     opts.onError({ response: { status: 401, data: { detail: '2FA required' } } }),
   )
-  renderLogin()
+  renderLogin(state)
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'lena' } })
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Correct-Horse-1' } })
   fireEvent.click(screen.getByRole('button', { name: 'Login' }))
@@ -78,6 +78,26 @@ describe('Login', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
 
     expect(screen.getByRole('alert')).toHaveTextContent('Invalid 2FA code')
+  })
+
+  it('drops the success message it was opened with once a sign-in is sent, so it never stands beside a prompt or refusal', () => {
+    const enabled = '2FA enabled. Please login again.'
+    renderLogin({ message: enabled })
+    expect(screen.getByText(enabled)).toBeInTheDocument()
+    cleanup()
+
+    reachTwoFactorStep({ message: enabled })
+    expect(screen.getByText('Enter your 2FA code.')).toBeInTheDocument()
+    expect(screen.queryByText(enabled)).not.toBeInTheDocument()
+
+    loginMutate.mockImplementation((_credentials, opts: { onError: (error: unknown) => void }) =>
+      opts.onError({ response: { status: 401, data: { detail: 'Invalid OTP code' } } }),
+    )
+    fireEvent.change(screen.getByLabelText('2FA Code'), { target: { value: '000000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid OTP code')
+    expect(screen.queryByText(enabled)).not.toBeInTheDocument()
   })
 
   it('drops a refused 2FA code with the 2FA step it belongs to on Cancel', () => {
