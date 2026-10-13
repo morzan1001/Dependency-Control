@@ -22,6 +22,15 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   const [email, setEmail] = useState(user?.email || '');
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
+  // Untouched fields follow a refetched account, so a save sends only what was edited.
+  const [prevUser, setPrevUser] = useState(user);
+  if (user !== prevUser) {
+    setPrevUser(user);
+    if (username === (prevUser?.username || '')) setUsername(user?.username || '');
+    if (email === (prevUser?.email || '')) setEmail(user?.email || '');
+    if (slackUsername === (prevUser?.slack_username || '')) setSlackUsername(user?.slack_username || '');
+    if (mattermostUsername === (prevUser?.mattermost_username || '')) setMattermostUsername(user?.mattermost_username || '');
+  }
 
   const profileMutation = useUpdateMe();
   const emailMutation = useMutation({

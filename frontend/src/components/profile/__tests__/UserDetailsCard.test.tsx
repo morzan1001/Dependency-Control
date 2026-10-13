@@ -232,6 +232,51 @@ describe('UserDetailsCard', () => {
     expect(screen.getByLabelText(field)).toHaveValue(typed)
   })
 
+  it('lets the fields nobody edited follow the refetched account', async () => {
+    const refetched = {
+      ...LOCAL_USER,
+      username: 'lena.k',
+      email: 'lena.k@corp.com',
+      slack_username: 'U9',
+      mattermost_username: 'lena-mm',
+    }
+    updateMe.mockResolvedValue({ ...refetched, slack_username: 'U1' })
+    const { showRefetched } = renderCard(LOCAL_USER, ['slack', 'mattermost'])
+
+    showRefetched(refetched)
+    expect(screen.getByLabelText('Username')).toHaveValue('lena.k')
+    expect(screen.getByLabelText('Email')).toHaveValue('lena.k@corp.com')
+    expect(screen.getByLabelText('Slack Member ID')).toHaveValue('U9')
+    expect(screen.getByLabelText('Mattermost Username')).toHaveValue('lena-mm')
+    type('Slack Member ID', 'U1')
+    save()
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Profile updated'))
+    expect(updateMe.mock.calls).toEqual([[{ slack_username: 'U1' }]])
+    expect(changeEmail).not.toHaveBeenCalled()
+  })
+
+  it('keeps what was typed when the account is refetched', () => {
+    const { showRefetched } = renderCard(LOCAL_USER, ['slack', 'mattermost'])
+    type('Username', 'lena.x')
+    type('Email', 'lena.x@corp.com')
+    type('Slack Member ID', 'U1')
+    type('Mattermost Username', 'lena-x')
+
+    showRefetched({
+      ...LOCAL_USER,
+      username: 'lena.k',
+      email: 'lena.k@corp.com',
+      slack_username: 'U9',
+      mattermost_username: 'lena-mm',
+    })
+
+    expect(screen.getByLabelText('Username')).toHaveValue('lena.x')
+    expect(screen.getByLabelText('Email')).toHaveValue('lena.x@corp.com')
+    expect(screen.getByLabelText('Slack Member ID')).toHaveValue('U1')
+    expect(screen.getByLabelText('Mattermost Username')).toHaveValue('lena-x')
+  })
+
   it.each(['', '   '])('offers no save for the blank name %j', async (blank) => {
     renderCard(LOCAL_USER)
 
