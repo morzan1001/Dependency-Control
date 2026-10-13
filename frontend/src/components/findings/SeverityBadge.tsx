@@ -35,7 +35,7 @@ export function SeverityBadge({ severity, showIcon = true }: Readonly<SeverityBa
   const Icon = config.icon
 
   return (
-    <Badge className={`${config.color} hover:${config.color} text-white flex items-center gap-1`}>
+    <Badge className={`${config.color} hover:${config.color} text-white flex w-fit items-center gap-1`}>
       {showIcon && <Icon className="h-3 w-3" />}
       {severity}
     </Badge>
