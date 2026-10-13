@@ -111,6 +111,7 @@ export function ApiKeysCard() {
   const [newExpiry, setNewExpiry] = useState(DEFAULT_EXPIRY_DAYS);
   const [newSurfaces, setNewSurfaces] = useState<ApiKeySurface[]>([]);
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
+  const [keyToRevoke, setKeyToRevoke] = useState<ApiKey | null>(null);
   const createMutation = useCreateApiKey();
   const revokeMutation = useRevokeApiKey();
 
@@ -145,16 +146,14 @@ export function ApiKeysCard() {
     }
   };
 
-  const handleRevoke = async (keyId: string) => {
-    if (!window.confirm('Revoke this key? Every surface it names stops accepting it immediately.')) {
-      return;
-    }
-    try {
-      await revokeMutation.mutateAsync(keyId);
-      toast.success('Key revoked');
-    } catch (err) {
-      toast.error('Error', { description: getErrorMessage(err) });
-    }
+  const handleRevoke = (key: ApiKey) => {
+    revokeMutation.mutate(key.id, {
+      onSuccess: () => {
+        setKeyToRevoke(null);
+        toast.success('Key revoked');
+      },
+      onError: (err) => toast.error('Error', { description: getErrorMessage(err) }),
+    });
   };
 
   const dismissRevealedToken = () => {
@@ -208,7 +207,7 @@ export function ApiKeysCard() {
                   size="icon"
                   className="h-7 w-7 text-muted-foreground hover:text-destructive"
                   aria-label={revokeLabel(key)}
-                  onClick={() => handleRevoke(key.id)}
+                  onClick={() => setKeyToRevoke(key)}
                   disabled={revokeMutation.isPending}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -365,6 +364,33 @@ export function ApiKeysCard() {
             <DialogClose asChild>
               <Button>Close</Button>
             </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={keyToRevoke !== null}
+        onOpenChange={(open) => {
+          if (!open) setKeyToRevoke(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Revoke API Key</DialogTitle>
+            <DialogDescription>
+              Revoke <strong className="wrap-anywhere">{keyToRevoke?.name}</strong>? Every surface it
+              names stops accepting it immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setKeyToRevoke(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => keyToRevoke && handleRevoke(keyToRevoke)}
+              disabled={revokeMutation.isPending}
+            >
+              {revokeMutation.isPending ? 'Revoking...' : 'Revoke'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

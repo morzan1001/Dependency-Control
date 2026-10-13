@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -43,7 +43,6 @@ const LIST_PAGE = 100;
 const TOTAL_KEYS = 103;
 const UNREACHABLE_KEYS = TOTAL_KEYS - LIST_PAGE;
 const NOT_CALLED = 0;
-const CALLED_ONCE = 1;
 const SHOWN_ONCE = 1;
 
 const {
@@ -291,35 +290,41 @@ describe("ApiKeysCard", () => {
     );
   });
 
-  it("revokes only after the user confirms", async () => {
-    const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("revokes only after the user confirms in a dialog naming the key in bold, like the user deletion", async () => {
+    const nativeConfirm = vi.spyOn(window, "confirm");
     renderCard([mcpKey]);
     await screen.findByText(MCP_KEY_NAME);
 
     fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
+    const dialog = screen.getByRole("dialog", { name: "Revoke API Key" });
+    expect(within(dialog).getByText(MCP_KEY_NAME, { selector: "strong" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
-    expect(confirmed).toHaveBeenCalledTimes(CALLED_ONCE);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(revokeKey.mock.calls).toHaveLength(NOT_CALLED);
 
-    confirmed.mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
 
     await waitFor(() => expect(revokeKey).toHaveBeenCalledWith(MCP_KEY_ID));
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Key revoked"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(nativeConfirm).not.toHaveBeenCalled();
   });
 
-  it("titles a failed revoke like the other Profile cards and names the reason", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("titles a failed revoke like the other Profile cards, names the reason and keeps the dialog open", async () => {
     revokeKey.mockRejectedValueOnce({ response: { data: { detail: "API key not found" } } });
     renderCard([mcpKey]);
     await screen.findByText(MCP_KEY_NAME);
 
     fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Error", { description: "API key not found" }),
     );
     expect(toastSuccess).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Revoke API Key" })).toBeInTheDocument();
   });
 
   it("says how many keys the listing left out when its page saturated", async () => {
@@ -352,7 +357,6 @@ describe("ApiKeysCard", () => {
   });
 
   it("keeps the rows and calls them stale when the refetch after a revoke fails", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderCard([mcpKey], {
       limit: LIST_PAGE,
       returned: LIST_PAGE,
@@ -362,6 +366,7 @@ describe("ApiKeysCard", () => {
     listKeys.mockRejectedValue(new Error("network unreachable"));
 
     fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
 
     expect(
       await screen.findByText(/Could not refresh this list/i),
