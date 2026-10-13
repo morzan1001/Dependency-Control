@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { User } from '@/types/user'
@@ -28,11 +29,11 @@ const LOCAL_USER: User = {
 }
 const IDP_USER: User = { ...LOCAL_USER, id: 'u-otto', username: 'otto', email: 'otto@corp.com', auth_provider: 'gitlab' }
 
-function renderCard(user: User) {
+function renderCard(user: User, notificationChannels = ['slack']) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <UserDetailsCard user={user} notificationChannels={['slack']} />
+      <UserDetailsCard user={user} notificationChannels={notificationChannels} />
     </QueryClientProvider>,
   )
 }
@@ -42,15 +43,31 @@ describe('UserDetailsCard', () => {
     vi.clearAllMocks()
   })
 
-  it('saves the notification identities without the username', async () => {
+  it('saves the chat IDs without the username', async () => {
     updateMe.mockResolvedValue(LOCAL_USER)
     renderCard(LOCAL_USER)
 
     fireEvent.change(screen.getByLabelText('Slack Member ID'), { target: { value: 'U123' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save chat IDs' }))
 
-    await waitFor(() => expect(updateMe).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Chat IDs saved'))
+    expect(updateMe).toHaveBeenCalledTimes(1)
     expect(updateMe.mock.calls[0][0]).toEqual({ slack_username: 'U123', mattermost_username: null })
+  })
+
+  it('offers the chat ID save beside a Mattermost field alone', () => {
+    renderCard(LOCAL_USER, ['email', 'mattermost'])
+
+    expect(screen.getByRole('button', { name: 'Save chat IDs' })).toBeInTheDocument()
+  })
+
+  it('offers only the field saves while no chat channel is configured', () => {
+    renderCard(LOCAL_USER, ['email'])
+
+    expect(screen.getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Save username',
+      'Save email',
+    ])
   })
 
   it('renames a local account and tells it to sign in with the new name', async () => {
@@ -105,7 +122,7 @@ describe('UserDetailsCard', () => {
     renderCard({ ...LOCAL_USER, slack_username: 'U123' })
 
     fireEvent.change(screen.getByLabelText('Slack Member ID'), { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save chat IDs' }))
 
     await waitFor(() => expect(updateMe).toHaveBeenCalledTimes(1))
     expect(updateMe.mock.calls[0][0]).toMatchObject({ slack_username: null })

@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
 import { useUpdateMe } from '@/hooks/queries/use-users';
 import { User } from '@/types/user';
-import { ApiError } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,24 +22,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
 
-  const updateProfileMutation = useMutation({
-    mutationFn: () => userApi.updateMe({
-      slack_username: slackUsername || null,
-      mattermost_username: mattermostUsername || null
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      toast.success("Profile updated", {
-        description: "Your profile has been updated successfully.",
-      });
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
-    }
-  });
-
+  const chatIdsMutation = useUpdateMe();
   const renameMutation = useUpdateMe();
 
   const emailMutation = useMutation({
@@ -50,13 +32,21 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     },
   });
 
-  const handleProfileUpdate = (e: React.FormEvent) => {
+  const handleChatIdsSave = (e: React.FormEvent) => {
     e.preventDefault();
-    updateProfileMutation.mutate();
+    chatIdsMutation.mutate(
+      { slack_username: slackUsername || null, mattermost_username: mattermostUsername || null },
+      {
+        onSuccess: () => toast.success("Chat IDs saved"),
+        onError: (error) => toast.error("Error", { description: getErrorMessage(error) }),
+      },
+    );
   };
 
   const isLocalAccount = (user?.auth_provider || 'local') === 'local';
   const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
+  const showsSlack = notificationChannels?.includes('slack');
+  const showsMattermost = notificationChannels?.includes('mattermost');
 
   return (
     <Card>
@@ -112,7 +102,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
           </div>
         )}
 
-        <form onSubmit={handleProfileUpdate} className="space-y-4">
+        <form onSubmit={handleChatIdsSave} className="space-y-4">
           <div className="grid gap-2">
             <Label>Authentication Provider</Label>
             <Input 
@@ -122,7 +112,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
             />
           </div>
           
-          {notificationChannels?.includes('slack') && (
+          {showsSlack && (
             <div className="grid gap-2">
               <Label htmlFor="slack-username">Slack Member ID</Label>
               <Input
@@ -137,7 +127,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
             </div>
           )}
 
-          {notificationChannels?.includes('mattermost') && (
+          {showsMattermost && (
             <div className="grid gap-2">
               <Label htmlFor="mattermost-username">Mattermost Username</Label>
               <Input 
@@ -159,9 +149,11 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
               )}
             </div>
           </div>
-          <Button type="submit" disabled={updateProfileMutation.isPending}>
-            {updateProfileMutation.isPending ? 'Saving...' : 'Save Changes'}
-          </Button>
+          {(showsSlack || showsMattermost) && (
+            <Button type="submit" disabled={chatIdsMutation.isPending}>
+              {chatIdsMutation.isPending ? 'Saving...' : 'Save chat IDs'}
+            </Button>
+          )}
         </form>
       </CardContent>
     </Card>
