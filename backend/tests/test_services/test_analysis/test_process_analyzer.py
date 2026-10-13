@@ -1,31 +1,11 @@
-"""process_analyzer records an analyzer that cannot run as a failed scanner naming the cause."""
+"""process_analyzer hands a CLI scanner the SBOM file, which the engine writes only for RAW_SBOM_ANALYZERS."""
 
-import pytest
-
-from app.schemas.sbom import SBOMFormat
-from app.services.aggregation import ResultAggregator
-from app.services.analysis import engine
-from app.services.analyzers.trivy import TrivyAnalyzer
+from app.services.analysis.registry import RAW_SBOM_ANALYZERS, analyzer_factories
+from app.services.analyzers.cli_base import CLIAnalyzer
 
 
-@pytest.mark.asyncio
-async def test_a_cli_scanner_without_the_sbom_file_fails_naming_the_missing_file():
-    aggregator = ResultAggregator()
+def test_every_cli_scanner_gets_the_sbom_file_written():
+    cli_scanners = {name for name, factory in analyzer_factories.items() if isinstance(factory(), CLIAnalyzer)}
 
-    outcome = await engine.process_analyzer(
-        "trivy",
-        TrivyAnalyzer(),
-        "scan-1",
-        None,
-        aggregator,
-        settings={},
-        source="sbom.json",
-        row_source="SBOM #1",
-        parsed_components=[],
-        sbom_path=None,
-        sbom_format=SBOMFormat.CYCLONEDX,
-    )
-
-    assert outcome == "trivy: Failed"
-    [warning] = aggregator.get_findings()
-    assert "SBOM file" in warning.description
+    assert cli_scanners
+    assert cli_scanners <= RAW_SBOM_ANALYZERS

@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from itertools import batched
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import bson
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
@@ -233,9 +233,7 @@ async def process_analyzer(
         analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
         if isinstance(analyzer, CLIAnalyzer):
-            if sbom_path is None:
-                raise RuntimeError(f"{analyzer_name} scans the SBOM file, which was not written")
-            result = await analyzer.analyze_file(sbom_path, sbom_format)
+            result = await analyzer.analyze_file(cast(str, sbom_path), sbom_format)
         else:
             result = await analyzer.analyze({}, settings=settings, parsed_components=parsed_components)
 
