@@ -37,13 +37,13 @@ export function ChatSettingsTab({
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Rate limits</CardTitle>
+          <CardTitle>Rate Limits</CardTitle>
           <CardDescription>
-            Per-user sliding-window limits applied on every chat message. The
+            Per-user sliding-window limits on chat messages and MCP tool calls.
+            MCP tool calls are capped at these limits times the max tool-call
+            rounds, in one window that all of a user's API keys share. The
             Ollama GPU node has finite throughput — use these to prevent a
-            single user from starving the rest. They also cap MCP tool calls,
-            at these limits times the max tool-call rounds, in one window that
-            all of a user's API keys share.
+            single user from starving the rest.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -95,14 +95,14 @@ export function ChatSettingsTab({
             onClick={handleSave}
             disabled={!canManage || isPending}
           >
-            {isPending ? 'Saving…' : 'Save chat settings'}
+            {isPending ? 'Saving...' : 'Save Rate Limits'}
           </Button>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Reasoning budget</CardTitle>
+          <CardTitle>Reasoning Budget</CardTitle>
           <CardDescription>
             How many rounds of LLM ↔ tool-call iteration the assistant is
             allowed per message before we give up and show a fallback.
@@ -140,7 +140,7 @@ export function ChatSettingsTab({
             onClick={handleSave}
             disabled={!canManage || isPending}
           >
-            {isPending ? 'Saving…' : 'Save reasoning budget'}
+            {isPending ? 'Saving...' : 'Save Reasoning Budget'}
           </Button>
         </CardContent>
       </Card>

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ChatSettingsTab } from '../ChatSettingsTab'
 
-function renderTab() {
+function renderTab(isPending = false) {
   const handleInputChange = vi.fn()
   render(
     <ChatSettingsTab
@@ -11,7 +11,7 @@ function renderTab() {
       handleInputChange={handleInputChange}
       handleSave={vi.fn()}
       hasPermission={() => true}
-      isPending={false}
+      isPending={isPending}
     />,
   )
   return handleInputChange
@@ -31,6 +31,25 @@ describe('ChatSettingsTab', () => {
     fireEvent.change(screen.getByLabelText(label), { target: { value: typed } })
 
     expect(handleInputChange).toHaveBeenCalledWith(field, stored)
+  })
+
+  it('titles its cards and save buttons in title case, like the other settings tabs', () => {
+    renderTab()
+
+    expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Rate Limits', 'Reasoning Budget'])
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Save Rate Limits', 'Save Reasoning Budget'])
+  })
+
+  it('says "Saving..." on both buttons while saving, like the other settings tabs', () => {
+    renderTab(true)
+
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Saving...', 'Saving...'])
+  })
+
+  it('opens with the limits governing MCP tool calls as well as chat messages', () => {
+    renderTab()
+
+    expect(screen.getByText(/^Per-user sliding-window limits on chat messages and MCP tool calls\./)).toBeInTheDocument()
   })
 
   it('keeps the current value when the field is cleared', () => {
