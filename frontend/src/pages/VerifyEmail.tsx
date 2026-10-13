@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2 } from 'lucide-react'
 import { getErrorMessage } from '@/lib/utils'
 
 interface VerifyEmailProps {
@@ -14,16 +14,7 @@ interface VerifyEmailProps {
 export default function VerifyEmail({ verifyToken }: Readonly<VerifyEmailProps>) {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
-  const { mutate: verify, isPending, isSuccess, isError, error, data } = useMutation({ mutationFn: verifyToken })
-  
-  const getStatus = () => {
-    if (isPending) return 'loading'
-    if (isSuccess) return 'success'
-    if (isError) return 'error'
-    return 'loading'
-  }
-  const status = getStatus()
-  const message = error ? getErrorMessage(error) : data?.message || ''
+  const { mutate: verify, isSuccess, error, data } = useMutation({ mutationFn: verifyToken })
 
   useEffect(() => {
     if (token) {
@@ -31,28 +22,38 @@ export default function VerifyEmail({ verifyToken }: Readonly<VerifyEmailProps>)
     }
   }, [token, verify])
 
-  const errorMessage = token ? message : 'No verification token provided.'
-  const displayStatus = token ? status : 'error'
+  if (!token || error) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-muted/50">
+        <Card className="w-[350px]">
+          <CardHeader className="text-center">
+            <CardTitle className="text-destructive">Error</CardTitle>
+            <CardDescription role="alert">{token ? getErrorMessage(error) : 'No verification token provided.'}</CardDescription>
+          </CardHeader>
+          <CardFooter className="flex justify-center">
+            <Button asChild>
+              <Link to="/login">Go to Login</Link>
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen items-center justify-center bg-muted/50">
       <Card className="w-[350px]">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            {displayStatus === 'loading' && <Skeleton className="h-12 w-12 rounded-full" />}
-            {displayStatus === 'success' && <CheckCircle2 className="h-12 w-12 text-success" />}
-            {displayStatus === 'error' && <XCircle className="h-12 w-12 text-destructive" />}
+            {isSuccess ? <CheckCircle2 className="h-12 w-12 text-success" /> : <Skeleton className="h-12 w-12 rounded-full" />}
           </div>
           <CardTitle>Email Verification</CardTitle>
           <CardDescription>
-            {displayStatus === 'loading' && 'Verifying your email...'}
-            {displayStatus === 'success' && 'Your email has been verified!'}
-            {displayStatus === 'error' && 'Verification failed.'}
+            {isSuccess ? 'Your email has been verified!' : 'Verifying your email...'}
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center">
-            {displayStatus === 'error' && <p role="alert" className="text-sm text-destructive">{errorMessage}</p>}
-            {displayStatus === 'success' && <output className="text-sm text-success">{errorMessage}</output>}
+            {isSuccess && <output className="text-sm text-success">{data.message}</output>}
         </CardContent>
         <CardFooter className="flex justify-center">
           <Button asChild>
