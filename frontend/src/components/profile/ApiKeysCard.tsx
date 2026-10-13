@@ -58,7 +58,7 @@ const SURFACE_ORDER: ApiKeySurface[] = ['mcp', 'adhoc'];
 
 const SURFACE_LABELS: Record<ApiKeySurface, string> = {
   mcp: 'MCP',
-  adhoc: 'Ad-hoc analysis',
+  adhoc: 'Ad-hoc Analysis',
 };
 
 const SURFACE_HINTS: Record<ApiKeySurface, string> = {
@@ -238,7 +238,7 @@ export function ApiKeysCard() {
           {mintableSurfaces.length > 0 && (
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
-              New key
+              New Key
             </Button>
           )}
         </div>
@@ -270,7 +270,7 @@ export function ApiKeysCard() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create API key</DialogTitle>
+            <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
               The token will be shown exactly once after creation. Store it
               somewhere safe (your CI secret store, a password manager). The
@@ -316,7 +316,7 @@ export function ApiKeysCard() {
               ))}
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="api-key-expiry">Expires in</Label>
+              <Label htmlFor="api-key-expiry">Expires In</Label>
               <Select
                 value={String(newExpiry)}
                 onValueChange={(v) => setNewExpiry(Number(v))}
@@ -339,7 +339,7 @@ export function ApiKeysCard() {
               <Button variant="outline">Cancel</Button>
             </DialogClose>
             <Button onClick={handleCreate} disabled={!canSubmit || createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : 'Create key'}
+              {createMutation.isPending ? 'Creating...' : 'Create Key'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -353,7 +353,7 @@ export function ApiKeysCard() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Copy your new key now</DialogTitle>
+            <DialogTitle>Copy Your New Key Now</DialogTitle>
             <DialogDescription>
               This is the only time the full token will be displayed. Once you
               close this dialog, the server cannot show it again — only its

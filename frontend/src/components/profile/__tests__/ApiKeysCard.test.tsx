@@ -226,6 +226,22 @@ describe("ApiKeysCard", () => {
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
   });
 
+  it("titles its button, dialogs and fields like the rest of the app", async () => {
+    renderCard([]);
+    await screen.findByText(/No API keys yet/i);
+
+    fireEvent.click(screen.getByRole("button", { name: "New Key" }));
+
+    expect(screen.getByRole("dialog", { name: "Create API Key" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Expires In")).toBeInTheDocument();
+    expect(screen.getByLabelText("Ad-hoc Analysis")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: MCP_KEY_NAME } });
+    fireEvent.click(screen.getByLabelText("MCP"));
+    fireEvent.click(screen.getByRole("button", { name: "Create Key" }));
+
+    expect(await screen.findByRole("dialog", { name: "Copy Your New Key Now" })).toBeInTheDocument();
+  });
+
   it("drops the minted token from the mutation cache when the reveal is closed", async () => {
     await mintKey();
     await screen.findByDisplayValue(PLAINTEXT_TOKEN);
@@ -247,7 +263,7 @@ describe("ApiKeysCard", () => {
 
     expect(screen.getByRole("button", { name: /Create key/i })).toBeDisabled();
 
-    fireEvent.click(screen.getByLabelText("Ad-hoc analysis"));
+    fireEvent.click(screen.getByLabelText("Ad-hoc Analysis"));
 
     expect(
       screen.getByRole("button", { name: /Create key/i }),
@@ -259,7 +275,7 @@ describe("ApiKeysCard", () => {
 
     await openCreateDialog();
 
-    expect(screen.getByLabelText("Ad-hoc analysis")).toBeInTheDocument();
+    expect(screen.getByLabelText("Ad-hoc Analysis")).toBeInTheDocument();
     expect(screen.queryByLabelText("MCP")).not.toBeInTheDocument();
   });
 
