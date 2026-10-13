@@ -179,7 +179,14 @@ export default function Login() {
             </Button>
             {showOTP && (
               <div className="text-sm text-center text-muted-foreground">
-                <button type="button" className="text-primary hover:underline" onClick={() => setShowOTP(false)}>
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => {
+                    setShowOTP(false)
+                    setError(null)
+                  }}
+                >
                   Cancel
                 </button>
               </div>

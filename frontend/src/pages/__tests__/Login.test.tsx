@@ -80,6 +80,21 @@ describe('Login', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Invalid 2FA code')
   })
 
+  it('drops a refused 2FA code with the 2FA step it belongs to on Cancel', () => {
+    reachTwoFactorStep()
+    loginMutate.mockImplementation((_credentials, opts: { onError: (error: unknown) => void }) =>
+      opts.onError({ response: { status: 401, data: { detail: 'Invalid OTP code' } } }),
+    )
+    fireEvent.change(screen.getByLabelText('2FA Code'), { target: { value: '000000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid OTP code')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.getByText('Enter your credentials to access the dashboard.')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('leaves the 2FA step through a Cancel link under a full-width Verify', () => {
     reachTwoFactorStep()
 
