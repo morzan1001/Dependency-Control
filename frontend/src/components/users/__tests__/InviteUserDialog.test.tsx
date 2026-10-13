@@ -56,3 +56,29 @@ describe('InviteUserDialog copy link', () => {
     expect(screen.getByText(INVITE_LINK)).toBeInTheDocument()
   })
 })
+
+describe('InviteUserDialog footer', () => {
+  it('closes the form with Cancel and opens again on an empty field', () => {
+    render(<InviteUserDialog />)
+    fireEvent.click(screen.getByRole('button', { name: /Invite User/ }))
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@test.com' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Invite User/ }))
+
+    expect(screen.getByLabelText('Email')).toHaveValue('')
+  })
+
+  it('closes the link with Close beside Copy Link and opens again on the form', () => {
+    writeText.mockResolvedValue(undefined)
+    inviteAndCopyLink()
+
+    fireEvent.click(screen.getByText('Close', { selector: 'button' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Invite User/ }))
+
+    expect(screen.queryByText(INVITE_LINK)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Send Invitation' })).toBeInTheDocument()
+  })
+})

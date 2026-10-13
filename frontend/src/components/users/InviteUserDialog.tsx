@@ -9,11 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Mail } from 'lucide-react';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 
@@ -78,16 +80,18 @@ export function InviteUserDialog() {
             <div className="p-4 bg-muted rounded-md break-all text-sm font-mono">
               {inviteLink}
             </div>
-            <Button 
-              className="w-full" 
-              onClick={() => void copyWithToast(inviteLink, 'invitation link')}
-            >
-              Copy Link
-            </Button>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => void copyWithToast(inviteLink, 'invitation link')}>
+                Copy Link
+              </Button>
+              <DialogClose asChild>
+                <Button>Close</Button>
+              </DialogClose>
+            </DialogFooter>
           </div>
         ) : (
           <form onSubmit={handleInviteUser} className="space-y-4">
-            <div className="space-y-2">
+            <div className="grid gap-2">
               <Label htmlFor="invite-email">Email</Label>
               <Input
                 id="invite-email"
@@ -97,9 +101,14 @@ export function InviteUserDialog() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full" disabled={inviteUserMutation.isPending}>
-              {inviteUserMutation.isPending ? "Sending..." : "Send Invitation"}
-            </Button>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline">Cancel</Button>
+              </DialogClose>
+              <Button type="submit" disabled={inviteUserMutation.isPending}>
+                {inviteUserMutation.isPending ? "Sending..." : "Send Invitation"}
+              </Button>
+            </DialogFooter>
           </form>
         )}
       </DialogContent>
