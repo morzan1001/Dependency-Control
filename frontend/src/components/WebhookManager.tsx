@@ -3,7 +3,7 @@ import { Webhook, WebhookCreate, WebhookType, WebhookUpdate } from "@/types/webh
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Dialog, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { WebhookForm } from "@/components/WebhookForm"
 import { Trash2, Plus, Send, Pencil } from "lucide-react"
@@ -70,6 +70,8 @@ export function WebhookManager({
 }: WebhookManagerProps) {
   const createDialog = useDialogState()
   const [editing, setEditing] = useState<Webhook | null>(null)
+  const [webhookToDelete, setWebhookToDelete] = useState<Webhook | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const { hasPermission } = useAuth()
   const canCreate = typeof createPermission === 'boolean'
     ? createPermission
@@ -81,13 +83,16 @@ export function WebhookManager({
     ? updatePermission
     : hasPermission(updatePermission)
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Delete this webhook? It stops receiving events and its settings cannot be restored.")) return
+  const handleDelete = async (webhook: Webhook) => {
+    setDeleting(true)
     try {
-      await onDelete(id)
+      await onDelete(webhook.id)
+      setWebhookToDelete(null)
       toast.success("Webhook deleted")
     } catch {
       toast.error("Failed to delete webhook")
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -200,7 +205,7 @@ export function WebhookManager({
                         </>
                       )}
                       {canDeleteWh && (
-                        <Button variant="ghost" size="icon" aria-label="Delete webhook" title="Delete webhook" onClick={() => handleDelete(webhook.id)}>
+                        <Button variant="ghost" size="icon" aria-label="Delete webhook" title="Delete webhook" onClick={() => setWebhookToDelete(webhook)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}
@@ -211,6 +216,23 @@ export function WebhookManager({
             )}
           </TableBody>
         </Table>
+        <Dialog open={webhookToDelete !== null} onOpenChange={open => { if (!open) setWebhookToDelete(null) }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Webhook</DialogTitle>
+              <DialogDescription>
+                Delete the webhook for <strong className="wrap-anywhere">{webhookToDelete?.url}</strong>? It stops
+                receiving events and its settings cannot be restored.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setWebhookToDelete(null)}>Cancel</Button>
+              <Button variant="destructive" onClick={() => webhookToDelete && handleDelete(webhookToDelete)} disabled={deleting}>
+                {deleting ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   )

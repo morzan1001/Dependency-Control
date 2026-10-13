@@ -175,24 +175,42 @@ describe("WebhookManager", () => {
     expect(webhookApi.test).toHaveBeenCalledWith("w-slack");
   });
 
-  it("deletes a webhook from its named Delete button once the deletion is confirmed", async () => {
-    vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+  it("deletes a webhook from its named Delete button once confirmed in a dialog naming its URL in bold, like the user deletion", async () => {
+    const nativeConfirm = vi.spyOn(window, "confirm");
     const onDelete = vi.fn().mockResolvedValue(undefined);
     render(<WebhookManager webhooks={[slackHook]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={onDelete} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete webhook" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete Webhook" });
+    expect(within(dialog).getByText(slackHook.url, { selector: "strong" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith("w-slack"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast.success).toHaveBeenCalledWith("Webhook deleted");
+    expect(nativeConfirm).not.toHaveBeenCalled();
   });
 
-  it("keeps a webhook whose deletion is not confirmed", () => {
-    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+  it("keeps a webhook whose deletion is cancelled", async () => {
     const onDelete = vi.fn().mockResolvedValue(undefined);
     render(<WebhookManager webhooks={[slackHook]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={onDelete} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete webhook" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete Webhook" })).getByRole("button", { name: "Cancel" }));
 
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it("keeps the deletion dialog open when the deletion fails", async () => {
+    const onDelete = vi.fn().mockRejectedValue(new Error("boom"));
+    render(<WebhookManager webhooks={[slackHook]} isLoading={false} onCreate={vi.fn()} onUpdate={vi.fn()} onDelete={onDelete} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete webhook" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete Webhook" })).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to delete webhook"));
+    expect(screen.getByRole("dialog", { name: "Delete Webhook" })).toBeInTheDocument();
   });
 
   it("ends the create dialog in an outline Cancel before Create Webhook and keeps the draft it closes on", () => {
