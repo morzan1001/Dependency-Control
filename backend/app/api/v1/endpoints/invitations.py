@@ -10,6 +10,7 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_system_invitation_email
 from app.api.v1.helpers.responses import RESP_400, RESP_404, RESP_AUTH, RESP_AUTH_400, RESP_AUTH_404
+from app.api.v1.helpers.users import resolve_usernames
 from app.core import security
 from app.core.config import settings
 from app.core.permissions import Permissions
@@ -31,8 +32,8 @@ async def read_system_invitations(
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """List all pending system invitations. Requires 'user:create' permission."""
-    invitation_repo = InvitationRepository(db)
-    return await invitation_repo.find_active_system_invitations(skip=skip, limit=limit)
+    pending = await InvitationRepository(db).find_active_system_invitations(skip=skip, limit=limit)
+    return await resolve_usernames(db, pending, "invited_by")
 
 
 @router.post("/system", status_code=status.HTTP_201_CREATED, responses=RESP_AUTH_400)
@@ -58,7 +59,7 @@ async def create_system_invitation(
         invitation = SystemInvitation(
             email=email,
             token=token,
-            invited_by=current_user.username,
+            invited_by=current_user.id,
             expires_at=datetime.now(timezone.utc) + timedelta(days=7),
         )
         await invitation_repo.create_system_invitation(invitation)

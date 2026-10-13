@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from fastapi import BackgroundTasks
 
-from app.api.v1.endpoints import waivers
+from app.api.v1.endpoints import invitations, waivers
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.schemas.waiver import WaiverCreate, WaiverUpdate
 from app.services.chat.tools import ChatToolRegistry
@@ -111,3 +111,30 @@ class TestWaivers:
         result = await _tool(db, "get_waiver_status", project_id=PROJECT, finding_id="QUALITY:w-ada:1.0")
 
         assert result["expired_waiver" if lapsed else "waiver"]["created_by"] == "ada.lovelace"
+
+
+class TestInvitations:
+    @pytest.mark.asyncio
+    async def test_an_invitation_stores_its_inviter_by_id(self, db):
+        await invitations.create_system_invitation(BackgroundTasks(), db, ADMIN, "nora@corp.com")
+
+        assert (await db.system_invitations.find_one({"email": "nora@corp.com"}))["invited_by"] == ADMIN.id
+
+    @pytest.mark.asyncio
+    async def test_pending_invitations_name_each_inviter(self, db):
+        expires = NOW + timedelta(days=1)
+        for key, invited_by in CREATORS.items():
+            await db.system_invitations.insert_one(
+                {
+                    "_id": key,
+                    "email": f"{key}@corp.com",
+                    "token": key,
+                    "invited_by": invited_by,
+                    "expires_at": expires,
+                    "is_used": False,
+                }
+            )
+
+        pending = await invitations.read_system_invitations(db, ADMIN)
+
+        assert {i["_id"]: i["invited_by"] for i in pending} == SHOWN
