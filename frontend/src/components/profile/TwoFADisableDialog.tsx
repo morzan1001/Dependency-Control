@@ -16,6 +16,8 @@ import {
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
+const INVALID_PASSWORD = 'Invalid password';
+
 interface TwoFADisableDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -27,6 +29,7 @@ export function TwoFADisableDialog({ isOpen, onClose }: Readonly<TwoFADisableDia
 
   const handleClose = () => {
     setPassword('');
+    disable2FAMutation.reset();
     onClose();
   };
 
@@ -40,11 +43,11 @@ export function TwoFADisableDialog({ isOpen, onClose }: Readonly<TwoFADisableDia
       });
     },
     onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
+      if (error.response?.data?.detail !== INVALID_PASSWORD) toast.error("Error", { description: getErrorMessage(error) });
     }
   });
+
+  const passwordError = disable2FAMutation.error?.response?.data?.detail === INVALID_PASSWORD ? INVALID_PASSWORD : null;
 
   const handleDisable2FA = () => {
     disable2FAMutation.mutate(password);
@@ -66,9 +69,17 @@ export function TwoFADisableDialog({ isOpen, onClose }: Readonly<TwoFADisableDia
               id="password-disable-2fa"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (!disable2FAMutation.isPending) disable2FAMutation.reset();
+              }}
               placeholder="Confirm your password"
+              aria-invalid={!!passwordError}
+              aria-describedby={passwordError ? 'password-disable-2fa-error' : undefined}
             />
+            {passwordError && (
+              <p id="password-disable-2fa-error" role="alert" className="text-xs text-destructive">{passwordError}</p>
+            )}
           </div>
         </div>
         <DialogFooter>

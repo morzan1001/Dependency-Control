@@ -17,6 +17,9 @@ import {
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
+const INVALID_CODE = 'Invalid OTP code';
+const INVALID_PASSWORD = 'Invalid password';
+
 interface TwoFASetupDialogProps {
   setupData: TwoFASetup | null;
   isOpen: boolean;
@@ -31,6 +34,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
   const handleClose = () => {
     setOtpCode('');
     setPassword('');
+    enable2FAMutation.reset();
     onClose();
   };
 
@@ -44,11 +48,18 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
       });
     },
     onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
+      const detail = error.response?.data?.detail;
+      if (detail !== INVALID_CODE && detail !== INVALID_PASSWORD) toast.error("Error", { description: getErrorMessage(error) });
     }
   });
+
+  const refusal = enable2FAMutation.error?.response?.data?.detail;
+  const codeError = refusal === INVALID_CODE ? refusal : null;
+  const passwordError = refusal === INVALID_PASSWORD ? refusal : null;
+
+  const resetRefusal = () => {
+    if (!enable2FAMutation.isPending) enable2FAMutation.reset();
+  };
 
   const handleEnable2FA = () => {
     enable2FAMutation.mutate({ code: otpCode, password });
@@ -76,12 +87,20 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
               <Input
                 id="otp"
                 value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value)}
+                onChange={(e) => {
+                  setOtpCode(e.target.value);
+                  resetRefusal();
+                }}
                 placeholder="123456"
                 maxLength={6}
                 inputMode="numeric"
                 autoComplete="one-time-code"
+                aria-invalid={!!codeError}
+                aria-describedby={codeError ? 'otp-error' : undefined}
               />
+              {codeError && (
+                <p id="otp-error" role="alert" className="text-xs text-destructive">{codeError}</p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="password-2fa">Current Password</Label>
@@ -89,9 +108,17 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
                 id="password-2fa"
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  resetRefusal();
+                }}
                 placeholder="Confirm your password"
+                aria-invalid={!!passwordError}
+                aria-describedby={passwordError ? 'password-2fa-error' : undefined}
               />
+              {passwordError && (
+                <p id="password-2fa-error" role="alert" className="text-xs text-destructive">{passwordError}</p>
+              )}
             </div>
           </div>
         </div>
