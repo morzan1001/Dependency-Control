@@ -33,7 +33,7 @@ vi.mock("@/context/useAuth", () => ({
 }));
 
 describe("WebhookManager", () => {
-  it("exposes every webhook event type in the create dialog", () => {
+  it("exposes every webhook event type in the create dialog, titled like the notification events", () => {
     render(
       <WebhookManager
         webhooks={[]}
@@ -46,17 +46,49 @@ describe("WebhookManager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
 
-    expect(screen.getByLabelText(/Scan completed/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Vulnerability found/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Analysis failed/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/SBOM ingested/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Crypto asset ingested/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Crypto policy changed/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/License policy changed/i)).toBeInTheDocument();
-    expect(
-      screen.getByLabelText(/Compliance report generated/i),
-    ).toBeInTheDocument();
+    for (const label of [
+      "Scan Completed",
+      "Vulnerability Found",
+      "Analysis Failed",
+      "SBOM Ingested",
+      "Crypto Asset Ingested",
+      "Crypto Policy Changed",
+      "License Policy Changed",
+      "Compliance Report Generated",
+    ]) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    }
     expect(within(screen.getByRole("group", { name: "Events" })).getAllByRole("checkbox")).toHaveLength(8);
+  });
+
+  it("describes the webhook dialog under its title, like the team dialog", () => {
+    const hook: Webhook = {
+      id: "w-described",
+      url: "https://example.com/hook",
+      events: ["scan.completed"],
+      is_active: true,
+      created_at: "2026-10-01T08:00:00Z",
+      webhook_type: "generic",
+      secret_configured: false,
+    };
+    render(
+      <WebhookManager
+        webhooks={[hook]}
+        isLoading={false}
+        onCreate={vi.fn()}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Webhook" }));
+    expect(screen.getByRole("dialog", { name: "Add Webhook" })).toHaveAccessibleDescription(
+      "Create a new webhook to receive event notifications.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit webhook" }));
+    expect(screen.getByRole("dialog", { name: "Edit Webhook" })).toHaveAccessibleDescription("Update webhook details.");
   });
 
   it.each([
