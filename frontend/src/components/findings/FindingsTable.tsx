@@ -187,7 +187,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         }
         if (openedDeepLinkRef.current === deepLinkFindingId) return
         let cancelled = false
-        ;(async () => {
+        void (async () => {
             try {
                 const res = await scanApi.getFindings(scanId, {
                     search: deepLinkFindingId, skip: 0, limit: RELATED_FINDING_SEARCH_LIMIT,

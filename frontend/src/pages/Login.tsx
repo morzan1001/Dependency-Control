@@ -104,6 +104,11 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+                {config?.password_reset_enabled && (
+                  <Link to="/forgot-password" className="self-end text-sm text-muted-foreground hover:underline">
+                    Forgot password?
+                  </Link>
+                )}
               </div>
               {showOTP && (
                 <div className="flex flex-col space-y-1.5 animate-accordion-down">

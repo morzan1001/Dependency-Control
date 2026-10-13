@@ -70,6 +70,7 @@ async def get_public_config(db: DatabaseDep) -> PublicConfig:
         enforce_email_verification=settings.enforce_email_verification,
         oidc_enabled=settings.oidc_enabled,
         oidc_provider_name=settings.oidc_provider_name,
+        password_reset_enabled=settings.email_configured,
     )
 
 

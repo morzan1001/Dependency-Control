@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.models.system import SystemSettings
 
 MODULE = "app.api.v1.endpoints.system"
@@ -177,6 +179,16 @@ class TestGetPublicConfig:
         assert result.allow_public_registration is False
         assert result.enforce_2fa is False
         assert result.oidc_enabled is False
+
+    @pytest.mark.parametrize(("smtp_host", "offered"), [("smtp.example.com", True), (None, False)])
+    def test_offers_password_reset_only_while_mail_can_be_sent(self, smtp_host, offered):
+        from app.api.v1.endpoints.system import get_public_config
+
+        with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = _make_settings(smtp_host=smtp_host)
+            result = asyncio.run(get_public_config(db=MagicMock()))
+
+        assert result.password_reset_enabled is offered
 
 
 class TestGetAppConfig:

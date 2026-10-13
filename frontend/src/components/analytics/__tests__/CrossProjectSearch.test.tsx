@@ -81,10 +81,14 @@ describe("CrossProjectSearch load error", () => {
 });
 
 describe("CrossProjectSearch later page error", () => {
-  it("keeps the loaded rows when a later page fails", async () => {
+  it("keeps the loaded rows, stops requesting the failed page and offers a retry", async () => {
     search.mockReset();
     search.mockImplementation(async (_q, options) => {
-      if (options?.skip) throw new Error("Request failed with status code 504");
+      if (options?.skip) {
+        // A failure that takes a moment, as over the network, renders the fetching state in between.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        throw new Error("Request failed with status code 504");
+      }
       const items = [0, 1, 2].map((i) => ({
         project_id: "p",
         project_name: "P",
@@ -113,9 +117,17 @@ describe("CrossProjectSearch later page error", () => {
     fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
     await screen.findByText("lodash-0");
     await waitFor(() => expect(client.getQueryCache().getAll().some((q) => q.state.status === "error")).toBe(true));
-    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
 
     expect(screen.getByText("lodash-0")).toBeInTheDocument();
+    expect(search.mock.calls.map(([, options]) => options?.skip)).toEqual([0, 3]);
+    expect(screen.getByRole("alert")).toHaveTextContent("Request failed with status code 504");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+
+    expect(search.mock.calls.map(([, options]) => options?.skip)).toEqual([0, 3, 3]);
+    expect(screen.getByRole("alert")).toHaveTextContent("Request failed with status code 504");
   });
 });
 

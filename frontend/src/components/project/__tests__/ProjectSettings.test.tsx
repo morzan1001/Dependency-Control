@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectSettings } from '../ProjectSettings'
@@ -8,6 +9,7 @@ import type { AppConfig } from '@/types/system'
 import type { User } from '@/types/user'
 
 const mockUpdate = vi.fn().mockResolvedValue({})
+const mockRotateApiKey = vi.fn()
 const mockGitHubList = vi.fn()
 const mockGitLabList = vi.fn()
 const mockUseTeams = vi.fn()
@@ -19,7 +21,7 @@ vi.mock('@/api/projects', () => ({
   projectApi: {
     update: (...args: unknown[]) => mockUpdate(...args),
     delete: vi.fn(),
-    rotateApiKey: vi.fn(),
+    rotateApiKey: (...args: unknown[]) => mockRotateApiKey(...args),
   },
 }))
 vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => mockUseAppConfig() }))
@@ -404,5 +406,42 @@ describe('ProjectSettings periodic re-scanning', () => {
     renderSettings(githubProject({ rescan_enabled: false }))
 
     expect(screen.getByLabelText('Enable Re-scanning')).not.toBeChecked()
+  })
+})
+
+describe('ProjectSettings API key rotation', () => {
+  const writeText = vi.fn()
+
+  beforeEach(() => {
+    vi.mocked(toast.success).mockClear()
+    vi.mocked(toast.error).mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+    mockRotateApiKey.mockResolvedValue({ project_id: 'p1', api_key: 'dc_rotated_key', note: '' })
+    // jsdom ships no Clipboard API.
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  })
+
+  async function rotateAndCopyKey() {
+    renderSettings(githubProject())
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy API key' }))
+  }
+
+  it('confirms the copy once the clipboard holds the new key', async () => {
+    writeText.mockResolvedValue(undefined)
+
+    await rotateAndCopyKey()
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/copied/i)))
+    expect(writeText.mock.calls).toEqual([['dc_rotated_key']])
+  })
+
+  it('tells the admin to copy the new key by hand when the clipboard refuses', async () => {
+    writeText.mockRejectedValue(new Error('denied'))
+
+    await rotateAndCopyKey()
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/copy it by hand/i)))
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
   })
 })
