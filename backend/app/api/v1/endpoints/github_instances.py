@@ -249,16 +249,24 @@ async def _probe_token(
             "names its API host only through the GitHub web URL. Set it, or pull-request decoration and "
             "branch housekeeping never call the API.",
         )
-    if await github_service.get_current_user_id() is not None:
+    response = await github_service._api_get("/user")
+    if response is not None and response.status_code == 200:
         return " The access token authenticates."
     cause, reset = await _why_refused(github_service)
     if cause is _Refusal.BUDGET:
         return _budget_failure(instance, "the token could not be tried", reset)
+    if response is not None and response.status_code in (401, 403):
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but GitHub refused the access token on GET /user, so pull-request "
+            "decoration, branch housekeeping and team sync cannot use it. Check that it is valid and has "
+            "not expired or been revoked.",
+        )
+    answer = "got no answer" if response is None else f"answered HTTP {response.status_code}"
     return _failed_test(
         instance,
-        "OIDC endpoint reachable, but GitHub refused the access token on GET /user, so pull-request "
-        "decoration, branch housekeeping and team sync cannot use it. Check that it is valid and has "
-        "not expired or been revoked.",
+        f"OIDC endpoint reachable, but GET /user {answer}, so whether GitHub accepts the access token could "
+        "not be determined: the API host may be unreachable, or GitHub may be failing. Check both, then test again.",
     )
 
 

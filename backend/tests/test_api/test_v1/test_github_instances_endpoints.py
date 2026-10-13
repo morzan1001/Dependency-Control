@@ -200,7 +200,11 @@ def _run_test_connection(
     with (
         patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
         patch.object(GitHubService, "refresh_jwks", new=AsyncMock(return_value=jwks)),
-        patch.object(GitHubService, "get_current_user_id", new=token_probe or AsyncMock(return_value=_TOKEN_USER_ID)),
+        patch.object(
+            GitHubService,
+            "_api_get",
+            new=token_probe or AsyncMock(return_value=httpx.Response(200, json={"id": _TOKEN_USER_ID})),
+        ),
         patch.object(GitHubService, "get_viewer_organisations", new=org_probe),
         patch.object(GitHubService, "count_org_teams", new=team_probe),
         patch.object(GitHubService, "get_core_rate_limit", new=rate_limit_probe),
@@ -279,20 +283,39 @@ class TestConnectionChecksTheToken:
 class TestConnectionTriesTheTokenWithoutTeamSync:
     """Pull-request decoration and branch housekeeping send the token whether or not teams are synced."""
 
-    def test_a_token_github_refuses_fails_the_test(self, admin_user):
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_token_github_refuses_fails_the_test(self, admin_user, status):
+        """A refused token cannot read GET /rate_limit either, so the budget stays unread."""
         instance = make_github_instance(access_token="ghp-revoked", sync_teams=False)
-        token_probe = AsyncMock(return_value=None)
+        token_probe = AsyncMock(return_value=httpx.Response(status, json={"message": "Bad credentials"}))
 
-        result, org_probe, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, token_probe=token_probe)
+        result, org_probe, *_ = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, rate_limit=None, token_probe=token_probe
+        )
 
         assert result.success is False
         assert "refused the access token" in result.message
         token_probe.assert_awaited_once()
         org_probe.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "answer", [None, httpx.Response(502), httpx.Response(503)], ids=["no-answer", "bad-gateway", "unavailable"]
+    )
+    def test_a_token_check_github_did_not_answer_blames_no_token(self, admin_user, answer):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
+
+        result, *_ = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, rate_limit=None, token_probe=AsyncMock(return_value=answer)
+        )
+
+        assert result.success is False
+        assert "could not be determined" in result.message
+        assert "unreachable" in result.message
+        assert "refused the access token" not in result.message
+
     def test_a_token_github_answers_for_passes(self, admin_user):
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
-        token_probe = AsyncMock(return_value=_TOKEN_USER_ID)
+        token_probe = AsyncMock(return_value=httpx.Response(200, json={"id": _TOKEN_USER_ID}))
 
         result, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, token_probe=token_probe)
 
@@ -312,9 +335,10 @@ class TestConnectionTriesTheTokenWithoutTeamSync:
     def test_a_throttled_token_reports_the_wait_rather_than_a_refusal(self, admin_user):
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
         budget = _spent_budget(minutes_until_reset=9)
+        spent = httpx.Response(403, headers={"X-RateLimit-Remaining": "0"})
 
         result, *_ = _run_test_connection(
-            instance, admin_user, jwks={"keys": [{}]}, rate_limit=budget, token_probe=AsyncMock(return_value=None)
+            instance, admin_user, jwks={"keys": [{}]}, rate_limit=budget, token_probe=AsyncMock(return_value=spent)
         )
 
         assert result.success is False
