@@ -83,7 +83,7 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                   Status: <ReportStatusBadge status={report.status} />
                 </div>
                 <div className="text-muted-foreground">
-                  Requested {formatDateTime(report.requested_at)} by {report.requested_by}
+                  Requested {formatDateTime(report.requested_at)} by {report.requested_by_name ?? report.requested_by}
                 </div>
                 {report.completed_at && (
                   <div className="text-muted-foreground">

@@ -43,6 +43,7 @@ export interface ComplianceReportMeta {
   format: ReportFormat;
   status: ReportStatus;
   requested_by: string;
+  requested_by_name?: string;
   requested_at: string;
   completed_at: string | null;
   artifact_filename: string | null;

@@ -115,6 +115,19 @@ describe("ReportDetailDrawer", () => {
     expect(await screen.findByText(/Delete this report\?/i)).toBeInTheDocument();
   });
 
+  it("names the requester by their username and still offers the delete to them", () => {
+    withClient(<ReportDetailDrawer report={{ ...sampleReport, requested_by_name: "lena" }} onClose={() => {}} />);
+
+    expect(screen.getByText(/Requested .* by lena$/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Delete report/i })).toBeInTheDocument();
+  });
+
+  it("names a requester whose account is gone by the stored id", () => {
+    withClient(<ReportDetailDrawer report={sampleReport} onClose={() => {}} />);
+
+    expect(screen.getByText(/Requested .* by u1$/)).toBeInTheDocument();
+  });
+
   it("offers no delete on a report someone else requested", () => {
     withClient(<ReportDetailDrawer report={{ ...sampleReport, requested_by: "u2" }} onClose={() => {}} />);
 

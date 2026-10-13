@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CONCURRENT_COMPLIANCE_REPORTS,
@@ -135,7 +136,8 @@ async def list_reports(
         skip=skip,
         limit=limit,
     )
-    return {"reports": [_report_view(r) for r in reports]}
+    views = [_report_view(r) for r in reports]
+    return {"reports": await resolve_usernames(db, views, "requested_by_name", id_field="requested_by")}
 
 
 @router.get(
@@ -153,7 +155,8 @@ async def get_report(
     if not await _user_can_see_report(db, current_user, r):
         # Don't leak the report's existence to a caller without scope access.
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
-    return _report_view(r)
+    [view] = await resolve_usernames(db, [_report_view(r)], "requested_by_name", id_field="requested_by")
+    return view
 
 
 @router.get(

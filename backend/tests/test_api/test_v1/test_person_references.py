@@ -7,10 +7,12 @@ import pytest
 import pytest_asyncio
 from fastapi import BackgroundTasks
 
-from app.api.v1.endpoints import crypto_policies, invitations, policy_audit, waivers
+from app.api.v1.endpoints import compliance_reports, crypto_policies, invitations, policy_audit, waivers
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.models.compliance_report import ComplianceReport
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
+from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.waiver import WaiverCreate, WaiverUpdate
 from app.services.chat.tools import ChatToolRegistry
@@ -229,3 +231,39 @@ class TestCryptoPolicy:
 
         assert policy["updated_by"] == shown
         assert (await db.crypto_policies.find_one({"scope": "system"}))["updated_by"] == updated_by
+
+
+@pytest_asyncio.fixture
+async def reported(db):
+    for report_id, requested_by in CREATORS.items():
+        report = ComplianceReport(
+            id=report_id,
+            scope="user",
+            framework=ReportFramework.BSI_TR_02102,
+            format=ReportFormat.JSON,
+            status=ReportStatus.COMPLETED,
+            requested_by=requested_by,
+            requested_at=NOW,
+        )
+        await db.compliance_reports.insert_one(report.model_dump(by_alias=True))
+    return db
+
+
+class TestComplianceReports:
+    # The id stays beside the name: it decides whether the requester may delete the report.
+    @pytest.mark.asyncio
+    async def test_the_list_names_each_requester_beside_the_id(self, reported):
+        result = await compliance_reports.list_reports(
+            ADMIN, reported, scope=None, scope_id=None, framework=None, status=None, skip=0, limit=50
+        )
+
+        shown = {r["_id"]: (r["requested_by"], r.get("requested_by_name")) for r in result["reports"]}
+        assert shown == {"w-ada": ("u-ada", "ada.lovelace"), "w-legacy": ("grace", None), "w-gone": ("u-gone", None)}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("report_id", list(CREATORS))
+    async def test_one_report_names_its_requester_beside_the_id(self, reported, report_id):
+        report = await compliance_reports.get_report(report_id, ADMIN, reported)
+
+        assert report["requested_by"] == CREATORS[report_id]
+        assert report.get("requested_by_name") == ("ada.lovelace" if report_id == "w-ada" else None)
