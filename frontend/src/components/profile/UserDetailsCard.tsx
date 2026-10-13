@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
-import { refusesUsername, useUpdateMe } from '@/hooks/queries/use-users';
+import { refusesEmail, refusesUsername, useUpdateMe } from '@/hooks/queries/use-users';
 import { User, UserUpdateMe } from '@/types/user';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -69,6 +69,9 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
           setEmail((draft) => (draft.trim() === sent ? saved.email : draft));
           toast.success(saved.email_change === 'changed' ? "Email changed" : "Confirmation link sent");
         },
+        onError: (error) => {
+          if (!refusesEmail(error)) toast.error("Error", { description: getErrorMessage(error) });
+        },
       });
     }
   };
@@ -78,7 +81,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     profileMutation.isError && refusesUsername(profileMutation.variables, profileMutation.error)
       ? getErrorMessage(profileMutation.error)
       : null;
-  const emailError = emailMutation.isError ? getErrorMessage(emailMutation.error) : null;
+  const emailError = emailMutation.isError && refusesEmail(emailMutation.error) ? getErrorMessage(emailMutation.error) : null;
   const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
 
   return (

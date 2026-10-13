@@ -195,8 +195,11 @@ describe('UserDetailsCard', () => {
     { field: 'Slack Member ID', value: 'U123', error: refused('Inactive user'), message: 'Inactive user' },
     { field: 'Username', value: 'lena.k', error: new Error('Network Error'), message: 'Network Error' },
     { field: 'Username', value: 'lena.k', error: refused(SERVER_FAILURE, 500), message: SERVER_FAILURE },
+    { field: 'Email', value: NEW_EMAIL, error: new Error('Network Error'), message: 'Network Error' },
+    { field: 'Email', value: NEW_EMAIL, error: refused(SERVER_FAILURE, 500), message: SERVER_FAILURE },
   ])('reports a failed save of the $field without blaming the field: $message', async ({ field, value, error, message }) => {
     updateMe.mockRejectedValue(error)
+    changeEmail.mockRejectedValue(error)
     renderCard(LOCAL_USER)
 
     type(field, value)
@@ -394,6 +397,18 @@ describe('UserDetailsCard', () => {
     expect(toast.success).not.toHaveBeenCalled()
     type('Email', 'lena.other@corp.com')
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('shows under the field that the new address belongs to another account, without a toast', async () => {
+    changeEmail.mockRejectedValue(refused('Email already registered'))
+    renderCard(LOCAL_USER)
+
+    type('Email', NEW_EMAIL)
+    save()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Email already registered')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Email already registered')
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('shows only why a malformed address was refused, in place of the pending note', async () => {
