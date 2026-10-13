@@ -156,9 +156,6 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
   };
 
   const canUpdateUser = hasPermission('user:update');
-  // Mirrors the server: a caller manages only accounts whose every permission they hold, unless system:manage.
-  const canRenameUser =
-    canUpdateUser && !!user && (hasPermission('system:manage') || user.permissions.every((p) => hasPermission(p)));
   const userProjects = user ? getUserProjects(user.id) : [];
   const userTeams = user ? getUserTeams(user.id) : [];
   const isLocalAuth = user?.auth_provider === 'local';
@@ -178,7 +175,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                   <Label>Username</Label>
                   <div className="flex items-center gap-2">
                     <span className="break-all text-sm font-medium">{user.username}</span>
-                    {canRenameUser && (
+                    {canUpdateUser && (
                       <Button
                         variant="outline"
                         size="sm"

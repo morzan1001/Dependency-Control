@@ -174,18 +174,16 @@ describe('UserDetailsDialog - username', () => {
     expect(field).toHaveValue('otto')
   })
 
-  it('lets a system manager rename a user who holds a permission the manager lacks', () => {
-    auth.granted = ['user:update', 'system:manage']
+  it('offers a rename wherever it offers Deactivate, also for a user who holds a permission the caller lacks', () => {
+    auth.granted = ['user:update']
     renderDialog()
 
     expect(screen.getByRole('button', { name: 'Rename' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Deactivate' })).toBeInTheDocument()
   })
 
-  it.each([
-    ['without user:update', ['project:read']],
-    ['lacking a permission the user holds', ['user:update']],
-  ])('offers no rename to a caller %s', (_, granted) => {
-    auth.granted = granted
+  it('offers no rename to a caller without user:update', () => {
+    auth.granted = ['project:read']
     renderDialog()
 
     expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument()
