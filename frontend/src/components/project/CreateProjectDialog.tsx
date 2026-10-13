@@ -144,7 +144,6 @@ export function CreateProjectDialog({
                   value={createdProjectData.api_key}
                   readOnly
                   className="font-mono bg-muted"
-                  type="password"
                 />
                 <Button
                   size="icon"

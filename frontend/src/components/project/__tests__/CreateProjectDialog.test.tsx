@@ -127,6 +127,7 @@ describe('CreateProjectDialog after a project was created', () => {
       )
       expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
       expect(copy.querySelector('.lucide-check')).not.toBeInTheDocument()
+      expect(screen.getByDisplayValue(API_KEY)).not.toHaveAttribute('type', 'password')
     })
   })
 })
