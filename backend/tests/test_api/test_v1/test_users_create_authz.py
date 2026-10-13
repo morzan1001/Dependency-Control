@@ -41,7 +41,7 @@ def _perm_manager_user(extra=None):
 def _mock_repo():
     repo = MagicMock()
     repo.exists_by_email = AsyncMock(return_value=False)
-    repo.exists_by_username = AsyncMock(return_value=False)
+    repo.ensure_username_free = AsyncMock()
     repo.create = AsyncMock()
     return repo
 

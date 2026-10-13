@@ -1,5 +1,6 @@
-"""Identity fields: usernames stay with their owner, email changes are proven by the new mailbox, and emails compare case-insensitively."""
+"""Identity fields: a new username follows one rule whoever picks it, email changes are proven by the new mailbox, and emails compare case-insensitively."""
 
+import logging
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -83,6 +84,18 @@ async def _put(db, caller, target_id, **fields):
         return await users.update_user(target_id, user_schemas.UserUpdate(**fields), User(**caller), db)
 
 
+async def _patch_me(db, caller, **fields):
+    return await users.update_user_me(user_schemas.UserUpdateMe(**fields), User(**caller), db)
+
+
+async def _admin_put(db, target, **fields):
+    return await _put(db, ADMIN, target["_id"], **fields)
+
+
+def _renames(caplog):
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.INFO and " renamed " in r.getMessage()]
+
+
 async def _request_change(db, caller, new_email, settings=MAIL):
     background_tasks = BackgroundTasks()
     with _system(settings):
@@ -98,35 +111,116 @@ def _mailed_token(background_tasks):
 
 
 class TestProfileUpdate:
-    @pytest.mark.parametrize("field", ["username", "email"])
-    def test_the_profile_update_does_not_accept_identity_fields(self, field):
+    def test_the_profile_update_does_not_accept_an_email(self):
         with pytest.raises(ValidationError):
-            user_schemas.UserUpdateMe.model_validate({field: "lena2@corp.com"})
+            user_schemas.UserUpdateMe.model_validate({"email": "lena2@corp.com"})
+
+    @pytest.mark.parametrize("username", ["", "   ", None], ids=["empty", "blank", "null"])
+    def test_the_profile_update_cannot_blank_the_username(self, username):
+        with pytest.raises(ValidationError):
+            user_schemas.UserUpdateMe.model_validate({"username": username})
+
+
+class TestRenames:
+    @pytest.mark.asyncio
+    async def test_a_user_renames_themselves_from_the_profile(self, db, caplog):
+        with caplog.at_level(logging.INFO):
+            result = await _patch_me(db, LOCAL, username="lena.k")
+
+        assert (await _stored(db, LOCAL_ID))["username"] == result["username"] == "lena.k"
+        assert _renames(caplog) == [f"User {LOCAL_ID} renamed user {LOCAL_ID} from 'lena' to 'lena.k'"]
+
+    @pytest.mark.asyncio
+    async def test_an_identity_provider_account_renames_itself_too(self, db):
+        await _patch_me(db, IDP, username="otto.k")
+
+        assert (await _stored(db, IDP_ID))["username"] == "otto.k"
+
+    @pytest.mark.asyncio
+    async def test_an_administrator_renames_another_user(self, db, caplog):
+        with caplog.at_level(logging.INFO):
+            await _put(db, ADMIN, LOCAL_ID, username="lena2")
+
+        assert (await _stored(db, LOCAL_ID))["username"] == "lena2"
+        assert _renames(caplog) == [f"User {ADMIN_ID} renamed user {LOCAL_ID} from 'lena' to 'lena2'"]
+
+    @pytest.mark.asyncio
+    async def test_an_administrator_renames_themselves(self, db, caplog):
+        with caplog.at_level(logging.INFO):
+            await _put(db, ADMIN, ADMIN_ID, username="root")
+
+        assert (await _stored(db, ADMIN_ID))["username"] == "root"
+        assert _renames(caplog) == [f"User {ADMIN_ID} renamed user {ADMIN_ID} from 'admin' to 'root'"]
+
+    @pytest.mark.asyncio
+    async def test_an_administrator_cannot_rename_a_user_who_holds_permissions_they_lack(self, db):
+        boss = {**ADMIN, "_id": "u-boss", "username": "boss", "email": "boss@corp.com"}
+        boss["permissions"] = [*ADMIN["permissions"], Permissions.SYSTEM_MANAGE]
+        await UserRepository(db).create_raw(dict(boss))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _put(db, ADMIN, "u-boss", username="minion")
+
+        assert exc_info.value.status_code == 403
+        assert (await _stored(db, "u-boss"))["username"] == "boss"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("username", ["ab", "a" * 64, "Lena_K-1.2", "0lena"])
+    async def test_a_name_within_the_rule_is_taken(self, db, username):
+        await _patch_me(db, LOCAL, username=username)
+
+        assert (await _stored(db, LOCAL_ID))["username"] == username
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "username",
+        ["l", "a" * 65, "-lena", ".lena", "_lena", "lena@corp.com", "lena k", "jörg", "lena/k"],
+        ids=["short", "long", "hyphen-first", "dot-first", "underscore-first", "email", "space", "umlaut", "slash"],
+    )
+    @pytest.mark.parametrize("rename", [_patch_me, _admin_put], ids=["profile", "admin"])
+    async def test_a_new_name_outside_the_rule_is_refused(self, db, rename, username):
+        with pytest.raises(HTTPException) as exc_info:
+            await rename(db, LOCAL, username=username)
+
+        assert exc_info.value.status_code == 422
+        assert await _stored(db, LOCAL_ID) == LOCAL
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("rename", [_patch_me, _admin_put], ids=["profile", "admin"])
+    async def test_another_accounts_name_in_any_case_is_refused(self, db, rename):
+        with pytest.raises(IdentityTakenError, match="Username already taken"):
+            await rename(db, LOCAL, username="OTTO")
+
+        assert await _stored(db, LOCAL_ID) == LOCAL
+
+    @pytest.mark.asyncio
+    async def test_a_user_changes_the_case_of_their_own_name(self, db):
+        await _patch_me(db, LOCAL, username="Lena")
+
+        assert (await _stored(db, LOCAL_ID))["username"] == "Lena"
+
+    @pytest.mark.asyncio
+    async def test_an_unchanged_name_outside_the_rule_stays_valid(self, db, caplog):
+        legacy = {**LOCAL, "_id": "u-nora", "username": "Nora Neu", "email": "nora@corp.com"}
+        await UserRepository(db).create_raw(dict(legacy))
+
+        with caplog.at_level(logging.INFO):
+            await _patch_me(db, legacy, username="Nora Neu", slack_username="U1")
+            await _put(db, ADMIN, "u-nora", username="Nora Neu", is_active=False)
+
+        stored = await _stored(db, "u-nora")
+        assert (stored["username"], stored["slack_username"], stored["is_active"]) == ("Nora Neu", "U1", False)
+        assert _renames(caplog) == []
 
 
 class TestUpdateUserIdentityFields:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(("field", "value"), [("username", "lena2"), ("email", "lena2@corp.com")])
-    async def test_a_user_cannot_change_their_own_identity_fields(self, db, field, value):
+    async def test_a_user_cannot_change_their_own_email_here(self, db):
         with pytest.raises(HTTPException) as exc_info:
-            await _put(db, LOCAL, LOCAL_ID, **{field: value})
+            await _put(db, LOCAL, LOCAL_ID, email="lena2@corp.com")
 
         assert exc_info.value.status_code == 403
         assert await _stored(db, LOCAL_ID) == LOCAL
-
-    @pytest.mark.asyncio
-    async def test_an_administrator_cannot_rename_themselves_either(self, db):
-        with pytest.raises(HTTPException) as exc_info:
-            await _put(db, ADMIN, ADMIN_ID, username="root")
-
-        assert exc_info.value.status_code == 403
-        assert (await _stored(db, ADMIN_ID))["username"] == "admin"
-
-    @pytest.mark.asyncio
-    async def test_an_administrator_renames_another_user(self, db):
-        await _put(db, ADMIN, LOCAL_ID, username="lena2")
-
-        assert (await _stored(db, LOCAL_ID))["username"] == "lena2"
 
     @pytest.mark.asyncio
     async def test_an_administrator_sets_a_local_email_lowercased_and_unverified(self, db):
@@ -276,8 +370,8 @@ class TestCaseInsensitiveEmails:
     @pytest.mark.parametrize(
         "build",
         [
-            lambda email: user_schemas.UserCreate(email=email, username="n", password=PASSWORD),
-            lambda email: user_schemas.UserSignup(email=email, username="n", password=PASSWORD),
+            lambda email: user_schemas.UserCreate(email=email, username="nora", password=PASSWORD),
+            lambda email: user_schemas.UserSignup(email=email, username="nora", password=PASSWORD),
             lambda email: user_schemas.UserUpdate(email=email),
             lambda email: user_schemas.UserEmailChange(email=email),
         ],
@@ -326,24 +420,39 @@ async def _oidc_login(db, **claims):
 
 
 class TestUsernames:
-    """A username is looked up at login before the email, so it must never be empty or read as one."""
+    """A username is looked up at login before the email, so a chosen one must never be empty or read as one."""
 
     @pytest.mark.parametrize(
         "build",
         [
             lambda username: user_schemas.UserCreate(email="n@corp.com", username=username, password=PASSWORD),
             lambda username: user_schemas.UserSignup(email="n@corp.com", username=username, password=PASSWORD),
-            lambda username: user_schemas.UserUpdate(username=username),
         ],
-        ids=["UserCreate", "UserSignup", "UserUpdate"],
+        ids=["UserCreate", "UserSignup"],
     )
-    @pytest.mark.parametrize("username", ["", "   ", "lena@corp.com"], ids=["empty", "blank", "email-shaped"])
-    def test_an_unusable_username_is_refused(self, build, username):
+    @pytest.mark.parametrize(
+        "username",
+        ["", "   ", "n", "a" * 65, "-nora", "nora@corp.com", "nora k", "jörg"],
+        ids=["empty", "blank", "short", "long", "hyphen-first", "email-shaped", "space", "umlaut"],
+    )
+    def test_a_new_account_with_a_name_outside_the_rule_is_refused(self, build, username):
         with pytest.raises(ValidationError):
             build(username)
 
     def test_a_new_username_is_stored_trimmed(self):
         assert user_schemas.UserSignup(email="n@corp.com", username=" nora ", password=PASSWORD).username == "nora"
+
+    @pytest.mark.asyncio
+    async def test_an_sso_account_keeps_a_provider_name_outside_the_rule(self, db):
+        await _oidc_login(db, email="max@corp.com", preferred_username="Max Mustermann")
+
+        assert (await UserRepository(db).get_raw_by_email("max@corp.com"))["username"] == "Max Mustermann"
+
+    @pytest.mark.asyncio
+    async def test_an_sso_first_login_is_not_refused_for_a_case_variant_of_another_name(self, db):
+        await _oidc_login(db, email="lena.idp@corp.com", preferred_username="LENA")
+
+        assert (await UserRepository(db).get_raw_by_email("lena.idp@corp.com"))["username"] == "LENA"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("preferred_username", ["lena@corp.com", None, ""], ids=["email-shaped", "null", "empty"])
@@ -357,4 +466,4 @@ class TestUsernames:
 
 def test_creating_a_user_requires_a_password():
     with pytest.raises(ValidationError):
-        user_schemas.UserCreate(email="n@corp.com", username="n")
+        user_schemas.UserCreate(email="n@corp.com", username="nora")

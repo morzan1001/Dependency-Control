@@ -1,5 +1,6 @@
 import base64
 import io
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -52,9 +53,32 @@ from app.schemas.user import (
     UserPasswordUpdate,
     UserUpdate,
     UserUpdateMe,
+    check_new_username,
 )
 
 router = CustomAPIRouter()
+logger = logging.getLogger(__name__)
+
+
+async def _save_user_fields(
+    user_repo: UserRepository, actor: User, target_id: str, current_name: str, update_data: dict[str, Any]
+) -> None:
+    """Write ``update_data``; a username other than ``current_name`` follows the rule and is no other account's."""
+    new_name: str | None = update_data.get("username")
+    if new_name == current_name:
+        del update_data["username"]
+        new_name = None
+    elif new_name is not None:
+        try:
+            check_new_username(new_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        await user_repo.ensure_username_free(new_name, except_id=target_id)
+
+    if update_data:
+        await user_repo.update(target_id, update_data)
+    if new_name is not None:
+        logger.info("User %s renamed user %s from %r to %r", actor.id, target_id, current_name, new_name)
 
 
 def _ensure_can_set_permissions(caller: User, existing: set[str], requested: set[str]) -> None:
@@ -94,7 +118,9 @@ async def create_user(
 
     # The admin vouches for the address, as an accepted invitation does.
     new_user = User(**user_dict, is_verified=True)
-    await UserRepository(db).create(new_user)
+    user_repo = UserRepository(db)
+    await user_repo.ensure_username_free(new_user.username)
+    await user_repo.create(new_user)
     return new_user
 
 
@@ -139,11 +165,9 @@ async def update_user_me(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Update own profile."""
-    update_data = user_in.model_dump(exclude_unset=True)
-
-    if update_data:
-        await UserRepository(db).update(current_user.id, update_data)
-
+    await _save_user_fields(
+        UserRepository(db), current_user, current_user.id, current_user.username, user_in.model_dump(exclude_unset=True)
+    )
     return await get_user_or_404(current_user.id, db)
 
 
@@ -201,11 +225,8 @@ async def update_user(
     user_repo = UserRepository(db)
     update_data = user_in.model_dump(exclude_unset=True)
 
-    if is_self and update_data.keys() & {"username", "email"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Change your email from your profile; only an administrator can change your username",
-        )
+    if is_self and "email" in update_data:
+        raise HTTPException(status_code=403, detail="Change your email from your profile")
 
     if "permissions" in update_data:
         _ensure_can_set_permissions(
@@ -226,8 +247,7 @@ async def update_user(
             raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
         update_data["is_verified"] = False
 
-    if update_data:
-        await user_repo.update(user_id, update_data)
+    await _save_user_fields(user_repo, current_user, user_id, existing_user["username"], update_data)
 
     return await get_user_or_404(user_id, db)
 

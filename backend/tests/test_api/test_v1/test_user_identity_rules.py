@@ -1,5 +1,6 @@
 """One rule each for 'this identity is taken' and 'this is a local account', on every path that asks."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -52,6 +53,20 @@ async def _invite(db, email):
         return await invitations.create_system_invitation(BackgroundTasks(), db, ADMIN, email)
 
 
+async def _accept_invitation(db, username):
+    await db.system_invitations.insert_one(
+        {
+            "_id": "inv-new",
+            "email": "new@corp.com",
+            "token": "tok",
+            "invited_by": ADMIN.id,
+            "is_used": False,
+            "expires_at": datetime.now(timezone.utc) + timedelta(days=1),
+        }
+    )
+    return await invitations.accept_system_invitation(db, "tok", username, PASSWORD)
+
+
 async def _refusal(call) -> str:
     with pytest.raises(IdentityTakenError) as exc_info:
         await call
@@ -65,13 +80,28 @@ class TestOneIdentityRule:
         [
             (_signup, {"email": "taken@corp.com"}, EMAIL_TAKEN),
             (_signup, {"username": "taken"}, USERNAME_TAKEN),
+            (_signup, {"username": "TAKEN"}, USERNAME_TAKEN),
             (_admin_create, {"email": "TAKEN@corp.com"}, EMAIL_TAKEN),
             (_admin_create, {"username": "taken"}, USERNAME_TAKEN),
+            (_admin_create, {"username": "Taken"}, USERNAME_TAKEN),
         ],
-        ids=["signup-email", "signup-username", "admin-email", "admin-username"],
+        ids=[
+            "signup-email",
+            "signup-username",
+            "signup-username-case",
+            "admin-email",
+            "admin-username",
+            "admin-username-case",
+        ],
     )
     async def test_every_account_creation_refuses_a_taken_identity_alike(self, db, create, fields, expected):
         assert await _refusal(create(db, **fields)) == expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("username", ["taken", "TaKeN"])
+    async def test_accepting_an_invitation_refuses_a_taken_username_in_any_case(self, db, username):
+        assert await _refusal(_accept_invitation(db, username)) == USERNAME_TAKEN
+        assert await db.users.count_documents({}) == 1
 
     @pytest.mark.asyncio
     async def test_an_invitation_to_a_registered_address_is_refused_alike(self, db):

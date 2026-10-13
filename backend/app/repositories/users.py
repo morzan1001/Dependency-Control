@@ -25,6 +25,10 @@ def _email_query(email: str) -> dict[str, Any]:
     return {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
 
 
+def _username_query(username: str) -> dict[str, Any]:
+    return {"username": {"$regex": f"^{re.escape(username)}$", "$options": "i"}}
+
+
 @contextmanager
 def _unique_index_as_identity_taken() -> Iterator[None]:
     try:
@@ -88,6 +92,14 @@ class UserRepository(BaseRepository[User]):
 
     async def exists_by_username(self, username: str) -> bool:
         return await self.exists({"username": username})
+
+    async def ensure_username_free(self, username: str, except_id: str | None = None) -> None:
+        """A name someone picks must be no other account's in any case; the unique index compares exactly."""
+        query = _username_query(username)
+        if except_id is not None:
+            query["_id"] = {"$ne": except_id}
+        if await self.exists(query):
+            raise IdentityTakenError("username")
 
     async def exists_by_email(self, email: str) -> bool:
         return await self.exists(_email_query(email))
