@@ -492,4 +492,13 @@ describe('UserDetailsCard', () => {
 
     expect(screen.queryByText(/open the link/i)).not.toBeInTheDocument()
   })
+
+  it.each([
+    { is_active: true, status: 'Active', tone: 'bg-green-100' },
+    { is_active: false, status: 'Inactive', tone: 'bg-red-100' },
+  ])('shows the status $status in the pill of the users table', ({ is_active, status, tone }) => {
+    renderCard({ ...LOCAL_USER, is_active })
+
+    expect(screen.getByText(status)).toHaveClass('rounded-full', tone)
+  })
 })

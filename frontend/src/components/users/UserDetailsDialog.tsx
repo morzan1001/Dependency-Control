@@ -24,6 +24,7 @@ import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
 import { RenameUserDialog } from './RenameUserDialog';
+import { UserStatusBadge } from './UserStatusBadge';
 
 interface AsyncListSectionProps {
   isLoading: boolean;
@@ -200,15 +201,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                 <div>
                   <Label>Status</Label>
                   <div className="flex items-center gap-2">
-                    {user.is_active ? (
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
-                          Active
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
-                          Inactive
-                        </span>
-                      )}
+                      <UserStatusBadge user={user} />
                       {canUpdateUser && (
                         <Button
                           variant="outline"

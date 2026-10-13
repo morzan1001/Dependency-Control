@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { UserStatusBadge } from '@/components/users/UserStatusBadge';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
@@ -188,11 +188,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
           <div className="grid gap-2">
             <Label>Status</Label>
             <div className="flex items-center gap-2">
-              {user?.is_active ? (
-                <Badge variant="default">Active</Badge>
-              ) : (
-                <Badge variant="destructive">Inactive</Badge>
-              )}
+              {user && <UserStatusBadge user={user} />}
             </div>
           </div>
           <Button type="submit" disabled={isSaving || !nextUsername}>

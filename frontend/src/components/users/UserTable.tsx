@@ -28,6 +28,7 @@ import {
 import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
+import { UserStatusBadge } from './UserStatusBadge';
 
 interface UserTableProps {
   users: User[] | undefined;
@@ -135,27 +136,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                 </TableCell>
                 <TableCell>{user.email}</TableCell>
                 <TableCell>
-                  {(() => {
-                    if (user.status === 'invited') {
-                      return (
-                        <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800">
-                          Invited
-                        </span>
-                      )
-                    }
-                    if (user.is_active) {
-                      return (
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
-                          Active
-                        </span>
-                      )
-                    }
-                    return (
-                      <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
-                        Inactive
-                      </span>
-                    )
-                  })()}
+                  <UserStatusBadge user={user} />
                 </TableCell>
                 <TableCell>
                     {(() => {

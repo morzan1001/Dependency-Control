@@ -1,5 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
+
+import type { User } from '@/types/user'
 
 import { UserTable } from '../UserTable'
 
@@ -18,5 +20,23 @@ describe('UserTable sorting', () => {
     fireEvent.click(screen.getByText('Username'))
 
     expect(onSort.mock.calls).toEqual([['username']])
+  })
+})
+
+describe('UserTable status', () => {
+  it('labels a pending invitation, an active account and a deactivated one', () => {
+    const row = (id: string, is_active: boolean, status: User['status']): User =>
+      ({ id, username: id, email: `${id}@corp.com`, is_active, status, permissions: [], totp_enabled: false })
+    render(
+      <UserTable
+        users={[row('invitee', false, 'invited'), row('lena', true, 'active'), row('otto', false, 'active')]}
+        page={0}
+        limit={20}
+        onPageChange={vi.fn()}
+      />,
+    )
+
+    const statuses = screen.getAllByRole('row').slice(1).map((tr) => within(tr).getAllByRole('cell')[2].textContent)
+    expect(statuses).toEqual(['Invited', 'Active', 'Inactive'])
   })
 })
