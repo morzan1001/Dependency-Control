@@ -235,6 +235,35 @@ def _failed_test(instance: GitHubInstance, message: str) -> GitHubInstanceTestCo
     )
 
 
+async def _probe_token(
+    github_service: GitHubService, instance: GitHubInstance
+) -> GitHubInstanceTestConnectionResponse | str:
+    """A failure response, or the sentence saying GitHub accepts the token."""
+    if github_service.api_url is None:
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the access token is sent nowhere: a GitHub Enterprise instance "
+            "names its API host only through the GitHub web URL. Set it, or pull-request decoration and "
+            "branch housekeeping never call the API.",
+        )
+    if await github_service.get_current_user_id() is not None:
+        return " The access token authenticates."
+    cause, reset = await _why_refused(github_service)
+    if cause is _Refusal.BUDGET:
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so the token "
+            f"could not be tried. The limit resets at {reset}. Wait for it, or stop sharing this "
+            "identity with another workload.",
+        )
+    return _failed_test(
+        instance,
+        "OIDC endpoint reachable, but GitHub refused the access token on GET /user, so pull-request "
+        "decoration, branch housekeeping and team sync cannot use it. Check that it is valid and has "
+        "not expired or been revoked.",
+    )
+
+
 async def _refused_org_listing(
     github_service: GitHubService, instance: GitHubInstance
 ) -> GitHubInstanceTestConnectionResponse | None:
@@ -323,7 +352,7 @@ async def test_connection(
     db: DatabaseDep,
     current_user: deps.SystemManagerDep,
 ) -> GitHubInstanceTestConnectionResponse:
-    """Fetch the JWKS from the configured issuer and, for a team-syncing instance, exercise the token."""
+    """Fetch the JWKS from the configured issuer, try a configured token, and check a team-syncing one's team access."""
     instance_repo = GitHubInstanceRepository(db)
     instance = await get_or_404(instance_repo, instance_id, _LABEL)
 
@@ -336,6 +365,11 @@ async def test_connection(
             return _failed_test(instance, "JWKS endpoint unreachable or returned no signing keys")
 
         message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+        if instance.access_token:
+            token_check = await _probe_token(github_service, instance)
+            if isinstance(token_check, GitHubInstanceTestConnectionResponse):
+                return token_check
+            message += token_check
         # Only an instance that syncs teams needs organisation access; demanding it of a
         # pure-ingest instance would fail a perfectly good setup.
         if instance.sync_teams:
