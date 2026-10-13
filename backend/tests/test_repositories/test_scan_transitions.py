@@ -85,6 +85,22 @@ async def test_a_failed_rescan_reports_its_run_on_the_build_it_re_analyses():
 
 
 @pytest.mark.asyncio
+async def test_a_failed_build_reports_its_own_run_over_the_rescan_it_announced():
+    """Re-ingested past its rescan's SBOM, the build never hears how that rescan ends, so only its own run replaces it."""
+    announced = {"scan_id": "rescan", "status": SCAN_STATUS_PENDING}
+    db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, latest_run=announced)
+
+    await ScanRepository(db).mark_failed(_SCAN, "boom", worker_id=_WORKER_A)
+
+    stored = await _stored(db)
+    assert stored["latest_run"] == {
+        "scan_id": _SCAN,
+        "status": SCAN_STATUS_FAILED,
+        "completed_at": stored["completed_at"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_a_failed_rescan_leaves_a_build_re_ingested_since_alone():
     db = await _seeded(
         status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, is_rescan=True, original_scan_id="root", sbom_generation=1
