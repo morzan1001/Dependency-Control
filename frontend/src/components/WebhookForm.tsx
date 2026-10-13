@@ -155,8 +155,7 @@ export function WebhookForm(props: WebhookFormProps) {
     try {
       if (props.webhook) {
         const changes = changedFields(props.webhook, form)
-        // The server refuses an empty update, so a save with nothing changed resends the unchanged active state.
-        await props.onUpdate(Object.keys(changes).length > 0 ? changes : { is_active: form.isActive })
+        if (Object.keys(changes).length > 0) await props.onUpdate(changes)
         toast.success("Webhook updated")
       } else {
         await props.onCreate(createPayload(form))

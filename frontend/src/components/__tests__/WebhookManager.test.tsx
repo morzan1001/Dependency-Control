@@ -278,15 +278,18 @@ describe("WebhookManager", () => {
       expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
     });
 
-    it("saves a webhook with nothing changed by resending its active state, and confirms like the other Save buttons", async () => {
-      const onUpdate = renderEditor(stored);
+    it("keeps a pause made while the dialog was open when nothing was changed, and confirms like the other Save buttons", async () => {
+      const onUpdate = vi.fn().mockResolvedValue(stored);
+      const props = { isLoading: false, onCreate: vi.fn(), onUpdate, onDelete: vi.fn() };
+      const { rerender } = render(<WebhookManager webhooks={[stored]} {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: "Edit webhook" }));
 
-      const [id, data] = await saved(onUpdate);
+      rerender(<WebhookManager webhooks={[{ ...stored, is_active: false }]} {...props} />);
+      fireEvent.click(saveButton());
 
-      expect(id).toBe("w-edit");
-      expect(data).toStrictEqual({ is_active: true });
       await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Webhook updated"));
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(onUpdate).not.toHaveBeenCalled();
     });
 
     it("closes through Cancel without saving and drops the edits", () => {
@@ -360,9 +363,10 @@ describe("WebhookManager", () => {
 
       fireEvent.click(screen.getByLabelText(/Scan completed/i));
       fireEvent.click(screen.getByLabelText(/Scan completed/i));
-      const [, data] = await saved(onUpdate);
+      fireEvent.click(saveButton());
 
-      expect(data).toStrictEqual({ is_active: true });
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(onUpdate).not.toHaveBeenCalled();
     });
 
     it.each([
