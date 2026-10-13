@@ -99,3 +99,15 @@ describe('auth form autofill', () => {
     expect(screen.getByLabelText('Confirm Password')).toHaveAttribute('autocomplete', 'new-password')
   })
 })
+
+describe('auth form navigation', () => {
+  it.each([
+    { name: 'Signup', page: <Signup />, path: '/signup' },
+    { name: 'AcceptInvite', page: <AcceptInvite />, path: '/accept-invite?token=t1' },
+  ])('offers the login under the submit on $name', ({ page, path }) => {
+    render(<MemoryRouter initialEntries={[path]}>{page}</MemoryRouter>)
+
+    expect(screen.getByText(/Already have an account\?/)).toContainElement(screen.getByRole('link', { name: 'Login' }))
+    expect(screen.getByRole('link', { name: 'Login' })).toHaveAttribute('href', '/login')
+  })
+})

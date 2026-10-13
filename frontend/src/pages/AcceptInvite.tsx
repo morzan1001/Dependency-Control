@@ -151,6 +151,9 @@ export default function AcceptInvite() {
             <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isSubmitting ? "Creating account..." : "Create Account"}
             </Button>
+            <div className="text-sm text-center text-muted-foreground">
+              Already have an account? <Link to="/login" className="text-primary hover:underline">Login</Link>
+            </div>
           </CardFooter>
         </form>
       </Card>
