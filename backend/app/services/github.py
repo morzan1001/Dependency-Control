@@ -648,11 +648,7 @@ class GitHubService:
         return await self._api_get_paginated("/user/orgs")
 
     async def get_core_rate_limit(self) -> GitHubCoreRateLimit | None:
-        """The token's core budget, or None when it cannot be read (GHES answers 404 with rate limiting off).
-
-        GitHub does not charge this endpoint against the budget, so it keeps answering 200 while every
-        other call 403s -- which tells an exhausted token from an unauthorised one when the refusal did not.
-        """
+        """The token's core budget from the uncharged GET /rate_limit; None if unreadable, as on GHES without limits."""
         response = await self._api_get("/rate_limit")
         if response is None or response.status_code != 200:
             return None

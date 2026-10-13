@@ -151,12 +151,7 @@ class _Refusal(Enum):
 
 
 async def _why_refused(github_service: GitHubService) -> tuple[_Refusal, str]:
-    """What refused a read, and -- when a rate limit did -- the moment it lifts.
-
-    A throttled token 403s exactly like one missing read:org. The refusal's Retry-After or spent quota
-    names the limit, a secondary one included; else GET /rate_limit, which GitHub does not charge, reads
-    the core budget. Called on a failure path alone, so a green read costs nothing.
-    """
+    """What refused a read, from its rate-limit headers or the uncharged GET /rate_limit, and when a limit lifts."""
     reset_at = github_service.rate_limited_until
     if reset_at is None:
         limit = await github_service.get_core_rate_limit()

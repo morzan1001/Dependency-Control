@@ -188,11 +188,7 @@ _TOKEN_USER_ID = 4242
 def _run_test_connection(
     instance, current_user, jwks, orgs=None, team_counts=None, rate_limit=_HEALTHY_BUDGET, token_probe=None
 ):
-    """Drive test_connection with the outbound calls stubbed; returns (response, org, team, rate-limit probes).
-
-    An intact budget and a token GET /user answers for are the defaults because they are the state a
-    test about anything else assumes: a probe refused under them is refused on its own merits.
-    """
+    """Drive test_connection with stubs; an intact budget and an accepted token keep any refusal the test's own."""
     from app.api.v1.endpoints.github_instances import test_connection
 
     mock_repo = _make_repo_mock(get_by_id=instance)
