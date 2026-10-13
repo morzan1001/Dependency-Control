@@ -58,6 +58,18 @@ describe('InviteUserDialog copy link', () => {
     expect(screen.queryByRole('button', { name: 'Copy Link' })).not.toBeInTheDocument()
   })
 
+  it('asks for the link to be copied once no email went out, like the project API key dialogs', async () => {
+    openDialog()
+    expect(screen.getByRole('dialog')).toHaveAccessibleDescription(
+      'Send an invitation email to a new user. They will be able to set their own password.',
+    )
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@test.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send Invitation' }))
+
+    await screen.findByDisplayValue(INVITE_LINK)
+    expect(screen.getByRole('dialog')).toHaveAccessibleDescription('Please copy the invitation link and send it to the user.')
+  })
+
   it('tells the admin to copy the link by hand and leaves the button unmarked when the clipboard refuses', async () => {
     writeText.mockRejectedValue(new Error('denied'))
 

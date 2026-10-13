@@ -80,7 +80,9 @@ export function InviteUserDialog() {
         <DialogHeader>
           <DialogTitle>Invite User</DialogTitle>
           <DialogDescription>
-            Send an invitation email to a new user. They will be able to set their own password.
+            {inviteLink
+              ? 'Please copy the invitation link and send it to the user.'
+              : 'Send an invitation email to a new user. They will be able to set their own password.'}
           </DialogDescription>
         </DialogHeader>
         
