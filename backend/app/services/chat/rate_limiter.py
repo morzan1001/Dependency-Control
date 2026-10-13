@@ -1,41 +1,19 @@
-"""Redis sliding-window rate limiter for chat requests."""
+"""Redis sliding-window rate limiter for chat messages and MCP tool calls."""
 
 import logging
 import time
 
 from fastapi import HTTPException, status
 
-from app.core.cache import CacheService, cache_service
+from app.core.cache import cache_service
 from app.core.metrics import chat_rate_limited_total
 
 logger = logging.getLogger(__name__)
 
 CHAT_PREFIX = "chat:rl:"
 
-
-async def rate_limit_retry_after(owner_id: str, *, per_minute: int, per_hour: int) -> int:
-    """Seconds until the owner's window admits a request, 0 when it admits this one; a Redis outage admits it."""
-    verdict = await ChatRateLimiter(cache_service).check_rate_limit(owner_id, per_minute=per_minute, per_hour=per_hour)
-    if verdict is None:
-        logger.warning("Redis unavailable for chat rate limiting, allowing request")
-        return 0
-    allowed, retry_after = verdict
-    return 0 if allowed else retry_after
-
-
-async def enforce_rate_limit(owner_id: str, *, per_minute: int, per_hour: int) -> None:
-    """Raise 429 with Retry-After once the owner's window is spent."""
-    if retry_after := await rate_limit_retry_after(owner_id, per_minute=per_minute, per_hour=per_hour):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded",
-            headers={"Retry-After": str(retry_after)},
-        )
-
-
-class ChatRateLimiter:
-    # Single-round-trip Lua script to avoid TOCTOU races admitting two concurrent requests.
-    _WINDOW_LUA = """
+# Single-round-trip Lua script to avoid TOCTOU races admitting two concurrent requests.
+_WINDOW_LUA = """
 -- KEYS[1] = window sorted set key
 -- ARGV[1] = now (unix seconds, float)
 -- ARGV[2] = window seconds
@@ -67,23 +45,29 @@ redis.call('EXPIRE', KEYS[1], math.floor(window * 2))
 return {1, max_reqs - count - 1}
 """
 
-    def __init__(self, cache: CacheService):
-        self.cache = cache
 
-    async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int] | None:
-        """Return (allowed, retry_after_seconds), or None while Redis is unreachable.
+async def rate_limit_retry_after(owner_id: str, *, per_minute: int, per_hour: int) -> int:
+    """Seconds until the owner's windows admit a request, 0 when they admit this one; a Redis outage admits it."""
+    now = time.time()
+    member = f"{owner_id}:{now}"
+    # An hour-window denial still spends a minute slot, acceptable as the hour limit rarely triggers.
+    for window, seconds, limit in (("minute", 60, per_minute), ("hour", 3600, per_hour)):
+        key = f"{CHAT_PREFIX}{owner_id}:{window}"
+        result = await cache_service.eval(_WINDOW_LUA, key, str(now), str(seconds), str(limit), member)
+        if result is None:
+            logger.warning("Redis unavailable for rate limiting, allowing request")
+            return 0
+        if not int(result[0]):
+            return int(result[1])
+    return 0
 
-        The minute window is consumed before the hour window is checked, so an hour-limit
-        denial still spends a minute slot — an acceptable asymmetry as the hour limit rarely triggers.
-        """
-        now = time.time()
-        member = f"{user_id}:{now}"
-        for window, seconds, limit in (("minute", 60, per_minute), ("hour", 3600, per_hour)):
-            key = f"{CHAT_PREFIX}{user_id}:{window}"
-            result = await self.cache.eval(self._WINDOW_LUA, key, str(now), str(seconds), str(limit), member)
-            if result is None:
-                return None
-            if not int(result[0]):
-                chat_rate_limited_total.inc()
-                return False, int(result[1])
-        return True, 0
+
+async def enforce_rate_limit(owner_id: str, *, per_minute: int, per_hour: int) -> None:
+    """Raise 429 with Retry-After once the owner's chat window is spent."""
+    if retry_after := await rate_limit_retry_after(owner_id, per_minute=per_minute, per_hour=per_hour):
+        chat_rate_limited_total.inc()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )

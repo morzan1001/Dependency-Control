@@ -40,6 +40,8 @@ _INTERNAL_ERROR = -32603
 # An owner holding both permissions leaves the key itself as the only thing that can refuse.
 _BOTH_SURFACES = (Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC)
 
+_CHAT_DENIALS = "dc_chat_rate_limited_total"
+
 
 @pytest.fixture(autouse=True)
 def limiter_cache(fake_cache, monkeypatch):
@@ -295,6 +297,7 @@ async def test_a_batch_at_the_cap_is_answered_in_full(client, db):
 async def test_tool_calls_beyond_the_owners_window_get_a_json_rpc_error_each(client, db, window):
     """One chat message may run chat_max_tool_rounds tool rounds, so it buys that many calls."""
     await _admit_one_chat_message(db, tool_rounds=2, window=window)
+    chat_denials = metrics.REGISTRY.get_sample_value(_CHAT_DENIALS)
 
     resp = await _rpc(client, db, [_tool_call(1), _tool_call(2), _tool_call(3)])
 
@@ -304,6 +307,7 @@ async def test_tool_calls_beyond_the_owners_window_get_a_json_rpc_error_each(cli
     assert third["id"] == 3
     assert third["error"]["code"] == _RATE_LIMITED
     assert "retry in" in third["error"]["message"]
+    assert metrics.REGISTRY.get_sample_value(_CHAT_DENIALS) == chat_denials
 
 
 @pytest.mark.asyncio

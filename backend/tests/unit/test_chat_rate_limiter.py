@@ -1,4 +1,4 @@
-"""Unit tests for ChatRateLimiter, exercising the real Lua script via fakeredis."""
+"""The chat and MCP rate limiter, exercising the real Lua script via fakeredis."""
 
 import asyncio
 import logging
@@ -11,7 +11,7 @@ from fastapi import HTTPException
 import app.core.cache as cache_mod
 import app.services.chat.rate_limiter as rate_limiter_mod
 from app.core.metrics import REGISTRY
-from app.services.chat.rate_limiter import ChatRateLimiter, enforce_rate_limit
+from app.services.chat.rate_limiter import enforce_rate_limit, rate_limit_retry_after
 
 _START = 1_000_000.0
 
@@ -37,86 +37,71 @@ def clock(monkeypatch):
 
 
 @pytest.fixture
-def limiter(fake_cache):
-    return ChatRateLimiter(fake_cache)
-
-
-@pytest.mark.asyncio
-async def test_allows_first_request(limiter):
-    allowed, retry_after = await limiter.check_rate_limit("user-1", per_minute=5, per_hour=20)
-    assert allowed is True
-    assert retry_after == 0
-
-
-@pytest.mark.asyncio
-async def test_blocks_after_minute_limit(limiter):
-    for _ in range(5):
-        allowed, _ = await limiter.check_rate_limit("user-1", per_minute=5, per_hour=100)
-        assert allowed is True
-
-    allowed, retry_after = await limiter.check_rate_limit("user-1", per_minute=5, per_hour=100)
-    assert allowed is False
-    assert retry_after > 0
-
-
-@pytest.mark.asyncio
-async def test_different_users_independent(limiter):
-    for _ in range(5):
-        await limiter.check_rate_limit("user-1", per_minute=5, per_hour=100)
-
-    allowed, _ = await limiter.check_rate_limit("user-2", per_minute=5, per_hour=100)
-    assert allowed is True
-
-
-@pytest.mark.asyncio
-async def test_a_spent_minute_slot_is_held_for_a_full_minute(limiter, clock):
-    await limiter.check_rate_limit("clock-user", per_minute=2, per_hour=1000)
-    clock.advance(1)
-    await limiter.check_rate_limit("clock-user", per_minute=2, per_hour=1000)
-
-    clock.advance(44)
-    allowed, retry_after = await limiter.check_rate_limit("clock-user", per_minute=2, per_hour=1000)
-    assert allowed is False
-    assert retry_after > 0
-
-    clock.advance(17)
-    allowed, _ = await limiter.check_rate_limit("clock-user", per_minute=2, per_hour=1000)
-    assert allowed is True
-
-
-@pytest.mark.asyncio
-async def test_a_spent_hour_slot_is_held_for_a_full_hour(limiter, clock):
-    await limiter.check_rate_limit("hour-user", per_minute=1000, per_hour=2)
-    clock.advance(1)
-    await limiter.check_rate_limit("hour-user", per_minute=1000, per_hour=2)
-
-    clock.advance(1199)
-    allowed, retry_after = await limiter.check_rate_limit("hour-user", per_minute=1000, per_hour=2)
-    assert allowed is False
-    assert retry_after > 0
-
-    clock.advance(2401)
-    allowed, _ = await limiter.check_rate_limit("hour-user", per_minute=1000, per_hour=2)
-    assert allowed is True
-
-
-@pytest.mark.asyncio
-async def test_a_check_adds_no_metric_series_per_user(limiter):
-    """Nothing ever removes a per-user child series, so every caller would stay in the registry."""
-    await limiter.check_rate_limit("series-user", per_minute=5, per_hour=20)
-
-    labelled = [s for metric in REGISTRY.collect() for s in metric.samples if "series-user" in s.labels.values()]
-    assert labelled == []
-
-
-@pytest.fixture
 def shared_cache(fake_cache, monkeypatch):
     monkeypatch.setattr(rate_limiter_mod, "cache_service", fake_cache)
     return fake_cache
 
 
+@pytest.mark.asyncio
+async def test_allows_first_request(shared_cache):
+    assert await rate_limit_retry_after("user-1", per_minute=5, per_hour=20) == 0
+
+
+@pytest.mark.asyncio
+async def test_blocks_after_minute_limit(shared_cache):
+    for _ in range(5):
+        assert await rate_limit_retry_after("user-1", per_minute=5, per_hour=100) == 0
+
+    assert await rate_limit_retry_after("user-1", per_minute=5, per_hour=100) > 0
+
+
+@pytest.mark.asyncio
+async def test_different_users_independent(shared_cache):
+    for _ in range(5):
+        await rate_limit_retry_after("user-1", per_minute=5, per_hour=100)
+
+    assert await rate_limit_retry_after("user-2", per_minute=5, per_hour=100) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_spent_minute_slot_is_held_for_a_full_minute(shared_cache, clock):
+    await rate_limit_retry_after("clock-user", per_minute=2, per_hour=1000)
+    clock.advance(1)
+    await rate_limit_retry_after("clock-user", per_minute=2, per_hour=1000)
+
+    clock.advance(44)
+    assert await rate_limit_retry_after("clock-user", per_minute=2, per_hour=1000) > 0
+
+    clock.advance(17)
+    assert await rate_limit_retry_after("clock-user", per_minute=2, per_hour=1000) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_spent_hour_slot_is_held_for_a_full_hour(shared_cache, clock):
+    await rate_limit_retry_after("hour-user", per_minute=1000, per_hour=2)
+    clock.advance(1)
+    await rate_limit_retry_after("hour-user", per_minute=1000, per_hour=2)
+
+    clock.advance(1199)
+    assert await rate_limit_retry_after("hour-user", per_minute=1000, per_hour=2) > 0
+
+    clock.advance(2401)
+    assert await rate_limit_retry_after("hour-user", per_minute=1000, per_hour=2) == 0
+
+
 async def _enforce(owner_id: str = "owner-1", per_minute: int = 5) -> None:
     await enforce_rate_limit(owner_id, per_minute=per_minute, per_hour=100)
+
+
+@pytest.mark.asyncio
+async def test_a_denial_adds_no_metric_series_per_user(shared_cache):
+    """Nothing ever removes a per-user child series, so every caller would stay in the registry."""
+    await _enforce("series-user", per_minute=1)
+    with pytest.raises(HTTPException):
+        await _enforce("series-user", per_minute=1)
+
+    labelled = [s for metric in REGISTRY.collect() for s in metric.samples if "series-user" in s.labels.values()]
+    assert labelled == []
 
 
 @pytest.mark.asyncio
