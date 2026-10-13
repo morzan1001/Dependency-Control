@@ -73,7 +73,7 @@ export default function AcceptInvite() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-muted/50">
+      <div className="flex h-screen items-center-safe justify-center bg-muted/50">
         <Card className="w-[350px]">
           <CardHeader>
             <Skeleton className="h-12 w-12 rounded-full mx-auto mb-2" />
@@ -93,7 +93,7 @@ export default function AcceptInvite() {
 
   if (error && !email) {
     return (
-      <div className="flex h-screen items-center justify-center bg-muted/50">
+      <div className="flex h-screen items-center-safe justify-center bg-muted/50">
         <Card className="w-[350px]">
           <CardHeader className="text-center">
             <CardTitle className="text-destructive">Error</CardTitle>
@@ -110,7 +110,7 @@ export default function AcceptInvite() {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-muted/50">
+    <div className="flex h-screen items-center-safe justify-center bg-muted/50">
       <Card className="w-[350px]">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">

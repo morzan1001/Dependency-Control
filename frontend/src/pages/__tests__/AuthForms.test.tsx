@@ -1,10 +1,14 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AcceptInvite from '../AcceptInvite'
 import Login from '../Login'
+import RequestEmailLink from '../RequestEmailLink'
+import ResetPassword from '../ResetPassword'
 import Signup from '../Signup'
+import VerifyEmail from '../VerifyEmail'
 
 const { loginRefusal } = vi.hoisted(() => ({ loginRefusal: { current: undefined as unknown } }))
 
@@ -15,6 +19,7 @@ vi.mock('@/hooks/queries/use-auth', () => ({
   }),
   useSignup: () => ({ mutate: vi.fn(), isPending: false }),
   useAcceptInvitation: () => ({ mutate: vi.fn(), isPending: false }),
+  useResetPassword: () => ({ mutate: vi.fn(), isPending: false }),
   useValidateInvitation: () => ({
     mutate: (_token: string, opts: { onSuccess: (data: { email: string }) => void }) =>
       opts.onSuccess({ email: 'invitee@example.com' }),
@@ -122,5 +127,28 @@ describe('auth form guidance', () => {
     expect(screen.getByLabelText('Password').parentElement).toHaveTextContent(
       'Must be at least 8 characters and contain uppercase, lowercase, digit, and special character.',
     )
+  })
+})
+
+describe('auth card layout', () => {
+  it.each([
+    { name: 'Login', page: <Login />, path: '/login' },
+    { name: 'Signup', page: <Signup />, path: '/signup' },
+    { name: 'AcceptInvite', page: <AcceptInvite />, path: '/accept-invite?token=t1' },
+    { name: 'ResetPassword', page: <ResetPassword />, path: '/reset-password?token=t1' },
+    { name: 'VerifyEmail', page: <VerifyEmail verifyToken={vi.fn()} />, path: '/verify-email' },
+    {
+      name: 'RequestEmailLink',
+      page: <RequestEmailLink title="Forgot Password" description="" submitLabel="Send Reset Email" requestLink={vi.fn()} />,
+      path: '/forgot-password',
+    },
+  ])('keeps the top of the $name card reachable on a screen shorter than the card', ({ page, path }) => {
+    const { container } = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={[path]}>{page}</MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(container.firstElementChild).toHaveClass('flex h-screen items-center-safe justify-center bg-muted/50', { exact: true })
   })
 })

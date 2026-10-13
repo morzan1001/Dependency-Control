@@ -22,7 +22,7 @@ export default function RequestEmailLink({ title, description, submitLabel, requ
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-muted/50">
+    <div className="flex h-screen items-center-safe justify-center bg-muted/50">
       <Card className="w-[350px]">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">

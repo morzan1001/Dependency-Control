@@ -20,7 +20,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 const refused = (detail: string, status = 400) => ({ response: { status, data: { detail } } })
 
 function renderPage() {
-  render(
+  return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
       <MemoryRouter>
         <Setup2FA />
@@ -58,6 +58,14 @@ describe('Setup2FA', () => {
     expect(screen.getByRole('button', { name: 'Start Setup' })).toHaveClass('w-full')
     fireEvent.click(screen.getByRole('button', { name: 'Start Setup' }))
     expect(await screen.findByRole('button', { name: 'Enable 2FA' })).toHaveClass('w-full')
+  })
+
+  it('keeps the top of the QR code card reachable on a screen shorter than the card, like the other auth pages', async () => {
+    const { container } = renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Start Setup' }))
+    await screen.findByAltText('2FA QR Code')
+
+    expect(container.firstElementChild).toHaveClass('flex h-screen items-center-safe justify-center bg-muted/50', { exact: true })
   })
 
   it('renders the enrolment QR code from the base64 the server sends', async () => {
