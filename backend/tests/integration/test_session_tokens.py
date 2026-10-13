@@ -260,6 +260,7 @@ async def test_a_reset_link_stops_working_once_a_newer_one_was_used(api, db, mai
 
     assert used.status_code == _OK
     assert superseded.status_code == _BAD_REQUEST
+    assert superseded.json() == {"detail": "Invalid or expired reset token"}
     assert security.verify_password(_FIRST_NEW_PASSWORD, await _stored_hash(db))
 
 
