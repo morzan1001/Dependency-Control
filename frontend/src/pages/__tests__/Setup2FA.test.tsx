@@ -19,7 +19,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const refused = (detail: string, status = 400) => ({ response: { status, data: { detail } } })
 
-async function startSetup() {
+function renderPage() {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
       <MemoryRouter>
@@ -27,6 +27,10 @@ async function startSetup() {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+}
+
+async function startSetup() {
+  renderPage()
   fireEvent.click(screen.getByRole('button', { name: 'Start Setup' }))
   await screen.findByAltText('2FA QR Code')
 }
@@ -42,6 +46,18 @@ describe('Setup2FA', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setup2FA.mockResolvedValue(SETUP)
+  })
+
+  it('sits on the card of the sign-in pages: 350px wide, the logo above a centred title and a full-width button', async () => {
+    renderPage()
+
+    const header = screen.getByRole('heading', { name: 'Setup Two-Factor Authentication' }).parentElement as HTMLElement
+    expect(header).toHaveClass('text-center')
+    expect(header).toContainElement(screen.getByAltText('Logo'))
+    expect(header.parentElement).toHaveClass('w-[350px]')
+    expect(screen.getByRole('button', { name: 'Start Setup' })).toHaveClass('w-full')
+    fireEvent.click(screen.getByRole('button', { name: 'Start Setup' }))
+    expect(await screen.findByRole('button', { name: 'Enable 2FA' })).toHaveClass('w-full')
   })
 
   it('renders the enrolment QR code from the base64 the server sends', async () => {
