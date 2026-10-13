@@ -443,9 +443,7 @@ describe("ApiKeysCard", () => {
     fireEvent.click(screen.getByRole("button", { name: /Copy to clipboard/i }));
 
     await waitFor(() =>
-      expect(toastSuccess).toHaveBeenCalledWith(
-        expect.stringMatching(/copied/i),
-      ),
+      expect(toastSuccess).toHaveBeenCalledWith("Token copied to clipboard"),
     );
     expect(writeText.mock.calls).toEqual([[PLAINTEXT_TOKEN]]);
   });
@@ -458,9 +456,9 @@ describe("ApiKeysCard", () => {
     fireEvent.click(screen.getByRole("button", { name: /Copy to clipboard/i }));
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith(
-        expect.stringMatching(/copy it by hand/i),
-      ),
+      expect(toastError).toHaveBeenCalledWith("Could not reach the clipboard", {
+        description: expect.stringMatching(/copy it by hand/i),
+      }),
     );
     expect(screen.getByText(PLAINTEXT_TOKEN)).toBeInTheDocument();
   });

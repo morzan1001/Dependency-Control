@@ -110,7 +110,7 @@ describe('CreateProjectDialog after a project was created', () => {
 
       const copy = createAndCopyKey()
 
-      await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/copied/i)))
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('API key copied to clipboard'))
       expect(writeText.mock.calls).toEqual([[API_KEY]])
       expect(copy.querySelector('.lucide-check')).toBeInTheDocument()
     })
@@ -120,7 +120,11 @@ describe('CreateProjectDialog after a project was created', () => {
 
       const copy = createAndCopyKey()
 
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/copy it by hand/i)))
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith('Could not reach the clipboard', {
+          description: expect.stringMatching(/copy it by hand/i),
+        }),
+      )
       expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
       expect(copy.querySelector('.lucide-check')).not.toBeInTheDocument()
     })

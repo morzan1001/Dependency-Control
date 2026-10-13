@@ -32,10 +32,10 @@ export function useCopyToClipboard(): UseCopyToClipboardReturn {
 export async function copyWithToast(text: string, what: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
-    toast.success(`Copied the ${what} to the clipboard.`)
+    toast.success(`${what.charAt(0).toUpperCase()}${what.slice(1)} copied to clipboard`)
     return true
   } catch {
-    toast.error(`Could not reach the clipboard. Select the ${what} and copy it by hand.`)
+    toast.error('Could not reach the clipboard', { description: `Select the ${what} and copy it by hand.` })
     return false
   }
 }

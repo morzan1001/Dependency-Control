@@ -38,7 +38,7 @@ describe('InviteUserDialog copy link', () => {
 
     inviteAndCopyLink()
 
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/copied/i)))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Invitation link copied to clipboard'))
     expect(writeText.mock.calls).toEqual([[INVITE_LINK]])
   })
 
@@ -47,7 +47,11 @@ describe('InviteUserDialog copy link', () => {
 
     inviteAndCopyLink()
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/copy it by hand/i)))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Could not reach the clipboard', {
+        description: expect.stringMatching(/copy it by hand/i),
+      }),
+    )
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
     expect(screen.getByText(INVITE_LINK)).toBeInTheDocument()
   })
