@@ -307,7 +307,7 @@ _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
 def _worst_outcomes(outcomes: list[AnalyzerOutcome]) -> list[AnalyzerOutcome]:
-    """Each analyzer's worst outcome, in the order first reported; run_analysis records one per SBOM."""
+    """Each analyzer's worst outcome, in the order first reported; an analyzer reports once per SBOM."""
     worst: dict[str, AnalyzerOutcome] = {}
     for outcome in outcomes:
         if outcome.name not in worst or outcome.status > worst[outcome.name].status:

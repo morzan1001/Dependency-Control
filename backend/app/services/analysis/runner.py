@@ -1,4 +1,4 @@
-"""What the scan engine and the ad-hoc path share to run the analyzers over an SBOM."""
+"""Run a registered analyzer over one SBOM and judge its result."""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
