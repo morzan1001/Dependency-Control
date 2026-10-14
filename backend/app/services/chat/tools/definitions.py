@@ -195,7 +195,7 @@ _tool(
     "period, newest first: bucket names the period (day up to 14 days, week up to 90, month "
     "beyond). A point sums the last usable head-branch build of each project in that period; "
     "risk_score is their average and projects says how many built in it.",
-    project_id=_string("Optional: limit to a specific project"),
+    project_id=_ONE_PROJECT,
     days=_bounded(30, MAX_DAY_WINDOW, "Days to look back"),
 )
 _tool(
@@ -319,7 +319,7 @@ _tool(
     "pages. Use when the user asks 'what changed since my last deploy?', 'did the last "
     "scan introduce new vulns?', 'which findings did we resolve?' or what crypto changed.",
     required=["project_id"],
-    project_id=_string("The project ID."),
+    project_id=_PROJECT_ID,
     from_scan_id=_string("Optional baseline scan."),
     to_scan_id=_string("Optional target scan."),
     category={"type": "string", "enum": ["findings", "components", "crypto"]},
@@ -390,7 +390,7 @@ _tool(
     "ago in the project, the age the CVE SLA report uses; each row carries first_seen_at. "
     "Use when the user asks 'what vulns have we been ignoring?', 'what's old?' or about SLA.",
     days_open=_bounded(30, MAX_DAY_WINDOW, "Minimum open age in days"),
-    project_id=_string("Optional: restrict to one project."),
+    project_id=_ONE_PROJECT,
     severity_min=_string("Min severity, one of CRITICAL/HIGH/MEDIUM/LOW (default HIGH)."),
     limit=_FINDING_LIMIT,
 )
@@ -399,7 +399,7 @@ _tool(
     "Return unwaived license-compliance findings specifically (type=license). Use "
     "when the user asks about legal / license issues, e.g. 'do we have GPL "
     "in proprietary code?' or 'license violations across the org'.",
-    project_id=_string("Optional: one project."),
+    project_id=_ONE_PROJECT,
     limit=_FINDING_LIMIT,
 )
 _tool(
@@ -417,7 +417,7 @@ _tool(
     "'how is team X doing?' or 'team-level summary'.",
     required=["team_id"],
     permissions=_TEAM_READ,
-    team_id=_string("The team ID."),
+    team_id=_TEAM_ID,
 )
 _tool(
     "get_projects_without_recent_scan",
@@ -450,7 +450,7 @@ _tool(
     "list_archives",
     "List archived scans.",
     permissions=_ARCHIVE_READ,
-    project_id=_string("Optional: filter by project"),
+    project_id=_ONE_PROJECT,
     limit=_bounded(20, MAX_SUMMARY_ROWS, "Max archives"),
 )
 _tool(
@@ -531,7 +531,7 @@ _tool(
     "get_crypto_hotspots",
     "List top crypto hotspots for a project, grouped by the given dimension.",
     required=["project_id"],
-    project_id=_string(),
+    project_id=_PROJECT_ID,
     group_by={"type": "string", "enum": list(get_args(GroupBy)), "default": "name"},
     limit=_bounded(20, MAX_CRYPTO_HOTSPOT_PAGE, "Max hotspots"),
 )
@@ -540,7 +540,7 @@ _tool(
     "Return time-bucketed crypto finding/asset trend data for a project. "
     "Bucket granularity is auto-selected based on the days range.",
     required=["project_id"],
-    project_id=_string(),
+    project_id=_PROJECT_ID,
     metric={"type": "string", "enum": list(get_args(Metric)), "default": "total_crypto_findings"},
     days=_bounded(30, MAX_DAY_WINDOW, "Days to look back"),
 )
@@ -550,13 +550,13 @@ _tool(
     "generate_pqc_migration_plan",
     "Generate a PQC migration plan for one project.",
     required=["project_id"],
-    project_id=_string(),
+    project_id=_PROJECT_ID,
     limit=_bounded(DEFAULT_PQC_PLAN_ITEMS, MAX_PQC_PLAN_ITEMS, "Max plan items"),
 )
 _tool(
     "list_compliance_reports",
     "List recent compliance reports (metadata only).",
-    project_id=_string(),
+    project_id=_ONE_PROJECT,
     framework=_FRAMEWORK,
     limit=_bounded(10, MAX_COMPLIANCE_REPORT_PAGE, "Max reports"),
 )
