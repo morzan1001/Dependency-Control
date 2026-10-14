@@ -1,7 +1,8 @@
-"""The users and teams lists order names alphabetically whatever their case; the fake ignores collations."""
+"""The users, teams and projects lists order names alphabetically whatever their case; the fake ignores collations."""
 
 import pytest
 
+from app.models.project import Project, ProjectMember
 from app.models.team import Team
 from app.models.user import User
 
@@ -39,3 +40,21 @@ async def test_the_teams_list_orders_names_whatever_their_case(client, db, admin
     )
 
     assert [team["name"] for team in resp.json()] == ["api-gateway", "Core", "Platform Engineering"]
+
+
+async def test_the_projects_list_orders_a_members_projects_whatever_their_case(client, db, member_auth_headers):
+    # member_auth_headers makes "testuser" a member of the fixture's "test-project".
+    membership = [ProjectMember(user_id="testuser", role="viewer")]
+    await db.projects.insert_many(
+        [
+            Project(name="Zeta Service", members=membership).model_dump(by_alias=True),
+            Project(name="alpha-api", members=membership).model_dump(by_alias=True),
+            Project(name="Beta Internal").model_dump(by_alias=True),
+        ]
+    )
+
+    resp = await client.get(
+        "/api/v1/projects/", params={"sort_by": "name", "sort_order": "asc"}, headers=member_auth_headers
+    )
+
+    assert [project["name"] for project in resp.json()["items"]] == ["alpha-api", "test-project", "Zeta Service"]

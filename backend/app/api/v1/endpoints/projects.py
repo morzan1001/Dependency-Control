@@ -44,7 +44,7 @@ from app.api.v1.helpers.projects import (
     load_project_with_members,
     reject_unknown_analyzers,
 )
-from app.api.v1.helpers.sorting import SortOrderQuery
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -353,7 +353,13 @@ async def read_projects(
 
     total = await project_repo.count(final_query)
     docs = await project_repo.find_many_raw(
-        final_query, skip=skip, limit=limit, sort_by=sort_field, sort_order=direction
+        final_query,
+        skip=skip,
+        limit=limit,
+        sort_by=sort_field,
+        sort_order=direction,
+        # Under a collation the membership filter cannot use its indexes, so only a name sort takes one.
+        collation=CASE_INSENSITIVE if sort_field == "name" else None,
     )
     projects = [ProjectWithTeam(**doc) for doc in docs]
 
