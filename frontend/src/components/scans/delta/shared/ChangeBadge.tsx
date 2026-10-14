@@ -10,5 +10,5 @@ const STYLES: Record<string, { label: string; className: string }> = {
 
 export function ChangeBadge({ change }: { readonly change: string }) {
   const style = STYLES[change] ?? { label: change, className: '' }
-  return <Badge variant="secondary" className={style.className}>{style.label}</Badge>
+  return <Badge variant="secondary" className={`whitespace-nowrap ${style.className}`}>{style.label}</Badge>
 }

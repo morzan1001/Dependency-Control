@@ -336,3 +336,19 @@ describe('DeltaHeader - what the comparison actually used', () => {
     ).toBeInTheDocument()
   })
 })
+
+describe('DeltaHeader on a narrow screen', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('stacks From, the swap button and To on a phone and lets each side shrink beside the other from sm on', () => {
+    mockScanSources()
+
+    renderHeader()
+
+    const swap = screen.getByRole('button', { name: 'Swap scans' })
+    expect(swap).toHaveClass('self-center', 'sm:self-auto')
+    const row = swap.parentElement
+    expect(row).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-end')
+    expect(screen.getByText('From').parentElement).toHaveClass('min-w-0')
+  })
+})
