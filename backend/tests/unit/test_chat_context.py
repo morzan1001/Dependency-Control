@@ -3,11 +3,8 @@
 import json
 import re
 
-import pytest
-
 import app.services.chat.context as context_mod
 from app.services.chat.context import SYSTEM_PROMPT, build_messages, trim_to_token_budget
-from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._helpers import MAX_TOOL_RESULT_BYTES
 from app.services.chat.tools._helpers import _truncate_if_too_large
 from app.services.chat.tools.definitions import TOOL_DEFINITIONS
@@ -182,11 +179,10 @@ def test_a_capped_result_fits_the_byte_cap_together_with_its_truncation_note():
     assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_TOOL_RESULT_BYTES
 
 
-@pytest.mark.parametrize("registry", [{t["function"]["name"] for t in TOOL_DEFINITIONS}, ChatToolRegistry._HANDLERS])
-def test_every_tool_the_system_prompt_names_is_a_declared_tool(registry):
+def test_every_tool_the_system_prompt_names_is_a_declared_tool():
     declared = {t["function"]["name"] for t in TOOL_DEFINITIONS}
     verbs = {name.split("_")[0] for name in declared}
     cited = {name for name in re.findall(r"`([a-z]+_[a-z_]+)", SYSTEM_PROMPT) if name.split("_")[0] in verbs}
 
     assert cited
-    assert cited <= set(registry)
+    assert cited <= declared

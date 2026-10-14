@@ -192,3 +192,42 @@ async def test_a_search_cut_short_names_how_many_matched(flooded, admin_user):
 
     assert (result["count"], result["findings_total"]) == (_ANSWER_LIMIT, _TOTAL)
     assert result["_bounded_read"] is True
+
+
+def _open_critical(index: int, finding_type: str) -> dict:
+    """A long-open CRITICAL finding: a vulnerability with a fixed KEV advisory, or a license finding."""
+    doc = {
+        **_finding(index, _SEV_CRITICAL),
+        "_id": f"{_SCAN}:{finding_type}:{index}",
+        "type": finding_type,
+        "first_seen_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+    }
+    if finding_type == "vulnerability":
+        advisory = {"id": f"CVE-2026-{index:05d}", "severity": _SEV_CRITICAL, "in_kev": True, "fixed_version": "1.0.1"}
+        doc["details"] = {"vulnerabilities": [advisory]}
+    else:
+        doc["details"] = {}
+    return doc
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "get_top_priority_findings",
+        "get_kev_findings",
+        "get_auto_fixable_findings",
+        "get_stale_findings",
+        "get_license_violations",
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_estate_wide_ranked_tool_relays_that_its_tier_was_sampled(flooded, admin_user, monkeypatch, tool_name):
+    monkeypatch.setattr(registry_module, "_FINDING_RANK_FETCH_CAP", _CAP)
+    flooded.findings._docs.clear()
+    for index in range(_CAP + 1):
+        for doc in (_open_critical(index, "vulnerability"), _open_critical(index, "license")):
+            flooded.findings._docs[doc["_id"]] = doc
+
+    result = await ChatToolRegistry().execute_tool(tool_name, {}, admin_user, flooded)
+
+    assert f"the {_SEV_CRITICAL} tier holds" in result["ranking_note"]

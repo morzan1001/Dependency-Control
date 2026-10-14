@@ -16,9 +16,12 @@ def advisory_ids(entry: Mapping[str, Any]) -> set[str]:
     return {i for i in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])) if i}
 
 
+ADVISORY_ID_FIELDS = ("id", "aliases", "resolved_cve")
+
+
 def advisory_match(value: Any, prefix: str = "details.vulnerabilities") -> dict[str, Any]:
     """Mongo clause for the advisories known under `value` (an id or an operator on one), as advisory_ids lists them."""
-    return {"$or": [{f"{prefix}.{field}": value} for field in ("id", "aliases", "resolved_cve")]}
+    return {"$or": [{f"{prefix}.{field}": value} for field in ADVISORY_ID_FIELDS]}
 
 
 def entry_cves(entry: Mapping[str, Any]) -> list[str]:

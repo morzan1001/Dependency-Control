@@ -138,15 +138,27 @@ async def test_a_caller_reading_every_project_sends_no_project_id_list() -> None
 
 
 @pytest.mark.parametrize(
-    "tool_name", ["get_kev_findings", "get_auto_fixable_findings", "get_stale_findings", "get_license_violations"]
+    ("tool_name", "args", "listing"),
+    [
+        ("get_top_priority_findings", {}, "findings"),
+        ("get_kev_findings", {}, "findings"),
+        ("get_auto_fixable_findings", {}, "findings"),
+        ("get_stale_findings", {}, "findings"),
+        ("get_license_violations", {}, "findings"),
+        ("get_findings_by_cve", {"cve_id": _CVE}, "findings"),
+        ("get_risk_trends", {}, "trend"),
+        ("generate_remediation_plan", {}, "plan"),
+    ],
 )
 @pytest.mark.asyncio
-async def test_an_unknown_project_id_is_answered_as_unknown_not_as_empty(tool_name: str) -> None:
+async def test_an_unknown_project_id_is_answered_as_unknown_and_an_unscanned_one_as_empty(
+    tool_name: str, args: dict, listing: str
+) -> None:
     db = _seeded()
     user = _user(PRESET_USER)
 
-    unknown = await _call(tool_name, {"project_id": "p-absent"}, user, db)
-    unscanned = await _call(tool_name, {"project_id": _UNSCANNED}, user, db)
+    unknown = await _call(tool_name, {**args, "project_id": "p-absent"}, user, db)
+    unscanned = await _call(tool_name, {**args, "project_id": _UNSCANNED}, user, db)
 
     assert unknown == {"error": _ERR_PROJECT}
-    assert unscanned["message"] == _ERR_NO_SCAN_DATA
+    assert unscanned == {listing: [], "message": _ERR_NO_SCAN_DATA}

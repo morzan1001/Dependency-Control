@@ -77,10 +77,12 @@ def test_tool_definitions_match_registry():
         assert tool_name in definition_names, f"Tool {tool_name} missing from definitions"
 
 
-def test_dispatch_table_covers_exactly_the_declared_tools():
-    """A declared tool absent from the table answers "Unknown tool" instead of failing loudly."""
+def test_every_tool_handler_serves_a_declared_tool():
+    """The dispatch table is built from the declarations, so a handler whose tool was dropped is never called."""
     declared = {t["function"]["name"] for t in TOOL_DEFINITIONS}
-    assert set(ChatToolRegistry._HANDLERS) == declared
+    handlers = {name.removeprefix("_tool_") for name in vars(ChatToolRegistry) if name.startswith("_tool_")}
+
+    assert handlers == declared
 
 
 _PROJECT_READER = [Permissions.PROJECT_READ, Permissions.CHAT_ACCESS]
