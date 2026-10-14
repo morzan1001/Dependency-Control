@@ -370,27 +370,32 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
     logger.info(f"{label}: Archived {len(scan_ids) - len(failed_ids)} scans, deleted {deleted} from MongoDB.")
 
 
-async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, label: str) -> None:
-    """Route retention to delete or archive based on the configured action."""
-    if not scan_ids:
-        return
-
-    if action == RETENTION_ACTION_ARCHIVE and is_archive_enabled():
-        await _archive_scans_and_delete(db, scan_ids, label)
-    elif action == RETENTION_ACTION_DELETE:
-        await _delete_expirable(db, {"_id": {"$in": scan_ids}}, label)
-    elif action == RETENTION_ACTION_ARCHIVE:
+def _retention_can_act(action: str, label: str) -> bool:
+    """Whether the action can expire scans; one that cannot is reported."""
+    if action == RETENTION_ACTION_DELETE or (action == RETENTION_ACTION_ARCHIVE and is_archive_enabled()):
+        return True
+    if action == RETENTION_ACTION_ARCHIVE:
         logger.warning(
             f"{label}: Retention action is 'archive' but S3 is not configured. "
             "Skipping cleanup. Configure S3 or change retention action to 'delete'."
         )
     elif action != RETENTION_ACTION_NONE:
-        # A value stored before the request schemas constrained it. Without this the scans would
-        # simply never expire, and disk growth would be the only signal.
+        # A value stored before the request schemas constrained it; silence would leave disk growth the only signal.
         logger.warning(
             f"{label}: Unknown retention action {action!r}; expected one of {RETENTION_ACTIONS}. "
-            f"{len(scan_ids)} scans past their retention window were left in place."
+            "Scans past their retention window are left in place."
         )
+    return False
+
+
+async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, label: str) -> None:
+    """Expire the scans by deleting or by archiving them."""
+    if not scan_ids:
+        return
+    if action == RETENTION_ACTION_ARCHIVE:
+        await _archive_scans_and_delete(db, scan_ids, label)
+    elif action == RETENTION_ACTION_DELETE:
+        await _delete_expirable(db, {"_id": {"$in": scan_ids}}, label)
 
 
 async def _project_heads(db: Any, project_ids: set[str]) -> set[str]:
@@ -448,6 +453,8 @@ async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[d
 async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, label: str) -> None:
     """Retention for one group: scans past its age and rescans past the history cap. A stored retention no
     cutoff can be computed for fails only its own group."""
+    if not _retention_can_act(action, label):
+        return
     try:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         cursor = db.scans.find({**scope, "created_at": {"$lt": cutoff_date}, **_EXPIRABLE}, {"_id": 1, "project_id": 1})

@@ -1,13 +1,20 @@
 """Tests for the archive branch of retention housekeeping."""
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.constants import RETENTION_PROTECTED_FLAG_VALUES
-from app.core.housekeeping import _archive_scans_and_delete, _handle_retention_action, _run_retention
+from app.core.constants import ARCHIVE_BATCH_SIZE, RETENTION_PROTECTED_FLAG_VALUES
+from app.core.housekeeping import (
+    _archive_scans_and_delete,
+    _expire_group,
+    _handle_retention_action,
+    _retention_can_act,
+    _run_retention,
+)
 from app.models.archive import ArchiveMetadata
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -122,65 +129,11 @@ class TestHandleRetentionAction:
 
         mock_delete.assert_called_once()
 
-    def test_archive_action_with_s3_enabled_calls_archive(self):
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-        ):
+    def test_archive_action_calls_archive(self):
+        with patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive:
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "archive", "test"))
 
         mock_archive.assert_called_once()
-
-    def test_archive_action_without_s3_logs_warning(self):
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=False),
-            patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete,
-            patch(f"{MODULE}.logger") as mock_logger,
-        ):
-            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "archive", "test"))
-
-        mock_archive.assert_not_called()
-        mock_delete.assert_not_called()
-        mock_logger.warning.assert_called_once()
-
-    def test_none_action_does_nothing(self):
-        with (
-            patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete,
-        ):
-            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
-
-        mock_archive.assert_not_called()
-        mock_delete.assert_not_called()
-
-    def test_none_action_stays_silent(self):
-        """ "none" is a deliberate no-op, so it must not be reported as a misconfiguration."""
-        with (
-            patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock),
-            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock),
-            patch(f"{MODULE}.logger") as mock_logger,
-        ):
-            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
-
-        mock_logger.warning.assert_not_called()
-
-    def test_unknown_action_is_reported_instead_of_expiring_nothing(self):
-        """A value stored before the schemas constrained it matches no branch; retention would
-        otherwise skip the scans forever with no log line at all."""
-        with (
-            patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_expirable", new_callable=AsyncMock) as mock_delete,
-            patch(f"{MODULE}.logger") as mock_logger,
-        ):
-            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1", "scan-2"], "Delete", "test"))
-
-        mock_archive.assert_not_called()
-        mock_delete.assert_not_called()
-        mock_logger.warning.assert_called_once()
-        message = mock_logger.warning.call_args[0][0]
-        assert "Delete" in message
-        assert "2" in message
 
     def test_empty_scan_list_returns_early(self):
         with (
@@ -191,6 +144,53 @@ class TestHandleRetentionAction:
 
         mock_archive.assert_not_called()
         mock_delete.assert_not_called()
+
+
+class TestRetentionCanAct:
+    @pytest.mark.parametrize(("action", "archive_enabled"), [("delete", False), ("archive", True)])
+    def test_an_action_that_expires_scans_can_act(self, action, archive_enabled):
+        with patch(f"{MODULE}.is_archive_enabled", return_value=archive_enabled):
+            assert _retention_can_act(action, "test") is True
+
+    def test_none_is_a_deliberate_silent_no_op(self, caplog):
+        with caplog.at_level(logging.WARNING, logger=MODULE):
+            assert _retention_can_act("none", "test") is False
+
+        assert caplog.records == []
+
+    def test_archive_without_s3_is_reported(self, caplog):
+        with patch(f"{MODULE}.is_archive_enabled", return_value=False), caplog.at_level(logging.WARNING, logger=MODULE):
+            assert _retention_can_act("archive", "test") is False
+
+        assert "S3 is not configured" in caplog.text
+
+    def test_an_unknown_action_is_reported_by_name(self, caplog):
+        """A value stored before the schemas constrained it would otherwise keep every scan forever, unlogged."""
+        with caplog.at_level(logging.WARNING, logger=MODULE):
+            assert _retention_can_act("Delete", "test") is False
+
+        assert "'Delete'" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["archive", "Delete"], ids=["archive-without-s3", "unknown"])
+async def test_an_action_that_cannot_act_walks_no_expired_scan(monkeypatch, caplog, action):
+    db = FakeDatabase()
+    expired = datetime.now(timezone.utc) - timedelta(days=200)
+    for i in range(2 * ARCHIVE_BATCH_SIZE + 1):
+        await db.scans.insert_one(
+            {"_id": f"scan-{i}", "project_id": "p1", "status": "completed", "created_at": expired}
+        )
+    unreferenced = AsyncMock(side_effect=lambda _db, batch: [doc["_id"] for doc in batch])
+    monkeypatch.setattr(f"{MODULE}._unreferenced", unreferenced)
+    monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: False)
+
+    with caplog.at_level(logging.WARNING, logger=MODULE):
+        await _expire_group(db, 90, {}, action, "retention")
+
+    unreferenced.assert_not_called()
+    assert len(caplog.records) == 1
+    assert await db.scans.count_documents({}) == 2 * ARCHIVE_BATCH_SIZE + 1
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +220,7 @@ class TestRunRetention:
 
         with (
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._project_heads", new_callable=AsyncMock, return_value=set()),
@@ -270,6 +271,7 @@ class TestRunRetention:
 
         with (
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock),
