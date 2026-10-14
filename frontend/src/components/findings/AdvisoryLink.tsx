@@ -1,4 +1,5 @@
-import { ExternalLink } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { ExternalLink, type LucideIcon } from 'lucide-react'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { advisoryUrl } from '@/lib/finding-utils'
 import { cn } from '@/lib/utils'
@@ -7,14 +8,18 @@ interface AdvisoryLinkProps {
   readonly id: string
   readonly href?: string | null
   readonly variant?: BadgeProps['variant']
+  readonly label?: ReactNode
+  readonly icon?: LucideIcon
+  readonly className?: string
 }
 
-export function AdvisoryLink({ id, href, variant = 'outline' }: AdvisoryLinkProps) {
+export function AdvisoryLink({ id, href, variant = 'outline', label = id, icon: Icon, className }: AdvisoryLinkProps) {
   const link = href || advisoryUrl(id)
   // The filled variants bring their own hover colour; only outline needs one.
   const badge = (
-    <Badge variant={variant} className={cn(link && 'cursor-pointer', link && variant === 'outline' && 'hover:bg-muted')}>
-      {id}
+    <Badge variant={variant} className={cn(link && 'cursor-pointer', link && variant === 'outline' && 'hover:bg-muted', className)}>
+      {Icon && <Icon className="h-3 w-3 mr-1" />}
+      {label}
       {link && <ExternalLink className="h-3 w-3 ml-1" />}
     </Badge>
   )

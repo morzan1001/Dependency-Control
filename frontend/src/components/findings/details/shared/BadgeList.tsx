@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge"
-import { ExternalLink, LucideIcon } from "lucide-react"
+import { LucideIcon } from "lucide-react"
+import { AdvisoryLink } from "../../AdvisoryLink"
 
 interface BadgeListProps {
     readonly items: string[]
@@ -23,34 +24,16 @@ export function BadgeList({
     return (
         <div className="flex flex-wrap gap-2">
             {items.map((item) => {
-                const url = buildUrl?.(item)
-                const badge = (
-                    <Badge
-                        key={item}
-                        variant={variant}
-                        className={`${url ? 'hover:bg-muted cursor-pointer' : ''} ${badgeClassName}`}
-                    >
+                const label = formatLabel ? formatLabel(item) : item
+                if (buildUrl) {
+                    return <AdvisoryLink key={item} id={item} href={buildUrl(item)} variant={variant} label={label} icon={Icon} className={badgeClassName} />
+                }
+                return (
+                    <Badge key={item} variant={variant} className={badgeClassName}>
                         {Icon && <Icon className="h-3 w-3 mr-1" />}
-                        {formatLabel ? formatLabel(item) : item}
-                        {url && <ExternalLink className="h-3 w-3 ml-1" />}
+                        {label}
                     </Badge>
                 )
-
-                if (url) {
-                    return (
-                        <a
-                            key={item}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center"
-                        >
-                            {badge}
-                        </a>
-                    )
-                }
-
-                return badge
             })}
         </div>
     )

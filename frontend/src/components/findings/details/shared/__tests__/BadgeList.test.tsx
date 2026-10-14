@@ -12,13 +12,14 @@ describe("BadgeList", () => {
         icon={AlertTriangle}
         formatLabel={(cwe) => `CWE-${cwe}`}
         buildUrl={(cwe) => `https://cwe.mitre.org/data/definitions/${cwe}.html`}
+        badgeClassName="font-mono"
       />,
     );
 
     const link = screen.getByText("CWE-89").closest("a")!;
     expect(link).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/89.html");
     expect(link).toHaveAttribute("target", "_blank");
-    expect(screen.getByText("CWE-89").className).toContain("hover:bg-muted cursor-pointer");
+    expect(screen.getByText("CWE-89")).toHaveClass("hover:bg-muted", "cursor-pointer", "font-mono");
     expect(screen.getByText("CWE-79").querySelectorAll("svg")).toHaveLength(2);
   });
 
