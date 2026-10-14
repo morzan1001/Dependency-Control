@@ -479,6 +479,8 @@ _ToolHandler = Callable[["ChatToolRegistry", _ToolContext], Awaitable[dict[str, 
 
 
 class ChatToolRegistry:
+    _HANDLERS: ClassVar[dict[str, _ToolHandler]]
+
     def get_available_tool_names(self, user_permissions: list[str]) -> set[str]:
         available = set()
         for tool_def in TOOL_DEFINITIONS:
@@ -1728,63 +1730,6 @@ class ChatToolRegistry:
             framework=ctx.args["framework"],
         )
 
-    _HANDLERS: ClassVar[dict[str, _ToolHandler]] = {
-        "list_projects": _tool_list_projects,
-        "get_project_details": _tool_get_project_details,
-        "get_project_members": _tool_get_project_members,
-        "get_scan_history": _tool_get_scan_history,
-        "get_scan_details": _tool_get_scan_details,
-        "get_scan_findings": _tool_get_scan_findings,
-        "get_vulnerability_details": _tool_get_vulnerability_details,
-        "search_findings": _tool_search_findings,
-        "get_findings_by_severity": _tool_get_findings_by_severity,
-        "get_findings_by_type": _tool_get_findings_by_type,
-        "get_analytics_summary": _tool_get_analytics_summary,
-        "get_risk_trends": _tool_get_risk_trends,
-        "get_dependency_tree": _tool_get_dependency_tree,
-        "get_hotspots": _tool_get_hotspots,
-        "get_dependency_details": _tool_get_dependency_details,
-        "list_teams": _tool_list_teams,
-        "get_team_details": _tool_get_team_details,
-        "get_team_projects": _tool_get_team_projects,
-        "get_waiver_status": _tool_get_waiver_status,
-        "list_project_waivers": _tool_list_project_waivers,
-        "list_global_waivers": _tool_list_global_waivers,
-        "get_top_priority_findings": _tool_get_top_priority_findings,
-        "generate_remediation_plan": _tool_generate_remediation_plan,
-        "get_auto_fixable_findings": _tool_get_auto_fixable_findings,
-        "suggest_waiver_for_finding": _tool_suggest_waiver_for_finding,
-        "compare_scans": _tool_compare_scans,
-        "get_kev_findings": _tool_get_kev_findings,
-        "find_component_usage": _tool_find_component_usage,
-        "get_findings_by_cve": _tool_get_findings_by_cve,
-        "get_cve_details": _tool_get_cve_details,
-        "get_stale_findings": _tool_get_stale_findings,
-        "get_license_violations": _tool_get_license_violations,
-        "get_expiring_waivers": _tool_get_expiring_waivers,
-        "get_team_risk_overview": _tool_get_team_risk_overview,
-        "get_projects_without_recent_scan": _tool_get_projects_without_recent_scan,
-        "get_callgraph": _tool_get_callgraph,
-        "check_reachability": _tool_check_reachability,
-        "list_archives": _tool_list_archives,
-        "get_archive_details": _tool_get_archive_details,
-        "list_project_webhooks": _tool_list_project_webhooks,
-        "get_webhook_deliveries": _tool_get_webhook_deliveries,
-        "get_system_settings": _tool_get_system_settings,
-        "get_system_health": _tool_get_system_health,
-        "list_crypto_assets": _tool_list_crypto_assets,
-        "get_crypto_asset_details": _tool_get_crypto_asset_details,
-        "get_crypto_summary": _tool_get_crypto_summary,
-        "get_project_crypto_policy": _tool_get_project_crypto_policy,
-        "suggest_crypto_policy_override": _tool_suggest_crypto_policy_override,
-        "get_crypto_hotspots": _tool_get_crypto_hotspots,
-        "get_crypto_trends": _tool_get_crypto_trends,
-        "generate_pqc_migration_plan": _tool_generate_pqc_migration_plan,
-        "list_compliance_reports": _tool_list_compliance_reports,
-        "list_policy_audit_entries": _tool_list_policy_audit_entries,
-        "get_framework_evaluation_summary": _tool_get_framework_evaluation_summary,
-    }
-
     async def _require_project(
         self, ctx: _ToolContext, project_id: str | None = None, *, refusal: str = _ERR_PROJECT_NOT_FOUND
     ) -> dict[str, Any]:
@@ -1864,3 +1809,9 @@ class ChatToolRegistry:
         projects = await read_scope_projects(ctx.db, ctx.user_project_query)
         heads = await ScanRepository(ctx.db).get_latest_active_scan_ids(list(projects))
         return heads, {p.id: p.name for p in projects}
+
+
+# A declared tool dispatches to the method named after it; one without such a method fails the import.
+ChatToolRegistry._HANDLERS = {
+    name: getattr(ChatToolRegistry, f"_tool_{name}") for name in (t["function"]["name"] for t in TOOL_DEFINITIONS)
+}
