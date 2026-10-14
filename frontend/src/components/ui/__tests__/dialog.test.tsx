@@ -21,3 +21,18 @@ describe('DialogHeader', () => {
     expect(screen.getByRole('button', { name: 'Close' })).toHaveClass('absolute', 'right-4', 'top-4')
   })
 })
+
+describe('DialogContent', () => {
+  it('holds its content to the dialog width, so a wide table scrolls inside it instead of pushing the title off a phone screen', () => {
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Team Webhooks</DialogTitle>
+          <DialogDescription>Webhooks that receive notifications for all projects in this team.</DialogDescription>
+        </DialogContent>
+      </Dialog>,
+    )
+
+    expect(screen.getByRole('dialog')).toHaveClass('grid', 'grid-cols-1')
+  })
+})
