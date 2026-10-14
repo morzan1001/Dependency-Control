@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from itertools import batched
@@ -519,6 +519,14 @@ async def _expire_scans(db: Any) -> None:
         await _expire_group(db, days, {"project_id": {"$in": project_ids}}, action, label)
 
 
+async def _best_effort[T](label: str, task: Callable[[T], Awaitable[object]], arg: T) -> None:
+    """Run ``task(arg)``; a failure is logged under ``label`` and keeps the caller's other tasks running."""
+    try:
+        await task(arg)
+    except Exception as e:
+        logger.exception("%s failed: %s", label, e)
+
+
 async def run_housekeeping() -> None:
     """The cluster's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
     try:
@@ -529,38 +537,15 @@ async def run_housekeeping() -> None:
         ):
             return
         logger.info("Starting housekeeping task...")
-
-        try:
-            await reconcile_release_flags(db)
-        except Exception as e:
-            logger.exception("Housekeeping: release flag reconcile failed: %s", e)
-
-        try:
-            await prune_old_audit_entries(db)
-        except Exception as e:
-            logger.exception("Housekeeping: policy audit retention failed: %s", e)
-
-        try:
-            await sweep_expired_compliance_reports(db)
-        except Exception as e:
-            logger.exception("Housekeeping: compliance report sweep failed: %s", e)
-
-        # Orphan-reaper: delete S3 archive objects with no matching metadata
-        try:
-            await _reap_orphan_s3_objects(db)
-        except Exception as e:
-            logger.exception("Orphan reaper failed: %s", e)
-
-        try:
-            await _reap_orphan_callgraphs(db)
-        except Exception as e:
-            logger.exception("Callgraph orphan reaper failed: %s", e)
-
-        try:
-            await reap_orphan_gridfs_files(db)
-        except Exception as e:
-            logger.exception("GridFS orphan reaper failed: %s", e)
-
+        for label, sweep in (
+            ("Housekeeping: release flag reconcile", reconcile_release_flags),
+            ("Housekeeping: policy audit retention", prune_old_audit_entries),
+            ("Housekeeping: compliance report sweep", sweep_expired_compliance_reports),
+            ("Orphan reaper", _reap_orphan_s3_objects),
+            ("Callgraph orphan reaper", _reap_orphan_callgraphs),
+            ("GridFS orphan reaper", reap_orphan_gridfs_files),
+        ):
+            await _best_effort(label, sweep, db)
     except Exception as e:
         logger.exception("Housekeeping task failed: %s", e)
 
@@ -703,10 +688,7 @@ async def stale_scan_loop(worker_manager: "AnalysisWorkerManager") -> None:
     """
     while True:
         for requeue in (trigger_stale_pending_scans, requeue_waiting_adhoc_jobs):
-            try:
-                await requeue(worker_manager)
-            except Exception as e:
-                logger.exception("Stale scan loop: %s failed: %s", requeue.__name__, e)
+            await _best_effort(f"Stale scan loop: {requeue.__name__}", requeue, worker_manager)
 
         await asyncio.sleep(HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS)
 
@@ -725,11 +707,7 @@ async def reconcile_update_frequency_ledger() -> None:
     """Check the update-frequency delta ledger against the scans and repair what drifted."""
     if not settings.UPDATE_FREQUENCY_RECONCILE_ENABLED:
         return
-    try:
-        db = await get_database()
-        await run_update_frequency_reconcile(db)
-    except Exception as e:
-        logger.exception("Update-frequency reconcile failed: %s", e)
+    await _best_effort("Update-frequency reconcile", run_update_frequency_reconcile, await get_database())
 
 
 async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
@@ -747,18 +725,9 @@ async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
         await update_archive_stats(db)
         await update_cache_stats()
 
-        try:
-            await run_waiver_recalc(db)
-        except Exception as e:
-            logger.exception("Waiver recalculation failed: %s", e)
-
+        await _best_effort("Waiver recalculation", run_waiver_recalc, db)
         await run_housekeeping()
-
-        try:
-            await _run_retention(db)
-        except Exception as e:
-            logger.exception("Housekeeping: retention failed: %s", e)
-
+        await _best_effort("Housekeeping: retention", _run_retention, db)
         await sync_branch_status()
 
         # Stamped whatever the reconcile did: only one pod gets the lock, and the others
