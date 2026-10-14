@@ -1,0 +1,91 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { gitlabInstancesApi } from "@/api/gitlab-instances";
+import { githubInstancesApi } from "@/api/github-instances";
+import type { Team } from "@/types/team";
+
+import { TeamMembersDialog } from "../TeamMembersDialog";
+
+const auth = vi.hoisted(() => ({ permissions: [] as string[] }));
+
+vi.mock("@/api/gitlab-instances", () => ({ gitlabInstancesApi: { list: vi.fn() } }));
+vi.mock("@/api/github-instances", () => ({ githubInstancesApi: { list: vi.fn() } }));
+vi.mock("@/context/useAuth", () => ({
+  useAuth: () => ({ permissions: auth.permissions, hasPermission: (p: string) => auth.permissions.includes(p) }),
+}));
+vi.mock("@/hooks/queries/use-users", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/queries/use-users")>()),
+  useCurrentUser: () => ({ data: { id: "u-admin" } }),
+}));
+
+const TEAM: Team = {
+  id: "t-1",
+  name: "Platform Engineering",
+  members: [
+    { user_id: "u-admin", username: "carol", role: "admin", source: "manual" },
+    { user_id: "u-gitlab", username: "Bob Example", role: "member", source: "gitlab:gl-1" },
+    { user_id: "u-github", username: "alice.jensen", role: "member", source: "github:gh-removed" },
+  ],
+  bindings: [],
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+function page<T>(items: T[]) {
+  return { items, total: items.length, page: 1, size: 100, pages: 1 };
+}
+
+function renderDialog(team: Team = TEAM) {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <TeamMembersDialog team={team} isOpen onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  auth.permissions = [];
+  vi.mocked(gitlabInstancesApi.list).mockResolvedValue(
+    page([{ id: "gl-1", name: "Internal GitLab", url: "https://gitlab.example.com" }]) as never,
+  );
+  vi.mocked(githubInstancesApi.list).mockResolvedValue(page([]) as never);
+});
+
+describe("TeamMembersDialog sync source", () => {
+  it("names a synced member's provider and instance the way the binding dialog names a binding", async () => {
+    auth.permissions = ["system:manage"];
+
+    renderDialog();
+
+    expect(await screen.findByText("Synced from GitLab · Internal GitLab")).toBeInTheDocument();
+    expect(screen.queryByText(/gl-1/)).not.toBeInTheDocument();
+  });
+
+  it("names only the provider of an instance it cannot name", async () => {
+    auth.permissions = ["system:manage"];
+
+    renderDialog();
+
+    await screen.findByText("Synced from GitLab · Internal GitLab");
+    expect(screen.getByText("Synced from GitHub")).toBeInTheDocument();
+    expect(screen.queryByText(/gh-removed/)).not.toBeInTheDocument();
+  });
+
+  it("names only the provider for a caller who may not list the instances, and asks for none", () => {
+    renderDialog();
+
+    expect(screen.getByText("Synced from GitLab")).toBeInTheDocument();
+    expect(gitlabInstancesApi.list).not.toHaveBeenCalled();
+    expect(githubInstancesApi.list).not.toHaveBeenCalled();
+  });
+
+  it("shows a source it does not know as it is stored and none for a member added by hand", () => {
+    renderDialog({ ...TEAM, members: [TEAM.members[0], { user_id: "u-legacy", username: "dana", role: "member", source: "auth-shepherd" }] });
+
+    expect(screen.getByText("Synced from auth-shepherd")).toBeInTheDocument();
+    expect(screen.getAllByText(/Synced from/)).toHaveLength(1);
+  });
+});
