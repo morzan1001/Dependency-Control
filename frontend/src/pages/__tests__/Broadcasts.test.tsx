@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Broadcasts from '../Broadcasts'
 
 const mockSendBroadcast = vi.fn()
+const mockUseTeams = vi.fn()
 
 // Radix Tabs use pointer events jsdom can't drive; use a controlled stub.
 const TabsCtx = createContext<{ value: string; onValueChange: (v: string) => void }>({
@@ -35,7 +36,7 @@ vi.mock('@/hooks/queries/use-broadcast', () => ({
   useBroadcastHistory: () => ({ data: [], refetch: vi.fn(), isLoading: false }),
 }))
 vi.mock('@/hooks/queries/use-teams', () => ({
-  useTeams: () => ({ data: [] }),
+  useTeams: () => mockUseTeams(),
 }))
 vi.mock('@/hooks/queries/use-system', () => ({
   useNotificationChannels: () => ['email'],
@@ -81,6 +82,7 @@ vi.mock('@/components/ui/package-autocomplete', () => ({
 beforeEach(() => {
   mockSendBroadcast.mockReset()
   mockSendBroadcast.mockResolvedValue({ recipient_count: 0, project_count: 3 })
+  mockUseTeams.mockReturnValue({ data: [] })
 })
 
 describe('Broadcasts - advisory package type reset', () => {
@@ -153,5 +155,23 @@ describe('Broadcasts - channel selection', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /email/i }))
 
     expect(screen.getByRole('button', { name: /Broadcast Security Advisory/i })).toBeDisabled()
+  })
+})
+
+describe('Broadcasts - team selection', () => {
+  it('sends an announcement to exactly the teams left ticked', async () => {
+    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments' }, { id: 't2', name: 'Platform' }] })
+    render(<Broadcasts />)
+    fireEvent.click(screen.getByRole('button', { name: /Specific Teams/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Payments' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Payments' }))
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Maintenance' } })
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Tonight' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Send Announcement/i }))
+
+    await waitFor(() => expect(mockSendBroadcast).toHaveBeenCalled())
+    expect(mockSendBroadcast.mock.calls[0][0]).toMatchObject({ target_type: 'teams', target_teams: ['t2'] })
   })
 })

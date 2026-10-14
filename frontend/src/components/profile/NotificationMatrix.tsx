@@ -1,6 +1,7 @@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
+import { toggle } from '@/lib/utils'
 
 interface NotificationMatrixProps {
   value: Record<string, string[]>
@@ -12,9 +13,8 @@ interface NotificationMatrixProps {
 export function NotificationMatrix({ value, onChange, channels, disabled }: Readonly<NotificationMatrixProps>) {
   const columns = NOTIFICATION_CHANNELS.filter((channel) => channels?.includes(channel.id))
 
-  const toggle = (event: string, channel: string) => {
-    const current = value[event] ?? []
-    const next = current.includes(channel) ? current.filter((c) => c !== channel) : [...current, channel]
+  const toggleChannel = (event: string, channel: string) => {
+    const next = toggle(value[event] ?? [], channel)
     const updated = { ...value, [event]: next }
     if (next.length === 0) delete updated[event]
     onChange(updated)
@@ -44,7 +44,7 @@ export function NotificationMatrix({ value, onChange, channels, disabled }: Read
                     <Checkbox
                       aria-label={`${event.label}: ${channel.label}`}
                       checked={(value[event.id] ?? []).includes(channel.id)}
-                      onCheckedChange={() => toggle(event.id, channel.id)}
+                      onCheckedChange={() => toggleChannel(event.id, channel.id)}
                       disabled={disabled}
                     />
                   </div>

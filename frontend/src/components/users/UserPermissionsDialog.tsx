@@ -18,6 +18,7 @@ import {
   PRESET_USER,
   PRESET_VIEWER
 } from '@/lib/permissions';
+import { toggle } from '@/lib/utils';
 import { toast } from "sonner"
 import { Shield, User as UserIcon, Eye, X } from 'lucide-react';
 
@@ -31,14 +32,6 @@ export function UserPermissionsDialog({ user, onOpenChange, onUserUpdated }: Rea
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user?.permissions || []);
 
   const updateUserMutation = useUpdateUser({ errorTitle: "Failed to update permissions" });
-
-  const addPermission = (permission: string) => {
-    setSelectedPermissions(prev => [...prev, permission]);
-  };
-
-  const removePermission = (permission: string) => {
-    setSelectedPermissions(prev => prev.filter(p => p !== permission));
-  };
 
   const handleSelectPreset = (preset: string[]) => {
     setSelectedPermissions([...preset]);
@@ -157,7 +150,7 @@ export function UserPermissionsDialog({ user, onOpenChange, onUserUpdated }: Rea
                                   <Checkbox
                                       id={`perm-dialog-${perm.id}`}
                                       checked={selectedPermissions.includes(perm.id)}
-                                      onCheckedChange={(checked: boolean) => checked ? addPermission(perm.id) : removePermission(perm.id)}
+                                      onCheckedChange={() => setSelectedPermissions((prev) => toggle(prev, perm.id))}
                                   />
                                   <div className="grid gap-1.5 leading-none">
                                       <Label htmlFor={`perm-dialog-${perm.id}`} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

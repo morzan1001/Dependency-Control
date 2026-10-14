@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Check } from "lucide-react";
 import { toast } from "sonner";
+import { toggle } from "@/lib/utils";
 import type { RetentionAction } from "@/types/project";
 import { AnalyzerChecklist } from "./AnalyzerChecklist";
 import { RetentionFields } from "./RetentionRescanFields";
@@ -88,10 +89,6 @@ export function CreateProjectDialog({
       setCreatedProjectData(null);
       setForm(EMPTY_FORM);
     }, 300);
-  };
-
-  const toggleAnalyzer = (id: string) => {
-    set({ pickedAnalyzers: analyzers.includes(id) ? analyzers.filter((a) => a !== id) : [...analyzers, id] });
   };
 
   return (
@@ -181,7 +178,7 @@ export function CreateProjectDialog({
               <AnalyzerChecklist
                 idPrefix="create-analyzer"
                 selected={analyzers}
-                onToggle={toggleAnalyzer}
+                onToggle={(id) => set({ pickedAnalyzers: toggle(analyzers, id) })}
                 className="max-h-[300px]"
               />
             </div>

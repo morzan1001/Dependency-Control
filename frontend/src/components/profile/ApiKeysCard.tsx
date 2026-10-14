@@ -40,6 +40,7 @@ import {
   useRevokeApiKey,
 } from '@/hooks/queries/use-api-keys';
 import { Permissions } from '@/lib/permissions';
+import { toggle } from '@/lib/utils';
 import type { ApiKey, ApiKeySurface } from '@/types/apiKey';
 
 const DEFAULT_EXPIRY_DAYS = 90;
@@ -118,14 +119,6 @@ export function ApiKeysCard() {
     hasPermission(SURFACE_PERMISSIONS[surface]),
   );
   const canSubmit = newName.trim() !== '' && newSurfaces.length > 0;
-
-  const toggleSurface = (surface: ApiKeySurface) => {
-    setNewSurfaces((current) =>
-      current.includes(surface)
-        ? current.filter((entry) => entry !== surface)
-        : [...current, surface],
-    );
-  };
 
   const handleCreate = () => {
     createMutation.mutate(
@@ -298,7 +291,7 @@ export function ApiKeysCard() {
                   <Checkbox
                     id={`api-key-surface-${surface}`}
                     checked={newSurfaces.includes(surface)}
-                    onCheckedChange={() => toggleSurface(surface)}
+                    onCheckedChange={() => setNewSurfaces((current) => toggle(current, surface))}
                   />
                   <div className="grid gap-0.5 leading-none">
                     <Label htmlFor={`api-key-surface-${surface}`}>

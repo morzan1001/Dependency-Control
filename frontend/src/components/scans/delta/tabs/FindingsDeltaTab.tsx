@@ -9,7 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SeverityBadge } from "@/components/findings/SeverityBadge";
-import { formatDate } from "@/lib/utils";
+import { formatDate, toggle } from "@/lib/utils";
 import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
 import { Pagination } from "@/components/ui/pagination";
@@ -30,10 +30,6 @@ function ChangedDetail({ item }: { readonly item: FindingDeltaItem }) {
       {item.dropped_cves.map((cve) => <span key={cve} className="text-green-600">{`−${cve}`}</span>)}
     </div>
   );
-}
-
-function toggle<T extends string>(list: readonly T[], value: T): T[] {
-  return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
 export function FindingsDeltaTab(props: DeltaTabProps) {

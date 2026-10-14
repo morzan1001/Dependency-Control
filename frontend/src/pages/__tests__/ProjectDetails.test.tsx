@@ -107,3 +107,18 @@ describe('ProjectDetails branch-filter initialization', () => {
     expect(screen.getByTestId('overview-branches').textContent).toBe('')
   })
 })
+
+describe('ProjectDetails branch filter', () => {
+  it('adds a ticked branch to the selection and drops an unticked one', () => {
+    mockUseProject.mockReturnValue({ data: { id: 'p1', name: 'Proj', default_branch: 'main' }, isLoading: false })
+    mockUseProjectBranches.mockReturnValue({ data: [branch('main', { is_default: true }), branch('dev')], isSuccess: true })
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /Filter Branches/i }))
+
+    fireEvent.click(screen.getByLabelText('dev'))
+    expect(screen.getByTestId('overview-branches').textContent).toBe('main,dev')
+
+    fireEvent.click(screen.getByLabelText('main'))
+    expect(screen.getByTestId('overview-branches').textContent).toBe('dev')
+  })
+})

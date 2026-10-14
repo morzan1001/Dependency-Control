@@ -13,7 +13,7 @@ import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-sc
 import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
 import type { TeamRef } from '@/types/team'
 import { User } from '@/types/user'
-import { cn } from '@/lib/utils'
+import { cn, toggle } from '@/lib/utils'
 import { memberPreferences, enforcedPreferences, withMutedEvents } from '@/lib/notification-preferences'
 import { useAuth } from '@/context/useAuth'
 import {
@@ -118,9 +118,6 @@ function TeamPicker({ teams, selectedIds, onToggle }: Readonly<TeamPickerProps>)
     </div>
   )
 }
-
-const toggled = (list: string[], item: string) =>
-  list.includes(item) ? list.filter((entry) => entry !== item) : [...list, item]
 
 function settingsForm(project: Project) {
   return {
@@ -345,7 +342,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     <TeamPicker
                         teams={teamOptions}
                         selectedIds={form.team_ids}
-                        onToggle={(id) => set({ team_ids: toggled(form.team_ids, id) })}
+                        onToggle={(id) => set({ team_ids: toggle(form.team_ids, id) })}
                     />
                     <p className="text-xs text-muted-foreground">
                         Every selected team's members can open this project, and it is listed under each of them.
@@ -541,7 +538,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     <AnalyzerChecklist
                         idPrefix="settings-analyzer"
                         selected={form.active_analyzers}
-                        onToggle={(analyzerId) => set({ active_analyzers: toggled(form.active_analyzers, analyzerId) })}
+                        onToggle={(analyzerId) => set({ active_analyzers: toggle(form.active_analyzers, analyzerId) })}
                         className="max-h-[300px]"
                         renderAction={(analyzerId) => hasSettingsSchema(analyzerId) && form.active_analyzers.includes(analyzerId) && isAdmin && (
                             <Button

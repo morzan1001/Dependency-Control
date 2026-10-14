@@ -12,6 +12,7 @@ import {
 import { AnalyzerChecklist } from "@/components/project/AnalyzerChecklist"
 import { RescanFields, RetentionActionSelect } from "@/components/project/RetentionRescanFields"
 import { useAppConfig } from "@/hooks/queries/use-system"
+import { toggle } from "@/lib/utils"
 import { SettingsTabProps } from "@/types/system"
 
 export function GeneralSettingsTab({
@@ -24,12 +25,6 @@ export function GeneralSettingsTab({
   const { data: appConfig } = useAppConfig()
   const analyzers = formData.default_active_analyzers ?? [];
 
-  const toggleAnalyzer = (analyzerId: string) => {
-    const updated = analyzers.includes(analyzerId)
-      ? analyzers.filter(a => a !== analyzerId)
-      : [...analyzers, analyzerId];
-    handleInputChange('default_active_analyzers', updated);
-  };
   return (
     <div className="space-y-4">
       <Card>
@@ -220,7 +215,7 @@ export function GeneralSettingsTab({
           <AnalyzerChecklist
             idPrefix="default-analyzer"
             selected={analyzers}
-            onToggle={toggleAnalyzer}
+            onToggle={(analyzerId) => handleInputChange('default_active_analyzers', toggle(analyzers, analyzerId))}
             className="max-h-[400px]"
           />
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>

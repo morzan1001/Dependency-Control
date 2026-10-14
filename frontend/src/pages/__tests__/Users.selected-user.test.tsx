@@ -146,6 +146,19 @@ describe('UsersPage user details', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('adds a ticked permission to the selection and drops it again once unticked', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([lena(['project:read'])])
+    await openLena()
+    fireEvent.click(screen.getByRole('button', { name: 'Manage Permissions' }))
+    const createTeams = screen.getByRole('checkbox', { name: 'Create Teams' })
+
+    fireEvent.click(createTeams)
+    expect(screen.getByText('Selected: 2 permissions')).toBeInTheDocument()
+
+    fireEvent.click(createTeams)
+    expect(screen.getByText('Selected: 1 permission')).toBeInTheDocument()
+  })
+
   it('drops unsaved permission edits when the dialog is cancelled', async () => {
     vi.mocked(userApi.getAll).mockResolvedValue([lena(['project:read'])])
     await openLena()
