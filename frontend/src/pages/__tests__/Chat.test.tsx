@@ -1,6 +1,9 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+import { createMutationCache } from '@/lib/mutation-cache';
 
 import Chat from '../Chat';
 
@@ -13,12 +16,23 @@ vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
+const { chatApi, history } = vi.hoisted(() => ({
+  chatApi: {
+    createConversation: vi.fn(),
+    listConversations: vi.fn(),
+    getConversation: vi.fn(),
+    deleteConversation: vi.fn(),
+  },
+  history: { granted: false },
+}));
+vi.mock('@/api/chat', () => ({ chatApi }));
+
 vi.mock('@/context', () => ({
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
     permissions: [],
-    hasPermission: () => false,
+    hasPermission: () => history.granted,
     login: vi.fn(),
     logout: vi.fn(),
   }),
@@ -38,20 +52,17 @@ vi.mock('@/hooks/useChatStream', () => ({
   }),
 }));
 
-const createMutateAsync = vi.fn();
-const deleteMutateAsync = vi.fn();
-vi.mock('@/hooks/queries/use-chat', () => ({
-  useConversations: () => ({ data: { conversations: [] } }),
-  useConversation: (id: string | null) => ({
-    data: id ? { conversation: { title: 'Risk talk' }, messages: [] } : undefined,
-    refetch: vi.fn(),
-  }),
-  useCreateConversation: () => ({ mutateAsync: createMutateAsync }),
-  useDeleteConversation: () => ({ mutateAsync: deleteMutateAsync }),
-}));
+const RISK_TALK = {
+  id: 'conv-1',
+  user_id: 'u1',
+  title: 'Risk talk',
+  created_at: '2026-10-08T10:00:00Z',
+  updated_at: '2026-10-08T10:00:00Z',
+  message_count: 0,
+};
 
 function renderChat() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <Chat />
@@ -59,14 +70,16 @@ function renderChat() {
   );
 }
 
-describe('Chat error handling', () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-  });
+beforeEach(() => {
+  vi.clearAllMocks();
+  history.granted = false;
+  chatApi.listConversations.mockResolvedValue({ conversations: [RISK_TALK], total: 1 });
+  chatApi.getConversation.mockResolvedValue({ conversation: RISK_TALK, messages: [] });
+});
 
+describe('Chat error handling', () => {
   it('surfaces a toast (and does not send) when creating a conversation fails on first message', async () => {
-    const { toast } = await import('sonner');
-    createMutateAsync.mockRejectedValueOnce(new Error('backend down'));
+    chatApi.createConversation.mockRejectedValueOnce(new Error('backend down'));
 
     renderChat();
 
@@ -75,16 +88,13 @@ describe('Chat error handling', () => {
     fireEvent.click(prompt);
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to send message',
-        expect.objectContaining({ description: 'backend down' }),
-      );
+      expect(toast.error).toHaveBeenCalledWith('Failed to send message', { description: 'backend down' });
     });
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('New chat clears the active conversation without creating an empty one', async () => {
-    createMutateAsync.mockResolvedValueOnce({ id: 'conv-1' });
+    chatApi.createConversation.mockResolvedValueOnce(RISK_TALK);
 
     renderChat();
 
@@ -94,12 +104,11 @@ describe('Chat error handling', () => {
     fireEvent.click(screen.getByRole('button', { name: /New chat/i }));
 
     await screen.findByRole('heading', { name: 'Chat' });
-    expect(createMutateAsync).toHaveBeenCalledTimes(1);
+    expect(chatApi.createConversation).toHaveBeenCalledTimes(1);
   });
 
   it('sends the message and does not toast when create succeeds', async () => {
-    const { toast } = await import('sonner');
-    createMutateAsync.mockResolvedValueOnce({ id: 'conv-1' });
+    chatApi.createConversation.mockResolvedValueOnce(RISK_TALK);
 
     renderChat();
 
@@ -112,5 +121,38 @@ describe('Chat error handling', () => {
       );
     });
     expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe('Chat history deletion', () => {
+  beforeEach(() => {
+    history.granted = true;
+  });
+
+  it('closes a conversation once it is deleted while open', async () => {
+    chatApi.deleteConversation.mockResolvedValueOnce(undefined);
+    renderChat();
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }));
+    fireEvent.click(await screen.findByText('Risk talk'));
+    await screen.findByRole('heading', { name: 'Risk talk' });
+
+    fireEvent.click(screen.getByRole('button', { name: /History/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete conversation' }));
+    await waitFor(() => expect(chatApi.deleteConversation).toHaveBeenCalledWith('conv-1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(await screen.findByRole('heading', { name: 'Chat' })).toBeInTheDocument();
+  });
+
+  it('names a deletion that failed and why', async () => {
+    chatApi.deleteConversation.mockRejectedValueOnce(new Error('Network Error'));
+    renderChat();
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete conversation' }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to delete conversation', { description: 'Network Error' });
+    });
   });
 });
