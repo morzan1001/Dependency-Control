@@ -59,24 +59,22 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Components</CardTitle>
-            <CardDescription>Software in use on this branch, with license and lifecycle status.</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input
-              placeholder="Search components…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-[220px]"
-            />
-            <Button variant="outline" size="sm" onClick={handleDownload}>
-              <Download className="mr-2 h-4 w-4" />
-              Download CSV
-            </Button>
-          </div>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0">
+        <div>
+          <CardTitle>Components</CardTitle>
+          <CardDescription>Software in use on this branch, with license and lifecycle status.</CardDescription>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            placeholder="Search components…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full sm:w-[220px]"
+          />
+          <Button variant="outline" size="sm" onClick={handleDownload}>
+            <Download className="mr-2 h-4 w-4" />
+            Download CSV
+          </Button>
         </div>
       </CardHeader>
       <CardContent>

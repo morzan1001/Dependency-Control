@@ -72,4 +72,14 @@ describe('LicensesTable', () => {
 
     await waitFor(() => expect(screen.getByText('MIT')).toBeInTheDocument())
   })
+
+  it("stacks Download CSV under the title on a phone, like the waiver list's header", async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getLicenses).mockResolvedValue(payload)
+    renderTable()
+    await waitFor(() => expect(screen.getByText('MIT')).toBeInTheDocument())
+
+    const header = screen.getByRole('heading', { name: 'Licenses' }).parentElement?.parentElement
+    expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+    expect(header).toContainElement(screen.getByRole('button', { name: /download csv/i }))
+  })
 })

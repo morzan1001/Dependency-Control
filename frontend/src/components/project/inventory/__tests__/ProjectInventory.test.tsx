@@ -122,4 +122,20 @@ describe('ProjectInventory', () => {
     expect(inventoryApiModule.inventoryApi.getStats).not.toHaveBeenCalled()
     expect(screen.queryByText('Components')).not.toBeInTheDocument()
   })
+
+  it('lets the licenses and cryptography cards shrink to the screen, so their tables scroll sideways inside them', async () => {
+    vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
+      data: [{ name: 'main', is_active: true }],
+    } as ReturnType<typeof projectHooks.useProjectBranches>)
+    const api = vi.mocked(inventoryApiModule.inventoryApi)
+    api.getStats.mockResolvedValue(stats)
+    api.getLicenses.mockResolvedValue({ scan: stats.scan, items: [] })
+    api.getComponents.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
+    api.getCrypto.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
+
+    renderInventory()
+
+    const licensesCard = (await screen.findByRole('heading', { name: 'Licenses' })).closest('.rounded-lg')
+    expect(licensesCard?.parentElement).toHaveClass('grid-cols-1', 'lg:grid-cols-2')
+  })
 })

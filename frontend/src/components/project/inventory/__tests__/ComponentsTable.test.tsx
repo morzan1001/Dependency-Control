@@ -111,4 +111,16 @@ describe('ComponentsTable', () => {
 
     await waitFor(() => expect(screen.getByText('lodash')).toBeInTheDocument())
   })
+
+  it("stacks its search and Download CSV under the title on a phone, like the waiver list's header", async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockResolvedValue(page)
+    renderTable()
+    await waitFor(() => expect(screen.getByText('lodash')).toBeInTheDocument())
+
+    const header = screen.getByRole('heading', { name: 'Components' }).parentElement?.parentElement
+    expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+    const controls = screen.getByRole('button', { name: /download csv/i }).parentElement
+    expect(controls).toHaveClass('flex-col', 'sm:flex-row')
+    expect(screen.getByPlaceholderText('Search components…')).toHaveClass('w-full', 'sm:w-[220px]')
+  })
 })
