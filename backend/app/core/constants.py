@@ -215,14 +215,7 @@ def team_source(provider: str, instance_id: str) -> str:
 
 
 def team_binding_key(provider: str, instance_id: str, external_id: int) -> str:
-    """The unique key of one team binding.
-
-    A single scalar rather than the three fields compounded: a `teams` document always carries the
-    `members` array, and MongoDB refuses any write to a document indexed across two arrays at once
-    ("cannot index parallel arrays", code 171), so a key built from array fields can never be
-    combined with one outside `bindings`. One string also keeps the lookup a single-field equality
-    on the index the uniqueness is enforced by.
-    """
+    """The unique key of one team binding, one string so that its uniqueness is a single-field equality on its index."""
     return f"{provider}{TEAM_SOURCE_SEPARATOR}{instance_id}{TEAM_SOURCE_SEPARATOR}{external_id}"
 
 
@@ -230,7 +223,7 @@ def team_binding_key(provider: str, instance_id: str, external_id: int) -> str:
 POLICY_COMMENT_MAX_LENGTH = 1000
 POLICY_CHANGE_SUMMARY_MAX_LENGTH = 200
 
-# Team Roles. Ordered least- to most-privileged: helpers/teams.py compares by index.
+# Team roles, ordered least- to most-privileged: role checks compare by index.
 TeamRole = Literal["member", "admin"]
 TEAM_ROLE_ADMIN: TeamRole = "admin"
 TEAM_ROLE_MEMBER: TeamRole = "member"
@@ -408,9 +401,7 @@ TYPOSQUATTING_CRITICAL_SIMILARITY: float = 0.95
 # because a name similar to a package below it is not flagged.
 TYPOSQUATTING_POPULAR_PACKAGE_RANKS: int = 5000
 
-# Analyzers a project runs unless it overrides them. epss_kev is the only caller of the
-# enrichment service, so without it a scan writes no in_kev, epss_score or enrichment
-# risk_score and every surface reading those reports zero.
+# A project's analyzers unless it overrides them; without epss_kev a scan carries no in_kev, epss_score or risk_score.
 DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
     "trivy",
     "osv",
@@ -518,11 +509,7 @@ DAYS_KNOWN_OVERDUE_THRESHOLD: int = 90  # Days a vuln is known before flagged as
 BLAST_RADIUS_THRESHOLD: int = 3  # Min affected projects for "high blast radius"
 KEV_DUE_SOON_DAYS: int = 30  # Days until KEV deadline to be "due soon"
 
-# Largest possible product of impact-score boosts. Every boost is >= 1.0, so the
-# un-boosted severity*reach base is a lower bound on fix_impact_score and this is
-# its upper bound: fix_impact_score in [base, base * IMPACT_MAX_SCORE_BOOST]. The
-# /impact candidate selection uses these bounds to enrich only the groups that can
-# reach the top, without dropping a low-reach-but-severe fix (see select_impact_candidates).
+# The largest boost product; every boost is >= 1.0, so fix_impact_score lies in [base, base * IMPACT_MAX_SCORE_BOOST].
 IMPACT_MAX_SCORE_BOOST: float = (
     KEV_RANSOMWARE_BOOST
     * EPSS_VERY_HIGH_BOOST
