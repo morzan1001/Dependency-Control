@@ -15,12 +15,7 @@ class TokenBlacklistRepository:
         """Returns False if the token is already blacklisted."""
         try:
             await self.collection.insert_one(
-                {
-                    "_id": jti,  # jti as _id enforces dedup
-                    "jti": jti,
-                    "blacklisted_at": datetime.now(timezone.utc),
-                    "expires_at": expires_at,
-                }
+                {"_id": jti, "blacklisted_at": datetime.now(timezone.utc), "expires_at": expires_at}
             )
             return True
         except DuplicateKeyError:
