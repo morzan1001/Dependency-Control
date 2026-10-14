@@ -13,15 +13,16 @@ import { scanApi } from "@/api/scans";
 
 const getFindingsMock = scanApi.getFindings as ReturnType<typeof vi.fn>;
 
-function renderWithProviders(node: React.ReactElement) {
+function renderWithProviders(node: React.ReactElement): QueryClient {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
-  return render(
+  render(
     <QueryClientProvider client={client}>
       <MemoryRouter>{node}</MemoryRouter>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 const emptyEnvelope = { items: [], total: 0, page: 1, size: 50, pages: 1 };
@@ -95,7 +96,11 @@ describe("FindingsTable later page error", () => {
     restoreObserver = showObservedElements();
     getFindingsMock.mockReset();
     getFindingsMock.mockImplementation(async (_scanId: string, params: { skip: number }) => {
-      if (params.skip > 0) throw new Error("Request failed with status code 504");
+      if (params.skip > 0) {
+        // A failure that takes a moment, as over the network, renders the retry in between.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        throw new Error("Request failed with status code 504");
+      }
       const finding = { id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: [] };
       return { ...emptyEnvelope, items: [finding], total: 2 };
     });
@@ -113,7 +118,35 @@ describe("FindingsTable later page error", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
+    expect(await screen.findByText("Loading more...")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load more findings");
+    expect(getFindingsMock.mock.calls.map(([, params]) => (params as { skip: number }).skip)).toEqual([0, 1, 1]);
+  });
+});
+
+describe("FindingsTable reload error", () => {
+  const finding = { id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: [] };
+
+  beforeEach(() => {
+    getFindingsMock.mockReset();
+    getFindingsMock.mockResolvedValueOnce({ ...emptyEnvelope, items: [finding], total: 1 });
+  });
+
+  it("keeps the loaded findings, says the reload failed and retries the reload", async () => {
+    const client = renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+    await screen.findByText("lodash");
+    getFindingsMock.mockRejectedValue(new Error("Request failed with status code 503"));
+
+    await act(() => client.invalidateQueries({ queryKey: ["findings"] }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Error loading findings");
+    expect(screen.getByRole("alert")).toHaveTextContent("Request failed with status code 503");
+    expect(screen.getByText("lodash")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
     await waitFor(() => expect(getFindingsMock).toHaveBeenCalledTimes(3));
-    expect((getFindingsMock.mock.calls[2][1] as { skip: number }).skip).toBe(1);
+    expect((getFindingsMock.mock.calls[2][1] as { skip: number }).skip).toBe(0);
   });
 });
