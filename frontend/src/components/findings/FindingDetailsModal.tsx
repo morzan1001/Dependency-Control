@@ -11,7 +11,7 @@ import { useCurrentUser } from '@/hooks/queries/use-users'
 import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
-import { getSeverityBadgeVariant } from '@/lib/finding-utils'
+import { SeverityBadge } from './SeverityBadge'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
 import { LicenseDetailsView } from './details/LicenseDetailsView'
@@ -147,11 +147,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                 <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
                 <DialogHeader className="pb-1">
                     <DialogTitle className="flex items-center justify-center gap-2 leading-normal sm:justify-start">
-                        {finding.severity && (
-                            <Badge variant={getSeverityBadgeVariant(finding.severity)}>
-                                {finding.severity}
-                            </Badge>
-                        )}
+                        {finding.severity && <SeverityBadge severity={finding.severity} />}
                         <span className="truncate leading-normal">{finding.id || 'Finding Details'}</span>
                     </DialogTitle>
                     <DialogDescription className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">

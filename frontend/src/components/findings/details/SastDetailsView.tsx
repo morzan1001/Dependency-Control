@@ -11,7 +11,7 @@ import {
     RiskBadge, 
     FileLocation 
 } from "./shared"
-import { getSeverityBadgeVariant } from '@/lib/finding-utils'
+import { SeverityBadge } from '../SeverityBadge'
 
 // Defined outside the component to avoid re-creation on each render.
 const markdownComponents: Partial<Components> = {
@@ -331,9 +331,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                                         
                                         <div className="flex flex-col gap-1 min-w-0">
                                             <div className="flex items-center gap-2">
-                                                 <Badge variant={getSeverityBadgeVariant(issue.severity)} className="flex-shrink-0">
-                                                    {issue.severity}
-                                                </Badge>
+                                                 <SeverityBadge severity={issue.severity} />
                                                 <span className="font-medium truncate text-sm">{issue.details?.title ?? issue.title}</span>
                                             </div>
                                             <div className="flex items-center gap-2 text-xs text-muted-foreground">

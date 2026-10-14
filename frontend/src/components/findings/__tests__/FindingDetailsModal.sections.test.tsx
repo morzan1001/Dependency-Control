@@ -45,6 +45,15 @@ function renderModal(shown: Finding, props: { scanContext?: ScanContext; onSelec
   );
 }
 
+describe("FindingDetailsModal severity", () => {
+  it("colours the finding's and each advisory's severity like the findings table row", () => {
+    renderModal(finding({ severity: "MEDIUM", details: { vulnerabilities: [{ id: "CVE-2024-1", severity: "LOW" }] } }));
+
+    expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium");
+    expect(screen.getByText("LOW")).toHaveClass("bg-severity-low");
+  });
+});
+
 describe("FindingDetailsModal vulnerability entries", () => {
   it("describes an advisory by its own text, never by the finding's", () => {
     renderModal(

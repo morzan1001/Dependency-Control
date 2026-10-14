@@ -20,6 +20,22 @@ function finding(type: "sast" | "iac", details: Record<string, unknown>): Findin
   } as unknown as Finding;
 }
 
+describe("SastDetailsView aggregated issues", () => {
+  it("colours each scanner's severity like the findings table row", () => {
+    const sast = finding("sast", {
+      sast_findings: [
+        { id: "python.eval", scanner: "opengrep", severity: "HIGH", details: SPAN },
+        { id: "B307", scanner: "bandit", severity: "LOW", details: SPAN },
+      ],
+    });
+
+    render(<SastDetailsView finding={sast} />);
+
+    expect(screen.getByText("HIGH")).toHaveClass("bg-severity-high");
+    expect(screen.getByText("LOW")).toHaveClass("bg-severity-low");
+  });
+});
+
 describe("SastDetailsView location", () => {
   it("reads lines and columns from the scanner entry a SAST finding is stored with", () => {
     // The persisted shape: the scanner's own details sit under sast_findings, the wrapper keeps only file and line.
