@@ -6,7 +6,8 @@ from app.models.finding import Severity
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.repositories.projects import ProjectRepository
-from app.services.analysis.engine import _build_settings_resolver, _load_project_settings_overrides
+from app.services.analysis.engine import _load_project_settings_overrides
+from app.services.analysis.runner import build_settings_resolver
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.sbom_parser import parse_sbom
 from tests.mocks.fake_mongo import FakeDatabase
@@ -38,7 +39,7 @@ async def test_a_stored_legacy_license_policy_does_not_override_the_saved_settin
     db.projects._docs["p1"] = {**doc, "license_policy": {"distribution_model": "internal_only"}}
 
     analyzer_settings = await _load_project_settings_overrides("p1", ProjectRepository(db))
-    settings = _build_settings_resolver(SystemSettings(), analyzer_settings)("license_compliance")
+    settings = build_settings_resolver(SystemSettings(), analyzer_settings)("license_compliance")
     parsed = [dep.model_dump() for dep in parse_sbom(_GPL_SBOM).dependencies]
     result = await LicenseAnalyzer().analyze(_GPL_SBOM, settings, parsed)
 

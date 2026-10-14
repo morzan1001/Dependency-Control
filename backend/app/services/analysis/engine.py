@@ -7,7 +7,6 @@ import re
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
 from datetime import datetime, timezone
 from itertools import batched
 from pathlib import Path
@@ -77,6 +76,7 @@ from app.services.analysis.registry import (
     analyzer_factories,
     crypto_evaluators,
 )
+from app.services.analysis.runner import build_settings_resolver, partial_result_reason, sbom_source
 from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
 from app.services.analyzers.base import Analyzer
@@ -162,21 +162,6 @@ async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) 
         logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
 
 
-# Analyzer result keys reporting incomplete coverage, with how to phrase each.
-_PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
-    ("partial_components_skipped", "{count} component(s) were not scanned"),
-    ("partial_vulnerabilities_unhydrated", "{count} vulnerability record(s) could not be fetched"),
-)
-
-
-def _partial_result_reason(result: Any) -> str | None:
-    """Why an analyzer's coverage is incomplete, or None when it is complete."""
-    if not isinstance(result, dict):
-        return None
-    reasons = [template.format(count=result[key]) for key, template in _PARTIAL_RESULT_KEYS if result.get(key)]
-    return "; ".join(reasons) if reasons else None
-
-
 async def _record_result(
     analyzer_name: str,
     result: Any,
@@ -195,7 +180,7 @@ async def _record_result(
         logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
         return f"{analyzer_name}: Failed"
 
-    partial_reason = _partial_result_reason(result)
+    partial_reason = partial_result_reason(result)
     if partial_reason:
         # Surface the coverage gap as a finding and flag the analyzer as partial.
         aggregator.add_scan_error(analyzer_name, partial_reason, partial=True, source=f"System: {analyzer_name}")
@@ -352,25 +337,13 @@ async def _load_sbom(
         raise
 
 
-def _sbom_source(sbom: dict[str, Any]) -> str | None:
-    """The SBOM's root component name, else its serial number."""
-    metadata = sbom.get("metadata")
-    if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
-        # An explicit ``"name": null`` is a present key, so a dict default would never fire.
-        name = metadata["component"].get("name")
-        if name:
-            return str(name)
-    serial = sbom.get("serialNumber")
-    return str(serial) if serial else None
-
-
 def _parse_and_track_sbom(document: Any) -> _ParsedDocument:
     """Pre-parse the SBOM and track metrics; a document that fails to parse leaves only the raw-document scanners."""
     parsed_components: list[dict[str, Any]] = []
     parsed_sbom = None
     source, sbom_format = None, SBOMFormat.UNKNOWN
     try:
-        source, sbom_format = _sbom_source(document), sbom_parser.detect_format(document)
+        source, sbom_format = sbom_source(document), sbom_parser.detect_format(document)
         parsed_sbom = parse_sbom(document)
         parsed_components = [dep.model_dump() for dep in parsed_sbom.dependencies]
         logger.info(
@@ -417,26 +390,6 @@ def _resolve_effective_analyzers(
     return sorted(active_analyzers)
 
 
-def _build_settings_resolver(
-    system_settings: Any,
-    project_analyzer_settings: dict[str, dict[str, Any]] | None,
-    github_token: str | None = None,
-) -> Callable[[str], dict[str, Any]]:
-    """Return a function that yields per-analyzer settings dicts."""
-    base_settings = system_settings.model_dump() if system_settings else {}
-    base_settings["github_token"] = github_token
-
-    def _settings_for(analyzer_name: str) -> dict[str, Any]:
-        merged = dict(base_settings)
-        if project_analyzer_settings:
-            overrides = project_analyzer_settings.get(analyzer_name)
-            if overrides:
-                merged.update(overrides)
-        return merged
-
-    return _settings_for
-
-
 async def _process_sbom(
     index: int,
     parsed_sbom: ParsedSBOM | None,
@@ -463,7 +416,7 @@ async def _process_sbom(
 
     effective_analyzers = _resolve_effective_analyzers(active_analyzers, parsed_sbom, parsed_components, scan_type)
 
-    settings_for = _build_settings_resolver(system_settings, project_analyzer_settings, github_token)
+    settings_for = build_settings_resolver(system_settings, project_analyzer_settings, github_token)
 
     tasks = [
         process_analyzer(

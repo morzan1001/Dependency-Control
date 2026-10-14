@@ -34,8 +34,8 @@ from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
-from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason, _sbom_source
 from app.services.analysis.registry import CRYPTO_ANALYZERS, POST_PROCESSOR_ANALYZERS, analyzer_factories
+from app.services.analysis.runner import build_settings_resolver, partial_result_reason, sbom_source
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers.base import Analyzer
@@ -247,7 +247,7 @@ async def _run_one_analyzer(
         if is_error_result(result):
             _record_errored(report, name, f"{fallback_source}: {result['error']}")
             return
-        aggregator.aggregate(name, result, source=_sbom_source(sbom) or fallback_source)
+        aggregator.aggregate(name, result, source=sbom_source(sbom) or fallback_source)
     except Exception as exc:
         logger.warning("adhoc: analyzer %s failed: %s", name, exc)
         # Attributed to the input, so "failed on one of ten" is distinguishable from "failed on ten".
@@ -256,7 +256,7 @@ async def _run_one_analyzer(
 
     # What the analyzer did find is kept; what it could not reach is a gap, and an unreachable
     # CVE source must not answer a Log4Shell SBOM with an empty finding list and no reason.
-    partial = _partial_result_reason(result)
+    partial = partial_result_reason(result)
     if partial:
         logger.warning("adhoc: analyzer %s returned partial coverage: %s", name, partial)
         _record_errored(report, name, f"{fallback_source}: {_PARTIAL_COVERAGE.format(reason=partial)}")
@@ -437,7 +437,7 @@ def _aggregate_crypto_rules(
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,
                 {"findings": findings},
-                source=_sbom_source(parsed_input.sbom) or _input_label(parsed_input),
+                source=sbom_source(parsed_input.sbom) or _input_label(parsed_input),
             )
     _record_ran(report, _CRYPTO_RULES)
 
@@ -554,7 +554,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
     license_settings = {"license_compliance": request.license_policy.model_dump()} if request.license_policy else None
-    settings_for = _build_settings_resolver(SystemSettings(), license_settings)
+    settings_for = build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
     # An input without package components must not be analysed into a clean bill of health.
