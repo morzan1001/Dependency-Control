@@ -12,7 +12,6 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
-    build_hotspot_priority_reasons,
     build_priority_reasons,
     calculate_days_known,
     calculate_days_until_due,
@@ -243,7 +242,10 @@ def _build_hotspot(
 
     enrichment_data = process_cve_enrichments(details_list, enrichments)
     days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
-    priority_reasons = build_hotspot_priority_reasons(enrichment_data, severity_counts, has_fix, days_until_due)
+    enrichment_data.days_until_due = days_until_due
+    priority_reasons = build_priority_reasons(
+        severity_counts, enrichment_data, len(r["project_ids"]), has_fix, days_known
+    )
 
     return VulnerabilityHotspot(
         component=r["_id"]["component"],
