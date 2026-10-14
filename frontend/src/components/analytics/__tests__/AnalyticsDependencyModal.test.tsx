@@ -390,6 +390,18 @@ describe("AnalyticsDependencyModal findings list", () => {
     const shown = screen.getAllByText(/^CVE-2024-/).map((cell) => cell.textContent);
     expect(shown).toEqual(["CVE-2024-1", "CVE-2024-9"]);
   });
+  it("keeps the Project column 200px wide and scrolls the findings table sideways in a phone-wide dialog", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [finding("CVE-1", "CRITICAL")], total: 1 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    const table = screen.getByRole("table");
+    expect(table).toHaveClass("table-fixed", "min-w-[620px]");
+    expect(table.parentElement).toHaveClass("overflow-auto");
+  });
 });
 
 describe("AnalyticsDependencyModal known advisories", () => {

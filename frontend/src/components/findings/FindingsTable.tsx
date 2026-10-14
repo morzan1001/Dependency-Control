@@ -254,9 +254,10 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
 
     return (
         <div className="relative w-full overflow-x-auto">
+            {/* Narrower than its fixed columns, the table would leave the Component column no width at all. */}
             {isLoading && (
                 <div className="relative">
-                    <table className="w-full text-sm table-fixed">
+                    <table className="w-full text-sm table-fixed min-w-[930px]">
                         <TableHeader className="sticky bg-background z-50 shadow-sm" style={{ top: stickyHeaderTop }}>
                             <TableRow className="w-full">
                                 <TableHead className="w-[120px] bg-background">Severity</TableHead>
@@ -287,7 +288,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
             )}
             {!isLoading && allRows.length > 0 && (
                 <TooltipProvider>
-                <table className="w-full caption-bottom text-sm table-fixed">
+                <table className="w-full caption-bottom text-sm table-fixed min-w-[930px]">
                     <TableHeader className="sticky bg-background z-50 shadow-sm" style={{ top: stickyHeaderTop }}>
                         <TableRow className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                             <SortableHead column="severity" sort={sort} className="w-[120px] bg-background">Severity</SortableHead>

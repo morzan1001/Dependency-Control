@@ -156,3 +156,13 @@ describe('Dashboard project table sorting', () => {
     expect(lastSort()).toEqual(['critical', 'desc'])
   })
 })
+
+describe('Dashboard project table on a narrow screen', () => {
+  it('keeps the Name column 200px wide and scrolls the table sideways until it fits, from xl on', () => {
+    renderDashboard([project('p1', [])])
+
+    const table = screen.getByRole('table')
+    expect(table).toHaveClass('table-fixed', 'min-w-[820px]')
+    expect(table.parentElement).toHaveClass('overflow-x-auto', 'xl:overflow-visible')
+  })
+})

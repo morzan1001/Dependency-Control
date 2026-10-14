@@ -216,3 +216,23 @@ describe("FindingsTable Scanner column", () => {
     expect(screen.getByRole("columnheader", { name: "Scanner" })).toHaveClass("w-[170px]");
   });
 });
+
+describe("FindingsTable on a narrow screen", () => {
+  beforeEach(() => {
+    getFindingsMock.mockReset();
+  });
+
+  it("keeps the Component column 200px wide while loading and loaded, scrolling the table sideways", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    getFindingsMock.mockReturnValue(new Promise((r) => { resolve = r; }));
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+
+    const skeleton = await screen.findByRole("table");
+    expect(skeleton).toHaveClass("table-fixed", "min-w-[930px]");
+
+    resolve({ ...emptyEnvelope, items: [{ id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: ["trivy"], details: {} }], total: 1 });
+    const table = (await screen.findByText("lodash")).closest("table");
+    expect(table).toHaveClass("table-fixed", "min-w-[930px]");
+    expect(table?.parentElement).toHaveClass("overflow-x-auto");
+  });
+});
