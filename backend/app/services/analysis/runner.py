@@ -100,7 +100,7 @@ class AnalyzerOutcome:
     reason: str = ""
     # What the status line counts, such as "12 enriched".
     detail: str = ""
-    # Set only when the analyzer raised rather than returned an error result.
+    # The exception raised in place of a judgeable result: by the analyzer, its inputs or storing its result.
     error: Exception | None = None
 
     @classmethod

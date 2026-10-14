@@ -8,7 +8,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import partial
 from itertools import batched
@@ -239,6 +239,7 @@ def _account(ctx: _RunContext, aggregator: ResultAggregator, outcome: AnalyzerOu
         logger.error("Analysis %s failed: %s", name, outcome.error, exc_info=outcome.error)
         analysis_errors_total.labels(analyzer=name).inc()
         aggregator.add_scan_error(name, reason, source=f"System: {name}")
+        outcome = replace(outcome, error=None)
     elif outcome.status is OutcomeStatus.FAILED:
         # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts, which aggregate into a finding.
         analysis_errors_total.labels(analyzer=name).inc()
