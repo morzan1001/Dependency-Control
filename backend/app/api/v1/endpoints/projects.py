@@ -514,7 +514,7 @@ async def _assert_github_pr_token_present(
     """Reject PR-decoration enablement when the linked GitHub instance lacks a token."""
     # The link is set by OIDC ingest, never by an update body, so unlike its GitLab twin this has no
     # in-UI escape hatch: reading a stored true back would lock the project out of every unrelated
-    # edit. Only an explicit enable is refused; decorate_reviews re-checks the token at scan time.
+    # edit. Only an explicit enable is refused; decorate_github_pr re-checks the token at scan time.
     if not (update_data.get("github_pr_comments_enabled") and project.github_instance_id):
         return
 

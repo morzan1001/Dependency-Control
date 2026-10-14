@@ -76,12 +76,12 @@ class TestPrDecorationEarlyReturns:
 
     @classmethod
     def _run_and_assert_no_service(cls, project, scan_doc, instance_doc=_USABLE_INSTANCE_DOC):
-        from app.services.analysis.integrations import decorate_reviews
+        from app.services.analysis.integrations import decorate_github_pr
 
         db = create_mock_db({"github_instances": create_mock_collection(find_one=instance_doc)})
         with patch("app.services.analysis.integrations.GitHubService") as MockService:
             with patch("app.services.analysis.integrations.logger") as mock_logger:
-                asyncio.run(decorate_reviews("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
+                asyncio.run(decorate_github_pr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
 
         MockService.assert_not_called()
         mock_logger.exception.assert_not_called()
@@ -107,12 +107,12 @@ class TestPrDecorationEarlyReturns:
         self._run_and_assert_no_service(_enabled_project(), _make_scan(commit_hash="abc"), instance_doc=None)
 
     def test_an_unusable_instance_is_logged_as_a_warning(self, caplog):
-        from app.services.analysis.integrations import decorate_reviews
+        from app.services.analysis.integrations import decorate_github_pr
 
         db = create_mock_db({"github_instances": create_mock_collection(find_one=None)})
         project, scan_doc = _enabled_project(github_instance_id="gh-gone"), _make_scan(commit_hash="abc")
         with caplog.at_level(logging.INFO, logger="app.services.analysis.integrations"):
-            asyncio.run(decorate_reviews("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
+            asyncio.run(decorate_github_pr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
 
         assert [(r.levelno, "gh-gone" in r.getMessage()) for r in caplog.records] == [(logging.WARNING, True)]
 
@@ -131,11 +131,11 @@ class TestPrDecorationEarlyReturns:
 
 def _run_with_service(project, scan_doc, mock_svc, instance_doc=_USABLE_INSTANCE_DOC, stats=None):
     """Runs the decoration with GitHubService stubbed; returns the patched class mock."""
-    from app.services.analysis.integrations import decorate_reviews
+    from app.services.analysis.integrations import decorate_github_pr
 
     db = create_mock_db({"github_instances": create_mock_collection(find_one=instance_doc)})
     with patch("app.services.analysis.integrations.GitHubService", return_value=mock_svc) as MockService:
-        asyncio.run(decorate_reviews("s1", stats or Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
+        asyncio.run(decorate_github_pr("s1", stats or Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
     return MockService
 
 
@@ -211,7 +211,7 @@ class TestPullRequestWorkflowScans:
     @staticmethod
     def _decorate(pr_head, branch="42/merge", comments_page=()):
         """The endpoints decorating the scan read through _api_get, and the ones it posted to."""
-        from app.services.analysis.integrations import decorate_reviews
+        from app.services.analysis.integrations import decorate_github_pr
         from app.services.github import GitHubService
 
         routes = {
@@ -246,7 +246,7 @@ class TestPullRequestWorkflowScans:
             patch.object(GitHubService, "_api_request", api_post),
         ):
             scan = _make_scan(commit_hash=_TEST_MERGE, branch=branch)
-            asyncio.run(decorate_reviews("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan, _enabled_project(), db))
+            asyncio.run(decorate_github_pr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan, _enabled_project(), db))
         return [call.args[0] for call in api_get.await_args_list], [call.args[1] for call in api_post.await_args_list]
 
     def test_the_current_head_is_decorated_after_github_retested_the_merge(self):
