@@ -6,6 +6,7 @@ import { createReport } from "@/api/compliance";
 import { projectApi } from "@/api/projects";
 import { teamApi } from "@/api/teams";
 import { createMutationCache } from "@/lib/mutation-cache";
+import { expectFieldLabel } from "@/test/form-field";
 import { NewReportDialog } from "../NewReportDialog";
 
 vi.mock("@/api/compliance", () => ({
@@ -61,6 +62,30 @@ describe("NewReportDialog", () => {
 
     expect(screen.getByRole("dialog")).toHaveClass("max-w-lg");
     expect(screen.getByRole("dialog")).not.toHaveClass("max-w-md");
+  });
+
+  it("labels each field like the other form dialogs and takes the shared text area for the comment", () => {
+    withClient(<NewReportDialog onClose={vi.fn()} />);
+
+    for (const name of ["Scope", "Framework", "Format", "Audit comment (optional)"]) expectFieldLabel(name);
+    expect(screen.getByLabelText("Audit comment (optional)")).toHaveClass("border-input");
+  });
+
+  it.each([
+    ["project picker", [], "Project", "Select a project for project scope"],
+    ["team list", [], "Team", "Select a team for team scope"],
+    ["typed team id", ["analytics:global", "team:read"], "Team", "Select a team for team scope"],
+  ])("marks the empty %s and says why under it, like the other field errors", async (_, permissions, scope, reason) => {
+    permissions.forEach((permission) => permissionSet.add(permission));
+    withClient(<NewReportDialog onClose={vi.fn()} />);
+    await pickOption(screen.getAllByRole("combobox")[0], scope);
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(reason);
+    expectFieldLabel(scope);
+    expect(screen.getByLabelText(scope)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText(scope)).toHaveAccessibleDescription(reason);
+    expect(createReport).not.toHaveBeenCalled();
   });
 
   it("offers the caller's teams by name and sends the picked team's id", async () => {

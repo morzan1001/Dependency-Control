@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { pruneSystemAudit, revertSystemPolicy } from "@/api/policyAudit";
 import { createMutationCache } from "@/lib/mutation-cache";
+import { expectFieldLabel } from "@/test/form-field";
 import { PolicyAuditTimeline } from "../PolicyAuditTimeline";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -62,6 +63,22 @@ describe("PolicyAuditTimeline", () => {
     fireEvent.click(btn);
     expect(screen.getByText(/Prune audit entries/i)).toBeInTheDocument();
     expect(screen.getByText(/Destructive:/i)).toBeInTheDocument();
+  });
+
+  it("labels the revert comment like the other form dialogs, with the shared text area", async () => {
+    withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+    fireEvent.click((await screen.findAllByTitle("Revert to this version"))[0]);
+
+    expectFieldLabel("Comment (required for revert)");
+    expect(screen.getByLabelText("Comment (required for revert)")).toHaveClass("border-input");
+  });
+
+  it("labels the prune cutoff like the other form dialogs, with the shared date field", async () => {
+    withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+    fireEvent.click(await screen.findByRole("button", { name: /Prune old entries/i }));
+
+    expectFieldLabel("Prune entries before");
+    expect(screen.getByLabelText("Prune entries before")).toHaveClass("border-input");
   });
 
   it("shows the server's reason when a revert is refused", async () => {

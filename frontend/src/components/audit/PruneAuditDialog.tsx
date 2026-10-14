@@ -3,6 +3,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface Props {
   open: boolean;
@@ -35,20 +37,20 @@ export function PruneAuditDialog({ open, onClose, onConfirm, busy }: Readonly<Pr
             <strong>Destructive:</strong> audit entries older than the selected
             date will be permanently removed and cannot be recovered.
           </div>
-          <label className="block">
-            <span className="text-muted-foreground">Prune entries before</span>
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="prune-before">Prune entries before</Label>
+            <Input
+              id="prune-before"
               type="date"
               value={beforeDate}
               onChange={(e) => setBeforeDate(e.target.value)}
-              className="mt-1 block w-full rounded border bg-background p-2 text-sm"
               max={new Date().toISOString().slice(0, 10)}
             />
-          </label>
-          <p className="text-xs text-muted-foreground">
-            The backend enforces a minimum cutoff and may reject dates that are
-            too recent.
-          </p>
+            <p className="text-xs text-muted-foreground">
+              The backend enforces a minimum cutoff and may reject dates that are
+              too recent.
+            </p>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>

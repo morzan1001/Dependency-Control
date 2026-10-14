@@ -3,6 +3,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 interface Props {
   open: boolean;
@@ -24,16 +26,16 @@ export function RevertConfirmDialog({ open, targetVersion, onClose, onConfirm }:
           This creates a new policy version whose rules match version{" "}
           <strong>{targetVersion}</strong>. The history is preserved.
         </p>
-        <label className="block text-sm">
-          <span className="text-muted-foreground">Comment (required for revert)</span>
-          <textarea
+        <div className="grid gap-2">
+          <Label htmlFor="revert-comment">Comment (required for revert)</Label>
+          <Textarea
+            id="revert-comment"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            className="mt-1 w-full rounded border p-2 text-sm"
             rows={3}
             maxLength={1000}
           />
-        </label>
+        </div>
         <DialogFooter>
           <Button variant="outline" onClick={close}>Cancel</Button>
           <Button

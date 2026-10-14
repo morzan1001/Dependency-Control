@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ProjectCombobox } from "@/components/ui/project-combobox";
 import { createReport } from "@/api/compliance";
 import type { ReportFormat, ReportFramework } from "@/types/compliance";
@@ -86,6 +88,11 @@ export function NewReportDialog({
     : hasPermission("project:update") && !hasPermission("project:read") && !hasPermission("project:read_all");
   const { data: teams } = useTeams(undefined, "name", "asc", { enabled: scope === "team" && !typesScopeId });
   const pickScopeId = (id: string) => { setScopeId(id); setScopeError(null); };
+  const scopeIdField = {
+    id: "report-scope-id",
+    "aria-invalid": !!scopeError,
+    "aria-describedby": scopeError ? "report-scope-id-error" : undefined,
+  };
 
   const submit = useMutation({
     mutationFn: () => createReport({
@@ -116,71 +123,71 @@ export function NewReportDialog({
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Generate Compliance Report</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <label className="block text-sm">
-            <span className="text-muted-foreground">Scope</span>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="report-scope">Scope</Label>
             <Select value={scope} onValueChange={(v) => { setScope(v as Scope); pickScopeId(""); }}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectTrigger id="report-scope"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {scopeOptions.map((s) => (
                   <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <span className="mt-1 block text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {scopeOptions.find((s) => s.value === scope)?.description}
-            </span>
-          </label>
+            </p>
+          </div>
           {needsScopeId && (
-            <label className="block text-sm">
-              <span className="text-muted-foreground">{scope === "project" ? "Project" : "Team"}</span>
+            <div className="grid gap-2">
+              <Label htmlFor={scopeIdField.id}>{scope === "project" ? "Project" : "Team"}</Label>
               {typesScopeId && (
-                <Input value={scopeId} onChange={(e) => pickScopeId(e.target.value.trim())} placeholder={scope === "project" ? "Project ID" : "Team ID"} className="mt-1" />
+                <Input {...scopeIdField} value={scopeId} onChange={(e) => pickScopeId(e.target.value.trim())} placeholder={scope === "project" ? "Project ID" : "Team ID"} />
               )}
               {scope === "project" && !typesScopeId && (
-                <ProjectCombobox value={scopeId} onValueChange={pickScopeId} className="mt-1" />
+                <ProjectCombobox {...scopeIdField} value={scopeId} onValueChange={pickScopeId} />
               )}
               {scope === "team" && !typesScopeId && (
                 <Select value={scopeId} onValueChange={pickScopeId}>
-                  <SelectTrigger className="mt-1"><SelectValue placeholder="Select a team..." /></SelectTrigger>
+                  <SelectTrigger {...scopeIdField}><SelectValue placeholder="Select a team..." /></SelectTrigger>
                   <SelectContent>
                     {teams?.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               )}
               {scopeError && (
-                <span className="mt-1 block text-xs text-destructive">{scopeError}</span>
+                <p id="report-scope-id-error" role="alert" className="text-xs text-destructive">{scopeError}</p>
               )}
-            </label>
+            </div>
           )}
-          <label className="block text-sm">
-            <span className="text-muted-foreground">Framework</span>
+          <div className="grid gap-2">
+            <Label htmlFor="report-framework">Framework</Label>
             <Select value={framework} onValueChange={(v) => setFramework(v as ReportFramework)}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectTrigger id="report-framework"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {FRAMEWORKS.map((f) => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
               </SelectContent>
             </Select>
-          </label>
-          <label className="block text-sm">
-            <span className="text-muted-foreground">Format</span>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="report-format">Format</Label>
             <Select value={format} onValueChange={(v) => setFormat(v as ReportFormat)}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectTrigger id="report-format"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {FORMATS.map((f) => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
               </SelectContent>
             </Select>
-          </label>
-          <label className="block text-sm">
-            <span className="text-muted-foreground">Audit comment (optional)</span>
-            <textarea
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="report-comment">Audit comment (optional)</Label>
+            <Textarea
+              id="report-comment"
               value={comment}
               onChange={(e) => setComment(e.target.value)}
-              className="mt-1 w-full rounded border p-2 text-sm"
               rows={2}
               maxLength={1000}
             />
-          </label>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
