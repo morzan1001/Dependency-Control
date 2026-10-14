@@ -472,6 +472,7 @@ describe('ScanDetails finding tabs', () => {
 
   it.each([
     [[], []],
+    [['trivy'], ['Security', 'Compliance']],
     [['grype'], ['Security']],
     [['osv'], ['Security']],
     [['deps_dev'], ['Security']],
@@ -487,26 +488,13 @@ describe('ScanDetails finding tabs', () => {
     [['outdated_packages'], ['Quality']],
     [['maintainer_risk'], ['Quality']],
     [['epss_kev', 'reachability'], []],
+    [['cbomkit'], []],
     [['maintainer_risk', 'trufflehog', 'osv', 'kics', 'end_of_life'], ['Security', 'Secrets', 'SAST', 'Compliance', 'Quality']],
   ])('shows the tabs of the analyzers %j next to All Findings and Raw Data', (active, tabs) => {
     analyzers.active = active
     renderPage()
 
     expect(tabNames()).toEqual(['All Findings', ...tabs, 'Raw Data'])
-  })
-
-  it('opens the SAST tab for CBOMkit, which the analyzer list files under SAST', () => {
-    analyzers.active = ['cbomkit']
-    renderPage()
-
-    expect(tabNames()).toEqual(['All Findings', 'SAST', 'Raw Data'])
-  })
-
-  it('opens only the Security tab for Trivy, which reports vulnerabilities and no licenses', () => {
-    analyzers.active = ['trivy']
-    renderPage()
-
-    expect(tabNames()).toEqual(['All Findings', 'Security', 'Raw Data'])
   })
 
   it.each([

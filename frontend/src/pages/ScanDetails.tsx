@@ -29,7 +29,6 @@ import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
 import { cn, formatBytes, formatDateTime, getErrorMessage, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
-import { AVAILABLE_ANALYZERS } from '@/lib/constants'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -42,21 +41,19 @@ interface FindingTab {
   readonly category?: string
 }
 
-// category is the backend's finding category; analyzerCategories are the AVAILABLE_ANALYZERS groups that open the tab.
-const FINDING_TABS: readonly (FindingTab & { readonly analyzerCategories: readonly string[] })[] = [
-  { value: 'security', label: 'Security', category: 'security', analyzerCategories: ['vulnerability', 'security'] },
-  { value: 'secrets', label: 'Secrets', category: 'secret', analyzerCategories: ['secrets'] },
-  { value: 'sast', label: 'SAST', category: 'sast', analyzerCategories: ['sast'] },
-  { value: 'compliance', label: 'Compliance', category: 'compliance', analyzerCategories: ['compliance'] },
-  { value: 'quality', label: 'Quality', category: 'quality', analyzerCategories: ['quality'] },
+// Listed per tab because AVAILABLE_ANALYZERS files CBOMkit under SAST, while its crypto findings are category "other".
+const FINDING_TABS: readonly (FindingTab & { readonly analyzers: readonly string[] })[] = [
+  { value: 'security', label: 'Security', category: 'security', analyzers: ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev', 'hash_verification'] },
+  { value: 'secrets', label: 'Secrets', category: 'secret', analyzers: ['trufflehog'] },
+  { value: 'sast', label: 'SAST', category: 'sast', analyzers: ['opengrep', 'kics', 'bearer'] },
+  { value: 'compliance', label: 'Compliance', category: 'compliance', analyzers: ['trivy', 'license_compliance', 'end_of_life'] },
+  { value: 'quality', label: 'Quality', category: 'quality', analyzers: ['outdated_packages', 'maintainer_risk'] },
 ]
 
 function findingTabsFor(activeAnalyzers: readonly string[]): FindingTab[] {
-  const active = new Set(activeAnalyzers)
-  const categories = new Set(AVAILABLE_ANALYZERS.filter((a) => active.has(a.id)).map((a) => a.category))
   return [
     { value: 'overview', label: 'All Findings' },
-    ...FINDING_TABS.filter((tab) => tab.analyzerCategories.some((c) => categories.has(c))),
+    ...FINDING_TABS.filter((tab) => tab.analyzers.some((a) => activeAnalyzers.includes(a))),
   ]
 }
 
