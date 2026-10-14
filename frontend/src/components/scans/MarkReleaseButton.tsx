@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -147,6 +148,9 @@ export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButto
           )}
           {!scan.is_rescan && (
             <DialogFooter>
+              <DialogClose asChild>
+                <Button variant="outline">Cancel</Button>
+              </DialogClose>
               <Button
                 disabled={!scan.commit_hash || markPending || rejection !== null}
                 onClick={() => mark(target, version, closeDialog)}

@@ -154,6 +154,18 @@ describe('MarkReleaseButton', () => {
     )
   })
 
+  it('ends in an outline Cancel before the mark button and closes through it without marking', () => {
+    const dialog = openDialog(makeScan())
+    const cancel = dialog.getByRole('button', { name: 'Cancel' })
+
+    expect(cancel).toHaveClass('border')
+    expect(cancel.compareDocumentPosition(dialog.getByRole('button', { name: MARK_BUTTON })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(cancel)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(mockMark).not.toHaveBeenCalled()
+  })
+
   it('promotes a staging release to the environment that was typed', () => {
     const dialog = openDialog(releasedScan([makeRelease({ environment: STAGING, version: STAGING_VERSION })]))
 

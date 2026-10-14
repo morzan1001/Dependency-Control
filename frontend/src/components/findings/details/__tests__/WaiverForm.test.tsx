@@ -71,6 +71,21 @@ describe('WaiverForm', () => {
     expect(await waiveForTheWholeProject(sast)).toMatchObject({ scope: 'rule', rule_id: 'python.eval' })
   })
 
+  it('ends in an outline Cancel before Confirm Waiver, like the other dialogs', () => {
+    const onCancel = vi.fn()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <WaiverForm finding={finding('vulnerability', {})} vulnId={null} projectId="p1" onCancel={onCancel} onSuccess={() => {}} />
+      </QueryClientProvider>,
+    )
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+
+    expect(cancel).toHaveClass('border')
+    expect(cancel.compareDocumentPosition(screen.getByRole('button', { name: 'Confirm Waiver' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(cancel)
+    expect(onCancel).toHaveBeenCalled()
+  })
+
   it('offers an IaC finding rule scope from its own rule id', async () => {
     expect(await waiveForTheWholeProject(finding('iac', { rule_id: 'kics-1' }))).toMatchObject({
       scope: 'rule',
