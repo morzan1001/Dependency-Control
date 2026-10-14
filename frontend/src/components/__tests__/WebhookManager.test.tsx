@@ -179,6 +179,14 @@ describe("WebhookManager", () => {
     expect(screen.queryByText("Failing")).not.toBeInTheDocument();
   });
 
+  it("stacks Add Webhook under the title on a phone, like the waiver list's header", () => {
+    renderWith([slackHook]);
+
+    const header = screen.getByRole("heading", { name: "Webhooks" }).parentElement?.parentElement;
+    expect(header).toHaveClass("flex-col", "sm:flex-row", "sm:items-center", "sm:justify-between");
+    expect(header).toContainElement(screen.getByRole("button", { name: /Add Webhook/i }));
+  });
+
   it("keeps the URL column 200px wide and scrolls the table sideways on a narrow screen", () => {
     renderWith([slackHook]);
 

@@ -42,6 +42,14 @@ describe('ProjectMembers', () => {
     expect(screen.getByText(CO_OWNED)).toBeInTheDocument()
   })
 
+  it("stacks Invite Member under the title on a phone, like the waiver list's header", () => {
+    renderMembers('')
+
+    const header = screen.getByRole('heading', { name: 'Project Members' }).parentElement?.parentElement
+    expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+    expect(header).toContainElement(screen.getByRole('button', { name: 'Invite Member' }))
+  })
+
   it('leaves a single owner reading as it did', () => {
     renderMembers('Team: The TOURists')
 
