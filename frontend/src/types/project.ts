@@ -78,7 +78,6 @@ export interface ProjectUpdate {
 export interface ProjectApiKeyResponse {
   project_id: string;
   api_key: string;
-  note: string;
 }
 
 export interface BranchInfo {
