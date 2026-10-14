@@ -43,4 +43,9 @@ describe('ReleaseBadge', () => {
     render(<ReleaseBadge environment={PRODUCTION} className={CALLER_CLASS} />)
     expect(screen.getByLabelText(`Release in ${PRODUCTION}`)).toHaveClass(CALLER_CLASS)
   })
+
+  it('wraps its version under the environment when the space beside it is narrower, instead of running over it', () => {
+    render(<ReleaseBadge environment={PRODUCTION} version={VERSION} />)
+    expect(screen.getByLabelText(`Release ${VERSION} in ${PRODUCTION}`)).toHaveClass('max-w-full', 'flex-wrap')
+  })
 })

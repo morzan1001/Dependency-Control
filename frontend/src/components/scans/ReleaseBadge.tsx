@@ -17,7 +17,7 @@ export function ReleaseBadge({ environment, version, className = '' }: Readonly<
       variant="outline"
       aria-label={ariaLabel}
       // The --success token carries its own light and dark value, so one class set covers both.
-      className={`flex w-fit items-center gap-1.5 border-success/30 bg-success/10 text-success hover:bg-success/20 ${className}`}
+      className={`flex w-fit max-w-full flex-wrap items-center gap-1.5 border-success/30 bg-success/10 text-success hover:bg-success/20 ${className}`}
     >
       <Rocket className="h-3 w-3" />
       <span>{label}</span>
