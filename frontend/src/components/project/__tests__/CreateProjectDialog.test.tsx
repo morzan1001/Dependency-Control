@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CreateProjectDialog } from '../CreateProjectDialog'
 
 const mockMutate = vi.fn()
-let appConfig: { retention_mode: string; default_project_analyzers: string[] } | undefined
+let appConfig: { retention_mode: string; default_project_analyzers: string[]; global_retention_days?: number } | undefined
 
 vi.mock('@/hooks/queries/use-system', () => ({
   useAppConfig: () => ({ data: appConfig }),
@@ -48,6 +48,26 @@ describe('CreateProjectDialog', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /trivy/i }))
 
     expect(screen.getByText('Requires at least one vulnerability scanner to be enabled')).toBeInTheDocument()
+  })
+
+  it('sends the retention the user set', () => {
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Retention Period (Days)'), { target: { value: '30' } })
+    fireEvent.click(screen.getByLabelText('Retention Action'))
+    fireEvent.click(screen.getByRole('option', { name: 'None (Keep Forever)' }))
+
+    expect(submit()).toMatchObject({ retention_days: 30, retention_action: 'none' })
+  })
+
+  it('leaves the retention to a global policy, which it names', () => {
+    appConfig = { retention_mode: 'global', default_project_analyzers: [], global_retention_days: 0 }
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByText('Data retention is disabled (data is kept forever).')).toBeInTheDocument()
+    const sent = submit()
+    expect(sent.retention_days).toBeUndefined()
+    expect(sent.retention_action).toBeUndefined()
   })
 
   it('sends the analyzers the user picked', () => {

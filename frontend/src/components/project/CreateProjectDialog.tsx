@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Check } from "lucide-react";
 import { toast } from "sonner";
+import type { RetentionAction } from "@/types/project";
 import { AnalyzerChecklist } from "./AnalyzerChecklist";
+import { RetentionFields } from "./RetentionRescanFields";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +28,17 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
+const EMPTY_FORM = {
+  name: "",
+  team_id: undefined as string | undefined,
+  retention_days: 90,
+  retention_action: "delete" as RetentionAction,
+  // null until the user picks: the selection follows the backend default until then.
+  pickedAnalyzers: null as string[] | null,
+};
+
+type CreateProjectForm = typeof EMPTY_FORM;
+
 interface CreateProjectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -35,12 +48,8 @@ export function CreateProjectDialog({
   open,
   onOpenChange,
 }: Readonly<CreateProjectDialogProps>) {
-  const [name, setName] = useState("");
-  const [teamId, setTeamId] = useState<string | undefined>(undefined);
-  const [retentionDays, setRetentionDays] = useState(90);
-  const [retentionAction, setRetentionAction] = useState<string>("delete");
-  // null until the user picks: the selection follows the backend default until then.
-  const [pickedAnalyzers, setPickedAnalyzers] = useState<string[] | null>(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const set = (patch: Partial<CreateProjectForm>) => setForm((current) => ({ ...current, ...patch }));
   const [createdProjectData, setCreatedProjectData] = useState<{
     project_id: string;
     api_key: string;
@@ -51,17 +60,18 @@ export function CreateProjectDialog({
   const { data: appConfig } = useAppConfig({ enabled: open });
 
   const createProjectMutation = useCreateProject({ errorTitle: "Failed to create project" });
-  const analyzers = pickedAnalyzers ?? appConfig?.default_project_analyzers ?? [];
+  const analyzers = form.pickedAnalyzers ?? appConfig?.default_project_analyzers ?? [];
+  const retentionIsGlobal = appConfig?.retention_mode === 'global';
 
   const handleCreateProject = (e: React.FormEvent) => {
     e.preventDefault();
     createProjectMutation.mutate(
       {
-        name,
-        team_id: teamId === "none" ? undefined : teamId,
-        active_analyzers: pickedAnalyzers ?? undefined,
-        retention_days: appConfig?.retention_mode === 'global' ? undefined : retentionDays,
-        retention_action: appConfig?.retention_mode === 'global' ? undefined : retentionAction as 'delete' | 'archive' | 'none',
+        name: form.name,
+        team_id: form.team_id === "none" ? undefined : form.team_id,
+        active_analyzers: form.pickedAnalyzers ?? undefined,
+        retention_days: retentionIsGlobal ? undefined : form.retention_days,
+        retention_action: retentionIsGlobal ? undefined : form.retention_action,
       },
       {
         onSuccess: (data) => {
@@ -76,16 +86,12 @@ export function CreateProjectDialog({
     onOpenChange(false);
     setTimeout(() => {
       setCreatedProjectData(null);
-      setName("");
-      setTeamId(undefined);
-      setRetentionDays(90);
-      setRetentionAction("delete");
-      setPickedAnalyzers(null);
+      setForm(EMPTY_FORM);
     }, 300);
   };
 
   const toggleAnalyzer = (id: string) => {
-    setPickedAnalyzers(analyzers.includes(id) ? analyzers.filter((a) => a !== id) : [...analyzers, id]);
+    set({ pickedAnalyzers: analyzers.includes(id) ? analyzers.filter((a) => a !== id) : [...analyzers, id] });
   };
 
   return (
@@ -136,8 +142,8 @@ export function CreateProjectDialog({
               <Label htmlFor="name">Project Name</Label>
               <Input
                 id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+                value={form.name}
+                onChange={(e) => set({ name: e.target.value })}
                 placeholder="my-awesome-project"
                 required
               />
@@ -146,8 +152,8 @@ export function CreateProjectDialog({
             <div className="space-y-2">
               <Label htmlFor="team">Team (Optional)</Label>
               <Select
-                value={teamId || "none"}
-                onValueChange={(val) => setTeamId(val)}
+                value={form.team_id || "none"}
+                onValueChange={(team_id) => set({ team_id })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a team" />
@@ -163,52 +169,12 @@ export function CreateProjectDialog({
               </Select>
             </div>
 
-            <div className="space-y-2">
-                <Label htmlFor="retention">Data Retention (Days)</Label>
-                {appConfig?.retention_mode === 'global' ? (
-                    <div className="p-3 bg-muted rounded-md text-sm border">
-                        <p className="font-medium">Managed Globally</p>
-                        <p className="text-muted-foreground mt-1">
-                            {appConfig.global_retention_days > 0
-                                ? `Data is retained for ${appConfig.global_retention_days} days.`
-                                : "Data retention is disabled (data is kept forever)."}
-                        </p>
-                    </div>
-                ) : (
-                    <div className="space-y-3">
-                        <Input
-                            id="retention"
-                            type="number"
-                            min="1"
-                            max="36500"
-                            value={retentionDays}
-                            onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)}
-                            required
-                        />
-                        <p className="text-xs text-muted-foreground">
-                            How long to keep scan data for this project.
-                        </p>
-                        <div className="space-y-2">
-                            <Label>Retention Action</Label>
-                            <Select value={retentionAction} onValueChange={setRetentionAction}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Select action" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="delete">Delete</SelectItem>
-                                    {appConfig?.archive_enabled && (
-                                        <SelectItem value="archive">Archive to S3</SelectItem>
-                                    )}
-                                    <SelectItem value="none">None (Keep Forever)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <p className="text-xs text-muted-foreground">
-                                Action when retention period expires.
-                            </p>
-                        </div>
-                    </div>
-                )}
-            </div>
+            <RetentionFields
+              days={form.retention_days}
+              action={form.retention_action}
+              onChange={set}
+              appConfig={appConfig}
+            />
 
             <div className="space-y-3 pt-2">
               <Label>Active Analyzers</Label>
