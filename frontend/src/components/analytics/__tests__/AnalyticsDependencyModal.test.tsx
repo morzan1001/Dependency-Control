@@ -358,6 +358,19 @@ describe("AnalyticsDependencyModal findings list", () => {
     expect(screen.getByText("MEDIUM").querySelector("svg")).not.toBeNull();
   });
 
+  it("names each row's type with the findings table's badge, in a column as wide as the table's", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ ...finding("CERT-1", "HIGH"), type: "crypto_cert_expired" }], total: 1 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    expect(screen.getByText("Certificate expired")).toHaveClass("truncate");
+    expect(screen.queryByText("crypto_cert_expired")).not.toBeInTheDocument();
+    expect(screen.getByText("Type", { selector: "th" })).toHaveClass("w-[160px]");
+  });
+
   it("marks the column the findings are sorted by and the direction", () => {
     (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [finding("CVE-1", "HIGH")], total: 1 },

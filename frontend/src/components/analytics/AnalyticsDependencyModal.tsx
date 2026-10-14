@@ -58,6 +58,7 @@ import {
 import { getDisplayId, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
 import { SeverityBadge } from '@/components/findings/SeverityBadge'
+import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 // Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
@@ -497,7 +498,7 @@ export function AnalyticsDependencyModal({
                 <TableHeader>
                   <TableRow>
                     <SortableHead column="id" sort={sort} firstOrder="asc" className="w-[180px]">Finding</SortableHead>
-                    <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[120px]">Type</SortableHead>
+                    <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[160px]">Type</SortableHead>
                     <SortableHead column="severity" sort={sort} className="w-[120px]">Severity</SortableHead>
                     <SortableHead column="project_name" sort={sort} firstOrder="asc">Project</SortableHead>
                   </TableRow>
@@ -513,7 +514,7 @@ export function AnalyticsDependencyModal({
                         {getDisplayId(finding) || '-'}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{finding.type}</Badge>
+                        <FindingTypeBadge type={finding.type} />
                       </TableCell>
                       <TableCell>
                         <SeverityBadge severity={finding.severity || 'UNKNOWN'} />

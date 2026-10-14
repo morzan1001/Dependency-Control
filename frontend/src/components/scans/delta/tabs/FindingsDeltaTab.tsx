@@ -9,6 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SeverityBadge } from "@/components/findings/SeverityBadge";
+import { FindingTypeBadge } from "@/components/findings/FindingTypeBadge";
 import { formatDate, toggle } from "@/lib/utils";
 import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
@@ -72,7 +73,7 @@ export function FindingsDeltaTab(props: DeltaTabProps) {
             <TableRow>
               <TableHead className="w-[110px]">Change</TableHead>
               <TableHead className="w-[110px]">Severity</TableHead>
-              <TableHead className="w-[120px]">Type</TableHead>
+              <TableHead className="w-[160px]">Type</TableHead>
               <TableHead>Title</TableHead>
               <TableHead>Component</TableHead>
               <TableHead className="w-[120px]">First seen</TableHead>
@@ -83,7 +84,7 @@ export function FindingsDeltaTab(props: DeltaTabProps) {
               <TableRow key={`${item.change}-${item.finding_id}`}>
                 <TableCell><ChangeBadge change={item.change} /></TableCell>
                 <TableCell><SeverityBadge severity={item.severity} /></TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">{item.finding_type}</TableCell>
+                <TableCell><FindingTypeBadge type={item.finding_type} /></TableCell>
                 <TableCell>{item.title}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {item.component ?? ""}
