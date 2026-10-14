@@ -4,14 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from '../Dashboard'
 import type { Project } from '@/types/project'
 
-const { useProjectsMock, navigateMock } = vi.hoisted(() => ({ useProjectsMock: vi.fn(), navigateMock: vi.fn() }))
+const { useProjectsMock, navigateMock, useRecentScansMock } = vi.hoisted(() => ({
+  useProjectsMock: vi.fn(),
+  navigateMock: vi.fn(),
+  useRecentScansMock: vi.fn(() => ({ data: [] as unknown[], isLoading: false })),
+}))
 
 vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: (...args: unknown[]) => useProjectsMock(...args) }))
 vi.mock('@/hooks/queries/use-analytics', () => ({
   useDashboardStats: () => ({ data: undefined, isLoading: false }),
 }))
 vi.mock('@/hooks/queries/use-scans', () => ({
-  useRecentScans: () => ({ data: [], isLoading: false }),
+  useRecentScans: () => useRecentScansMock(),
 }))
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }))
 vi.mock('recharts', () => ({
@@ -61,6 +65,24 @@ describe('Dashboard project table team column', () => {
 
     expect(screen.getByText('project-p1')).toBeInTheDocument()
     expect(screen.getByText('Unassigned')).toBeInTheDocument()
+  })
+})
+
+describe('Dashboard recent activity', () => {
+  it('breaks a long branch name anywhere, wraps the status under it when short of room and keeps the date whole', () => {
+    const branch = 'feature/PAY-4821-checkout-redesign-with-a-considerably-longer-branch-name'
+    useRecentScansMock.mockReturnValue({
+      data: [{ id: 's1', project_id: 'p1', project_name: 'payments-service', pipeline_iid: 1039, branch, status: 'completed', created_at: '2026-10-13T13:31:00Z' }],
+      isLoading: false,
+    })
+    renderDashboard([])
+
+    const run = screen.getByText(`Pipeline #1039 on ${branch}`)
+    const row = run.closest('.space-y-1')!.parentElement!
+    expect(run).toHaveClass('wrap-anywhere')
+    expect(run.parentElement).toHaveClass('flex-wrap')
+    expect(row).toHaveClass('gap-4')
+    expect(row.lastElementChild).toHaveClass('shrink-0')
   })
 })
 

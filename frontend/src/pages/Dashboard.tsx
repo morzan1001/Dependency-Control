@@ -208,15 +208,15 @@ export default function Dashboard() {
                     ) : (
                         <>
                             {scanList.map((scan) => (
-                                <div key={scan.id} className="flex items-center">
+                                <div key={scan.id} className="flex items-center gap-4">
                                     <div className="space-y-1">
                                         <p className="text-sm font-medium leading-none">{scan.project_name}</p>
-                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                            <span>{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>
+                                        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                                            <span className="wrap-anywhere">{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>
                                             <ScanStatusBadge status={scan.status} failedAnalyzers={scan.failed_analyzers} />
                                         </div>
                                     </div>
-                                    <div className="ml-auto font-medium text-sm text-muted-foreground">
+                                    <div className="ml-auto shrink-0 font-medium text-sm text-muted-foreground">
                                         {formatDate(scan.created_at)}
                                     </div>
                                 </div>
