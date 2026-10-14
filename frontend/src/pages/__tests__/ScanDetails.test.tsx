@@ -14,9 +14,12 @@ import ScanDetails from '../ScanDetails'
 const mockUseScan = vi.fn()
 const mockMutate = vi.fn()
 const releaseControlProps = vi.fn()
-const { member, auth } = vi.hoisted(() => ({
+const findingsTableProps = vi.fn()
+const waivedSectionProps = vi.fn()
+const { member, auth, analyzers } = vi.hoisted(() => ({
   member: { current: undefined as ProjectMember | undefined },
   auth: { permissions: [] as string[] },
+  analyzers: { active: [] as string[] },
 }))
 const ALREADY_UNDER_WAY = 'A re-scan of this scan is already under way.'
 const RESCAN_BUTTON = { name: /trigger re-scan/i }
@@ -51,7 +54,7 @@ vi.mock('@/hooks/queries/use-scans', async (importOriginal) => ({
 
 vi.mock('@/hooks/queries/use-projects', () => ({
   useProject: () => ({
-    data: { id: 'p1', name: 'Proj', active_analyzers: [], members: [member.current] },
+    data: { id: 'p1', name: 'Proj', active_analyzers: analyzers.active, members: [member.current] },
     isLoading: false,
   }),
 }))
@@ -68,8 +71,18 @@ function teamMember(effectiveRole: string): ProjectMember {
   }
 }
 
-vi.mock('@/components/findings/FindingsTable', () => ({ FindingsTable: () => null }))
-vi.mock('@/components/findings/WaivedFindingsSection', () => ({ WaivedFindingsSection: () => null }))
+vi.mock('@/components/findings/FindingsTable', () => ({
+  FindingsTable: (props: unknown) => {
+    findingsTableProps(props)
+    return null
+  },
+}))
+vi.mock('@/components/findings/WaivedFindingsSection', () => ({
+  WaivedFindingsSection: (props: unknown) => {
+    waivedSectionProps(props)
+    return null
+  },
+}))
 vi.mock('@/components/scans/MarkReleaseButton', () => ({ MarkReleaseButton: () => <button>Mark as release</button> }))
 vi.mock('@/components/scans/ScanReleaseControl', () => ({
   ScanReleaseControl: (props: unknown) => {
@@ -103,6 +116,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   member.current = teamMember('editor')
   auth.permissions = []
+  analyzers.active = []
 })
 
 afterEach(cleanup)
@@ -447,3 +461,139 @@ describe('ScanDetails source links', () => {
   })
 })
 
+
+const tabNames = () => screen.getAllByRole('tab').map((tab) => tab.textContent)
+const lastProps = (mock: typeof findingsTableProps) => mock.mock.lastCall?.[0] as Record<string, unknown>
+
+describe('ScanDetails finding tabs', () => {
+  beforeEach(() => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+  })
+
+  it.each([
+    [[], []],
+    [['grype'], ['Security']],
+    [['osv'], ['Security']],
+    [['deps_dev'], ['Security']],
+    [['os_malware'], ['Security']],
+    [['typosquatting'], ['Security']],
+    [['hash_verification'], ['Security']],
+    [['trufflehog'], ['Secrets']],
+    [['opengrep'], ['SAST']],
+    [['kics'], ['SAST']],
+    [['bearer'], ['SAST']],
+    [['license_compliance'], ['Compliance']],
+    [['end_of_life'], ['Compliance']],
+    [['outdated_packages'], ['Quality']],
+    [['maintainer_risk'], ['Quality']],
+    [['epss_kev', 'reachability'], []],
+    [['maintainer_risk', 'trufflehog', 'osv', 'kics', 'end_of_life'], ['Security', 'Secrets', 'SAST', 'Compliance', 'Quality']],
+  ])('shows the tabs of the analyzers %j next to All Findings and Raw Data', (active, tabs) => {
+    analyzers.active = active
+    renderPage()
+
+    expect(tabNames()).toEqual(['All Findings', ...tabs, 'Raw Data'])
+  })
+
+  it.each([
+    ['overview', undefined],
+    ['security', 'security'],
+    ['secrets', 'secret'],
+    ['sast', 'sast'],
+    ['compliance', 'compliance'],
+    ['quality', 'quality'],
+  ])('lists the %s tab\'s findings and waived findings by category %s', (tab, category) => {
+    analyzers.active = ['osv', 'trufflehog', 'opengrep', 'license_compliance', 'outdated_packages']
+    renderPage(`${SCAN_PATH}?tab=${tab}`)
+
+    expect(lastProps(findingsTableProps)).toMatchObject({ scanId: 's1', projectId: 'p1' })
+    expect(lastProps(findingsTableProps).category).toBe(category)
+    expect(lastProps(waivedSectionProps)).toMatchObject({ scanId: 's1', projectId: 'p1' })
+    expect(lastProps(waivedSectionProps).category).toBe(category)
+  })
+
+  it('narrows only All Findings to the severity the link names', () => {
+    analyzers.active = ['osv']
+    renderPage(`${SCAN_PATH}?severity=CRITICAL`)
+    expect(lastProps(findingsTableProps).severity).toBe('CRITICAL')
+
+    cleanup()
+    renderPage(`${SCAN_PATH}?tab=security&severity=CRITICAL`)
+    expect(lastProps(findingsTableProps).severity).toBeUndefined()
+  })
+
+  it('offers the license category filter on the Compliance tab only', () => {
+    analyzers.active = ['license_compliance', 'osv']
+    renderPage(`${SCAN_PATH}?tab=compliance`)
+    expect(screen.getByRole('combobox')).toHaveTextContent('All Categories')
+    expect(lastProps(findingsTableProps).licenseCategory).toBeUndefined()
+
+    cleanup()
+    renderPage(`${SCAN_PATH}?tab=security`)
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+  })
+
+  it('hides historical secrets on the Secrets tab only', () => {
+    analyzers.active = ['trufflehog', 'osv']
+    renderPage(`${SCAN_PATH}?tab=secrets`)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Hide historical secrets' }))
+
+    expect(findingsTableProps).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'secret', hideHistoricalSecrets: true }))
+    cleanup()
+    renderPage(`${SCAN_PATH}?tab=security`)
+    expect(screen.queryByRole('checkbox', { name: 'Hide historical secrets' })).not.toBeInTheDocument()
+  })
+
+  it('applies the direct-dependency and informational filters to the open tab', () => {
+    analyzers.active = ['osv']
+    renderPage(`${SCAN_PATH}?tab=security`)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Only direct dependencies' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Hide informational' }))
+
+    expect(findingsTableProps).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'security', directOnly: true, hideInfo: true }))
+  })
+})
+
+describe('ScanDetails metadata', () => {
+  it('lists status, branch, ignored count and every time the scan carries', () => {
+    mockUseScan.mockReturnValue({
+      data: {
+        ...scan('completed_with_errors'),
+        error: 'osv: rate limited',
+        ignored_count: 7,
+        commit_hash: 'abcdef1234567890',
+        completed_at: '2026-09-01T00:10:00Z',
+        job_started_at: '2026-08-31T23:58:00Z',
+      },
+      isLoading: false,
+    })
+    renderPage()
+
+    for (const label of ['Status', 'Branch', 'Commit', 'Ignored', 'Scan Started', 'Scan Completed', 'Pipeline Started']) {
+      expect(screen.getByText(label)).toBeInTheDocument()
+    }
+    expect(screen.getByText('completed with errors')).toBeInTheDocument()
+    expect(screen.getByText('osv: rate limited')).toBeInTheDocument()
+    expect(screen.getByText('Ignored').parentElement).toHaveTextContent('7')
+  })
+
+  it('leaves out the times and the commit a scan does not carry', () => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+    renderPage()
+
+    expect(screen.getByText('Ignored').parentElement).toHaveTextContent('0')
+    for (const label of ['Commit', 'Scan Completed', 'Pipeline Started', 'Pipeline']) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument()
+    }
+  })
+
+  it('charts the severity and the category distribution', () => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+    renderPage()
+
+    expect(screen.getByText('Severity Distribution')).toBeInTheDocument()
+    expect(screen.getByText('Category Distribution')).toBeInTheDocument()
+  })
+})
