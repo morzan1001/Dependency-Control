@@ -46,15 +46,15 @@ describe("ImpactAnalysis fix versions", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(`Fix versions: ${SAMPLED.join(", ")} (+2 more)`);
   });
 
-  it("breaks each component's findings down by severity in the table", async () => {
+  it("breaks each component's findings down by severity in the table, in the severity pill colours", async () => {
     vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([
       { ...result, findings_by_severity: { critical: 1, high: 2, medium: 3, low: 0 } },
     ]);
     renderImpact();
 
-    expect((await screen.findByText("C:1")).className).toContain("text-xs");
-    expect(screen.getByText("H:2").className).toContain("text-xs bg-orange-500 hover:bg-orange-600");
-    expect(screen.getByText("M:3").className).toContain("text-xs bg-yellow-500 hover:bg-yellow-600 text-black");
+    expect(await screen.findByText("C:1")).toHaveClass("text-xs", "bg-severity-critical", "text-severity-critical-foreground");
+    expect(screen.getByText("H:2")).toHaveClass("text-xs", "bg-severity-high", "text-severity-high-foreground");
+    expect(screen.getByText("M:3")).toHaveClass("text-xs", "bg-severity-medium", "text-severity-medium-foreground");
     expect(screen.queryByText(/^L:/)).not.toBeInTheDocument();
   });
 });
