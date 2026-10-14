@@ -312,7 +312,7 @@ export default function ScanDetails() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
             <Link to={`/projects/${projectId}`}>
@@ -328,7 +328,7 @@ export default function ScanDetails() {
             </div>
             </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
             {scanHistory && scanHistory.total > 1 && (
                 <Select
                     value={scanId}

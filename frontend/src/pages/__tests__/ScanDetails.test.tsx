@@ -133,6 +133,18 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+describe('ScanDetails header', () => {
+  it('stacks its actions under the title on a phone and wraps them, like the project page header', () => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+
+    renderPage()
+
+    const actions = screen.getByRole('button', RESCAN_BUTTON).parentElement!
+    expect(actions).toHaveClass('flex-wrap')
+    expect(actions.parentElement).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+  })
+})
+
 describe('ScanDetails re-scan button', () => {
   it('tells the user why the server refused the re-scan', async () => {
     mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
