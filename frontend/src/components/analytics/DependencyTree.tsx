@@ -213,27 +213,25 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
   return (
     <TooltipProvider>
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Dependency Tree</CardTitle>
-            <CardDescription>View dependencies and their relationship to vulnerabilities</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <ProjectCombobox
-              value={selectedProjectId}
-              onValueChange={setSelectedProjectId}
-              className="w-[300px]"
-            />
-            <Button
-              variant={showDirectOnly ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowDirectOnly(!showDirectOnly)}
-            >
-              <Layers className="h-4 w-4 mr-2" />
-              Direct only
-            </Button>
-          </div>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0">
+        <div>
+          <CardTitle>Dependency Tree</CardTitle>
+          <CardDescription>View dependencies and their relationship to vulnerabilities</CardDescription>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <ProjectCombobox
+            value={selectedProjectId}
+            onValueChange={setSelectedProjectId}
+            className="w-full sm:w-[300px]"
+          />
+          <Button
+            variant={showDirectOnly ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowDirectOnly(!showDirectOnly)}
+          >
+            <Layers className="h-4 w-4 mr-2" />
+            Direct only
+          </Button>
         </div>
       </CardHeader>
       <CardContent>

@@ -10,8 +10,8 @@ vi.mock("@/api/analytics", () => ({
 
 // The tree only renders once a project is picked; stub the combobox to select one immediately.
 vi.mock("@/components/ui/project-combobox", () => ({
-  ProjectCombobox: ({ onValueChange }: { onValueChange: (v: string) => void }) => (
-    <button type="button" onClick={() => onValueChange("p1")}>select-project</button>
+  ProjectCombobox: ({ onValueChange, className }: { onValueChange: (v: string) => void; className?: string }) => (
+    <button type="button" className={className} onClick={() => onValueChange("p1")}>select-project</button>
   ),
 }));
 
@@ -117,5 +117,17 @@ describe("DependencyTree load error", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Not enough permissions");
     expect(screen.queryByText("No dependencies found for this project")).not.toBeInTheDocument();
+  });
+});
+
+describe("DependencyTree on a narrow screen", () => {
+  it("stacks the project picker and Direct only under the title on a phone, the picker full width", () => {
+    renderTree(graph([node("a")], ["a"]));
+
+    const header = screen.getByRole("heading", { name: "Dependency Tree" }).parentElement?.parentElement;
+    expect(header).toHaveClass("flex-col", "sm:flex-row", "sm:items-center", "sm:justify-between");
+    const picker = screen.getByText("select-project");
+    expect(picker).toHaveClass("w-full", "sm:w-[300px]");
+    expect(picker.parentElement).toHaveClass("flex-wrap");
   });
 });
