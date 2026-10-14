@@ -103,9 +103,9 @@ export function WebhookManager({
     try {
       const result = await testWebhook.mutateAsync(id)
       if (result.success) toast.success(`Test delivered (HTTP ${result.status_code})`)
-      else toast.error("Test failed", { description: result.error })
+      else toast.error("Failed to deliver test", { description: result.error })
     } catch (error) {
-      toast.error("Test failed", { description: getErrorMessage(error) })
+      toast.error("Failed to send test", { description: getErrorMessage(error) })
     }
   }
 

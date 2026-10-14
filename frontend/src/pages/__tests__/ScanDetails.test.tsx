@@ -128,7 +128,7 @@ describe('ScanDetails re-scan button', () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', RESCAN_BUTTON))
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Re-scan not started', { description: ALREADY_UNDER_WAY }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to trigger re-scan', { description: ALREADY_UNDER_WAY }))
   })
 
   it.each(['pending', 'processing'])('cannot be clicked while the scan is %s', (status) => {
@@ -406,7 +406,7 @@ describe('ScanDetails for a scan pinned by an archive restore', () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', UNPIN_BUTTON))
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Unpin failed', { description: 'Network Error' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to unpin scan', { description: 'Network Error' }))
   })
 
   it('offers no unpin for a scan that is not pinned', () => {

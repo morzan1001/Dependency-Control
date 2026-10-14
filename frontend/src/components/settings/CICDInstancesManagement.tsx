@@ -167,7 +167,7 @@ export function CICDInstancesManagement() {
     mutationFn: ({ _type, id }: UnifiedInstance) => INSTANCE_API[_type].testConnection(id),
     onSuccess: (data, { _type }) => {
       if (!data.success) {
-        toast.error("Connection failed", { description: data.message });
+        toast.error(`Failed to connect to ${PROVIDER_LABEL[_type]}`, { description: data.message });
       } else if (_type === "github") {
         toast.success("Connection successful!", { description: data.message });
       } else {
@@ -175,7 +175,7 @@ export function CICDInstancesManagement() {
         toast.success("Connection successful!", { description: version ? `GitLab version: ${version}` : undefined });
       }
     },
-    meta: { errorTitle: "Connection test failed" },
+    meta: { errorTitle: "Failed to test connection" },
     onSettled: () => setTestingInstanceId(null),
   });
 

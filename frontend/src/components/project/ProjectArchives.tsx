@@ -185,7 +185,7 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
 
   const { data, isLoading } = useProjectArchives(projectId, page, size, filters)
   const { data: branches } = useArchiveBranches(projectId)
-  const restoreMutation = useRestoreArchive({ errorTitle: "Restore failed" })
+  const restoreMutation = useRestoreArchive({ errorTitle: "Failed to restore archive" })
 
   const handleRestore = () => {
     if (!restoreScanId) return
@@ -205,7 +205,7 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
   const handleDownload = (scanId: string) => downloadServerFile(
     () => projectApi.downloadArchive(projectId, scanId),
     `${scanId}.json.gz`,
-    "Download failed",
+    "Failed to download archive",
   )
 
   if (isLoading) {

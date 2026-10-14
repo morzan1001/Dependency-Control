@@ -207,8 +207,8 @@ export default function ScanDetails() {
   const { permissions } = useAuth()
   const { data: currentUser } = useCurrentUser()
 
-  const triggerRescanMutation = useTriggerRescan({ errorTitle: "Re-scan not started" })
-  const unpinMutation = useUnpinScan({ errorTitle: "Unpin failed" })
+  const triggerRescanMutation = useTriggerRescan({ errorTitle: "Failed to trigger re-scan" })
+  const unpinMutation = useUnpinScan({ errorTitle: "Failed to unpin scan" })
 
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]

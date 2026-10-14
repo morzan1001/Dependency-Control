@@ -185,7 +185,7 @@ describe("WebhookManager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Send test/i }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Test failed", { description: "HTTP 400: no_text" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to deliver test", { description: "HTTP 400: no_text" }));
     expect(webhookApi.test).toHaveBeenCalledWith("w-slack");
   });
 
@@ -195,7 +195,7 @@ describe("WebhookManager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Send test/i }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Test failed", { description: "Network Error" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to send test", { description: "Network Error" }));
   });
 
   it("deletes a webhook from its named Delete button once confirmed in a dialog naming its URL in bold, like the user deletion", async () => {

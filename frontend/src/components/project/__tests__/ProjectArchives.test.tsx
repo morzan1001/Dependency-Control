@@ -69,9 +69,10 @@ describe('ProjectArchives rows', () => {
 
     fireEvent.click(screen.getByTitle('Download archive'))
 
-    const [fetchFile] = vi.mocked(downloadServerFile).mock.calls[0]
+    const [fetchFile, , errorTitle] = vi.mocked(downloadServerFile).mock.calls[0]
     await fetchFile()
     expect(projectApi.downloadArchive).toHaveBeenCalledWith('p1', 's1')
+    expect(errorTitle).toBe('Failed to download archive')
   })
 
   it('restores the archive of the row after confirmation', () => {
@@ -123,6 +124,6 @@ describe('ProjectArchives restore failure', () => {
   it('names a failed restore, which the error toast completes with the reason', () => {
     render(<ProjectArchives projectId="p1" />)
 
-    expect(mockUseRestoreArchive).toHaveBeenCalledWith({ errorTitle: 'Restore failed' })
+    expect(mockUseRestoreArchive).toHaveBeenCalledWith({ errorTitle: 'Failed to restore archive' })
   })
 })
