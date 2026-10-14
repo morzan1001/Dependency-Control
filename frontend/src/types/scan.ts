@@ -1,4 +1,5 @@
 import type { PaginatedResponse, Severity } from './common';
+import type { CryptoFindingType } from './cryptoPolicy';
 
 export type { Severity } from './common';
 
@@ -13,6 +14,7 @@ export type FindingType =
   | "system_warning"
   | "outdated"
   | "quality"
+  | CryptoFindingType
   | "other";
 
 export interface ScanAnalysisResult {
