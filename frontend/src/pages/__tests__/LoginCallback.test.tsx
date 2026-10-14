@@ -74,6 +74,19 @@ describe('LoginCallback', () => {
     expect(exchangeOidcLogin).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['idp_error', 'The identity provider did not complete the sign-in'],
+    ['no_email', 'The identity provider did not share your email address'],
+    ['inactive_user', 'This account is inactive'],
+    ['not_configured', 'Single sign-on is not set up on this server'],
+  ])('ends the one-sentence explanation of %s without a period, like the refusals of the server', async (code, explanation) => {
+    globalThis.location.hash = `#error=${code}`
+
+    renderCallbackFlow()
+
+    expect(await screen.findByText(explanation)).toHaveClass('text-destructive')
+  })
+
   it('shows only its own text for a code it does not know', async () => {
     globalThis.location.hash = '#error=Your%20account%20is%20locked%2C%20call%20555-0100'
 

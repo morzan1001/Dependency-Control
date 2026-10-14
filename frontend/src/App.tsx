@@ -40,7 +40,7 @@ const queryClient = new QueryClient({
     onError: (error: Error) => {
       const axiosError = error as { response?: { status?: number } }
       if (axiosError.response?.status && axiosError.response.status >= 500) {
-        toast.error("Server Error", { description: "Something went wrong on the server." })
+        toast.error("Server Error", { description: "Something went wrong on the server" })
       }
     }
   }),

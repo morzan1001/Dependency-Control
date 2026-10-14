@@ -165,7 +165,7 @@ function reportUnresolved(outcome: RelatedFindingLookup): void {
         })
         return
     }
-    toast.warning('Could not open that finding', { description: 'This scan holds no finding with that reference.' })
+    toast.warning('Could not open that finding', { description: 'This scan holds no finding with that reference' })
 }
 
 export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false, hideHistoricalSecrets = false }: FindingsTableProps) {

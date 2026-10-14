@@ -8,12 +8,12 @@ const SSO_FAILED = 'Single sign-on failed. Please try again.'
 
 const SSO_ERRORS = new Map([
   ['state_expired', 'The sign-in expired or was started in another browser. Please try again.'],
-  ['idp_error', 'The identity provider did not complete the sign-in.'],
-  ['no_email', 'The identity provider did not share your email address.'],
+  ['idp_error', 'The identity provider did not complete the sign-in'],
+  ['no_email', 'The identity provider did not share your email address'],
   ['local_user_blocked', 'This account signs in with a password. Please use the login form.'],
-  ['inactive_user', 'This account is inactive.'],
+  ['inactive_user', 'This account is inactive'],
   ['not_provisioned', 'No account exists for you yet. Please ask an administrator to create one.'],
-  ['not_configured', 'Single sign-on is not set up on this server.'],
+  ['not_configured', 'Single sign-on is not set up on this server'],
 ])
 
 export default function LoginCallback() {

@@ -85,7 +85,7 @@ describe('InviteUserDialog copy link', () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Could not reach the clipboard', {
-        description: expect.stringMatching(/copy it by hand/i),
+        description: 'Select the invitation link and copy it by hand',
       }),
     )
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))

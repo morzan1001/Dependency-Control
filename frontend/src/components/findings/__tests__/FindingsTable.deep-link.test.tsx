@@ -56,7 +56,11 @@ describe("FindingsTable ?finding= deep link", () => {
 
     renderAt(`/?finding=${LINKED_ID}`);
 
-    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith("Could not open that finding", {
+        description: "This scan holds no finding with that reference",
+      }),
+    );
     expect(screen.queryByTestId("opened-finding")).not.toBeInTheDocument();
   });
 
