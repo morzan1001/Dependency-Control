@@ -43,7 +43,7 @@ from app.services.analysis.runner import (
     build_settings_resolver,
     run_analyzer,
     sbom_label,
-    sbom_source,
+    sbom_name,
 )
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
@@ -359,7 +359,7 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
             report.skipped_inputs[label] = "; ".join(defects)
         components = [dep.model_dump() for dep in parsed.dependencies]
         parsed_inputs.append(
-            _ParsedInput(parsed, AnalyzerInput(position, components, name=sbom_source(sbom), document=sbom))
+            _ParsedInput(parsed, AnalyzerInput(position, components, name=sbom_name(sbom), document=sbom))
         )
     return parsed_inputs
 

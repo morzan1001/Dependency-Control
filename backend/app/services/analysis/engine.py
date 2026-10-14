@@ -86,7 +86,7 @@ from app.services.analysis.runner import (
     build_settings_resolver,
     record_result,
     run_analyzer,
-    sbom_source,
+    sbom_name,
 )
 from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
@@ -343,9 +343,6 @@ async def _stored_sbom_ids(
     return [gid if gid in stored else None for gid in gridfs_ids]
 
 
-_ParsedDocument = tuple[ParsedSBOM | None, list[dict[str, Any]], str | None, SBOMFormat]
-
-
 async def _load_sbom(
     fs: AsyncIOMotorGridFSBucket, gridfs_id: str, position: int, write_file: bool
 ) -> tuple[ParsedSBOM | None, AnalyzerInput]:
@@ -361,21 +358,22 @@ async def _load_sbom(
         document = await asyncio.to_thread(json.loads, data)
         del data
         analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
-        parsed_sbom, components, name, sbom_format = await asyncio.to_thread(_parse_and_track_sbom, document)
+        return await asyncio.to_thread(_parse_and_track_sbom, document, position, path)
     except BaseException:
         if path:
             os.remove(path)
         raise
-    return parsed_sbom, AnalyzerInput(position, components, name=name, path=path, format=sbom_format)
 
 
-def _parse_and_track_sbom(document: Any) -> _ParsedDocument:
+def _parse_and_track_sbom(
+    document: Any, position: int = 1, path: str | None = None
+) -> tuple[ParsedSBOM | None, AnalyzerInput]:
     """Pre-parse the SBOM and track metrics; a document that fails to parse leaves only the raw-document scanners."""
     parsed_components: list[dict[str, Any]] = []
     parsed_sbom = None
-    source, sbom_format = None, SBOMFormat.UNKNOWN
+    name, sbom_format = None, SBOMFormat.UNKNOWN
     try:
-        source, sbom_format = sbom_source(document), sbom_parser.detect_format(document)
+        name, sbom_format = sbom_name(document), sbom_parser.detect_format(document)
         parsed_sbom = parse_sbom(document)
         parsed_components = [dep.model_dump() for dep in parsed_sbom.dependencies]
         logger.info(
@@ -388,7 +386,7 @@ def _parse_and_track_sbom(document: Any) -> _ParsedDocument:
     except Exception as parse_err:
         logger.warning(f"Failed to pre-parse SBOM: {parse_err} - only the raw-document scanners will run")
         analysis_sbom_parse_errors_total.inc()
-    return parsed_sbom, parsed_components, source, sbom_format
+    return parsed_sbom, AnalyzerInput(position, parsed_components, name=name, path=path, format=sbom_format)
 
 
 async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, scan_id: str, db: Database) -> None:

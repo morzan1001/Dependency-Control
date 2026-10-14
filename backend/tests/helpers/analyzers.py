@@ -11,7 +11,7 @@ from app.models.project import Scan
 from app.models.stats import Stats
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.services.analysis import engine, registry
-from app.services.analysis.runner import AnalyzerInput, build_settings_resolver
+from app.services.analysis.runner import build_settings_resolver
 from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
@@ -72,10 +72,7 @@ def verdict(status: ScanStatus = SCAN_STATUS_COMPLETED, stats: Stats | None = No
 
 async def process_sbom_document(ctx: Any, aggregator: Any, sbom: dict[str, Any], position: int = 1) -> list[Any]:
     """Run ``engine._process_sbom`` on the document as run_analysis hands it a loaded SBOM, for the non-CLI analyzers."""
-    parsed, components, name, sbom_format = engine._parse_and_track_sbom(sbom)
-    return await engine._process_sbom(
-        ctx, aggregator, parsed, AnalyzerInput(position, components, name=name, format=sbom_format)
-    )
+    return await engine._process_sbom(ctx, aggregator, *engine._parse_and_track_sbom(sbom, position))
 
 
 def bundled_iana_catalog() -> dict[str, CipherSuiteEntry]:

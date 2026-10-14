@@ -25,7 +25,7 @@ def _partial_result_reason(result: Any) -> str | None:
     return "; ".join(reasons) if reasons else None
 
 
-def sbom_source(sbom: dict[str, Any]) -> str | None:
+def sbom_name(sbom: dict[str, Any]) -> str | None:
     """The SBOM's root component name, else its serial number."""
     metadata = sbom.get("metadata")
     if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
