@@ -276,7 +276,11 @@ class TestGitLabTeamSyncWithoutListedEmails:
         profile_read.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("refusal", [None, _answer(429), _answer(403)], ids=["unreachable", "429", "403"])
+    @pytest.mark.parametrize(
+        "refusal",
+        [None, _answer(429), _answer(403), _answer(200, ["no", "profile"])],
+        ids=["unreachable", "429", "403", "no-document"],
+    )
     async def test_a_member_gitlab_would_not_describe_leaves_the_stored_members_alone(self, refusal):
         db = await _db(_VERIFIED)
         await self._bound_team(db)
@@ -332,14 +336,15 @@ class TestGitLabTeamSyncWithoutListedEmails:
         assert read.await_count == len(answers)
 
     @pytest.mark.asyncio
-    async def test_a_profile_answer_that_is_no_document_shows_no_email(self):
-        """Read as GitHub reads it: the member stays unresolved instead of the whole sync failing."""
+    async def test_a_profile_answer_that_is_no_document_is_refused_and_not_cached(self, gitlab_cache):
+        """Read as no email, it would drop the member and keep it dropped until the cached answer expired."""
         service = GitLabService(make_gitlab_instance(id="inst-1"))
         listing = [GitLabMember(id=7, username="ada-gl", access_level=30)]
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_answer(200, ["no", "profile"]))):
             answered = await service._with_public_emails(listing)
 
-        assert [member.email for member in answered] == [None]
+        assert answered is None
+        assert await gitlab_cache._client.keys("*user_email*") == []
 
     @pytest.mark.asyncio
     async def test_a_lookup_the_budget_cut_short_keeps_its_answers_so_the_next_one_resumes(self):

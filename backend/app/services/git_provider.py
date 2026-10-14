@@ -257,7 +257,8 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
         if response.status_code != 200:
             logger.warning("%s API GET /users/%s answered HTTP %s", self.provider, account, response.status_code)
             return None
-        return str(json_document(response).get(self._email_field) or "")
+        profile = json_document(response)
+        return str(profile.get(self._email_field) or "") if profile else None
 
     async def _public_emails[K: (str, int)](self, accounts: Iterable[K]) -> dict[K, str] | None:
         """Account -> public email ("" for none) in one cache read; None once one was refused, cancelling those queued."""
