@@ -37,3 +37,23 @@ async def test_a_package_ahead_of_the_registry_default_is_not_outdated():
     by_name = {item.name: item for item in items}
     assert (by_name["urllib3"].outdated, by_name["urllib3"].latest_version) == (True, "2.32.0")
     assert (by_name["requests"].outdated, by_name["requests"].latest_version) == (False, None)
+
+
+@pytest.mark.asyncio
+async def test_a_page_reads_the_lifecycle_findings_of_its_own_components_only(monkeypatch):
+    db = FakeDatabase()
+    for name in ("alpha", "beta", "gamma"):
+        await db.dependencies.insert_one(
+            {"scan_id": "s1", "name": name, "version": "1.0", "purl": f"pkg:npm/{name}@1.0"}
+        )
+        await db.findings.insert_one({"scan_id": "s1", "type": "eol", "component": name, "version": "1.0"})
+    queries: list[dict] = []
+    find = db.findings.find
+    monkeypatch.setattr(
+        db.findings, "find", lambda query, *args, **kwargs: queries.append(query) or find(query, *args, **kwargs)
+    )
+
+    items, _ = await get_components_page(db, _SCAN, page=2, page_size=1, search=None, sort_by="name", direction=1)
+
+    assert [(item.name, item.eol) for item in items] == [("beta", True)]
+    assert [query.get("component") for query in queries] == [{"$in": ["beta"]}]
