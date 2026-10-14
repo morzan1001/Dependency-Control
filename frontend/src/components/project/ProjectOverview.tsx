@@ -19,7 +19,7 @@ import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS, bySeverityOrder } from '@/lib/finding-utils'
+import { SEVERITY_CHART_COLORS, bySeriesOrder, bySeverityOrder } from '@/lib/finding-utils'
 
 interface ProjectOverviewProps {
   projectId: string
@@ -300,7 +300,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                   />
-                  <Legend />
+                  <Legend itemSorter={bySeriesOrder(selectedBranches)} />
                   {selectedBranches.map((branch, index) => (
                       <Line 
                           key={branch}

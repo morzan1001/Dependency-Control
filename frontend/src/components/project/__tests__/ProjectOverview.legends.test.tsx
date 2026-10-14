@@ -60,3 +60,15 @@ describe('ProjectOverview severity legends', () => {
     expect(await legendOf('Severity Distribution by Branch')).toEqual(['Critical', 'High', 'Medium', 'Low'])
   })
 })
+
+describe('ProjectOverview trend legend', () => {
+  it('lists the branches in the order their lines are coloured, not alphabetically', async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectOverview projectId="p1" selectedBranches={['main', 'develop']} />
+      </QueryClientProvider>,
+    )
+
+    expect(await legendOf('Vulnerability Trends')).toEqual(['main', 'develop'])
+  })
+})

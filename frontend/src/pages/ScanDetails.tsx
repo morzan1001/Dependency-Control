@@ -28,7 +28,7 @@ import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
 import { cn, formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, bySeriesOrder, type Severity } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -86,8 +86,6 @@ interface DistributionSlice {
 
 function DistributionPie({ title, data }: Readonly<{ title: string; data: DistributionSlice[] }>) {
   const slices = data.filter((d) => d.value > 0)
-  // Recharts sorts a legend alphabetically unless given a sorter.
-  const bySliceOrder = (entry: { value?: string }) => slices.findIndex((slice) => slice.name === entry.value)
   return (
     <Card>
       <CardHeader>
@@ -106,7 +104,7 @@ function DistributionPie({ title, data }: Readonly<{ title: string; data: Distri
                 contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
               />
-              <Legend verticalAlign="bottom" height={36} itemSorter={bySliceOrder} />
+              <Legend verticalAlign="bottom" height={36} itemSorter={bySeriesOrder(slices.map((slice) => slice.name))} />
             </PieChart>
           </ResponsiveContainer>
         </div>

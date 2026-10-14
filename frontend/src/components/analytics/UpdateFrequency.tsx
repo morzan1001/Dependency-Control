@@ -32,6 +32,7 @@ import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
 import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
 import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
+import { bySeriesOrder } from '@/lib/finding-utils'
 
 const updateTypeColors: Record<string, string> = {
   patch: '#22c55e',
@@ -40,6 +41,16 @@ const updateTypeColors: Record<string, string> = {
   unknown: '#94a3b8',
   downgrade: '#a855f7',
 }
+
+const UPDATE_BARS = [
+  { dataKey: 'patch', name: 'Patch', fill: updateTypeColors.patch },
+  { dataKey: 'minor', name: 'Minor', fill: updateTypeColors.minor },
+  { dataKey: 'major', name: 'Major', fill: updateTypeColors.major },
+  { dataKey: 'unknown', name: 'Unknown', fill: updateTypeColors.unknown },
+  { dataKey: 'downgrades', name: 'Downgrade', fill: updateTypeColors.downgrade },
+]
+const OUTDATED_SERIES = 'Outdated'
+const byTimelineSeries = bySeriesOrder([...UPDATE_BARS.map((bar) => bar.name), OUTDATED_SERIES])
 
 const updateTypeBadgeVariants: Record<string, string> = {
   patch: 'bg-green-500/10 text-green-600 border-green-500/20',
@@ -159,12 +170,10 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
                 }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
               />
-              <Legend />
-              <Bar yAxisId="left" dataKey="patch" stackId="updates" fill={updateTypeColors.patch} name="Patch" />
-              <Bar yAxisId="left" dataKey="minor" stackId="updates" fill={updateTypeColors.minor} name="Minor" />
-              <Bar yAxisId="left" dataKey="major" stackId="updates" fill={updateTypeColors.major} name="Major" />
-              <Bar yAxisId="left" dataKey="unknown" stackId="updates" fill={updateTypeColors.unknown} name="Unknown" />
-              <Bar yAxisId="left" dataKey="downgrades" stackId="updates" fill={updateTypeColors.downgrade} name="Downgrade" />
+              <Legend itemSorter={byTimelineSeries} />
+              {UPDATE_BARS.map((bar) => (
+                <Bar key={bar.dataKey} yAxisId="left" stackId="updates" {...bar} />
+              ))}
               <Line
                 yAxisId="right"
                 type="monotone"
@@ -175,7 +184,7 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
                 // Scans without an outdated analysis are null, and recharts draws no
                 // segment next to a null: without dots an isolated measurement vanishes.
                 dot={{ r: 2 }}
-                name="Outdated"
+                name={OUTDATED_SERIES}
               />
             </ComposedChart>
           </ResponsiveContainer>

@@ -26,6 +26,7 @@ export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
 export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NEGLIGIBLE', 'INFO', 'UNKNOWN']
 
 // A Recharts legend sorts its entries alphabetically unless given a sorter.
+export const bySeriesOrder = (series: readonly string[]) => (entry: { value?: string }) => series.indexOf(entry.value ?? '')
 export const bySeverityOrder = (entry: { value?: string }) => SEVERITY_ORDER.indexOf(entry.value?.toUpperCase() as Severity)
 
 export function getSeverityBgColor(severity: string): string {
