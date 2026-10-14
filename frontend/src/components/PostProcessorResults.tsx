@@ -182,8 +182,8 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
                 return order.indexOf(a) - order.indexOf(b);
               })
               .map(([maturity, count]) => (
-                <div key={maturity} className="flex items-center gap-3">
-                  <div className="w-32 text-sm">{getMaturityLabel(maturity)}</div>
+                <div key={maturity} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <div className="w-full text-sm sm:w-32">{getMaturityLabel(maturity)}</div>
                   <div className="flex-1">
                     <Progress
                       value={(count / data.total_vulnerabilities) * 100}
@@ -249,7 +249,7 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
             <div className="space-y-2">
               {/* Two versions of one component can share a KEV CVE, so the index disambiguates. */}
               {data.kev_details.map((kev, index) => (
-                <div key={`${kev.component}-${kev.cve}-${index}`} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <div key={`${kev.component}-${kev.cve}-${index}`} className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-muted/50">
                   <div className="flex items-center gap-3">
                     {kev.ransomware ? (
                       <Skull className="h-5 w-5 text-red-600" />
@@ -258,10 +258,10 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
                     )}
                     <div>
                       <p className="font-mono text-sm font-medium">{kev.cve}</p>
-                      <p className="text-xs text-muted-foreground">{kev.component}</p>
+                      <p className="text-xs text-muted-foreground wrap-anywhere">{kev.component}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {kev.ransomware && (
                       <Badge variant="destructive" className="text-xs">Ransomware</Badge>
                     )}
@@ -304,7 +304,7 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
               {shownHighRisk.map((cve) => (
                 <Collapsible key={`${cve.cve}-${cve.component}`}>
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                       <span className="font-mono text-sm">{cve.cve}</span>
                       <Badge 
                         variant={cve.risk_score >= 80 ? "destructive" : "default"}
@@ -443,8 +443,8 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
         <CardContent>
           <div className="space-y-3">
             {totalAnalyzed > 0 && REACHABILITY_BARS.map(({ level, label, icon: Icon, iconClass, barClass }) => (
-              <div key={level} className="flex items-center gap-3">
-                <div className="w-32 text-sm flex items-center gap-2">
+              <div key={level} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <div className="w-full text-sm flex items-center gap-2 sm:w-32">
                   <Icon className={`h-4 w-4 ${iconClass}`} />
                   {label}
                 </div>
@@ -476,7 +476,7 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
               {shownReachable.map((vuln) => (
                 <Collapsible key={`${vuln.cve}-${vuln.component}`}>
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-red-50/50 dark:bg-red-950/50 hover:bg-red-100/50 dark:hover:bg-red-900/50 transition-colors">
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                       <span className="font-mono text-sm">{vuln.cve}</span>
                       <Badge variant={getSeverityBadgeVariant(vuln.severity)} className="capitalize">
                         {vuln.severity}
@@ -540,8 +540,8 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
             </p>
             <div className="grid gap-2">
               {shownUnreachable.map((vuln) => (
-                <div key={`${vuln.cve}-${vuln.component}`} className="flex items-center justify-between p-2 rounded bg-muted/50">
-                  <div className="flex items-center gap-3">
+                <div key={`${vuln.cve}-${vuln.component}`} className="flex flex-wrap items-center justify-between gap-2 p-2 rounded bg-muted/50">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="font-mono text-sm">{vuln.cve}</span>
                     <span className="text-sm text-muted-foreground">
                       {vuln.component}@{vuln.version}

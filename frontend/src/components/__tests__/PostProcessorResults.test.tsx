@@ -170,3 +170,53 @@ describe("EPSSKEVResults high-risk list", () => {
     expect(screen.queryByText(/Showing \d+ of/)).toBeNull();
   });
 });
+
+describe("EPSSKEVResults on a phone", () => {
+  it("wraps a KEV row's ransomware and due-date pills under the CVE instead of cutting them off", () => {
+    render(
+      <EPSSKEVResults
+        data={{
+          ...baseData,
+          kev_matches: 1,
+          kev_details: [{ cve: "CVE-2021-44228", component: "org.apache.logging.log4j:log4j-core", due_date: "2021-12-24", ransomware: true }],
+        }}
+      />,
+    );
+
+    const row = screen.getByText("Ransomware").parentElement?.parentElement;
+    expect(row).toHaveClass("flex-wrap", "justify-between", "gap-2");
+    expect(screen.getByText("org.apache.logging.log4j:log4j-core")).toHaveClass("wrap-anywhere");
+    expect(screen.getByText("Ransomware").parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("wraps a high-risk row's score under the CVE instead of breaking the CVE over three lines", () => {
+    render(<EPSSKEVResults data={{ ...baseData, high_risk_cves: [highRiskCve(0)], high_risk_total: 1 }} />);
+
+    expect(screen.getByText("Risk: 99").parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("puts a maturity label above its bar on a phone, so the bar keeps a width, and beside it from sm on", () => {
+    render(<EPSSKEVResults data={baseData} />);
+
+    const label = screen.getByText("Weaponized (Ransomware)");
+    expect(label).toHaveClass("w-full", "sm:w-32");
+    expect(label.parentElement).toHaveClass("flex-wrap");
+  });
+});
+
+describe("ReachabilityResults on a phone", () => {
+  it("puts a level label above its bar on a phone and beside it from sm on", () => {
+    render(<ReachabilityResults data={reachabilityData} />);
+
+    const label = screen.getByText("Confirmed").closest("div");
+    expect(label).toHaveClass("w-full", "sm:w-32");
+    expect(label?.parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("wraps a vulnerability row's badges under the CVE", () => {
+    render(<ReachabilityResults data={reachabilityData} />);
+
+    expect(screen.getByText("CVE-2026-0").parentElement).toHaveClass("flex-wrap");
+    expect(screen.getByText("CVE-2025-0").parentElement?.parentElement).toHaveClass("flex-wrap", "gap-2");
+  });
+});
