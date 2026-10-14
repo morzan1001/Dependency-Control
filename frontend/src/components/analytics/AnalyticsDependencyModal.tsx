@@ -497,8 +497,8 @@ export function AnalyticsDependencyModal({
                 <TableHeader>
                   <TableRow>
                     <SortableHead column="id" sort={sort} firstOrder="asc" className="w-[180px]">Finding</SortableHead>
-                    <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[100px]">Type</SortableHead>
-                    <SortableHead column="severity" sort={sort} className="w-[100px]">Severity</SortableHead>
+                    <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[120px]">Type</SortableHead>
+                    <SortableHead column="severity" sort={sort} className="w-[120px]">Severity</SortableHead>
                     <SortableHead column="project_name" sort={sort} firstOrder="asc">Project</SortableHead>
                   </TableRow>
                 </TableHeader>
