@@ -38,7 +38,7 @@ from app.core.constants import (
     get_severity_value,
     max_severity,
 )
-from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
+from app.core.cve import ADVISORY_ID_FIELDS, advisory_id, advisory_ids, advisory_match, canonical_cve
 from app.core.cache import cache_service
 from app.core.housekeeping import resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
@@ -679,19 +679,25 @@ class ChatToolRegistry:
         return {"finding": slim}
 
     async def _tool_search_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        search_query = ctx.args["query"]
-        pattern = {"$regex": re.escape(search_query), "$options": "i"}
+        term = ctx.args["query"]
+        pattern = {"$regex": re.escape(term), "$options": "i"}
+        holders: list[dict[str, Any]] = [{"component": pattern}, {"finding_id": pattern}, {"description": pattern}]
+        # The advisory ids cost most of the scan: no id holds whitespace, and one $elemMatch reads an advisory once.
+        if not re.search(r"\s", term):
+            advisory = {"$or": [{field: pattern} for field in ADVISORY_ID_FIELDS]}
+            holders.append({"details.vulnerabilities": {"$elemMatch": advisory}})
         head, names = await self._heads_in_scope(ctx)
-        query = {
-            "scan_id": {"$in": list(head.values())},
-            "$or": [{"finding_id": pattern}, {"description": pattern}, {"component": pattern}, advisory_match(pattern)],
-        }
+        query = {"scan_id": {"$in": list(head.values())}, "$or": holders}
         if ctx.args.get("severity"):
             query["severity"] = ctx.args["severity"]
         if ctx.args.get("type"):
             query["type"] = ctx.args["type"]
         findings, findings_total = await bounded_read(
-            ctx.db["findings"], query, subject="matching findings", limit=ctx.args["limit"]
+            ctx.db["findings"],
+            query,
+            subject="matching findings",
+            limit=ctx.args["limit"],
+            projection=RANKED_FINDING_PROJECTION,
         )
         return {
             "findings": _slim_with_project(findings, names),
