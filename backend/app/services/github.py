@@ -19,23 +19,15 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITHUB,
-    team_binding_key,
-    team_source,
 )
 from app.core.http_utils import quota_lifts_at
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, TeamSyncResult, binding_of
-from app.repositories.teams import MemberSubset, TeamRepository
+from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.github_instance import GitHubOrgTeam
-from app.services.git_provider import (
-    GitProviderService,
-    ResponseHooks,
-    cached_public_emails,
-    json_document,
-    request_gate,
-)
+from app.services.git_provider import GitProviderService, ResponseHooks, json_document, request_gate
 from app.services.oidc_utils import discover_jwks_uri
 
 logger = logging.getLogger(__name__)
@@ -187,6 +179,9 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     provider = "GitHub"
     _cache_prefix = "github:gh_instance"
+    _team_provider = TEAM_SOURCE_GITHUB
+    _email_field = "email"
+    _email_cache_ttl = GITHUB_USER_EMAIL_CACHE_TTL
     _oidc_payload = GitHubOIDCPayload
 
     def __init__(self, github_instance: GitHubInstance):
@@ -481,25 +476,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
             logger.warning("GitHub rate limit response could not be read: %s", e)
             return None
 
-    async def _fetch_public_email(self, login: str) -> str | None:
-        """The profile's public email, "" when it shows none; None when GitHub would not answer."""
-        response = await self._api_get(f"/users/{login}")
-        if response is None:
-            return None
-        if response.status_code == 404:
-            return ""
-        if response.status_code != 200:
-            logger.warning("GitHub API GET /users/%s failed: %s", login, response.status_code)
-            return None
-        return str(json_document(response).get("email") or "")
-
-    async def _public_emails(self, logins: list[str]) -> dict[str, str] | None:
-        """Login -> public email ("" for none); None once GitHub refused one."""
-        keys = {login: self._get_cache_key(f"user_email:{login}") for login in logins}
-        return await cached_public_emails(
-            keys, self._fetch_public_email, self._instance_id, GITHUB_USER_EMAIL_CACHE_TTL
-        )
-
     async def _resolve_logins(self, logins: list[str], user_repo: UserRepository) -> dict[str, dict[str, Any]] | None:
         """Login -> existing local user by verified public email, never by username; None when GitHub won't say."""
         emails = await self._public_emails(logins)
@@ -512,11 +488,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         """The EXISTING local user that verified the login's public email, if GitHub names one."""
         return (await self._resolve_logins([login], user_repo) or {}).get(login)
 
-    @property
-    def _member_source(self) -> str:
-        """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(TEAM_SOURCE_GITHUB, self._instance_id)
-
     async def _build_team_members(
         self,
         members: list[dict[str, Any]],
@@ -526,24 +497,15 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         users = await self._resolve_logins([member["login"] for member in members], user_repo)
         if users is None:
             return None
-        resolved: dict[str, TeamMember] = {}
+        resolved: list[tuple[str, str]] = []
         for member in members:
-            login = member["login"]
-            user = users.get(login)
+            user = users.get(member["login"])
             if user is None:
-                # Sync never creates users; a real member is added on their next sync after
-                # logging in via OIDC.
-                logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", login)
+                # Sync never creates users; a real member is added on their next sync after logging in via OIDC.
+                logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", member["login"])
                 continue
-            role = member["role"]
-            user_id = str(user["_id"])
-            # Two logins can resolve to one local user. A duplicate entry breaks add_member's $ne
-            # guard, and the next sync's last-wins merge would silently demote the admin entry.
-            previous = resolved.get(user_id)
-            if previous is not None and previous.role == TEAM_ROLE_ADMIN:
-                continue
-            resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return list(resolved.values())
+            resolved.append((str(user["_id"]), member["role"]))
+        return self._team_members(resolved)
 
     @staticmethod
     def _renamed_fields(team: dict[str, Any], binding: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
@@ -573,25 +535,14 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         on: barely a login resolves here, so a name would otherwise never follow a renamed team.
         """
         binding = binding_of(team, self._instance_id) or {}
-        updates: dict[str, Any] = self._renamed_fields(team, binding, org, holder.slug)
-        # Handed to the server as the subset to replace rather than merged here: the snapshot is
-        # several round trips old, and a member added in between would be written back out of the
-        # team after the add had already reported success.
-        subset = (
-            MemberSubset(self._member_source, [member.model_dump() for member in team_members])
-            if team_members is not None
-            else None
-        )
         # The binding is the numeric team id, so a renamed slug has to follow it.
-        binding_fields = {"slug": holder.slug} if binding.get("slug") != holder.slug else {}
-        if not updates and not binding_fields and subset is None:
-            return
-        await team_repo.update_with_binding(
-            team["_id"],
-            updates,
-            team_binding_key(TEAM_SOURCE_GITHUB, self._instance_id, holder.team_id),
-            binding_fields,
-            subset,
+        await self._write_team_refresh(
+            team_repo,
+            team,
+            holder.team_id,
+            self._renamed_fields(team, binding, org, holder.slug),
+            {"slug": holder.slug} if binding.get("slug") != holder.slug else {},
+            team_members,
         )
 
     async def _team_for_github_group(

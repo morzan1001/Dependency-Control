@@ -330,6 +330,16 @@ class TestGitLabTeamSyncWithoutListedEmails:
         assert read.await_count == len(answers)
 
     @pytest.mark.asyncio
+    async def test_a_profile_answer_that_is_no_document_shows_no_email(self):
+        """Read as GitHub reads it: the member stays unresolved instead of the whole sync failing."""
+        service = GitLabService(make_gitlab_instance(id="inst-1"))
+        listing = [GitLabMember(id=7, username="ada-gl", access_level=30)]
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_answer(200, ["no", "profile"]))):
+            answered = await service._with_public_emails(listing)
+
+        assert [member.email for member in answered] == [None]
+
+    @pytest.mark.asyncio
     async def test_a_lookup_the_budget_cut_short_keeps_its_answers_so_the_next_one_resumes(self):
         service = GitLabService(make_gitlab_instance(id="inst-1"))
         listing = [GitLabMember(id=i, username=f"m{i}-gl", access_level=30) for i in range(1, 41)]

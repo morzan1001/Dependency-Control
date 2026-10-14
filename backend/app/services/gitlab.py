@@ -13,8 +13,6 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITLAB,
-    team_binding_key,
-    team_source,
 )
 from app.models.gitlab_api import (
     GitLabMember,
@@ -25,10 +23,10 @@ from app.models.gitlab_api import (
 )
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult, binding_of
-from app.repositories.teams import MemberSubset, TeamRepository
+from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.gitlab_instance import GitLabGroupOption
-from app.services.git_provider import GitProviderService, cached_public_emails
+from app.services.git_provider import GitProviderService
 from app.services.oidc_utils import discover_jwks_uri
 
 logger = logging.getLogger(__name__)
@@ -97,6 +95,10 @@ _NO_OWNING_GROUP = GitLabSyncTarget(None)
 class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
     provider = "GitLab"
     _cache_prefix = "gitlab:instance"
+    _team_provider = TEAM_SOURCE_GITLAB
+    # GitLab accepts a public email only from the account's confirmed addresses.
+    _email_field = "public_email"
+    _email_cache_ttl = GITLAB_USER_EMAIL_CACHE_TTL
     _oidc_payload = OIDCPayload
 
     def __init__(self, gitlab_instance: GitLabInstance):
@@ -166,27 +168,10 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         # An empty list is a group nobody is left in, and stays a list; only None is a failure.
         return None if members is None else [GitLabMember(**m) for m in members]
 
-    async def _fetch_public_email(self, user_id: int) -> str | None:
-        """The profile's public email, which GitLab accepts only from confirmed addresses; "" for none, None unanswered."""
-        response = await self._api_get(f"/users/{user_id}")
-        if response is None:
-            return None
-        if response.status_code == 404:
-            return ""
-        if response.status_code != 200:
-            logger.warning("GitLab API GET /users/%s answered %s", user_id, response.status_code)
-            return None
-        return str(response.json().get("public_email") or "")
-
     async def _with_public_emails(self, members: list[GitLabMember]) -> list[GitLabMember] | None:
         """The members, each one listed without an email carrying its public one; None if GitLab would not say."""
-        keys = {
-            member_id: self._get_cache_key(f"user_email:{member_id}")
-            for member in members
-            if not member.email and (member_id := member.id) is not None
-        }
-        emails = await cached_public_emails(
-            keys, self._fetch_public_email, self._instance_id, GITLAB_USER_EMAIL_CACHE_TTL
+        emails = await self._public_emails(
+            member_id for member in members if not member.email and (member_id := member.id) is not None
         )
         if emails is None:
             # Written without them, the members GitLab would not describe would lose the team.
@@ -276,11 +261,6 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         )
         return _UNDETERMINED_TARGET
 
-    @property
-    def _member_source(self) -> str:
-        """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(TEAM_SOURCE_GITLAB, self._instance_id)
-
     async def _build_team_members(
         self,
         gitlab_members: list[GitLabMember],
@@ -288,7 +268,7 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
     ) -> tuple[list[TeamMember], int, bool]:
         """(owners, unresolved count, any resolved), matching only verified local users, tagged with this instance."""
         by_email = await user_repo.verified_users_by_email({member.email for member in gitlab_members if member.email})
-        resolved: dict[str, TeamMember] = {}
+        resolved: list[tuple[str, str]] = []
         unresolved = 0
         resolved_any = False
         for member in gitlab_members:
@@ -311,14 +291,8 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
             ):
                 continue
             role = TEAM_ROLE_ADMIN if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else TEAM_ROLE_MEMBER
-            user_id = str(user["_id"])
-            # Two GitLab members can resolve to one local user. A duplicate entry breaks
-            # add_member's $ne guard, and a last-wins merge would silently demote the admin entry.
-            previous = resolved.get(user_id)
-            if previous is not None and previous.role == TEAM_ROLE_ADMIN:
-                continue
-            resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return list(resolved.values()), unresolved, resolved_any
+            resolved.append((str(user["_id"]), role))
+        return self._team_members(resolved), unresolved, resolved_any
 
     async def _resolve_group_members(
         self,
@@ -362,26 +336,15 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         on: a group whose members none resolve would otherwise never follow a rename.
         """
         stored_path = (binding_of(team, self._instance_id) or {}).get("path")
-        updates: dict[str, Any] = self._renamed_fields(team, stored_path, group_path)
-        # Handed to the server as the subset to replace rather than merged here: the snapshot is
-        # several round trips old, and a member added in between would be written back out of the
-        # team after the add had already reported success.
-        subset = (
-            MemberSubset(self._member_source, [member.model_dump() for member in team_members])
-            if team_members is not None
-            else None
-        )
         # A group that was renamed or moved has to carry the path GitLab reports now, including on
         # a team bound by hand before any sync ran.
-        binding_fields = {"path": group_path} if stored_path != group_path else {}
-        if not updates and not binding_fields and subset is None:
-            return
-        await team_repo.update_with_binding(
-            team["_id"],
-            updates,
-            team_binding_key(TEAM_SOURCE_GITLAB, self._instance_id, group_id),
-            binding_fields,
-            subset,
+        await self._write_team_refresh(
+            team_repo,
+            team,
+            group_id,
+            self._renamed_fields(team, stored_path, group_path),
+            {"path": group_path} if stored_path != group_path else {},
+            team_members,
         )
 
     async def _upsert_team_with_members(

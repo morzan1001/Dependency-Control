@@ -1,10 +1,10 @@
-"""What the GitLab and GitHub services share: the token's API calls, Link-header paging and OIDC validation."""
+"""What the GitLab and GitHub services share: API calls, paging, OIDC validation, profile emails and team members."""
 
 import asyncio
 import logging
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import aclosing, asynccontextmanager
 from typing import Any, ClassVar
 
@@ -12,10 +12,13 @@ import httpx
 from pydantic import BaseModel
 
 from app.core.cache import cache_service
+from app.core.constants import TEAM_ROLE_ADMIN, team_binding_key, team_source
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.log_utils import sanitize_for_log
 from app.models.github_instance import GitHubInstance
 from app.models.gitlab_instance import GitLabInstance
+from app.models.team import TeamMember
+from app.repositories.teams import MemberSubset, TeamRepository
 from app.services.oidc_utils import fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -49,39 +52,14 @@ def json_document(response: httpx.Response) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
-async def cached_public_emails[K](
-    cache_keys: dict[K, str], fetch: Callable[[K], Awaitable[str | None]], instance_id: str, ttl_seconds: int
-) -> dict[K, str] | None:
-    """Key -> public email ("" for none) in one cache read; None once a fetch was refused, cancelling those queued."""
-    cached = await cache_service.mget(list(cache_keys.values()))
-    emails = {key: value for key, cache_key in cache_keys.items() if isinstance(value := cached.get(cache_key), str)}
-    answered: dict[K, str] = {}
-    refused = False
-
-    async def fetch_one(key: K) -> None:
-        nonlocal refused
-        async with request_gate(instance_id):
-            if refused:
-                return
-            email = await fetch(key)
-        if email is None:
-            refused = True
-        else:
-            answered[key] = email
-
-    try:
-        await asyncio.gather(*(fetch_one(key) for key in cache_keys if key not in emails))
-    finally:
-        # Also when the caller's deadline cancels the batch, so the next sync resumes from these answers.
-        await cache_service.mset({cache_keys[key]: email for key, email in answered.items()}, ttl_seconds)
-    return None if refused else {**emails, **answered}
-
-
 class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: BaseModel](ABC):
     """One configured instance's API, called with its access token; each provider names its host and headers."""
 
     provider: ClassVar[str]
     _cache_prefix: ClassVar[str]
+    _team_provider: ClassVar[str]
+    _email_field: ClassVar[str]
+    _email_cache_ttl: ClassVar[int]
     _oidc_payload: type[PayloadT]
 
     api_url: str | None
@@ -244,4 +222,85 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
             audience=self.instance.oidc_audience,
             payload_model=self._oidc_payload,
             provider_name=self.provider,
+        )
+
+    async def _fetch_public_email(self, account: str | int) -> str | None:
+        """The profile's public email, "" when it shows none; None when the provider would not answer."""
+        response = await self._api_get(f"/users/{account}")
+        if response is None:
+            return None
+        if response.status_code == 404:
+            return ""
+        if response.status_code != 200:
+            logger.warning("%s API GET /users/%s answered HTTP %s", self.provider, account, response.status_code)
+            return None
+        return str(json_document(response).get(self._email_field) or "")
+
+    async def _public_emails[K: (str, int)](self, accounts: Iterable[K]) -> dict[K, str] | None:
+        """Account -> public email ("" for none) in one cache read; None once one was refused, cancelling those queued."""
+        cache_keys = {account: self._get_cache_key(f"user_email:{account}") for account in accounts}
+        cached = await cache_service.mget(list(cache_keys.values()))
+        emails = {account: value for account, key in cache_keys.items() if isinstance(value := cached.get(key), str)}
+        answered: dict[K, str] = {}
+        refused = False
+
+        async def fetch_one(account: K) -> None:
+            nonlocal refused
+            async with request_gate(self._instance_id):
+                if refused:
+                    return
+                email = await self._fetch_public_email(account)
+            if email is None:
+                refused = True
+            else:
+                answered[account] = email
+
+        try:
+            await asyncio.gather(*(fetch_one(account) for account in cache_keys if account not in emails))
+        finally:
+            # Also when the caller's deadline cancels the batch, so the next sync resumes from these answers.
+            await cache_service.mset(
+                {cache_keys[account]: email for account, email in answered.items()}, self._email_cache_ttl
+            )
+        return None if refused else {**emails, **answered}
+
+    @property
+    def _member_source(self) -> str:
+        """The provenance of a member this instance resolves, and the subset its sync replaces."""
+        return team_source(self._team_provider, self._instance_id)
+
+    def _team_members(self, resolved: Iterable[tuple[str, str]]) -> list[TeamMember]:
+        """One member per local user from (user id, role) pairs, an admin role kept over any other."""
+        members: dict[str, TeamMember] = {}
+        for user_id, role in resolved:
+            # Two accounts can resolve to one user: a duplicate breaks add_member's $ne guard, and last-wins demotes.
+            if (previous := members.get(user_id)) is None or previous.role != TEAM_ROLE_ADMIN:
+                members[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
+        return list(members.values())
+
+    async def _write_team_refresh(
+        self,
+        team_repo: TeamRepository,
+        team: dict[str, Any],
+        external_id: int,
+        renamed: dict[str, Any],
+        binding_fields: dict[str, Any],
+        team_members: list[TeamMember] | None,
+    ) -> None:
+        """Write a bound team's rename, binding fields and members, and nothing when nothing changed."""
+        # Handed to the server as the subset to replace rather than merged here: the snapshot is several round
+        # trips old, and a member added in between would be written back out after the add had reported success.
+        subset = (
+            MemberSubset(self._member_source, [member.model_dump() for member in team_members])
+            if team_members is not None
+            else None
+        )
+        if not renamed and not binding_fields and subset is None:
+            return
+        await team_repo.update_with_binding(
+            team["_id"],
+            renamed,
+            team_binding_key(self._team_provider, self._instance_id, external_id),
+            binding_fields,
+            subset,
         )
