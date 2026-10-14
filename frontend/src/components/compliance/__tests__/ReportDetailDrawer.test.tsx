@@ -181,3 +181,15 @@ describe("ReportDetailDrawer", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to delete report", { description: "Network Error" }));
   });
 });
+
+describe("ReportDetailDrawer download button", () => {
+  it("truncates a long artifact name within the dialog and gives the full name as its title", () => {
+    const longName = "bsi-tr-02102_project-c6a56274-292e-48dc-a3f3-fe762c0ea12d_20261014T192603Z.pdf";
+    withClient(<ReportDetailDrawer report={{ ...sampleReport, artifact_filename: longName }} onClose={() => {}} />);
+
+    const button = screen.getByRole("button", { name: /Download/i });
+    expect(button).toHaveClass("max-w-full");
+    expect(button).toHaveAttribute("title", longName);
+    expect(screen.getByText(`Download PDF · ${longName}`)).toHaveClass("truncate");
+  });
+});

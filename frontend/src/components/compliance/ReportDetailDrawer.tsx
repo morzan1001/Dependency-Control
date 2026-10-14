@@ -106,10 +106,12 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                     <Button
                       size="sm"
                       variant="default"
+                      className="max-w-full"
+                      title={report.artifact_filename}
                       onClick={() => dl.mutate(report)}
                       disabled={dl.isPending}
                     >
-                      Download {report.format.toUpperCase()} · {report.artifact_filename}
+                      <span className="truncate">Download {report.format.toUpperCase()} · {report.artifact_filename}</span>
                     </Button>
                     {report.artifact_size_bytes && (
                       <span className="ml-2 text-xs text-muted-foreground">
