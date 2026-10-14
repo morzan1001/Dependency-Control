@@ -24,7 +24,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_404_409_502,
     RESP_AUTH_404,
 )
-from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR, team_source
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
@@ -101,7 +101,9 @@ async def read_teams(
     search_query = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
     final_query = and_filters(search_query, visible)
 
-    teams = await team_repo.find_many_raw(final_query, sort_by, parse_sort_direction(sort_order), limit=1000)
+    teams = await team_repo.find_many_raw(
+        final_query, sort_by, parse_sort_direction(sort_order), limit=1000, collation=CASE_INSENSITIVE
+    )
     await enrich_teams_with_usernames(teams, db)
     return teams
 
