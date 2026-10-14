@@ -13,7 +13,8 @@ import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
-import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl, getSecretTreeStatusInfo, getSecretRemediationHint, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
+import { AdvisoryLink } from './AdvisoryLink'
+import { getSeverityBadgeVariant, getExploitMaturityClass, getSecretTreeStatusInfo, getSecretRemediationHint, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
 import { formatDate, shortCommitHash } from '@/lib/utils'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
@@ -51,32 +52,13 @@ function MatchedSymbolsList({ symbols }: Readonly<{ symbols: string[] }>) {
     )
 }
 
-function AliasLink({ alias }: Readonly<{ alias: string }>) {
-    const link = advisoryUrl(alias);
-
-    if (link) {
-        return (
-            <a
-                href={link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-primary hover:underline text-xs"
-                onClick={(e) => e.stopPropagation()}
-            >
-                {alias}
-            </a>
-        );
-    }
-    return <span className="font-mono text-xs">{alias}</span>;
-}
-
 function AliasList({ aliases }: Readonly<{ aliases: string[] }>) {
     return (
         <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-muted-foreground">Aliases:</span>
             <div className="flex flex-wrap gap-1">
                 {aliases.map((alias) => (
-                    <AliasLink key={alias} alias={alias} />
+                    <AdvisoryLink key={alias} id={alias} />
                 ))}
             </div>
         </div>
@@ -384,52 +366,13 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                                 
                                                 {vulns.map((vuln: NestedVulnerability) => {
                                                     const vulnId = vuln.id || finding.id;
-                                                    const isCve = vulnId?.startsWith('CVE-');
-                                                    const isGhsa = vulnId?.startsWith('GHSA-');
-                                                    const resolvedCve = vuln.resolved_cve;
-                                                    const githubAdvisoryUrl = vuln.github_advisory_url;
-
-                                                    let vulnLink = null;
-                                                    if (isCve) {
-                                                        vulnLink = advisoryUrl(vulnId);
-                                                    } else if (isGhsa) {
-                                                        vulnLink = githubAdvisoryUrl || advisoryUrl(vulnId);
-                                                    }
 
                                                     return (
                                                     <div key={vulnId} className="border rounded-lg p-4 space-y-3">
                                                         <div className="flex items-center justify-between">
                                                             <div className="flex items-center gap-2">
-                                                                {vulnLink ? (
-                                                                    <a
-                                                                        href={vulnLink}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                        className="inline-flex items-center gap-1"
-                                                                        onClick={(e) => e.stopPropagation()}
-                                                                    >
-                                                                        <Badge variant="outline" className="hover:bg-muted cursor-pointer">
-                                                                            {vulnId}
-                                                                            <ExternalLink className="h-3 w-3 ml-1" />
-                                                                        </Badge>
-                                                                    </a>
-                                                                ) : (
-                                                                    <Badge variant="outline">{vulnId}</Badge>
-                                                                )}
-                                                                {isGhsa && resolvedCve && (
-                                                                    <a
-                                                                        href={advisoryUrl(resolvedCve) ?? undefined}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                        className="inline-flex items-center gap-1"
-                                                                        onClick={(e) => e.stopPropagation()}
-                                                                    >
-                                                                        <Badge variant="secondary" className="hover:bg-muted cursor-pointer text-xs">
-                                                                            {resolvedCve}
-                                                                            <ExternalLink className="h-3 w-3 ml-1" />
-                                                                        </Badge>
-                                                                    </a>
-                                                                )}
+                                                                <AdvisoryLink id={vulnId} href={vuln.github_advisory_url} />
+                                                                {vuln.resolved_cve && <AdvisoryLink id={vuln.resolved_cve} variant="secondary" />}
                                                                 {(() => {
                                                                     const sev = vuln.severity || finding.severity
                                                                     let badgeVariant: 'destructive' | 'default' | 'secondary' = 'secondary'

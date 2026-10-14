@@ -54,7 +54,8 @@ import {
   Copy,
   Check,
 } from "lucide-react"
-import { getDisplayId, getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { getDisplayId, getSeverityBgColor, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { SortIcon } from './VulnerabilityHotspots'
 
@@ -226,25 +227,9 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
               {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
             </p>
             <div className="flex flex-wrap gap-1 mt-1">
-              {metadata.deps_dev.known_advisories.map((advisory) => {
-                const advisoryHref = advisoryUrl(advisory)
-                return (
-                  <a
-                    key={advisory}
-                    href={advisoryHref ?? undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={advisoryHref ? 'cursor-pointer' : ''}
-                  >
-                    <Badge variant="destructive" className="text-xs hover:opacity-80">
-                      {advisory}
-                      {advisoryHref && (
-                        <ExternalLink className="h-2.5 w-2.5 ml-1" />
-                      )}
-                    </Badge>
-                  </a>
-                )
-              })}
+              {metadata.deps_dev.known_advisories.map((advisory) => (
+                <AdvisoryLink key={advisory} id={advisory} variant="destructive" />
+              ))}
             </div>
           </div>
         </div>
