@@ -557,7 +557,7 @@ export default function ScanDetails() {
                             size={result.size}
                             badge={isPostProcessorResult(result.analyzer_name) && <Badge variant="outline">Post-Processor</Badge>}
                             preview={<ResultPreview scanId={scanId!} resultId={result.id} />}
-                            onDownload={() => downloadServerFile(() => scanApi.downloadResult(scanId!, result.id), `${result.analyzer_name}.json`, 'Could not download the result')}
+                            onDownload={() => downloadServerFile(() => scanApi.downloadResult(scanId!, result.id), `${result.analyzer_name}.json`, 'Failed to download analyzer result')}
                         />
                     ))}
                 </CardContent>
@@ -583,7 +583,7 @@ export default function ScanDetails() {
                             size={sbom.size}
                             highlighted={highlightedSbomIndex === sbom.index}
                             preview={<SbomPreview scanId={scanId!} index={sbom.index} />}
-                            onDownload={() => downloadServerFile(() => scanApi.downloadSbom(scanId!, sbom.index), `scan_${scanId}_sbom_${sbom.index + 1}.json`, 'Could not download the SBOM')}
+                            onDownload={() => downloadServerFile(() => scanApi.downloadSbom(scanId!, sbom.index), `scan_${scanId}_sbom_${sbom.index + 1}.json`, 'Failed to download SBOM')}
                         />
                     ))}
                 </CardContent>

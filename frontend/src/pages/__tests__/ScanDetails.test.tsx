@@ -254,6 +254,20 @@ describe('ScanDetails raw tab', () => {
     expect(scanApi.downloadSbom).toHaveBeenCalledWith('s1', 0)
   })
 
+  it('names a failed result and SBOM download like the app\'s other downloads', async () => {
+    vi.mocked(scanApi.downloadResult).mockRejectedValue(new Error('Network Error'))
+    vi.mocked(scanApi.downloadSbom).mockRejectedValue(new Error('Network Error'))
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Download trivy SBOM #1' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Download app.cdx.json' }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to download analyzer result')
+      expect(toast.error).toHaveBeenCalledWith('Failed to download SBOM')
+    })
+  })
+
   it.each(['SBOM #2', 'grype SBOM #1'])('marks %s, whose stored file is gone, and offers neither preview nor download', async (label) => {
     renderPage(RAW_TAB)
 
