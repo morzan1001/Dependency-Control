@@ -20,6 +20,7 @@ import redis.asyncio as redis
 from redis.asyncio.connection import BlockingConnectionPool
 
 from app.core.config import settings
+from app.core.http_utils import gather_bounded
 from app.core.metrics import (
     cache_connected_clients,
     cache_hits_total,
@@ -482,6 +483,23 @@ class CacheService:
         except Exception as e:
             logger.warning(f"get_or_fetch_with_lock error for {key}: {e}")
             return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
+
+    async def get_many_or_fetch(
+        self, keys: Iterable[str], fetch_fn: Callable[[str], Awaitable[Any]], ttl_seconds: int, concurrency: int
+    ) -> dict[str, Any]:
+        """Every key's value from one batched read, each miss fetched as get_or_fetch_with_lock fetches it, at most
+        ``concurrency`` at a time; a failed fetch leaves its exception as the key's value."""
+        wanted = list(dict.fromkeys(keys))
+        values = {key: value for key, value in (await self.mget(wanted)).items() if value is not None}
+        missing = [key for key in wanted if key not in values]
+        fetched = await gather_bounded(
+            missing,
+            lambda key: self.get_or_fetch_with_lock(
+                key=key, fetch_fn=lambda: fetch_fn(key), ttl_seconds=ttl_seconds, reraise_fetch_errors=True
+            ),
+            concurrency,
+        )
+        return values | dict(zip(missing, fetched, strict=True))
 
     @staticmethod
     async def _fetch_bypassing_cache(key: str, fetch_fn: Callable[[], Any], reraise_fetch_errors: bool) -> Any | None:

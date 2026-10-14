@@ -313,6 +313,59 @@ class TestStampedeNegativeCaching:
         assert await fake_cache._client.ttl(fake_cache._make_key(key)) > CacheTTL.NEGATIVE_RESULT
 
 
+class TestGetManyOrFetch:
+    """One batched read for every key; only a miss goes upstream, through the stampede lock."""
+
+    @pytest.mark.asyncio
+    async def test_hits_come_from_one_read_and_only_a_miss_is_fetched_and_cached(self, fake_cache, monkeypatch):
+        await fake_cache.set("k:hit", {"v": 1})
+        reads: list[list[str]] = []
+        read_many = fake_cache.mget
+
+        async def _recording_mget(keys):
+            reads.append(list(keys))
+            return await read_many(keys)
+
+        monkeypatch.setattr(fake_cache, "mget", _recording_mget)
+        fetched: list[str] = []
+
+        async def fetch(key):
+            fetched.append(key)
+            return {"v": key}
+
+        values = await fake_cache.get_many_or_fetch(["k:hit", "k:miss", "k:hit"], fetch, 60, 4)
+
+        assert values == {"k:hit": {"v": 1}, "k:miss": {"v": "k:miss"}}
+        assert (reads, fetched) == ([["k:hit", "k:miss"]], ["k:miss"])
+        assert 0 < await fake_cache._client.ttl(fake_cache._make_key("k:miss")) <= 60
+
+    @pytest.mark.asyncio
+    async def test_a_failed_fetch_leaves_its_exception_and_caches_nothing(self, fake_cache):
+        boom = RuntimeError("upstream down")
+
+        async def fetch(_key):
+            raise boom
+
+        assert await fake_cache.get_many_or_fetch(["k:down"], fetch, 60, 4) == {"k:down": boom}
+        assert await fake_cache.get("k:down") is None
+
+    @pytest.mark.asyncio
+    async def test_no_more_than_the_concurrency_fetch_at_once(self, fake_cache):
+        in_flight = peak = 0
+
+        async def fetch(key):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return key
+
+        values = await fake_cache.get_many_or_fetch([f"k:{i}" for i in range(6)], fetch, 60, 2)
+
+        assert (len(values), peak) == (6, 2)
+
+
 _SUPPRESSED_KEY = "deps:pypi:acme-private:1.0.0"
 _SUPPRESSED_VALUE = {"scorecard": 4.2}
 _SEEDED_KEY = "popular:npm"

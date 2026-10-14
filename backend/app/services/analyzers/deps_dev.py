@@ -12,7 +12,7 @@ from app.core.constants import (
     DEPS_DEV_API_URL,
     SCORECARD_FLAG_THRESHOLD,
 )
-from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.sbom import has_known_version
 
 from .base import Analyzer
@@ -66,23 +66,6 @@ class DepsDevAnalyzer(Analyzer):
         if issue and issue.get("scorecard", {}).get("overallScore", 10) < threshold:
             scorecard_issues.append({**issue, "component": name, "version": version, "purl": purl})
 
-    async def _fetch_uncached(self, keys: list[str], targets: dict[str, tuple[dict[str, Any], str, str]]) -> list[Any]:
-        """Fetch deps.dev data for uncached packages with bounded concurrency."""
-        timeout = ANALYZER_TIMEOUTS["deps_dev"]
-        async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-
-            async def fetch(key: str) -> dict[str, Any] | None:
-                component, system, lookup_name = targets[key]
-                # Distributed lock prevents multiple pods fetching the same package.
-                return await cache_service.get_or_fetch_with_lock(
-                    key=key,
-                    fetch_fn=lambda: self._check_component(client, component, system, lookup_name),
-                    ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
-                    reraise_fetch_errors=True,
-                )
-
-            return await gather_bounded(keys, fetch, ANALYZER_BATCH_SIZES["deps_dev"])
-
     async def analyze(
         self,
         sbom: dict[str, Any],
@@ -102,14 +85,13 @@ class DepsDevAnalyzer(Analyzer):
             if target is not None:
                 targets.setdefault(target[0], (component, target[1], target[2]))
 
-        cached: dict[str, Any] = await cache_service.mget(list(targets))
-        payloads = {key: data for key, data in cached.items() if data is not None}
-        uncached = [key for key in targets if key not in payloads]
-        logger.debug(f"deps_dev: {len(payloads)} from cache, {len(uncached)} to fetch")
-
-        if uncached:
-            fetched = await self._fetch_uncached(uncached, targets)
-            payloads.update(zip(uncached, fetched, strict=True))
+        async with InstrumentedAsyncClient("deps.dev API", timeout=ANALYZER_TIMEOUTS["deps_dev"]) as client:
+            payloads = await cache_service.get_many_or_fetch(
+                targets,
+                lambda key: self._check_component(client, *targets[key]),
+                CacheTTL.DEPS_DEV_METADATA,
+                ANALYZER_BATCH_SIZES["deps_dev"],
+            )
 
         skipped = 0
         for key, payload in payloads.items():
