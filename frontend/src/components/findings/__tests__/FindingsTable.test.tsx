@@ -86,6 +86,11 @@ describe("resolveRelatedFindingInRows", () => {
     expect(resolveRelatedFindingInRows(rows, "openssl:1.1.1", FROM)?.id).toBe("v1");
   });
 
+  it("matches no other version for a vulnerability id whose own version holds a colon", () => {
+    const rows = [makeFinding({ id: "zlib1g:1", type: "vulnerability", component: "zlib1g", version: "1" })];
+    expect(resolveRelatedFindingInRows(rows, "zlib1g:1:1.2.13.dfsg-1", FROM)).toBeUndefined();
+  });
+
   it("prefers an exact id match over format-specific dispatch", () => {
     const rows = [
       makeFinding({ id: "OUTDATED-react", type: "vulnerability", component: "pkg" }),

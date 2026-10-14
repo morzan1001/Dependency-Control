@@ -25,6 +25,16 @@ import { WaiverForm } from './details/WaiverForm'
 import { SastDetailsView, ScanContext } from './details/SastDetailsView'
 import { DetailSection, FileLocation, BadgeList } from './details/shared'
 import { ReachabilityEvidence } from './details/ReachabilityEvidence'
+import { describeRelatedFinding, type RelatedFindingKind } from './related-finding-rows'
+
+const RELATED_KIND_STYLES: Record<RelatedFindingKind, string> = {
+    outdated: 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100',
+    quality: 'border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100',
+    license: 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100',
+    eol: 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100',
+    vulnerability: 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100',
+    exact: 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100',
+}
 
 const REACHABILITY_STYLES: Record<ReachabilityVerdict, { className: string; icon: LucideIcon }> = {
     reachable: { className: 'bg-red-500/10 text-severity-critical', icon: AlertTriangle },
@@ -207,46 +217,17 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                         <DetailSection label="Related Findings" compact>
                                             <div className="flex flex-wrap gap-2">
                                             {[...new Set(finding.related_findings)].map((relatedId) => {
-                                                let label = relatedId;
-                                                let badgeClass = "font-mono text-xs cursor-pointer ";
-
-                                                if (relatedId.startsWith("OUTDATED-")) {
-                                                    const component = relatedId.replace("OUTDATED-", "");
-                                                    label = `Outdated: ${component}`;
-                                                    badgeClass += "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100";
-                                                } else if (relatedId.startsWith("QUALITY:")) {
-                                                    const parts = relatedId.split(":");
-                                                    const qualifier = parts[2] ? ` (${parts[2]})` : "";
-                                                    label = `Quality: ${parts[1]}${qualifier}`;
-                                                    badgeClass += "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100";
-                                                } else if (relatedId.startsWith("LIC-")) {
-                                                    const license = relatedId.replace("LIC-", "");
-                                                    label = `License: ${license}`;
-                                                    badgeClass += "border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100";
-                                                } else if (relatedId.startsWith("EOL-")) {
-                                                    const info = relatedId.replace("EOL-", "");
-                                                    label = `EOL: ${info}`;
-                                                    badgeClass += "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100";
-                                                } else if (relatedId.includes(":")) {
-                                                    const parts = relatedId.split(":");
-                                                    if (parts.length === 2) {
-                                                        label = `Vuln: ${parts[0]} (${parts[1]})`;
-                                                    }
-                                                    badgeClass += "border-red-200 bg-red-50 text-red-700 hover:bg-red-100";
-                                                } else {
-                                                    badgeClass += "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100";
-                                                }
-                                                
+                                                const { kind, label } = describeRelatedFinding(relatedId)
                                                 return (
-                                                    <Badge 
-                                                        key={relatedId} 
-                                                        variant="outline" 
-                                                        className={badgeClass}
+                                                    <Badge
+                                                        key={relatedId}
+                                                        variant="outline"
+                                                        className={`font-mono text-xs cursor-pointer ${RELATED_KIND_STYLES[kind]}`}
                                                         onClick={() => onSelectFinding?.(relatedId)}
                                                     >
                                                         {label}
                                                     </Badge>
-                                                );
+                                                )
                                             })}
                                         </div>
                                             <p className="text-xs text-muted-foreground mt-1">
