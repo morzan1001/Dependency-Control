@@ -70,7 +70,7 @@ function MetaItem({ label, icon: Icon, iconClassName, children }: MetaItemProps)
       <span className="text-sm text-muted-foreground">{label}</span>
       {Icon ? (
         <div className="flex items-center gap-2">
-          <Icon className={cn('h-4 w-4', iconClassName)} />
+          <Icon className={cn('h-4 w-4 shrink-0', iconClassName)} />
           {children}
         </div>
       ) : children}
@@ -408,7 +408,7 @@ export default function ScanDetails() {
                                 pipelineUrl: scan.pipeline_url,
                                 branch: scan.branch,
                             })}>
-                                <span className="font-medium">{scan.branch}</span>
+                                <span className="font-medium wrap-anywhere">{scan.branch}</span>
                             </ScmLink>
                         </MetaItem>
                         <ScanReleaseControl projectId={projectId!} scan={scan} canWrite={canWrite} />

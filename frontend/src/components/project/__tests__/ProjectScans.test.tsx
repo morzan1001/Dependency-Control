@@ -415,3 +415,16 @@ describe('ProjectScans - sorting', () => {
     expect(lastSort()).toEqual(['branch', 'asc'])
   })
 })
+
+describe('ProjectScans - long branch names', () => {
+  it('breaks a long branch name anywhere and keeps the row icons whole beside it', () => {
+    const branch = 'feature/checkout-redesign-with-a-rather-long-branch-name'
+    renderScans([makeScan({ id: 'long', branch, commit_hash: '6722380abc' })])
+
+    const row = screen.getByText(branch).closest('tr')!
+    expect(screen.getByText(branch)).toHaveClass('wrap-anywhere')
+    for (const icon of ['lucide-calendar', 'lucide-git-branch', 'lucide-git-commit-horizontal']) {
+      expect(row.querySelector(`svg.${icon}`)).toHaveClass('shrink-0')
+    }
+  })
+})

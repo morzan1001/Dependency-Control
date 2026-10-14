@@ -20,7 +20,7 @@ export function ScmLink({ href, className, title, external = false, children }: 
       className={cn('text-primary hover:underline', className)}
     >
       {children}
-      {external && <ExternalLink className="h-3 w-3" />}
+      {external && <ExternalLink className="h-3 w-3 shrink-0" />}
     </a>
   )
 }

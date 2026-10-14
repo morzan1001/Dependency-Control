@@ -606,3 +606,21 @@ describe('ScanDetails metadata', () => {
     expect(screen.getByText('Category Distribution')).toBeInTheDocument()
   })
 })
+
+describe('ScanDetails metadata', () => {
+  const LONG_BRANCH = 'feature/checkout-redesign-with-a-rather-long-branch-name'
+
+  it('breaks a long branch name anywhere inside the card and keeps its icons whole, like the finding id', () => {
+    mockUseScan.mockReturnValue({
+      data: { ...scan('completed'), branch: LONG_BRANCH, project_url: 'https://gitlab.example.com/acme/shop' },
+      isLoading: false,
+    })
+
+    renderPage()
+
+    const branch = screen.getByText(LONG_BRANCH)
+    expect(branch).toHaveClass('wrap-anywhere')
+    expect(branch.closest('a')?.querySelector('svg.lucide-external-link')).toHaveClass('shrink-0')
+    expect(branch.closest('a')?.parentElement?.querySelector('svg.lucide-git-branch')).toHaveClass('shrink-0')
+  })
+})
