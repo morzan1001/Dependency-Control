@@ -225,6 +225,14 @@ describe("ApiKeysCard", () => {
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
   });
 
+  it("focuses the minted token with all of it selected, ready to copy", async () => {
+    await mintKey();
+
+    const token = (await screen.findByDisplayValue(PLAINTEXT_TOKEN)) as HTMLInputElement;
+    await waitFor(() => expect(token).toHaveFocus());
+    expect([token.selectionStart, token.selectionEnd]).toEqual([0, PLAINTEXT_TOKEN.length]);
+  });
+
   it("titles its button, dialogs and fields like the rest of the app", async () => {
     renderCard([]);
     await screen.findByText(/No API keys yet/i);

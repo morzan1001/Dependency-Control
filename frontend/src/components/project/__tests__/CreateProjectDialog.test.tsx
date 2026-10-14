@@ -84,6 +84,19 @@ describe('CreateProjectDialog after a project was created', () => {
     expect(screen.getByLabelText('Project Name')).toHaveValue('')
   })
 
+  it('focuses the API key with all of it selected, like the key rotation dialog', () => {
+    mockMutate.mockImplementation((_vars, options: { onSuccess: (data: unknown) => void }) =>
+      options.onSuccess({ project_id: 'p-new', api_key: API_KEY, note: 'Save the key' }),
+    )
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    submit()
+
+    const key = screen.getByDisplayValue(API_KEY) as HTMLInputElement
+    expect(key).toHaveFocus()
+    expect([key.selectionStart, key.selectionEnd]).toEqual([0, API_KEY.length])
+  })
+
   describe('copying the API key', () => {
     const writeText = vi.fn()
 

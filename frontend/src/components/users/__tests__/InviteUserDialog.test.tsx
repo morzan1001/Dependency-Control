@@ -58,6 +58,14 @@ describe('InviteUserDialog copy link', () => {
     expect(screen.queryByRole('button', { name: 'Copy Link' })).not.toBeInTheDocument()
   })
 
+  it('focuses the link with all of it selected, like the API key dialogs', async () => {
+    sendInvitation()
+
+    const link = (await screen.findByDisplayValue(INVITE_LINK)) as HTMLInputElement
+    expect(link).toHaveFocus()
+    expect([link.selectionStart, link.selectionEnd]).toEqual([0, INVITE_LINK.length])
+  })
+
   it('asks for the link to be copied once no email went out, like the project API key dialogs', async () => {
     openDialog()
     expect(screen.getByRole('dialog')).toHaveAccessibleDescription(
