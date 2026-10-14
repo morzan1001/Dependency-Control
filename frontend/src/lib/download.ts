@@ -1,4 +1,5 @@
 import { toast } from 'sonner'
+import { getErrorMessage } from '@/lib/utils'
 
 function triggerBrowserDownload(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob)
@@ -24,8 +25,8 @@ export async function downloadServerFile(
       name = `${name.replace(/\.[^.]+$/, '')}.zip`
     }
     triggerBrowserDownload(blob, name)
-  } catch {
-    toast.error(errorMsg)
+  } catch (error) {
+    toast.error(errorMsg, { description: getErrorMessage(error) })
   }
 }
 

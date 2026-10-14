@@ -266,7 +266,7 @@ describe('ScanDetails raw tab', () => {
     expect(scanApi.downloadSbom).toHaveBeenCalledWith('s1', 0)
   })
 
-  it('names a failed result and SBOM download like the app\'s other downloads', async () => {
+  it('names a failed result and SBOM download and why, like the app\'s other failures', async () => {
     vi.mocked(scanApi.downloadResult).mockRejectedValue(new Error('Network Error'))
     vi.mocked(scanApi.downloadSbom).mockRejectedValue(new Error('Network Error'))
     renderPage(RAW_TAB)
@@ -275,8 +275,8 @@ describe('ScanDetails raw tab', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Download app.cdx.json' }))
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to download analyzer result')
-      expect(toast.error).toHaveBeenCalledWith('Failed to download SBOM')
+      expect(toast.error).toHaveBeenCalledWith('Failed to download analyzer result', { description: 'Network Error' })
+      expect(toast.error).toHaveBeenCalledWith('Failed to download SBOM', { description: 'Network Error' })
     })
   })
 

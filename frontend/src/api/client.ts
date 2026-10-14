@@ -115,8 +115,18 @@ export async function getServerFile(
   url: string,
   params?: Record<string, string | undefined>,
 ): Promise<{ blob: Blob; filename: string | null }> {
-  const response = await api.get<Blob>(url, { params, responseType: 'blob', timeout: 0 });
-  return { blob: response.data, filename: filenameFromContentDisposition(response.headers['content-disposition']) };
+  try {
+    const response = await api.get<Blob>(url, { params, responseType: 'blob', timeout: 0 });
+    return { blob: response.data, filename: filenameFromContentDisposition(response.headers['content-disposition']) };
+  } catch (error) {
+    // A refusal arrives as a blob too; its JSON holds the detail the caller shows.
+    const response = axios.isAxiosError(error) ? error.response : undefined;
+    if (response?.data instanceof Blob) {
+      const blob = response.data;
+      response.data = await blob.text().then((body) => JSON.parse(body)).catch(() => blob);
+    }
+    throw error;
+  }
 }
 
 // Build URLSearchParams, skipping null/undefined/empty values; arrays joined with commas.
