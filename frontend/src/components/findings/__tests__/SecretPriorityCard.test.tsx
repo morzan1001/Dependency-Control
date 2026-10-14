@@ -27,4 +27,10 @@ describe('SecretPriorityCard', () => {
     )
     expect(container).toBeEmptyDOMElement()
   })
+
+  it("lays its counts out two by two on a phone, like the prioritized view's tiles, and in one row from md on", () => {
+    render(<SecretPriorityCard counts={counts} />)
+
+    expect(screen.getByText('Deprioritized').parentElement?.parentElement).toHaveClass('grid-cols-2', 'md:grid-cols-4')
+  })
 })
