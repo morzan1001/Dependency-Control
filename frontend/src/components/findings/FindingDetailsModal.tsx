@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { useState, type ComponentType } from "react"
+import { useState, type ReactNode } from "react"
 import type { Finding, FindingType } from "@/types/scan"
 import { ExternalLink, ShieldAlert, ServerCrash } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
@@ -40,44 +40,6 @@ interface DetailsViewProps {
     readonly onWaive: (vulnId: string) => void
 }
 
-function AdditionalDetailsSection({ finding }: Readonly<{ finding: Finding }>) {
-    if (!finding.details) return null
-    return (
-        <DetailSection label="Additional Details">
-            <AdditionalDetailsView details={finding.details} />
-        </DetailSection>
-    )
-}
-
-function LicenseView({ finding }: Readonly<{ finding: Finding }>) {
-    if (!finding.details) return null
-    return (
-        <>
-            <ContextBannersSection finding={finding} />
-            <LicenseDetailsView details={finding.details} />
-        </>
-    )
-}
-
-function QualityView({ finding }: Readonly<{ finding: Finding }>) {
-    if (!finding.details) return null
-    return (
-        <>
-            <ContextBannersSection finding={finding} />
-            <AggregatedQualityView details={finding.details} />
-        </>
-    )
-}
-
-function EolView({ finding }: Readonly<{ finding: Finding }>) {
-    return (
-        <>
-            <ContextBannersSection finding={finding} />
-            <AdditionalDetailsSection finding={finding} />
-        </>
-    )
-}
-
 function SystemWarningView({ finding }: Readonly<{ finding: Finding }>) {
     const errorDetails = finding.details?.error_details
     return (
@@ -104,16 +66,37 @@ function SystemWarningView({ finding }: Readonly<{ finding: Finding }>) {
     )
 }
 
-const DETAIL_VIEWS: Partial<Record<FindingType, ComponentType<DetailsViewProps>>> = {
-    vulnerability: VulnerabilityDetailsView,
-    secret: SecretDetailsView,
-    sast: SastDetailsView,
-    iac: SastDetailsView,
-    license: LicenseView,
-    quality: QualityView,
-    outdated: ContextBannersSection,
-    eol: EolView,
-    system_warning: SystemWarningView,
+const renderAdditionalDetails = ({ finding }: DetailsViewProps) => finding.details && (
+    <DetailSection label="Additional Details">
+        <AdditionalDetailsView details={finding.details} />
+    </DetailSection>
+)
+
+const DETAIL_VIEWS: Partial<Record<FindingType, (props: DetailsViewProps) => ReactNode>> = {
+    vulnerability: ({ finding, canWaive, onWaive }) => <VulnerabilityDetailsView finding={finding} canWaive={canWaive} onWaive={onWaive} />,
+    secret: ({ finding, scanContext }) => <SecretDetailsView finding={finding} scanContext={scanContext} />,
+    sast: ({ finding, scanContext }) => <SastDetailsView finding={finding} scanContext={scanContext} />,
+    iac: ({ finding, scanContext }) => <SastDetailsView finding={finding} scanContext={scanContext} />,
+    license: ({ finding }) => finding.details && (
+        <>
+            <ContextBannersSection finding={finding} />
+            <LicenseDetailsView details={finding.details} />
+        </>
+    ),
+    quality: ({ finding }) => finding.details && (
+        <>
+            <ContextBannersSection finding={finding} />
+            <AggregatedQualityView details={finding.details} />
+        </>
+    ),
+    outdated: ({ finding }) => <ContextBannersSection finding={finding} />,
+    eol: (props) => (
+        <>
+            <ContextBannersSection finding={props.finding} />
+            {renderAdditionalDetails(props)}
+        </>
+    ),
+    system_warning: ({ finding }) => <SystemWarningView finding={finding} />,
 }
 
 // Their views describe each advisory or rule on its own, so the finding-level text would repeat it.
@@ -157,7 +140,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
         navigate(`/projects/${projectId}/scans/${scanId}?tab=raw&${sbomQuery}`)
     }
 
-    const DetailsView: ComponentType<DetailsViewProps> = DETAIL_VIEWS[finding.type] ?? AdditionalDetailsSection
+    const renderDetails = DETAIL_VIEWS[finding.type] ?? renderAdditionalDetails
 
     return (
         <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -300,7 +283,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                 </DetailSection>
                             )}
 
-                            <DetailsView finding={finding} scanContext={scanContext} canWaive={canCreateWaiver} onWaive={handleWaive} />
+                            {renderDetails({ finding, scanContext, canWaive: canCreateWaiver, onWaive: handleWaive })}
                         </div>
                     )}
                 </div>
