@@ -352,7 +352,7 @@ describe("FindingDetailsModal details by type", () => {
     expect(screen.getByText("typosquat of lodash")).toBeInTheDocument();
   });
 
-  it("writes each of several quality issues' severity in the pill colours of that severity", () => {
+  it("writes each of several quality issues' severity in the pill colours and with the icon of that severity", () => {
     renderModal(
       finding({
         type: "quality",
@@ -367,7 +367,7 @@ describe("FindingDetailsModal details by type", () => {
 
     expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium", "text-severity-medium-foreground");
     expect(screen.getByText("UNKNOWN")).toHaveClass("bg-muted", "text-muted-foreground");
-    expect(screen.getByText("MEDIUM").querySelector("svg")).toBeNull();
+    expect(screen.getByText("MEDIUM").querySelector("svg")).not.toBeNull();
   });
 
   it("shows an end-of-life finding's banners beside its own details", () => {

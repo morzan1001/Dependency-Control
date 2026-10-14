@@ -447,7 +447,7 @@ export function AggregatedQualityView({ details }: Readonly<{ details: FindingDe
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{getIssueLabel(issue.type)}</span>
-                    <SeverityBadge severity={issue.severity} showIcon={false} />
+                    <SeverityBadge severity={issue.severity} />
                     {issue.scanners && issue.scanners.length > 0 && (
                       <Badge variant="outline" className="text-xs">
                         {issue.scanners.join(', ')}

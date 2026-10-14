@@ -516,7 +516,7 @@ export function AnalyticsDependencyModal({
                         <Badge variant="outline">{finding.type}</Badge>
                       </TableCell>
                       <TableCell>
-                        <SeverityBadge severity={finding.severity || 'UNKNOWN'} showIcon={false} />
+                        <SeverityBadge severity={finding.severity || 'UNKNOWN'} />
                       </TableCell>
                       <TableCell className="truncate">
                         <Link

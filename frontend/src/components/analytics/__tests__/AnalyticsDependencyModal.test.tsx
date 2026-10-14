@@ -345,7 +345,7 @@ describe("AnalyticsDependencyModal findings list", () => {
     expect(screen.queryByText("pkg:1.0")).not.toBeInTheDocument();
   });
 
-  it("writes each row's severity in the pill colours of that severity, UNKNOWN without one", () => {
+  it("writes each row's severity in the pill colours and with the icon of that severity, UNKNOWN without one", () => {
     (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [finding("CVE-1", "MEDIUM"), finding("CVE-2", "")], total: 2 },
       isLoading: false,
@@ -355,7 +355,7 @@ describe("AnalyticsDependencyModal findings list", () => {
 
     expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium", "text-severity-medium-foreground");
     expect(screen.getByText("UNKNOWN")).toHaveClass("bg-muted", "text-muted-foreground");
-    expect(screen.getByText("MEDIUM").querySelector("svg")).toBeNull();
+    expect(screen.getByText("MEDIUM").querySelector("svg")).not.toBeNull();
   });
 
   it("marks the column the findings are sorted by and the direction", () => {
