@@ -118,7 +118,6 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
                     type="email"
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="user@example.com"
                     required
                   />
                 </div>
