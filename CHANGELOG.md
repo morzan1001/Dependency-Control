@@ -1,3 +1,19 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.55. Run mongosh commands in-pod against the application database.
+
+## Before the rollout (gate): no jti_1 index on the token blacklist
+
+Blacklisted refresh tokens no longer carry `jti`. A unique `jti_1` index (built by 1.9.52 and older; the 1.9.53 notes list it among the indexes to drop) holds every such entry under the same null key, so every token refresh after the first one is refused. This must print `false`:
+
+```js
+db.token_blacklist.getIndexes().some((i) => i.name === "jti_1")
+```
+
+If it prints `true`, run `db.token_blacklist.dropIndex("jti_1")` first. That is safe while 1.9.55 runs, because it reads the blacklist by `_id` and its startup no longer creates `jti_1`.
+
+
+
 # Release 1.9.55
 
 ## 🐛 Fixes
