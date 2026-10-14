@@ -208,7 +208,7 @@ _JWKS = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
 @pytest.fixture
 def jwks_cache(fake_cache, monkeypatch):
     monkeypatch.setattr("app.services.oidc_utils.cache_service", fake_cache)
-    monkeypatch.setattr("app.services.gitlab.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.git_provider.cache_service", fake_cache)
     return fake_cache
 
 

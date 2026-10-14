@@ -5,7 +5,6 @@ from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.cache import cache_service
 from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
     GITLAB_TEAM_MEMBER_MIN_ACCESS,
@@ -30,8 +29,7 @@ from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.gitlab_instance import GitLabGroupOption
 from app.services.git_provider import GitProviderService, cached_public_emails
-from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
-from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
+from app.services.oidc_utils import discover_jwks_uri
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +94,10 @@ _UNDETERMINED_TARGET = GitLabSyncTarget(None, determined=False)
 _NO_OWNING_GROUP = GitLabSyncTarget(None)
 
 
-class GitLabService(GitProviderService[GitLabInstance]):
+class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
     provider = "GitLab"
     _cache_prefix = "gitlab:instance"
+    _oidc_payload = OIDCPayload
 
     def __init__(self, gitlab_instance: GitLabInstance):
         super().__init__(gitlab_instance)
@@ -111,26 +110,6 @@ class GitLabService(GitProviderService[GitLabInstance]):
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
         fallbacks = [f"{self.base_url}/oauth/discovery/keys", f"{self.base_url}/-/jwks"]
         return list(dict.fromkeys([discovered, *fallbacks] if discovered else fallbacks))
-
-    async def refresh_jwks(self) -> dict | None:
-        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitLab")
-
-    async def get_jwks(self) -> dict | None:
-        """The instance's cached key set, fetched on a miss; None while GitLab serves none."""
-        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
-        return cached or await self.refresh_jwks()
-
-    async def validate_oidc_token(self, token: str) -> OIDCPayload | None:
-        """Validate a GitLab OIDC JWT, refreshing JWKS on key rotation."""
-        return await _validate_oidc_token(
-            token=token,
-            get_jwks=self.get_jwks,
-            refresh_jwks=self.refresh_jwks,
-            issuer=self.base_url,
-            audience=self.instance.oidc_audience,
-            payload_model=OIDCPayload,
-            provider_name="GitLab",
-        )
 
     async def list_branches(self, project_id: int) -> list[str] | None:
         """Fetches all branch names from a GitLab project. Returns None on API failure."""

@@ -222,7 +222,7 @@ class TestConnectionAsksTheIssuerNow:
             raise httpx.ConnectError("issuer down", request=request)
 
         instance = make_github_instance(id="gh-1")
-        monkeypatch.setattr("app.services.github.cache_service", fake_cache)
+        monkeypatch.setattr("app.services.git_provider.cache_service", fake_cache)
         monkeypatch.setattr("app.services.oidc_utils.cache_service", fake_cache)
         monkeypatch.setattr(
             httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(_unreachable))

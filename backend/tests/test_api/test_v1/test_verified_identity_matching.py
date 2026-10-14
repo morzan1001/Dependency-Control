@@ -206,7 +206,6 @@ def gitlab_cache(monkeypatch):
     cache._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     cache._pool = object()
     cache._available = True
-    monkeypatch.setattr("app.services.gitlab.cache_service", cache)
     monkeypatch.setattr("app.services.git_provider.cache_service", cache)
     return cache
 

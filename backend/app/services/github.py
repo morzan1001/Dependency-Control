@@ -36,8 +36,7 @@ from app.services.git_provider import (
     json_document,
     request_gate,
 )
-from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
-from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
+from app.services.oidc_utils import discover_jwks_uri
 
 logger = logging.getLogger(__name__)
 
@@ -183,11 +182,12 @@ def github_api_headers(token: str | None) -> dict[str, str]:
     return headers
 
 
-class GitHubService(GitProviderService[GitHubInstance]):
+class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     """OIDC token validation and API operations for github.com and GHES instances."""
 
     provider = "GitHub"
     _cache_prefix = "github:gh_instance"
+    _oidc_payload = GitHubOIDCPayload
 
     def __init__(self, github_instance: GitHubInstance):
         super().__init__(github_instance)
@@ -954,26 +954,6 @@ class GitHubService(GitProviderService[GitHubInstance]):
             return [_GITHUB_COM_JWKS_URI]
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
         return [discovered or f"{self.base_url}/.well-known/jwks"]
-
-    async def refresh_jwks(self) -> dict | None:
-        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitHub")
-
-    async def get_jwks(self) -> dict | None:
-        """The instance's cached key set, fetched on a miss; None while the issuer serves none."""
-        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
-        return cached or await self.refresh_jwks()
-
-    async def validate_oidc_token(self, token: str) -> GitHubOIDCPayload | None:
-        """Validate a GitHub Actions OIDC JWT, refreshing JWKS on key rotation."""
-        return await _validate_oidc_token(
-            token=token,
-            get_jwks=self.get_jwks,
-            refresh_jwks=self.refresh_jwks,
-            issuer=self.base_url,
-            audience=self.instance.oidc_audience,
-            payload_model=GitHubOIDCPayload,
-            provider_name="GitHub",
-        )
 
     async def get_current_user_id(self) -> int | None:
         """The id of the account the token belongs to; None when GET /user does not answer it."""

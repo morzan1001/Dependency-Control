@@ -1,4 +1,4 @@
-"""What the GitLab and GitHub services share: the token's API calls and Link-header paging."""
+"""What the GitLab and GitHub services share: the token's API calls, Link-header paging and OIDC validation."""
 
 import asyncio
 import logging
@@ -9,12 +9,15 @@ from contextlib import aclosing, asynccontextmanager
 from typing import Any, ClassVar
 
 import httpx
+from pydantic import BaseModel
 
 from app.core.cache import cache_service
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.log_utils import sanitize_for_log
 from app.models.github_instance import GitHubInstance
 from app.models.gitlab_instance import GitLabInstance
+from app.services.oidc_utils import fetch_jwks
+from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +77,12 @@ async def cached_public_emails[K](
     return None if refused else {**emails, **answered}
 
 
-class GitProviderService[InstanceT: GitHubInstance | GitLabInstance](ABC):
+class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: BaseModel](ABC):
     """One configured instance's API, called with its access token; each provider names its host and headers."""
 
     provider: ClassVar[str]
     _cache_prefix: ClassVar[str]
+    _oidc_payload: type[PayloadT]
 
     api_url: str | None
 
@@ -217,3 +221,27 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance](ABC):
                     return None
                 items.extend(page)
         return items
+
+    @abstractmethod
+    async def _jwks_uris(self) -> list[str]:
+        """Where the issuer's signing keys may be fetched, in the order to try them."""
+
+    async def refresh_jwks(self) -> dict | None:
+        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, self.provider)
+
+    async def get_jwks(self) -> dict | None:
+        """The instance's cached key set, fetched on a miss; None while the issuer serves none."""
+        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
+        return cached or await self.refresh_jwks()
+
+    async def validate_oidc_token(self, token: str) -> PayloadT | None:
+        """Validate a CI job's OIDC JWT, refreshing JWKS on key rotation."""
+        return await _validate_oidc_token(
+            token=token,
+            get_jwks=self.get_jwks,
+            refresh_jwks=self.refresh_jwks,
+            issuer=self.base_url,
+            audience=self.instance.oidc_audience,
+            payload_model=self._oidc_payload,
+            provider_name=self.provider,
+        )
