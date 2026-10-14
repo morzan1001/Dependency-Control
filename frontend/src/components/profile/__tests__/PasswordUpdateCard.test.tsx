@@ -143,7 +143,7 @@ describe('PasswordUpdateCard', () => {
 
     fillIn(NEW_PASSWORD)
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: 'Internal Server Error' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update password', { description: 'Internal Server Error' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -177,7 +177,7 @@ describe('PasswordUpdateCard', () => {
     migrate()
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith('Error', { description: 'User is already a local account' }),
+      expect(toast.error).toHaveBeenCalledWith('Failed to migrate account', { description: 'User is already a local account' }),
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })

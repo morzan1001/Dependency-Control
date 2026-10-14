@@ -35,11 +35,11 @@ describe('TwoFactorAuthCard', () => {
     expect(await screen.findByText('ABC', { selector: 'code' })).toBeInTheDocument()
   })
 
-  it('titles a failed setup like the other Profile cards and names the reason', async () => {
+  it('titles a failed setup like the 2FA setup page and names the reason', async () => {
     setup2FA.mockRejectedValue({ response: { status: 400, data: { detail: '2FA is already enabled' } } })
 
     enable2FA()
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: '2FA is already enabled' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to start 2FA setup', { description: '2FA is already enabled' }))
   })
 })

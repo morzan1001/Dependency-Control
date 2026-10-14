@@ -112,8 +112,8 @@ export function ApiKeysCard() {
   const [newSurfaces, setNewSurfaces] = useState<ApiKeySurface[]>([]);
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [keyToRevoke, setKeyToRevoke] = useState<ApiKey | null>(null);
-  const createMutation = useCreateApiKey({ errorTitle: 'Error' });
-  const revokeMutation = useRevokeApiKey({ errorTitle: 'Error' });
+  const createMutation = useCreateApiKey({ errorTitle: 'Failed to create API key' });
+  const revokeMutation = useRevokeApiKey({ errorTitle: 'Failed to revoke API key' });
 
   const mintableSurfaces = SURFACE_ORDER.filter((surface) =>
     hasPermission(SURFACE_PERMISSIONS[surface]),

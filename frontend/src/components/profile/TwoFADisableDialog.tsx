@@ -42,7 +42,7 @@ export function TwoFADisableDialog({ isOpen, onClose }: Readonly<TwoFADisableDia
       });
     },
     onError: (error: ApiError) => {
-      if (error.response?.data?.detail !== INVALID_PASSWORD) toast.error("Error", { description: getErrorMessage(error) });
+      if (error.response?.data?.detail !== INVALID_PASSWORD) toast.error("Failed to disable 2FA", { description: getErrorMessage(error) });
     }
   });
 

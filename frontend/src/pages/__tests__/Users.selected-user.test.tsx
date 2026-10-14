@@ -246,7 +246,7 @@ describe('UsersPage user details toasts', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Migrate to Local' }))
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Migration Failed', { description: 'Network Error' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to migrate user', { description: 'Network Error' }))
   })
 
   it('names a password reset that failed and why', async () => {
@@ -256,7 +256,19 @@ describe('UsersPage user details toasts', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Send Reset Email' }))
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Reset Failed', { description: 'Network Error' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to send reset email', { description: 'Network Error' }))
+  })
+
+  it('names a password reset that queued no email', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), auth_provider: 'local' }])
+    vi.mocked(userApi.adminResetPassword).mockResolvedValue({ email_queued: false } as never)
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send Reset Email' }))
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Failed to send reset email', { description: 'No reset email could be queued for the user' }),
+    )
   })
 
   it('names a 2FA disable that failed and why', async () => {

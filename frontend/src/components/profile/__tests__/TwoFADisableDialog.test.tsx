@@ -63,7 +63,7 @@ describe('TwoFADisableDialog', () => {
     disable()
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith('Error', { description: '2FA is not enabled for your account' }),
+      expect(toast.error).toHaveBeenCalledWith('Failed to disable 2FA', { description: '2FA is not enabled for your account' }),
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })

@@ -21,7 +21,7 @@ export function TwoFactorAuthCard({ user }: Readonly<TwoFactorAuthCardProps>) {
     setSetupData(null);
   };
 
-  const setup2FAMutation = useSetup2FA({ errorTitle: "Error" });
+  const setup2FAMutation = useSetup2FA({ errorTitle: "Failed to start 2FA setup" });
   const startSetup = () =>
     setup2FAMutation.mutate(undefined, {
       onSuccess: (data) => {

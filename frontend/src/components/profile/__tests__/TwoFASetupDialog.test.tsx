@@ -77,7 +77,7 @@ describe('TwoFASetupDialog', () => {
     enable2FA.mockRejectedValue(refused('2FA setup not initiated'))
     enable()
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: '2FA setup not initiated' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to enable 2FA', { description: '2FA setup not initiated' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 

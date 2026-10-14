@@ -39,7 +39,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
       logout();
     },
     onError: (error: ApiError) => {
-      if (!refusesField(error)) toast.error("Error", { description: getErrorMessage(error) });
+      if (!refusesField(error)) toast.error("Failed to update password", { description: getErrorMessage(error) });
     }
   });
 
@@ -54,7 +54,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
       queryClient.invalidateQueries({ queryKey: ['me'] });
     },
     onError: (error: ApiError) => {
-      if (!refusesField(error)) toast.error("Error", { description: getErrorMessage(error) });
+      if (!refusesField(error)) toast.error("Failed to migrate account", { description: getErrorMessage(error) });
     }
   });
 

@@ -71,7 +71,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
           }
         },
         onError: (error, sent) => {
-          if (!refusesUsername(sent, error)) toast.error("Error", { description: getErrorMessage(error) });
+          if (!refusesUsername(sent, error)) toast.error("Failed to update profile", { description: getErrorMessage(error) });
         },
       });
     }
@@ -86,7 +86,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
           }
         },
         onError: (error) => {
-          if (!refusesEmail(error)) toast.error("Error", { description: getErrorMessage(error) });
+          if (!refusesEmail(error)) toast.error("Failed to change email", { description: getErrorMessage(error) });
         },
       });
     }

@@ -77,8 +77,8 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
   const updateUserMutation = useUpdateUser({
     errorTitle: user?.is_active ? "Failed to deactivate user" : "Failed to activate user",
   });
-  const migrateUserMutation = useAdminMigrateUser({ errorTitle: "Migration Failed" });
-  const resetPasswordMutation = useAdminResetPassword({ errorTitle: "Reset Failed" });
+  const migrateUserMutation = useAdminMigrateUser({ errorTitle: "Failed to migrate user" });
+  const resetPasswordMutation = useAdminResetPassword({ errorTitle: "Failed to send reset email" });
   const disable2FAMutation = useAdminDisable2FA({ errorTitle: "Failed to disable 2FA" });
 
   const handleMigrate = (userId: string) => {
@@ -96,7 +96,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
             if (email_queued) {
               toast.success("Password Reset Initiated", { description: "A reset email has been queued for the user." });
             } else {
-              toast.error("Reset Failed", { description: "No reset email could be queued for the user" });
+              toast.error("Failed to send reset email", { description: "No reset email could be queued for the user" });
             }
           },
       });

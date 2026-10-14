@@ -296,7 +296,7 @@ describe("ApiKeysCard", () => {
     await mintKey();
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Error", { description: SURFACE_REFUSED }),
+      expect(toastError).toHaveBeenCalledWith("Failed to create API key", { description: SURFACE_REFUSED }),
     );
   });
 
@@ -322,7 +322,7 @@ describe("ApiKeysCard", () => {
     expect(nativeConfirm).not.toHaveBeenCalled();
   });
 
-  it("titles a failed revoke like the other Profile cards, names the reason and keeps the dialog open", async () => {
+  it("names a failed revoke and its reason, and keeps the dialog open", async () => {
     revokeKey.mockRejectedValueOnce({ response: { data: { detail: "API key not found" } } });
     renderCard([mcpKey]);
     await screen.findByText(MCP_KEY_NAME);
@@ -331,7 +331,7 @@ describe("ApiKeysCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Error", { description: "API key not found" }),
+      expect(toastError).toHaveBeenCalledWith("Failed to revoke API key", { description: "API key not found" }),
     );
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "Revoke API Key" })).toBeInTheDocument();

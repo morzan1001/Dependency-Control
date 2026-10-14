@@ -192,13 +192,13 @@ describe('UserDetailsCard', () => {
   })
 
   it.each([
-    { field: 'Slack Member ID', value: 'U123', error: new Error('Network Error'), message: 'Network Error' },
-    { field: 'Slack Member ID', value: 'U123', error: refused('Inactive user'), message: 'Inactive user' },
-    { field: 'Username', value: 'lena.k', error: new Error('Network Error'), message: 'Network Error' },
-    { field: 'Username', value: 'lena.k', error: refused(SERVER_FAILURE, 500), message: SERVER_FAILURE },
-    { field: 'Email', value: NEW_EMAIL, error: new Error('Network Error'), message: 'Network Error' },
-    { field: 'Email', value: NEW_EMAIL, error: refused(SERVER_FAILURE, 500), message: SERVER_FAILURE },
-  ])('reports a failed save of the $field without blaming the field: $message', async ({ field, value, error, message }) => {
+    { field: 'Slack Member ID', value: 'U123', error: new Error('Network Error'), message: 'Network Error', title: 'Failed to update profile' },
+    { field: 'Slack Member ID', value: 'U123', error: refused('Inactive user'), message: 'Inactive user', title: 'Failed to update profile' },
+    { field: 'Username', value: 'lena.k', error: new Error('Network Error'), message: 'Network Error', title: 'Failed to update profile' },
+    { field: 'Username', value: 'lena.k', error: refused(SERVER_FAILURE, 500), message: SERVER_FAILURE, title: 'Failed to update profile' },
+    { field: 'Email', value: NEW_EMAIL, error: new Error('Network Error'), message: 'Network Error', title: 'Failed to change email' },
+    { field: 'Email', value: NEW_EMAIL, error: refused(SERVER_FAILURE, 500), message: SERVER_FAILURE, title: 'Failed to change email' },
+  ])('reports a failed save of the $field without blaming the field: $message', async ({ field, value, error, message, title }) => {
     updateMe.mockRejectedValue(error)
     changeEmail.mockRejectedValue(error)
     renderCard(LOCAL_USER)
@@ -206,7 +206,7 @@ describe('UserDetailsCard', () => {
     type(field, value)
     save()
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Error', { description: message }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(title, { description: message }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.getByLabelText(field)).toHaveValue(value)
     expect(toast.success).not.toHaveBeenCalled()

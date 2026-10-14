@@ -47,7 +47,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFAS
     },
     onError: (error: ApiError) => {
       const detail = error.response?.data?.detail;
-      if (detail !== INVALID_OTP_CODE && detail !== INVALID_PASSWORD) toast.error("Error", { description: getErrorMessage(error) });
+      if (detail !== INVALID_OTP_CODE && detail !== INVALID_PASSWORD) toast.error("Failed to enable 2FA", { description: getErrorMessage(error) });
     }
   });
 
