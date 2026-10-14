@@ -218,8 +218,8 @@ class _PartialOnTheSecondSbom:
 async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcome(db, _stored_sboms, monkeypatch):
     announced: list[dict[str, str]] = []
 
-    async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
-        announced.append(analyzer_outcomes)
+    async def _capture(ctx, verdict, findings):
+        announced.append(verdict.analyzer_outcomes)
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     serve_analyzer(monkeypatch, "osv", _PartialOnTheSecondSbom())

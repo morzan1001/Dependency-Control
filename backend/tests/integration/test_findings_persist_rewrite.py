@@ -13,7 +13,6 @@ from pymongo.errors import DocumentTooLarge
 from app.core import ensure_utc
 from app.core.init_db import create_indexes
 from app.models.waiver import Waiver
-from app.repositories.findings import FindingRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analysis.engine import _partial_run_reasons, _persist_findings_and_waivers, _prepare_finding_records
@@ -72,7 +71,7 @@ def _trivy_records(*vulnerabilities: dict) -> list[dict]:
 
 
 async def _persist(db, records: list[dict]) -> int:
-    return await _persist_findings_and_waivers(records, _SCAN, _PROJECT, FindingRepository(db), db)
+    return await _persist_findings_and_waivers(records, _SCAN, _PROJECT, db)
 
 
 async def _stored_ids(db) -> list[str]:

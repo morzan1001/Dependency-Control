@@ -1,7 +1,10 @@
 """What the scan engine and the ad-hoc path share to run the analyzers over an SBOM."""
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
+
+from app.schemas.sbom import SBOMFormat
 
 # Analyzer result keys reporting incomplete coverage, with how to phrase each.
 _PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
@@ -48,3 +51,30 @@ def build_settings_resolver(
         return merged
 
     return _settings_for
+
+
+def sbom_label(position: int) -> str:
+    return f"SBOM #{position}"
+
+
+@dataclass(frozen=True)
+class AnalyzerInput:
+    """One SBOM as the analyzers read it."""
+
+    # 1-based, so a label names the SBOM the caller sent even when an earlier one was skipped.
+    position: int
+    components: list[dict[str, Any]]
+    # The root component name or serial number, which a finding's source prefers over the label.
+    name: str | None = None
+    # What a CLI scanner reads: the written file when there is one, else the document.
+    document: dict[str, Any] = field(default_factory=dict)
+    path: str | None = None
+    format: SBOMFormat = SBOMFormat.UNKNOWN
+
+    @property
+    def label(self) -> str:
+        return sbom_label(self.position)
+
+    @property
+    def source(self) -> str:
+        return self.name or self.label

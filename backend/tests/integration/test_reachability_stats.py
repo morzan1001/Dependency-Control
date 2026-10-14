@@ -403,8 +403,9 @@ async def test_coverable_count_is_zero_without_dependencies(db):
 async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analyses(db):
     """CI uploads the callgraph under the original build's id; a rescan carries a fresh id."""
     await create_indexes(db)
-    from app.repositories.scans import ScanRepository
+    from app.models.project import Scan
     from app.services.analysis.engine import _run_reachability_enrichment
+    from tests.helpers.analyzers import run_context
 
     rescan_id = "rescan-reach"
     await _seed_callgraph(db)
@@ -426,7 +427,8 @@ async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analys
     findings = [{**_finding("CVE-1", "requests"), "scan_id": rescan_id}]
     summary: list[str] = []
 
-    await _run_reachability_enrichment(findings, rescan_id, _PROJECT_ID, db, ScanRepository(db), summary)
+    rescan = Scan(id=rescan_id, project_id=_PROJECT_ID, branch="main")
+    await _run_reachability_enrichment(run_context(db, rescan), findings, summary)
 
     assert summary == ["reachability: Success (1 enriched)"]
     assert findings[0]["reachable"] is True

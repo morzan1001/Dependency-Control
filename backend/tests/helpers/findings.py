@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from app.models.finding import Finding, FindingType
-from app.repositories.findings import FindingRepository
 from app.services.aggregation.aggregator import ResultAggregator
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 
@@ -68,4 +67,4 @@ async def persist_findings(
     db: Any, scan_id: str, project_id: str, findings: Iterable[Finding], created_at: datetime
 ) -> None:
     records, _ = _prepare_finding_records(list(findings), scan_id, project_id, created_at)
-    await _persist_findings_and_waivers(records, scan_id, project_id, FindingRepository(db), db)
+    await _persist_findings_and_waivers(records, scan_id, project_id, db)

@@ -7,6 +7,8 @@ import re
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import batched
 from pathlib import Path
@@ -76,10 +78,9 @@ from app.services.analysis.registry import (
     analyzer_factories,
     crypto_evaluators,
 )
-from app.services.analysis.runner import build_settings_resolver, partial_result_reason, sbom_source
+from app.services.analysis.runner import AnalyzerInput, build_settings_resolver, partial_result_reason, sbom_source
 from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
-from app.services.analyzers.base import Analyzer
 from app.services.analyzers.cli_base import CLIAnalyzer
 from app.services.analyzers.cli_base import TEMP_SBOM_PREFIX
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load_iana_catalog
@@ -121,6 +122,42 @@ _ENGINE_RESULT_NAMES = frozenset(analyzer_factories) | POST_PROCESSOR_ANALYZERS 
 _CRYPTO_SOURCE = "CBOM"
 
 
+@dataclass(frozen=True)
+class _RunContext:
+    """What every step of one scan's analysis reads, fixed once the claimed scan is loaded."""
+
+    scan: Scan
+    db: Database
+    worker_id: str
+    # The claimed document's, which every final write is guarded on; ``scan`` may already carry a newer one.
+    sbom_generation: int | None
+    active_analyzers: list[str]
+    github_token: str | None
+    settings_for: Callable[[str], dict[str, Any]]
+
+    @property
+    def scan_id(self) -> str:
+        return self.scan.id
+
+    @property
+    def project_id(self) -> str:
+        return self.scan.project_id
+
+
+@dataclass(frozen=True)
+class _Verdict:
+    """How the run ended, as the scan stores it and the announcements report it."""
+
+    status: ScanStatus
+    error: str | None
+    stats: Stats
+    findings_count: int
+    ignored_count: int
+    analyzer_outcomes: dict[str, str]
+    failed_analyzers: list[str]
+    enrichment_failures: list[str]
+
+
 async def _get_github_instance_token(db: Database) -> str | None:
     """The token of the oldest active github.com instance, since GHSA lookups send it to api.github.com."""
     cursor = db.github_instances.find(
@@ -131,6 +168,18 @@ async def _get_github_instance_token(db: Database) -> str | None:
         if is_public_github(doc.get("github_url"), doc["url"]):
             return str(doc["access_token"])
     return None
+
+
+async def _run_context(
+    scan: Scan, db: Database, worker_id: str, sbom_generation: int | None, active_analyzers: list[str]
+) -> _RunContext:
+    system_settings = await SystemSettingsRepository(db).get()
+    github_token = system_settings.github_token or await _get_github_instance_token(db)
+    project = await ProjectRepository(db).get_by_id(scan.project_id)
+    settings_for = build_settings_resolver(
+        system_settings, project.analyzer_settings if project else None, github_token
+    )
+    return _RunContext(scan, db, worker_id, sbom_generation, active_analyzers, github_token, settings_for)
 
 
 async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Database) -> None:
@@ -163,16 +212,16 @@ async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) 
 
 
 async def _record_result(
+    ctx: _RunContext,
+    aggregator: ResultAggregator,
     analyzer_name: str,
     result: Any,
-    scan_id: str,
-    db: Database,
-    aggregator: ResultAggregator,
     source: str,
     row_source: str | None = None,
 ) -> str:
+    scan_id = ctx.scan_id
     aggregator.aggregate(analyzer_name, result, source=source)
-    await AnalysisResultRepository(db).save_result(scan_id, analyzer_name, result, source=row_source)
+    await AnalysisResultRepository(ctx.db).save_result(scan_id, analyzer_name, result, source=row_source)
 
     # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
     if is_error_result(result):
@@ -200,31 +249,24 @@ def _analyzer_failed(analyzer_name: str, error: Exception, aggregator: ResultAgg
 
 
 async def process_analyzer(
-    analyzer_name: str,
-    analyzer: Analyzer,
-    scan_id: str,
-    db: Database,
-    aggregator: ResultAggregator,
-    *,
-    settings: dict[str, Any],
-    source: str,
-    row_source: str,
-    parsed_components: list[dict[str, Any]],
-    sbom_path: str | None,
-    sbom_format: SBOMFormat,
+    ctx: _RunContext, aggregator: ResultAggregator, analyzer_name: str, sbom: AnalyzerInput
 ) -> str:
+    analyzer = analyzer_factories[analyzer_name]()
     analyzer_start_time = time.time()
     try:
         analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
         if isinstance(analyzer, CLIAnalyzer):
-            result = await analyzer.analyze_file(cast(str, sbom_path), sbom_format)
+            result = await analyzer.analyze_file(cast(str, sbom.path), sbom.format)
         else:
-            result = await analyzer.analyze({}, settings=settings, parsed_components=parsed_components)
+            result = await analyzer.analyze(
+                {}, settings=ctx.settings_for(analyzer_name), parsed_components=sbom.components
+            )
 
         analysis_duration_seconds.labels(analyzer=analyzer_name).observe(time.time() - analyzer_start_time)
 
-        return await _record_result(analyzer_name, result, scan_id, db, aggregator, source, row_source=row_source)
+        # Rows are keyed on the SBOM's position: root names repeat within a scan (multi-arch images).
+        return await _record_result(ctx, aggregator, analyzer_name, result, sbom.source, row_source=sbom.label)
     except Exception as e:
         return _analyzer_failed(analyzer_name, e, aggregator)
 
@@ -246,11 +288,11 @@ def _evaluate_crypto(
     return results
 
 
-async def _run_crypto_analyzers(project_id: str, scan_id: str, db: Database, aggregator: ResultAggregator) -> list[str]:
+async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) -> list[str]:
     """Evaluate the scan's stored crypto assets once, after every SBOM's embedded assets are persisted."""
     try:
-        docs = await CryptoAssetRepository(db).find_all_raw(scan_query(project_id, scan_id))
-        policy = await CryptoPolicyResolver(db).resolve(project_id)
+        docs = await CryptoAssetRepository(ctx.db).find_all_raw(scan_query(ctx.project_id, ctx.scan_id))
+        policy = await CryptoPolicyResolver(ctx.db).resolve(ctx.project_id)
         has_protocols = any(d.get("asset_type") == CryptoAssetType.PROTOCOL for d in docs)
         catalog = await load_iana_catalog() if has_protocols else {}
         results = await asyncio.to_thread(_evaluate_crypto, docs, policy, catalog)
@@ -260,7 +302,7 @@ async def _run_crypto_analyzers(project_id: str, scan_id: str, db: Database, agg
     summary: list[str] = []
     for name, result in results.items():
         try:
-            summary.append(await _record_result(name, result, scan_id, db, aggregator, _CRYPTO_SOURCE))
+            summary.append(await _record_result(ctx, aggregator, name, result, _CRYPTO_SOURCE))
         except Exception as e:
             summary.append(_analyzer_failed(name, e, aggregator))
     return summary
@@ -316,8 +358,8 @@ _ParsedDocument = tuple[ParsedSBOM | None, list[dict[str, Any]], str | None, SBO
 
 
 async def _load_sbom(
-    fs: AsyncIOMotorGridFSBucket, gridfs_id: str, write_file: bool
-) -> tuple[str | None, _ParsedDocument]:
+    fs: AsyncIOMotorGridFSBucket, gridfs_id: str, position: int, write_file: bool
+) -> tuple[ParsedSBOM | None, AnalyzerInput]:
     """Download one stored SBOM, write its bytes for the CLI scanners when asked, and parse it."""
     analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
     data = await (await open_gridfs_download_with_retry(fs, bson.ObjectId(gridfs_id))).read()
@@ -330,11 +372,12 @@ async def _load_sbom(
         document = await asyncio.to_thread(json.loads, data)
         del data
         analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
-        return path, await asyncio.to_thread(_parse_and_track_sbom, document)
+        parsed_sbom, components, name, sbom_format = await asyncio.to_thread(_parse_and_track_sbom, document)
     except BaseException:
         if path:
             os.remove(path)
         raise
+    return parsed_sbom, AnalyzerInput(position, components, name=name, path=path, format=sbom_format)
 
 
 def _parse_and_track_sbom(document: Any) -> _ParsedDocument:
@@ -391,52 +434,56 @@ def _resolve_effective_analyzers(
 
 
 async def _process_sbom(
-    index: int,
-    parsed_sbom: ParsedSBOM | None,
-    parsed_components: list[dict[str, Any]],
-    source: str | None,
-    sbom_path: str | None,
-    sbom_format: SBOMFormat,
-    scan_id: str,
-    db: Database,
-    aggregator: ResultAggregator,
-    active_analyzers: list[str],
-    system_settings: Any,
-    project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
-    project_id: str | None = None,
-    scan_type: str | None = None,
-    github_token: str | None = None,
+    ctx: _RunContext, aggregator: ResultAggregator, parsed_sbom: ParsedSBOM | None, sbom: AnalyzerInput
 ) -> list[str]:
     """Run the analyzers over one loaded SBOM; returns the results summary."""
-    # Rows are keyed on the SBOM's position: root names repeat within a scan (multi-arch images).
-    row_source = f"SBOM #{index + 1}"
-
-    if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
-        await _persist_embedded_crypto_assets(parsed_sbom, project_id, scan_id, db)
-
-    effective_analyzers = _resolve_effective_analyzers(active_analyzers, parsed_sbom, parsed_components, scan_type)
-
-    settings_for = build_settings_resolver(system_settings, project_analyzer_settings, github_token)
-
-    tasks = [
-        process_analyzer(
-            analyzer_name,
-            analyzer_factories[analyzer_name](),
-            scan_id,
-            db,
-            aggregator,
-            settings=settings_for(analyzer_name),
-            source=source or row_source,
-            row_source=row_source,
-            parsed_components=parsed_components,
-            sbom_path=sbom_path,
-            sbom_format=sbom_format,
-        )
-        for analyzer_name in effective_analyzers
-        if analyzer_name in analyzer_factories
-    ]
-
+    if parsed_sbom is not None and parsed_sbom.crypto_assets:
+        await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
+    names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components, ctx.scan.scan_type)
+    tasks = [process_analyzer(ctx, aggregator, name, sbom) for name in names if name in analyzer_factories]
     return list(await asyncio.gather(*tasks))
+
+
+async def _analyse_sboms(
+    ctx: _RunContext, fs: AsyncIOMotorGridFSBucket, stored_ids: list[str | None], aggregator: ResultAggregator
+) -> tuple[list[ParsedSBOM | None], int, list[str]]:
+    """Load and analyse the stored SBOMs one at a time; returns the parsed payload, how many failed to load and
+    the results summary."""
+    write_file = bool(RAW_SBOM_ANALYZERS & set(ctx.active_analyzers))
+    # Collected rather than stored per SBOM: the inventory is replaced once per payload (see store_scan_dependencies).
+    payload: list[ParsedSBOM | None] = []
+    load_failures = stored_ids.count(None)
+    results_summary: list[str] = []
+    for position, gridfs_id in enumerate(stored_ids, start=1):
+        if gridfs_id is None:
+            payload.append(None)
+            continue
+        try:
+            parsed_sbom, sbom = await _load_sbom(fs, gridfs_id, position, write_file)
+        except Exception as load_err:
+            logger.exception("Failed to load SBOM from GridFS %s", gridfs_id)
+            _sbom_load_failed(aggregator, load_err)
+            load_failures += 1
+            payload.append(None)
+            continue
+        payload.append(parsed_sbom)
+        try:
+            results_summary.extend(await _process_sbom(ctx, aggregator, parsed_sbom, sbom))
+        finally:
+            if sbom.path:
+                os.remove(sbom.path)
+        aggregator.fold_vulnerability_entries()
+        # The component dicts must not stay alive while the next SBOM loads.
+        del sbom
+
+    if load_failures:
+        logger.warning(
+            "Scan %s: %d/%d SBOMs failed to load; skipping dependency persistence to keep stored dependencies",
+            ctx.scan_id,
+            load_failures,
+            len(stored_ids),
+        )
+    return payload, load_failures, results_summary
 
 
 def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
@@ -507,19 +554,15 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
 
 
 async def _run_epss_kev_enrichment(
-    vulnerability_findings: list[dict[str, Any]],
-    scan_id: str,
-    result_repo: AnalysisResultRepository,
-    github_token: str | None,
-    results_summary: list[str],
+    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], results_summary: list[str]
 ) -> None:
     """Run EPSS/KEV enrichment on vulnerability findings."""
     try:
         _, unavailable = await vulnerability_enrichment_service.enrich_findings(
-            vulnerability_findings, github_token=github_token
+            vulnerability_findings, github_token=ctx.github_token
         )
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
-        await result_repo.save_result(scan_id, "epss_kev", epss_kev_summary)
+        await AnalysisResultRepository(ctx.db).save_result(ctx.scan_id, "epss_kev", epss_kev_summary)
         outcome = f"Partial ({' and '.join(unavailable)} unavailable)" if unavailable else "Success"
         results_summary.append(f"epss_kev: {outcome} ({len(vulnerability_findings)} enriched)")
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
@@ -541,35 +584,25 @@ async def _run_epss_kev_enrichment(
 
 
 async def _run_reachability_enrichment(
-    vulnerability_findings: list[dict[str, Any]],
-    scan_id: str,
-    project_id: str,
-    db: Database,
-    scan_repo: ScanRepository,
-    results_summary: list[str],
+    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], results_summary: list[str]
 ) -> ComponentLanguages | None:
     """Run reachability analysis on vulnerability findings; returns the inventory language map it built."""
-    callgraphs = await fetch_callgraphs(project_id, scan_id, db)
+    callgraphs = await fetch_callgraphs(ctx.project_id, ctx.scan_id, ctx.db)
     if not callgraphs:
-        await scan_repo.update_raw(scan_id, {"$set": {"reachability_pending": True}})
-        logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
+        await ScanRepository(ctx.db).update_raw(ctx.scan_id, {"$set": {"reachability_pending": True}})
+        logger.info(f"[reachability] No callgraph available for scan {ctx.scan_id}. Marked as pending.")
         return None
 
     try:
-        component_languages, enriched_count = await apply_reachability(db, scan_id, vulnerability_findings, callgraphs)
+        component_languages, enriched_count = await apply_reachability(
+            ctx.db, ctx.scan_id, vulnerability_findings, callgraphs
+        )
     except Exception as e:
         results_summary.append("reachability: Failed")
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
         return None
     results_summary.append(f"reachability: Success ({enriched_count} enriched)")
     return component_languages
-
-
-async def _load_project_settings_overrides(
-    project_id: str, project_repo: ProjectRepository
-) -> dict[str, dict[str, Any]] | None:
-    project_doc = await project_repo.get_by_id(project_id)
-    return project_doc.analyzer_settings if project_doc else None
 
 
 async def _aggregate_external_results(
@@ -636,24 +669,14 @@ def _prepare_finding_records(
 
 
 async def _run_vuln_enrichments(
-    active_analyzers: list[str],
-    vulnerability_findings: list[dict[str, Any]],
-    scan_id: str,
-    project_id: str,
-    db: Database,
-    result_repo: AnalysisResultRepository,
-    scan_repo: ScanRepository,
-    github_token: str | None,
-    results_summary: list[str],
+    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], results_summary: list[str]
 ) -> ComponentLanguages | None:
     """Run the vulnerability enrichments; returns the inventory language map reachability built."""
-    if "epss_kev" in active_analyzers and vulnerability_findings:
-        await _run_epss_kev_enrichment(vulnerability_findings, scan_id, result_repo, github_token, results_summary)
+    if "epss_kev" in ctx.active_analyzers and vulnerability_findings:
+        await _run_epss_kev_enrichment(ctx, vulnerability_findings, results_summary)
 
-    if "reachability" in active_analyzers and vulnerability_findings:
-        return await _run_reachability_enrichment(
-            vulnerability_findings, scan_id, project_id, db, scan_repo, results_summary
-        )
+    if "reachability" in ctx.active_analyzers and vulnerability_findings:
+        return await _run_reachability_enrichment(ctx, vulnerability_findings, results_summary)
     return None
 
 
@@ -697,13 +720,10 @@ def _fit_finding(record: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _persist_findings_and_waivers(
-    findings_to_insert: list[dict[str, Any]],
-    scan_id: str,
-    project_id: str,
-    finding_repo: FindingRepository,
-    db: Database,
+    findings_to_insert: list[dict[str, Any]], scan_id: str, project_id: str, db: Database
 ) -> int:
     """Write findings over the scan's stored ones and stamp the waiver set on them and the scan; returns the count."""
+    finding_repo = FindingRepository(db)
     # Before the write, so re-analysing a scan still sees the dates its own copies inherited.
     await _stamp_first_seen(findings_to_insert, project_id, finding_repo)
     written_at = datetime.now(timezone.utc)
@@ -739,14 +759,7 @@ async def _apply_handed_over_callgraphs(scan_id: str, project_id: str, db: Datab
 
 
 async def _write_final_state(
-    scan_repo: ScanRepository,
-    scan_id: str,
-    status: ScanStatus,
-    update: dict[str, Any],
-    *,
-    worker_id: str,
-    sbom_generation: int | None,
-    external_load_start: datetime,
+    ctx: _RunContext, status: ScanStatus, update: dict[str, Any], external_load_start: datetime
 ) -> ScanStatus | None:
     """Apply ``update`` while this run holds the scan and saw all its input.
 
@@ -756,89 +769,78 @@ async def _write_final_state(
     # A replaced SBOM, or a scanner result that arrived after loading began, would otherwise be
     # finalized over and never analysed.
     guard: dict[str, Any] = {
-        "_id": scan_id,
+        "_id": ctx.scan_id,
         "status": SCAN_STATUS_PROCESSING,
-        "worker_id": worker_id,
-        "sbom_generation": sbom_generation,
+        "worker_id": ctx.worker_id,
+        "sbom_generation": ctx.sbom_generation,
         "$or": [
             {"last_result_at": None},
             {"last_result_at": {"$lt": external_load_start}},
         ],
     }
+    scan_repo = ScanRepository(ctx.db)
     if await scan_repo.collection.find_one_and_update(guard, update) is not None:
         return status
-    if not await scan_repo.requeue(scan_id, worker_id, counter="retry_count"):
-        logger.warning("Scan %s: the claim moved to another run; leaving the scan to it.", scan_id)
+    if not await scan_repo.requeue(ctx.scan_id, ctx.worker_id, counter="retry_count"):
+        logger.warning("Scan %s: the claim moved to another run; leaving the scan to it.", ctx.scan_id)
         return None
-    logger.warning("Scan %s: new input arrived during analysis; rescheduled instead of finalizing.", scan_id)
+    logger.warning("Scan %s: new input arrived during analysis; rescheduled instead of finalizing.", ctx.scan_id)
     analysis_race_conditions_total.inc()
     return SCAN_STATUS_PENDING
 
 
 async def _finalize_scan_and_project(
-    scan_id: str,
-    scan_doc: Any,
-    project_id: str,
-    total_findings_count: int,
-    ignored_count: int,
-    stats: Any,
-    latest_run_summary: dict,
-    scan_repo: ScanRepository,
-    *,
-    worker_id: str,
-    external_load_start: datetime,
-    status: ScanStatus = SCAN_STATUS_COMPLETED,
-    error: str | None = None,
-    failed_analyzers: list[str] | None = None,
-    enrichment_failures: list[str] | None = None,
-    sbom_generation: int | None = None,
+    ctx: _RunContext, verdict: _Verdict, external_load_start: datetime
 ) -> ScanStatus | None:
     """Persist the final scan status, ignored count, and (on success) project stats; returns what
     ``_write_final_state`` returns."""
+    scan, scan_id, status = ctx.scan, ctx.scan_id, verdict.status
+    completed_at = datetime.now(timezone.utc)
+    stats = verdict.stats.model_dump()
+    latest_run = {
+        "scan_id": scan_id,
+        "status": status,
+        "findings_count": verdict.findings_count,
+        "stats": stats,
+        "completed_at": completed_at,
+    }
     set_fields: dict[str, Any] = {
         "status": status,
-        "findings_count": total_findings_count,
-        "ignored_count": ignored_count,
-        "stats": stats.model_dump(),
-        "completed_at": datetime.now(timezone.utc),
-        "latest_run": latest_run_summary,
-        "failed_analyzers": failed_analyzers or None,
-        "enrichment_failures": enrichment_failures or None,
+        "findings_count": verdict.findings_count,
+        "ignored_count": verdict.ignored_count,
+        "stats": stats,
+        "completed_at": completed_at,
+        "latest_run": latest_run,
+        "failed_analyzers": verdict.failed_analyzers or None,
+        "enrichment_failures": verdict.enrichment_failures or None,
     }
     unset_fields = {"received_results": "", "last_result_at": ""}
-    if error:
-        set_fields["error"] = error
+    if verdict.error:
+        set_fields["error"] = verdict.error
     else:
         unset_fields["error"] = ""
-    if status in SCAN_USABLE_STATUSES and not scan_doc.is_rescan:
+    if status in SCAN_USABLE_STATUSES and not scan.is_rescan:
         # This analysis post-dates every rescan of the build, which may still hold a replaced SBOM.
         unset_fields["latest_rescan_id"] = ""
 
-    outcome = await _write_final_state(
-        scan_repo,
-        scan_id,
-        status,
-        {"$set": set_fields, "$unset": unset_fields},
-        worker_id=worker_id,
-        sbom_generation=sbom_generation,
-        external_load_start=external_load_start,
-    )
+    outcome = await _write_final_state(ctx, status, {"$set": set_fields, "$unset": unset_fields}, external_load_start)
     if outcome != status:
         return outcome
 
-    if scan_doc.is_rescan and scan_doc.original_scan_id:
+    scan_repo = ScanRepository(ctx.db)
+    if scan.is_rescan and scan.original_scan_id:
         # latest_run reports every run, while the lineage moves only onto an analysis head may report.
-        root_fields: dict[str, Any] = {"latest_run": latest_run_summary}
+        root_fields: dict[str, Any] = {"latest_run": latest_run}
         if status in SCAN_USABLE_STATUSES:
             root_fields["latest_rescan_id"] = scan_id
-        await scan_repo.report_rescan_run(scan_doc.original_scan_id, scan_doc.sbom_generation, root_fields)
+        await scan_repo.report_rescan_run(scan.original_scan_id, scan.sbom_generation, root_fields)
 
-    if status != SCAN_STATUS_FAILED and await scan_repo.sync_project_head(project_id) == scan_id:
+    if status != SCAN_STATUS_FAILED and await scan_repo.sync_project_head(ctx.project_id) == scan_id:
         # Only head records waiver outcomes, and head is known once sync_project_head derived it.
         try:
-            waiver_repo = WaiverRepository(scan_repo.db)
-            waivers = await waiver_repo.find_active_for_project(project_id)
-            await restamp_waivers(FindingRepository(scan_repo.db), waiver_repo, scan_id, waivers)
+            waiver_repo = WaiverRepository(ctx.db)
+            waivers = await waiver_repo.find_active_for_project(ctx.project_id)
+            await restamp_waivers(FindingRepository(ctx.db), waiver_repo, scan_id, waivers)
         except Exception:
             # Best effort like the announcement: the scan is already final.
             logger.exception("Scan %s: recording the waiver outcomes on head failed", scan_id)
@@ -852,32 +854,23 @@ async def _unwaived_findings(scan_id: str, db: Database) -> list[dict[str, Any]]
 
 
 async def _send_integrations_and_notifications(
-    project_id: str,
-    scan_id: str,
-    scan_doc: Any,
-    stats: Stats,
-    status: ScanStatus,
-    error: str | None,
-    failed_analyzers: list[str],
-    findings: list[dict[str, Any]],
-    analyzer_outcomes: dict[str, str],
-    db: Database,
+    ctx: _RunContext, verdict: _Verdict, findings: list[dict[str, Any]]
 ) -> None:
-    project = await ProjectRepository(db).get_by_id(project_id)
+    project = await ProjectRepository(ctx.db).get_by_id(ctx.project_id)
     if not project:
         return
-    await decorate_gitlab_mr(scan_id, stats, status, error, scan_doc, project, db)
-    await decorate_github_pr(scan_id, stats, status, error, scan_doc, project, db)
+    for decorate in (decorate_gitlab_mr, decorate_github_pr):
+        await decorate(ctx.scan_id, verdict.stats, verdict.status, verdict.error, ctx.scan, project, ctx.db)
     await send_scan_notifications(
-        scan_id,
+        ctx.scan_id,
         project,
         findings,
-        stats,
-        status,
-        failed_analyzers,
-        analyzer_outcomes,
-        analyzer_count=sum(1 for name in analyzer_outcomes if name not in POST_PROCESSOR_ANALYZERS),
-        db=db,
+        verdict.stats,
+        verdict.status,
+        verdict.failed_analyzers,
+        verdict.analyzer_outcomes,
+        analyzer_count=sum(1 for name in verdict.analyzer_outcomes if name not in POST_PROCESSOR_ANALYZERS),
+        db=ctx.db,
     )
 
 
@@ -913,38 +906,45 @@ def _final_scan_status(scan_id: str, sboms_unusable: bool, partial_reasons: list
     return SCAN_STATUS_COMPLETED, None
 
 
-async def _announce_outcome(
-    status: ScanStatus,
-    error: str | None,
-    failed_analyzers: list[str],
-    project_id: str,
-    scan_id: str,
-    scan_doc: Scan,
-    stats: Stats,
-    analyzer_outcomes: dict[str, str],
-    db: Database,
-) -> None:
+async def _announce_outcome(ctx: _RunContext, verdict: _Verdict) -> None:
     """Best effort: the scan is already final, so a failure here is logged and never changes it."""
     try:
-        await _apply_handed_over_callgraphs(scan_id, project_id, db)
-        if status == SCAN_STATUS_FAILED:
-            await notify_analysis_failed(db, scan_id, project_id, error or status)
+        await _apply_handed_over_callgraphs(ctx.scan_id, ctx.project_id, ctx.db)
+        if verdict.status == SCAN_STATUS_FAILED:
+            await notify_analysis_failed(ctx.db, ctx.scan_id, ctx.project_id, verdict.error or verdict.status)
             return
-        notify_findings = await _unwaived_findings(scan_id, db)
-        await _send_integrations_and_notifications(
-            project_id,
-            scan_id,
-            scan_doc,
-            stats,
-            status,
-            error,
-            failed_analyzers,
-            notify_findings,
-            analyzer_outcomes,
-            db,
-        )
+        await _send_integrations_and_notifications(ctx, verdict, await _unwaived_findings(ctx.scan_id, ctx.db))
     except Exception:
-        logger.exception("Scan %s: announcing the finished analysis failed", scan_id)
+        logger.exception("Scan %s: announcing the finished analysis failed", ctx.scan_id)
+
+
+async def _keep_previous_analysis(ctx: _RunContext, load_start: datetime) -> ScanStatus | None:
+    """A re-analysis whose SBOM failed to load keeps the stored analysis once the worker stops re-queueing it."""
+    scan_repo = ScanRepository(ctx.db)
+    # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
+    if ctx.scan.retry_count + 1 < ANALYSIS_MAX_RETRIES:
+        logger.warning("Scan %s: an SBOM failed to load; retrying the re-analysis", ctx.scan_id)
+        requeued = await scan_repo.requeue(ctx.scan_id, ctx.worker_id, counter="retry_count")
+        return SCAN_STATUS_PENDING if requeued else None
+    logger.warning("Scan %s: an SBOM failed to load on the last attempt; keeping the previous analysis", ctx.scan_id)
+    error = "SBOM could not be loaded for re-analysis; findings are from the previous analysis"
+    outcome = await _write_final_state(
+        ctx,
+        SCAN_STATUS_COMPLETED_WITH_ERRORS,
+        {"$set": {"status": SCAN_STATUS_COMPLETED_WITH_ERRORS, "error": error}},
+        load_start,
+    )
+    if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS:
+        await scan_repo.sync_project_head(ctx.project_id)
+        await _apply_handed_over_callgraphs(ctx.scan_id, ctx.project_id, ctx.db)
+    return outcome
+
+
+async def _still_claimed(ctx: _RunContext) -> bool:
+    if await ScanRepository(ctx.db).renew_claim(ctx.scan_id, ctx.worker_id):
+        return True
+    logger.warning("Scan %s: the claim moved to another run; stopping before writing results.", ctx.scan_id)
+    return False
 
 
 async def run_analysis(
@@ -963,50 +963,22 @@ async def run_analysis(
     """
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregation_start_time = time.time()
-    aggregator = ResultAggregator()
-    results_summary: list[str] = []
 
-    scan_repo = ScanRepository(db)
-    result_repo = AnalysisResultRepository(db)
-    finding_repo = FindingRepository(db)
-    project_repo = ProjectRepository(db)
-
-    scan_doc = await scan_repo.get_by_id(scan_id)
+    scan_doc = await ScanRepository(db).get_by_id(scan_id)
     if not scan_doc:
         logger.error(f"Scan {scan_id} not found")
         return None
+    ctx = await _run_context(scan_doc, db, worker_id, sbom_generation, active_analyzers)
 
-    project_id = scan_doc.project_id
-    scan_type = scan_doc.scan_type
-
+    aggregator = ResultAggregator()
     fs = AsyncIOMotorGridFSBucket(db)
-
     load_start = datetime.now(timezone.utc)
     # Checked before the first delete, so an SBOM that is gone leaves the stored analysis intact.
     stored_ids = await _stored_sbom_ids(fs, sboms, aggregator)
-    sbom_load_failures = stored_ids.count(None)
-    sboms_expected = len(stored_ids)
-    if sbom_load_failures and scan_doc.completed_at is not None:
-        # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
-        if scan_doc.retry_count + 1 < ANALYSIS_MAX_RETRIES:
-            logger.warning("Scan %s: an SBOM failed to load; retrying the re-analysis", scan_id)
-            return SCAN_STATUS_PENDING if await scan_repo.requeue(scan_id, worker_id, counter="retry_count") else None
-        logger.warning("Scan %s: an SBOM failed to load on the last attempt; keeping the previous analysis", scan_id)
-        error = "SBOM could not be loaded for re-analysis; findings are from the previous analysis"
-        outcome = await _write_final_state(
-            scan_repo,
-            scan_id,
-            SCAN_STATUS_COMPLETED_WITH_ERRORS,
-            {"$set": {"status": SCAN_STATUS_COMPLETED_WITH_ERRORS, "error": error}},
-            worker_id=worker_id,
-            sbom_generation=sbom_generation,
-            external_load_start=load_start,
-        )
-        if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS:
-            await scan_repo.sync_project_head(project_id)
-            await _apply_handed_over_callgraphs(scan_id, project_id, db)
-        return outcome
+    if None in stored_ids and scan_doc.completed_at is not None:
+        return await _keep_previous_analysis(ctx, load_start)
 
+    result_repo = AnalysisResultRepository(db)
     await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}})
 
     if scan_doc.is_rescan:
@@ -1016,71 +988,16 @@ async def run_analysis(
     await _carry_over_external_results(scan_id, scan_doc, db)
     await _carry_over_crypto_assets(scan_id, scan_doc, db)
 
-    settings_repo = SystemSettingsRepository(db)
-    system_settings = await settings_repo.get()
-    github_token = system_settings.github_token or await _get_github_instance_token(db)
+    payload, sbom_load_failures, results_summary = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
 
-    project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
+    if scan_doc.scan_type == "cbom" or any(p is not None and p.crypto_assets for p in payload):
+        results_summary.extend(await _run_crypto_analyzers(ctx, aggregator))
 
-    write_file = bool(RAW_SBOM_ANALYZERS & set(active_analyzers))
-    # Collected rather than stored per SBOM: the inventory is replaced once per payload (see store_scan_dependencies).
-    payload: list[ParsedSBOM | None] = []
-    for index, gridfs_id in enumerate(stored_ids):
-        if gridfs_id is None:
-            payload.append(None)
-            continue
-        try:
-            sbom_path, (parsed_sbom, components, source, sbom_format) = await _load_sbom(fs, gridfs_id, write_file)
-        except Exception as load_err:
-            logger.exception("Failed to load SBOM from GridFS %s", gridfs_id)
-            _sbom_load_failed(aggregator, load_err)
-            sbom_load_failures += 1
-            payload.append(None)
-            continue
-        payload.append(parsed_sbom)
-        try:
-            sbom_results = await _process_sbom(
-                index,
-                parsed_sbom,
-                components,
-                source,
-                sbom_path,
-                sbom_format,
-                scan_id,
-                db,
-                aggregator,
-                active_analyzers,
-                system_settings,
-                project_analyzer_settings=project_analyzer_settings,
-                project_id=project_id,
-                scan_type=scan_type,
-                github_token=github_token,
-            )
-        finally:
-            if sbom_path:
-                os.remove(sbom_path)
-        results_summary.extend(sbom_results)
-        aggregator.fold_vulnerability_entries()
-        # The component dicts must not stay alive while the next SBOM loads.
-        del components
-
-    if sbom_load_failures:
-        logger.warning(
-            "Scan %s: %d/%d SBOMs failed to load; skipping dependency persistence to keep stored dependencies",
-            scan_id,
-            sbom_load_failures,
-            sboms_expected,
-        )
-
-    if scan_type == "cbom" or any(p is not None and p.crypto_assets for p in payload):
-        results_summary.extend(await _run_crypto_analyzers(project_id, scan_id, db, aggregator))
-
-    if not await scan_repo.renew_claim(scan_id, worker_id):
-        logger.warning("Scan %s: the claim moved to another run; stopping before writing results.", scan_id)
+    if not await _still_claimed(ctx):
         return None
 
     sbom_parse_failures = payload.count(None) - sbom_load_failures
-    stored = await store_scan_dependencies(payload, project_id, scan_id, DependencyRepository(db))
+    stored = await store_scan_dependencies(payload, ctx.project_id, scan_id, DependencyRepository(db))
     if stored is not None:
         logger.info(f"Stored {stored} dependencies for scan {scan_id}")
     del payload
@@ -1097,44 +1014,31 @@ async def run_analysis(
     del dependency_enrichments
 
     findings_to_insert, vulnerability_findings = _prepare_finding_records(
-        aggregated_findings, scan_id, project_id, scan_doc.created_at
+        aggregated_findings, scan_id, ctx.project_id, scan_doc.created_at
     )
     del aggregated_findings
     total_findings_count = len(findings_to_insert)
 
-    component_languages = await _run_vuln_enrichments(
-        active_analyzers,
-        vulnerability_findings,
-        scan_id,
-        project_id,
-        db,
-        result_repo,
-        scan_repo,
-        github_token,
-        results_summary,
-    )
+    component_languages = await _run_vuln_enrichments(ctx, vulnerability_findings, results_summary)
     refresh_vulnerability_info(findings_to_insert)
 
-    if not await scan_repo.renew_claim(scan_id, worker_id):
-        logger.warning("Scan %s: the claim moved to another run; stopping before writing results.", scan_id)
+    if not await _still_claimed(ctx):
         return None
 
-    persisted_findings_count = await _persist_findings_and_waivers(
-        findings_to_insert, scan_id, project_id, finding_repo, db
-    )
+    persisted_findings_count = await _persist_findings_and_waivers(findings_to_insert, scan_id, ctx.project_id, db)
     del findings_to_insert, vulnerability_findings
     stats, ignored_count = await calculate_comprehensive_stats(db, scan_id, component_languages)
 
     # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
     sboms_unusable = (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
-        sbom_load_failures > 0 and sbom_load_failures == sboms_expected
+        sbom_load_failures > 0 and sbom_load_failures == len(stored_ids)
     )
     if sboms_unusable:
         logger.error(
             "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; marking failed",
             scan_id,
             sbom_load_failures,
-            sboms_expected,
+            len(stored_ids),
             sbom_parse_failures,
         )
 
@@ -1144,54 +1048,29 @@ async def run_analysis(
         failed_analyzers,
         sbom_load_failures,
         sbom_parse_failures,
-        sboms_expected,
+        len(stored_ids),
         persisted_findings_count,
         total_findings_count,
     )
-    total_findings_count = persisted_findings_count
     final_status, final_error = _final_scan_status(scan_id, sboms_unusable, partial_reasons)
-
-    latest_run_summary = {
-        "scan_id": scan_id,
-        "status": final_status,
-        "findings_count": total_findings_count,
-        "stats": stats.model_dump(),
-        "completed_at": datetime.now(timezone.utc),
-    }
+    verdict = _Verdict(
+        final_status,
+        final_error,
+        stats,
+        persisted_findings_count,
+        ignored_count,
+        analyzer_outcomes,
+        failed_analyzers,
+        enrichment_failures,
+    )
 
     analysis_aggregation_duration_seconds.observe(time.time() - aggregation_start_time)
 
-    outcome = await _finalize_scan_and_project(
-        scan_id,
-        scan_doc,
-        project_id,
-        total_findings_count,
-        ignored_count,
-        stats,
-        latest_run_summary,
-        scan_repo,
-        worker_id=worker_id,
-        external_load_start=external_load_start,
-        status=final_status,
-        error=final_error,
-        failed_analyzers=failed_analyzers,
-        enrichment_failures=enrichment_failures,
-        sbom_generation=sbom_generation,
-    )
+    outcome = await _finalize_scan_and_project(ctx, verdict, external_load_start)
     if outcome != final_status:
         return outcome
 
-    await _announce_outcome(
-        final_status,
-        final_error,
-        failed_analyzers,
-        project_id,
-        scan_id,
-        scan_doc,
-        stats,
-        analyzer_outcomes,
-        db,
-    )
+    await _announce_outcome(ctx, verdict)
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
     await record_scan_update_delta(db, scan_id)

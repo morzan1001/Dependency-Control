@@ -15,7 +15,7 @@ from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.analyzers import bundled_iana_catalog, process_sbom_document
+from tests.helpers.analyzers import bundled_iana_catalog, process_sbom_document, run_context
 from tests.helpers.cbom import content_ref, fixture_component
 from tests.helpers.sboms import store_sbom
 
@@ -48,7 +48,7 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
     scan_id = "scan-embedded-cbom-001"
     aggregator = _MinimalAggregator()
 
-    await process_sbom_document(0, sbom, scan_id, db, aggregator, [], None, project_id=project_id)
+    await process_sbom_document(run_context(db, scan_id), aggregator, sbom)
 
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
     assert count == 1, f"Expected 1 CryptoAsset (SHA-1) from embedded CBOM, got {count}"
@@ -72,7 +72,7 @@ async def test_sbom_without_crypto_components_persists_no_crypto_assets(db):
     project_id = "test-project-id"
     scan_id = "scan-no-crypto-001"
 
-    await process_sbom_document(0, sbom, scan_id, db, _MinimalAggregator(), [], None, project_id=project_id)
+    await process_sbom_document(run_context(db, scan_id), _MinimalAggregator(), sbom)
 
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
     assert count == 0, f"Expected 0 CryptoAssets for a plain SBOM, got {count}"
@@ -92,7 +92,7 @@ async def test_a_json_number_in_a_crypto_text_field_keeps_every_asset_of_the_sbo
     }
     scan_id = "scan-numeric-crypto-fields"
 
-    await process_sbom_document(0, sbom, scan_id, db, _MinimalAggregator(), [], None, project_id="test-project-id")
+    await process_sbom_document(run_context(db, scan_id), _MinimalAggregator(), sbom)
 
     stored = await db.crypto_assets.find({"scan_id": scan_id}).to_list(None)
     assert sorted((a["name"], a["parameter_set_identifier"], a["version"]) for a in stored) == [

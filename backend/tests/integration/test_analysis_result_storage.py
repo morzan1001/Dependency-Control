@@ -22,7 +22,13 @@ from app.services.analysis.engine import (
 from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analyzers.outdated import OutdatedAnalyzer
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
-from tests.helpers.analyzers import analyze_cyclonedx, build_analyzer, process_sbom_document, serve_analyzer
+from tests.helpers.analyzers import (
+    analyze_cyclonedx,
+    build_analyzer,
+    process_sbom_document,
+    run_context,
+    serve_analyzer,
+)
 from tests.helpers.sboms import store_sbom
 
 _RUN = {"pipeline_id": 616161, "commit_hash": "d" * 40, "branch": "main"}
@@ -237,7 +243,7 @@ async def test_each_sbom_keeps_its_own_row_and_a_rerun_replaces_it(db, monkeypat
     async def analyze(index: int) -> None:
         # the two images of a multi-arch build share their root component name
         await process_sbom_document(
-            index, _sbom("storefront"), "scan-1", db, ResultAggregator(), ["outdated_packages"], None
+            run_context(db, "scan-1", ["outdated_packages"]), ResultAggregator(), _sbom("storefront"), index + 1
         )
 
     await analyze(0)
@@ -284,7 +290,7 @@ async def test_an_engine_license_result_over_16_mib_is_stored_as_a_file(db):
     ]
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
 
-    summary = await process_sbom_document(0, sbom, "scan-1", db, ResultAggregator(), ["license_compliance"], None)
+    summary = await process_sbom_document(run_context(db, "scan-1", ["license_compliance"]), ResultAggregator(), sbom)
 
     assert summary == ["license_compliance: Success"]
     [row] = await _rows(db, "scan-1")

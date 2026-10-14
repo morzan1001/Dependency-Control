@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.models.project import Scan
 from app.models.stats import Stats
+from tests.helpers.analyzers import run_context, verdict
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
@@ -17,7 +18,7 @@ def _db_with_project():
 def test_both_decorators_get_the_scans_outcome():
     from app.services.analysis import engine
 
-    scan_doc = Scan(project_id="p1", branch="main", commit_hash="abc")
+    scan_doc = Scan(id="s1", project_id="p1", branch="main", commit_hash="abc")
     error = "analyzers failed or returned partial results: grype"
     with (
         patch.object(engine, "decorate_gitlab_mr", new_callable=AsyncMock) as gitlab,
@@ -26,16 +27,14 @@ def test_both_decorators_get_the_scans_outcome():
     ):
         asyncio.run(
             engine._send_integrations_and_notifications(
-                "p1",
-                "s1",
-                scan_doc,
-                Stats(),
-                SCAN_STATUS_COMPLETED_WITH_ERRORS,
-                error,
-                ["grype"],
+                run_context(_db_with_project(), scan_doc),
+                verdict(
+                    SCAN_STATUS_COMPLETED_WITH_ERRORS,
+                    error=error,
+                    failed_analyzers=["grype"],
+                    analyzer_outcomes={"grype": "Failed"},
+                ),
                 [],
-                {"grype": "Failed"},
-                _db_with_project(),
             )
         )
 
@@ -56,7 +55,7 @@ def test_the_notifier_counts_the_analyzers_but_not_the_enrichments():
     ):
         asyncio.run(
             engine._send_integrations_and_notifications(
-                "p1", "s1", None, Stats(), SCAN_STATUS_COMPLETED, None, [], [], outcomes, _db_with_project()
+                run_context(_db_with_project(), "s1"), verdict(SCAN_STATUS_COMPLETED, analyzer_outcomes=outcomes), []
             )
         )
 

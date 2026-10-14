@@ -60,8 +60,8 @@ async def stored_sbom(db, monkeypatch) -> dict:
 def notified(monkeypatch) -> list[Stats]:
     sent: list[Stats] = []
 
-    async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
-        sent.append(stats)
+    async def _capture(ctx, verdict, findings):
+        sent.append(verdict.stats)
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     return sent
@@ -205,9 +205,9 @@ async def test_a_failing_head_waiver_bookkeeping_still_announces_the_completed_s
 def enrichment_inputs(monkeypatch) -> dict:
     seen: dict = {}
 
-    async def _capture(active_analyzers, *args):
-        seen["analyzers"] = active_analyzers
-        seen["github_token"] = args[-2]
+    async def _capture(ctx, *args):
+        seen["analyzers"] = ctx.active_analyzers
+        seen["github_token"] = ctx.github_token
 
     monkeypatch.setattr(engine, "_run_vuln_enrichments", _capture)
     return seen
