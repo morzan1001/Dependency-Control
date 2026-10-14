@@ -190,7 +190,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                     <p className="font-medium text-success">{finding.details?.fixed_version || "None"}</p>
                                 </DetailSection>
                                 <DetailSection label="ID" compact>
-                                    <p className="font-mono text-sm">{finding.id}</p>
+                                    <p className="font-mono text-sm break-all">{finding.id}</p>
                                 </DetailSection>
                                 {finding.scanners && finding.scanners.length > 0 && (
                                     <div className="col-span-2">
