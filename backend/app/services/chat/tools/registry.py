@@ -482,21 +482,19 @@ class _ToolContext:
 _ToolHandler = Callable[["ChatToolRegistry", _ToolContext], Awaitable[dict[str, Any]]]
 
 
+def _permitted(tool_name: str, permissions: list[str]) -> bool:
+    required = TOOL_PERMISSIONS.get(tool_name)
+    return required is None or has_permission(permissions, required)
+
+
 class ChatToolRegistry:
     _HANDLERS: ClassVar[dict[str, _ToolHandler]]
 
-    def get_available_tool_names(self, user_permissions: list[str]) -> set[str]:
-        available = set()
-        for tool_def in TOOL_DEFINITIONS:
-            name = tool_def["function"]["name"]
-            required = TOOL_PERMISSIONS.get(name)
-            if required is None or has_permission(user_permissions, required):
-                available.add(name)
-        return available
-
     def get_available_tool_definitions(self, user_permissions: list[str]) -> list[dict[str, Any]]:
-        available_names = self.get_available_tool_names(user_permissions)
-        return [t for t in TOOL_DEFINITIONS if t["function"]["name"] in available_names]
+        return [t for t in TOOL_DEFINITIONS if _permitted(t["function"]["name"], user_permissions)]
+
+    def get_available_tool_names(self, user_permissions: list[str]) -> set[str]:
+        return {t["function"]["name"] for t in self.get_available_tool_definitions(user_permissions)}
 
     async def execute_tool(
         self,
@@ -510,8 +508,7 @@ class ChatToolRegistry:
             # A model-invented name as a label would open a new series per hallucination.
             chat_tool_calls_total.labels(tool_name="unknown", status="unknown").inc()
             return {"error": f"Unknown tool: {tool_name}"}
-        required = TOOL_PERMISSIONS.get(tool_name)
-        if required and not has_permission(user.permissions, required):
+        if not _permitted(tool_name, user.permissions):
             chat_tool_calls_total.labels(tool_name=tool_name, status="denied").inc()
             return {"error": f"You don't have permission to use {tool_name}"}
 
