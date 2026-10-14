@@ -568,7 +568,7 @@ async def _run_epss_kev_enrichment(
                 analysis_kev_vulnerabilities_total.inc()
 
     except Exception as e:
-        outcomes.append(AnalyzerOutcome("epss_kev", OutcomeStatus.FAILED, str(e)))
+        outcomes.append(AnalyzerOutcome("epss_kev", OutcomeStatus.FAILED))
         logger.warning(f"[epss_kev] Failed to enrich findings: {e}")
 
 
@@ -587,7 +587,7 @@ async def _run_reachability_enrichment(
             ctx.db, ctx.scan_id, vulnerability_findings, callgraphs
         )
     except Exception as e:
-        outcomes.append(AnalyzerOutcome("reachability", OutcomeStatus.FAILED, str(e)))
+        outcomes.append(AnalyzerOutcome("reachability", OutcomeStatus.FAILED))
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
         return None
     outcomes.append(AnalyzerOutcome("reachability", OutcomeStatus.SUCCESS, detail=f"{enriched_count} enriched"))
@@ -618,7 +618,7 @@ async def _aggregate_external_results(
             aggregator.add_scan_error(
                 analyzer_name, f"external result could not be aggregated: {exc}", error_details=str(exc)
             )
-            outcomes.append(AnalyzerOutcome(analyzer_name, OutcomeStatus.FAILED, str(exc)))
+            outcomes.append(AnalyzerOutcome(analyzer_name, OutcomeStatus.FAILED))
     return outcomes
 
 
