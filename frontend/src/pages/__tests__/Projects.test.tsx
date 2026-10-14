@@ -1,18 +1,13 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, it, expect, vi } from 'vitest'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
 
 import ProjectsPage from '../Projects'
 
 const VISIBLE_PROJECTS = 5
 
-vi.mock('@/hooks/queries/use-projects', () => ({
-  useProjects: () => ({
-    data: { items: [], total: VISIBLE_PROJECTS, page: 1, size: 12, pages: 1 },
-    isLoading: false,
-    error: null,
-  }),
-}))
+const { useProjectsMock } = vi.hoisted(() => ({ useProjectsMock: vi.fn() }))
+vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: (...args: unknown[]) => useProjectsMock(...args) }))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => ({ data: [] }) }))
 vi.mock('@/hooks/queries/use-system', () => ({
   useAppConfig: () => ({ data: { project_limit_per_user: 1 } }),
@@ -22,14 +17,54 @@ vi.mock('@/context/useAuth', () => ({
 }))
 vi.mock('@/components/project/CreateProjectDialog', () => ({ CreateProjectDialog: () => null }))
 
+function renderProjects(pages = 1) {
+  useProjectsMock.mockReturnValue({
+    data: { items: [], total: VISIBLE_PROJECTS, page: 1, size: 12, pages },
+    isLoading: false,
+    error: null,
+  })
+  render(
+    <MemoryRouter>
+      <ProjectsPage />
+    </MemoryRouter>,
+  )
+}
+
+beforeEach(() => useProjectsMock.mockReset())
+
 describe('ProjectsPage New Project button', () => {
   it('stays enabled however many projects the user can see, since the server counts the ones the user administers', () => {
-    render(
-      <MemoryRouter>
-        <ProjectsPage />
-      </MemoryRouter>,
-    )
+    renderProjects()
 
     expect(screen.getByRole('button', { name: /New Project/i })).toBeEnabled()
+  })
+})
+
+describe('ProjectsPage sorting', () => {
+  const lastPage = () => useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1][1]
+
+  function onPageTwo() {
+    renderProjects(3)
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }))
+    expect(lastPage()).toBe(2)
+  }
+
+  it('returns to the first page when the sort field changes, like the team filter', async () => {
+    onPageTwo()
+
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('option', { name: 'Name' }))
+
+    expect(useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1][3]).toBe('name')
+    expect(lastPage()).toBe(1)
+  })
+
+  it('returns to the first page when the sort order flips', () => {
+    onPageTwo()
+
+    fireEvent.click(screen.getAllByRole('button').find((button) => button.querySelector('svg.lucide-arrow-down'))!)
+
+    expect(useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1][4]).toBe('asc')
+    expect(lastPage()).toBe(1)
   })
 })
