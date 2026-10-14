@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Search, Package, Filter, X, Loader2 } from 'lucide-react'
+import { Search, Package, Filter, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { useInfiniteRows } from '@/hooks/use-infinite-rows'
@@ -82,7 +82,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     enabled: debouncedQuery.length >= 2,
   })
 
-  const { isFetchingNextPage, isLoading, error } = results
+  const { isLoading, error } = results
   const list = useInfiniteRows(results, (page) => page.items)
   const allResults = list.rows
   const totalCount = results.data?.pages[0]?.total ?? 0
@@ -246,12 +246,6 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                 <p className="text-sm text-muted-foreground">
                   Showing {allResults.length} of {totalCount} result{totalCount !== 1 ? 's' : ''}
                 </p>
-                {isFetchingNextPage && (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading more...
-                  </div>
-                )}
               </div>
               <div className="border rounded-lg overflow-hidden">
                 <Table className="table-fixed">

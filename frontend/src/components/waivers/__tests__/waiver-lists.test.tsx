@@ -142,11 +142,17 @@ describe('the project waiver list', () => {
     expect(await screen.findByText('No waivers match your search.')).toBeInTheDocument()
   })
 
-  it('reports a failed load', async () => {
+  it('reports a failed load and why, and reloads it on Retry', async () => {
     vi.mocked(waiverApi.getAll).mockRejectedValue(new Error('boom'))
     renderList(<ProjectWaivers projectId="p1" />)
 
-    expect(await screen.findByText('Failed to load waivers. Please try again.')).toBeInTheDocument()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Failed to load waivers')
+    expect(alert).toHaveTextContent('boom')
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => expect(waiverApi.getAll).toHaveBeenCalledTimes(2))
+    expect(lastQuery()).toMatchObject({ skip: 0 })
   })
 
   it('offers more rows while the server holds more', async () => {
@@ -165,7 +171,11 @@ describe('the project waiver list', () => {
       })
       renderList(<ProjectWaivers projectId="p1" />)
 
-      fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent('Failed to load more waivers')
+      expect(alert).toHaveTextContent('Request failed with status code 504')
+      expect(screen.getByRole('table').compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
       await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
 
       expect(screen.getByText('minimist')).toBeInTheDocument()

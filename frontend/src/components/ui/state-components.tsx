@@ -1,13 +1,4 @@
-import { AlertCircle, FileX } from 'lucide-react'
-
-export function InlineError({ message }: Readonly<{ message: string }>) {
-  return (
-    <div className="flex items-center gap-2 text-destructive text-sm">
-      <AlertCircle className="h-4 w-4" />
-      <span>{message}</span>
-    </div>
-  )
-}
+import { FileX } from 'lucide-react'
 
 export function NoData({ entityName }: Readonly<{ entityName: string }>) {
   return (

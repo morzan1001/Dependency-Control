@@ -9,7 +9,7 @@ import { AnalyticsErrorCard } from '@/components/analytics/AnalyticsErrorCard'
 import { useInfiniteRows } from '@/hooks/use-infinite-rows'
 import { useSortState } from '@/hooks/use-pagination-state'
 import { Skeleton } from '@/components/ui/skeleton'
-import { InlineError, NoData } from '@/components/ui/state-components'
+import { NoData } from '@/components/ui/state-components'
 import { FindingDetailsModal } from './FindingDetailsModal'
 import { Shield, AlertTriangle, HelpCircle, Loader2, type LucideIcon } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
@@ -282,9 +282,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     </table>
                 </div>
             )}
-            {!isLoading && isError && allRows.length === 0 && (
-                <InlineError message="Error loading findings" />
-            )}
             {!isLoading && !isError && allRows.length === 0 && (
                 <NoData entityName="findings" />
             )}
@@ -364,9 +361,11 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                         })}
                         {isFetchingNextPage && (
                             <TableRow>
-                                <TableCell colSpan={6} className="p-4 text-center">
-                                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
-                                    <span className="sr-only">Loading more...</span>
+                                <TableCell colSpan={6} className="text-center py-4">
+                                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Loading more...
+                                    </div>
                                 </TableCell>
                             </TableRow>
                         )}
@@ -375,7 +374,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 </TooltipProvider>
             )}
 
-            {isError && !isFetchingNextPage && allRows.length > 0 && (
+            {isError && !isFetchingNextPage && (
                 <AnalyticsErrorCard
                     title={nextPageFailed ? 'Failed to load more findings' : 'Error loading findings'}
                     error={error}

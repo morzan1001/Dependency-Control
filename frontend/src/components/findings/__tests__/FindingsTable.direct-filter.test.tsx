@@ -125,6 +125,27 @@ describe("FindingsTable later page error", () => {
   });
 });
 
+describe("FindingsTable first page error", () => {
+  beforeEach(() => {
+    getFindingsMock.mockReset();
+    getFindingsMock.mockRejectedValue(new Error("Request failed with status code 503"));
+  });
+
+  it("says why the findings could not load and retries the first page", async () => {
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Error loading findings");
+    expect(alert).toHaveTextContent("Request failed with status code 503");
+    expect(screen.queryByText("No findings found")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(getFindingsMock).toHaveBeenCalledTimes(2));
+    expect((getFindingsMock.mock.calls[1][1] as { skip: number }).skip).toBe(0);
+  });
+});
+
 describe("FindingsTable reload error", () => {
   const finding = { id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: [] };
 

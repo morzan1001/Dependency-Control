@@ -3,6 +3,7 @@ import { useWaiverList, useDeleteWaiver } from '@/hooks/queries/use-waivers'
 import { Waiver } from '@/types/waiver'
 import { EditWaiverDialog } from '@/components/waivers/EditWaiverDialog'
 import { WaiverExpiryCell } from '@/components/waivers/WaiverExpiryCell'
+import { AnalyticsErrorCard } from '@/components/analytics/AnalyticsErrorCard'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SortableHead } from '@/components/ui/sortable-head'
@@ -50,8 +51,8 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
         projectId,
         { search: debouncedSearch, sortBy: sort.sortBy, sortOrder: sort.sortOrder, orphaned: orphanedOnly },
     )
-    const { isFetchingNextPage, isLoading, isError } = waivers
-    const { rows: allWaivers, hasMore, retry, observeEnd } = useInfiniteRows(waivers, (page) => page.items)
+    const { isFetchingNextPage, isLoading, isError, error } = waivers
+    const { rows: allWaivers, hasMore, nextPageFailed, retry, observeEnd } = useInfiniteRows(waivers, (page) => page.items)
     const deleteWaiverMutation = useDeleteWaiver({ errorTitle: 'Failed to delete waiver' })
 
     const handleDelete = (id: string) => {
@@ -202,25 +203,9 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                             {hasMore && (
                                 <TableRow ref={observeEnd}>
                                     <TableCell colSpan={columns} className="text-center py-4">
-                                        {isFetchingNextPage ? (
-                                            <div className="flex items-center justify-center gap-2">
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                                <span className="text-muted-foreground">Loading more...</span>
-                                            </div>
-                                        ) : (
-                                            <span className="text-muted-foreground">Scroll to load more</span>
-                                        )}
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                            {isError && (
-                                <TableRow>
-                                    <TableCell colSpan={columns} className="text-center text-destructive py-8">
-                                        <div className="flex flex-col items-center gap-2">
-                                            <span>Failed to load waivers. Please try again.</span>
-                                            <Button variant="outline" size="sm" onClick={retry}>
-                                                Retry
-                                            </Button>
+                                        <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                                            {isFetchingNextPage && <Loader2 className="h-4 w-4 animate-spin" />}
+                                            {isFetchingNextPage ? 'Loading more...' : 'Scroll to load more'}
                                         </div>
                                     </TableCell>
                                 </TableRow>
@@ -235,6 +220,13 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                         </TableBody>
                     </Table>
                 </div>
+                {isError && !isFetchingNextPage && (
+                    <AnalyticsErrorCard
+                        title={nextPageFailed ? 'Failed to load more waivers' : 'Failed to load waivers'}
+                        error={error}
+                        onRetry={retry}
+                    />
+                )}
             </CardContent>
 
             <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
