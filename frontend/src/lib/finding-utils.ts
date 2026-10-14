@@ -93,6 +93,12 @@ export function formatScorecardCriticalIssue(issue: string): string {
   }
 }
 
+export function getEpssColorClass(score: number): string {
+  if (score >= 0.1) return 'text-severity-critical'
+  if (score >= 0.01) return 'text-severity-high'
+  return 'text-muted-foreground'
+}
+
 export function formatEpssScore(
   epss: number | undefined | null,
   decimals: number = 1,

@@ -211,6 +211,19 @@ describe("FindingDetailsModal advisory details", () => {
     expect(screen.getAllByText("HIGH")).toHaveLength(2);
   });
 
+  it.each(["NEGLIGIBLE", "UNKNOWN"])("styles a %s advisory like the header styles the finding", (severity) => {
+    renderModal(finding({ severity: severity as Finding["severity"], details: { vulnerabilities: [{ id: "CVE-2024-1" }] } }));
+
+    const [header, entry] = screen.getAllByText(severity);
+    expect(entry.className).toBe(header.className);
+  });
+
+  it("dims an unlikely EPSS score as the analytics tables do", () => {
+    renderModal(finding({ details: { vulnerabilities: [{ id: "CVE-2024-1", epss_score: 0.005 }] } }));
+
+    expect(screen.getByText("EPSS: 0.50%")).toHaveClass("text-muted-foreground");
+  });
+
   it("shows the scores, dates, weaknesses and scanners of an advisory, falling back to the finding's", () => {
     renderModal(
       finding({
