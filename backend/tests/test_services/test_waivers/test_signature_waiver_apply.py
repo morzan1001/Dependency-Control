@@ -8,6 +8,7 @@ from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
 from app.services.waivers.apply import restamp_waivers
+from app.services.waivers.signature import compute_match_signature
 from tests.helpers.restamp import restamp_docs, waived
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -215,3 +216,25 @@ async def test_a_global_waiver_goes_by_its_criteria_and_loads_no_location_findin
 
     assert await waived(db, _SCAN) == {"secret:config/a.env": "reason w", "secret:config/b.env": "reason w"}
     assert waiver.match is None and waiver_repo.writes == {}
+
+
+@pytest.mark.asyncio
+async def test_a_signed_location_finding_stored_without_a_finding_id_is_still_stamped():
+    stored = _doc("f1", _sig("fpA").model_dump())
+    del stored["finding_id"]
+
+    db, _ = await restamp_docs([stored], [_Waiver("w", _sig("fpA"))], _SCAN)
+
+    assert await waived(db, _SCAN) == {"f1": "reason w"}
+
+
+@pytest.mark.asyncio
+async def test_an_unsigned_merged_sast_finding_stored_without_a_finding_id_gets_its_signature_recomputed():
+    details = {"line": 10, "sast_findings": [{"scanner": "opengrep", "id": "r", "details": {"fingerprint": "fpA"}}]}
+    stored = {"_id": "f1", "scan_id": _SCAN, "type": "sast", "component": "a.py", "details": details, "match": None}
+    sig = compute_match_signature(None, details, "a.py")
+
+    db, _ = await restamp_docs([stored], [_Waiver("w", sig)], _SCAN)
+
+    assert await waived(db, _SCAN) == {"f1": "reason w"}
+    assert (await db.findings.find_one({"_id": "f1"}))["match"] == sig.model_dump()

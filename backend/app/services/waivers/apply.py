@@ -86,14 +86,13 @@ async def _signed_location_findings(
         return []
     signed = []
     for doc in await finding_repo.find_location_findings(scan_id):
+        finding_id = doc.get("finding_id") or ""
         if doc.get("match"):
             sig = _safe_match_signature(doc["match"], f"finding {doc['_id']}")
-        elif (
-            sig := compute_match_signature(doc["finding_id"], doc.get("details"), doc.get("component") or "")
-        ) is not None:
+        elif (sig := compute_match_signature(finding_id, doc.get("details"), doc.get("component") or "")) is not None:
             finding_fields[doc["_id"]]["match"] = sig.model_dump()
         if sig is not None:
-            signed.append((doc["finding_id"], MatchFinding(id=doc["_id"], sig=sig)))
+            signed.append((finding_id, MatchFinding(id=doc["_id"], sig=sig)))
     return signed
 
 
