@@ -100,7 +100,10 @@ function DistributionPie({ title, data }: Readonly<{ title: string; data: Distri
                   <Cell key={`cell-${entry.name}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip
+                contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
+                itemStyle={{ color: 'hsl(var(--foreground))' }}
+              />
               <Legend verticalAlign="bottom" height={36} />
             </PieChart>
           </ResponsiveContainer>
