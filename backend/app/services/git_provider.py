@@ -200,6 +200,29 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
                 items.extend(page)
         return items
 
+    async def get_current_user_id(self) -> int | None:
+        """The id of the account the token belongs to; None when GET /user does not answer it."""
+        response = await self._get_ok("/user")
+        user_id = None if response is None else json_document(response).get("id")
+        return user_id if isinstance(user_id, int) else None
+
+    async def _branch_names(self, endpoint: str) -> list[str] | None:
+        """Every branch a paginated branch listing names; None on API failure."""
+        branches = await self._api_get_paginated(endpoint)
+        return None if branches is None else [branch["name"] for branch in branches]
+
+    async def _send_comment(self, method: str, endpoint: str, body: str) -> bool:
+        """Post a review comment, which answers 201, or edit one, which answers 200; any other answer is logged."""
+        response = await self._api_request(method, endpoint, json_data={"body": body})
+        if response is None:
+            return False
+        if response.status_code == (201 if method == "POST" else 200):
+            return True
+        logger.error(
+            "%s API %s %s returned HTTP %s: %s", self.provider, method, endpoint, response.status_code, response.text
+        )
+        return False
+
     @abstractmethod
     async def _jwks_uris(self) -> list[str]:
         """Where the issuer's signing keys may be fetched, in the order to try them."""

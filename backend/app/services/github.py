@@ -225,11 +225,8 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         )
 
     async def list_branches(self, owner: str, repo: str) -> list[str] | None:
-        """Fetches all branch names from a GitHub repository. Returns None on API failure."""
-        branches = await self._api_get_paginated(f"/repos/{owner}/{repo}/branches")
-        if branches is None:
-            return None
-        return [b["name"] for b in branches]
+        """Every branch name of a GitHub repository; None on API failure."""
+        return await self._branch_names(f"/repos/{owner}/{repo}/branches")
 
     async def get_default_branch(self, owner: str, repo: str) -> str | None:
         """The repository's default branch. Returns None on API failure."""
@@ -879,37 +876,13 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return None if comments is None else [GitHubIssueComment(**c) for c in comments]
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
-        """Post a comment on a pull request."""
-        response = await self._api_request(
-            "POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 201:
-                return True
-            logger.error(f"Failed to post PR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", body)
 
     async def update_pull_request_comment(self, owner: str, repo: str, comment_id: int, body: str) -> bool:
-        """Update an existing pull-request comment."""
-        response = await self._api_request(
-            "PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 200:
-                return True
-            logger.error(f"Failed to update PR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", body)
 
     async def _jwks_uris(self) -> list[str]:
         if "token.actions.githubusercontent.com" in self.base_url:
             return [_GITHUB_COM_JWKS_URI]
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
         return [discovered or f"{self.base_url}/.well-known/jwks"]
-
-    async def get_current_user_id(self) -> int | None:
-        """The id of the account the token belongs to; None when GET /user does not answer it."""
-        response = await self._get_ok("/user")
-        if response is None:
-            return None
-        user_id = json_document(response).get("id")
-        return user_id if isinstance(user_id, int) else None

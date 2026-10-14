@@ -114,11 +114,8 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         return list(dict.fromkeys([discovered, *fallbacks] if discovered else fallbacks))
 
     async def list_branches(self, project_id: int) -> list[str] | None:
-        """Fetches all branch names from a GitLab project. Returns None on API failure."""
-        branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches")
-        if branches is None:
-            return None
-        return [b["name"] for b in branches]
+        """Every branch name of a GitLab project; None on API failure."""
+        return await self._branch_names(f"/projects/{project_id}/repository/branches")
 
     async def get_project_details(self, project_id: int) -> GitLabProjectDetails | None:
         """Fetches project details using the system token."""
@@ -136,15 +133,7 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         return [] if response is None else [GitLabMergeRequest(**mr) for mr in response.json()]
 
     async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
-        """Posts a comment to a merge request."""
-        response = await self._api_request(
-            "POST", f"/projects/{project_id}/merge_requests/{mr_iid}/notes", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 201:
-                return True
-            logger.error(f"Failed to post MR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("POST", f"/projects/{project_id}/merge_requests/{mr_iid}/notes", body)
 
     async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> list[GitLabNote] | None:
         """Every note on a merge request, newest first; None when a page failed."""
@@ -152,15 +141,7 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         return None if notes is None else [GitLabNote(**n) for n in notes]
 
     async def update_merge_request_comment(self, project_id: int, mr_iid: int, note_id: int, body: str) -> bool:
-        """Updates an existing comment on a merge request."""
-        response = await self._api_request(
-            "PUT", f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 200:
-                return True
-            logger.error(f"Failed to update MR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("PUT", f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}", body)
 
     async def get_group_members(self, group_id: int) -> list[GitLabMember] | None:
         """Fetch all group members via the system token."""
@@ -451,11 +432,3 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
                 e,
             )
             return TeamSyncResult(None)
-
-    async def get_current_user_id(self) -> int | None:
-        """The id of the account the token belongs to; None when GET /user does not answer it."""
-        response = await self._get_ok("/user")
-        if response is None:
-            return None
-        user_id = response.json().get("id")
-        return user_id if isinstance(user_id, int) else None
