@@ -31,13 +31,14 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
 
-      - name: Lint and render with default and prod-like values
+      - name: Lint and render with default, prod-like and backup-only values
         working-directory: helm/dependency-control
         run: |
           helm lint .
           helm template . > /dev/null
           helm lint . -f ../ci/prod-like-values.yaml
           helm template . -f ../ci/prod-like-values.yaml > /dev/null
+          helm template . --set database.type=percona --set database.percona.backup.enabled=true > /dev/null
 
   sonarcloud:
     name: SonarCloud

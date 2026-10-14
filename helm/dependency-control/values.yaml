@@ -126,6 +126,10 @@ database:
       versionServiceEndpoint: "https://check.percona.com"
     backup:
       enabled: false
+      # The Percona Backup for MongoDB release operator 1.21.2 ships with.
+      image:
+        repository: percona/percona-backup-mongodb
+        tag: "2.11.0"
     pmm:
       enabled: false
     monitoring:
