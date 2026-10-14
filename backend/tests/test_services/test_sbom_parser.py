@@ -2935,6 +2935,9 @@ def _syft_142_artifacts() -> list[dict]:
     ]
 
 
+_LODASH_SHA512 = "bf690311ee7b95e713ba568322e3533f2dd1cb880b189e99d4edef13592b81764daec43e2c54c61d5c558dc5cfb35ecb85b65519e74026ff17675b6f8f916f4a"
+
+
 def _syft_142_json(artifacts: list[dict] | None = None, source: dict | None = None) -> dict:
     return {
         "artifacts": _syft_142_artifacts() if artifacts is None else artifacts,
@@ -3008,6 +3011,33 @@ class TestSyftJsonRealShapes:
         assert self.deps["aopalliance"].group == "aopalliance"
         assert self.deps["monolog/monolog"].group == "monolog"
         assert self.deps["lodash"].group is None
+
+    @pytest.mark.parametrize(
+        ("sha512", "expected"),
+        [
+            (
+                "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==",
+                {"sha512": _LODASH_SHA512},
+            ),
+            (_LODASH_SHA512, {"sha512": _LODASH_SHA512}),
+            ("not-a-digest", {}),
+        ],
+        ids=["sri", "plain-hex", "neither"],
+    )
+    def test_a_sha512_field_is_read_as_sri_or_plain_hex(self, sha512, expected):
+        artifact = {
+            "id": "4a1f2b3c4d5e6f70",
+            "name": "Newtonsoft.Json",
+            "version": "13.0.3",
+            "type": "dotnet",
+            "purl": "pkg:nuget/Newtonsoft.Json@13.0.3",
+            "metadataType": "dotnet-deps-entry",
+            "metadata": {"name": "Newtonsoft.Json", "version": "13.0.3", "sha512": sha512},
+        }
+
+        [dep] = parse_sbom(_syft_142_json([artifact])).dependencies
+
+        assert dep.hashes == expected
 
     def test_repeated_cpes_are_stored_once(self):
         assert self.deps["aopalliance"].cpes == ["cpe:2.3:a:aopalliance:aopalliance:1.0:*:*:*:*:*:*:*"]
