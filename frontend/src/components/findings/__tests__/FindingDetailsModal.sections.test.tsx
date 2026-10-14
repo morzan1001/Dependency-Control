@@ -215,6 +215,7 @@ describe("FindingDetailsModal advisory details", () => {
 
     expect(screen.getByText("PYSEC-2024-1")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "PYSEC-2024-1" })).not.toBeInTheDocument();
+    expect(screen.getByText("Aliases:")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "CVE-2024-3" })).toHaveAttribute("href", `${NVD}CVE-2024-3`);
     expect(screen.getByText("OSV-2024-9")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "OSV-2024-9" })).not.toBeInTheDocument();
