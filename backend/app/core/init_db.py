@@ -207,13 +207,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
     # Dependencies
-    await database["dependencies"].create_index("name")
-    await database["dependencies"].create_index("purl")
     # Unique key permits idempotent upserts during concurrent SBOM ingestion and serves every (scan_id, name,
     # version) read. sparse is inert (every row has a scan_id, so purl-less rows are indexed and unique too) but
     # stays: changing it fails on the built index.
     await database["dependencies"].create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
-    await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
@@ -234,8 +231,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
 
     # Findings
-    await database["findings"].create_index("severity")
-    await database["findings"].create_index("finding_id")  # Logical CVE id, not _id.
     # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
     await database["findings"].create_index(
         [
@@ -363,10 +358,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("reachability_pending", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)]
     )
 
-    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("source_type", pymongo.ASCENDING)])
-
-    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("reachable", pymongo.ASCENDING)])
-
     # Callgraphs
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
@@ -486,8 +477,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["adhoc_jobs"].create_index("input_file_id")
     await database["adhoc_jobs"].create_index("result_file_id", sparse=True)
 
-    # Findings: scan_created_at analytics indexes
-    await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
+    # Reads by type and scan date across every project, Metabase's direct ones included, have no other index.
     await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
     logger.info("Database indexes created successfully.")
