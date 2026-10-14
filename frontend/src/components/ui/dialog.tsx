@@ -57,7 +57,8 @@ const DialogHeader = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex flex-col space-y-1.5 text-center sm:text-left",
+      // Keeps titles clear of the close button, mirrored on the left while the header is centred.
+      "flex flex-col space-y-1.5 px-6 text-center sm:pl-0 sm:text-left",
       className
     )}
     {...props}
