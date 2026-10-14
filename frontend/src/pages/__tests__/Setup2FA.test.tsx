@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -19,11 +19,19 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const refused = (detail: string, status = 400) => ({ response: { status, data: { detail } } })
 
+function LoginCard() {
+  const { state } = useLocation()
+  return <output>{state?.message}</output>
+}
+
 function renderPage() {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
-      <MemoryRouter>
-        <Setup2FA />
+      <MemoryRouter initialEntries={['/setup-2fa']}>
+        <Routes>
+          <Route path="/setup-2fa" element={<Setup2FA />} />
+          <Route path="/login" element={<LoginCard />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -94,10 +102,17 @@ describe('Setup2FA', () => {
 
     await enable('654321', 'Correct-Horse-1')
 
-    await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith('2FA enabled', { description: 'Two-factor authentication has been enabled.' }),
-    )
+    await screen.findByRole('status')
     expect(enable2FA.mock.calls).toEqual([['654321', 'Correct-Horse-1']])
+  })
+
+  it('announces the enabled 2FA once, on the login card, like a finished signup', async () => {
+    enable2FA.mockResolvedValue({})
+
+    await enable()
+
+    expect(await screen.findByRole('status')).toHaveTextContent('2FA enabled. Please login again.')
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it.each([
