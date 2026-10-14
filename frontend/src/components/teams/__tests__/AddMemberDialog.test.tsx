@@ -29,7 +29,7 @@ describe("AddMemberDialog", () => {
 
     expect(dialog).not.toHaveClass("sm:max-w-[425px]");
     expect(screen.getByLabelText("Email").parentElement).toHaveClass("grid", "gap-2");
-    expect(within(dialog).getByText("Role").parentElement).toHaveClass("grid", "gap-2");
+    expect(screen.getByLabelText("Role").parentElement).toHaveClass("grid", "gap-2");
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveClass("border");
     expect(within(dialog).getByRole("button", { name: "Add Member" })).toHaveAttribute("type", "submit");
   });

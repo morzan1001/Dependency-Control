@@ -79,7 +79,7 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberD
           <div className="grid gap-2">
             <Label htmlFor="role">Role</Label>
             <Select value={role} onValueChange={setRole}>
-              <SelectTrigger>
+              <SelectTrigger id="role">
                 <SelectValue placeholder="Select a role" />
               </SelectTrigger>
               <SelectContent>
