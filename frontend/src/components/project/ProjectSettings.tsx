@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { useAppConfig, useNotificationChannels } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useClickOutside } from '@/hooks/use-click-outside'
+import { useDialogState, type DialogState } from '@/hooks/use-dialog-state'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
@@ -141,6 +142,47 @@ function settingsForm(project: Project) {
 
 type SettingsForm = ReturnType<typeof settingsForm>
 
+interface DangerActionProps {
+  title: string
+  description: string
+  label: string
+  pendingLabel: string
+  icon: ReactNode
+  confirmation: ReactNode
+  dialog: DialogState
+  isPending: boolean
+  onConfirm: () => void
+}
+
+function DangerAction({ title, description, label, pendingLabel, icon, confirmation, dialog, isPending, onConfirm }: Readonly<DangerActionProps>) {
+  return (
+    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
+      <div>
+        <div className="font-medium">{title}</div>
+        <div className="text-sm text-muted-foreground">{description}</div>
+      </div>
+      <Button variant="destructive" onClick={dialog.openDialog}>
+        {icon}
+        {label}
+      </Button>
+      <Dialog open={dialog.open} onOpenChange={dialog.setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{confirmation}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={dialog.closeDialog}>Cancel</Button>
+            <Button variant="destructive" onClick={onConfirm} disabled={isPending}>
+              {isPending ? pendingLabel : label}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
 export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSettingsProps>) {
   const queryClient = useQueryClient()
   const { permissions } = useAuth()
@@ -174,7 +216,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
 
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const rotateDialog = useDialogState()
+  const deleteDialog = useDialogState()
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
   
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
@@ -233,6 +276,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const rotateKeyMutation = useMutation({
     mutationFn: () => projectApi.rotateApiKey(projectId),
     onSuccess: (data) => {
+      rotateDialog.closeDialog()
       setApiKey(data.api_key)
       setIsApiKeyDialogOpen(true)
       toast.success("API Key rotated successfully")
@@ -633,33 +677,31 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             </CardHeader>
             <CardContent className="space-y-4">
                 {isAdmin && (
-                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
-                        <div>
-                            <div className="font-medium">Rotate API Key</div>
-                            <div className="text-sm text-muted-foreground">
-                                Invalidate the current API key and generate a new one.
-                            </div>
-                        </div>
-                        <Button variant="destructive" onClick={() => rotateKeyMutation.mutate()} disabled={rotateKeyMutation.isPending}>
-                            {rotateKeyMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                            Rotate Key
-                        </Button>
-                    </div>
+                    <DangerAction
+                        title="Rotate API Key"
+                        description="Invalidate the current API key and generate a new one."
+                        label="Rotate Key"
+                        pendingLabel="Rotating..."
+                        icon={<RefreshCw className="mr-2 h-4 w-4" />}
+                        confirmation={<>Are you sure you want to rotate the API key of <strong>{project.name}</strong>? The current key stops working at once, so every pipeline that still sends it fails until it gets the new one.</>}
+                        dialog={rotateDialog}
+                        isPending={rotateKeyMutation.isPending}
+                        onConfirm={() => rotateKeyMutation.mutate()}
+                    />
                 )}
 
                 {canDelete && (
-                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
-                        <div>
-                            <div className="font-medium">Delete Project</div>
-                            <div className="text-sm text-muted-foreground">
-                                Permanently delete this project and all its data. This action cannot be undone.
-                            </div>
-                        </div>
-                        <Button variant="destructive" onClick={() => setIsDeleteDialogOpen(true)}>
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete Project
-                        </Button>
-                    </div>
+                    <DangerAction
+                        title="Delete Project"
+                        description="Permanently delete this project and all its data. This action cannot be undone."
+                        label="Delete Project"
+                        pendingLabel="Deleting..."
+                        icon={<Trash2 className="mr-2 h-4 w-4" />}
+                        confirmation={<>Are you sure you want to delete this project? This action cannot be undone and will permanently remove all scans, findings, and settings associated with <strong>{project.name}</strong>.</>}
+                        dialog={deleteDialog}
+                        isPending={deleteProjectMutation.isPending}
+                        onConfirm={() => deleteProjectMutation.mutate()}
+                    />
                 )}
             </CardContent>
         </Card>
@@ -676,27 +718,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             <CopyField value={apiKey || ''} what="API key" />
             <DialogFooter>
                 <Button onClick={() => setIsApiKeyDialogOpen(false)}>Close</Button>
-            </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <DialogContent>
-            <DialogHeader>
-                <DialogTitle>Delete Project</DialogTitle>
-                <DialogDescription>
-                    Are you sure you want to delete this project? This action cannot be undone and will permanently remove all scans, findings, and settings associated with <strong>{project.name}</strong>.
-                </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Cancel</Button>
-                <Button
-                    variant="destructive"
-                    onClick={() => deleteProjectMutation.mutate()}
-                    disabled={deleteProjectMutation.isPending}
-                >
-                    {deleteProjectMutation.isPending ? "Deleting..." : "Delete Project"}
-                </Button>
             </DialogFooter>
         </DialogContent>
       </Dialog>

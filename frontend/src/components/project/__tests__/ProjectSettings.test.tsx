@@ -433,8 +433,22 @@ describe('ProjectSettings API key rotation', () => {
   async function rotateAndCopyKey() {
     renderSettings(githubProject())
     fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Rotate API Key' })).getByRole('button', { name: 'Rotate Key' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Copy API key' }))
   }
+
+  it('asks before rotating, like the deletion, and names the project in bold', async () => {
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Rotate API Key' })
+    expect(within(dialog).getByText('acme/widget', { selector: 'strong' })).toBeInTheDocument()
+    expect(mockRotateApiKey).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(mockRotateApiKey).not.toHaveBeenCalled()
+  })
 
   it('confirms the copy once the clipboard holds the new key', async () => {
     writeText.mockResolvedValue(undefined)
@@ -491,6 +505,7 @@ describe('ProjectSettings failures', () => {
     renderSettings(githubProject())
 
     fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Rotate API Key' })).getByRole('button', { name: 'Rotate Key' }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to rotate API key', { description: 'Network Error' }))
   })
