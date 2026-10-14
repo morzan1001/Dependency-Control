@@ -25,8 +25,9 @@ function parseRelatedFindingId(id: string): ParsedRelatedId {
         return { kind: 'outdated', component: id.replace('OUTDATED-', '') }
     }
     if (id.startsWith('QUALITY:')) {
-        const parts = id.split(':')
-        return { kind: 'quality', component: parts[1] ?? '', version: parts[2] }
+        const key = id.slice('QUALITY:'.length)
+        const [component, version, ...rest] = key.split(':')
+        return rest.length > 0 ? { kind: 'quality', component: key } : { kind: 'quality', component, version }
     }
     // LIC- encodes the license name, not a finding id; resolve via exact-id/API instead.
     if (id.startsWith('LIC-')) {

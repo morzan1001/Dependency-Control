@@ -225,6 +225,21 @@ describe("fetchRelatedFinding", () => {
     });
   });
 
+  it("searches a QUALITY id whose segments leave the version open by everything after the prefix", async () => {
+    const coordinate = { component: "org.apache.logging.log4j:log4j-core", version: "2.14.1" };
+    const vuln = makeFinding({ id: "org.apache.logging.log4j:log4j-core:2.14.1", type: "vulnerability", ...coordinate });
+    const quality = makeFinding({ id: "QUALITY:org.apache.logging.log4j:log4j-core:2.14.1", type: "quality", ...coordinate });
+    getFindingsMock.mockResolvedValue({ items: [quality], total: 1, page: 1, size: 1, pages: 1 });
+
+    expect(await fetchRelatedFinding("scan1", quality.id, vuln)).toEqual({ status: "found", finding: quality });
+    expect(getFindingsMock).toHaveBeenCalledWith("scan1", {
+      type: "quality",
+      search: "org.apache.logging.log4j:log4j-core:2.14.1",
+      skip: 0,
+      limit: RELATED_FINDING_SEARCH_LIMIT,
+    });
+  });
+
   it("queries EOL with the full hyphenated component (trailing cycle stripped)", async () => {
     getFindingsMock.mockResolvedValue({
       items: [makeFinding({ id: "e1", type: "eol", component: "spring-boot" })],

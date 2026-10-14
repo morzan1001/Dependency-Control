@@ -316,6 +316,7 @@ describe("FindingDetailsModal related finding badges", () => {
   it.each([
     ["OUTDATED-lodash", "Outdated: lodash", "text-blue-700"],
     ["QUALITY:lodash:4.17.20", "Quality: lodash (4.17.20)", "text-yellow-700"],
+    ["QUALITY:org.apache.logging.log4j:log4j-core:2.14.1", "Quality: org.apache.logging.log4j:log4j-core:2.14.1", "text-yellow-700"],
     ["LIC-MIT", "License: MIT", "text-purple-700"],
     ["EOL-spring-boot-2", "EOL: spring-boot-2", "text-orange-700"],
     ["lodash:4.17.21", "Vuln: lodash (4.17.21)", "text-red-700"],
