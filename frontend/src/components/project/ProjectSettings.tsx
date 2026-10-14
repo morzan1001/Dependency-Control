@@ -75,7 +75,7 @@ function TeamPicker({ teams, selectedIds, onToggle }: Readonly<TeamPickerProps>)
   return (
     <div
       ref={containerRef}
-      className="relative"
+      className="relative min-w-0"
       onKeyDown={(event) => event.key === 'Escape' && close()}
     >
       <button
@@ -394,9 +394,9 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     <div className="grid gap-2">
                         <Label>GitHub Integration</Label>
                         <div className="border rounded-md p-4 space-y-2 text-sm">
-                            <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-1">
+                            <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[150px_1fr]">
                                 <span className="text-muted-foreground">Instance</span>
-                                <span className="font-mono">
+                                <span className="font-mono wrap-anywhere">
                                     {linkedGithubInstance
                                         ? `${linkedGithubInstance.name} (${linkedGithubInstance.url})`
                                         : project.github_instance_id}
@@ -404,13 +404,13 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                 {project.github_repository_path && (
                                     <>
                                         <span className="text-muted-foreground">Repository</span>
-                                        <span className="font-mono">{project.github_repository_path}</span>
+                                        <span className="font-mono wrap-anywhere">{project.github_repository_path}</span>
                                     </>
                                 )}
                                 {project.github_repository_id && (
                                     <>
                                         <span className="text-muted-foreground">Repository ID</span>
-                                        <span className="font-mono">{project.github_repository_id}</span>
+                                        <span className="font-mono wrap-anywhere">{project.github_repository_id}</span>
                                     </>
                                 )}
                             </div>
@@ -441,15 +441,15 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         <div className="border rounded-md p-4 space-y-2 text-sm">
                             {form.gitlab_instance_id ? (
                                 <>
-                                    <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-1">
+                                    <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[150px_1fr]">
                                         <span className="text-muted-foreground">Instance</span>
-                                        <span className="font-mono">{form.gitlab_instance_id}</span>
+                                        <span className="font-mono wrap-anywhere">{form.gitlab_instance_id}</span>
                                         <span className="text-muted-foreground">Project ID</span>
-                                        <span className="font-mono">{form.gitlab_project_id}</span>
+                                        <span className="font-mono wrap-anywhere">{form.gitlab_project_id}</span>
                                         {form.gitlab_project_path && (
                                             <>
                                                 <span className="text-muted-foreground">Project Path</span>
-                                                <span className="font-mono">{form.gitlab_project_path}</span>
+                                                <span className="font-mono wrap-anywhere">{form.gitlab_project_path}</span>
                                             </>
                                         )}
                                     </div>
@@ -473,7 +473,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 {(projectSource === "gitlab" || projectSource === "none") && gitlabBindingEditable && (
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
-                        <div className="border rounded-md p-4 space-y-4">
+                        <div className="border rounded-md p-4 space-y-4 min-w-0">
                             <div className="grid gap-2">
                                 <Label htmlFor="gitlab-instance">GitLab Instance</Label>
                                 <Select

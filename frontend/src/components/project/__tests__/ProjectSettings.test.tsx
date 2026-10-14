@@ -597,3 +597,40 @@ describe('ProjectSettings notifications', () => {
     })
   })
 })
+
+describe('ProjectSettings on a phone', () => {
+  beforeEach(() => {
+    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments-Backend-Squad-Europe-Cross-Border-Settlements', members: [] }] })
+  })
+
+  it('lets the team picker shrink to the card, so a long team name truncates instead of widening the form', () => {
+    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'manual' } }))
+
+    expect(screen.getByRole('combobox', { name: 'Teams' }).parentElement).toHaveClass('min-w-0')
+  })
+
+  it('stacks a VCS binding\'s labels above their values on a phone and breaks a long value anywhere', () => {
+    renderSettings(githubProject({ github_repository_path: 'acme-org/a-repository-with-a-name-longer-than-the-phone' }))
+
+    const value = screen.getByText('acme-org/a-repository-with-a-name-longer-than-the-phone')
+    expect(value).toHaveClass('wrap-anywhere')
+    expect(value.parentElement).toHaveClass('grid-cols-1', 'sm:grid-cols-[150px_1fr]')
+  })
+
+  it('stacks the read-only GitLab binding the same way', () => {
+    renderSettings(gitlabProject())
+
+    const value = screen.getByText('4242')
+    expect(value).toHaveClass('wrap-anywhere')
+    expect(value.parentElement).toHaveClass('grid-cols-1', 'sm:grid-cols-[150px_1fr]')
+  })
+
+  it('lets the editable GitLab binding shrink to the card, so an instance URL cannot widen the form', async () => {
+    mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
+    mockGitLabList.mockResolvedValue(gitlabInstances())
+    renderSettings(gitlabProject())
+
+    await screen.findByLabelText('GitLab Instance')
+    expect(screen.getByText('GitLab Integration').nextElementSibling).toHaveClass('min-w-0')
+  })
+})
