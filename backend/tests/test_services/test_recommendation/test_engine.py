@@ -551,3 +551,47 @@ def test_the_kev_card_names_the_cve_the_live_threat_intel_marks():
 
     [kev_card] = [r for r in result if r.type == RecommendationType.KNOWN_EXPLOIT]
     assert kev_card.action["cves"] == ["CVE-2023-0002"]
+
+
+def test_an_outdated_package_is_advised_by_one_card():
+    """The update card already upgrades a vulnerable package, so the outdated card leaves it out."""
+    aggregator = ResultAggregator()
+    aggregator.aggregate(
+        "outdated_packages",
+        {
+            "outdated_dependencies": [
+                {"component": name, "current_version": current, "latest_version": latest, "severity": "INFO"}
+                for name, current, latest in (("requests", "2.28.0", "2.32.3"), ("flask", "2.0.0", "3.1.0"))
+            ]
+        },
+    )
+    aggregator.aggregate(
+        "trivy",
+        {
+            "Results": [
+                {
+                    "Target": "requirements.txt",
+                    "Vulnerabilities": [
+                        {
+                            "VulnerabilityID": "CVE-2023-32681",
+                            "PkgName": "requests",
+                            "InstalledVersion": "2.28.0",
+                            "FixedVersion": "2.31.0",
+                            "Severity": "MEDIUM",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    dependencies = [_make_dependency("requests", "2.28.0"), _make_dependency("flask", "2.0.0")]
+
+    recs = generate_recommendations(
+        findings=[f.model_dump() for f in aggregator.get_findings()],
+        dependencies=dependencies,
+        join_dependencies=dependencies,
+    )
+
+    [outdated] = [r for r in recs if r.type == RecommendationType.OUTDATED_DEPENDENCY]
+    assert outdated.action["packages"] == [{"name": "flask", "current_version": "2.0.0", "latest_version": "3.1.0"}]
+    assert [r.action["package"] for r in recs if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE] == ["requests"]

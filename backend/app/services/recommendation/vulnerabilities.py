@@ -19,13 +19,12 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.aggregation.versions import normalize_version
-from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
     VulnerabilityInfo,
     get_attr,
+    installed_copy_lookup,
     names_fix,
     priority_for,
     recommend,
@@ -96,16 +95,11 @@ def _categorize_by_source(
     join_dependencies: list[ModelOrDict],
 ) -> dict[str, list[VulnerabilityInfo]]:
     """Categorize vulnerabilities by their source type."""
-    deps_by_version: dict[str, dict[str, ModelOrDict]] = defaultdict(dict)
-    for row in join_dependencies:
-        deps_by_version[normalize_version(get_attr(row, "version"))][get_attr(row, "name")] = row
-    index_by_version = {version: build_component_index(deps) for version, deps in deps_by_version.items()}
-
+    row_of = installed_copy_lookup(join_dependencies, "name")
     categories = defaultdict(list)
 
     for f in findings:
-        index = index_by_version.get(normalize_version(get_attr(f, "version")), {})
-        dep = lookup_component(index, get_attr(f, "component") or "")
+        dep = row_of(f)
         vuln = vuln_info(f)
         vuln.direct_inferred = bool(dep and get_attr(dep, "direct_inferred", False))
         categories[_classify_category(vuln, dep)].append(vuln)

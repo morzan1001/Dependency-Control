@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -20,7 +20,13 @@ from app.core.cve import canonical_cves, counted_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import is_actionable_vulnerability
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
-from app.services.aggregation.versions import aggregate_fixed_version, newest_first, split_fixed_versions
+from app.services.aggregation.versions import (
+    aggregate_fixed_version,
+    newest_first,
+    normalize_version,
+    split_fixed_versions,
+)
+from app.services.component_identity import build_component_index, lookup_component
 
 ModelOrDict = BaseModel | dict[str, Any]
 
@@ -148,6 +154,17 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
 
 def dependency_label(dep: ModelOrDict) -> str:
     return f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+
+
+def installed_copy_lookup(rows: Iterable[ModelOrDict], name_field: str) -> Callable[[ModelOrDict], Any]:
+    """The row naming a finding's package at the finding's version, under either spelling of the package."""
+    by_version: dict[str, dict[str, ModelOrDict]] = defaultdict(dict)
+    for row in rows:
+        by_version[normalize_version(get_attr(row, "version"))][get_attr(row, name_field)] = row
+    indexes = {version: build_component_index(named) for version, named in by_version.items()}
+    return lambda finding: lookup_component(
+        indexes.get(normalize_version(get_attr(finding, "version")), {}), get_attr(finding, "component") or ""
+    )
 
 
 MALWARE_REMEDIATION_STEPS = (

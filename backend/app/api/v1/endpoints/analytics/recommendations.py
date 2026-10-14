@@ -71,6 +71,7 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.FIX_INFRASTRUCTURE: (None, "iac_issues"),
     RecommendationType.LICENSE_COMPLIANCE: (None, "license_issues"),
     RecommendationType.SUPPLY_CHAIN_RISK: (None, "quality_issues"),
+    RecommendationType.OUTDATED_DEPENDENCY: (None, "outdated_deps"),
     RecommendationType.VERSION_FRAGMENTATION: (None, "fragmentation_issues"),
     RecommendationType.DEV_IN_PRODUCTION: (None, "fragmentation_issues"),
     RecommendationType.DUPLICATE_FUNCTIONALITY: (None, "fragmentation_issues"),

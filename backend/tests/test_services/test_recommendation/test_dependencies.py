@@ -5,14 +5,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.constants import NON_RUNTIME_SCOPES
-from app.schemas.recommendation import Priority, RecommendationType
+from app.schemas.recommendation import Effort, Priority, RecommendationType
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers.end_of_life import EndOfLifeAnalyzer
+from app.services.analyzers.outdated import OutdatedAnalyzer
 from app.services.recommendation.dependencies import (
     analyze_dev_in_production,
     analyze_end_of_life,
+    analyze_outdated_dependencies,
     analyze_version_fragmentation,
 )
+from tests.helpers.findings import stored_vulnerability
 
 
 def _dep(name="requests", version="2.28.0", direct=True, scope=None, **extra):
@@ -292,3 +295,94 @@ class TestHygieneCardsMatchTheQualifiedName:
         [rec] = analyze_dev_in_production([dep])
 
         assert rec.affected_components == ["@types/node@18.0.0"]
+
+
+def _outdated(*installs):
+    """(name, installed, registry default) as the analyzer classifies them and the aggregator stores them."""
+    analyzer = OutdatedAnalyzer()
+    outdated, ahead = [], []
+    for name, version, default in installs:
+        component = {"name": name, "version": version, "purl": f"pkg:npm/{name}@{version}"}
+        analyzer._classify_version(component, default, outdated, ahead)
+    aggregator = ResultAggregator()
+    aggregator.aggregate("outdated_packages", {"outdated_dependencies": outdated, "ahead_of_default": ahead})
+    return [f.model_dump() for f in aggregator.get_findings()]
+
+
+class TestAnalyzeOutdatedDependencies:
+    def test_an_outdated_direct_dependency_is_upgraded_to_the_registry_default(self):
+        findings = _outdated(("express", "4.17.1", "4.21.2"))
+
+        [rec] = analyze_outdated_dependencies(findings, [], [_dep("express", "4.17.1", direct=True)])
+
+        assert (rec.type, rec.priority, rec.effort) == (
+            RecommendationType.OUTDATED_DEPENDENCY,
+            Priority.MEDIUM,
+            Effort.MEDIUM,
+        )
+        assert rec.title == "Upgrade 1 outdated direct dependencies"
+        assert (rec.affected_components, rec.impact["total"]) == (["express@4.17.1"], 1)
+        assert rec.action == {
+            "type": "upgrade_outdated",
+            "packages": [{"name": "express", "current_version": "4.17.1", "latest_version": "4.21.2"}],
+            "packages_total": 1,
+        }
+
+    def test_the_packages_are_listed_by_name_whatever_order_the_findings_are_read_in(self):
+        installs = [("zod", "3.0.0", "3.24.1"), ("Zustand", "4.0.0", "5.0.2"), ("chalk", "4.1.2", "5.4.1")]
+        findings = _outdated(*installs)
+        dependencies = [_dep(name, version, direct=True) for name, version, _ in installs]
+
+        [rec] = analyze_outdated_dependencies(findings[::-1], [], dependencies)
+
+        assert [p["name"] for p in rec.action["packages"]] == ["chalk", "zod", "Zustand"]
+
+    @pytest.mark.parametrize(("count", "cards"), [(3, 0), (4, 1)])
+    def test_outdated_transitive_dependencies_earn_a_low_card_only_past_three(self, count, cards):
+        findings = _outdated(*((f"sub-{i}", "1.0.0", "2.0.0") for i in range(count)))
+        dependencies = [_dep(f"sub-{i}", "1.0.0", direct=False) for i in range(count)]
+
+        recs = analyze_outdated_dependencies(findings, [], dependencies)
+
+        assert [(r.priority, r.effort, r.title) for r in recs] == [
+            (Priority.LOW, Effort.LOW, f"{count} transitive dependencies are outdated")
+        ][:cards]
+
+    def test_an_install_without_an_inventory_row_counts_as_transitive(self):
+        findings = _outdated(*((f"sub-{i}", "1.0.0", "2.0.0") for i in range(4)))
+
+        [rec] = analyze_outdated_dependencies(findings, [], [])
+
+        assert rec.priority == Priority.LOW
+
+    def test_an_install_newer_than_the_registry_default_is_not_outdated(self):
+        findings = _outdated(("urllib3", "2.3.0", "2.2.3"))
+
+        assert findings
+        assert analyze_outdated_dependencies(findings, [], [_dep("urllib3", "2.3.0", direct=True)]) == []
+
+    @pytest.mark.parametrize(
+        "upgrading",
+        [
+            pytest.param(
+                stored_vulnerability("org.yaml:snakeyaml", "1.33", [{"id": "CVE-2022-1471", "fixed_version": "2.0"}]),
+                id="vulnerability",
+            ),
+            pytest.param(_eol_finding(component="snakeyaml", version="1.33"), id="end-of-life"),
+        ],
+    )
+    def test_a_package_another_card_upgrades_is_left_to_that_card(self, upgrading):
+        findings = _outdated(("snakeyaml", "1.33", "2.3"), ("jackson-core", "2.13.0", "2.18.2"))
+        dependencies = [_dep("snakeyaml", "1.33", direct=True), _dep("jackson-core", "2.13.0", direct=True)]
+
+        [rec] = analyze_outdated_dependencies(findings, [upgrading], dependencies)
+
+        assert rec.affected_components == ["jackson-core@2.13.0"]
+
+    def test_a_vulnerability_in_another_installed_version_leaves_this_one_outdated(self):
+        findings = _outdated(("lodash", "4.17.15", "4.17.21"))
+        vulnerable = stored_vulnerability("lodash", "4.17.10", [{"id": "CVE-2019-10744", "fixed_version": "4.17.12"}])
+
+        [rec] = analyze_outdated_dependencies(findings, [vulnerable], [_dep("lodash", "4.17.15", direct=True)])
+
+        assert rec.affected_components == ["lodash@4.17.15"]

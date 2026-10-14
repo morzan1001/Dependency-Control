@@ -102,6 +102,13 @@ def generate_recommendations(
 
     _safe_extend(
         recommendations,
+        lambda: dep_analysis.analyze_outdated_dependencies(
+            findings_by_type["outdated"], [*vulns, *findings_by_type["eol"]], dependencies_list
+        ),
+        "outdated_dependencies",
+    )
+    _safe_extend(
+        recommendations,
         lambda: dep_analysis.analyze_version_fragmentation(dependencies_list),
         "version_fragmentation",
     )

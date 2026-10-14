@@ -289,6 +289,20 @@ def _dependency_cards():
     ]
 
 
+def _outdated_cards():
+    installs = [(f"lib-{i:02d}", "1.0.0", "2.4.1", True) for i in range(_CROWD)]
+    installs += [(f"sub-{i:02d}", "0.9.0", "1.0.0", False) for i in range(5)]
+    outdated = [
+        {"component": name, "current_version": current, "latest_version": latest, "severity": "INFO"}
+        for name, current, latest, _ in installs
+    ]
+    ahead = [{"component": "urllib3", "current_version": "2.3.0", "default_version": "2.2.3", "severity": "INFO"}]
+    findings = _produced("outdated_packages", {"outdated_dependencies": outdated, "ahead_of_default": ahead})
+    vulnerable = [_vuln("lib-00", "1.0.0", _advisory("CVE-2024-1111", "HIGH", "1.0.1"))]
+    rows = [_row(name, current, direct=direct) for name, current, _, direct in installs]
+    return dependencies.analyze_outdated_dependencies(findings, vulnerable, rows)
+
+
 def _graph_cards():
     chain = [_row("step-00", "1.0.0", direct=True)] + [
         _row(f"step-{step:02d}", "1.0.0", parent_components=[f"pkg:npm/step-{step - 1:02d}@1.0.0"])
@@ -376,6 +390,7 @@ def _cards():
             _quality_cards,
             _crypto_cards,
             _dependency_cards,
+            _outdated_cards,
             _graph_cards,
             _trend_cards,
             _cross_project_cards,
