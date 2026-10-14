@@ -28,7 +28,7 @@ export default function Setup2FA() {
     }
   }, [user, navigate])
 
-  const setupMutation = useSetup2FA();
+  const setupMutation = useSetup2FA({ errorTitle: "Failed to start 2FA setup" });
   const enableMutation = useEnable2FA();
 
   const resetRefusal = () => {
@@ -41,11 +41,6 @@ export default function Setup2FA() {
         setSetupData(data)
         setStep('verify')
       },
-      onError: (error) => {
-        toast.error("Failed to start 2FA setup", {
-          description: getErrorMessage(error)
-        })
-      }
     })
   }
 

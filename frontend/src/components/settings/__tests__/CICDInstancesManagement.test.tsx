@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { toast } from 'sonner'
 
 import { CICDInstancesManagement } from '../CICDInstancesManagement'
+import { createMutationCache } from '@/lib/mutation-cache'
 import type { GitHubInstance } from '@/types/github'
 import type { GitLabInstance } from '@/types/gitlab'
 
@@ -101,7 +102,7 @@ function openEditDialog(name: RegExp) {
 }
 
 function renderManagement() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const queryClient = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <CICDInstancesManagement />
@@ -428,19 +429,19 @@ describe('CICDInstancesManagement refusals', () => {
   })
 
   it.each([
-    ['creating a GitLab instance', mockGitLabCreate, () => fillCreateForm('GitLab')],
-    ['creating a GitHub instance', mockGitHubCreate, () => fillCreateForm('GitHub')],
-    ['updating a GitLab instance', mockGitLabUpdate, () => updateFrom(/Internal GitLab/)],
-    ['updating a GitHub instance', mockGitHubUpdate, () => updateFrom(/GitHub\.com/)],
-    ['deleting a GitLab instance', mockGitLabDelete, () => deleteFrom(/Internal GitLab/)],
-    ['deleting a GitHub instance', mockGitHubDelete, () => deleteFrom(/GitHub\.com/)],
-  ])('shows the validation message as text when %s is refused', async (_, call, act) => {
+    ['creating a GitLab instance', mockGitLabCreate, () => fillCreateForm('GitLab'), 'Failed to create instance'],
+    ['creating a GitHub instance', mockGitHubCreate, () => fillCreateForm('GitHub'), 'Failed to create instance'],
+    ['updating a GitLab instance', mockGitLabUpdate, () => updateFrom(/Internal GitLab/), 'Failed to update instance'],
+    ['updating a GitHub instance', mockGitHubUpdate, () => updateFrom(/GitHub\.com/), 'Failed to update instance'],
+    ['deleting a GitLab instance', mockGitLabDelete, () => deleteFrom(/Internal GitLab/), 'Failed to delete instance'],
+    ['deleting a GitHub instance', mockGitHubDelete, () => deleteFrom(/GitHub\.com/), 'Failed to delete instance'],
+  ])('shows the validation message as text when %s is refused', async (_, call, act, title) => {
     call.mockRejectedValueOnce(VALIDATION_FAILURE)
     renderManagement()
 
     act()
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('oidc_audience must not be empty'))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(title, { description: 'oidc_audience must not be empty' }))
   })
 })
 
@@ -598,7 +599,7 @@ describe('CICDInstancesManagement outcomes', () => {
 
     testRow(/GitHub\.com/)
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connection test failed'))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connection test failed', { description: 'Network Error' }))
     const row = screen.getByRole('row', { name: /GitHub\.com/ })
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Test' })).toBeEnabled())
   })

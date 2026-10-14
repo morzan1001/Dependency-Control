@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createMutationCache } from "@/lib/mutation-cache";
 import type { Team, TeamBinding } from "@/types/team";
 
 import { TeamBindingDialog } from "../TeamBindingDialog";
@@ -95,7 +96,7 @@ function team(bindings: TeamBinding[] = []): Team {
 }
 
 function Wrapper({ children }: { children: ReactNode }) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryClient = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
@@ -249,6 +250,17 @@ describe("TeamBindingDialog", () => {
     expect(clearBinding).toHaveBeenCalledTimes(1);
   });
 
+  it("names a removal that failed and why", async () => {
+    clearBinding.mockRejectedValue({ response: { data: { detail: "Team not found" } } });
+    renderDialog(team([GITLAB_BINDING]));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove the binding on GitLab Corp" }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Failed to remove binding", { description: "Team not found" }),
+    );
+  });
+
   it("says what removing a binding costs, so a mis-binding is reversed knowingly", async () => {
     renderDialog(team([GITLAB_BINDING]));
 
@@ -266,7 +278,9 @@ describe("TeamBindingDialog", () => {
     await saveBinding();
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Team 'Platform' is already bound to GitLab group 77"),
+      expect(toastError).toHaveBeenCalledWith("Failed to save binding", {
+        description: "Team 'Platform' is already bound to GitLab group 77",
+      }),
     );
   });
 

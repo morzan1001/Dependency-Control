@@ -1,5 +1,4 @@
 import { User } from '@/types/user';
-import { getErrorMessage } from '@/lib/utils';
 import { useProjectsDropdown } from '@/hooks/queries/use-projects';
 import { useTeams } from '@/hooks/queries/use-teams';
 import {
@@ -75,10 +74,12 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
 
   const { data: teams, isLoading: isLoadingTeams, error: errorTeams } = useTeams(undefined, undefined, undefined, { enabled: open });
 
-  const updateUserMutation = useUpdateUser();
-  const migrateUserMutation = useAdminMigrateUser();
-  const resetPasswordMutation = useAdminResetPassword();
-  const disable2FAMutation = useAdminDisable2FA();
+  const updateUserMutation = useUpdateUser({
+    errorTitle: user?.is_active ? "Failed to deactivate user" : "Failed to activate user",
+  });
+  const migrateUserMutation = useAdminMigrateUser({ errorTitle: "Migration Failed" });
+  const resetPasswordMutation = useAdminResetPassword({ errorTitle: "Reset Failed" });
+  const disable2FAMutation = useAdminDisable2FA({ errorTitle: "Failed to disable 2FA" });
 
   const handleMigrate = (userId: string) => {
       migrateUserMutation.mutate(userId, {
@@ -86,9 +87,6 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
               onUserUpdated?.(migrated);
               toast.success("User migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
           },
-          onError: (error) => {
-              toast.error("Migration Failed", { description: getErrorMessage(error) });
-          }
       });
   };
 
@@ -101,9 +99,6 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
               toast.error("Reset Failed", { description: "No reset email could be queued for the user" });
             }
           },
-          onError: (error) => {
-              toast.error("Reset Failed", { description: getErrorMessage(error) });
-          }
       });
   };
 
@@ -113,9 +108,6 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
               onUserUpdated?.(updated);
               toast.success("2FA disabled", { description: "Two-Factor Authentication has been disabled for this user." });
           },
-          onError: (error) => {
-              toast.error("Action Failed", { description: getErrorMessage(error) });
-          }
       });
   };
 
@@ -126,9 +118,6 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
       onSuccess: (updated) => {
         onUserUpdated?.(updated);
         toast.success(activates ? "User activated" : "User deactivated");
-      },
-      onError: (error) => {
-        toast.error(activates ? "Failed to activate user" : "Failed to deactivate user", { description: getErrorMessage(error) });
       },
     });
   };

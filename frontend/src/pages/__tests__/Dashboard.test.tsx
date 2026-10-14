@@ -6,7 +6,7 @@ import type { Project } from '@/types/project'
 
 const { useProjectsMock, navigateMock } = vi.hoisted(() => ({ useProjectsMock: vi.fn(), navigateMock: vi.fn() }))
 
-vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: () => useProjectsMock() }))
+vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: (...args: unknown[]) => useProjectsMock(...args) }))
 vi.mock('@/hooks/queries/use-analytics', () => ({
   useDashboardStats: () => ({ data: undefined, isLoading: false }),
 }))
@@ -95,3 +95,34 @@ describe('Dashboard project table rows', () => {
   })
 })
 
+
+describe('Dashboard project table sorting', () => {
+  const lastSort = () => useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1].slice(3)
+
+  it('lists the newest projects first, then sorts a clicked column descending and flips it', () => {
+    renderDashboard([project('p1', [])])
+    expect(lastSort()).toEqual(['created_at', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Critical' }))
+    expect(lastSort()).toEqual(['critical', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Critical' }))
+    expect(lastSort()).toEqual(['critical', 'asc'])
+  })
+
+  it('returns to the first page when a column is sorted, like the other paged tables', () => {
+    useProjectsMock.mockReturnValue({
+      data: { items: [project('p1', [])], total: 120, page: 1, size: 50, pages: 3 },
+      isLoading: false,
+    })
+    const lastPage = () => useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1][1]
+    render(<Dashboard />)
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }))
+    expect(lastPage()).toBe(2)
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Critical' }))
+
+    expect(lastPage()).toBe(1)
+    expect(lastSort()).toEqual(['critical', 'desc'])
+  })
+})

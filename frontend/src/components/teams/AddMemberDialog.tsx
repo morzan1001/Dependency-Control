@@ -20,7 +20,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "sonner"
-import { getErrorMessage } from "@/lib/utils"
 import { TEAM_ROLES } from '@/lib/constants';
 
 interface AddMemberDialogProps {
@@ -32,7 +31,7 @@ interface AddMemberDialogProps {
 export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberDialogProps>) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('member');
-  const addMemberMutation = useAddTeamMember();
+  const addMemberMutation = useAddTeamMember({ errorTitle: "Failed to add member" });
 
   const handleClose = () => {
     setEmail('');
@@ -50,7 +49,6 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberD
             handleClose();
             toast.success("Member added successfully");
           },
-          onError: (error) => toast.error("Failed to add member", { description: getErrorMessage(error) }),
         }
       );
     }

@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectScans } from '../ProjectScans'
+import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import type { LatestProjectRelease } from '@/hooks/queries/use-releases'
 import type { ScanWithReleases } from '@/types/scan'
 
@@ -373,3 +374,33 @@ describe('ProjectScans - source links', () => {
   })
 })
 
+
+describe('ProjectScans - sorting', () => {
+  const lastSort = () => {
+    const filters = mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1][1]
+    return [filters.sortBy, filters.sortOrder]
+  }
+
+  it('lists the newest pipelines first, then sorts a clicked column descending and flips it', () => {
+    renderScans([makeScan({ id: 's1' })])
+    expect(lastSort()).toEqual(['created_at', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
+    expect(lastSort()).toEqual(['branch', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
+    expect(lastSort()).toEqual(['branch', 'asc'])
+  })
+
+  it('returns to the first page when a column is sorted, like the other paged tables', () => {
+    renderScans(Array.from({ length: DEFAULT_PAGE_SIZE }, (_, i) => makeScan({ id: `s${i}` })))
+    const lastPage = () => mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1][1].page
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }))
+    expect(lastPage()).toBe(2)
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
+
+    expect(lastPage()).toBe(1)
+    expect(lastSort()).toEqual(['branch', 'desc'])
+  })
+})

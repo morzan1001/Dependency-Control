@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type MutationMeta } from '@tanstack/react-query';
 
 import { apiKeysApi } from '@/api/apiKeys';
 import type { ApiKeyCreatePayload } from '@/types/apiKey';
@@ -16,9 +16,10 @@ export function useApiKeys() {
   });
 }
 
-export function useCreateApiKey() {
+export function useCreateApiKey(meta?: MutationMeta) {
   const qc = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (payload: ApiKeyCreatePayload) => apiKeysApi.create(payload),
     // The result carries the one-time plaintext. Without this, reset() only detaches the observer
     // and the MutationCache keeps the token for the default five minutes.
@@ -29,9 +30,10 @@ export function useCreateApiKey() {
   });
 }
 
-export function useRevokeApiKey() {
+export function useRevokeApiKey(meta?: MutationMeta) {
   const qc = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (keyId: string) => apiKeysApi.revoke(keyId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: apiKeyQueryKeys.list() });

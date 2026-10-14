@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, type MutationMeta } from '@tanstack/react-query';
 import { authApi } from '@/api/auth';
 
 // The 2FA endpoints refuse a wrong code or password with these details; every other refusal belongs to no field.
@@ -38,8 +38,9 @@ export const useAcceptInvitation = () => {
     })
 }
 
-export const useSetup2FA = () => {
+export const useSetup2FA = (meta?: MutationMeta) => {
     return useMutation({
+        meta,
         mutationFn: authApi.setup2FA
     })
 }

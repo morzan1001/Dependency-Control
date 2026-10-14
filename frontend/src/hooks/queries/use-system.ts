@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type MutationMeta } from '@tanstack/react-query';
 import { systemApi } from '@/api/system';
 import { SystemSettings } from '@/types/system';
 import { NOTIFICATION_CHANNELS } from '@/lib/constants';
@@ -19,9 +19,10 @@ export const useSystemSettings = () => {
   });
 };
 
-export const useUpdateSystemSettings = () => {
+export const useUpdateSystemSettings = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (data: Partial<SystemSettings>) => systemApi.updateSettings(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: systemKeys.settings() });

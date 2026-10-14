@@ -38,7 +38,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { getErrorMessage } from "@/lib/utils";
 
 interface InstanceFormData {
   type: InstanceType;
@@ -147,20 +146,20 @@ export function CICDInstancesManagement() {
     mutationFn: ({ type, data }: { type: InstanceType; data: GitLabInstanceCreate | GitHubInstanceCreate }): Promise<unknown> =>
       INSTANCE_API[type].create(data),
     onSuccess: (_, { type }) => settle(type, "created", closeCreateDialog),
-    onError: (error) => toast.error(getErrorMessage(error)),
+    meta: { errorTitle: "Failed to create instance" },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ type, id, data }: { type: InstanceType; id: string; data: GitLabInstanceUpdate | GitHubInstanceUpdate }): Promise<unknown> =>
       INSTANCE_API[type].update(id, data),
     onSuccess: (_, { type }) => settle(type, "updated", closeEditDialog),
-    onError: (error) => toast.error(getErrorMessage(error)),
+    meta: { errorTitle: "Failed to update instance" },
   });
 
   const deleteMutation = useMutation({
     mutationFn: ({ _type, id }: UnifiedInstance) => INSTANCE_API[_type].delete(id),
     onSuccess: (_, { _type }) => settle(_type, "deleted", () => setDeleteInstance(null)),
-    onError: (error) => toast.error(getErrorMessage(error)),
+    meta: { errorTitle: "Failed to delete instance" },
   });
 
   const testMutation = useMutation({
@@ -175,7 +174,7 @@ export function CICDInstancesManagement() {
         toast.success("Connection successful!", { description: version ? `GitLab version: ${version}` : undefined });
       }
     },
-    onError: () => toast.error("Connection test failed"),
+    meta: { errorTitle: "Connection test failed" },
     onSettled: () => setTestingInstanceId(null),
   });
 

@@ -5,14 +5,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CreateProjectDialog } from '../CreateProjectDialog'
 
 const mockMutate = vi.fn()
-let appConfig: { retention_mode: string; default_project_analyzers: string[] } | undefined
+const mockUseCreateProject = vi.fn()
+let appConfig: { retention_mode: string; default_project_analyzers: string[]; global_retention_days?: number } | undefined
 
 vi.mock('@/hooks/queries/use-system', () => ({
   useAppConfig: () => ({ data: appConfig }),
 }))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => ({ data: [] }) }))
 vi.mock('@/hooks/queries/use-projects', () => ({
-  useCreateProject: () => ({ mutate: mockMutate, isPending: false }),
+  useCreateProject: (meta: unknown) => {
+    mockUseCreateProject(meta)
+    return { mutate: mockMutate, isPending: false }
+  },
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -48,6 +52,26 @@ describe('CreateProjectDialog', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /trivy/i }))
 
     expect(screen.getByText('Requires at least one vulnerability scanner to be enabled')).toBeInTheDocument()
+  })
+
+  it('sends the retention the user set', () => {
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Retention Period (Days)'), { target: { value: '30' } })
+    fireEvent.click(screen.getByLabelText('Retention Action'))
+    fireEvent.click(screen.getByRole('option', { name: 'None (Keep Forever)' }))
+
+    expect(submit()).toMatchObject({ retention_days: 30, retention_action: 'none' })
+  })
+
+  it('leaves the retention to a global policy, which it names', () => {
+    appConfig = { retention_mode: 'global', default_project_analyzers: [], global_retention_days: 0 }
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByText('Data retention is disabled (data is kept forever).')).toBeInTheDocument()
+    const sent = submit()
+    expect(sent.retention_days).toBeUndefined()
+    expect(sent.retention_action).toBeUndefined()
   })
 
   it('sends the analyzers the user picked', () => {
@@ -142,5 +166,13 @@ describe('CreateProjectDialog after a project was created', () => {
       expect(copy.querySelector('.lucide-check')).not.toBeInTheDocument()
       expect(screen.getByDisplayValue(API_KEY)).not.toHaveAttribute('type', 'password')
     })
+  })
+})
+
+describe('CreateProjectDialog failure', () => {
+  it('names a failed creation, which the error toast completes with the reason', () => {
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    expect(mockUseCreateProject).toHaveBeenCalledWith({ errorTitle: 'Failed to create project' })
   })
 })

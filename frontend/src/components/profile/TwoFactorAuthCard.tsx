@@ -1,13 +1,9 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { authApi } from '@/api/auth';
-import { ApiError } from '@/api/client';
+import { useSetup2FA } from '@/hooks/queries/use-auth';
 import { User, TwoFASetup } from '@/types/user';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Shield, ShieldAlert, KeyRound } from 'lucide-react';
-import { toast } from "sonner"
-import { getErrorMessage } from "@/lib/utils"
 import { TwoFASetupDialog } from './TwoFASetupDialog';
 import { TwoFADisableDialog } from './TwoFADisableDialog';
 
@@ -25,18 +21,14 @@ export function TwoFactorAuthCard({ user }: Readonly<TwoFactorAuthCardProps>) {
     setSetupData(null);
   };
 
-  const setup2FAMutation = useMutation({
-    mutationFn: authApi.setup2FA,
-    onSuccess: (data) => {
-      setSetupData(data);
-      setIsSetupOpen(true);
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: getErrorMessage(error),
-      });
-    }
-  });
+  const setup2FAMutation = useSetup2FA({ errorTitle: "Error" });
+  const startSetup = () =>
+    setup2FAMutation.mutate(undefined, {
+      onSuccess: (data) => {
+        setSetupData(data);
+        setIsSetupOpen(true);
+      },
+    });
 
   const isOidcUser = user?.auth_provider && user.auth_provider !== 'local';
 
@@ -95,7 +87,7 @@ export function TwoFactorAuthCard({ user }: Readonly<TwoFactorAuthCardProps>) {
                 </Button>
               ) : (
                 <Button
-                  onClick={() => setup2FAMutation.mutate()}
+                  onClick={startSetup}
                   disabled={setup2FAMutation.isPending}
                 >
                   {setup2FAMutation.isPending ? 'Setting up...' : 'Enable 2FA'}

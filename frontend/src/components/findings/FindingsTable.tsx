@@ -4,10 +4,14 @@ import { useSearchParams } from 'react-router-dom'
 import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SortableHead } from '@/components/ui/sortable-head'
+import { AnalyticsErrorCard } from '@/components/analytics/AnalyticsErrorCard'
+import { useInfiniteRows } from '@/hooks/use-infinite-rows'
+import { useSortState } from '@/hooks/use-pagination-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { InlineError, NoData } from '@/components/ui/state-components'
 import { FindingDetailsModal } from './FindingDetailsModal'
-import { ArrowUp, ArrowDown, Shield, AlertTriangle, HelpCircle, Loader2, type LucideIcon } from 'lucide-react';
+import { Shield, AlertTriangle, HelpCircle, Loader2, type LucideIcon } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import {
   Tooltip,
@@ -169,10 +173,8 @@ function reportUnresolved(outcome: RelatedFindingLookup): void {
 }
 
 export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false, hideHistoricalSecrets = false }: FindingsTableProps) {
-    const sentinelRef = useRef<HTMLDivElement>(null)
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
-    const [sortBy, setSortBy] = useState("severity")
-    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+    const sort = useSortState('severity')
     const [searchParams, setSearchParams] = useSearchParams()
     const deepLinkFindingId = searchParams.get('finding')
     // Guard so we only auto-open once per deep-link value — otherwise the
@@ -219,15 +221,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         }
     }
 
-    const {
-        data,
-        fetchNextPage,
-        hasNextPage,
-        isFetchingNextPage,
-        isLoading,
-        isError
-    } = useInfiniteQuery({
-        queryKey: ['findings', scanId, category, search, severity, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly, hideHistoricalSecrets],
+    const findings = useInfiniteQuery({
+        queryKey: ['findings', scanId, category, search, severity, sort.sortBy, sort.sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly, hideHistoricalSecrets],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
@@ -235,8 +230,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 category,
                 search,
                 severity,
-                sort_by: sortBy,
-                sort_order: sortOrder,
+                sort_by: sort.sortBy,
+                sort_order: sort.sortOrder,
                 ...(licenseCategory ? { license_category: licenseCategory } : {}),
                 ...(hideInfo ? { hide_info: true } : {}),
                 // "all": omit the param so the backend returns both waived and active.
@@ -254,40 +249,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         },
     })
 
-    const allRows = data ? data.pages.flatMap((d) => d.items) : []
-
-    // Load the next page when the sentinel nears the viewport.
-    useEffect(() => {
-        const sentinel = sentinelRef.current
-        if (!sentinel) return
-
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
-                    fetchNextPage()
-                }
-            },
-            { rootMargin: '300px' }
-        )
-        observer.observe(sentinel)
-        return () => observer.disconnect()
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage])
-
-    const renderSortIcon = (column: string) => {
-        if (sortBy === column) {
-            return sortOrder === 'asc' ? <ArrowUp className="ml-2 h-4 w-4 inline" /> : <ArrowDown className="ml-2 h-4 w-4 inline" />
-        }
-        return null;
-    };
-
-    const handleSort = (column: string) => {
-        if (sortBy === column) {
-            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortBy(column);
-            setSortOrder('desc');
-        }
-    };
+    const { isFetchingNextPage, isLoading, isError, error, fetchNextPage, refetch } = findings
+    const { rows: allRows, nextPageFailed, observeEnd } = useInfiniteRows(findings, (page) => page.items)
 
     return (
         <div className="relative w-full overflow-x-auto">
@@ -319,35 +282,23 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     </table>
                 </div>
             )}
-            {!isLoading && isError && (
+            {!isLoading && isError && allRows.length === 0 && (
                 <InlineError message="Error loading findings" />
             )}
             {!isLoading && !isError && allRows.length === 0 && (
                 <NoData entityName="findings" />
             )}
-            {!isLoading && !isError && allRows.length > 0 && (
+            {!isLoading && allRows.length > 0 && (
                 <TooltipProvider>
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <TableHeader className="sticky bg-background z-50 shadow-sm" style={{ top: stickyHeaderTop }}>
                         <TableRow className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                            <TableHead className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('severity')}>
-                                Severity {renderSortIcon('severity')}
-                            </TableHead>
-                            <TableHead className="w-[200px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('vuln_id')}>
-                                ID {renderSortIcon('vuln_id')}
-                            </TableHead>
-                            <TableHead className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('component')}>
-                                Component {renderSortIcon('component')}
-                            </TableHead>
-                            <TableHead className="w-[80px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('source_type')}>
-                                Source {renderSortIcon('source_type')}
-                            </TableHead>
-                            <TableHead className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('type')}>
-                                Type {renderSortIcon('type')}
-                            </TableHead>
-                            <TableHead className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('scanner')}>
-                                Scanner {renderSortIcon('scanner')}
-                            </TableHead>
+                            <SortableHead column="severity" sort={sort} className="w-[120px] bg-background">Severity</SortableHead>
+                            <SortableHead column="vuln_id" sort={sort} className="w-[200px] bg-background">ID</SortableHead>
+                            <SortableHead column="component" sort={sort} className="w-auto bg-background">Component</SortableHead>
+                            <SortableHead column="source_type" sort={sort} className="w-[80px] bg-background">Source</SortableHead>
+                            <SortableHead column="type" sort={sort} className="w-[120px] bg-background">Type</SortableHead>
+                            <SortableHead column="scanner" sort={sort} className="w-[150px] bg-background">Scanner</SortableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -424,8 +375,14 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 </TooltipProvider>
             )}
 
-            {/* Sentinel element — IntersectionObserver triggers load-more when this approaches the viewport */}
-            <div ref={sentinelRef} className="h-1" />
+            {isError && !isFetchingNextPage && allRows.length > 0 && (
+                <AnalyticsErrorCard
+                    title={nextPageFailed ? 'Failed to load more findings' : 'Error loading findings'}
+                    error={error}
+                    onRetry={() => (nextPageFailed ? fetchNextPage() : refetch())}
+                />
+            )}
+            <div ref={observeEnd} className="h-1" />
 
             {selectedFinding && (
                 <FindingDetailsModal

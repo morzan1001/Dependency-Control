@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { userApi } from '@/api/users'
+import { createMutationCache } from '@/lib/mutation-cache'
 import { PRESET_VIEWER } from '@/lib/permissions'
 import type { User } from '@/types/user'
 
@@ -15,7 +16,9 @@ vi.mock('@/api/users', () => ({
     getAll: vi.fn(),
     getPendingInvitations: () => Promise.resolve([]),
     update: vi.fn(),
+    delete: vi.fn(),
     adminMigrateToLocal: vi.fn(),
+    adminResetPassword: vi.fn(),
     adminDisable2FA: vi.fn(),
   },
 }))
@@ -32,7 +35,7 @@ function lena(permissions: string[]): User {
 }
 
 async function openLena() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const client = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -144,6 +147,19 @@ describe('UsersPage user details', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('adds a ticked permission to the selection and drops it again once unticked', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([lena(['project:read'])])
+    await openLena()
+    fireEvent.click(screen.getByRole('button', { name: 'Manage Permissions' }))
+    const createTeams = screen.getByRole('checkbox', { name: 'Create Teams' })
+
+    fireEvent.click(createTeams)
+    expect(screen.getByText('Selected: 2 permissions')).toBeInTheDocument()
+
+    fireEvent.click(createTeams)
+    expect(screen.getByText('Selected: 1 permission')).toBeInTheDocument()
+  })
+
   it('drops unsaved permission edits when the dialog is cancelled', async () => {
     vi.mocked(userApi.getAll).mockResolvedValue([lena(['project:read'])])
     await openLena()
@@ -209,5 +225,47 @@ describe('UsersPage user details toasts', () => {
       expect(toast.error).toHaveBeenCalledWith('Failed to update permissions', { description: 'Network Error' }),
     )
     expect(screen.getByRole('dialog', { name: 'Manage Permissions for lena' })).toBeInTheDocument()
+  })
+
+  it('names a deletion that failed and why', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([lena([])])
+    vi.mocked(userApi.delete).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete user' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete User' })).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to delete user', { description: 'Network Error' }))
+  })
+
+  it('names a migration to local login that failed and why', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), auth_provider: 'oidc' }])
+    vi.mocked(userApi.adminMigrateToLocal).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Migrate to Local' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Migration Failed', { description: 'Network Error' }))
+  })
+
+  it('names a password reset that failed and why', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), auth_provider: 'local' }])
+    vi.mocked(userApi.adminResetPassword).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send Reset Email' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Reset Failed', { description: 'Network Error' }))
+  })
+
+  it('names a 2FA disable that failed and why', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), totp_enabled: true }])
+    vi.mocked(userApi.adminDisable2FA).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to disable 2FA', { description: 'Network Error' }))
   })
 })

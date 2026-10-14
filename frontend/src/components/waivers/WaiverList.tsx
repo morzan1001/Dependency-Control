@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useWaiverList, useDeleteWaiver } from '@/hooks/queries/use-waivers'
 import { Waiver } from '@/types/waiver'
 import { EditWaiverDialog } from '@/components/waivers/EditWaiverDialog'
 import { WaiverExpiryCell } from '@/components/waivers/WaiverExpiryCell'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { SortableHead } from '@/components/ui/sortable-head'
 import { Button } from '@/components/ui/button'
-import { getErrorMessage } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -20,9 +20,11 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
-import { ArrowUp, ArrowDown, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { Pencil, Trash2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useInfiniteRows } from '@/hooks/use-infinite-rows'
+import { useSortState } from '@/hooks/use-pagination-state'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 interface WaiverListProps {
@@ -36,67 +38,25 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
     const columns = isGlobal ? 7 : 6
     const [searchInput, setSearchInput] = useState('')
     const [orphanedOnly, setOrphanedOnly] = useState(false)
-    const [sortBy, setSortBy] = useState('created_at')
-    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+    const sort = useSortState('created_at')
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [waiverToDelete, setWaiverToDelete] = useState<Waiver | null>(null)
     const [waiverToEdit, setWaiverToEdit] = useState<Waiver | null>(null)
     const [editDialogOpen, setEditDialogOpen] = useState(false)
 
-    const loadMoreRef = useRef<HTMLTableRowElement>(null)
     const debouncedSearch = useDebounce(searchInput, DEBOUNCE_DELAY_MS)
 
-    const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } = useWaiverList(
+    const waivers = useWaiverList(
         projectId,
-        { search: debouncedSearch, sortBy, sortOrder, orphaned: orphanedOnly },
+        { search: debouncedSearch, sortBy: sort.sortBy, sortOrder: sort.sortOrder, orphaned: orphanedOnly },
     )
-    const deleteWaiverMutation = useDeleteWaiver()
-    const allWaivers = data?.pages.flatMap((page) => page.items) ?? []
-
-    useEffect(() => {
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
-                    fetchNextPage()
-                }
-            },
-            { threshold: 0.1 }
-        )
-
-        if (loadMoreRef.current) {
-            observer.observe(loadMoreRef.current)
-        }
-
-        return () => observer.disconnect()
-    }, [fetchNextPage, hasNextPage, isFetchingNextPage])
+    const { fetchNextPage, isFetchingNextPage, isLoading, isError, refetch } = waivers
+    const { rows: allWaivers, hasMore, nextPageFailed, observeEnd } = useInfiniteRows(waivers, (page) => page.items)
+    const deleteWaiverMutation = useDeleteWaiver({ errorTitle: 'Failed to delete waiver' })
 
     const handleDelete = (id: string) => {
-        deleteWaiverMutation.mutate(id, {
-            onSuccess: () => toast.success('Waiver deleted successfully'),
-            onError: (error) => toast.error('Failed to delete waiver', { description: getErrorMessage(error) }),
-        })
+        deleteWaiverMutation.mutate(id, { onSuccess: () => toast.success('Waiver deleted successfully') })
     }
-
-    const apiSortKey = (key: string) => (key === 'expires' ? 'expiration_date' : key)
-
-    const handleSort = (key: string) => {
-        const apiKey = apiSortKey(key)
-        if (sortBy === apiKey) {
-            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-        } else {
-            setSortBy(apiKey)
-            setSortOrder('desc')
-        }
-    }
-
-    const sortableHead = (key: string, label: string) => (
-        <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort(key)}>
-            <div className="flex items-center gap-1">
-                {label}{' '}
-                {sortBy === apiSortKey(key) && (sortOrder === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
-            </div>
-        </TableHead>
-    )
 
     const title = isGlobal ? 'Active Global Waivers' : 'Active Waivers'
     const description = isGlobal
@@ -158,12 +118,12 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                {sortableHead('finding_id', 'Finding ID')}
-                                {sortableHead('package_name', 'Package')}
-                                {sortableHead('status', 'Status')}
-                                {sortableHead('reason', 'Reason')}
-                                {sortableHead('expires', 'Expires')}
-                                {isGlobal && sortableHead('created_by', 'Created By')}
+                                <SortableHead column="finding_id" sort={sort}>Finding ID</SortableHead>
+                                <SortableHead column="package_name" sort={sort}>Package</SortableHead>
+                                <SortableHead column="status" sort={sort}>Status</SortableHead>
+                                <SortableHead column="reason" sort={sort}>Reason</SortableHead>
+                                <SortableHead column="expiration_date" sort={sort}>Expires</SortableHead>
+                                {isGlobal && <SortableHead column="created_by" sort={sort}>Created By</SortableHead>}
                                 <TableHead className="w-[100px]">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -239,8 +199,8 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                                     </TableCell>
                                 </TableRow>
                             ))}
-                            {hasNextPage && (
-                                <TableRow ref={loadMoreRef}>
+                            {hasMore && (
+                                <TableRow ref={observeEnd}>
                                     <TableCell colSpan={columns} className="text-center py-4">
                                         {isFetchingNextPage ? (
                                             <div className="flex items-center justify-center gap-2">
@@ -256,7 +216,12 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                             {isError && (
                                 <TableRow>
                                     <TableCell colSpan={columns} className="text-center text-destructive py-8">
-                                        Failed to load waivers. Please try again.
+                                        <div className="flex flex-col items-center gap-2">
+                                            <span>Failed to load waivers. Please try again.</span>
+                                            <Button variant="outline" size="sm" onClick={() => (nextPageFailed ? fetchNextPage() : refetch())}>
+                                                Retry
+                                            </Button>
+                                        </div>
                                     </TableCell>
                                 </TableRow>
                             )}

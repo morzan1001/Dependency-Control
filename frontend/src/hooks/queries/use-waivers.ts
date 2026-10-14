@@ -1,4 +1,4 @@
-import { useMutation, useInfiniteQuery, useQuery, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useInfiniteQuery, useQuery, useQueryClient, keepPreviousData, type QueryClient, type MutationMeta } from '@tanstack/react-query';
 import { waiverApi } from '@/api/waivers';
 import { WaiverUpdate } from '@/types/waiver';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
@@ -24,9 +24,10 @@ const invalidateWaiverDependents = (queryClient: QueryClient) => {
     queryClient.invalidateQueries({ queryKey: projectKeys.all });
 };
 
-export const useCreateWaiver = () => {
+export const useCreateWaiver = (meta?: MutationMeta) => {
     const queryClient = useQueryClient();
     return useMutation({
+        meta,
         mutationFn: waiverApi.create,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: waiverKeys.all });
@@ -35,9 +36,10 @@ export const useCreateWaiver = () => {
     })
 }
 
-export const useUpdateWaiver = () => {
+export const useUpdateWaiver = (meta?: MutationMeta) => {
     const queryClient = useQueryClient();
     return useMutation({
+        meta,
         mutationFn: ({ waiverId, data }: { waiverId: string; data: WaiverUpdate }) =>
             waiverApi.update(waiverId, data),
         onSuccess: () => {
@@ -47,9 +49,10 @@ export const useUpdateWaiver = () => {
     })
 }
 
-export const useDeleteWaiver = () => {
+export const useDeleteWaiver = (meta?: MutationMeta) => {
     const queryClient = useQueryClient();
     return useMutation({
+        meta,
         mutationFn: waiverApi.delete,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: waiverKeys.all });

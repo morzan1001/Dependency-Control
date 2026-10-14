@@ -15,14 +15,15 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SortableHead } from '@/components/ui/sortable-head'
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useSortState } from '@/hooks/use-pagination-state'
 import {
   Collapsible,
   CollapsibleContent,
@@ -58,7 +59,6 @@ import { getDisplayId, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
 import { SeverityBadge } from '@/components/findings/SeverityBadge'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
-import { SortIcon } from './VulnerabilityHotspots'
 
 // Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
@@ -67,7 +67,6 @@ function severityRank(severity?: string): number {
 }
 
 type SortField = 'id' | 'type' | 'severity' | 'project_name'
-type SortOrder = 'asc' | 'desc'
 
 function formatEnrichmentSource(source: string): string {
   if (source === "deps_dev") return "deps.dev"
@@ -167,18 +166,25 @@ function ScorecardDisplay({ metadata }: Readonly<{ metadata: DependencyMetadata 
 function DependencyMetadataSection({ metadata }: Readonly<{ metadata: DependencyMetadata }>) {
   const [showDetails, setShowDetails] = useState(false)
 
-  const homepageHref = safeHref(metadata.homepage)
-  const repositoryHref = safeHref(metadata.repository_url)
-  const downloadHref = safeHref(metadata.download_url)
   const licenseHref = safeHref(metadata.license_url)
-  const depsDevLinks = metadata.deps_dev?.links
-    ? Object.entries(metadata.deps_dev.links)
+  const externalLinks = [
+    { label: 'Homepage', href: safeHref(metadata.homepage), icon: Globe },
+    { label: 'Repository', href: safeHref(metadata.repository_url), icon: GitBranch },
+    { label: 'Download', href: safeHref(metadata.download_url), icon: Download },
+  ].filter((link) => link.href)
+  const depsDev = metadata.deps_dev
+  const statTiles = [
+    { label: 'Stars', value: depsDev?.stars, icon: Star, color: 'text-yellow-500' },
+    { label: 'Forks', value: depsDev?.forks, icon: GitFork, color: 'text-blue-500' },
+    { label: 'Issues', value: depsDev?.open_issues, icon: CircleDot, color: 'text-green-500' },
+    { label: 'Dependents', value: depsDev?.dependents?.total, icon: Users, color: 'text-purple-500' },
+  ]
+  const depsDevLinks = depsDev?.links
+    ? Object.entries(depsDev.links)
         .map(([label, url]) => [label, safeHref(url)] as const)
         .filter((entry): entry is readonly [string, string] => Boolean(entry[1]))
     : []
 
-  const hasExternalLinks = homepageHref || repositoryHref || downloadHref
-  const hasDepsDevData = metadata.deps_dev
   const hasMaintainerInfo = metadata.author || metadata.publisher
   
   return (
@@ -195,7 +201,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
               </span>
             )}
             <Badge variant="secondary">{metadata.type}</Badge>
-            {metadata.deps_dev?.is_deprecated && (
+            {depsDev?.is_deprecated && (
               <Badge variant="destructive">Deprecated</Badge>
             )}
             {metadata.license && (
@@ -236,87 +242,37 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
         </div>
       )}
 
-      {hasDepsDevData && (
+      {depsDev && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {metadata.deps_dev?.stars !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <Star className="h-4 w-4 text-yellow-500" />
+          {statTiles.map(({ label, value, icon: Icon, color }) => value !== undefined && (
+            <div key={label} className="flex items-center gap-2 p-2 bg-background rounded-md">
+              <Icon className={cn("h-4 w-4", color)} />
               <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.stars.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Stars</p>
+                <p className="text-sm font-medium">{value.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">{label}</p>
               </div>
             </div>
-          )}
-          {metadata.deps_dev?.forks !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <GitFork className="h-4 w-4 text-blue-500" />
-              <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.forks.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Forks</p>
-              </div>
-            </div>
-          )}
-          {metadata.deps_dev?.open_issues !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <CircleDot className="h-4 w-4 text-green-500" />
-              <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.open_issues.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Issues</p>
-              </div>
-            </div>
-          )}
-          {metadata.deps_dev?.dependents?.total !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <Users className="h-4 w-4 text-purple-500" />
-              <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.dependents.total.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Dependents</p>
-              </div>
-            </div>
-          )}
+          ))}
         </div>
       )}
 
       <ScorecardDisplay metadata={metadata} />
 
-      {hasExternalLinks && (
+      {externalLinks.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {homepageHref && (
+          {externalLinks.map(({ label, href, icon: Icon }) => (
             <a
-              href={homepageHref}
+              key={label}
+              href={href}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
             >
-              <Globe className="h-4 w-4" />
-              Homepage
+              <Icon className="h-4 w-4" />
+              {label}
               <ExternalLink className="h-3 w-3" />
             </a>
-          )}
-          {repositoryHref && (
-            <a
-              href={repositoryHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
-            >
-              <GitBranch className="h-4 w-4" />
-              Repository
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
-          {downloadHref && (
-            <a
-              href={downloadHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
-            >
-              <Download className="h-4 w-4" />
-              Download
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
+          ))}
         </div>
       )}
 
@@ -412,11 +368,11 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
             </div>
           )}
 
-          {metadata.deps_dev?.published_at && (
+          {depsDev?.published_at && (
             <InfoRow
               icon={Calendar}
               label="Published"
-              value={formatDate(metadata.deps_dev.published_at, {
+              value={formatDate(depsDev.published_at, {
                 year: "numeric",
                 month: "long",
                 day: "numeric"
@@ -442,8 +398,7 @@ export function AnalyticsDependencyModal({
   open,
   onOpenChange
 }: Readonly<AnalyticsDependencyModalProps>) {
-  const [sortBy, setSortBy] = useState<SortField>('severity')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const sort = useSortState<SortField>('severity')
   const [selectedFinding, setSelectedFinding] = useState<ComponentFinding | null>(null)
 
   const enabledComponent = open ? component : ''
@@ -464,7 +419,7 @@ export function AnalyticsDependencyModal({
     return [...findingsPage.items].sort((a, b) => {
       let comparison = 0
       
-      switch (sortBy) {
+      switch (sort.sortBy) {
         case 'id':
           comparison = (getDisplayId(a) ?? '').localeCompare(getDisplayId(b) ?? '')
           break
@@ -480,18 +435,9 @@ export function AnalyticsDependencyModal({
           break
       }
       
-      return sortOrder === 'asc' ? comparison : -comparison
+      return sort.sortOrder === 'asc' ? comparison : -comparison
     })
-  }, [findingsPage, sortBy, sortOrder])
-
-  const handleSort = (field: SortField) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortBy(field)
-      setSortOrder(field === 'severity' ? 'desc' : 'asc')
-    }
-  }
+  }, [findingsPage, sort.sortBy, sort.sortOrder])
 
   const metadataSection = metadata ? (
     <DependencyMetadataSection metadata={metadata} />
@@ -549,34 +495,10 @@ export function AnalyticsDependencyModal({
               <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead 
-                      className="w-[180px] cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('id')}
-                    >
-                      Finding
-                      <SortIcon field="id" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
-                    <TableHead 
-                      className="w-[100px] cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('type')}
-                    >
-                      Type
-                      <SortIcon field="type" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
-                    <TableHead 
-                      className="w-[100px] cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('severity')}
-                    >
-                      Severity
-                      <SortIcon field="severity" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
-                    <TableHead 
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('project_name')}
-                    >
-                      Project
-                      <SortIcon field="project_name" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
+                    <SortableHead column="id" sort={sort} firstOrder="asc" className="w-[180px]">Finding</SortableHead>
+                    <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[100px]">Type</SortableHead>
+                    <SortableHead column="severity" sort={sort} className="w-[100px]">Severity</SortableHead>
+                    <SortableHead column="project_name" sort={sort} firstOrder="asc">Project</SortableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

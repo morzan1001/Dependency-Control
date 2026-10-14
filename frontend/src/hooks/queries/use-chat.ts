@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type MutationMeta } from '@tanstack/react-query';
 import { chatApi } from '@/api/chat';
 
 export const chatKeys = {
@@ -23,9 +23,10 @@ export function useConversation(id: string | null) {
   });
 }
 
-export function useCreateConversation() {
+export function useCreateConversation(meta?: MutationMeta) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (title?: string) => chatApi.createConversation(title),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
@@ -33,9 +34,10 @@ export function useCreateConversation() {
   });
 }
 
-export function useDeleteConversation() {
+export function useDeleteConversation(meta?: MutationMeta) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (id: string) => chatApi.deleteConversation(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });

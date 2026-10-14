@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData, type MutationMeta } from '@tanstack/react-query';
 import { teamApi } from '@/api/teams';
 import { TeamBindingRequest, TeamCreate, TeamMemberCreate } from '@/types/team';
 
@@ -27,9 +27,10 @@ export const useTeams = (
   });
 };
 
-export const useCreateTeam = () => {
+export const useCreateTeam = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (data: TeamCreate) => teamApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
@@ -37,9 +38,10 @@ export const useCreateTeam = () => {
   });
 };
 
-export const useDeleteTeam = () => {
+export const useDeleteTeam = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (id: string) => teamApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
@@ -47,9 +49,10 @@ export const useDeleteTeam = () => {
   });
 };
 
-export const useAddTeamMember = () => {
+export const useAddTeamMember = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: ({ teamId, data }: { teamId: string; data: TeamMemberCreate }) => 
       teamApi.addMember(teamId, data),
     onSuccess: () => {
@@ -58,18 +61,20 @@ export const useAddTeamMember = () => {
   });
 };
 
-export const useUpdateTeam = () => {
+export const useUpdateTeam = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: ({ id, data }: { id: string; data: Partial<TeamCreate> }) => 
       teamApi.update(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: teamKeys.lists() }),
   });
 };
 
-export const useRemoveTeamMember = () => {
+export const useRemoveTeamMember = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: ({ teamId, userId }: { teamId: string; userId: string }) => 
       teamApi.removeMember(teamId, userId),
     onSuccess: () => {
@@ -78,9 +83,10 @@ export const useRemoveTeamMember = () => {
   });
 };
 
-export const useSetTeamBinding = () => {
+export const useSetTeamBinding = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: ({ teamId, data }: { teamId: string; data: TeamBindingRequest }) =>
       teamApi.setBinding(teamId, data),
     onSuccess: () => {
@@ -89,9 +95,10 @@ export const useSetTeamBinding = () => {
   });
 };
 
-export const useClearTeamBinding = () => {
+export const useClearTeamBinding = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: ({ teamId, instanceId }: { teamId: string; instanceId: string }) =>
       teamApi.clearBinding(teamId, instanceId),
     onSuccess: () => {
@@ -100,9 +107,10 @@ export const useClearTeamBinding = () => {
   });
 };
 
-export const useUpdateTeamMember = () => {
+export const useUpdateTeamMember = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: ({ teamId, userId, role }: { teamId: string; userId: string; role: string }) => 
       teamApi.updateMember(teamId, userId, role),
     onSuccess: () => {

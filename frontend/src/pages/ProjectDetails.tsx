@@ -16,6 +16,7 @@ import { ProjectSettings } from '@/components/project/ProjectSettings'
 import { ProjectArchives } from '@/components/project/ProjectArchives'
 import { ProjectInventory } from '@/components/project/inventory/ProjectInventory'
 import { initialBranchSelection } from '@/lib/branches'
+import { toggle } from '@/lib/utils'
 
 
 import { useState, useMemo } from 'react'
@@ -58,13 +59,7 @@ export default function ProjectDetails() {
     setSelectedBranches(initialBranchSelection(branches ?? []))
   }
 
-  const toggleBranch = (branch: string) => {
-      setSelectedBranches(prev =>
-          prev.includes(branch)
-              ? prev.filter(b => b !== branch)
-              : [...prev, branch]
-      )
-  }
+  const toggleBranch = (branch: string) => setSelectedBranches((prev) => toggle(prev, branch))
 
   const toggleAllBranches = () => {
       if (selectedBranches.length === activeBranchNames.length) {

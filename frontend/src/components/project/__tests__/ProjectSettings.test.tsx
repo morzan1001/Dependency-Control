@@ -1,35 +1,47 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectSettings } from '../ProjectSettings'
+import { NOTIFICATION_EVENTS } from '@/lib/constants'
+import { createMutationCache } from '@/lib/mutation-cache'
 import type { Project } from '@/types/project'
 import type { AppConfig } from '@/types/system'
 import type { User } from '@/types/user'
 
 const mockUpdate = vi.fn().mockResolvedValue({})
+const mockDelete = vi.fn()
 const mockRotateApiKey = vi.fn()
 const mockGitHubList = vi.fn()
 const mockGitLabList = vi.fn()
 const mockUseTeams = vi.fn()
 const mockUseAuth = vi.fn()
 const mockUseAppConfig = vi.fn()
+const mockUseNotificationChannels = vi.fn()
 const mockUseProjectBranches = vi.fn()
+const mockUpdateNotifications = vi.fn()
+const mockUseUpdateProjectNotifications = vi.fn()
 
 vi.mock('@/api/projects', () => ({
   projectApi: {
     update: (...args: unknown[]) => mockUpdate(...args),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => mockDelete(...args),
     rotateApiKey: (...args: unknown[]) => mockRotateApiKey(...args),
   },
 }))
-vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => mockUseAppConfig() }))
+vi.mock('@/hooks/queries/use-system', () => ({
+  useAppConfig: () => mockUseAppConfig(),
+  useNotificationChannels: () => mockUseNotificationChannels(),
+}))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => mockUseTeams() }))
 vi.mock('@/hooks/queries/use-projects', () => ({
   projectKeys: { detail: (id: string) => ['project', id] },
   useProjectBranches: () => mockUseProjectBranches(),
-  useUpdateProjectNotifications: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateProjectNotifications: (meta: unknown) => {
+    mockUseUpdateProjectNotifications(meta)
+    return { mutate: mockUpdateNotifications, isPending: false }
+  },
 }))
 vi.mock('@/hooks/queries/use-webhooks', () => ({
   useProjectWebhooks: () => ({ data: [], isLoading: false }),
@@ -65,6 +77,7 @@ beforeEach(() => {
   mockGitLabList.mockReset().mockRejectedValue(new Error('Request failed with status code 403'))
   mockGitHubList.mockReset().mockRejectedValue(new Error('Request failed with status code 403'))
   mockUseAppConfig.mockReturnValue({ data: undefined })
+  mockUseNotificationChannels.mockReturnValue(undefined)
   mockUseProjectBranches.mockReturnValue({ data: [] })
 })
 
@@ -82,7 +95,7 @@ function githubProject(overrides: Partial<Project> = {}): Project {
 }
 
 function renderSettings(project: Project) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const queryClient = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <ProjectSettings project={project} projectId="p1" user={USER} />
@@ -424,8 +437,22 @@ describe('ProjectSettings API key rotation', () => {
   async function rotateAndCopyKey() {
     renderSettings(githubProject())
     fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Rotate API Key' })).getByRole('button', { name: 'Rotate Key' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Copy API key' }))
   }
+
+  it('asks before rotating, like the deletion, and names the project in bold', async () => {
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Rotate API Key' })
+    expect(within(dialog).getByText('acme/widget', { selector: 'strong' })).toBeInTheDocument()
+    expect(mockRotateApiKey).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(mockRotateApiKey).not.toHaveBeenCalled()
+  })
 
   it('confirms the copy once the clipboard holds the new key', async () => {
     writeText.mockResolvedValue(undefined)
@@ -449,5 +476,124 @@ describe('ProjectSettings API key rotation', () => {
     )
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
     expect(screen.getByRole('button', { name: 'Copy API key' }).querySelector('.lucide-check')).not.toBeInTheDocument()
+  })
+})
+
+describe('ProjectSettings failures', () => {
+  beforeEach(() => {
+    vi.mocked(toast.error).mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+  })
+
+  it('names a save that failed and why', async () => {
+    mockUpdate.mockRejectedValueOnce(new Error('Network Error'))
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update project', { description: 'Network Error' }))
+  })
+
+  it('names a deletion that failed and why', async () => {
+    mockDelete.mockRejectedValueOnce(new Error('Network Error'))
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Project' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete Project' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to delete project', { description: 'Network Error' }))
+  })
+
+  it('names a key rotation that failed and why', async () => {
+    mockRotateApiKey.mockRejectedValueOnce(new Error('Network Error'))
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Rotate API Key' })).getByRole('button', { name: 'Rotate Key' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to rotate API key', { description: 'Network Error' }))
+  })
+
+  it('names a failed notification settings save, which the error toast completes with the reason', () => {
+    renderSettings(githubProject())
+
+    expect(mockUseUpdateProjectNotifications).toHaveBeenCalledWith({ errorTitle: 'Failed to update notification settings' })
+  })
+})
+
+describe('ProjectSettings data retention', () => {
+  beforeEach(() => {
+    mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+  })
+
+  it('saves the retention period and action the project sets', async () => {
+    mockUseAppConfig.mockReturnValue({ data: appConfig({ global_rescan_enabled: false, global_rescan_interval: 24 }) })
+    renderSettings(githubProject({ retention_days: 90, retention_action: 'delete' }))
+
+    fireEvent.change(screen.getByLabelText('Retention Period (Days)'), { target: { value: '30' } })
+    fireEvent.click(screen.getByLabelText('Retention Action'))
+    fireEvent.click(screen.getByRole('option', { name: 'None (Keep Forever)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ retention_days: 30, retention_action: 'none' })
+  })
+
+  it('names the global retention and re-scan schedule a project cannot change', () => {
+    mockUseAppConfig.mockReturnValue({
+      data: {
+        ...appConfig({ global_rescan_enabled: true, global_rescan_interval: 12 }),
+        archive_enabled: true,
+        retention_mode: 'global',
+        global_retention_days: 30,
+        global_retention_action: 'archive',
+        rescan_mode: 'global',
+      },
+    })
+    renderSettings(githubProject())
+
+    expect(screen.getByText('Data is retained for 30 days (archived to S3).')).toBeInTheDocument()
+    expect(screen.getByText('Re-scanning is enabled (every 12 hours).')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Retention Period (Days)')).toBeNull()
+  })
+})
+
+describe('ProjectSettings notifications', () => {
+  beforeEach(() => {
+    mockUpdateNotifications.mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+    mockUseNotificationChannels.mockReturnValue(['email'])
+  })
+
+  it('names each checkbox by its event and channel', () => {
+    renderSettings(githubProject())
+
+    expect(screen.getByRole('checkbox', { name: 'Analysis Completed: Email' })).not.toBeChecked()
+  })
+
+  it('stores a matrix with nothing checked as a mute of every event rather than as no override', () => {
+    renderSettings(githubProject({
+      members: [{ user_id: 'u1', role: 'admin', notification_preferences: { analysis_completed: ['email'] } }],
+    }))
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Analysis Completed: Email' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Notification Settings' }))
+
+    expect(mockUpdateNotifications.mock.calls[0][0].settings.notification_preferences).toEqual(
+      Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event.id, []])),
+    )
+  })
+
+  it('keeps the checked channels of the events it names', () => {
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Vulnerability Found: Email' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Notification Settings' }))
+
+    expect(mockUpdateNotifications.mock.calls[0][0].settings.notification_preferences).toMatchObject({
+      vulnerability_found: ['email'],
+      analysis_completed: [],
+    })
   })
 })

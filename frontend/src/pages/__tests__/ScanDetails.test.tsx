@@ -6,13 +6,13 @@ import { toast } from 'sonner'
 
 import { projectApi } from '@/api/projects'
 import { scanApi } from '@/api/scans'
+import { createMutationCache } from '@/lib/mutation-cache'
 import type { ProjectMember } from '@/types/project'
 import type { SbomResponse, ScanAnalysisResult } from '@/types/scan'
 
 import ScanDetails from '../ScanDetails'
 
 const mockUseScan = vi.fn()
-const mockMutate = vi.fn()
 const releaseControlProps = vi.fn()
 const findingsTableProps = vi.fn()
 const waivedSectionProps = vi.fn()
@@ -48,7 +48,6 @@ vi.mock('@/hooks/queries/use-scans', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/queries/use-scans')>()),
   useScan: (...args: unknown[]) => mockUseScan(...args),
   useScanHistory: () => ({ data: undefined }),
-  useTriggerRescan: () => ({ mutate: mockMutate, isPending: false }),
   useScanStats: () => ({ data: undefined }),
 }))
 
@@ -99,7 +98,7 @@ function scan(status: string) {
 }
 
 function renderPage(entry = SCAN_PATH) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const queryClient = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(
     [{ path: '/projects/:projectId/scans/:scanId', element: <ScanDetails /> }],
     { initialEntries: [entry] },
@@ -122,16 +121,14 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('ScanDetails re-scan button', () => {
-  it('tells the user why the server refused the re-scan', () => {
+  it('tells the user why the server refused the re-scan', async () => {
     mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
-    mockMutate.mockImplementation((_vars, options: { onError: (error: unknown) => void }) =>
-      options.onError({ response: { status: 409, data: { detail: ALREADY_UNDER_WAY } } }),
-    )
+    vi.mocked(scanApi.triggerRescan).mockRejectedValue({ response: { status: 409, data: { detail: ALREADY_UNDER_WAY } } })
 
     renderPage()
     fireEvent.click(screen.getByRole('button', RESCAN_BUTTON))
 
-    expect(toast.error).toHaveBeenCalledWith(expect.any(String), { description: ALREADY_UNDER_WAY })
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Re-scan not started', { description: ALREADY_UNDER_WAY }))
   })
 
   it.each(['pending', 'processing'])('cannot be clicked while the scan is %s', (status) => {
@@ -400,6 +397,16 @@ describe('ScanDetails for a scan pinned by an archive restore', () => {
 
     await waitFor(() => expect(projectApi.unpinScan).toHaveBeenCalledWith('p1', 's1'))
     await waitFor(() => expect(toast.success).toHaveBeenCalled())
+  })
+
+  it('names an unpin that failed and why', async () => {
+    vi.mocked(projectApi.unpinScan).mockRejectedValueOnce(new Error('Network Error'))
+    mockUseScan.mockReturnValue({ data: pinned(), isLoading: false })
+
+    renderPage()
+    fireEvent.click(screen.getByRole('button', UNPIN_BUTTON))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Unpin failed', { description: 'Network Error' }))
   })
 
   it('offers no unpin for a scan that is not pinned', () => {

@@ -190,3 +190,29 @@ describe('UsersPage - removing a row', () => {
     expect(mockRevokeInvitation).not.toHaveBeenCalled()
   })
 })
+
+describe('UsersPage - sorting', () => {
+  it('sorts the users by a clicked column, descending first, from the first page', () => {
+    const limit = SMALL_PAGE_SIZE
+    mockUseUsers.mockReturnValue({ data: Array.from({ length: limit }, (_, i) => makeUser(i)), isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })
+    const lastQuery = () => mockUseUsers.mock.calls[mockUseUsers.mock.calls.length - 1]
+    render(<UsersPage />)
+    expect(lastQuery()).toEqual([0, limit, '', 'username', 'asc'])
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }))
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Email' }))
+
+    expect(lastQuery()).toEqual([0, limit, '', 'email', 'desc'])
+  })
+
+  it('offers no sort on the pending invitations, which are not paged from the server', () => {
+    mockUseUsers.mockReturnValue({ data: [], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [makeInvitation(0)], isLoading: false })
+
+    render(<UsersPage />)
+
+    const [invitationsEmail] = screen.getAllByRole('columnheader', { name: 'Email' })
+    expect(invitationsEmail).not.toHaveClass('cursor-pointer')
+  })
+})

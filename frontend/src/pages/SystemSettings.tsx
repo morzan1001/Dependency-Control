@@ -35,7 +35,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
   })
   
   const { hasPermission } = useAuth()
-  const mutation = useUpdateSystemSettings();
+  const mutation = useUpdateSystemSettings({ errorTitle: "Failed to update settings" });
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -59,7 +59,6 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
   const handleSave = () => {
     mutation.mutate(stripEmptySecrets(formData), {
       onSuccess: () => toast.success("Settings updated successfully"),
-      onError: () => toast.error("Failed to update settings")
     })
   }
 

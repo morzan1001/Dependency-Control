@@ -5,8 +5,12 @@ import type { Waiver } from '@/types/waiver'
 import { EditWaiverDialog } from '../EditWaiverDialog'
 
 const mutate = vi.fn()
+const mockUseUpdateWaiver = vi.fn()
 vi.mock('@/hooks/queries/use-waivers', () => ({
-  useUpdateWaiver: () => ({ mutate, isPending: false }),
+  useUpdateWaiver: (meta: unknown) => {
+    mockUseUpdateWaiver(meta)
+    return { mutate, isPending: false }
+  },
 }))
 
 const EXPIRED: Waiver = {
@@ -33,5 +37,13 @@ describe('EditWaiverDialog', () => {
       expect.objectContaining({ data: expect.objectContaining({ reason: 'still not reachable' }) }),
       expect.anything(),
     )
+  })
+})
+
+describe('EditWaiverDialog failure', () => {
+  it('names a failed save, which the error toast completes with the reason', () => {
+    render(<EditWaiverDialog waiver={EXPIRED} open onOpenChange={() => undefined} />)
+
+    expect(mockUseUpdateWaiver).toHaveBeenCalledWith({ errorTitle: 'Failed to update waiver' })
   })
 })

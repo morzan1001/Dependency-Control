@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
-import { useAppConfig } from '@/hooks/queries/use-system'
+import { useAppConfig, useNotificationChannels } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useClickOutside } from '@/hooks/use-click-outside'
+import { useDialogState, type DialogState } from '@/hooks/use-dialog-state'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
@@ -12,8 +13,8 @@ import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-sc
 import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
 import type { TeamRef } from '@/types/team'
 import { User } from '@/types/user'
-import { cn, getErrorMessage } from '@/lib/utils'
-import { memberPreferences, enforcedPreferences } from '@/lib/notification-preferences'
+import { cn, toggle } from '@/lib/utils'
+import { memberPreferences, enforcedPreferences, withMutedEvents } from '@/lib/notification-preferences'
 import { useAuth } from '@/context/useAuth'
 import {
   isProjectAdmin,
@@ -26,15 +27,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { CopyField } from '@/components/ui/copy-field'
 import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { WebhookManager } from '@/components/WebhookManager'
+import { NotificationMatrix } from '@/components/profile/NotificationMatrix'
 import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
 import { AlertTriangle, RefreshCw, Trash2, Info, Settings, Check, ChevronDown } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
-import { NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
 import { AnalyzerChecklist } from './AnalyzerChecklist'
+import { DEFAULT_RESCAN_HOURS, DEFAULT_RETENTION_DAYS, ManagedGlobally, RescanFields, RetentionFields } from './RetentionRescanFields'
 import {
   Select,
   SelectContent,
@@ -50,14 +51,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 
 interface ProjectSettingsProps {
   project: Project
@@ -126,6 +119,67 @@ function TeamPicker({ teams, selectedIds, onToggle }: Readonly<TeamPickerProps>)
   )
 }
 
+function settingsForm(project: Project) {
+  return {
+    name: project.name,
+    team_ids: project.team_ids ?? [],
+    retention_days: project.retention_days || DEFAULT_RETENTION_DAYS,
+    retention_action: project.retention_action || 'delete',
+    active_analyzers: project.active_analyzers || [],
+    default_branch: project.default_branch,
+    rescan_enabled: project.rescan_enabled,
+    rescan_interval: project.rescan_interval,
+    gitlab_mr_comments_enabled: project.gitlab_mr_comments_enabled || false,
+    gitlab_instance_id: project.gitlab_instance_id,
+    gitlab_project_id: project.gitlab_project_id,
+    gitlab_project_path: project.gitlab_project_path,
+    github_pr_comments_enabled: project.github_pr_comments_enabled || false,
+  }
+}
+
+type SettingsForm = ReturnType<typeof settingsForm>
+
+interface DangerActionProps {
+  title: string
+  description: string
+  label: string
+  pendingLabel: string
+  icon: ReactNode
+  confirmation: ReactNode
+  dialog: DialogState
+  isPending: boolean
+  onConfirm: () => void
+}
+
+function DangerAction({ title, description, label, pendingLabel, icon, confirmation, dialog, isPending, onConfirm }: Readonly<DangerActionProps>) {
+  return (
+    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
+      <div>
+        <div className="font-medium">{title}</div>
+        <div className="text-sm text-muted-foreground">{description}</div>
+      </div>
+      <Button variant="destructive" onClick={dialog.openDialog}>
+        {icon}
+        {label}
+      </Button>
+      <Dialog open={dialog.open} onOpenChange={dialog.setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{confirmation}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={dialog.closeDialog}>Cancel</Button>
+            <Button variant="destructive" onClick={onConfirm} disabled={isPending}>
+              {isPending ? pendingLabel : label}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
 export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSettingsProps>) {
   const queryClient = useQueryClient()
   const { permissions } = useAuth()
@@ -140,19 +194,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const isSystemManager = permissions.includes('system:manage')
   const isMember = !!project.members?.some(m => m.user_id === userId)
   
-  const [name, setName] = useState(project.name)
-  const [teamIds, setTeamIds] = useState<string[]>(project.team_ids ?? [])
-  const [retentionDays, setRetentionDays] = useState(project.retention_days || 90)
-  const [retentionAction, setRetentionAction] = useState<string>(project.retention_action || 'delete')
-  const [analyzers, setAnalyzers] = useState<string[]>(project.active_analyzers || [])
-  const [defaultBranch, setDefaultBranch] = useState<string | undefined>(project.default_branch)
-  const [rescanEnabled, setRescanEnabled] = useState<boolean | undefined>(project.rescan_enabled)
-  const [rescanInterval, setRescanInterval] = useState<number | undefined>(project.rescan_interval)
-  const [gitlabMrCommentsEnabled, setGitlabMrCommentsEnabled] = useState<boolean>(project.gitlab_mr_comments_enabled || false)
-  const [gitlabInstanceId, setGitlabInstanceId] = useState<string | undefined>(project.gitlab_instance_id)
-  const [gitlabProjectId, setGitlabProjectId] = useState<number | undefined>(project.gitlab_project_id)
-  const [gitlabProjectPath, setGitlabProjectPath] = useState<string | undefined>(project.gitlab_project_path)
-  const [githubPrCommentsEnabled, setGithubPrCommentsEnabled] = useState<boolean>(project.github_pr_comments_enabled || false)
+  const [form, setForm] = useState(() => settingsForm(project))
+  const set = (patch: Partial<SettingsForm>) => setForm((current) => ({ ...current, ...patch }))
 
   const [openSettingsAnalyzer, setOpenSettingsAnalyzer] = useState<string | null>(null)
   const [analyzerSettingsState, setAnalyzerSettingsState] = useState<Record<string, Record<string, unknown>>>(
@@ -170,7 +213,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
 
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const rotateDialog = useDialogState()
+  const deleteDialog = useDialogState()
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
   
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
@@ -188,8 +232,9 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const { data: teams } = useTeams();
   const { data: branches } = useProjectBranches(projectId);
   const { data: appConfig } = useAppConfig();
+  const notificationChannels = useNotificationChannels();
   // A project without its own schedule runs on the global one, so that is what it shows.
-  const effectiveRescanEnabled = (rescanEnabled ?? appConfig?.global_rescan_enabled) === true
+  const effectiveRescanEnabled = (form.rescan_enabled ?? appConfig?.global_rescan_enabled) === true
   const { data: webhooks, isLoading: isLoadingWebhooks } = useProjectWebhooks(projectId);
 
   const { data: gitlabInstances } = useGitLabInstances({ active_only: true }, isSystemManager);
@@ -211,9 +256,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       toast.success("Project Deleted", { description: "The project has been permanently deleted." })
       navigate('/projects')
     },
-    onError: (error) => {
-      toast.error("Delete Failed", { description: getErrorMessage(error) })
-    }
+    meta: { errorTitle: "Failed to delete project" },
   })
 
   const updateProjectMutation = useMutation({
@@ -222,27 +265,20 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       toast.success("Project updated successfully")
     },
-    onError: (error) => {
-      toast.error("Failed to update project", {
-        description: getErrorMessage(error)
-      })
-    }
+    meta: { errorTitle: "Failed to update project" },
   })
 
-  const updateNotificationSettingsMutation = useUpdateProjectNotifications()
+  const updateNotificationSettingsMutation = useUpdateProjectNotifications({ errorTitle: "Failed to update notification settings" })
 
   const rotateKeyMutation = useMutation({
     mutationFn: () => projectApi.rotateApiKey(projectId),
     onSuccess: (data) => {
+      rotateDialog.closeDialog()
       setApiKey(data.api_key)
       setIsApiKeyDialogOpen(true)
       toast.success("API Key rotated successfully")
     },
-    onError: (error) => {
-      toast.error("Failed to rotate API key", {
-        description: getErrorMessage(error)
-      })
-    }
+    meta: { errorTitle: "Failed to rotate API key" },
   })
 
 
@@ -260,35 +296,19 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
     return [...visible, ...unseen].sort((a, b) => a.name.localeCompare(b.name))
   }, [teams, project.team_ids])
 
-  const toggleTeam = (id: string) =>
-    setTeamIds((current) =>
-      current.includes(id) ? current.filter((selected) => selected !== id) : [...current, id],
-    )
-
   const handleUpdate = (e?: React.FormEvent) => {
     e?.preventDefault()
     updateProjectMutation.mutate({
-      name,
-      team_ids: teamIds,
-      retention_days: retentionDays,
-      retention_action: retentionAction as 'delete' | 'archive' | 'none',
-      active_analyzers: analyzers,
-      default_branch: defaultBranch ?? null,
-      rescan_enabled: rescanEnabled,
-      rescan_interval: rescanInterval,
-      gitlab_mr_comments_enabled: gitlabMrCommentsEnabled,
-      gitlab_instance_id: gitlabInstanceId || null,
-      gitlab_project_id: gitlabProjectId || null,
-      gitlab_project_path: gitlabProjectPath || null,
-      github_pr_comments_enabled: githubPrCommentsEnabled,
+      ...form,
+      default_branch: form.default_branch ?? null,
+      gitlab_instance_id: form.gitlab_instance_id || null,
+      gitlab_project_id: form.gitlab_project_id || null,
+      gitlab_project_path: form.gitlab_project_path || null,
     })
   }
 
-  const clearGitlabBinding = () => {
-    setGitlabInstanceId(undefined)
-    setGitlabProjectId(undefined)
-    setGitlabProjectPath(undefined)
-  }
+  const clearGitlabBinding = () =>
+    set({ gitlab_instance_id: undefined, gitlab_project_id: undefined, gitlab_project_path: undefined })
 
   const gitlabMrSwitch = (
     <div className="flex items-center justify-between">
@@ -296,31 +316,13 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
         <Label htmlFor="gitlab-mr-comments" className="text-base">Merge Request Decoration</Label>
         <p className="text-sm text-muted-foreground">Post scan results as comments on GitLab Merge Requests.</p>
       </div>
-      <Switch id="gitlab-mr-comments" checked={gitlabMrCommentsEnabled} onCheckedChange={setGitlabMrCommentsEnabled} />
+      <Switch
+        id="gitlab-mr-comments"
+        checked={form.gitlab_mr_comments_enabled}
+        onCheckedChange={(gitlab_mr_comments_enabled) => set({ gitlab_mr_comments_enabled })}
+      />
     </div>
   )
-
-  const toggleAnalyzer = (analyzerId: string) => {
-    setAnalyzers(prev => 
-      prev.includes(analyzerId)
-        ? prev.filter(a => a !== analyzerId)
-        : [...prev, analyzerId]
-    )
-  }
-
-  const toggleNotification = (event: string, channel: string) => {
-    setNotificationPrefs(prev => {
-        const currentChannels = prev[event] || []
-        const newChannels = currentChannels.includes(channel)
-            ? currentChannels.filter(c => c !== channel)
-            : [...currentChannels, channel]
-        
-        return {
-            ...prev,
-            [event]: newChannels
-        }
-    })
-  }
 
   return (
     <div className="space-y-6">
@@ -333,22 +335,22 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             <form onSubmit={handleUpdate} className="space-y-4">
                 <div className="grid gap-2">
                     <Label htmlFor="name">Project Name</Label>
-                    <Input 
-                        id="name" 
-                        value={name} 
-                        onChange={(e) => setName(e.target.value)} 
-                    />
+                    <Input id="name" value={form.name} onChange={(e) => set({ name: e.target.value })} />
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="teams">Teams</Label>
-                    <TeamPicker teams={teamOptions} selectedIds={teamIds} onToggle={toggleTeam} />
+                    <TeamPicker
+                        teams={teamOptions}
+                        selectedIds={form.team_ids}
+                        onToggle={(id) => set({ team_ids: toggle(form.team_ids, id) })}
+                    />
                     <p className="text-xs text-muted-foreground">
                         Every selected team's members can open this project, and it is listed under each of them.
                     </p>
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="defaultBranch">Default Branch</Label>
-                    <Select value={defaultBranch || "none"} onValueChange={(val) => setDefaultBranch(val === "none" ? undefined : val)}>
+                    <Select value={form.default_branch || "none"} onValueChange={(val) => set({ default_branch: val === "none" ? undefined : val })}>
                         <SelectTrigger id="defaultBranch">
                             <SelectValue placeholder="Select default branch" />
                         </SelectTrigger>
@@ -363,96 +365,28 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         This branch will be selected by default on the dashboard.
                     </p>
                 </div>
-                <div className="grid gap-2">
-                    <Label htmlFor="retention">Data Retention</Label>
-                    {appConfig?.retention_mode === 'global' ? (
-                        <div className="p-3 bg-muted rounded-md text-sm border">
-                            <p className="font-medium">Managed Globally</p>
-                            <p className="text-muted-foreground mt-1">
-                                {appConfig.global_retention_days && appConfig.global_retention_days > 0
-                                    ? `Data is retained for ${appConfig.global_retention_days} days (${
-                                        { archive: 'archived to S3', none: 'kept forever', delete: 'deleted' }[appConfig.global_retention_action || 'delete']
-                                      }).`
-                                    : "Data retention is disabled (data is kept forever)."}
-                            </p>
-                        </div>
-                    ) : (
-                        <div className="border rounded-md p-4 space-y-4">
-                            <div className="grid gap-2">
-                                <Label htmlFor="retention">Retention Period (Days)</Label>
-                                <Input
-                                    id="retention"
-                                    type="number"
-                                    min="1"
-                                    max="36500"
-                                    value={retentionDays}
-                                    onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)}
-                                />
-                            </div>
-                            <div className="grid gap-2">
-                                <Label>Retention Action</Label>
-                                <Select value={retentionAction} onValueChange={setRetentionAction}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select action" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="delete">Delete</SelectItem>
-                                        {appConfig?.archive_enabled && (
-                                            <SelectItem value="archive">Archive to S3</SelectItem>
-                                        )}
-                                        <SelectItem value="none">None (Keep Forever)</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-xs text-muted-foreground">
-                                    Action to take when scan data exceeds the retention period.
-                                </p>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                <RetentionFields
+                    days={form.retention_days}
+                    action={form.retention_action}
+                    onChange={set}
+                    appConfig={appConfig}
+                />
                 <div className="grid gap-2">
                     <Label>Periodic Re-scanning</Label>
                     {appConfig?.rescan_mode === 'global' ? (
-                        <div className="p-3 bg-muted rounded-md text-sm border">
-                            <p className="font-medium">Managed Globally</p>
-                            <p className="text-muted-foreground mt-1">
-                                {appConfig.global_rescan_enabled 
-                                    ? `Re-scanning is enabled (every ${appConfig.global_rescan_interval} hours).` 
-                                    : "Re-scanning is disabled globally."}
-                            </p>
-                        </div>
+                        <ManagedGlobally>
+                            {appConfig.global_rescan_enabled
+                                ? `Re-scanning is enabled (every ${appConfig.global_rescan_interval} hours).`
+                                : "Re-scanning is disabled globally."}
+                        </ManagedGlobally>
                     ) : (
-                        <div className="border rounded-md p-4 space-y-4">
-                            <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                    <Label htmlFor="rescanEnabled" className="text-base">Enable Re-scanning</Label>
-                                    <p className="text-sm text-muted-foreground">
-                                        Automatically re-scan the latest SBOMs periodically.
-                                    </p>
-                                </div>
-                                <Switch
-                                    id="rescanEnabled"
-                                    checked={effectiveRescanEnabled}
-                                    onCheckedChange={(checked) => setRescanEnabled(checked)}
-                                />
-                            </div>
-                            
-                            {effectiveRescanEnabled && (
-                                <div className="grid gap-2">
-                                    <Label htmlFor="rescanInterval">Interval (Hours)</Label>
-                                    <Input 
-                                        id="rescanInterval" 
-                                        type="number" 
-                                        min="1"
-                                        value={rescanInterval ?? appConfig?.global_rescan_interval ?? 24} 
-                                        onChange={(e) => setRescanInterval(Number.parseInt(e.target.value) || 24)} 
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                        How often to re-scan the project.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
+                        <RescanFields
+                            enabled={effectiveRescanEnabled}
+                            interval={form.rescan_interval ?? appConfig?.global_rescan_interval ?? DEFAULT_RESCAN_HOURS}
+                            onEnabledChange={(rescan_enabled) => set({ rescan_enabled })}
+                            onIntervalChange={(rescan_interval) => set({ rescan_interval })}
+                            description="Automatically re-scan the latest SBOMs periodically."
+                        />
                     )}
                 </div>
 
@@ -493,8 +427,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                 </div>
                                 <Switch
                                     id="github-pr-comments"
-                                    checked={githubPrCommentsEnabled}
-                                    onCheckedChange={setGithubPrCommentsEnabled}
+                                    checked={form.github_pr_comments_enabled}
+                                    onCheckedChange={(github_pr_comments_enabled) => set({ github_pr_comments_enabled })}
                                 />
                             </div>
                         </div>
@@ -505,17 +439,17 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
                         <div className="border rounded-md p-4 space-y-2 text-sm">
-                            {gitlabInstanceId ? (
+                            {form.gitlab_instance_id ? (
                                 <>
                                     <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-1">
                                         <span className="text-muted-foreground">Instance</span>
-                                        <span className="font-mono">{gitlabInstanceId}</span>
+                                        <span className="font-mono">{form.gitlab_instance_id}</span>
                                         <span className="text-muted-foreground">Project ID</span>
-                                        <span className="font-mono">{gitlabProjectId}</span>
-                                        {gitlabProjectPath && (
+                                        <span className="font-mono">{form.gitlab_project_id}</span>
+                                        {form.gitlab_project_path && (
                                             <>
                                                 <span className="text-muted-foreground">Project Path</span>
-                                                <span className="font-mono">{gitlabProjectPath}</span>
+                                                <span className="font-mono">{form.gitlab_project_path}</span>
                                             </>
                                         )}
                                     </div>
@@ -543,8 +477,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                             <div className="grid gap-2">
                                 <Label htmlFor="gitlab-instance">GitLab Instance</Label>
                                 <Select
-                                    value={gitlabInstanceId || "none"}
-                                    onValueChange={(value) => (value === "none" ? clearGitlabBinding() : setGitlabInstanceId(value))}
+                                    value={form.gitlab_instance_id || "none"}
+                                    onValueChange={(value) => (value === "none" ? clearGitlabBinding() : set({ gitlab_instance_id: value }))}
                                 >
                                     <SelectTrigger id="gitlab-instance">
                                         <SelectValue placeholder="Select GitLab instance" />
@@ -563,7 +497,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                 </p>
                             </div>
 
-                            {gitlabInstanceId && (
+                            {form.gitlab_instance_id && (
                                 <>
                                     <div className="grid gap-2">
                                         <Label htmlFor="gitlab-project-id">GitLab Project ID</Label>
@@ -571,8 +505,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                             id="gitlab-project-id"
                                             type="number"
                                             placeholder="12345"
-                                            value={gitlabProjectId || ''}
-                                            onChange={(e) => setGitlabProjectId(Number.parseInt(e.target.value) || undefined)}
+                                            value={form.gitlab_project_id || ''}
+                                            onChange={(e) => set({ gitlab_project_id: Number.parseInt(e.target.value) || undefined })}
                                         />
                                         <p className="text-xs text-muted-foreground">
                                             The numeric project ID from GitLab (found in project settings).
@@ -584,8 +518,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                         <Input
                                             id="gitlab-project-path"
                                             placeholder="namespace/project-name"
-                                            value={gitlabProjectPath || ''}
-                                            onChange={(e) => setGitlabProjectPath(e.target.value || undefined)}
+                                            value={form.gitlab_project_path || ''}
+                                            onChange={(e) => set({ gitlab_project_path: e.target.value || undefined })}
                                         />
                                         <p className="text-xs text-muted-foreground">
                                             For display purposes only. Taken from GitLab when the binding is set or changed.
@@ -603,10 +537,10 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     <Label>Active Analyzers</Label>
                     <AnalyzerChecklist
                         idPrefix="settings-analyzer"
-                        selected={analyzers}
-                        onToggle={toggleAnalyzer}
+                        selected={form.active_analyzers}
+                        onToggle={(analyzerId) => set({ active_analyzers: toggle(form.active_analyzers, analyzerId) })}
                         className="max-h-[300px]"
-                        renderAction={(analyzerId) => hasSettingsSchema(analyzerId) && analyzers.includes(analyzerId) && isAdmin && (
+                        renderAction={(analyzerId) => hasSettingsSchema(analyzerId) && form.active_analyzers.includes(analyzerId) && isAdmin && (
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -691,55 +625,22 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 return null;
             })()}
 
-            <div className="border rounded-md">
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead className="w-[300px]">Event</TableHead>
-                            {NOTIFICATION_CHANNELS.filter(c => appConfig?.notifications[c.id]).map(channel => (
-                                <TableHead key={channel.id} className="capitalize text-center">{channel.label}</TableHead>
-                            ))}
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {NOTIFICATION_EVENTS.map(event => (
-                            <TableRow key={event.id} className={enforceNotificationSettings && !isAdmin ? 'opacity-60' : ''}>
-                                <TableCell>
-                                    <div className="font-medium">{event.label}</div>
-                                    <div className="text-xs text-muted-foreground">{event.description}</div>
-                                </TableCell>
-                                {NOTIFICATION_CHANNELS.filter(c => appConfig?.notifications[c.id]).map(channel => (
-                                    <TableCell key={channel.id} className="text-center">
-                                        <div className="flex justify-center">
-                                            <Checkbox
-                                                id={`${event.id}-${channel.id}`}
-                                                checked={(notificationPrefs[event.id] || []).includes(channel.id)}
-                                                onCheckedChange={() => toggleNotification(event.id, channel.id)}
-                                                disabled={enforceNotificationSettings && !isAdmin}
-                                            />
-                                        </div>
-                                    </TableCell>
-                                ))}
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
-            </div>
+            <NotificationMatrix
+                value={notificationPrefs}
+                onChange={setNotificationPrefs}
+                channels={notificationChannels}
+                disabled={enforceNotificationSettings && !isAdmin}
+            />
             {(isMember || isAdmin) && (
                 <Button
                     onClick={() => updateNotificationSettingsMutation.mutate({
                         id: project.id,
                         settings: {
-                            // Every event is sent, so an all-unchecked matrix is stored as a mute rather than as no override.
-                            notification_preferences: {
-                                ...Object.fromEntries(NOTIFICATION_EVENTS.map(event => [event.id, []])),
-                                ...notificationPrefs,
-                            },
+                            notification_preferences: withMutedEvents(notificationPrefs),
                             enforce_notification_settings: enforceNotificationSettings
                         }
                     }, {
                         onSuccess: () => toast.success("Notification settings updated"),
-                        onError: () => toast.error("Failed to update notification settings")
                     })}
                     disabled={updateNotificationSettingsMutation.isPending}
                 >
@@ -773,33 +674,31 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             </CardHeader>
             <CardContent className="space-y-4">
                 {isAdmin && (
-                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
-                        <div>
-                            <div className="font-medium">Rotate API Key</div>
-                            <div className="text-sm text-muted-foreground">
-                                Invalidate the current API key and generate a new one.
-                            </div>
-                        </div>
-                        <Button variant="destructive" onClick={() => rotateKeyMutation.mutate()} disabled={rotateKeyMutation.isPending}>
-                            {rotateKeyMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                            Rotate Key
-                        </Button>
-                    </div>
+                    <DangerAction
+                        title="Rotate API Key"
+                        description="Invalidate the current API key and generate a new one."
+                        label="Rotate Key"
+                        pendingLabel="Rotating..."
+                        icon={<RefreshCw className="mr-2 h-4 w-4" />}
+                        confirmation={<>Are you sure you want to rotate the API key of <strong>{project.name}</strong>? The current key stops working at once, so every pipeline that still sends it fails until it gets the new one.</>}
+                        dialog={rotateDialog}
+                        isPending={rotateKeyMutation.isPending}
+                        onConfirm={() => rotateKeyMutation.mutate()}
+                    />
                 )}
 
                 {canDelete && (
-                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
-                        <div>
-                            <div className="font-medium">Delete Project</div>
-                            <div className="text-sm text-muted-foreground">
-                                Permanently delete this project and all its data. This action cannot be undone.
-                            </div>
-                        </div>
-                        <Button variant="destructive" onClick={() => setIsDeleteDialogOpen(true)}>
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete Project
-                        </Button>
-                    </div>
+                    <DangerAction
+                        title="Delete Project"
+                        description="Permanently delete this project and all its data. This action cannot be undone."
+                        label="Delete Project"
+                        pendingLabel="Deleting..."
+                        icon={<Trash2 className="mr-2 h-4 w-4" />}
+                        confirmation={<>Are you sure you want to delete this project? This action cannot be undone and will permanently remove all scans, findings, and settings associated with <strong>{project.name}</strong>.</>}
+                        dialog={deleteDialog}
+                        isPending={deleteProjectMutation.isPending}
+                        onConfirm={() => deleteProjectMutation.mutate()}
+                    />
                 )}
             </CardContent>
         </Card>
@@ -816,27 +715,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             <CopyField value={apiKey || ''} what="API key" />
             <DialogFooter>
                 <Button onClick={() => setIsApiKeyDialogOpen(false)}>Close</Button>
-            </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <DialogContent>
-            <DialogHeader>
-                <DialogTitle>Delete Project</DialogTitle>
-                <DialogDescription>
-                    Are you sure you want to delete this project? This action cannot be undone and will permanently remove all scans, findings, and settings associated with <strong>{project.name}</strong>.
-                </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Cancel</Button>
-                <Button
-                    variant="destructive"
-                    onClick={() => deleteProjectMutation.mutate()}
-                    disabled={deleteProjectMutation.isPending}
-                >
-                    {deleteProjectMutation.isPending ? "Deleting..." : "Delete Project"}
-                </Button>
             </DialogFooter>
         </DialogContent>
       </Dialog>

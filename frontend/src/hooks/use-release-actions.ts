@@ -82,7 +82,8 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
             },
           })
         },
-        onError: () => toast.error(`Could not withdraw this scan from ${withdrawnFrom}`),
+        onError: (error) =>
+          toast.error(`Could not withdraw this scan from ${withdrawnFrom}`, { description: getErrorMessage(error) }),
       },
     )
   }

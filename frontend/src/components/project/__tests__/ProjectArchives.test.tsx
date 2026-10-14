@@ -11,12 +11,16 @@ import type { ArchiveFilters, ArchiveListItem, ArchiveListResponse } from '@/typ
 
 const mockUseProjectArchives = vi.fn()
 const mockRestore = vi.fn()
+const mockUseRestoreArchive = vi.fn()
 const mockHasPermission = vi.fn()
 
 vi.mock('@/hooks/queries/use-projects', () => ({
   useProjectArchives: (...args: unknown[]) => mockUseProjectArchives(...args),
   useArchiveBranches: () => ({ data: ['main'] }),
-  useRestoreArchive: () => ({ mutate: mockRestore, isPending: false }),
+  useRestoreArchive: (meta: unknown) => {
+    mockUseRestoreArchive(meta)
+    return { mutate: mockRestore, isPending: false }
+  },
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: mockHasPermission }) }))
 vi.mock('@/api/projects', () => ({ projectApi: { downloadArchive: vi.fn() } }))
@@ -112,5 +116,13 @@ describe('ProjectArchives date filters', () => {
     const filters = calls[calls.length - 1]?.[3] as ArchiveFilters | undefined
     expect(filters?.date_from).toBe(new Date('2026-07-01T00:00:00').toISOString())
     expect(filters?.date_to).toBe(new Date('2026-07-01T23:59:59').toISOString())
+  })
+})
+
+describe('ProjectArchives restore failure', () => {
+  it('names a failed restore, which the error toast completes with the reason', () => {
+    render(<ProjectArchives projectId="p1" />)
+
+    expect(mockUseRestoreArchive).toHaveBeenCalledWith({ errorTitle: 'Restore failed' })
   })
 })

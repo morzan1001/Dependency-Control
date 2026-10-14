@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createMutationCache } from "@/lib/mutation-cache";
 import { Permissions } from "@/lib/permissions";
 import type {
   ApiKey,
@@ -184,6 +185,7 @@ describe("ApiKeysCard", () => {
     // App.tsx sets no mutation defaults, so neither does this: a `mutations.gcTime` here would
     // hide whether the create mutation clears its own plaintext.
     queryClient = new QueryClient({
+      mutationCache: createMutationCache(),
       defaultOptions: { queries: { retry: false } },
     });
     granted.current = [Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC];

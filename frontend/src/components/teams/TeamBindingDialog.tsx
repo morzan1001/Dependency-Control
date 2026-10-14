@@ -109,10 +109,8 @@ function BoundInstance({
   );
 }
 
-// Both providers answer a refusal the same way: the 409 names the team that already holds the
-// group, and that name is the whole value of the message.
 function useBindingWrite(teamId: string, onSaved: () => void) {
-  const setBinding = useSetTeamBinding();
+  const setBinding = useSetTeamBinding({ errorTitle: "Failed to save binding" });
   const write = (data: TeamBindingRequest) =>
     setBinding.mutate(
       { teamId, data },
@@ -121,7 +119,6 @@ function useBindingWrite(teamId: string, onSaved: () => void) {
           onSaved();
           toast.success("Binding saved");
         },
-        onError: (error) => toast.error(getErrorMessage(error)),
       },
     );
   return { write, isPending: setBinding.isPending };
@@ -271,7 +268,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindin
   const { data: githubInstances, isLoading: githubLoading, error: githubError } = useGitHubInstances(undefined, isOpen);
   const { data: gitlabInstances, isLoading: gitlabLoading, error: gitlabError } = useGitLabInstances(undefined, isOpen);
 
-  const clearBinding = useClearTeamBinding();
+  const clearBinding = useClearTeamBinding({ errorTitle: "Failed to remove binding" });
 
   const instancesLoading = githubLoading || gitlabLoading;
   const instancesError = githubError ?? gitlabError;
@@ -309,10 +306,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindin
     if (!team) return;
     clearBinding.mutate(
       { teamId: team.id, instanceId },
-      {
-        onSuccess: () => toast.success("Binding removed"),
-        onError: (error) => toast.error(getErrorMessage(error)),
-      },
+      { onSuccess: () => toast.success("Binding removed") },
     );
   };
 

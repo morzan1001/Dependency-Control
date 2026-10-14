@@ -39,8 +39,8 @@ import {
   useCreateApiKey,
   useRevokeApiKey,
 } from '@/hooks/queries/use-api-keys';
-import { getErrorMessage } from '@/lib/utils';
 import { Permissions } from '@/lib/permissions';
+import { toggle } from '@/lib/utils';
 import type { ApiKey, ApiKeySurface } from '@/types/apiKey';
 
 const DEFAULT_EXPIRY_DAYS = 90;
@@ -112,38 +112,27 @@ export function ApiKeysCard() {
   const [newSurfaces, setNewSurfaces] = useState<ApiKeySurface[]>([]);
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [keyToRevoke, setKeyToRevoke] = useState<ApiKey | null>(null);
-  const createMutation = useCreateApiKey();
-  const revokeMutation = useRevokeApiKey();
+  const createMutation = useCreateApiKey({ errorTitle: 'Error' });
+  const revokeMutation = useRevokeApiKey({ errorTitle: 'Error' });
 
   const mintableSurfaces = SURFACE_ORDER.filter((surface) =>
     hasPermission(SURFACE_PERMISSIONS[surface]),
   );
   const canSubmit = newName.trim() !== '' && newSurfaces.length > 0;
 
-  const toggleSurface = (surface: ApiKeySurface) => {
-    setNewSurfaces((current) =>
-      current.includes(surface)
-        ? current.filter((entry) => entry !== surface)
-        : [...current, surface],
+  const handleCreate = () => {
+    createMutation.mutate(
+      { name: newName.trim(), surfaces: newSurfaces, expires_in_days: newExpiry },
+      {
+        onSuccess: (created) => {
+          setRevealedToken(created.token);
+          setNewName('');
+          setNewExpiry(DEFAULT_EXPIRY_DAYS);
+          setNewSurfaces([]);
+          setCreateOpen(false);
+        },
+      },
     );
-  };
-
-  const handleCreate = async () => {
-    try {
-      const created = await createMutation.mutateAsync({
-        name: newName.trim(),
-        surfaces: newSurfaces,
-        expires_in_days: newExpiry,
-      });
-      setRevealedToken(created.token);
-      setNewName('');
-      setNewExpiry(DEFAULT_EXPIRY_DAYS);
-      setNewSurfaces([]);
-      setCreateOpen(false);
-    } catch (err) {
-      // The refusal names the surface the caller cannot reach; a generic message would hide it.
-      toast.error('Error', { description: getErrorMessage(err) });
-    }
   };
 
   const handleRevoke = (key: ApiKey) => {
@@ -152,7 +141,6 @@ export function ApiKeysCard() {
         setKeyToRevoke(null);
         toast.success('Key revoked');
       },
-      onError: (err) => toast.error('Error', { description: getErrorMessage(err) }),
     });
   };
 
@@ -303,7 +291,7 @@ export function ApiKeysCard() {
                   <Checkbox
                     id={`api-key-surface-${surface}`}
                     checked={newSurfaces.includes(surface)}
-                    onCheckedChange={() => toggleSurface(surface)}
+                    onCheckedChange={() => setNewSurfaces((current) => toggle(current, surface))}
                   />
                   <div className="grid gap-0.5 leading-none">
                     <Label htmlFor={`api-key-surface-${surface}`}>

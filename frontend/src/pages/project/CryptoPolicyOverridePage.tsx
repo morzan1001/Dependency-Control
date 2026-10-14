@@ -8,7 +8,6 @@ import { CryptoPolicyEditor } from "@/components/crypto/CryptoPolicyEditor";
 import { PolicyAuditTimeline } from "@/components/audit/PolicyAuditTimeline";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CryptoRule } from "@/types/cryptoPolicy";
-import { getErrorMessage } from "@/lib/utils";
 
 interface Props {
   readonly projectId: string;
@@ -28,7 +27,7 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
       toast.success("Override saved");
       qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
-    onError: (e: unknown) => toast.error(`Save failed: ${getErrorMessage(e)}`),
+    meta: { errorTitle: "Failed to save override" },
   });
 
   const reset = useMutation({
@@ -37,6 +36,7 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
       toast.success("Override removed");
       qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
+    meta: { errorTitle: "Failed to remove override" },
   });
 
   if (effective.isLoading) return <div>Loading…</div>;
@@ -86,7 +86,7 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
           onSave={async (rules) => { await save.mutateAsync(rules); }}
           onResetOverride={
             editable && hasOverride
-              ? async () => { await reset.mutateAsync(); }
+              ? () => reset.mutate()
               : undefined
           }
         />

@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { getErrorMessage } from '@/lib/utils'
 import { expirationDateInputToIso } from '@/lib/waiver-date'
 
 import { Button } from '@/components/ui/button'
@@ -51,7 +50,7 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
     const [reason, setReason] = useState('')
     const [date, setDate] = useState('')
 
-    const createMutation = useCreateWaiver()
+    const createMutation = useCreateWaiver({ errorTitle: 'Failed to create global waiver' })
 
     const resetForm = () => {
         setFindingId('')
@@ -87,11 +86,6 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
                 toast.success('Global waiver created successfully')
                 resetForm()
                 onOpenChange(false)
-            },
-            onError: (error) => {
-                toast.error('Failed to create global waiver', {
-                    description: getErrorMessage(error),
-                })
             },
         })
     }

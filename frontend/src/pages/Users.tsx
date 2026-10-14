@@ -14,8 +14,8 @@ import { SMALL_PAGE_SIZE } from '@/lib/constants';
 
 export default function UsersPage() {
   const [selected, setSelected] = useState<User | null>(null);
-  const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
-    usePaginationState({ defaultSort: 'username', defaultOrder: 'asc' });
+  const pagination = usePaginationState({ defaultSort: 'username', defaultOrder: 'asc' });
+  const { search, setSearch, page, setPage, sortBy, sortOrder, debouncedSearch } = pagination;
   const limit = SMALL_PAGE_SIZE;
 
   const { hasPermission } = useAuth();
@@ -130,16 +130,7 @@ export default function UsersPage() {
                 limit={limit}
                 onPageChange={(p) => setPage(p + 1)}
                 onSelectUser={setSelected}
-                sortBy={sortBy}
-                sortOrder={sortOrder}
-                onSort={(column) => {
-                  if (sortBy === column) {
-                    setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-                  } else {
-                    setSortBy(column);
-                    setSortOrder("desc");
-                  }
-                }}
+                sort={pagination}
               />
             </CardContent>
           </Card>

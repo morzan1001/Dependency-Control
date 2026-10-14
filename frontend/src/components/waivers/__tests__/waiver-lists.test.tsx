@@ -1,8 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { toast } from 'sonner'
+import { act } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ProjectWaivers } from '@/components/project/ProjectWaivers'
+import { createMutationCache } from '@/lib/mutation-cache'
+import { showObservedElements } from '@/test/intersection-observer'
 import GlobalWaivers from '@/pages/GlobalWaivers'
 import { waiverApi } from '@/api/waivers'
 import type { Waiver, WaiversPaginatedResponse } from '@/types/waiver'
@@ -42,7 +46,7 @@ function page(items: Waiver[], total = items.length): WaiversPaginatedResponse {
 }
 
 function renderList(ui: React.ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const client = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
 }
 
@@ -99,6 +103,16 @@ describe('the project waiver list', () => {
     await waitFor(() => expect(waiverApi.delete).toHaveBeenCalledWith('w1', expect.anything()))
   })
 
+  it('names a deletion that failed and why', async () => {
+    vi.mocked(waiverApi.delete).mockRejectedValue(new Error('Network Error'))
+    renderList(<ProjectWaivers projectId="p1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete waiver' }))
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to delete waiver', { description: 'Network Error' }))
+  })
+
   it('offers neither edit nor delete to a project viewer', async () => {
     project.role = 'viewer'
     renderList(<ProjectWaivers projectId="p1" />)
@@ -140,6 +154,25 @@ describe('the project waiver list', () => {
     renderList(<ProjectWaivers projectId="p1" />)
 
     expect(await screen.findByText('Scroll to load more')).toBeInTheDocument()
+  })
+
+  it('keeps the loaded rows, stops requesting a failed later page and offers a retry', async () => {
+    const restoreObserver = showObservedElements()
+    try {
+      vi.mocked(waiverApi.getAll).mockImplementation(async (params) => {
+        if (params?.skip) throw new Error('Request failed with status code 504')
+        return page([WAIVER], 120)
+      })
+      renderList(<ProjectWaivers projectId="p1" />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+
+      expect(screen.getByText('minimist')).toBeInTheDocument()
+      expect(vi.mocked(waiverApi.getAll).mock.calls.map(([params]) => params?.skip)).toEqual([0, 50, 50])
+    } finally {
+      restoreObserver()
+    }
   })
 })
 

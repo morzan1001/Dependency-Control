@@ -2,7 +2,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -11,7 +10,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AnalyzerChecklist } from "@/components/project/AnalyzerChecklist"
+import { DEFAULT_RESCAN_HOURS, DEFAULT_RETENTION_DAYS, RescanFields, RetentionActionSelect } from "@/components/project/RetentionRescanFields"
 import { useAppConfig } from "@/hooks/queries/use-system"
+import { toggle } from "@/lib/utils"
 import { SettingsTabProps } from "@/types/system"
 
 export function GeneralSettingsTab({
@@ -24,12 +25,6 @@ export function GeneralSettingsTab({
   const { data: appConfig } = useAppConfig()
   const analyzers = formData.default_active_analyzers ?? [];
 
-  const toggleAnalyzer = (analyzerId: string) => {
-    const updated = analyzers.includes(analyzerId)
-      ? analyzers.filter(a => a !== analyzerId)
-      : [...analyzers, analyzerId];
-    handleInputChange('default_active_analyzers', updated);
-  };
   return (
     <div className="space-y-4">
       <Card>
@@ -103,7 +98,7 @@ export function GeneralSettingsTab({
                   type="number"
                   min="0"
                   max="36500"
-                  value={formData.global_retention_days ?? 90}
+                  value={formData.global_retention_days ?? DEFAULT_RETENTION_DAYS}
                   onChange={(e) => handleInputChange('global_retention_days', Number.parseInt(e.target.value) || 0)}
                 />
                 <p className="text-sm text-muted-foreground">
@@ -112,22 +107,13 @@ export function GeneralSettingsTab({
               </div>
 
               <div className="grid gap-2">
-                <Label>Retention Action</Label>
-                <Select
+                <Label htmlFor="global-retention-action">Retention Action</Label>
+                <RetentionActionSelect
+                  id="global-retention-action"
                   value={formData.global_retention_action || 'delete'}
-                  onValueChange={(value) => handleInputChange('global_retention_action', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select action" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="delete">Delete</SelectItem>
-                    {appConfig?.archive_enabled && (
-                      <SelectItem value="archive">Archive to S3</SelectItem>
-                    )}
-                    <SelectItem value="none">None (Keep Forever)</SelectItem>
-                  </SelectContent>
-                </Select>
+                  onChange={(action) => handleInputChange('global_retention_action', action)}
+                  archiveEnabled={appConfig?.archive_enabled}
+                />
                 <p className="text-sm text-muted-foreground">
                   "Delete" permanently removes old scan data.{appConfig?.archive_enabled && ' "Archive to S3" compresses and stores data in S3-compatible storage before removing it from the database.'} "None" keeps data indefinitely.
                 </p>
@@ -169,33 +155,13 @@ export function GeneralSettingsTab({
           </div>
 
           {formData.rescan_mode === 'global' && (
-            <div className="space-y-4 border p-4 rounded-md">
-              <div className="flex items-center justify-between space-x-2">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Enable Periodic Re-scanning</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Automatically re-scan projects to detect new vulnerabilities in existing dependencies.
-                  </p>
-                </div>
-                <Switch 
-                  checked={formData.global_rescan_enabled || false}
-                  onCheckedChange={(checked) => handleInputChange('global_rescan_enabled', checked)}
-                />
-              </div>
-              
-              {formData.global_rescan_enabled && (
-                <div className="grid gap-2">
-                  <Label htmlFor="global-rescan-interval">Re-scan Interval (Hours)</Label>
-                  <Input 
-                    id="global-rescan-interval" 
-                    type="number"
-                    min="1"
-                    value={formData.global_rescan_interval ?? 24} 
-                    onChange={(e) => handleInputChange('global_rescan_interval', Number.parseInt(e.target.value) || 1)}
-                  />
-                </div>
-              )}
-            </div>
+            <RescanFields
+              enabled={formData.global_rescan_enabled || false}
+              interval={formData.global_rescan_interval ?? DEFAULT_RESCAN_HOURS}
+              onEnabledChange={(enabled) => handleInputChange('global_rescan_enabled', enabled)}
+              onIntervalChange={(hours) => handleInputChange('global_rescan_interval', hours)}
+              description="Automatically re-scan projects to detect new vulnerabilities in existing dependencies."
+            />
           )}
           
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
@@ -249,7 +215,7 @@ export function GeneralSettingsTab({
           <AnalyzerChecklist
             idPrefix="default-analyzer"
             selected={analyzers}
-            onToggle={toggleAnalyzer}
+            onToggle={(analyzerId) => handleInputChange('default_active_analyzers', toggle(analyzers, analyzerId))}
             className="max-h-[400px]"
           />
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
