@@ -185,6 +185,22 @@ describe("FindingDetailsModal advisory details", () => {
     }
   });
 
+  it("links a CVE that absorbed its GitHub advisory once, to NVD", () => {
+    renderModal(
+      finding({
+        details: {
+          vulnerabilities: [
+            { id: "CVE-2024-1", resolved_cve: "CVE-2024-1", github_advisory_url: "https://github.com/advisories/GHSA-aaaa-bbbb-cccc" },
+          ],
+        },
+      }),
+    );
+
+    const links = screen.getAllByRole("link", { name: "CVE-2024-1" });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", `${NVD}CVE-2024-1`);
+  });
+
   it("links a GHSA without a stored page to GitHub's advisory database", () => {
     renderModal(finding({ details: { vulnerabilities: [{ id: "GHSA-aaaa-bbbb-cccc" }] } }));
 
