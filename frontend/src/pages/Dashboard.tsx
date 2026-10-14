@@ -8,8 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Skeleton } from '@/components/ui/skeleton'
 import { SortableHead } from '@/components/ui/sortable-head'
 import { TableHead } from '@/components/ui/table'
-import { useSortState } from '@/hooks/use-pagination-state'
-import { useState } from 'react'
+import { usePaginationState } from '@/hooks/use-pagination-state'
 import { Pagination } from '@/components/ui/pagination'
 import { formatDate } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
@@ -38,8 +37,8 @@ function ProjectStatusPill({ stats }: Readonly<{ stats: Project['stats'] }>) {
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const [page, setPage] = useState(1)
-  const sort = useSortState('created_at')
+  const pagination = usePaginationState()
+  const { page, setPage, sortBy, sortOrder } = pagination
   const limit = DEFAULT_PAGE_SIZE
   const { data: recentScans, isLoading: isLoadingScans } = useRecentScans()
   const { data: dashboardStats, isLoading: isLoadingStats } = useDashboardStats()
@@ -48,8 +47,8 @@ export default function Dashboard() {
     '', // search
     page,
     limit,
-    sort.sortBy,
-    sort.sortOrder
+    sortBy,
+    sortOrder
   )
 
   const scanList = recentScans || []
@@ -241,11 +240,11 @@ export default function Dashboard() {
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                            <SortableHead column="name" sort={sort} className="w-auto">Name</SortableHead>
+                            <SortableHead column="name" sort={pagination} className="w-auto">Name</SortableHead>
                             <TableHead className="w-[150px]">Teams</TableHead>
-                            <SortableHead column="last_scan_at" sort={sort} className="w-[150px]">Last Scan</SortableHead>
-                            <SortableHead column="critical" sort={sort} className="w-[100px]">Critical</SortableHead>
-                            <SortableHead column="high" sort={sort} className="w-[100px]">High</SortableHead>
+                            <SortableHead column="last_scan_at" sort={pagination} className="w-[150px]">Last Scan</SortableHead>
+                            <SortableHead column="critical" sort={pagination} className="w-[100px]">Critical</SortableHead>
+                            <SortableHead column="high" sort={pagination} className="w-[100px]">High</SortableHead>
                             <TableHead className="w-[120px]">Status</TableHead>
                         </tr>
                     </thead>

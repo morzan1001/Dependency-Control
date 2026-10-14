@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SortableHead } from '@/components/ui/sortable-head'
-import { useSortState } from '@/hooks/use-pagination-state'
+import { usePaginationState } from '@/hooks/use-pagination-state'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, RefreshCw, Rocket, Trash2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
@@ -38,9 +38,9 @@ function rescanNote(status?: string): string {
 }
 
 export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
-  const [page, setPage] = useState(1)
+  const pagination = usePaginationState()
+  const { page, setPage, sortBy, sortOrder } = pagination
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
-  const sort = useSortState('created_at')
   const [releasesOnly, setReleasesOnly] = useState(false)
   const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
@@ -58,7 +58,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
   const { data: scans, isLoading, isPlaceholderData } = useProjectScans(
     projectId,
     {
-      page, limit, branch: selectedBranch, sortBy: sort.sortBy, sortOrder: sort.sortOrder,
+      page, limit, branch: selectedBranch, sortBy, sortOrder,
       excludeRescans: true,
       // A release commonly sits on a branch that has since been deleted, tag builds above all.
       excludeDeletedBranches: !selectedBranch && !releasesOnly,
@@ -171,12 +171,12 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
           <Table>
             <TableHeader>
               <TableRow>
-                <SortableHead column="created_at" sort={sort} className="w-[200px]">Date</SortableHead>
-                <SortableHead column="pipeline_iid" sort={sort} className="w-[120px]">Source</SortableHead>
-                <SortableHead column="branch" sort={sort} className="w-[200px]">Branch</SortableHead>
+                <SortableHead column="created_at" sort={pagination} className="w-[200px]">Date</SortableHead>
+                <SortableHead column="pipeline_iid" sort={pagination} className="w-[120px]">Source</SortableHead>
+                <SortableHead column="branch" sort={pagination} className="w-[200px]">Branch</SortableHead>
                 <TableHead className="w-[120px]">Commit</TableHead>
-                <SortableHead column="findings_count" sort={sort} className="w-[250px]">Findings</SortableHead>
-                <SortableHead column="status" sort={sort} className="w-[120px]">Status</SortableHead>
+                <SortableHead column="findings_count" sort={pagination} className="w-[250px]">Findings</SortableHead>
+                <SortableHead column="status" sort={pagination} className="w-[120px]">Status</SortableHead>
                 <TableHead className="w-[80px]">Delta</TableHead>
               </TableRow>
             </TableHeader>

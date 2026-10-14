@@ -109,4 +109,20 @@ describe('Dashboard project table sorting', () => {
     fireEvent.click(screen.getByRole('columnheader', { name: 'Critical' }))
     expect(lastSort()).toEqual(['critical', 'asc'])
   })
+
+  it('returns to the first page when a column is sorted, like the other paged tables', () => {
+    useProjectsMock.mockReturnValue({
+      data: { items: [project('p1', [])], total: 120, page: 1, size: 50, pages: 3 },
+      isLoading: false,
+    })
+    const lastPage = () => useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1][1]
+    render(<Dashboard />)
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }))
+    expect(lastPage()).toBe(2)
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Critical' }))
+
+    expect(lastPage()).toBe(1)
+    expect(lastSort()).toEqual(['critical', 'desc'])
+  })
 })
