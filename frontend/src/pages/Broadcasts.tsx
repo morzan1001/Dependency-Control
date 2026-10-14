@@ -25,7 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Plus, Trash2, Megaphone, ShieldAlert, Users, Globe, Calculator, Send, History, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDistanceToNow } from "date-fns"
-import { toggle } from "@/lib/utils"
+import { getErrorMessage, toggle } from "@/lib/utils"
 
 export default function Broadcasts() {
   const { mutateAsync: sendBroadcast, isPending } = useBroadcast()
@@ -141,8 +141,8 @@ export default function Broadcasts() {
       setSelectedTeams([])
       setAnnouncementTarget("global")
       refetchHistory()
-    } catch {
-      toast.error("Failed to send announcement")
+    } catch (err) {
+      toast.error("Failed to send announcement", { description: getErrorMessage(err) })
     }
   }
 
@@ -167,8 +167,8 @@ export default function Broadcasts() {
       setAdvisoryMessage("")
       setPackages([{ name: "", version: "", type: "", _key: packageKeyCounter.current++ }])
       refetchHistory()
-    } catch {
-      toast.error("Failed to send advisory")
+    } catch (err) {
+      toast.error("Failed to send advisory", { description: getErrorMessage(err) })
     }
   }
 

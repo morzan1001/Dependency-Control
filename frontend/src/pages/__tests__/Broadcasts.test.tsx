@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import Broadcasts from '../Broadcasts'
@@ -31,6 +32,7 @@ vi.mock('@/components/ui/tabs', () => ({
   },
 }))
 
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/hooks/queries/use-broadcast', () => ({
   useBroadcast: () => ({ mutateAsync: mockSendBroadcast, isPending: false }),
   useBroadcastHistory: () => ({ data: [], refetch: vi.fn(), isLoading: false }),
@@ -173,5 +175,34 @@ describe('Broadcasts - team selection', () => {
 
     await waitFor(() => expect(mockSendBroadcast).toHaveBeenCalled())
     expect(mockSendBroadcast.mock.calls[0][0]).toMatchObject({ target_type: 'teams', target_teams: ['t2'] })
+  })
+})
+
+describe('Broadcasts - send failures', () => {
+  beforeEach(() => {
+    vi.mocked(toast.error).mockClear()
+    mockSendBroadcast.mockRejectedValue(new Error('Network Error'))
+  })
+
+  it('names a failed announcement and why', async () => {
+    render(<Broadcasts />)
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Maintenance' } })
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Tonight' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Send Announcement/i }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to send announcement', { description: 'Network Error' }))
+  })
+
+  it('names a failed advisory and why', async () => {
+    render(<Broadcasts />)
+    fireEvent.click(screen.getByRole('tab', { name: /Security Advisory/i }))
+    fireEvent.change(screen.getByLabelText('Advisory Subject'), { target: { value: 'log4j' } })
+    fireEvent.change(screen.getByLabelText('Advisory Details'), { target: { value: 'Upgrade' } })
+    fireEvent.change(screen.getByTestId('pkg-name'), { target: { value: 'log4j-core' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Broadcast Security Advisory/i }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to send advisory', { description: 'Network Error' }))
   })
 })
