@@ -676,13 +676,11 @@ class ChatToolRegistry:
         return {"finding": slim}
 
     async def _tool_search_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        term = ctx.args["query"]
-        pattern = {"$regex": re.escape(term), "$options": "i"}
+        pattern = {"$regex": re.escape(ctx.args["query"]), "$options": "i"}
         holders: list[dict[str, Any]] = [{"component": pattern}, {"finding_id": pattern}, {"description": pattern}]
-        # The advisory ids cost most of the scan: no id holds whitespace, and one $elemMatch reads an advisory once.
-        if not re.search(r"\s", term):
-            advisory = {"$or": [{field: pattern} for field in ADVISORY_ID_FIELDS]}
-            holders.append({"details.vulnerabilities": {"$elemMatch": advisory}})
+        # One $elemMatch reads each advisory once instead of once per id field.
+        advisory = {"$or": [{field: pattern} for field in ADVISORY_ID_FIELDS]}
+        holders.append({"details.vulnerabilities": {"$elemMatch": advisory}})
         head, names = await self._heads_in_scope(ctx)
         query = {"scan_id": {"$in": list(head.values())}, "$or": holders}
         if ctx.args.get("severity"):

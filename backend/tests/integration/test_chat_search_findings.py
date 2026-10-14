@@ -43,6 +43,7 @@ _FINDINGS = [
     _finding("by-finding-id", type="sast", finding_id="SAST-hardcoded-key-0042"),
     _finding("by-description", type="secret", description="AWS secret access key committed to the repository"),
     _finding("by-advisory-id", **_advisories({"id": "CVE-2021-44228"})),
+    _finding("by-spaced-advisory-id", **_advisories({"id": "VULN-Acme Widget Runtime"})),
     _finding("by-alias", **_advisories({"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-45046"]})),
     _finding("by-resolved-cve", **_advisories({"id": "GHSA-7rjr-3q55-vv33", "resolved_cve": "CVE-2021-45105"})),
     _finding(
@@ -89,6 +90,7 @@ async def _seed(db) -> None:
         ("hardcoded-key", "by-finding-id"),
         ("Secret Access KEY", "by-description"),
         ("cve-2021-44228", "by-advisory-id"),
+        ("vuln-acme widget", "by-spaced-advisory-id"),
         ("2021-45046", "by-alias"),
         ("JFH8-C2JP", "by-alias"),
         ("CVE-2021-45105", "by-resolved-cve"),
