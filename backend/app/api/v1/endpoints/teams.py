@@ -181,7 +181,7 @@ async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDat
             status_code=400,
             detail=(
                 f"GitHub organisation '{request.org}' has no team with id {request.external_id} "
-                f"that instance '{instance.name}' can see."
+                f"that instance '{instance.name}' can see"
             ),
         )
     return GitHubTeamBinding(
@@ -207,7 +207,7 @@ async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDat
     if lookup.group is None:
         raise HTTPException(
             status_code=400,
-            detail=f"GitLab instance '{instance.name}' has no group with id {request.external_id} that it can see.",
+            detail=f"GitLab instance '{instance.name}' has no group with id {request.external_id} that it can see",
         )
     path = group_full_path(lookup.group, str(request.external_id))
     return GitLabGroupBinding(instance_id=request.instance_id, external_id=request.external_id, path=path)
@@ -227,7 +227,7 @@ async def _reject_taken_binding(
     if holder is not None and str(holder["_id"]) != team_id:
         raise HTTPException(
             status_code=409,
-            detail=f"Team '{holder.get('name')}' is already bound to {_binding_conflict(binding)}.",
+            detail=f"Team '{holder.get('name')}' is already bound to {_binding_conflict(binding)}",
         )
 
 
@@ -256,7 +256,7 @@ async def set_team_binding(
         # The unique index caught a binding written between the check above and this write.
         raise HTTPException(
             status_code=409,
-            detail=f"Another team was just bound to {_binding_conflict(binding)}.",
+            detail=f"Another team was just bound to {_binding_conflict(binding)}",
         ) from exc
 
     logger.info(
@@ -286,7 +286,7 @@ async def clear_team_binding(
     if binding is None or not await team_repo.remove_binding_for_instance(
         team_id, instance_id, team_source(binding["provider"], instance_id)
     ):
-        raise HTTPException(status_code=404, detail=f"This team holds no binding for instance {instance_id}.")
+        raise HTTPException(status_code=404, detail=f"This team holds no binding for instance {instance_id}")
 
     logger.info(
         "Binding for instance %s removed from team %s by %s",
@@ -336,7 +336,7 @@ async def _ensure_hand_editable_member(team: Team, user_id: str, db: AsyncIOMoto
     if instance is not None and instance.sync_teams:
         raise HTTPException(
             status_code=409,
-            detail=f"This member is synced from {_binding_conflict(binding)}; change their membership there.",
+            detail=f"This member is synced from {_binding_conflict(binding)}; change their membership there",
         )
 
 

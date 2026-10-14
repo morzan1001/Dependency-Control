@@ -272,7 +272,7 @@ async def migrate_to_local(
 ) -> dict[str, Any]:
     """Migrate SSO user to local account by setting a password."""
     if current_user.is_local:
-        raise HTTPException(status_code=400, detail="User is already a local account.")
+        raise HTTPException(status_code=400, detail="User is already a local account")
 
     hashed_password = security.get_password_hash(password_in.new_password)
 

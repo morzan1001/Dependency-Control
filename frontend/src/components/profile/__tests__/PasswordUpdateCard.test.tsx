@@ -171,13 +171,13 @@ describe('PasswordUpdateCard', () => {
   })
 
   it('toasts a migration the server refuses for the account rather than a field', async () => {
-    refuseWith(400, 'User is already a local account.')
+    refuseWith(400, 'User is already a local account')
     renderProfile(SSO_USER)
 
     migrate()
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith('Error', { description: 'User is already a local account.' }),
+      expect(toast.error).toHaveBeenCalledWith('Error', { description: 'User is already a local account' }),
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })

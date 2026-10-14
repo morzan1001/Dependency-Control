@@ -37,7 +37,7 @@ _PIPELINE_IID = 7
 _PIPELINE_USER = "ci-bot"
 _FINDINGS_COUNT = 12
 
-_MSG_NO_SBOMS = "Cannot re-scan: No SBOMs found in the source scan."
+_MSG_NO_SBOMS = "Cannot re-scan: No SBOMs found in the source scan"
 
 _EDITOR_USERNAME = "editoruser"
 _EDITOR_ROLE = "editor"

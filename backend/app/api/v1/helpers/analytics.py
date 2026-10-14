@@ -80,7 +80,7 @@ def require_any_analytics_permission(user: User) -> None:
     if not has_permission(user.permissions, _ANALYTICS_FEATURE_PERMISSIONS):
         raise HTTPException(
             status_code=403,
-            detail=f"Analytics permission required: one of {', '.join(_ANALYTICS_FEATURE_PERMISSIONS)}.",
+            detail=f"Analytics permission required: one of {', '.join(_ANALYTICS_FEATURE_PERMISSIONS)}",
         )
 
 

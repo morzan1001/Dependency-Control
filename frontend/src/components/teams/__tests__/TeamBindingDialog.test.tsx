@@ -221,7 +221,7 @@ describe("TeamBindingDialog", () => {
 
   it("names the team that already holds the group when the write is refused", async () => {
     setBinding.mockRejectedValue({
-      response: { data: { detail: "Team 'Platform' is already bound to GitLab group 77." } },
+      response: { data: { detail: "Team 'Platform' is already bound to GitLab group 77" } },
     });
     renderDialog(team());
 
@@ -230,7 +230,7 @@ describe("TeamBindingDialog", () => {
     await saveBinding();
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Team 'Platform' is already bound to GitLab group 77."),
+      expect(toastError).toHaveBeenCalledWith("Team 'Platform' is already bound to GitLab group 77"),
     );
   });
 
