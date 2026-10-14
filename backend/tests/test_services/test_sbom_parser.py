@@ -1,6 +1,7 @@
 """Tests for SBOM parser - format detection, CycloneDX/SPDX/Syft parsing."""
 
 import json
+import logging
 import re
 import subprocess
 import sys
@@ -1589,6 +1590,17 @@ class TestMalformedComponentResilience:
         assert result.skipped_components == 1
         assert result.skipped_reasons.get("parse-error") == 1
         assert _accounted(result) == 3
+
+    def test_a_document_of_crashing_components_logs_one_traceback(self, caplog):
+        crashing = {"type": "library", "name": "bad", "version": "1.0", "licenses": 5}
+        sbom = _three_component_sbom(crashing)
+        sbom["components"] += [{**crashing, "name": f"bad-{i}"} for i in range(3)]
+
+        with caplog.at_level(logging.DEBUG, logger="app.services.sbom_parser"):
+            result = self.parser.parse(sbom)
+
+        assert result.skipped_reasons.get("parse-error") == 4
+        assert [record.exc_info is not None for record in caplog.records] == [True]
 
     def test_non_dict_component_is_counted(self):
         sbom = _three_component_sbom({"type": "library", "name": "second", "version": "2.0"})

@@ -525,7 +525,9 @@ class SBOMParser:
         try:
             parsed = parse_one(item, *args)
         except Exception:
-            logger.warning("Skipping malformed %s %r", label, item.get("name"), exc_info=True)
+            # One traceback per document; the parse summary counts the rest.
+            if "parse-error" not in result.skipped_reasons:
+                logger.warning("Skipping malformed %s %r", label, item.get("name"), exc_info=True)
             self._count_skipped(result, "parse-error")
             return None
         if parsed is None:
