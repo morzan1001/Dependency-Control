@@ -483,6 +483,19 @@ describe('CICDInstancesManagement optional fields', () => {
     mockUseGitLabInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
   })
 
+  it.each([
+    ['GitLab', mockGitLabCreate],
+    ['GitHub', mockGitHubCreate],
+  ] as const)('creates a %s instance without a token by leaving the token out', async (provider, create) => {
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+    renderManagement()
+
+    fillCreateForm(provider)
+
+    await waitFor(() => expect(create).toHaveBeenCalled())
+    expect(create.mock.calls[0][0].access_token).toBeUndefined()
+  })
+
   it('removes the description and base URL an admin empties', async () => {
     mockUseGitHubInstances.mockReturnValue(githubInstance({ description: 'Public GitHub' }))
     renderManagement()
