@@ -266,6 +266,24 @@ async def test_components_sort_by_version_ascending(client, db, member_auth_head
     assert [i["version"] for i in resp.json()["items"]] == ["1.0.0", "2.0.0", "3.0.0"]
 
 
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_components_sort_by_version_descending(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", version="1.0.0")
+    await _seed_dep(db, "s1", "b", version="3.0.0")
+    await _seed_dep(db, "s1", "c", version="2.0.0")
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": "version", "sort_order": "desc"},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    assert [i["version"] for i in resp.json()["items"]] == ["3.0.0", "2.0.0", "1.0.0"]
+
+
 @pytest.mark.asyncio
 async def test_components_invalid_sort_by_falls_back_to_name(client, db, member_auth_headers):
     await _seed_scan(db)

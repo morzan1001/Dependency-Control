@@ -33,6 +33,7 @@ def _mock_db() -> tuple:
         ("name", -1, [("name", -1), ("version", -1), ("purl", -1)]),
         ("type", -1, [("type", -1), ("name", 1), ("version", 1), ("_id", 1)]),
         ("direct", 1, [("direct", 1), ("name", 1), ("version", 1), ("_id", 1)]),
+        ("version", -1, [("version", -1), ("name", 1), ("_id", 1)]),
     ],
 )
 async def test_the_components_page_sorts_on_a_unique_key(sort_by, direction, expected):

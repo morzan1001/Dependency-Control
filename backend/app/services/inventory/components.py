@@ -96,10 +96,11 @@ async def get_components_page(
 
     # The unique (scan_id, name, version, purl) index serves the name sort in either direction;
     # the other sorts are blocking anyway, so a unique tail costs nothing.
+    # pymongo keeps a repeated sort key at its first position with its last direction.
     sort_spec = (
         [("name", direction), ("version", direction), ("purl", direction)]
         if sort_field == "name"
-        else [(sort_field, direction), ("name", 1), ("version", 1), ("_id", 1)]
+        else [(sort_field, direction), *((key, 1) for key in ("name", "version", "_id") if key != sort_field)]
     )
     cursor = deps.collection.find(query, _DEP_PROJECTION).sort(sort_spec).skip((page - 1) * page_size).limit(page_size)
     docs = await cursor.to_list(page_size)
