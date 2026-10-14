@@ -89,7 +89,7 @@ select = ["E4", "E7", "E9", "F", "B", "PERF", "SIM", "RET", "ASYNC", "RUF", "PLW
 "tests/mocks/fake_mongo.py" = ["C901"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 20
+max-complexity = 15
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query", "fastapi.Header", "fastapi.Path", "fastapi.Body"]
