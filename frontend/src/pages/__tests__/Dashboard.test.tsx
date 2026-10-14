@@ -6,7 +6,7 @@ import type { Project } from '@/types/project'
 
 const { useProjectsMock, navigateMock } = vi.hoisted(() => ({ useProjectsMock: vi.fn(), navigateMock: vi.fn() }))
 
-vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: () => useProjectsMock() }))
+vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: (...args: unknown[]) => useProjectsMock(...args) }))
 vi.mock('@/hooks/queries/use-analytics', () => ({
   useDashboardStats: () => ({ data: undefined, isLoading: false }),
 }))
@@ -95,3 +95,18 @@ describe('Dashboard project table rows', () => {
   })
 })
 
+
+describe('Dashboard project table sorting', () => {
+  const lastSort = () => useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1].slice(3)
+
+  it('lists the newest projects first, then sorts a clicked column descending and flips it', () => {
+    renderDashboard([project('p1', [])])
+    expect(lastSort()).toEqual(['created_at', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Critical' }))
+    expect(lastSort()).toEqual(['critical', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Critical' }))
+    expect(lastSort()).toEqual(['critical', 'asc'])
+  })
+})

@@ -13,13 +13,14 @@ vi.mock('@/hooks/queries/use-users', () => {
 
 describe('UserTable sorting', () => {
   it('offers no sort on Status, which no stored user field backs', () => {
-    const onSort = vi.fn()
-    render(<UserTable users={[]} page={1} limit={20} onPageChange={vi.fn()} onSelectUser={vi.fn()} onSort={onSort} />)
+    const toggleSort = vi.fn()
+    const sort = { sortBy: 'username', sortOrder: 'asc' as const, toggleSort }
+    render(<UserTable users={[]} page={1} limit={20} onPageChange={vi.fn()} onSelectUser={vi.fn()} sort={sort} />)
 
     fireEvent.click(screen.getByText('Status'))
     fireEvent.click(screen.getByText('Username'))
 
-    expect(onSort.mock.calls).toEqual([['username']])
+    expect(toggleSort.mock.calls.map(([column]) => column)).toEqual(['username'])
   })
 })
 

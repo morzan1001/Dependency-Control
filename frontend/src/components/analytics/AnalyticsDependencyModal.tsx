@@ -15,14 +15,15 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SortableHead } from '@/components/ui/sortable-head'
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useSortState } from '@/hooks/use-pagination-state'
 import {
   Collapsible,
   CollapsibleContent,
@@ -56,7 +57,6 @@ import {
 } from "lucide-react"
 import { getDisplayId, getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
-import { SortIcon } from './VulnerabilityHotspots'
 
 // Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
@@ -65,7 +65,6 @@ function severityRank(severity?: string): number {
 }
 
 type SortField = 'id' | 'type' | 'severity' | 'project_name'
-type SortOrder = 'asc' | 'desc'
 
 function formatEnrichmentSource(source: string): string {
   if (source === "deps_dev") return "deps.dev"
@@ -456,8 +455,7 @@ export function AnalyticsDependencyModal({
   open,
   onOpenChange
 }: Readonly<AnalyticsDependencyModalProps>) {
-  const [sortBy, setSortBy] = useState<SortField>('severity')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const sort = useSortState<SortField>('severity')
   const [selectedFinding, setSelectedFinding] = useState<ComponentFinding | null>(null)
 
   const enabledComponent = open ? component : ''
@@ -478,7 +476,7 @@ export function AnalyticsDependencyModal({
     return [...findingsPage.items].sort((a, b) => {
       let comparison = 0
       
-      switch (sortBy) {
+      switch (sort.sortBy) {
         case 'id':
           comparison = (getDisplayId(a) ?? '').localeCompare(getDisplayId(b) ?? '')
           break
@@ -494,18 +492,9 @@ export function AnalyticsDependencyModal({
           break
       }
       
-      return sortOrder === 'asc' ? comparison : -comparison
+      return sort.sortOrder === 'asc' ? comparison : -comparison
     })
-  }, [findingsPage, sortBy, sortOrder])
-
-  const handleSort = (field: SortField) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortBy(field)
-      setSortOrder(field === 'severity' ? 'desc' : 'asc')
-    }
-  }
+  }, [findingsPage, sort.sortBy, sort.sortOrder])
 
   const metadataSection = metadata ? (
     <DependencyMetadataSection metadata={metadata} />
@@ -563,34 +552,10 @@ export function AnalyticsDependencyModal({
               <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead 
-                      className="w-[180px] cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('id')}
-                    >
-                      Finding
-                      <SortIcon field="id" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
-                    <TableHead 
-                      className="w-[100px] cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('type')}
-                    >
-                      Type
-                      <SortIcon field="type" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
-                    <TableHead 
-                      className="w-[100px] cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('severity')}
-                    >
-                      Severity
-                      <SortIcon field="severity" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
-                    <TableHead 
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => handleSort('project_name')}
-                    >
-                      Project
-                      <SortIcon field="project_name" sortBy={sortBy} sortOrder={sortOrder} />
-                    </TableHead>
+                    <SortableHead column="id" sort={sort} firstOrder="asc" className="w-[180px]">Finding</SortableHead>
+                    <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[100px]">Type</SortableHead>
+                    <SortableHead column="severity" sort={sort} className="w-[100px]">Severity</SortableHead>
+                    <SortableHead column="project_name" sort={sort} firstOrder="asc">Project</SortableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

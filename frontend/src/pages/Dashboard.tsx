@@ -1,11 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Activity, ShieldAlert, ShieldCheck, FolderGit2, ArrowUp, ArrowDown } from 'lucide-react'
+import { Activity, ShieldAlert, ShieldCheck, FolderGit2 } from 'lucide-react'
 import { useDashboardStats } from '@/hooks/queries/use-analytics'
 import { useRecentScans } from '@/hooks/queries/use-scans'
 import { useProjects} from '@/hooks/queries/use-projects'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SortableHead } from '@/components/ui/sortable-head'
+import { TableHead } from '@/components/ui/table'
+import { useSortState } from '@/hooks/use-pagination-state'
 import { useState } from 'react'
 import { Pagination } from '@/components/ui/pagination'
 import { formatDate } from '@/lib/utils'
@@ -36,8 +39,7 @@ function ProjectStatusPill({ stats }: Readonly<{ stats: Project['stats'] }>) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const [page, setPage] = useState(1)
-  const [sortBy, setSortBy] = useState('created_at')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const sort = useSortState('created_at')
   const limit = DEFAULT_PAGE_SIZE
   const { data: recentScans, isLoading: isLoadingScans } = useRecentScans()
   const { data: dashboardStats, isLoading: isLoadingStats } = useDashboardStats()
@@ -46,23 +48,9 @@ export default function Dashboard() {
     '', // search
     page,
     limit,
-    sortBy,
-    sortOrder
+    sort.sortBy,
+    sort.sortOrder
   )
-
-  const handleSort = (field: string) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortBy(field)
-      setSortOrder('desc')
-    }
-  }
-
-  const renderSortIcon = (column: string) => {
-    if (sortBy !== column) return null;
-    return sortOrder === 'asc' ? <ArrowUp className="ml-2 h-4 w-4 inline" /> : <ArrowDown className="ml-2 h-4 w-4 inline" />;
-  };
 
   const scanList = recentScans || []
   const projectList = projectsData?.items || []
@@ -253,20 +241,12 @@ export default function Dashboard() {
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                            <th className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
-                                Name {renderSortIcon('name')}
-                            </th>
-                            <th className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Teams</th>
-                            <th className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('last_scan_at')}>
-                                Last Scan {renderSortIcon('last_scan_at')}
-                            </th>
-                            <th className="w-[100px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('critical')}>
-                                Critical {renderSortIcon('critical')}
-                            </th>
-                            <th className="w-[100px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('high')}>
-                                High {renderSortIcon('high')}
-                            </th>
-                            <th className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Status</th>
+                            <SortableHead column="name" sort={sort} className="w-auto">Name</SortableHead>
+                            <TableHead className="w-[150px]">Teams</TableHead>
+                            <SortableHead column="last_scan_at" sort={sort} className="w-[150px]">Last Scan</SortableHead>
+                            <SortableHead column="critical" sort={sort} className="w-[100px]">Critical</SortableHead>
+                            <SortableHead column="high" sort={sort} className="w-[100px]">High</SortableHead>
+                            <TableHead className="w-[120px]">Status</TableHead>
                         </tr>
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0">

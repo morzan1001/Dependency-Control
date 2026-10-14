@@ -14,8 +14,10 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SortableHead } from '@/components/ui/sortable-head'
+import { useSortState } from '@/hooks/use-pagination-state'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ArrowUp, ArrowDown, RefreshCw, Rocket, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, RefreshCw, Rocket, Trash2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -38,8 +40,7 @@ function rescanNote(status?: string): string {
 export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
   const [page, setPage] = useState(1)
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
-  const [sortBy, setSortBy] = useState("created_at")
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+  const sort = useSortState('created_at')
   const [releasesOnly, setReleasesOnly] = useState(false)
   const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
@@ -57,29 +58,13 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
   const { data: scans, isLoading, isPlaceholderData } = useProjectScans(
     projectId,
     {
-      page, limit, branch: selectedBranch, sortBy, sortOrder,
+      page, limit, branch: selectedBranch, sortBy: sort.sortBy, sortOrder: sort.sortOrder,
       excludeRescans: true,
       // A release commonly sits on a branch that has since been deleted, tag builds above all.
       excludeDeletedBranches: !selectedBranch && !releasesOnly,
       isRelease: releasesOnly ? true : undefined,
     }
   )
-
-  const renderSortIcon = (column: string) => {
-    if (sortBy === column) {
-      return sortOrder === 'asc' ? <ArrowUp className="ml-2 h-4 w-4 inline" /> : <ArrowDown className="ml-2 h-4 w-4 inline" />;
-    }
-    return null;
-  };
-
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortOrder('desc');
-    }
-  };
 
   const scanList = useMemo(() => scans || [], [scans])
   const hasMore = scanList.length === limit
@@ -186,22 +171,12 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[200px] cursor-pointer hover:text-foreground" onClick={() => handleSort('created_at')}>
-                  Date {renderSortIcon('created_at')}
-                </TableHead>
-                <TableHead className="w-[120px] cursor-pointer hover:text-foreground" onClick={() => handleSort('pipeline_iid')}>
-                  Source {renderSortIcon('pipeline_iid')}
-                </TableHead>
-                <TableHead className="w-[200px] cursor-pointer hover:text-foreground" onClick={() => handleSort('branch')}>
-                  Branch {renderSortIcon('branch')}
-                </TableHead>
+                <SortableHead column="created_at" sort={sort} className="w-[200px]">Date</SortableHead>
+                <SortableHead column="pipeline_iid" sort={sort} className="w-[120px]">Source</SortableHead>
+                <SortableHead column="branch" sort={sort} className="w-[200px]">Branch</SortableHead>
                 <TableHead className="w-[120px]">Commit</TableHead>
-                <TableHead className="w-[250px] cursor-pointer hover:text-foreground" onClick={() => handleSort('findings_count')}>
-                  Findings {renderSortIcon('findings_count')}
-                </TableHead>
-                <TableHead className="w-[120px] cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
-                  Status {renderSortIcon('status')}
-                </TableHead>
+                <SortableHead column="findings_count" sort={sort} className="w-[250px]">Findings</SortableHead>
+                <SortableHead column="status" sort={sort} className="w-[120px]">Status</SortableHead>
                 <TableHead className="w-[80px]">Delta</TableHead>
               </TableRow>
             </TableHeader>

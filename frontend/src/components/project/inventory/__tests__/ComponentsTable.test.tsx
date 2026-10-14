@@ -82,6 +82,24 @@ describe('ComponentsTable', () => {
     expect(searches).toEqual([expect.objectContaining({ search: 'lod', page: 1 })])
   })
 
+  it('sorts a clicked column ascending from the first page, and flips it on the next click', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockImplementation(
+      async (_, params) => ({ ...page, total: 50, page: params?.page ?? 1 }),
+    )
+    renderTable()
+    await waitFor(() => expect(screen.getByText('lodash')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByText('Page 2 of 2')).toBeInTheDocument())
+    const getComponents = vi.mocked(inventoryApiModule.inventoryApi.getComponents)
+    const lastParams = () => getComponents.mock.calls[getComponents.mock.calls.length - 1][1]
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Version' }))
+    await waitFor(() => expect(lastParams()).toMatchObject({ sortBy: 'version', sortOrder: 'asc', page: 1 }))
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Version' }))
+    await waitFor(() => expect(lastParams()).toMatchObject({ sortBy: 'version', sortOrder: 'desc', page: 1 }))
+  })
+
   it('reloads the table when Retry is clicked after a failure', async () => {
     vi.mocked(inventoryApiModule.inventoryApi.getComponents)
       .mockRejectedValueOnce(Object.assign(new Error('not found'), { response: { status: 404 } }))

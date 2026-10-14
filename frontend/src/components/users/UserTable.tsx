@@ -1,7 +1,9 @@
 import { User } from '@/types/user';
 import { useDeleteUser, useInviteUser, useRevokeInvitation } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
-import { Check, X, Trash2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Check, X, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { SortableHead } from '@/components/ui/sortable-head';
+import type { SortState } from '@/hooks/use-pagination-state';
 import {
   Tooltip,
   TooltipContent,
@@ -35,12 +37,10 @@ interface UserTableProps {
   limit: number;
   onPageChange: (page: number) => void;
   onSelectUser?: (user: User) => void;
-  sortBy?: string;
-  sortOrder?: "asc" | "desc";
-  onSort?: (column: string) => void;
+  sort?: SortState;
 }
 
-export function UserTable({ users, page, limit, onPageChange, onSelectUser, sortBy, sortOrder, onSort }: Readonly<UserTableProps>) {
+export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort }: Readonly<UserTableProps>) {
   const { hasPermission } = useAuth();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
@@ -70,18 +70,8 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
       });
   }
 
-  const renderSortIcon = (column: string) => {
-    if (sortBy === column) {
-      return sortOrder === 'asc' ? <ArrowUp className="ml-2 h-4 w-4 inline" /> : <ArrowDown className="ml-2 h-4 w-4 inline" />;
-    }
-    return null;
-  };
-
-  const handleSort = (column: string) => {
-    if (onSort) {
-      onSort(column);
-    }
-  };
+  const head = (column: string, label: string) =>
+    sort ? <SortableHead column={column} sort={sort}>{label}</SortableHead> : <TableHead>{label}</TableHead>;
 
   return (
     <>
@@ -89,18 +79,8 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('username')}>
-                <div className="flex items-center">
-                  Username
-                  {renderSortIcon('username')}
-                </div>
-              </TableHead>
-              <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('email')}>
-                <div className="flex items-center">
-                  Email
-                  {renderSortIcon('email')}
-                </div>
-              </TableHead>
+              {head('username', 'Username')}
+              {head('email', 'Email')}
               <TableHead>Status</TableHead>
               <TableHead>2FA</TableHead>
               <TableHead>Permissions</TableHead>

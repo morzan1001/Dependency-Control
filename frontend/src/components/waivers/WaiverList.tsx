@@ -5,6 +5,7 @@ import { EditWaiverDialog } from '@/components/waivers/EditWaiverDialog'
 import { WaiverExpiryCell } from '@/components/waivers/WaiverExpiryCell'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { SortableHead } from '@/components/ui/sortable-head'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -19,9 +20,10 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
-import { ArrowUp, ArrowDown, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { Pencil, Trash2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useSortState } from '@/hooks/use-pagination-state'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 interface WaiverListProps {
@@ -35,8 +37,7 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
     const columns = isGlobal ? 7 : 6
     const [searchInput, setSearchInput] = useState('')
     const [orphanedOnly, setOrphanedOnly] = useState(false)
-    const [sortBy, setSortBy] = useState('created_at')
-    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+    const sort = useSortState('created_at')
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [waiverToDelete, setWaiverToDelete] = useState<Waiver | null>(null)
     const [waiverToEdit, setWaiverToEdit] = useState<Waiver | null>(null)
@@ -47,7 +48,7 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
 
     const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } = useWaiverList(
         projectId,
-        { search: debouncedSearch, sortBy, sortOrder, orphaned: orphanedOnly },
+        { search: debouncedSearch, sortBy: sort.sortBy, sortOrder: sort.sortOrder, orphaned: orphanedOnly },
     )
     const deleteWaiverMutation = useDeleteWaiver({ errorTitle: 'Failed to delete waiver' })
     const allWaivers = data?.pages.flatMap((page) => page.items) ?? []
@@ -72,27 +73,6 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
     const handleDelete = (id: string) => {
         deleteWaiverMutation.mutate(id, { onSuccess: () => toast.success('Waiver deleted successfully') })
     }
-
-    const apiSortKey = (key: string) => (key === 'expires' ? 'expiration_date' : key)
-
-    const handleSort = (key: string) => {
-        const apiKey = apiSortKey(key)
-        if (sortBy === apiKey) {
-            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-        } else {
-            setSortBy(apiKey)
-            setSortOrder('desc')
-        }
-    }
-
-    const sortableHead = (key: string, label: string) => (
-        <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort(key)}>
-            <div className="flex items-center gap-1">
-                {label}{' '}
-                {sortBy === apiSortKey(key) && (sortOrder === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
-            </div>
-        </TableHead>
-    )
 
     const title = isGlobal ? 'Active Global Waivers' : 'Active Waivers'
     const description = isGlobal
@@ -154,12 +134,12 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                {sortableHead('finding_id', 'Finding ID')}
-                                {sortableHead('package_name', 'Package')}
-                                {sortableHead('status', 'Status')}
-                                {sortableHead('reason', 'Reason')}
-                                {sortableHead('expires', 'Expires')}
-                                {isGlobal && sortableHead('created_by', 'Created By')}
+                                <SortableHead column="finding_id" sort={sort}>Finding ID</SortableHead>
+                                <SortableHead column="package_name" sort={sort}>Package</SortableHead>
+                                <SortableHead column="status" sort={sort}>Status</SortableHead>
+                                <SortableHead column="reason" sort={sort}>Reason</SortableHead>
+                                <SortableHead column="expiration_date" sort={sort}>Expires</SortableHead>
+                                {isGlobal && <SortableHead column="created_by" sort={sort}>Created By</SortableHead>}
                                 <TableHead className="w-[100px]">Actions</TableHead>
                             </TableRow>
                         </TableHeader>

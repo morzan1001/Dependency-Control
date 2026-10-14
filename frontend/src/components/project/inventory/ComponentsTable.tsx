@@ -10,7 +10,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ArrowDown, ArrowUp, Download } from 'lucide-react'
+import { SortableHead } from '@/components/ui/sortable-head'
+import { Download } from 'lucide-react'
 import { useInventoryComponents } from '@/hooks/queries/use-inventory'
 import { usePaginationState } from '@/hooks/use-pagination-state'
 import { inventoryApi } from '@/api/inventory'
@@ -36,8 +37,8 @@ function LifecycleBadge({ item }: { readonly item: ComponentItem }) {
 }
 
 export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableProps>) {
-  const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
-    usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' })
+  const pagination = usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' })
+  const { search, setSearch, page, setPage, sortBy, sortOrder, debouncedSearch } = pagination
   const [pageBranch, setPageBranch] = useState(branch)
   if (pageBranch !== branch) {
     setPageBranch(branch)
@@ -49,21 +50,6 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
   })
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1
-
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortBy(column)
-      setSortOrder('asc')
-    }
-    setPage(1)
-  }
-
-  const renderSortIcon = (column: string) => {
-    if (sortBy !== column) return null
-    return sortOrder === 'asc' ? <ArrowUp className="ml-2 inline h-4 w-4" /> : <ArrowDown className="ml-2 inline h-4 w-4" />
-  }
 
   const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'components', branch),
@@ -98,19 +84,11 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
-                  Name {renderSortIcon('name')}
-                </TableHead>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('version')}>
-                  Version {renderSortIcon('version')}
-                </TableHead>
+                <SortableHead column="name" sort={pagination} firstOrder="asc">Name</SortableHead>
+                <SortableHead column="version" sort={pagination} firstOrder="asc">Version</SortableHead>
                 <TableHead>Latest</TableHead>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('type')}>
-                  Ecosystem {renderSortIcon('type')}
-                </TableHead>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('license')}>
-                  License {renderSortIcon('license')}
-                </TableHead>
+                <SortableHead column="type" sort={pagination} firstOrder="asc">Ecosystem</SortableHead>
+                <SortableHead column="license" sort={pagination} firstOrder="asc">License</SortableHead>
                 <TableHead>Direct</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>

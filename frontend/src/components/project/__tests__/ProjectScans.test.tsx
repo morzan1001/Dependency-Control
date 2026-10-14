@@ -373,3 +373,21 @@ describe('ProjectScans - source links', () => {
   })
 })
 
+
+describe('ProjectScans - sorting', () => {
+  const lastSort = () => {
+    const filters = mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1][1]
+    return [filters.sortBy, filters.sortOrder]
+  }
+
+  it('lists the newest pipelines first, then sorts a clicked column descending and flips it', () => {
+    renderScans([makeScan({ id: 's1' })])
+    expect(lastSort()).toEqual(['created_at', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
+    expect(lastSort()).toEqual(['branch', 'desc'])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
+    expect(lastSort()).toEqual(['branch', 'asc'])
+  })
+})
