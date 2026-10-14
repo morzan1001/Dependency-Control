@@ -122,3 +122,16 @@ describe('ProjectDetails branch filter', () => {
     expect(screen.getByTestId('overview-branches').textContent).toBe('dev')
   })
 })
+
+describe('ProjectDetails tab bar', () => {
+  it("stacks Filter Branches under the tabs on a phone, like the waiver list's header, so the tabs keep the full width", () => {
+    mockUseProject.mockReturnValue({ data: { id: 'p1', name: 'Proj', default_branch: 'main' }, isLoading: false })
+    mockUseProjectBranches.mockReturnValue({ data: [branch('main', { is_default: true }), branch('dev')], isSuccess: true })
+
+    renderPage()
+
+    const bar = screen.getByRole('tablist').parentElement
+    expect(bar).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+    expect(bar).toContainElement(screen.getByRole('button', { name: /Filter Branches/i }))
+  })
+})
