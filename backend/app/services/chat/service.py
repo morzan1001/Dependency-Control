@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import aclosing
+from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
@@ -36,12 +38,69 @@ logger = logging.getLogger(__name__)
 # Seconds between cold-start keepalive info events; module-level so tests can patch it.
 _WARMUP_SLICE_SECONDS = 10.0
 
+_KEEPALIVE = {"type": "keepalive"}
 _INTERRUPTED = "_[stream interrupted]_"
 _EMPTY_ANSWER = "_The model returned an empty response. Please try again or rephrase the question._"
+_ROUNDS_EXHAUSTED = (
+    "_I gathered data from {calls} tool call(s) but couldn't put together a "
+    "final answer within my reasoning budget. The tool results "
+    "above contain the raw data — please ask a more specific "
+    "follow-up question and I'll try again._"
+)
 
 
 def _sse(event: str, **data: Any) -> str:
     return f"data: {json.dumps({'type': event, **data}, default=str)}\n\n"
+
+
+async def _chunks(stream: AsyncIterator[dict[str, Any]], *, warming: bool) -> AsyncGenerator[dict[str, Any], None]:
+    """The model's chunks; while `warming`, a keepalive chunk for every slice the first one keeps the client waiting."""
+    if warming:
+        # A cold start loads the model for 60-90s, long enough for proxies to idle-timeout a silent connection.
+        # One fetch spans every slice: asyncio.wait, unlike wait_for, leaves it running when a slice runs out.
+        first = asyncio.ensure_future(anext(stream, None))
+        try:
+            while not (await asyncio.wait({first}, timeout=_WARMUP_SLICE_SECONDS))[0]:
+                yield _KEEPALIVE
+        finally:
+            # A client leaving mid-wait must cancel the fetch, else it keeps pinning Ollama/GPU.
+            if not first.done():
+                first.cancel()
+                await asyncio.gather(first, return_exceptions=True)
+        if (chunk := first.result()) is None:
+            return
+        yield chunk
+    async for chunk in stream:
+        yield chunk
+
+
+@dataclass
+class _Turn:
+    """One answer in the making: the transcript the model reads and what its rounds produced so far."""
+
+    messages: list[dict[str, Any]]
+    budget: int
+    started: float
+    answer: str = ""
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    round_tool_calls: int = 0
+    first_token: bool = False
+    failed: bool = False
+
+    def settle(self) -> tuple[str, str | None]:
+        """The turn's status and, for a turn left without a final answer, the fallback to stream in its place."""
+        if self.round_tool_calls:
+            status, self.answer = "max_rounds_exhausted", _ROUNDS_EXHAUSTED.format(calls=len(self.tool_calls))
+        elif not self.answer.strip():
+            status, self.answer = "empty_response", _EMPTY_ANSWER
+        else:
+            return "success", None
+        return status, f"\n\n{self.answer}" if self.first_token else self.answer
+
+    def interrupt(self) -> str:
+        """Mark the answer as cut short; returns the status it is saved under."""
+        self.answer = f"{self.answer}\n\n{_INTERRUPTED}" if self.answer else _INTERRUPTED
+        return "error" if self.failed else "interrupted"
 
 
 class ChatService:
@@ -67,15 +126,7 @@ class ChatService:
         max_tool_rounds: int,
     ) -> AsyncIterator[str]:
         """Process a user message and stream the response as SSE event strings."""
-        start_time = time.time()
-        first_token_recorded = False
-        total_tool_calls = 0
-        round_tool_calls = 0
-        answer = ""
-        all_tool_calls: list[dict[str, Any]] = []
-        assistant_saved = False
-        client_notified_of_error = False
-
+        started = time.time()
         # Load history before persisting the new message so the current turn isn't replayed twice.
         history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
 
@@ -87,133 +138,82 @@ class ChatService:
             title = content[:80] + ("..." if len(content) > 80 else "")
             await self.repo.update_conversation_title(conversation_id, str(user.id), title)
 
-        available_tools = self.tools.get_available_tool_definitions(user.permissions)
-        budget = message_token_budget(available_tools)
-        messages = build_messages(history, content, budget)
-
+        tools = self.tools.get_available_tool_definitions(user.permissions)
+        budget = message_token_budget(tools)
+        turn = _Turn(build_messages(history, content, budget), budget, started)
+        saved = False
         try:
             for _ in range(max_tool_rounds):
-                round_tool_calls = 0
-                answer = ""
-                stream_iter = self.ollama.chat_stream(messages, tools=available_tools).__aiter__()
-                while True:
-                    try:
-                        if not first_token_recorded and total_tool_calls == 0:
-                            # Cold start can take 60-90s to load the model; emit SSE heartbeat
-                            # comments so the connection and upstream proxies don't idle-timeout.
-                            # shield + one persistent task keeps the fetch alive across slices,
-                            # since asyncio.wait_for would cancel it and abort the load on timeout.
-                            pending = asyncio.ensure_future(stream_iter.__anext__())
-                            try:
-                                while True:
-                                    try:
-                                        chunk = await asyncio.wait_for(
-                                            asyncio.shield(pending),
-                                            timeout=_WARMUP_SLICE_SECONDS,
-                                        )
-                                        break
-                                    except asyncio.TimeoutError:
-                                        yield ": keepalive\n\n"
-                            finally:
-                                # Cancel the shielded fetch if we exit before consuming the
-                                # chunk (e.g. client disconnect), else it keeps pinning Ollama/GPU.
-                                if not pending.done():
-                                    pending.cancel()
-                                    await asyncio.gather(pending, return_exceptions=True)
-                        else:
-                            chunk = await stream_iter.__anext__()
-                    except StopAsyncIteration:
-                        break
-
-                    chunk_type = chunk["type"]
-
-                    if chunk_type == "token":
-                        if not first_token_recorded:
-                            chat_first_token_seconds.observe(time.time() - start_time)
-                            first_token_recorded = True
-                        answer += chunk["content"]
-                        yield _sse("token", content=chunk["content"])
-
-                    elif chunk_type == "tool_call":
-                        round_tool_calls += 1
-                        total_tool_calls += 1
-                        fn = chunk["function"]
-                        tool_name = fn.get("name", "unknown")
-                        tool_args = fn.get("arguments", {})
-
-                        yield _sse("tool_call_start", tool_name=tool_name)
-
-                        tool_start = time.monotonic()
-                        result = await self.tools.execute_tool(tool_name, tool_args, user, self.db)
-                        all_tool_calls.append(
-                            {
-                                "tool_name": tool_name,
-                                "arguments": tool_args,
-                                "result": result,
-                                "duration_ms": int((time.monotonic() - tool_start) * 1000),
-                            }
-                        )
-
-                        yield _sse("tool_call_end", tool_name=tool_name, arguments=tool_args, result=result)
-
-                        messages.extend(tool_exchange_messages(all_tool_calls[-1:]))
-                        messages = trim_to_token_budget(messages, budget)
-
-                    elif chunk_type == "done":
-                        chat_ollama_tokens_generated_total.inc(chunk.get("total_tokens", 0))
-                        chat_ollama_tokens_per_second.set(chunk.get("eval_rate", 0))
-                        break
-
-                    elif chunk_type == "error":
-                        yield _sse("error", message=chunk["message"])
-                        client_notified_of_error = True
-                        return
-
-                if round_tool_calls == 0:
+                async with aclosing(self._model_round(turn, tools, user)) as events:
+                    async for event in events:
+                        yield event
+                if turn.failed:
+                    return
+                if not turn.round_tool_calls:
                     break
 
-            # Only the last round's text answers the question; earlier rounds only led up to tool calls.
-            status = "success"
-            if round_tool_calls > 0:
-                status = "max_rounds_exhausted"
-                answer = (
-                    "_I gathered data from "
-                    f"{total_tool_calls} tool call(s) but couldn't put together a "
-                    "final answer within my reasoning budget. The tool results "
-                    "above contain the raw data — please ask a more specific "
-                    "follow-up question and I'll try again._"
-                )
-            elif not answer.strip():
-                status = "empty_response"
-                answer = _EMPTY_ANSWER
-            if status != "success":
-                yield _sse("token", content=f"\n\n{answer}" if first_token_recorded else answer)
-
-            await self._persist_assistant(conversation_id, answer, all_tool_calls, status)
-            assistant_saved = True
-
-            chat_response_duration_seconds.observe(time.time() - start_time)
-            chat_tool_calls_per_message.observe(total_tool_calls)
-
+            status, fallback = turn.settle()
+            if fallback:
+                yield _sse("token", content=fallback)
+            await self._persist_assistant(conversation_id, turn, status)
+            saved = True
+            chat_response_duration_seconds.observe(time.time() - started)
+            chat_tool_calls_per_message.observe(len(turn.tool_calls))
             yield _sse("done")
-
         finally:
-            if not assistant_saved:
+            if not saved:
                 # A client disconnect cancels the response's scope; the save must still land.
                 with anyio.CancelScope(shield=True):
-                    await self._persist_assistant(
-                        conversation_id,
-                        f"{answer}\n\n{_INTERRUPTED}" if answer else _INTERRUPTED,
-                        all_tool_calls,
-                        "error" if client_notified_of_error else "interrupted",
-                    )
+                    await self._persist_assistant(conversation_id, turn, turn.interrupt())
 
-    async def _persist_assistant(
-        self,
-        conversation_id: str,
-        content: str,
-        tool_calls: list[dict[str, Any]],
-        status: str,
-    ) -> None:
-        await self.repo.add_message(conversation_id, role="assistant", content=content, tool_calls=tool_calls)
+    async def _model_round(self, turn: _Turn, tools: list[dict[str, Any]], user: User) -> AsyncGenerator[str, None]:
+        """One model call streamed as SSE events; its text and tool calls land on `turn`."""
+        # Only the last round's text answers the question; earlier rounds only led up to tool calls.
+        turn.answer, turn.round_tool_calls = "", 0
+        stream = self.ollama.chat_stream(turn.messages, tools=tools)
+        # Only the turn's first round can meet a cold model.
+        async with aclosing(_chunks(stream, warming=not turn.tool_calls)) as chunks:
+            async for chunk in chunks:
+                kind = chunk["type"]
+                if kind == "keepalive":
+                    yield ": keepalive\n\n"
+                elif kind == "token":
+                    if not turn.first_token:
+                        chat_first_token_seconds.observe(time.time() - turn.started)
+                        turn.first_token = True
+                    turn.answer += chunk["content"]
+                    yield _sse("token", content=chunk["content"])
+                elif kind == "tool_call":
+                    function = chunk["function"]
+                    name, arguments = function.get("name", "unknown"), function.get("arguments", {})
+                    yield _sse("tool_call_start", tool_name=name)
+                    result = await self._call_tool(turn, name, arguments, user)
+                    yield _sse("tool_call_end", tool_name=name, arguments=arguments, result=result)
+                elif kind == "done":
+                    chat_ollama_tokens_generated_total.inc(chunk.get("total_tokens", 0))
+                    chat_ollama_tokens_per_second.set(chunk.get("eval_rate", 0))
+                    return
+                elif kind == "error":
+                    yield _sse("error", message=chunk["message"])
+                    turn.failed = True
+                    return
+
+    async def _call_tool(self, turn: _Turn, name: str, arguments: Any, user: User) -> dict[str, Any]:
+        """Run a tool call the model asked for and feed its result back into the transcript."""
+        turn.round_tool_calls += 1
+        tool_start = time.monotonic()
+        result = await self.tools.execute_tool(name, arguments, user, self.db)
+        call = {
+            "tool_name": name,
+            "arguments": arguments,
+            "result": result,
+            "duration_ms": int((time.monotonic() - tool_start) * 1000),
+        }
+        turn.tool_calls.append(call)
+        turn.messages.extend(tool_exchange_messages([call]))
+        turn.messages = trim_to_token_budget(turn.messages, turn.budget)
+        return result
+
+    async def _persist_assistant(self, conversation_id: str, turn: _Turn, status: str) -> None:
+        await self.repo.add_message(conversation_id, role="assistant", content=turn.answer, tool_calls=turn.tool_calls)
         chat_messages_total.labels(status=status).inc()

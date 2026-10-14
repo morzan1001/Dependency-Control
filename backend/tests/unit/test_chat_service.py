@@ -534,3 +534,71 @@ async def test_every_prompt_sent_to_ollama_leaves_room_for_the_reply():
 
     assert len(prompt_sizes) == 4
     assert max(prompt_sizes) <= settings.OLLAMA_NUM_CTX - 2048
+
+
+_KEEPALIVE = ": keepalive\n\n"
+_SLOW = 0.1
+
+
+async def _paced(*chunks: tuple[float, dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+    for delay, chunk in chunks:
+        await asyncio.sleep(delay)
+        yield chunk
+
+
+def _token(text: str) -> dict[str, Any]:
+    return {"type": "token", "content": text}
+
+
+@pytest.mark.asyncio
+async def test_a_slow_first_chunk_is_preceded_by_keepalives_and_still_delivered(monkeypatch):
+    monkeypatch.setattr(service_mod, "_WARMUP_SLICE_SECONDS", 0.01)
+    service = _make_service()
+    service.ollama.chat_stream = MagicMock(return_value=_paced((_SLOW, _token("Hello")), (0, _DONE)))
+
+    events = [e async for e in service.send_message("conv-1", _make_user(), "hi", max_tool_rounds=20)]
+
+    assert events[0] == _KEEPALIVE
+    assert [e for e in events if e != _KEEPALIVE] == [
+        'data: {"type": "token", "content": "Hello"}\n\n',
+        'data: {"type": "done"}\n\n',
+    ]
+    assert service.repo.add_message.call_args_list[-1].kwargs["content"] == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_a_slow_chunk_after_the_first_token_gets_no_keepalive(monkeypatch):
+    monkeypatch.setattr(service_mod, "_WARMUP_SLICE_SECONDS", 0.01)
+    service = _make_service()
+    service.ollama.chat_stream = MagicMock(return_value=_paced((0, _token("a")), (_SLOW, _token("b")), (0, _DONE)))
+
+    events = [e async for e in service.send_message("conv-1", _make_user(), "hi", max_tool_rounds=20)]
+
+    assert _KEEPALIVE not in events
+    assert service.repo.add_message.call_args_list[-1].kwargs["content"] == "ab"
+
+
+@pytest.mark.asyncio
+async def test_a_slow_answer_to_a_tool_result_gets_no_keepalive(monkeypatch):
+    monkeypatch.setattr(service_mod, "_WARMUP_SLICE_SECONDS", 0.01)
+    service = _make_service()
+    service.ollama.chat_stream = MagicMock(
+        side_effect=[_paced((0, _LIST_PROJECTS), (0, _DONE)), _paced((_SLOW, _token("Two projects.")), (0, _DONE))]
+    )
+
+    events = [e async for e in service.send_message("conv-1", _make_user(), "list projects", max_tool_rounds=20)]
+
+    assert _KEEPALIVE not in events
+    assert service.repo.add_message.call_args_list[-1].kwargs["content"] == "Two projects."
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_after_streamed_text_opens_a_new_paragraph():
+    service = _make_service()
+    service.ollama.chat_stream = MagicMock(return_value=_async_gen([_token("Let me check. "), _LIST_PROJECTS, _DONE]))
+
+    events = [e async for e in service.send_message("conv-1", _make_user(), "why?", max_tool_rounds=1)]
+
+    fallback = json.loads(events[-2].removeprefix("data: "))
+    assert fallback["type"] == "token"
+    assert fallback["content"].startswith("\n\n_I gathered data from 1 tool call(s)")
