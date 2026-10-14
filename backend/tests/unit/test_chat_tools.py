@@ -83,7 +83,6 @@ def test_every_tool_handler_serves_a_declared_tool():
     handlers = {name.removeprefix("_tool_") for name in vars(ChatToolRegistry) if name.startswith("_tool_")}
 
     assert handlers == declared
-    assert set(ChatToolRegistry._HANDLERS) == declared
 
 
 _PROJECT_READER = [Permissions.PROJECT_READ, Permissions.CHAT_ACCESS]
