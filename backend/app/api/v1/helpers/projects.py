@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core import security
 from app.core.constants import (
     PROJECT_ROLE_ADMIN,
@@ -217,7 +218,7 @@ def _merge_team_members(data: dict[str, Any], teams: list[dict[str, Any]], usern
             "role": role,
             "effective_role": role,
             "username": usernames.get(uid),
-            "inherited_from": "Team: " + ", ".join(sorted(owners[uid])),
+            "inherited_from": "Team: " + ", ".join(sorted(owners[uid], key=case_insensitive_key)),
             "notification_preferences": overrides.get(uid) or {},
         }
         for uid, role in team_roles.items()

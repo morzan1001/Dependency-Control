@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLES,
@@ -37,7 +38,7 @@ def team_refs(team_ids: Iterable[str], names: Mapping[str, str]) -> list[TeamRef
     cannot name lost its team between the two reads and is dropped rather than shown blank.
     """
     refs = [TeamRef(id=team_id, name=name) for team_id in team_ids if (name := names.get(team_id)) is not None]
-    return sorted(refs, key=lambda ref: (ref.name, ref.id))
+    return sorted(refs, key=lambda ref: (case_insensitive_key(ref.name), ref.id))
 
 
 def visible_teams_filter(user: User) -> dict[str, Any] | None:

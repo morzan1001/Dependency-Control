@@ -7,6 +7,12 @@ from pymongo.collation import Collation, CollationStrength
 
 CASE_INSENSITIVE = Collation(locale="en", strength=CollationStrength.SECONDARY)
 
+
+def case_insensitive_key(text: str) -> tuple[str, str]:
+    """CASE_INSENSITIVE for a sort in Python: case decides only between otherwise equal texts."""
+    return text.casefold(), text
+
+
 SORT_FIELDS: dict[str, dict[str, str]] = {
     "projects": {
         "name": "name",

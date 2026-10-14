@@ -94,6 +94,16 @@ async def test_without_a_usable_scan_the_first_branch_by_name_is_the_default(cli
 
 
 @pytest.mark.asyncio
+async def test_the_branches_are_listed_by_name_whatever_their_case(client, db, member_auth_headers):
+    for age_hours, branch in enumerate(("Release-2", "main", "develop"), start=1):
+        await _seed_branch(db, branch, age_hours=age_hours)
+
+    branches = await _get_branches(client, member_auth_headers)
+
+    assert [b["name"] for b in branches] == ["develop", "main", "Release-2"]
+
+
+@pytest.mark.asyncio
 async def test_a_rescan_of_an_old_release_branch_does_not_make_it_the_default(client, db, member_auth_headers):
     """A rescan carries today's date over an old commit, so it is no sign of what CI builds."""
     await _seed_branch(db, "main", age_hours=50)

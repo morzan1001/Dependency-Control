@@ -173,6 +173,16 @@ async def test_an_inherited_member_names_every_owner_it_comes_from(db, database,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("database", DATABASES)
+async def test_an_inherited_member_names_its_owners_by_name_whatever_their_case(db, database):
+    await _seed(db, team_order=({**_ALPHA, "name": "alpha"}, _BRAVO))
+
+    project = await read_project(_PROJECT, _user("u-direct"), db)
+
+    assert {member.user_id: member.inherited_from for member in project.members}["u-both"] == "Team: alpha, Bravo"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _PROD_TEAM_ORDERS, ids=_PROD_ORDER_IDS)
 async def test_both_owners_of_the_same_two_members_are_named(db, database, team_order):
     """The reported project: co-owners with identical membership, and one of them went unnamed."""
