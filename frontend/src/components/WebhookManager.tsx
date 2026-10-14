@@ -13,6 +13,7 @@ import { useAuth } from "@/context/useAuth"
 import { useDialogState } from "@/hooks/use-dialog-state"
 import { useTestWebhook } from "@/hooks/queries/use-webhooks"
 import { formatDate, formatDateTime, getErrorMessage } from "@/lib/utils"
+import { WEBHOOK_EVENTS } from "@/lib/constants"
 
 const TYPE_LABELS: Record<WebhookType, string> = { generic: "Generic", teams: "Teams", slack: "Slack" };
 
@@ -176,7 +177,7 @@ export function WebhookManager({
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {(webhook.events || []).map(e => (
-                        <Badge key={e} variant="secondary">{e}</Badge>
+                        <Badge key={e} variant="secondary">{WEBHOOK_EVENTS.find(event => event.id === e)?.label ?? e}</Badge>
                       ))}
                     </div>
                   </TableCell>
