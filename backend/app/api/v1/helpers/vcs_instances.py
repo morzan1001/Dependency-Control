@@ -1,12 +1,15 @@
 """The provider-neutral half of the GitLab and GitHub instance endpoints."""
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel
 
+from app.api.v1.helpers.pagination import build_pagination_response
 from app.core.constants import team_source
 from app.models.base import VcsInstanceModel
 from app.models.github_instance import GitHubInstance
@@ -28,12 +31,15 @@ async def get_or_404[T: VcsInstanceModel](repo: VcsInstanceRepository[T], instan
 
 
 async def list_page[T: VcsInstanceModel](
-    repo: VcsInstanceRepository[T], page: int, size: int, active_only: bool
-) -> tuple[list[T], int, int]:
-    """One page of instances, how many there are, and the page's offset."""
+    repo: VcsInstanceRepository[T], page: int, size: int, active_only: bool, to_response: Callable[[T], BaseModel]
+) -> dict[str, Any]:
+    """One page of instances as the paginated response."""
     skip = (page - 1) * size
     query: dict[str, Any] = {"is_active": True} if active_only else {}
-    return await repo.find_many(query, skip=skip, limit=size), await repo.count(query), skip
+    instances = await repo.find_many(query, skip=skip, limit=size)
+    return build_pagination_response(
+        [to_response(instance) for instance in instances], await repo.count(query), skip, size
+    )
 
 
 async def assert_unique(
@@ -55,10 +61,17 @@ async def assert_unique(
         )
 
 
-async def prepare_update(
-    repo: VcsInstanceRepository[Any], instance: GitLabInstance | GitHubInstance, update_dict: dict[str, Any]
-) -> None:
-    """Refuse a URL or name another instance holds and team sync without a token, then stamp the change."""
+async def apply_update[T: GitLabInstance | GitHubInstance](
+    repo: VcsInstanceRepository[T],
+    instance_id: str,
+    update_data: BaseModel,
+    label: str,
+    username: str,
+    allowlist_refusal: str,
+) -> T:
+    """Write the provided fields, refusing a taken URL or name, team sync without a token and an open shared issuer."""
+    instance = await get_or_404(repo, instance_id, label)
+    update_dict = update_data.model_dump(exclude_unset=True)
 
     def changed(field: str) -> Any:
         value = update_dict.get(field)
@@ -71,7 +84,15 @@ async def prepare_update(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="An access token is required to enable team syncing"
         )
+    if instance.model_copy(update=update_dict).lacks_required_allowlist():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=allowlist_refusal)
+
     update_dict["last_modified_at"] = datetime.now(timezone.utc)
+    updated = await repo.update(instance_id, update_dict)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found after update")
+    logger.info("Updated %s instance '%s' by user %s", label, updated.name, username)
+    return updated
 
 
 async def delete_guarded(

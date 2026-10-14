@@ -50,15 +50,8 @@ _ONE_GROUP = [{"id": 1, "full_path": "mo", "name": "MO"}]
 
 
 def _make_gitlab_service_mock(response, groups=_ONE_GROUP):
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-
     mock_svc = MagicMock()
-    mock_svc._api_client.return_value = mock_client
-    mock_svc.api_url = "https://gitlab.test.com/api/v4"
-    mock_svc._get_auth_headers.return_value = {"PRIVATE-TOKEN": "tok"}
+    mock_svc.get_version = AsyncMock(return_value=response)
     mock_svc.get_groups = AsyncMock(return_value=groups)
     return mock_svc
 
@@ -301,7 +294,7 @@ class TestCreateInstance:
 
         mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
         mock_svc = _make_gitlab_service_mock(MagicMock(status_code=200))
-        mock_svc._api_client.return_value.get = AsyncMock(side_effect=error)
+        mock_svc.get_version = AsyncMock(side_effect=error)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             with patch(f"{MODULE}.GitLabService", return_value=mock_svc):
@@ -322,7 +315,7 @@ class TestCreateInstance:
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
         mock_svc = _make_gitlab_service_mock(MagicMock(status_code=200))
-        mock_svc._api_client.return_value.get = AsyncMock(side_effect=KeyError("api_url"))
+        mock_svc.get_version = AsyncMock(side_effect=KeyError("api_url"))
 
         with patch(
             f"{MODULE}.GitLabInstanceRepository",
@@ -638,9 +631,7 @@ class TestTestConnection:
 
         mock_response = MagicMock()
         mock_svc = _make_gitlab_service_mock(mock_response)
-        mock_svc._api_client.return_value.__aenter__.return_value.get = AsyncMock(
-            side_effect=ConnectionError("DNS resolution failed")
-        )
+        mock_svc.get_version = AsyncMock(side_effect=ConnectionError("DNS resolution failed"))
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             with patch(f"{MODULE}.GitLabService", return_value=mock_svc):

@@ -7,8 +7,7 @@ from fastapi import HTTPException, Query, status
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers import build_pagination_response
-from app.api.v1.helpers.vcs_instances import assert_unique, delete_guarded, get_or_404, list_page, prepare_update
+from app.api.v1.helpers.vcs_instances import apply_update, assert_unique, delete_guarded, get_or_404, list_page
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400,
@@ -26,7 +25,6 @@ from app.schemas.gitlab_instance import (
     GitLabInstanceResponse,
     GitLabInstanceTestConnectionResponse,
     GitLabInstanceUpdate,
-    lacks_required_namespaces,
 )
 from app.schemas.pagination import Page
 from app.services.gitlab import GitLabService, build_group_options
@@ -49,12 +47,7 @@ async def list_instances(
     active_only: bool = False,
 ) -> dict[str, Any]:
     """List all GitLab instances."""
-    instance_repo = GitLabInstanceRepository(db)
-
-    instances, total, skip = await list_page(instance_repo, page, size, active_only)
-    items = [_to_response(instance) for instance in instances]
-
-    return build_pagination_response(items, total, skip, size)
+    return await list_page(GitLabInstanceRepository(db), page, size, active_only, _to_response)
 
 
 @router.get("/{instance_id}", responses=RESP_AUTH_404)
@@ -64,10 +57,7 @@ async def get_instance(
     current_user: deps.SystemManagerDep,
 ) -> GitLabInstanceResponse:
     """Get a specific GitLab instance by ID."""
-    instance_repo = GitLabInstanceRepository(db)
-    instance = await get_or_404(instance_repo, instance_id, _LABEL)
-
-    return _to_response(instance)
+    return _to_response(await get_or_404(GitLabInstanceRepository(db), instance_id, _LABEL))
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, responses=RESP_AUTH_400)
@@ -84,12 +74,8 @@ async def create_instance(
     new_instance = GitLabInstance(**instance_data.model_dump(), created_by=str(current_user.id))
 
     if new_instance.access_token:
-        gitlab_service = GitLabService(new_instance)
         try:
-            async with gitlab_service._api_client() as client:
-                response = await client.get(
-                    f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers()
-                )
+            response = await GitLabService(new_instance).get_version()
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             logger.warning("Connection test failed for %s: %s", instance_data.url, e)
             raise HTTPException(
@@ -116,25 +102,10 @@ async def update_instance(
 ) -> GitLabInstanceResponse:
     """Update a GitLab instance; only provided fields are changed, with uniqueness validation."""
     instance_repo = GitLabInstanceRepository(db)
-    instance = await get_or_404(instance_repo, instance_id, _LABEL)
-
-    update_dict = update_data.model_dump(exclude_unset=True)
-    await prepare_update(instance_repo, instance, update_dict)
-
-    if lacks_required_namespaces(
-        update_dict.get("url", instance.url),
-        update_dict.get("auto_create_projects", instance.auto_create_projects),
-        update_dict.get("allowed_namespaces", instance.allowed_namespaces),
-    ):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=AUTO_CREATE_NEEDS_NAMESPACES)
-
-    updated_instance = await instance_repo.update(instance_id, update_dict)
-    if not updated_instance:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found after update")
-
-    logger.info(f"Updated GitLab instance '{updated_instance.name}' by user {current_user.username}")
-
-    return _to_response(updated_instance)
+    updated = await apply_update(
+        instance_repo, instance_id, update_data, _LABEL, current_user.username, AUTO_CREATE_NEEDS_NAMESPACES
+    )
+    return _to_response(updated)
 
 
 @router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT, responses=RESP_AUTH_400_404_500)
@@ -237,9 +208,7 @@ async def test_connection(
     gitlab_service = GitLabService(instance)
 
     try:
-        async with gitlab_service._api_client() as client:
-            response = await client.get(f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers())
-
+        response = await gitlab_service.get_version()
         if response.status_code != 200:
             return _test_result(instance, success=False, message=f"GitLab API returned HTTP {response.status_code}")
 

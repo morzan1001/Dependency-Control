@@ -3,6 +3,7 @@ import logging
 import urllib.parse
 from typing import Any, NamedTuple
 
+import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
@@ -107,6 +108,11 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
 
     def _token_headers(self, token: str) -> dict[str, str]:
         return {"PRIVATE-TOKEN": token}
+
+    async def get_version(self) -> httpx.Response:
+        """GET /version with the token; a transport error reaches the caller, which reports it."""
+        async with self._api_client() as client:
+            return await client.get(f"{self.api_url}/version", headers=self._get_auth_headers())
 
     async def _jwks_uris(self) -> list[str]:
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))

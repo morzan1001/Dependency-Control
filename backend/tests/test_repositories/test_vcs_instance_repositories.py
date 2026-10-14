@@ -73,11 +73,18 @@ class TestSharedVcsInstanceBehaviour:
             await repo.create(_instance(model, instance_id=f"a-{index}", name=f"Active {index}"))
         await repo.create(_instance(model, instance_id="inactive", name="Inactive", is_active=False))
 
-        page, total, skip = await list_page(repo, page=2, size=1, active_only=True)
+        second = await list_page(repo, page=2, size=1, active_only=True, to_response=lambda instance: instance)
 
-        assert ([instance.id for instance in page], total, skip) == (["a-1"], _ACTIVE_COUNT, 1)
-        everything, total, _ = await list_page(repo, page=1, size=10, active_only=False)
-        assert ([instance.id for instance in everything][-1], total) == ("inactive", _ACTIVE_COUNT + 1)
+        assert ([instance.id for instance in second["items"]], second["total"], second["page"]) == (
+            ["a-1"],
+            _ACTIVE_COUNT,
+            2,
+        )
+        everything = await list_page(repo, page=1, size=10, active_only=False, to_response=lambda instance: instance)
+        assert ([instance.id for instance in everything["items"]][-1], everything["total"]) == (
+            "inactive",
+            _ACTIVE_COUNT + 1,
+        )
 
     @pytest.mark.asyncio
     async def test_a_name_is_taken_unless_the_row_holding_it_is_the_excluded_one(

@@ -3,7 +3,7 @@ from typing import Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.models.github_instance import is_shared_github_issuer
+from app.models.github_instance import lacks_required_owners
 from app.schemas._vcs_instance import VcsInstanceBase, VcsInstanceCreate, VcsInstanceResponse, VcsInstanceUpdate
 
 AUTO_CREATE_NEEDS_OWNERS = (
@@ -12,10 +12,6 @@ AUTO_CREATE_NEEDS_OWNERS = (
 )
 
 _OWNER_ID = re.compile(r"[0-9]+")
-
-
-def lacks_required_owners(url: str, auto_create_projects: bool, allowed_owner_ids: list[str]) -> bool:
-    return auto_create_projects and is_shared_github_issuer(url) and not allowed_owner_ids
 
 
 def _validate_owner_ids(value: list[str] | None) -> list[str]:

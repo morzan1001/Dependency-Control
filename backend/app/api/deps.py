@@ -232,10 +232,6 @@ class _CiProvider[IdT: (int, str)](ABC):
         """The project's composite key on this instance."""
         return {self.instance_field: self.instance_id, self.id_field: external_id}
 
-    @property
-    @abstractmethod
-    def allowlist(self) -> list[str]: ...
-
     @abstractmethod
     async def claim(self, oidc_token: str) -> _CiClaim[IdT] | None:
         """The repository a valid token ran in, None for an invalid one, and a 403 for one the instance refuses."""
@@ -263,10 +259,6 @@ class _GitLabCi(_CiProvider[int]):
     def __init__(self, instance: GitLabInstance, service: GitLabService) -> None:
         self.instance = instance
         self.service = service
-
-    @property
-    def allowlist(self) -> list[str]:
-        return self.instance.allowed_namespaces
 
     async def claim(self, oidc_token: str) -> _CiClaim[int] | None:
         payload = await self.service.validate_oidc_token(oidc_token)
@@ -306,10 +298,6 @@ class _GitHubCi(_CiProvider[str]):
     def __init__(self, instance: GitHubInstance, service: GitHubService) -> None:
         self.instance = instance
         self.service = service
-
-    @property
-    def allowlist(self) -> list[str]:
-        return self.instance.allowed_owner_ids
 
     async def claim(self, oidc_token: str) -> _CiClaim[str] | None:
         payload = await self.service.validate_oidc_token(oidc_token)
@@ -388,7 +376,7 @@ async def _resolve_ci_project[IdT: (int, str)](
     not_found = f"Project not found on {ci.label} instance '{instance.name}'"
     if not instance.auto_create_projects:
         raise HTTPException(status_code=404, detail=f"{not_found} and auto-creation is disabled")
-    if instance.is_shared_issuer and not ci.allowlist:
+    if instance.lacks_required_allowlist():
         raise HTTPException(status_code=403, detail=f"{not_found}: {ci.allowlist_rule}")
 
     member_id = await ci.initial_member(claim, db)

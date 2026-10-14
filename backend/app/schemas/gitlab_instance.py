@@ -3,7 +3,7 @@ from typing import Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.models.gitlab_instance import is_shared_gitlab_issuer
+from app.models.gitlab_instance import lacks_required_namespaces
 from app.schemas._not_null import reject_null
 from app.schemas._vcs_instance import VcsInstanceBase, VcsInstanceCreate, VcsInstanceResponse, VcsInstanceUpdate
 
@@ -13,10 +13,6 @@ AUTO_CREATE_NEEDS_NAMESPACES = (
 )
 
 _TOP_LEVEL_GROUP = re.compile(r"[A-Za-z0-9_.-]+")
-
-
-def lacks_required_namespaces(url: str, auto_create_projects: bool, allowed_namespaces: list[str]) -> bool:
-    return auto_create_projects and is_shared_gitlab_issuer(url) and not allowed_namespaces
 
 
 def _validate_namespaces(value: list[str] | None) -> list[str]:

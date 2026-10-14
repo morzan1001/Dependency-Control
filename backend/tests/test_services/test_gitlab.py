@@ -1,6 +1,7 @@
 """Tests for GitLabService multi-instance support."""
 
 import asyncio
+from functools import partial
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
@@ -383,3 +384,38 @@ class TestGetCurrentUserId:
     @pytest.mark.parametrize("response", [None, httpx.Response(401, json={"message": "401 Unauthorized"})])
     def test_an_unanswered_or_refused_lookup_resolves_no_one(self, gitlab_instance_a, response):
         assert self._resolve(GitLabService(gitlab_instance_a), response)[0] is None
+
+
+class TestVersion:
+    """The connection test and the create check both read GET /version, and both report a transport error."""
+
+    def test_asks_the_version_endpoint_with_the_token(self, gitlab_instance_a, monkeypatch):
+        seen = serve_api(monkeypatch, lambda request: httpx.Response(200, json={"version": "17.4.1"}))
+
+        response = asyncio.run(GitLabService(gitlab_instance_a).get_version())
+
+        assert response.json() == {"version": "17.4.1"}
+        assert [(str(r.url), r.headers["PRIVATE-TOKEN"]) for r in seen] == [
+            ("https://gitlab-a.com/api/v4/version", "glpat-token-a")
+        ]
+
+    def test_a_transport_error_reaches_the_caller(self, gitlab_instance_a, monkeypatch):
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
+
+        serve_api(monkeypatch, refuse)
+
+        with pytest.raises(httpx.ConnectError):
+            asyncio.run(GitLabService(gitlab_instance_a).get_version())
+
+
+def serve_api(monkeypatch, handler) -> list[httpx.Request]:
+    """The instance's API answered by ``handler``; returns the requests that went out."""
+    seen: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return handler(request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(record)))
+    return seen
