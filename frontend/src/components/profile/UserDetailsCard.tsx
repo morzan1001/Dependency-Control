@@ -96,9 +96,9 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     profileMutation.isError && refusesUsername(profileMutation.variables, profileMutation.error)
       ? getErrorMessage(profileMutation.error)
       : null;
-  const usernameError = blankUsername ? 'Enter a username.' : usernameRefusal;
+  const usernameError = blankUsername ? 'Enter a username' : usernameRefusal;
   const emailRefusal = emailMutation.isError && refusesEmail(emailMutation.error) ? getErrorMessage(emailMutation.error) : null;
-  const emailError = blankEmail ? 'Enter an email address.' : emailRefusal;
+  const emailError = blankEmail ? 'Enter an email address' : emailRefusal;
   const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
 
   return (

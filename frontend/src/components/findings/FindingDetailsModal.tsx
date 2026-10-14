@@ -125,7 +125,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
         <Dialog open onOpenChange={(open) => !open && onClose()}>
                 <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
                 <DialogHeader className="pb-1">
-                    <DialogTitle className="flex items-center gap-2 leading-normal">
+                    <DialogTitle className="flex items-center justify-center gap-2 leading-normal sm:justify-start">
                         {finding.severity && (
                             <Badge variant={getSeverityBadgeVariant(finding.severity)}>
                                 {finding.severity}
@@ -133,7 +133,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                         )}
                         <span className="truncate leading-normal">{finding.id || 'Finding Details'}</span>
                     </DialogTitle>
-                    <DialogDescription className="flex flex-wrap items-center gap-2">
+                    <DialogDescription className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
                         <span className="flex items-center gap-1">
                             <Badge variant="outline">{finding.type}</Badge>
                             {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }) => (

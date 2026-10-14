@@ -294,7 +294,7 @@ describe('CICDInstancesManagement owner and namespace allowlists', () => {
     fireEvent.click(within(dialog).getByLabelText('Auto-Create Projects'))
 
     expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeDisabled()
-    expect(within(dialog).getByText(/needs at least one owner id/i)).toBeInTheDocument()
+    expect(within(dialog).getByText('Auto-creating projects on github.com needs at least one owner ID in the list above')).toBeInTheDocument()
 
     fireEvent.change(within(dialog).getByLabelText('Allowed Owner IDs'), { target: { value: '111' } })
     expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeEnabled()

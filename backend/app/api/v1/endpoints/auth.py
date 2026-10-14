@@ -260,13 +260,13 @@ async def create_user(
     if not signup_enabled:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Signup is currently disabled.",
+            detail="Signup is currently disabled",
         )
 
     if system_config.enforce_email_verification and not system_config.email_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Registration is temporarily unavailable.",
+            detail="Registration is temporarily unavailable",
         )
 
     new_user = User(

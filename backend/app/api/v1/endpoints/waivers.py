@@ -34,7 +34,7 @@ from app.services.stats import request_waiver_recalc, restamp_single_scan, run_w
 from app.services.waivers.matching import finding_rule_id, waiver_query
 
 
-_MSG_NO_CRITERIA = "A waiver names a finding, package, type, rule or vulnerability to match."
+_MSG_NO_CRITERIA = "A waiver names a finding, package, type, rule or vulnerability to match"
 _MSG_NO_MATCHING_FINDING = (
     "Waiver criteria do not match any finding on the given scan (default: the project's current build). "
     "Verify finding_id, finding_type, package_name and package_version. "
@@ -54,10 +54,10 @@ _MSG_NEEDS_PACKAGE_SCOPE = (
 
 _MSG_SCOPE_NEEDS_RULE = (
     "A file or rule scope waiver needs its rule_id, or the finding_id of a finding this project stores, "
-    "to name the rule it widens to."
+    "to name the rule it widens to"
 )
-_MSG_SCOPE_NEEDS_FILE = "A file scope waiver needs the file (package_name) it covers."
-_MSG_SCOPE_NEEDS_LOCATION = "File and rule scope apply only to findings a scanner places in a file."
+_MSG_SCOPE_NEEDS_FILE = "A file scope waiver needs the file (package_name) it covers"
+_MSG_SCOPE_NEEDS_LOCATION = "File and rule scope apply only to findings a scanner places in a file"
 
 
 async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> None:

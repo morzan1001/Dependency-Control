@@ -768,15 +768,15 @@ async def trigger_rescan(
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     if not scan.get("sbom_refs"):
-        raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan.")
+        raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan")
 
     # Scanner results may still be arriving, and a rescan would copy the SBOM set as it stands.
     if scan.get("status") in SCAN_ACTIVE_STATUSES:
-        raise HTTPException(status_code=409, detail="Cannot re-scan: the scan is still being analysed.")
+        raise HTTPException(status_code=409, detail="Cannot re-scan: the scan is still being analysed")
 
     rescan = await create_rescan(db, scan, worker_manager)
     if rescan is None:
-        raise HTTPException(status_code=409, detail="A re-scan of this scan is already under way.")
+        raise HTTPException(status_code=409, detail="A re-scan of this scan is already under way")
     return rescan
 
 

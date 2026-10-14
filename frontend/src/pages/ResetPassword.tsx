@@ -5,7 +5,6 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { useResetPassword } from '@/hooks/queries/use-auth'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
 const INVALID_RESET_TOKEN = 'Invalid or expired reset token'
@@ -33,12 +32,7 @@ export default function ResetPassword() {
     }
 
     resetPasswordMutation.mutate({ token, newPassword }, {
-      onSuccess: () => {
-        toast.success("Password Reset Successful", {
-          description: "You can now login with your new password.",
-        })
-        navigate('/login')
-      },
+      onSuccess: () => navigate('/login', { state: { message: 'Password reset successfully. Please login.' } }),
       onError: (err) => setError(getErrorMessage(err)),
     })
   }
@@ -49,7 +43,7 @@ export default function ResetPassword() {
         <Card className="w-[350px]">
           <CardHeader className="text-center">
             <CardTitle className="text-destructive">Error</CardTitle>
-            <CardDescription>The password reset link is invalid or missing a token.</CardDescription>
+            <CardDescription>The password reset link is invalid or missing a token</CardDescription>
           </CardHeader>
           <CardFooter className="flex flex-col gap-2">
             <Button asChild>

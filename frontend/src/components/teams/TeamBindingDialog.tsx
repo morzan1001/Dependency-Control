@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -66,9 +67,9 @@ function bindingDescription(teamName: string, providers: BindingProvider[]): str
 
 function FieldRow({ label, htmlFor, children }: Readonly<{ label: string; htmlFor: string; children: React.ReactNode }>) {
   return (
-    <div className="grid grid-cols-4 items-center gap-4">
-      <Label htmlFor={htmlFor} className="text-right">{label}</Label>
-      <div className="col-span-3">{children}</div>
+    <div className="grid gap-2">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {children}
     </div>
   );
 }
@@ -88,24 +89,22 @@ function BoundInstance({
 }>) {
   const instanceName = instance?.name ?? binding.instance_id;
   return (
-    <div className="grid grid-cols-4 items-baseline gap-4">
-      <Label className="text-right">{`${PROVIDER_LABEL[binding.provider]} · ${instanceName}`}</Label>
-      <div className="col-span-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground truncate">{bindingSummary(binding)}</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onRemove}
-            disabled={isRemoving}
-            aria-label={`Remove the binding on ${instanceName}`}
-          >
-            Remove
-          </Button>
-        </div>
-        {note && <p className="mt-1 text-xs text-muted-foreground">{note}</p>}
+    <div className="grid grid-cols-1 gap-2">
+      <Label>{`${PROVIDER_LABEL[binding.provider]} · ${instanceName}`}</Label>
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground truncate">{bindingSummary(binding)}</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onRemove}
+          disabled={isRemoving}
+          aria-label={`Remove the binding on ${instanceName}`}
+        >
+          Remove
+        </Button>
       </div>
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   );
 }
@@ -157,41 +156,42 @@ function GitHubBindingForm({
   };
 
   return (
-    <form onSubmit={handleSave}>
-      <div className="grid gap-4 py-4">
-        <FieldRow label="Organisation" htmlFor="binding-org">
-          <Select value={org ?? ''} onValueChange={pickOrg} disabled={orgsLoading}>
-            <SelectTrigger id="binding-org">
-              <SelectValue placeholder={orgsLoading ? 'Loading...' : 'Select an organisation'} />
-            </SelectTrigger>
-            <SelectContent>
-              {orgs?.map((name) => (
-                <SelectItem key={name} value={name}>
-                  {name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {orgsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(orgsError)}</p>}
-        </FieldRow>
+    <form onSubmit={handleSave} className="grid gap-4">
+      <FieldRow label="Organisation" htmlFor="binding-org">
+        <Select value={org ?? ''} onValueChange={pickOrg} disabled={orgsLoading}>
+          <SelectTrigger id="binding-org">
+            <SelectValue placeholder={orgsLoading ? 'Loading...' : 'Select an organisation'} />
+          </SelectTrigger>
+          <SelectContent>
+            {orgs?.map((name) => (
+              <SelectItem key={name} value={name}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {orgsError && <p className="text-xs text-destructive">{getErrorMessage(orgsError)}</p>}
+      </FieldRow>
 
-        <FieldRow label="GitHub team" htmlFor="binding-team">
-          <Select value={githubTeamId ?? ''} onValueChange={setGithubTeamId} disabled={!org || teamsLoading}>
-            <SelectTrigger id="binding-team">
-              <SelectValue placeholder={teamsLoading ? 'Loading...' : 'Select a GitHub team'} />
-            </SelectTrigger>
-            <SelectContent>
-              {orgTeams?.map((orgTeam) => (
-                <SelectItem key={orgTeam.id} value={String(orgTeam.id)}>
-                  {githubTeamOptionLabel(orgTeam)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {teamsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(teamsError)}</p>}
-        </FieldRow>
-      </div>
+      <FieldRow label="GitHub team" htmlFor="binding-team">
+        <Select value={githubTeamId ?? ''} onValueChange={setGithubTeamId} disabled={!org || teamsLoading}>
+          <SelectTrigger id="binding-team">
+            <SelectValue placeholder={teamsLoading ? 'Loading...' : 'Select a GitHub team'} />
+          </SelectTrigger>
+          <SelectContent>
+            {orgTeams?.map((orgTeam) => (
+              <SelectItem key={orgTeam.id} value={String(orgTeam.id)}>
+                {githubTeamOptionLabel(orgTeam)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {teamsError && <p className="text-xs text-destructive">{getErrorMessage(teamsError)}</p>}
+      </FieldRow>
       <DialogFooter>
+        <DialogClose asChild>
+          <Button type="button" variant="outline">Cancel</Button>
+        </DialogClose>
         <Button type="submit" disabled={!org || !githubTeamId || isPending}>
           {isPending ? 'Saving...' : 'Save Binding'}
         </Button>
@@ -228,34 +228,35 @@ function GitLabBindingForm({
   };
 
   return (
-    <form onSubmit={handleSave}>
-      <div className="grid gap-4 py-4">
-        <FieldRow label="Find group" htmlFor="binding-group-search">
-          <Input
-            id="binding-group-search"
-            placeholder="Filter by name or path"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </FieldRow>
+    <form onSubmit={handleSave} className="grid gap-4">
+      <FieldRow label="Find group" htmlFor="binding-group-search">
+        <Input
+          id="binding-group-search"
+          placeholder="Filter by name or path"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </FieldRow>
 
-        <FieldRow label="Group" htmlFor="binding-group">
-          <Select value={groupId ?? ''} onValueChange={setGroupId} disabled={groupsLoading}>
-            <SelectTrigger id="binding-group">
-              <SelectValue placeholder={groupsLoading ? 'Loading...' : 'Select a group'} />
-            </SelectTrigger>
-            <SelectContent>
-              {groups?.map((group) => (
-                <SelectItem key={group.id} value={String(group.id)}>
-                  {gitlabGroupOptionLabel(group)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {groupsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(groupsError)}</p>}
-        </FieldRow>
-      </div>
+      <FieldRow label="Group" htmlFor="binding-group">
+        <Select value={groupId ?? ''} onValueChange={setGroupId} disabled={groupsLoading}>
+          <SelectTrigger id="binding-group">
+            <SelectValue placeholder={groupsLoading ? 'Loading...' : 'Select a group'} />
+          </SelectTrigger>
+          <SelectContent>
+            {groups?.map((group) => (
+              <SelectItem key={group.id} value={String(group.id)}>
+                {gitlabGroupOptionLabel(group)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {groupsError && <p className="text-xs text-destructive">{getErrorMessage(groupsError)}</p>}
+      </FieldRow>
       <DialogFooter>
+        <DialogClose asChild>
+          <Button type="button" variant="outline">Cancel</Button>
+        </DialogClose>
         <Button type="submit" disabled={!groupId || isPending}>
           {isPending ? 'Saving...' : 'Save Binding'}
         </Button>
@@ -317,7 +318,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindin
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Team Binding</DialogTitle>
           <DialogDescription>

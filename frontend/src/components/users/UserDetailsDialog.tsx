@@ -98,7 +98,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
             if (email_queued) {
               toast.success("Password Reset Initiated", { description: "A reset email has been queued for the user." });
             } else {
-              toast.error("Reset Failed", { description: "No reset email could be queued for the user." });
+              toast.error("Reset Failed", { description: "No reset email could be queued for the user" });
             }
           },
           onError: (error) => {

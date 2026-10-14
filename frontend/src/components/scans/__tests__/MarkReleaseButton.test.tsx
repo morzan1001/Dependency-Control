@@ -30,7 +30,7 @@ const OVERLONG_COMMIT_TAG = `${LONGEST_COMMIT_TAG}v`
 const TYPED_VERSION = '1.0.6'
 const VERSION_LIKE_HINT = /looks like a version/i
 const OFF_PATTERN_ENVIRONMENT = 'Pre-Prod!'
-const OFF_PATTERN_HINT = /lowercase letters/i
+const OFF_PATTERN_HINT = 'Lowercase letters, digits, - and _ only, up to 32 characters'
 const TOO_LONG_REFUSAL = 'String should have at most 128 characters'
 const RESCAN_NOTE = /releases are held by the original scan/i
 const ORIGINAL_SCAN_LINK = 'Open the original scan'
@@ -170,7 +170,7 @@ describe('MarkReleaseButton', () => {
     const dialog = openDialog(releasedScan([makeRelease()]))
 
     expect(dialog.getByRole('button', { name: MARK_BUTTON })).toBeDisabled()
-    expect(dialog.getByText(`Already released to ${PRODUCTION}.`)).toBeInTheDocument()
+    expect(dialog.getByText(`Already released to ${PRODUCTION}`)).toBeInTheDocument()
     // An untouched field stands for the default, which is not a value the user got wrong.
     expect(dialog.getByLabelText(ENVIRONMENT_FIELD)).not.toHaveAttribute('aria-invalid', 'true')
   })

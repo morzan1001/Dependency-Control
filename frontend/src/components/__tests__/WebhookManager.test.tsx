@@ -152,6 +152,20 @@ describe("WebhookManager", () => {
     expect(screen.getByText("Slack")).toBeInTheDocument();
   });
 
+  it("names the events in the table with the labels of the webhook dialog", () => {
+    renderWith([{ ...slackHook, events: ["vulnerability.found", "compliance_report.generated"] }]);
+
+    expect(screen.getByText("Vulnerability Found")).toBeInTheDocument();
+    expect(screen.getByText("Compliance Report Generated")).toBeInTheDocument();
+    expect(screen.queryByText("vulnerability.found")).not.toBeInTheDocument();
+  });
+
+  it("shows an event the dialog does not offer by its stored name", () => {
+    renderWith([{ ...slackHook, events: ["scan_completed"] }]);
+
+    expect(screen.getByText("scan_completed")).toBeInTheDocument();
+  });
+
   it("marks a webhook whose last delivery failed", () => {
     renderWith([slackHook, { ...slackHook, id: "w-ok", last_triggered_at: "2026-10-07T10:00:00Z" }]);
 

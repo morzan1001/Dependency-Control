@@ -243,7 +243,7 @@ async def load_project_with_members(db: AsyncIOMotorDatabase, project_id: str) -
 async def ensure_crypto_overrides_writable(db: AsyncIOMotorDatabase) -> None:
     if project_overrides_locked(await SystemSettingsRepository(db).get()):
         raise HTTPException(
-            status_code=403, detail="System enforces a global crypto policy; project overrides are disabled."
+            status_code=403, detail="System enforces a global crypto policy; project overrides are disabled"
         )
 
 

@@ -35,7 +35,7 @@ export async function copyWithToast(text: string, what: string): Promise<boolean
     toast.success(`${what.charAt(0).toUpperCase()}${what.slice(1)} copied to clipboard`)
     return true
   } catch {
-    toast.error('Could not reach the clipboard', { description: `Select the ${what} and copy it by hand.` })
+    toast.error('Could not reach the clipboard', { description: `Select the ${what} and copy it by hand` })
     return false
   }
 }

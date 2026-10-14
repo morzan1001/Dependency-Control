@@ -134,7 +134,7 @@ async def ingest_sbom(
     if not sbom_refs:
         raise HTTPException(
             status_code=400,
-            detail=f"None of the {len(data.sboms)} document(s) is a CycloneDX, SPDX or Syft SBOM.",
+            detail=f"None of the {len(data.sboms)} document(s) is a CycloneDX, SPDX or Syft SBOM",
         )
     sboms_processed = len(sbom_refs)
     sboms_failed = len(data.sboms) - sboms_processed

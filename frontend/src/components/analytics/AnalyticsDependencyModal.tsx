@@ -515,7 +515,7 @@ export function AnalyticsDependencyModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center justify-center gap-2 sm:justify-start">
             <Package className="h-5 w-5" />
             {component}
             {version && <Badge variant="outline">{version}</Badge>}

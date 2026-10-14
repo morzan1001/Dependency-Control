@@ -18,7 +18,7 @@ const { member, auth } = vi.hoisted(() => ({
   member: { current: undefined as ProjectMember | undefined },
   auth: { permissions: [] as string[] },
 }))
-const ALREADY_UNDER_WAY = 'A re-scan of this scan is already under way.'
+const ALREADY_UNDER_WAY = 'A re-scan of this scan is already under way'
 const RESCAN_BUTTON = { name: /trigger re-scan/i }
 const SCAN_PATH = '/projects/p1/scans/s1'
 const RAW_TAB = `${SCAN_PATH}?tab=raw`

@@ -58,6 +58,14 @@ describe('InviteUserDialog copy link', () => {
     expect(screen.queryByRole('button', { name: 'Copy Link' })).not.toBeInTheDocument()
   })
 
+  it('focuses the link with all of it selected, like the API key dialogs', async () => {
+    sendInvitation()
+
+    const link = (await screen.findByDisplayValue(INVITE_LINK)) as HTMLInputElement
+    expect(link).toHaveFocus()
+    expect([link.selectionStart, link.selectionEnd]).toEqual([0, INVITE_LINK.length])
+  })
+
   it('asks for the link to be copied once no email went out, like the project API key dialogs', async () => {
     openDialog()
     expect(screen.getByRole('dialog')).toHaveAccessibleDescription(
@@ -77,7 +85,7 @@ describe('InviteUserDialog copy link', () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Could not reach the clipboard', {
-        description: expect.stringMatching(/copy it by hand/i),
+        description: 'Select the invitation link and copy it by hand',
       }),
     )
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
@@ -115,8 +123,8 @@ describe('InviteUserDialog refusals', () => {
   it.each(['', '   '])('says under the field that the blank address %j needs an email address and sends nothing', async (blank) => {
     sendInvitation(blank)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address.')
-    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address')
     expect(invite).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'lena@corp.com' } })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()

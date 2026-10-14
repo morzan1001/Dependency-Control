@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch"
 import { SecretInput } from "@/components/settings/SecretInput"
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
+import { WEBHOOK_EVENTS } from "@/lib/constants"
 
 // Mirrors the server's detection, which decides the type when the request names none.
 function detectWebhookType(url: string): WebhookType {
@@ -27,49 +28,6 @@ function detectWebhookType(url: string): WebhookType {
   if ((host === "api.powerplatform.com" || host.endsWith(".api.powerplatform.com")) && path.includes("/workflows/")) return "teams";
   return "generic";
 }
-
-const AVAILABLE_EVENTS = [
-  {
-    id: "scan.completed",
-    label: "Scan Completed",
-    description: "Fires when a project scan finishes successfully.",
-  },
-  {
-    id: "vulnerability.found",
-    label: "Vulnerability Found",
-    description: "Fires when a scan finds critical, high, KEV or high-EPSS vulnerabilities.",
-  },
-  {
-    id: "analysis.failed",
-    label: "Analysis Failed",
-    description: "Fires when a scan or analysis run fails.",
-  },
-  {
-    id: "sbom.ingested",
-    label: "SBOM Ingested",
-    description: "Fires when an SBOM is ingested for a project.",
-  },
-  {
-    id: "crypto_asset.ingested",
-    label: "Crypto Asset Ingested",
-    description: "Fires when crypto assets (CBOM) are imported or updated.",
-  },
-  {
-    id: "crypto_policy.changed",
-    label: "Crypto Policy Changed",
-    description: "Fires on every create/update/delete/revert of a crypto policy.",
-  },
-  {
-    id: "license_policy.changed",
-    label: "License Policy Changed",
-    description: "Fires on every create/update/delete/revert of a license policy.",
-  },
-  {
-    id: "compliance_report.generated",
-    label: "Compliance Report Generated",
-    description: "Fires when a compliance report finishes, completed or failed.",
-  },
-]
 
 interface WebhookFormState {
   url: string
@@ -232,7 +190,7 @@ export function WebhookForm(props: WebhookFormProps) {
         <div className="space-y-2">
           <Label id="webhook-events-label">Events</Label>
           <div role="group" aria-labelledby="webhook-events-label" className="space-y-2 max-h-64 overflow-y-auto pr-1">
-            {AVAILABLE_EVENTS.map(event => (
+            {WEBHOOK_EVENTS.map(event => (
               <div key={event.id} className="flex items-start space-x-2">
                 <Checkbox
                   id={event.id}

@@ -49,6 +49,14 @@ function renderModal(metadata: DependencyMetadata) {
   );
 }
 
+describe("AnalyticsDependencyModal header", () => {
+  it("centres the package icon, name and version on a phone, as the centred header does with a plain title, and starts them on the left from sm up", () => {
+    renderModal(baseMetadata);
+
+    expect(screen.getByRole("heading", { name: /pkg/ })).toHaveClass("justify-center", "sm:justify-start");
+  });
+});
+
 describe("AnalyticsDependencyModal metadata link hardening", () => {
   beforeEach(() => {
     vi.clearAllMocks();

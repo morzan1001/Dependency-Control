@@ -26,7 +26,7 @@ const REJECTION_HINT_ID = 'release-environment-rejection'
 const VERSION_LIKE_HINT_ID = 'release-environment-version-like'
 const VERSION_LABEL = 'Version'
 const VERSION_PLACEHOLDER = 'e.g. 1.0.6'
-const OFF_PATTERN_HINT = 'Lowercase letters, digits, - and _ only, up to 32 characters.'
+const OFF_PATTERN_HINT = 'Lowercase letters, digits, - and _ only, up to 32 characters'
 const VERSION_LIKE_HINT = 'This looks like a version number. Put it under Version and name the environment here, such as production.'
 // 1.0.6, 1-0-6, v2.3, 1_0_6: a version typed into the environment, its dots swapped for the slug's dashes.
 const VERSION_LIKE = /^v?\d+(?:[._-]\d+)+/i
@@ -48,7 +48,7 @@ interface MarkRejection {
 function rejectionFor(environment: string, held: readonly string[]): MarkRejection | null {
   if (!RELEASE_ENVIRONMENT_PATTERN.test(environment)) return { reason: OFF_PATTERN_HINT, malformed: true }
   // The backend would upsert the same record; offering that only invites confusion.
-  if (held.includes(environment)) return { reason: `Already released to ${environment}.`, malformed: false }
+  if (held.includes(environment)) return { reason: `Already released to ${environment}`, malformed: false }
   return null
 }
 

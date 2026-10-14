@@ -75,6 +75,50 @@ export const DEFAULT_RELEASE_ENVIRONMENT = 'production';
 // Must match `RELEASE_VERSION_MAX_LENGTH` in backend/app/core/constants.py.
 export const RELEASE_VERSION_MAX_LENGTH = 128;
 
+// Must match `WEBHOOK_VALID_EVENTS` in backend/app/core/constants.py.
+export const WEBHOOK_EVENTS = [
+  {
+    id: 'scan.completed',
+    label: 'Scan Completed',
+    description: 'Fires when a project scan finishes successfully.',
+  },
+  {
+    id: 'vulnerability.found',
+    label: 'Vulnerability Found',
+    description: 'Fires when a scan finds critical, high, KEV or high-EPSS vulnerabilities.',
+  },
+  {
+    id: 'analysis.failed',
+    label: 'Analysis Failed',
+    description: 'Fires when a scan or analysis run fails.',
+  },
+  {
+    id: 'sbom.ingested',
+    label: 'SBOM Ingested',
+    description: 'Fires when an SBOM is ingested for a project.',
+  },
+  {
+    id: 'crypto_asset.ingested',
+    label: 'Crypto Asset Ingested',
+    description: 'Fires when crypto assets (CBOM) are imported or updated.',
+  },
+  {
+    id: 'crypto_policy.changed',
+    label: 'Crypto Policy Changed',
+    description: 'Fires on every create/update/delete/revert of a crypto policy.',
+  },
+  {
+    id: 'license_policy.changed',
+    label: 'License Policy Changed',
+    description: 'Fires on every create/update/delete/revert of a license policy.',
+  },
+  {
+    id: 'compliance_report.generated',
+    label: 'Compliance Report Generated',
+    description: 'Fires when a compliance report finishes, completed or failed.',
+  },
+] as const;
+
 // Per-user notification events. Must match `NOTIFICATION_EVENTS` in
 // backend/app/core/constants.py.
 export const NOTIFICATION_EVENTS = [

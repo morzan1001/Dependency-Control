@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,13 +23,18 @@ function answer(status: number, data: unknown) {
   }
 }
 
+function LoginCard() {
+  const { state } = useLocation()
+  return <output>{state?.message}</output>
+}
+
 function renderResetPage(path = '/reset-password?token=t1') {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/login" element={<p>login page</p>} />
+          <Route path="/login" element={<LoginCard />} />
           <Route path="/forgot-password" element={<p>forgot password page</p>} />
         </Routes>
       </MemoryRouter>
@@ -86,27 +91,25 @@ describe('ResetPassword', () => {
     renderResetPage('/reset-password')
 
     expect(screen.getByRole('heading', { name: 'Error' })).toBeInTheDocument()
-    expect(screen.getByText('The password reset link is invalid or missing a token.')).toBeInTheDocument()
+    expect(screen.getByText('The password reset link is invalid or missing a token')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Go to Login' })).toHaveAttribute('href', '/login')
     expect(screen.queryByRole('button', { name: 'Reset Password' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('link', { name: 'Request a new link' }))
     expect(await screen.findByText('forgot password page')).toBeInTheDocument()
   })
 
-  it("sends the mailed link's token with the new password and opens the login", async () => {
+  it("sends the mailed link's token with the new password and announces the reset once, on the login card", async () => {
     const token = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJib2JAdGVzdC5jb20ifQ.c2ln-_x'
     answer(200, { message: 'Password successfully reset' })
     renderResetPage(`/reset-password?token=${token}`)
 
     submit('Battery-Staple-2')
 
-    expect(await screen.findByText('login page')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('Password reset successfully. Please login.')
     expect(sent.map(({ method, url, data }) => [method, url, JSON.parse(data)])).toEqual([
       ['post', '/reset-password', { token, new_password: 'Battery-Staple-2' }],
     ])
-    expect(toast.success).toHaveBeenCalledWith('Password Reset Successful', {
-      description: 'You can now login with your new password.',
-    })
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('keeps the fields open while the reset is sent, like the other auth forms', async () => {
