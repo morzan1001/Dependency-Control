@@ -84,6 +84,31 @@ describe('ProjectMembers', () => {
     await waitFor(() => expect(projectApi.inviteMember).toHaveBeenCalledWith('p1', 'bob@example.com', 'viewer'))
   })
 
+  it('invites a pasted address without the non-breaking spaces around it', async () => {
+    vi.mocked(projectApi.inviteMember).mockResolvedValue(undefined as never)
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    // An email field strips the plain spaces around its value itself, so only a pasted non-breaking space reaches the dialog.
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: '\u00a0bob@example.com\u00a0' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
+
+    await waitFor(() => expect(projectApi.inviteMember).toHaveBeenCalledWith('p1', 'bob@example.com', 'viewer'))
+  })
+
+  it('opens again on the Viewer role after another role was picked and the dialog cancelled', async () => {
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+    fireEvent.keyDown(within(screen.getByRole('dialog')).getByLabelText('Role'), { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('option', { name: 'Admin' }))
+    expect(within(screen.getByRole('dialog')).getByLabelText('Role')).toHaveTextContent('Admin')
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    expect(within(screen.getByRole('dialog')).getByLabelText('Role')).toHaveTextContent('Viewer')
+  })
+
   it('closes without inviting through Cancel', () => {
     renderMembers('')
     fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))

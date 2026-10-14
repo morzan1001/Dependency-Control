@@ -62,6 +62,13 @@ describe("AddMemberDialog", () => {
     expect(teamApi.addMember).toHaveBeenCalledWith("t-1", { email: "lena@example.com", role: "member" });
   });
 
+  it("sends a pasted address without the non-breaking spaces around it", async () => {
+    // An email field strips the plain spaces around its value itself, so only a pasted non-breaking space reaches the dialog.
+    addMember("\u00a0lena@example.com\u00a0");
+
+    await waitFor(() => expect(teamApi.addMember).toHaveBeenCalledWith("t-1", { email: "lena@example.com", role: "member" }));
+  });
+
   it("closes without adding through Cancel", () => {
     const { onClose, dialog } = openDialog();
 
