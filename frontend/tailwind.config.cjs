@@ -86,6 +86,10 @@ module.exports = {
             DEFAULT: "hsl(var(--severity-info))",
             foreground: "hsl(var(--severity-info-foreground))",
           },
+          unknown: {
+            DEFAULT: "hsl(var(--severity-unknown))",
+            foreground: "hsl(var(--severity-unknown-foreground))",
+          },
         },
       },
       borderRadius: {

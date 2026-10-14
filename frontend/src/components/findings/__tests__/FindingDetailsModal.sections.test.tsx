@@ -376,7 +376,7 @@ describe("FindingDetailsModal details by type", () => {
     );
 
     expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium", "text-severity-medium-foreground");
-    expect(screen.getByText("UNKNOWN")).toHaveClass("bg-muted", "text-muted-foreground");
+    expect(screen.getByText("UNKNOWN")).toHaveClass("bg-severity-unknown", "text-severity-unknown-foreground");
     expect(screen.getByText("MEDIUM").querySelector("svg")).not.toBeNull();
   });
 

@@ -14,9 +14,9 @@ export function advisoryUrl(id: string): string | null {
 // values mirror the light-mode severity tokens in index.css.
 export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
   CRITICAL: '#dc2626', // red-600 / --severity-critical
-  HIGH: '#f97316', // orange-500 / --severity-high
-  MEDIUM: '#eab308', // yellow-500 / --severity-medium
-  LOW: '#3b82f6', // blue-500 / --severity-low
+  HIGH: '#c2410c', // orange-700 / --severity-high
+  MEDIUM: '#ebbd05', // --severity-medium
+  LOW: '#2563eb', // blue-600 / --severity-low
   NEGLIGIBLE: '#d1d5db', // gray-300
   INFO: '#6b7280', // gray-500 / --severity-info
   UNKNOWN: '#9ca3af', // gray-400
@@ -42,7 +42,7 @@ export function getSeverityBgColor(severity: string): string {
     case 'INFO':
       return 'bg-severity-info hover:bg-severity-info text-severity-info-foreground'
     default:
-      return 'bg-muted hover:bg-muted text-muted-foreground'
+      return 'bg-severity-unknown hover:bg-severity-unknown text-severity-unknown-foreground'
   }
 }
 
