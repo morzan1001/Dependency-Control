@@ -435,8 +435,7 @@ async def _process_sbom(
 async def _analyse_sboms(
     ctx: _RunContext, fs: AsyncIOMotorGridFSBucket, stored_ids: list[str | None], aggregator: ResultAggregator
 ) -> tuple[list[ParsedSBOM | None], int, list[AnalyzerOutcome]]:
-    """Load and analyse the stored SBOMs one at a time; returns the parsed payload, how many failed to load and
-    the analyzer outcomes."""
+    """Load and analyse the stored SBOMs one at a time; returns the payload, the load failures and the outcomes."""
     write_file = bool(RAW_SBOM_ANALYZERS & set(ctx.active_analyzers))
     # Collected rather than stored per SBOM: the inventory is replaced once per payload (see store_scan_dependencies).
     payload: list[ParsedSBOM | None] = []

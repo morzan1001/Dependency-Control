@@ -1,5 +1,4 @@
-"""How a run reports each analyzer's outcome: the scan's verdict, its scan-error findings, the metrics and the
-completion notice."""
+"""What each analyzer outcome does to the scan, its findings, the metrics and the completion notice."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
