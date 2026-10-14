@@ -8,6 +8,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pydantic import BaseModel
 from pymongo import ReplaceOne
+from pymongo.collation import Collation
 from pymongo.errors import BulkWriteError
 
 
@@ -85,8 +86,11 @@ class BaseRepository[T: BaseModel]:
         limit: int = 100,
         sort_by: str | None = None,
         sort_order: int = 1,
+        collation: Collation | None = None,
     ) -> list[T]:
-        return self._to_model_list(await self.find_many_raw(query, skip, limit, sort_by, sort_order))
+        return self._to_model_list(
+            await self.find_many_raw(query, skip, limit, sort_by, sort_order, collation=collation)
+        )
 
     async def find_many_raw(
         self,
@@ -96,10 +100,11 @@ class BaseRepository[T: BaseModel]:
         sort_by: str | None = None,
         sort_order: int = 1,
         projection: dict[str, Any] | None = None,
+        collation: Collation | None = None,
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
-        cursor = self.collection.find(query, projection)
+        cursor = self.collection.find(query, projection, collation=collation)
         if sort_by:
             # Mongo leaves the order among equal keys open per query, so skip/limit pages would overlap.
             cursor = cursor.sort([(sort_by, sort_order)] if sort_by == "_id" else [(sort_by, sort_order), ("_id", 1)])
@@ -190,6 +195,7 @@ class BaseRepository[T: BaseModel]:
         limit: int | None = None,
         allow_disk_use: bool = False,
         hint: dict[str, int] | None = None,
+        collation: Collation | None = None,
     ) -> list[dict[str, Any]]:
         """allow_disk_use lets mongod spill large $group/$sort sets to disk past the 100MB limit."""
         options: dict[str, Any] = {}
@@ -197,7 +203,7 @@ class BaseRepository[T: BaseModel]:
             options["allowDiskUse"] = True
         if hint:
             options["hint"] = hint
-        return await self.collection.aggregate(pipeline, **options).to_list(limit)
+        return await self.collection.aggregate(pipeline, collation=collation, **options).to_list(limit)
 
     async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T, None]:
         async for doc in self.collection.find(query or {}):

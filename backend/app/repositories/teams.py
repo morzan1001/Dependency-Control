@@ -6,6 +6,7 @@ from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.collation import Collation
 from pymongo.errors import DuplicateKeyError
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, team_binding_key
@@ -269,6 +270,11 @@ class TeamRepository:
         return bool(result.matched_count)
 
     async def find_many_raw(
-        self, query: dict[str, Any], sort_by: str = "name", sort_order: int = 1, limit: int | None = None
+        self,
+        query: dict[str, Any],
+        sort_by: str = "name",
+        sort_order: int = 1,
+        limit: int | None = None,
+        collation: Collation | None = None,
     ) -> list[dict[str, Any]]:
-        return await self.collection.find(query).sort(sort_by, sort_order).to_list(limit)
+        return await self.collection.find(query, collation=collation).sort(sort_by, sort_order).to_list(limit)

@@ -15,7 +15,7 @@ from app.api.v1.helpers import (
     parse_sort_direction,
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.api.v1.helpers.sorting import SortOrderQuery
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR, WAIVER_SCOPE_FILE, WAIVER_SCOPE_FINDING
 from app.core.permissions import Permissions, has_permission
@@ -232,7 +232,7 @@ async def list_waivers(
     total = await waiver_repo.count(query)
     sort_direction = parse_sort_direction(sort_order)
     if sort_by == "created_by":
-        waivers = await waiver_repo.find_many_by_creator_name(query, skip, limit, sort_direction)
+        waivers = await waiver_repo.find_many_by_creator_name(query, skip, limit, sort_direction, CASE_INSENSITIVE)
     else:
         waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
 

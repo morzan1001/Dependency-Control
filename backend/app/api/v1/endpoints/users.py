@@ -33,7 +33,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_501,
     RESP_AUTH_404,
 )
-from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
 from app.core import security
 from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
@@ -147,7 +147,12 @@ async def read_users(
 
     user_repo = UserRepository(db)
     return await user_repo.find_many(
-        query, skip=skip, limit=limit, sort_by=sort_by, sort_order=parse_sort_direction(sort_order)
+        query,
+        skip=skip,
+        limit=limit,
+        sort_by=sort_by,
+        sort_order=parse_sort_direction(sort_order),
+        collation=CASE_INSENSITIVE,
     )
 
 

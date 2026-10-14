@@ -3,6 +3,9 @@
 from typing import Annotated, Literal
 
 from fastapi import Query
+from pymongo.collation import Collation, CollationStrength
+
+CASE_INSENSITIVE = Collation(locale="en", strength=CollationStrength.SECONDARY)
 
 SORT_FIELDS: dict[str, dict[str, str]] = {
     "projects": {

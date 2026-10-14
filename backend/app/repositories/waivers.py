@@ -5,9 +5,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pymongo import ReturnDocument, UpdateOne
+from pymongo.collation import Collation
 
 from app.models.waiver import Waiver
 from app.repositories.base import BaseRepository
+from app.repositories.users import UserRepository
 
 
 def non_expired_waiver_filter(now: datetime) -> dict[str, Any]:
@@ -41,19 +43,21 @@ class WaiverRepository(BaseRepository[Waiver]):
         )
 
     async def find_many_by_creator_name(
-        self, query: dict[str, Any], skip: int, limit: int, sort_order: int
+        self, query: dict[str, Any], skip: int, limit: int, sort_order: int, collation: Collation
     ) -> list[Waiver]:
         """A page ordered by the name each waiver shows for its creator: the account's username, else what it stored."""
+        # Under the collation a users $lookup scans users per waiver, since their _id index cannot carry it.
+        names = await UserRepository(self.db).usernames_by_id(await self.collection.distinct("created_by", query))
+        creator = {"$getField": {"field": "$created_by", "input": {"$literal": names}}}
         pipeline: list[dict[str, Any]] = [
             {"$match": query},
-            {"$lookup": {"from": "users", "localField": "created_by", "foreignField": "_id", "as": "_creator"}},
-            {"$set": {"_creator": {"$ifNull": [{"$arrayElemAt": ["$_creator.username", 0]}, "$created_by"]}}},
+            {"$set": {"_creator": {"$ifNull": [creator, "$created_by"]}}},
             {"$sort": {"_creator": sort_order, "_id": 1}},
             {"$skip": skip},
             {"$limit": limit},
             {"$unset": "_creator"},
         ]
-        return self._to_model_list(await self.aggregate(pipeline, limit))
+        return self._to_model_list(await self.aggregate(pipeline, limit, collation=collation))
 
     async def find_active_for_project(self, project_id: str) -> list[Waiver]:
         """Active (non-expired) waivers that apply to a project: its own and the global ones (project_id=None)."""
