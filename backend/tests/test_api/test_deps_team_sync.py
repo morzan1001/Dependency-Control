@@ -50,11 +50,13 @@ async def _seed(db, **ownership) -> Project:
 
 
 def _gitlab(service, instance_id: str = _GITLAB_INSTANCE) -> _GitLabCi:
-    return _GitLabCi(make_gitlab_instance(id=instance_id), service)
+    service.instance, service.team_provider = make_gitlab_instance(id=instance_id), TEAM_SOURCE_GITLAB
+    return _GitLabCi(service)
 
 
 def _github(service) -> _GitHubCi:
-    return _GitHubCi(make_github_instance(id=_GITHUB_INSTANCE), service)
+    service.instance, service.team_provider = make_github_instance(id=_GITHUB_INSTANCE), TEAM_SOURCE_GITHUB
+    return _GitHubCi(service)
 
 
 async def _apply(db, project: Project, stages: list[dict]) -> dict:

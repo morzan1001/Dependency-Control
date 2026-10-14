@@ -179,7 +179,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     provider = "GitHub"
     _cache_prefix = "github:gh_instance"
-    _team_provider = TEAM_SOURCE_GITHUB
+    team_provider = TEAM_SOURCE_GITHUB
     _email_field = "email"
     _email_cache_ttl = GITHUB_USER_EMAIL_CACHE_TTL
     _oidc_payload = GitHubOIDCPayload

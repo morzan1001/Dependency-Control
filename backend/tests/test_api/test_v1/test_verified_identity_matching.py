@@ -132,8 +132,7 @@ class TestProjectMemberAdd:
 class TestCiInitialProjectAdmin:
     @staticmethod
     async def _admin(job_email: str, *users: dict) -> str | None:
-        instance = make_gitlab_instance()
-        gitlab = _GitLabCi(instance, GitLabService(instance))
+        gitlab = _GitLabCi(GitLabService(make_gitlab_instance()))
         return await gitlab.initial_member(_CiClaim(42, "corp/proj", job_email), await _db(*users))
 
     @pytest.mark.asyncio

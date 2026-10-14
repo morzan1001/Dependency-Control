@@ -56,7 +56,7 @@ async def _ingest(
     org_reads, check_reads, member_reads, map_reads = _reads(service, org_teams, repo_map)
 
     with org_reads, check_reads, member_reads, map_reads:
-        stages = await _ownership_stages(_GitHubCi(service.instance, service), project, _CiClaim("1", path, None), db)
+        stages = await _ownership_stages(_GitHubCi(service), project, _CiClaim("1", path, None), db)
 
     if stages:
         await project_repo.update_raw(project_id, stages)

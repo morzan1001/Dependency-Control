@@ -57,7 +57,7 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
 
     provider: ClassVar[str]
     _cache_prefix: ClassVar[str]
-    _team_provider: ClassVar[str]
+    team_provider: ClassVar[str]
     _email_field: ClassVar[str]
     _email_cache_ttl: ClassVar[int]
     _oidc_payload: type[PayloadT]
@@ -291,7 +291,7 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
     @property
     def _member_source(self) -> str:
         """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(self._team_provider, self._instance_id)
+        return team_source(self.team_provider, self._instance_id)
 
     def _team_members(self, resolved: Iterable[tuple[str, str]]) -> list[TeamMember]:
         """One member per local user from (user id, role) pairs, an admin role kept over any other."""
@@ -324,7 +324,7 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
         await team_repo.update_with_binding(
             team["_id"],
             renamed,
-            team_binding_key(self._team_provider, self._instance_id, external_id),
+            team_binding_key(self.team_provider, self._instance_id, external_id),
             binding_fields,
             subset,
         )

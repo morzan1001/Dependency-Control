@@ -25,6 +25,7 @@ from app.repositories.projects import (
     set_owners_pipeline,
 )
 from app.schemas.project import ProjectUpdate
+from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.gitlab import make_gitlab_instance
 
@@ -93,11 +94,10 @@ async def _assert_an_ingest_leaves_unmigrated_owners_as_they_are(db) -> None:
     """A bare provider value names no instance, so it stays as a hand assignment would, with no write."""
     await db.projects.insert_one(dict(_UNMIGRATED_PROJECT))
     project = Project(**_UNMIGRATED_PROJECT)
-    service = MagicMock()
+    service = GitLabService(make_gitlab_instance(id="gl-inst-a"))
     service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(["gl-still-held"]))
 
-    gitlab = _GitLabCi(make_gitlab_instance(id="gl-inst-a"), service)
-    stages = await _ownership_stages(gitlab, project, _CiClaim(100, "grp/proj", None), db)
+    stages = await _ownership_stages(_GitLabCi(service), project, _CiClaim(100, "grp/proj", None), db)
 
     assert stages == []
     await ProjectRepository(db).update_raw("p-unmigrated", replace_team_subset_pipeline(_GITLAB_A, ["gl-still-held"]))

@@ -21,16 +21,12 @@ from app.core.constants import (
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
-    TEAM_SOURCE_GITHUB,
-    TEAM_SOURCE_GITLAB,
     team_source,
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import auth_token_validations_total
 from app.core.permissions import Permissions, has_permission, is_setup_2fa_scope
 from app.db.mongodb import get_database
-from app.models.github_instance import GitHubInstance
-from app.models.gitlab_instance import GitLabInstance
 from app.models.project import Project, ProjectMember
 from app.models.system import SystemSettings
 from app.models.team import TeamSyncResult
@@ -213,20 +209,17 @@ class _CiClaim[IdT](NamedTuple):
 class _CiProvider[IdT: (int, str)](ABC):
     """One provider's part in resolving the project a CI token belongs to."""
 
-    label: ClassVar[str]
-    team_provider: ClassVar[str]
     instance_field: ClassVar[str]
     id_field: ClassVar[str]
     path_field: ClassVar[str]
     allowlist_rule: ClassVar[str]
-    # Every job of every pipeline ingests; a provider with a window resolves a project's owners once per window.
     sync_window: ClassVar[int] = 0
 
-    instance: GitLabInstance | GitHubInstance
+    service: GitLabService | GitHubService
 
     @property
     def instance_id(self) -> str:
-        return str(self.instance.id)
+        return str(self.service.instance.id)
 
     def key(self, external_id: IdT) -> dict[str, Any]:
         """The project's composite key on this instance."""
@@ -248,16 +241,13 @@ class _CiProvider[IdT: (int, str)](ABC):
 
 
 class _GitLabCi(_CiProvider[int]):
-    label = "GitLab"
-    team_provider = TEAM_SOURCE_GITLAB
     instance_field, id_field, path_field = "gitlab_instance_id", "gitlab_project_id", "gitlab_project_path"
     allowlist_rule = "auto-creation on gitlab.com needs an allowed namespace list"
     sync_window = GITLAB_TEAM_SYNC_WINDOW_SECONDS
 
-    instance: GitLabInstance
+    service: GitLabService
 
-    def __init__(self, instance: GitLabInstance, service: GitLabService) -> None:
-        self.instance = instance
+    def __init__(self, service: GitLabService) -> None:
         self.service = service
 
     async def claim(self, oidc_token: str) -> _CiClaim[int] | None:
@@ -265,15 +255,16 @@ class _GitLabCi(_CiProvider[int]):
         if not payload:
             return None
         path = payload.project_path
-        if not self.instance.accepts_project_path(path):
+        instance = self.service.instance
+        if not instance.accepts_project_path(path):
             logger.warning(
                 "Refused GitLab OIDC token from %s: outside the namespaces allowed on instance '%s'",
                 sanitize_for_log(path),
-                self.instance.name,
+                instance.name,
             )
             raise HTTPException(
                 status_code=403,
-                detail=f"Project '{path}' is outside the namespaces allowed on GitLab instance '{self.instance.name}'",
+                detail=f"Project '{path}' is outside the namespaces allowed on GitLab instance '{instance.name}'",
             )
         return _CiClaim(int(payload.project_id), path, payload.user_email)
 
@@ -288,32 +279,30 @@ class _GitLabCi(_CiProvider[int]):
 
 
 class _GitHubCi(_CiProvider[str]):
-    label = "GitHub"
-    team_provider = TEAM_SOURCE_GITHUB
     instance_field, id_field, path_field = "github_instance_id", "github_repository_id", "github_repository_path"
     allowlist_rule = "auto-creation on the shared github.com issuer needs an allowed owner list"
 
-    instance: GitHubInstance
+    service: GitHubService
 
-    def __init__(self, instance: GitHubInstance, service: GitHubService) -> None:
-        self.instance = instance
+    def __init__(self, service: GitHubService) -> None:
         self.service = service
 
     async def claim(self, oidc_token: str) -> _CiClaim[str] | None:
         payload = await self.service.validate_oidc_token(oidc_token)
         if not payload:
             return None
-        if not self.instance.accepts_owner(payload.repository_owner_id):
+        instance = self.service.instance
+        if not instance.accepts_owner(payload.repository_owner_id):
             logger.warning(
                 "Refused GitHub OIDC token from %s (owner id %s): owner not allowed on instance '%s'",
                 sanitize_for_log(payload.repository),
                 sanitize_for_log(payload.repository_owner_id),
-                self.instance.name,
+                instance.name,
             )
             raise HTTPException(
                 status_code=403,
                 detail=f"Repository owner '{payload.repository_owner}' (id {payload.repository_owner_id}) "
-                f"is not allowed on GitHub instance '{self.instance.name}'",
+                f"is not allowed on GitHub instance '{instance.name}'",
             )
         return _CiClaim(payload.repository_id, payload.repository, payload.actor)
 
@@ -333,8 +322,8 @@ async def _ownership_stages[IdT: (int, str)](
     ci: _CiProvider[IdT], project: Project, claim: _CiClaim[IdT], db: AsyncIOMotorDatabase
 ) -> list[dict]:
     """The provider's ownership stages; the source is the instance that authenticated this ingest, not the project's."""
-    source = team_source(ci.team_provider, ci.instance_id)
-    window = f"{ci.team_provider}_team_sync:{source}:{claim.external_id}"
+    source = team_source(ci.service.team_provider, ci.instance_id)
+    window = f"{ci.service.team_provider}_team_sync:{source}:{claim.external_id}"
     if ci.sync_window and (await cache_service.incr(window, ci.sync_window) or 0) > 1:
         return []
     result = await ci.sync(
@@ -352,12 +341,12 @@ async def _resolve_ci_project[IdT: (int, str)](
     create_missing: bool,
 ) -> Project:
     """Resolve the project a CI token belongs to; ``create_missing`` also creates, renames and syncs it."""
-    instance = ci.instance
+    instance = ci.service.instance
     if not instance.is_active:
-        raise HTTPException(status_code=403, detail=f"{ci.label} instance '{instance.name}' is not active")
+        raise HTTPException(status_code=403, detail=f"{ci.service.provider} instance '{instance.name}' is not active")
     claim = await ci.claim(oidc_token)
     if claim is None:
-        raise HTTPException(status_code=403, detail=f"Invalid {ci.label} OIDC Token")
+        raise HTTPException(status_code=403, detail=f"Invalid {ci.service.provider} OIDC Token")
 
     key = ci.key(claim.external_id)
     project_data = await project_repo.find_one_raw(key)
@@ -373,7 +362,7 @@ async def _resolve_ci_project[IdT: (int, str)](
             project, claim.path, project_repo, path_field=ci.path_field, ownership_stages=stages
         )
 
-    not_found = f"Project not found on {ci.label} instance '{instance.name}'"
+    not_found = f"Project not found on {ci.service.provider} instance '{instance.name}'"
     if not instance.auto_create_projects:
         raise HTTPException(status_code=404, detail=f"{not_found} and auto-creation is disabled")
     if instance.lacks_required_allowlist():
@@ -392,11 +381,11 @@ async def _resolve_ci_project[IdT: (int, str)](
         **key,
         **{ci.path_field: claim.path},
         active_analyzers=(await SystemSettingsRepository(db).get()).default_active_analyzers,
-        **ownership_fields(owners, team_source(ci.team_provider, ci.instance_id)),
+        **ownership_fields(owners, team_source(ci.service.team_provider, ci.instance_id)),
     )
     project, created = await project_repo.find_or_create_by_key(key, new_project)
     if created:
-        logger.info("Auto-created project '%s' from %s instance '%s'", claim.path, ci.label, instance.name)
+        logger.info("Auto-created project '%s' from %s instance '%s'", claim.path, ci.service.provider, instance.name)
     return project
 
 
@@ -436,11 +425,11 @@ async def _authenticate_via_oidc(
     issuer = _extract_oidc_issuer(oidc_token)
 
     if gitlab_instance := await GitLabInstanceRepository(db).get_by_url(issuer):
-        gitlab = _GitLabCi(gitlab_instance, GitLabService(gitlab_instance))
+        gitlab = _GitLabCi(GitLabService(gitlab_instance))
         return await _resolve_ci_project(oidc_token, gitlab, db, project_repo, create_missing=create_missing)
 
     if github_instance := await GitHubInstanceRepository(db).get_by_url(issuer):
-        github = _GitHubCi(github_instance, GitHubService(github_instance))
+        github = _GitHubCi(GitHubService(github_instance))
         return await _resolve_ci_project(oidc_token, github, db, project_repo, create_missing=create_missing)
 
     raise HTTPException(

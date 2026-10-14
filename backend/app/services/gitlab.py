@@ -96,7 +96,7 @@ _NO_OWNING_GROUP = GitLabSyncTarget(None)
 class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
     provider = "GitLab"
     _cache_prefix = "gitlab:instance"
-    _team_provider = TEAM_SOURCE_GITLAB
+    team_provider = TEAM_SOURCE_GITLAB
     # GitLab accepts a public email only from the account's confirmed addresses.
     _email_field = "public_email"
     _email_cache_ttl = GITLAB_USER_EMAIL_CACHE_TTL
