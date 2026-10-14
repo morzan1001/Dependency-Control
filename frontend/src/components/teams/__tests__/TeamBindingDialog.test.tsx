@@ -140,6 +140,42 @@ describe("TeamBindingDialog", () => {
     expect(listGitlabInstances).not.toHaveBeenCalled();
   });
 
+  it("stacks its labels above the fields in a default-width dialog that ends in Cancel and Save Binding, like the team dialog", async () => {
+    renderDialog(team([GITHUB_BINDING]));
+
+    const group = await screen.findByLabelText("Group");
+    expect(screen.getByRole("dialog")).not.toHaveClass("sm:max-w-[520px]");
+    expect(screen.getByLabelText("Instance").parentElement).toHaveClass("grid", "gap-2");
+    expect(screen.getByLabelText("Find group").parentElement).toHaveClass("grid", "gap-2");
+    expect(group.parentElement).toHaveClass("grid", "gap-2");
+    expect(group.parentElement?.parentElement).toBe(group.closest("form"));
+    expect(group.closest("form")).toHaveClass("grid", "gap-4");
+    expect(screen.getByText("GitHub · GitHub.com").parentElement).toHaveClass("grid", "gap-2");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("border");
+  });
+
+  it("holds a long binding summary to the dialog width, so it truncates instead of pushing Remove off a phone screen", async () => {
+    renderDialog(team([GITLAB_BINDING]));
+
+    const summary = await screen.findByText("mo/edge (#77)");
+    expect(summary).toHaveClass("truncate");
+    expect(summary.parentElement?.parentElement).toHaveClass("grid", "grid-cols-1");
+  });
+
+  it("closes without binding through Cancel", async () => {
+    const onClose = vi.fn();
+    render(<TeamBindingDialog team={team()} isOpen onClose={onClose} />, { wrapper: Wrapper });
+
+    await pickOption("Instance", "GitHub.com");
+    await pickOption("Organisation", "Acme");
+    await pickOption("GitHub team", "Cards (cards) — under Payments");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onClose).toHaveBeenCalled();
+    expect(setBinding).not.toHaveBeenCalled();
+  });
+
   it("lists every binding the team holds, each naming the instance it is held on", async () => {
     renderDialog(team([GITHUB_BINDING, GITLAB_BINDING, LEGACY_BINDING]));
 
