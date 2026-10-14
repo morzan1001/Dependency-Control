@@ -38,7 +38,7 @@ def _payload(raw: object = _SECRET) -> dict:
 
 async def _aggregated_ids(db, scan_id: str) -> list[str]:
     aggregator = ResultAggregator()
-    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), scan_id, [])
+    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), scan_id)
     return [f.id for f in aggregator.get_findings()]
 
 

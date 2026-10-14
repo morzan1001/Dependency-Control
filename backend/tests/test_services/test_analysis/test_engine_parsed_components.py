@@ -11,6 +11,7 @@ import pytest
 from app.schemas.sbom import SBOMFormat
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
+from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.sbom_parser import parse_sbom
 from tests.helpers.analyzers import process_sbom_document, run_context
@@ -31,7 +32,7 @@ async def _components_by_analyzer(monkeypatch, sbom: dict[str, Any], active: lis
 
     async def record(ctx, aggregator, analyzer_name, sbom_input):
         seen[analyzer_name] = sbom_input.components
-        return f"{analyzer_name}: Success"
+        return AnalyzerOutcome(analyzer_name, OutcomeStatus.SUCCESS)
 
     monkeypatch.setattr(engine, "process_analyzer", record)
     await process_sbom_document(run_context(None, "scan-1", active), ResultAggregator(), sbom)

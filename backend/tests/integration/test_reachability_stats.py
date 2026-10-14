@@ -425,12 +425,12 @@ async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analys
         }
     )
     findings = [{**_finding("CVE-1", "requests"), "scan_id": rescan_id}]
-    summary: list[str] = []
+    summary: list = []
 
     rescan = Scan(id=rescan_id, project_id=_PROJECT_ID, branch="main")
     await _run_reachability_enrichment(run_context(db, rescan), findings, summary)
 
-    assert summary == ["reachability: Success (1 enriched)"]
+    assert [str(outcome) for outcome in summary] == ["reachability: Success (1 enriched)"]
     assert findings[0]["reachable"] is True
     assert not (await db.scans.find_one({"_id": rescan_id})).get("reachability_pending")
 

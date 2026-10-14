@@ -271,7 +271,7 @@ async def test_a_kics_result_over_16_mib_is_stored_and_every_finding_aggregated(
     assert "result" not in row
     assert await _file_length(db, row["result_gridfs_id"]) > _MONGO_DOCUMENT_LIMIT
     aggregator = ResultAggregator()
-    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), row["scan_id"], [])
+    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), row["scan_id"])
     assert len(aggregator.get_findings()) == file_entries
 
 
@@ -292,7 +292,7 @@ async def test_an_engine_license_result_over_16_mib_is_stored_as_a_file(db):
 
     summary = await process_sbom_document(run_context(db, "scan-1", ["license_compliance"]), ResultAggregator(), sbom)
 
-    assert summary == ["license_compliance: Success"]
+    assert [str(outcome) for outcome in summary] == ["license_compliance: Success"]
     [row] = await _rows(db, "scan-1")
     assert await _file_length(db, row["result_gridfs_id"]) > _MONGO_DOCUMENT_LIMIT
     assert await _stored(db, row) == await analyze_cyclonedx(build_analyzer("license_compliance"), components)
@@ -333,7 +333,7 @@ async def test_a_legacy_inline_row_is_aggregated_and_listed(db):
     )
     aggregator = ResultAggregator()
 
-    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1", [])
+    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1")
 
     assert [finding.type for finding in aggregator.get_findings()] == ["iac"]
     [listed] = await AnalysisResultRepository(db).find_by_scan("scan-1", limit=10)
@@ -428,8 +428,6 @@ async def test_every_external_row_of_a_scan_is_aggregated(db):
             for i in range(10_001)
         ]
     )
-    summary: list[str] = []
+    outcomes = await _aggregate_external_results(ResultAggregator(), AnalysisResultRepository(db), "scan-1")
 
-    await _aggregate_external_results(ResultAggregator(), AnalysisResultRepository(db), "scan-1", summary)
-
-    assert len(summary) == 10_001
+    assert len(outcomes) == 10_001

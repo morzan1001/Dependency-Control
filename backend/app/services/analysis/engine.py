@@ -10,9 +10,10 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from itertools import batched
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import bson
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
@@ -78,10 +79,17 @@ from app.services.analysis.registry import (
     analyzer_factories,
     crypto_evaluators,
 )
-from app.services.analysis.runner import AnalyzerInput, build_settings_resolver, partial_result_reason, sbom_source
+from app.services.analysis.runner import (
+    AnalyzerInput,
+    AnalyzerOutcome,
+    OutcomeStatus,
+    build_settings_resolver,
+    record_result,
+    run_analyzer,
+    sbom_source,
+)
 from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
-from app.services.analyzers.cli_base import CLIAnalyzer
 from app.services.analyzers.cli_base import TEMP_SBOM_PREFIX
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load_iana_catalog
 from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy
@@ -153,7 +161,8 @@ class _Verdict:
     stats: Stats
     findings_count: int
     ignored_count: int
-    analyzer_outcomes: dict[str, str]
+    # Each analyzer's worst outcome, in the order first reported.
+    outcomes: list[AnalyzerOutcome]
     failed_analyzers: list[str]
     enrichment_failures: list[str]
 
@@ -211,64 +220,50 @@ async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) 
         logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
 
 
-async def _record_result(
+async def _keep_result(
     ctx: _RunContext,
     aggregator: ResultAggregator,
     analyzer_name: str,
     result: Any,
     source: str,
     row_source: str | None = None,
-) -> str:
-    scan_id = ctx.scan_id
+) -> None:
     aggregator.aggregate(analyzer_name, result, source=source)
-    await AnalysisResultRepository(ctx.db).save_result(scan_id, analyzer_name, result, source=row_source)
-
-    # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
-    if is_error_result(result):
-        analysis_errors_total.labels(analyzer=analyzer_name).inc()
-        logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
-        return f"{analyzer_name}: Failed"
-
-    partial_reason = partial_result_reason(result)
-    if partial_reason:
-        # Surface the coverage gap as a finding and flag the analyzer as partial.
-        aggregator.add_scan_error(analyzer_name, partial_reason, partial=True, source=f"System: {analyzer_name}")
-        logger.warning(f"Analysis {analyzer_name} returned a partial result for {scan_id}: {partial_reason}")
-        return f"{analyzer_name}: Partial ({partial_reason})"
-
-    logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
-    return f"{analyzer_name}: Success"
+    await AnalysisResultRepository(ctx.db).save_result(ctx.scan_id, analyzer_name, result, source=row_source)
 
 
-def _analyzer_failed(analyzer_name: str, error: Exception, aggregator: ResultAggregator) -> str:
-    logger.error("Analysis %s failed: %s", analyzer_name, error, exc_info=error)
-    analysis_errors_total.labels(analyzer=analyzer_name).inc()
-    # Surface the failure as a finding.
-    aggregator.add_scan_error(analyzer_name, str(error), source=f"System: {analyzer_name}")
-    return f"{analyzer_name}: Failed"
+def _account(ctx: _RunContext, aggregator: ResultAggregator, outcome: AnalyzerOutcome) -> AnalyzerOutcome:
+    """Log and count an analyzer the engine ran; a raised failure and a coverage gap also become findings."""
+    name, reason = outcome.name, outcome.reason
+    if outcome.error is not None:
+        logger.error("Analysis %s failed: %s", name, outcome.error, exc_info=outcome.error)
+        analysis_errors_total.labels(analyzer=name).inc()
+        aggregator.add_scan_error(name, reason, source=f"System: {name}")
+    elif outcome.status is OutcomeStatus.FAILED:
+        # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts, which aggregate into a finding.
+        analysis_errors_total.labels(analyzer=name).inc()
+        logger.warning(f"Analysis {name} returned an error result for {ctx.scan_id}: {reason}")
+    elif outcome.status is OutcomeStatus.PARTIAL:
+        aggregator.add_scan_error(name, reason, partial=True, source=f"System: {name}")
+        logger.warning(f"Analysis {name} returned a partial result for {ctx.scan_id}: {reason}")
+    else:
+        logger.info(f"Analysis {name} completed for {ctx.scan_id}")
+    return outcome
 
 
 async def process_analyzer(
     ctx: _RunContext, aggregator: ResultAggregator, analyzer_name: str, sbom: AnalyzerInput
-) -> str:
-    analyzer = analyzer_factories[analyzer_name]()
-    analyzer_start_time = time.time()
-    try:
-        analysis_scans_total.labels(analyzer=analyzer_name).inc()
+) -> AnalyzerOutcome:
+    started = time.time()
+    analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
-        if isinstance(analyzer, CLIAnalyzer):
-            result = await analyzer.analyze_file(cast(str, sbom.path), sbom.format)
-        else:
-            result = await analyzer.analyze(
-                {}, settings=ctx.settings_for(analyzer_name), parsed_components=sbom.components
-            )
-
-        analysis_duration_seconds.labels(analyzer=analyzer_name).observe(time.time() - analyzer_start_time)
-
+    async def keep(result: Any) -> None:
+        analysis_duration_seconds.labels(analyzer=analyzer_name).observe(time.time() - started)
         # Rows are keyed on the SBOM's position: root names repeat within a scan (multi-arch images).
-        return await _record_result(ctx, aggregator, analyzer_name, result, sbom.source, row_source=sbom.label)
-    except Exception as e:
-        return _analyzer_failed(analyzer_name, e, aggregator)
+        await _keep_result(ctx, aggregator, analyzer_name, result, sbom.source, row_source=sbom.label)
+
+    outcome = await run_analyzer(analyzer_name, sbom, ctx.settings_for(analyzer_name), keep)
+    return _account(ctx, aggregator, outcome)
 
 
 def _evaluate_crypto(
@@ -288,7 +283,7 @@ def _evaluate_crypto(
     return results
 
 
-async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) -> list[str]:
+async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) -> list[AnalyzerOutcome]:
     """Evaluate the scan's stored crypto assets once, after every SBOM's embedded assets are persisted."""
     try:
         docs = await CryptoAssetRepository(ctx.db).find_all_raw(scan_query(ctx.project_id, ctx.scan_id))
@@ -297,38 +292,31 @@ async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) 
         catalog = await load_iana_catalog() if has_protocols else {}
         results = await asyncio.to_thread(_evaluate_crypto, docs, policy, catalog)
     except Exception as e:
-        return [_analyzer_failed(name, e, aggregator) for name in sorted(CRYPTO_ANALYZERS)]
+        return [_account(ctx, aggregator, AnalyzerOutcome.from_error(name, e)) for name in sorted(CRYPTO_ANALYZERS)]
 
-    summary: list[str] = []
+    outcomes: list[AnalyzerOutcome] = []
     for name, result in results.items():
-        try:
-            summary.append(await _record_result(ctx, aggregator, name, result, _CRYPTO_SOURCE))
-        except Exception as e:
-            summary.append(_analyzer_failed(name, e, aggregator))
-    return summary
+        keep = partial(_keep_result, ctx, aggregator, name, source=_CRYPTO_SOURCE)
+        outcomes.append(_account(ctx, aggregator, await record_result(name, result, keep)))
+    return outcomes
 
 
 # Marker substring of the system-error raised when a GridFS SBOM cannot be read.
 _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
-def _outcome_rank(status: str) -> int:
-    return 2 if status.startswith("Failed") else int(status.startswith("Partial"))
+def _worst_outcomes(outcomes: list[AnalyzerOutcome]) -> list[AnalyzerOutcome]:
+    """Each analyzer's worst outcome, in the order first reported; run_analysis records one per SBOM."""
+    worst: dict[str, AnalyzerOutcome] = {}
+    for outcome in outcomes:
+        if outcome.name not in worst or outcome.status > worst[outcome.name].status:
+            worst[outcome.name] = outcome
+    return list(worst.values())
 
 
-def _analyzer_outcomes(results_summary: list[str]) -> dict[str, str]:
-    """Worst reported status per analyzer; run_analysis repeats each analyzer's entry once per SBOM."""
-    outcomes: dict[str, str] = {}
-    for entry in results_summary:
-        name, _, status = entry.partition(": ")
-        if name not in outcomes or _outcome_rank(status) > _outcome_rank(outcomes[name]):
-            outcomes[name] = status
-    return outcomes
-
-
-def _failed_analyzer_names(outcomes: dict[str, str]) -> tuple[list[str], list[str]]:
+def _failed_analyzer_names(outcomes: list[AnalyzerOutcome]) -> tuple[list[str], list[str]]:
     """(analyzers, enrichments) that failed or ran partially; a failed enrichment loses metadata, not findings."""
-    failed = sorted(name for name, status in outcomes.items() if _outcome_rank(status))
+    failed = sorted(outcome.name for outcome in outcomes if outcome.status is not OutcomeStatus.SUCCESS)
     return (
         [name for name in failed if name not in POST_PROCESSOR_ANALYZERS],
         [name for name in failed if name in POST_PROCESSOR_ANALYZERS],
@@ -435,8 +423,8 @@ def _resolve_effective_analyzers(
 
 async def _process_sbom(
     ctx: _RunContext, aggregator: ResultAggregator, parsed_sbom: ParsedSBOM | None, sbom: AnalyzerInput
-) -> list[str]:
-    """Run the analyzers over one loaded SBOM; returns the results summary."""
+) -> list[AnalyzerOutcome]:
+    """Run the analyzers over one loaded SBOM."""
     if parsed_sbom is not None and parsed_sbom.crypto_assets:
         await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
     names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components, ctx.scan.scan_type)
@@ -446,14 +434,14 @@ async def _process_sbom(
 
 async def _analyse_sboms(
     ctx: _RunContext, fs: AsyncIOMotorGridFSBucket, stored_ids: list[str | None], aggregator: ResultAggregator
-) -> tuple[list[ParsedSBOM | None], int, list[str]]:
+) -> tuple[list[ParsedSBOM | None], int, list[AnalyzerOutcome]]:
     """Load and analyse the stored SBOMs one at a time; returns the parsed payload, how many failed to load and
-    the results summary."""
+    the analyzer outcomes."""
     write_file = bool(RAW_SBOM_ANALYZERS & set(ctx.active_analyzers))
     # Collected rather than stored per SBOM: the inventory is replaced once per payload (see store_scan_dependencies).
     payload: list[ParsedSBOM | None] = []
     load_failures = stored_ids.count(None)
-    results_summary: list[str] = []
+    outcomes: list[AnalyzerOutcome] = []
     for position, gridfs_id in enumerate(stored_ids, start=1):
         if gridfs_id is None:
             payload.append(None)
@@ -468,7 +456,7 @@ async def _analyse_sboms(
             continue
         payload.append(parsed_sbom)
         try:
-            results_summary.extend(await _process_sbom(ctx, aggregator, parsed_sbom, sbom))
+            outcomes.extend(await _process_sbom(ctx, aggregator, parsed_sbom, sbom))
         finally:
             if sbom.path:
                 os.remove(sbom.path)
@@ -483,7 +471,7 @@ async def _analyse_sboms(
             load_failures,
             len(stored_ids),
         )
-    return payload, load_failures, results_summary
+    return payload, load_failures, outcomes
 
 
 def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
@@ -554,7 +542,7 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
 
 
 async def _run_epss_kev_enrichment(
-    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], results_summary: list[str]
+    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], outcomes: list[AnalyzerOutcome]
 ) -> None:
     """Run EPSS/KEV enrichment on vulnerability findings."""
     try:
@@ -563,8 +551,9 @@ async def _run_epss_kev_enrichment(
         )
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
         await AnalysisResultRepository(ctx.db).save_result(ctx.scan_id, "epss_kev", epss_kev_summary)
-        outcome = f"Partial ({' and '.join(unavailable)} unavailable)" if unavailable else "Success"
-        results_summary.append(f"epss_kev: {outcome} ({len(vulnerability_findings)} enriched)")
+        status = OutcomeStatus.PARTIAL if unavailable else OutcomeStatus.SUCCESS
+        reason = f"{' and '.join(unavailable)} unavailable" if unavailable else ""
+        outcomes.append(AnalyzerOutcome("epss_kev", status, reason, f"{len(vulnerability_findings)} enriched"))
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
         analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
@@ -579,12 +568,12 @@ async def _run_epss_kev_enrichment(
                 analysis_kev_vulnerabilities_total.inc()
 
     except Exception as e:
-        results_summary.append("epss_kev: Failed")
+        outcomes.append(AnalyzerOutcome("epss_kev", OutcomeStatus.FAILED, str(e)))
         logger.warning(f"[epss_kev] Failed to enrich findings: {e}")
 
 
 async def _run_reachability_enrichment(
-    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], results_summary: list[str]
+    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], outcomes: list[AnalyzerOutcome]
 ) -> ComponentLanguages | None:
     """Run reachability analysis on vulnerability findings; returns the inventory language map it built."""
     callgraphs = await fetch_callgraphs(ctx.project_id, ctx.scan_id, ctx.db)
@@ -598,31 +587,27 @@ async def _run_reachability_enrichment(
             ctx.db, ctx.scan_id, vulnerability_findings, callgraphs
         )
     except Exception as e:
-        results_summary.append("reachability: Failed")
+        outcomes.append(AnalyzerOutcome("reachability", OutcomeStatus.FAILED, str(e)))
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
         return None
-    results_summary.append(f"reachability: Success ({enriched_count} enriched)")
+    outcomes.append(AnalyzerOutcome("reachability", OutcomeStatus.SUCCESS, detail=f"{enriched_count} enriched"))
     return component_languages
 
 
 async def _aggregate_external_results(
-    aggregator: ResultAggregator,
-    result_repo: AnalysisResultRepository,
-    scan_id: str,
-    results_summary: list[str],
-) -> None:
-    """Fetch external analyzer results and aggregate them; failures land in results_summary."""
+    aggregator: ResultAggregator, result_repo: AnalysisResultRepository, scan_id: str
+) -> list[AnalyzerOutcome]:
+    """Fetch external analyzer results and aggregate them; returns each one's outcome."""
+    outcomes: list[AnalyzerOutcome] = []
     query = {"scan_id": scan_id, "analyzer_name": {"$nin": list(_ENGINE_RESULT_NAMES)}}
     async for row in result_repo.iterate_raw(query, RESULT_PROJECTION):
         analyzer_name = row["analyzer_name"]
         try:
             result = await result_repo.load_result(row)
             aggregator.aggregate(analyzer_name, result)
-            if is_error_result(result):
-                # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
-                results_summary.append(f"{analyzer_name}: Failed")
-            else:
-                results_summary.append(f"{analyzer_name}: Success")
+            # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
+            status = OutcomeStatus.FAILED if is_error_result(result) else OutcomeStatus.SUCCESS
+            outcomes.append(AnalyzerOutcome(analyzer_name, status))
         except Exception as exc:
             logger.warning(
                 "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
@@ -633,7 +618,8 @@ async def _aggregate_external_results(
             aggregator.add_scan_error(
                 analyzer_name, f"external result could not be aggregated: {exc}", error_details=str(exc)
             )
-            results_summary.append(f"{analyzer_name}: Failed")
+            outcomes.append(AnalyzerOutcome(analyzer_name, OutcomeStatus.FAILED, str(exc)))
+    return outcomes
 
 
 def _prepare_finding_records(
@@ -669,14 +655,14 @@ def _prepare_finding_records(
 
 
 async def _run_vuln_enrichments(
-    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], results_summary: list[str]
+    ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], outcomes: list[AnalyzerOutcome]
 ) -> ComponentLanguages | None:
     """Run the vulnerability enrichments; returns the inventory language map reachability built."""
     if "epss_kev" in ctx.active_analyzers and vulnerability_findings:
-        await _run_epss_kev_enrichment(ctx, vulnerability_findings, results_summary)
+        await _run_epss_kev_enrichment(ctx, vulnerability_findings, outcomes)
 
     if "reachability" in ctx.active_analyzers and vulnerability_findings:
-        return await _run_reachability_enrichment(ctx, vulnerability_findings, results_summary)
+        return await _run_reachability_enrichment(ctx, vulnerability_findings, outcomes)
     return None
 
 
@@ -868,8 +854,7 @@ async def _send_integrations_and_notifications(
         verdict.stats,
         verdict.status,
         verdict.failed_analyzers,
-        verdict.analyzer_outcomes,
-        analyzer_count=sum(1 for name in verdict.analyzer_outcomes if name not in POST_PROCESSOR_ANALYZERS),
+        verdict.outcomes,
         db=ctx.db,
     )
 
@@ -988,10 +973,10 @@ async def run_analysis(
     await _carry_over_external_results(scan_id, scan_doc, db)
     await _carry_over_crypto_assets(scan_id, scan_doc, db)
 
-    payload, sbom_load_failures, results_summary = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
+    payload, sbom_load_failures, outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
 
     if scan_doc.scan_type == "cbom" or any(p is not None and p.crypto_assets for p in payload):
-        results_summary.extend(await _run_crypto_analyzers(ctx, aggregator))
+        outcomes.extend(await _run_crypto_analyzers(ctx, aggregator))
 
     if not await _still_claimed(ctx):
         return None
@@ -1003,7 +988,7 @@ async def run_analysis(
     del payload
 
     external_load_start = datetime.now(timezone.utc)
-    await _aggregate_external_results(aggregator, result_repo, scan_id, results_summary)
+    outcomes.extend(await _aggregate_external_results(aggregator, result_repo, scan_id))
 
     aggregated_findings = aggregator.get_findings()
     _track_findings_metrics(aggregated_findings)
@@ -1019,7 +1004,7 @@ async def run_analysis(
     del aggregated_findings
     total_findings_count = len(findings_to_insert)
 
-    component_languages = await _run_vuln_enrichments(ctx, vulnerability_findings, results_summary)
+    component_languages = await _run_vuln_enrichments(ctx, vulnerability_findings, outcomes)
     refresh_vulnerability_info(findings_to_insert)
 
     if not await _still_claimed(ctx):
@@ -1042,7 +1027,7 @@ async def run_analysis(
             sbom_parse_failures,
         )
 
-    analyzer_outcomes = _analyzer_outcomes(results_summary)
+    analyzer_outcomes = _worst_outcomes(outcomes)
     failed_analyzers, enrichment_failures = _failed_analyzer_names(analyzer_outcomes)
     partial_reasons = _partial_run_reasons(
         failed_analyzers,

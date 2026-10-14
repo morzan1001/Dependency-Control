@@ -113,7 +113,7 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     announced: list[list[str]] = []
 
     async def _capture(ctx, verdict, findings):
-        announced.append(sorted(verdict.analyzer_outcomes))
+        announced.append(sorted(outcome.name for outcome in verdict.outcomes))
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     await seed_crypto_policies(db)

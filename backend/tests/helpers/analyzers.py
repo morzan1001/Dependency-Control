@@ -63,7 +63,7 @@ def verdict(status: ScanStatus = SCAN_STATUS_COMPLETED, stats: Stats | None = No
         "stats": stats or Stats(),
         "findings_count": 0,
         "ignored_count": 0,
-        "analyzer_outcomes": {},
+        "outcomes": [],
         "failed_analyzers": [],
         "enrichment_failures": [],
     }

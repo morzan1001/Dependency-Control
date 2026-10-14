@@ -17,6 +17,7 @@ from app.models.project import Project, ProjectMember
 from app.models.stats import Stats
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine, notifications
+from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.analysis.notifications import (
     _build_vulnerability_message,
     send_scan_notifications,
@@ -66,8 +67,7 @@ def _outcome(**overrides):
         "stats": Stats(),
         "status": SCAN_STATUS_COMPLETED,
         "failed_analyzers": [],
-        "analyzer_outcomes": {"osv": "Success"},
-        "analyzer_count": 1,
+        "analyzer_outcomes": [AnalyzerOutcome("osv", OutcomeStatus.SUCCESS)],
     }
     outcome.update(overrides)
     return outcome
@@ -263,11 +263,11 @@ class TestAnalysisCompletedSeverityCounts:
 class TestAnalysisCompletedAnalyzers:
     @pytest.mark.asyncio
     async def test_every_channel_lists_and_counts_each_analyzer_once(self):
-        outcomes = {
-            "grype": "Success",
-            "osv": "Partial (7 component(s) were not scanned)",
-            "epss_kev": "Success (3 enriched)",
-        }
+        outcomes = [
+            AnalyzerOutcome("grype", OutcomeStatus.SUCCESS),
+            AnalyzerOutcome("osv", OutcomeStatus.PARTIAL, "7 component(s) were not scanned"),
+            AnalyzerOutcome("epss_kev", OutcomeStatus.SUCCESS, detail="3 enriched"),
+        ]
         notify = SimpleNamespace(notify_project_members=AsyncMock())
         with (
             patch.object(notifications, "notification_service", notify),
@@ -278,7 +278,7 @@ class TestAnalysisCompletedAnalyzers:
                 project=Project(id="proj-1", name="MyProject"),
                 findings=[],
                 db=await _db_with_scan(),
-                **_outcome(analyzer_outcomes=outcomes, analyzer_count=2),
+                **_outcome(analyzer_outcomes=outcomes),
             )
 
         sent = notify.notify_project_members.await_args.kwargs
@@ -308,7 +308,7 @@ class TestScanCompletedWebhook:
                     stats=stats,
                     status=SCAN_STATUS_COMPLETED_WITH_ERRORS,
                     failed_analyzers=["grype"],
-                    analyzer_outcomes={"grype": "Failed"},
+                    analyzer_outcomes=[AnalyzerOutcome("grype", OutcomeStatus.FAILED)],
                 ),
             )
 

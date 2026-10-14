@@ -1,10 +1,14 @@
 """What the scan engine and the ad-hoc path share to run the analyzers over an SBOM."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Any
 
 from app.schemas.sbom import SBOMFormat
+from app.services.aggregation import is_error_result
+from app.services.analysis.registry import analyzer_factories
+from app.services.analyzers.cli_base import CLIAnalyzer
 
 # Analyzer result keys reporting incomplete coverage, with how to phrase each.
 _PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
@@ -13,7 +17,7 @@ _PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 
-def partial_result_reason(result: Any) -> str | None:
+def _partial_result_reason(result: Any) -> str | None:
     """Why an analyzer's coverage is incomplete, or None when it is complete."""
     if not isinstance(result, dict):
         return None
@@ -78,3 +82,65 @@ class AnalyzerInput:
     @property
     def source(self) -> str:
         return self.name or self.label
+
+
+class OutcomeStatus(IntEnum):
+    """Ordered from best to worst, so the worse of two outcomes compares greater."""
+
+    SUCCESS = 0
+    PARTIAL = 1
+    FAILED = 2
+
+
+@dataclass(frozen=True)
+class AnalyzerOutcome:
+    name: str
+    status: OutcomeStatus
+    # The failure message, or the coverage the analyzer missed.
+    reason: str = ""
+    # What the status line counts, such as "12 enriched".
+    detail: str = ""
+    # Set only when the analyzer raised rather than returned an error result.
+    error: Exception | None = None
+
+    @classmethod
+    def from_result(cls, name: str, result: Any) -> "AnalyzerOutcome":
+        if is_error_result(result):
+            return cls(name, OutcomeStatus.FAILED, str(result["error"]))
+        partial = _partial_result_reason(result)
+        return cls(name, OutcomeStatus.PARTIAL, partial) if partial else cls(name, OutcomeStatus.SUCCESS)
+
+    @classmethod
+    def from_error(cls, name: str, error: Exception) -> "AnalyzerOutcome":
+        return cls(name, OutcomeStatus.FAILED, str(error), error=error)
+
+    def __str__(self) -> str:
+        if self.status is OutcomeStatus.FAILED:
+            return f"{self.name}: Failed"
+        status = f"Partial ({self.reason})" if self.status is OutcomeStatus.PARTIAL else "Success"
+        return f"{self.name}: {status} ({self.detail})" if self.detail else f"{self.name}: {status}"
+
+
+Keep = Callable[[Any], Awaitable[None]]
+
+
+async def record_result(name: str, result: Any, keep: Keep) -> AnalyzerOutcome:
+    """Hand the result to ``keep`` and judge it; a ``keep`` that raises fails the analyzer."""
+    try:
+        await keep(result)
+    except Exception as exc:
+        return AnalyzerOutcome.from_error(name, exc)
+    return AnalyzerOutcome.from_result(name, result)
+
+
+async def run_analyzer(name: str, sbom: AnalyzerInput, settings: dict[str, Any], keep: Keep) -> AnalyzerOutcome:
+    """Run the registered analyzer over one SBOM and record its result; what it raises is a failed outcome."""
+    analyzer = analyzer_factories[name]()
+    try:
+        if isinstance(analyzer, CLIAnalyzer) and sbom.path:
+            result = await analyzer.analyze_file(sbom.path, sbom.format)
+        else:
+            result = await analyzer.analyze(sbom.document, settings=settings, parsed_components=sbom.components)
+    except Exception as exc:
+        return AnalyzerOutcome.from_error(name, exc)
+    return await record_result(name, result, keep)
