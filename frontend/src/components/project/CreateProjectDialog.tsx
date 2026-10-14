@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useCreateProject } from "@/hooks/queries/use-projects";
+import { useCreateProject, useProjectNameTaken } from "@/hooks/queries/use-projects";
 import { useTeams } from "@/hooks/queries/use-teams";
 import { useAppConfig } from "@/hooks/queries/use-system";
 import { Button } from "@/components/ui/button";
 import { CopyField } from "@/components/ui/copy-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { WarningHint } from "@/components/ui/warning-hint";
 import { toast } from "sonner";
 import { toggle } from "@/lib/utils";
 import type { ProjectApiKeyResponse, RetentionAction } from "@/types/project";
@@ -55,6 +56,7 @@ export function CreateProjectDialog({
   const { data: appConfig } = useAppConfig({ enabled: open });
 
   const createProjectMutation = useCreateProject({ errorTitle: "Failed to create project" });
+  const nameTaken = useProjectNameTaken(form.name);
   const analyzers = form.pickedAnalyzers ?? appConfig?.default_project_analyzers ?? [];
   const retentionIsGlobal = appConfig?.retention_mode === 'global';
 
@@ -124,6 +126,7 @@ export function CreateProjectDialog({
                 placeholder="my-awesome-project"
                 required
               />
+              {nameTaken && <WarningHint>A project with this name already exists</WarningHint>}
             </div>
 
             <div className="space-y-2">

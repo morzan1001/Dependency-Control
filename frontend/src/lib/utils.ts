@@ -9,6 +9,20 @@ export function toggle<T extends string>(list: readonly T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
 }
 
+export interface Named {
+  id: string
+  name: string
+}
+
+export function isNameTaken(items: readonly Named[] | undefined, name: string, current?: Named): boolean {
+  const wanted = name.trim()
+  return (
+    wanted !== '' &&
+    wanted !== current?.name &&
+    (items ?? []).some((item) => item.id !== current?.id && item.name.trim().toLowerCase() === wanted.toLowerCase())
+  )
+}
+
 interface ValidationError {
   msg?: string;
   type?: string;

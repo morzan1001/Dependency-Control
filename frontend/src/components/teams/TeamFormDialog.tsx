@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useCreateTeam, useUpdateTeam } from '@/hooks/queries/use-teams';
+import { useCreateTeam, useTeamNameTaken, useUpdateTeam } from '@/hooks/queries/use-teams';
 import { Team } from '@/types/team';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { WarningHint } from '@/components/ui/warning-hint';
 import { Plus } from 'lucide-react';
 import {
   Dialog,
@@ -27,6 +28,7 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
   const [description, setDescription] = useState(team?.description || '');
   const createTeamMutation = useCreateTeam({ errorTitle: "Failed to create team" });
   const updateTeamMutation = useUpdateTeam({ errorTitle: "Failed to update team" });
+  const nameTaken = useTeamNameTaken(name, team);
   const mode = team ? EDIT : CREATE;
   const isPending = createTeamMutation.isPending || updateTeamMutation.isPending;
 
@@ -81,6 +83,7 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
               onChange={(e) => setName(e.target.value)}
               required
             />
+            {nameTaken && <WarningHint>A team with this name already exists</WarningHint>}
           </div>
           <div className="grid gap-2">
             <Label htmlFor={`${mode.idPrefix}description`}>Description</Label>

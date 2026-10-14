@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { projectApi } from "@/api/projects";
-import { useProjectArchives, useProjectsDropdown, useRestoreArchive } from "../use-projects";
+import { useProjectArchives, useProjectNameTaken, useProjectsDropdown, useRestoreArchive } from "../use-projects";
 import { DROPDOWN_PAGE_SIZE } from "@/lib/constants";
 import type { ProjectsResponse } from "@/types/project";
 
@@ -108,3 +108,52 @@ describe("useRestoreArchive", () => {
   });
 });
 
+
+describe("useProjectNameTaken", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function holding(...names: Array<[string, string]>) {
+    const items = names.map(([id, name]) => ({ id, name })) as ProjectsResponse["items"];
+    vi.mocked(projectApi.getAll).mockResolvedValue({ items, total: items.length, page: 1, size: DROPDOWN_PAGE_SIZE, pages: 1 });
+  }
+
+  it("flags a name another visible project holds, whatever its case and surrounding spaces", async () => {
+    holding(["p2", "Payments"]);
+
+    const { result } = renderHook(() => useProjectNameTaken("  payments "), { wrapper });
+
+    await waitFor(() => expect(result.current).toBe(true));
+    expect(projectApi.getAll).toHaveBeenCalledWith("payments", 0, DROPDOWN_PAGE_SIZE, "name", "asc", undefined);
+  });
+
+  it("does not flag the project being renamed, nor a longer name that holds this one", async () => {
+    holding(["p1", "Payments"], ["p3", "Payments EU"]);
+
+    const { result } = renderHook(
+      () => ({
+        renamed: useProjectNameTaken("PAYMENTS", { id: "p1", name: "Payments" }),
+        other: useProjectNameTaken("PAYMENTS", { id: "p2", name: "Billing" }),
+      }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.other).toBe(true));
+    expect(result.current.renamed).toBe(false);
+  });
+
+  it("asks nothing while the project keeps its name", () => {
+    const { result } = renderHook(() => useProjectNameTaken("Payments", { id: "p1", name: "Payments" }), { wrapper });
+
+    expect(result.current).toBe(false);
+    expect(projectApi.getAll).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing for an empty name", () => {
+    const { result } = renderHook(() => useProjectNameTaken("   "), { wrapper });
+
+    expect(result.current).toBe(false);
+    expect(projectApi.getAll).not.toHaveBeenCalled();
+  });
+});

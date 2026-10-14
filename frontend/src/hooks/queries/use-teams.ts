@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData, type MutationMeta } from '@tanstack/react-query';
 import { teamApi } from '@/api/teams';
+import { useDebounce } from '@/hooks/use-debounce';
+import { isNameTaken, type Named } from '@/lib/utils';
 import { TeamBindingRequest, TeamCreate, TeamMemberCreate } from '@/types/team';
 
 export const teamKeys = {
@@ -25,6 +27,13 @@ export const useTeams = (
     enabled,
     placeholderData: keepPreviousData,
   });
+};
+
+export const useTeamNameTaken = (name: string, current?: Named) => {
+  const search = useDebounce(name.trim());
+  const enabled = search !== '' && search !== current?.name;
+  const { data } = useTeams(search, 'name', 'asc', { enabled });
+  return isNameTaken(data, name, current);
 };
 
 export const useCreateTeam = (meta?: MutationMeta) => {
