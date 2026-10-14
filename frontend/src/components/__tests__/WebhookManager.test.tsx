@@ -179,6 +179,13 @@ describe("WebhookManager", () => {
     expect(screen.queryByText("Failing")).not.toBeInTheDocument();
   });
 
+  it("shows a webhook without a delivery yet as a one-line pill, like its other states", () => {
+    renderWith([{ ...slackHook, last_failure_at: undefined }]);
+
+    expect(screen.getByText("No deliveries yet")).toHaveClass("rounded-full", "whitespace-nowrap");
+    expect(screen.getByRole("columnheader", { name: "Status" })).toHaveClass("w-[160px]");
+  });
+
   it("stacks Add Webhook under the title on a phone, like the waiver list's header", () => {
     renderWith([slackHook]);
 
@@ -191,7 +198,10 @@ describe("WebhookManager", () => {
     renderWith([slackHook]);
 
     const table = screen.getByRole("table");
-    expect(table).toHaveClass("table-fixed", "min-w-[880px]");
+    const fixedColumns = screen
+      .getAllByRole("columnheader")
+      .reduce((sum, header) => sum + Number(/w-\[(\d+)px\]/.exec(header.className)?.[1] ?? 0), 0);
+    expect(table).toHaveClass("table-fixed", `min-w-[${fixedColumns + 200}px]`);
     expect(table.parentElement).toHaveClass("overflow-auto");
     expect(screen.getByRole("columnheader", { name: "URL" })).toHaveClass("w-auto");
   });
