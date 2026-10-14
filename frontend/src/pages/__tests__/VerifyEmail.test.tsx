@@ -31,7 +31,7 @@ describe('VerifyEmail', () => {
     renderPage('/confirm-email', verifyToken)
 
     expect(screen.getByRole('heading', { name: 'Error' })).toHaveClass('text-destructive')
-    expect(screen.getByRole('alert')).toHaveTextContent('No verification token provided.')
+    expect(screen.getByRole('alert')).toBe(screen.getByText('No verification token provided'))
     expect(screen.queryByRole('heading', { name: 'Email Verification' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Go to Login' })).toHaveAttribute('href', '/login')
     expect(verifyToken).not.toHaveBeenCalled()

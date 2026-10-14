@@ -103,8 +103,8 @@ describe('UserDetailsDialog - username', () => {
     expect(save).toBeEnabled()
     fireEvent.click(save)
 
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Enter a username.')
-    expect(field).toHaveAccessibleDescription('Enter a username.')
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Enter a username')
+    expect(field).toHaveAccessibleDescription('Enter a username')
     expect(update).not.toHaveBeenCalled()
     fireEvent.change(field, { target: { value: 'target2' } })
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()

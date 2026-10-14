@@ -123,7 +123,7 @@ describe("NewReportDialog", () => {
     await pickOption(screen.getAllByRole("combobox")[0], "Project");
     fireEvent.click(screen.getByRole("button", { name: "Generate" }));
 
-    expect(await screen.findByText("Select a project for project scope.")).toBeInTheDocument();
+    expect(await screen.findByText("Select a project for project scope")).toBeInTheDocument();
     expect(createReport).not.toHaveBeenCalled();
   });
 

@@ -55,11 +55,7 @@ export default function Login() {
             return
           }
 
-          if (detail === 'Email not verified') {
-            setError('Email not verified.')
-            setShowResendLink(true)
-            return
-          }
+          setShowResendLink(detail === 'Email not verified')
         }
 
         setError(getErrorMessage(err))

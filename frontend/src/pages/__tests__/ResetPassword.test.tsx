@@ -86,7 +86,7 @@ describe('ResetPassword', () => {
     renderResetPage('/reset-password')
 
     expect(screen.getByRole('heading', { name: 'Error' })).toBeInTheDocument()
-    expect(screen.getByText('The password reset link is invalid or missing a token.')).toBeInTheDocument()
+    expect(screen.getByText('The password reset link is invalid or missing a token')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Go to Login' })).toHaveAttribute('href', '/login')
     expect(screen.queryByRole('button', { name: 'Reset Password' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('link', { name: 'Request a new link' }))

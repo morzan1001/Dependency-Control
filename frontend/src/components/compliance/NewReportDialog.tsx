@@ -106,7 +106,7 @@ export function NewReportDialog({
 
   const handleSubmit = () => {
     if (needsScopeId && !scopeId) {
-      setScopeError(`Select a ${scope} for ${scope} scope.`);
+      setScopeError(`Select a ${scope} for ${scope} scope`);
       return;
     }
     setScopeError(null);

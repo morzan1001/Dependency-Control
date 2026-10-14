@@ -28,7 +28,7 @@ export default function VerifyEmail({ verifyToken }: Readonly<VerifyEmailProps>)
         <Card className="w-[350px]">
           <CardHeader className="text-center">
             <CardTitle className="text-destructive">Error</CardTitle>
-            <CardDescription role="alert">{token ? getErrorMessage(error) : 'No verification token provided.'}</CardDescription>
+            <CardDescription role="alert">{token ? getErrorMessage(error) : 'No verification token provided'}</CardDescription>
           </CardHeader>
           <CardFooter className="flex justify-center">
             <Button asChild>

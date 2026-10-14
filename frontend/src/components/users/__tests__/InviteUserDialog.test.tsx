@@ -123,8 +123,8 @@ describe('InviteUserDialog refusals', () => {
   it.each(['', '   '])('says under the field that the blank address %j needs an email address and sends nothing', async (blank) => {
     sendInvitation(blank)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address.')
-    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address')
     expect(invite).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'lena@corp.com' } })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()

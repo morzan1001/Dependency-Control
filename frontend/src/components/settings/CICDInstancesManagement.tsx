@@ -483,8 +483,8 @@ function InstanceForm({
       : "Create a team for each GitHub team holding a repository and sync its members. The token needs read:org and must belong to a member of the organisation.";
   const allowlistRequirement =
     formData.type === "github"
-      ? "Auto-creating projects on github.com needs at least one owner ID in the list above."
-      : "Auto-creating projects on gitlab.com needs at least one namespace in the list above.";
+      ? "Auto-creating projects on github.com needs at least one owner ID in the list above"
+      : "Auto-creating projects on gitlab.com needs at least one namespace in the list above";
   return (
     <div className="space-y-4">
       {showTypeSelector && (

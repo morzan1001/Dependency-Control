@@ -49,7 +49,7 @@ export default function ResetPassword() {
         <Card className="w-[350px]">
           <CardHeader className="text-center">
             <CardTitle className="text-destructive">Error</CardTitle>
-            <CardDescription>The password reset link is invalid or missing a token.</CardDescription>
+            <CardDescription>The password reset link is invalid or missing a token</CardDescription>
           </CardHeader>
           <CardFooter className="flex flex-col gap-2">
             <Button asChild>

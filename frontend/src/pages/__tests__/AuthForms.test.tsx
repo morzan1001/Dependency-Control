@@ -68,8 +68,18 @@ describe('auth page announcements', () => {
 
     logIn()
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Email not verified.')
+    expect(screen.getByRole('alert')).toBe(screen.getByText('Email not verified'))
     expect(screen.getByRole('link', { name: 'Resend verification email' })).toHaveAttribute('href', '/resend-verification')
+  })
+
+  it('explains an invitation link without a token', () => {
+    render(
+      <MemoryRouter initialEntries={['/accept-invite']}>
+        <AcceptInvite />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Invalid invitation link')).toBeInTheDocument()
   })
 
   it('reads out the message another page sent to the login', () => {

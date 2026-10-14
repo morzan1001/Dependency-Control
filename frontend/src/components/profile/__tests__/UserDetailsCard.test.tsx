@@ -313,8 +313,8 @@ describe('UserDetailsCard', () => {
     expect(saveButton()).toBeEnabled()
     save()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a username.')
-    expect(screen.getByLabelText('Username')).toHaveAccessibleDescription('Enter a username.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a username')
+    expect(screen.getByLabelText('Username')).toHaveAccessibleDescription('Enter a username')
     expect(updateMe).not.toHaveBeenCalled()
     expect(changeEmail).not.toHaveBeenCalled()
     type('Username', 'lena.k')
@@ -328,8 +328,8 @@ describe('UserDetailsCard', () => {
     type('Slack Member ID', 'U123')
     save()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address.')
-    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address')
     expect(updateMe).not.toHaveBeenCalled()
     expect(changeEmail).not.toHaveBeenCalled()
     type('Email', NEW_EMAIL)
@@ -344,8 +344,8 @@ describe('UserDetailsCard', () => {
     save()
 
     expect((await screen.findAllByRole('alert')).map((alert) => alert.textContent)).toEqual([
-      'Enter a username.',
-      'Enter an email address.',
+      'Enter a username',
+      'Enter an email address',
     ])
     expect(updateMe).not.toHaveBeenCalled()
     expect(changeEmail).not.toHaveBeenCalled()
