@@ -71,7 +71,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
   }
 
   const head = (column: string, label: string) =>
-    sort ? <SortableHead column={column} sort={sort}>{label}</SortableHead> : <TableHead>{label}</TableHead>;
+    sort ? <SortableHead column={column} sort={sort} firstOrder="asc">{label}</SortableHead> : <TableHead>{label}</TableHead>;
 
   return (
     <>

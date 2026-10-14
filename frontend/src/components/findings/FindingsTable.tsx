@@ -291,11 +291,11 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     <TableHeader className="sticky bg-background z-50 shadow-sm" style={{ top: stickyHeaderTop }}>
                         <TableRow className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                             <SortableHead column="severity" sort={sort} className="w-[120px] bg-background">Severity</SortableHead>
-                            <SortableHead column="vuln_id" sort={sort} className="w-[200px] bg-background">ID</SortableHead>
-                            <SortableHead column="component" sort={sort} className="w-auto bg-background">Component</SortableHead>
-                            <SortableHead column="source_type" sort={sort} className="w-[80px] bg-background">Source</SortableHead>
-                            <SortableHead column="type" sort={sort} className="w-[120px] bg-background">Type</SortableHead>
-                            <SortableHead column="scanner" sort={sort} className="w-[150px] bg-background">Scanner</SortableHead>
+                            <SortableHead column="vuln_id" sort={sort} firstOrder="asc" className="w-[200px] bg-background">ID</SortableHead>
+                            <SortableHead column="component" sort={sort} firstOrder="asc" className="w-auto bg-background">Component</SortableHead>
+                            <SortableHead column="source_type" sort={sort} firstOrder="asc" className="w-[80px] bg-background">Source</SortableHead>
+                            <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[120px] bg-background">Type</SortableHead>
+                            <SortableHead column="scanner" sort={sort} firstOrder="asc" className="w-[150px] bg-background">Scanner</SortableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>

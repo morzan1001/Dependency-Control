@@ -192,7 +192,7 @@ describe('UsersPage - removing a row', () => {
 })
 
 describe('UsersPage - sorting', () => {
-  it('sorts the users by a clicked column, descending first, from the first page', () => {
+  it('sorts the users by a clicked text column, ascending first, from the first page', () => {
     const limit = SMALL_PAGE_SIZE
     mockUseUsers.mockReturnValue({ data: Array.from({ length: limit }, (_, i) => makeUser(i)), isLoading: false, error: null })
     mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })
@@ -203,7 +203,7 @@ describe('UsersPage - sorting', () => {
 
     fireEvent.click(screen.getByRole('columnheader', { name: 'Email' }))
 
-    expect(lastQuery()).toEqual([0, limit, '', 'email', 'desc'])
+    expect(lastQuery()).toEqual([0, limit, '', 'email', 'asc'])
   })
 
   it('offers no sort on the pending invitations, which are not paged from the server', () => {

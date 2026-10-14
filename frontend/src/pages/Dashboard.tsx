@@ -240,7 +240,7 @@ export default function Dashboard() {
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                            <SortableHead column="name" sort={pagination} className="w-auto">Name</SortableHead>
+                            <SortableHead column="name" sort={pagination} firstOrder="asc" className="w-auto">Name</SortableHead>
                             <TableHead className="w-[150px]">Teams</TableHead>
                             <SortableHead column="last_scan_at" sort={pagination} className="w-[150px]">Last Scan</SortableHead>
                             <SortableHead column="critical" sort={pagination} className="w-[100px]">Critical</SortableHead>

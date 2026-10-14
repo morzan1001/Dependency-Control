@@ -173,10 +173,10 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
               <TableRow>
                 <SortableHead column="created_at" sort={pagination} className="w-[200px]">Date</SortableHead>
                 <SortableHead column="pipeline_iid" sort={pagination} className="w-[120px]">Source</SortableHead>
-                <SortableHead column="branch" sort={pagination} className="w-[200px]">Branch</SortableHead>
+                <SortableHead column="branch" sort={pagination} firstOrder="asc" className="w-[200px]">Branch</SortableHead>
                 <TableHead className="w-[120px]">Commit</TableHead>
                 <SortableHead column="findings_count" sort={pagination} className="w-[250px]">Findings</SortableHead>
-                <SortableHead column="status" sort={pagination} className="w-[120px]">Status</SortableHead>
+                <SortableHead column="status" sort={pagination} firstOrder="asc" className="w-[120px]">Status</SortableHead>
                 <TableHead className="w-[80px]">Delta</TableHead>
               </TableRow>
             </TableHeader>

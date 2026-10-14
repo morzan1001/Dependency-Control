@@ -82,6 +82,20 @@ describe('the project waiver list', () => {
     await waitFor(() => expect(lastQuery()).toMatchObject({ sort_by: 'expiration_date', sort_order: 'asc' }))
   })
 
+  it.each([
+    ['Finding ID', 'finding_id'],
+    ['Package', 'package_name'],
+    ['Status', 'status'],
+    ['Reason', 'reason'],
+  ])('sorts the %s text column ascending first', async (name, column) => {
+    renderList(<ProjectWaivers projectId="p1" />)
+    await screen.findByText('minimist')
+
+    fireEvent.click(screen.getByRole('columnheader', { name }))
+
+    await waitFor(() => expect(lastQuery()).toMatchObject({ sort_by: column, sort_order: 'asc' }))
+  })
+
   it('narrows to orphaned waivers', async () => {
     renderList(<ProjectWaivers projectId="p1" />)
     await screen.findByText('minimist')
@@ -194,7 +208,7 @@ describe('the global waiver list', () => {
     expect(lastQuery()).toMatchObject({ global_only: true, skip: 0, limit: 50 })
     fireEvent.click(screen.getByRole('columnheader', { name: /created by/i }))
 
-    await waitFor(() => expect(lastQuery()).toMatchObject({ sort_by: 'created_by' }))
+    await waitFor(() => expect(lastQuery()).toMatchObject({ sort_by: 'created_by', sort_order: 'asc' }))
   })
 
   it('warns that deleting a global waiver affects every project', async () => {

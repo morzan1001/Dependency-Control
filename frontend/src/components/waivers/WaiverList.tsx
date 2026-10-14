@@ -119,12 +119,12 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                <SortableHead column="finding_id" sort={sort}>Finding ID</SortableHead>
-                                <SortableHead column="package_name" sort={sort}>Package</SortableHead>
-                                <SortableHead column="status" sort={sort}>Status</SortableHead>
-                                <SortableHead column="reason" sort={sort}>Reason</SortableHead>
+                                <SortableHead column="finding_id" sort={sort} firstOrder="asc">Finding ID</SortableHead>
+                                <SortableHead column="package_name" sort={sort} firstOrder="asc">Package</SortableHead>
+                                <SortableHead column="status" sort={sort} firstOrder="asc">Status</SortableHead>
+                                <SortableHead column="reason" sort={sort} firstOrder="asc">Reason</SortableHead>
                                 <SortableHead column="expiration_date" sort={sort}>Expires</SortableHead>
-                                {isGlobal && <SortableHead column="created_by" sort={sort}>Created By</SortableHead>}
+                                {isGlobal && <SortableHead column="created_by" sort={sort} firstOrder="asc">Created By</SortableHead>}
                                 <TableHead className="w-[100px]">Actions</TableHead>
                             </TableRow>
                         </TableHeader>

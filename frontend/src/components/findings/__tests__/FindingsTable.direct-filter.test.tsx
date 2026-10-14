@@ -75,17 +75,26 @@ describe("FindingsTable sorting", () => {
     return [params.sort_by, params.sort_order];
   };
 
-  it("asks for the most severe findings first, then sorts a clicked column descending and flips it", async () => {
+  it("asks for the most severe findings first, then sorts a text column ascending first and flips it", async () => {
     renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
     await screen.findByText("lodash");
     expect(lastSort()).toEqual(["severity", "desc"]);
 
     fireEvent.click(screen.getByRole("columnheader", { name: "Component" }));
-    await waitFor(() => expect(lastSort()).toEqual(["component", "desc"]));
+    await waitFor(() => expect(lastSort()).toEqual(["component", "asc"]));
 
     await screen.findByText("lodash");
     fireEvent.click(screen.getByRole("columnheader", { name: "Component" }));
-    await waitFor(() => expect(lastSort()).toEqual(["component", "asc"]));
+    await waitFor(() => expect(lastSort()).toEqual(["component", "desc"]));
+  });
+
+  it.each(["ID", "Source", "Type", "Scanner"])("sorts the %s text column ascending first", async (column) => {
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+    await screen.findByText("lodash");
+
+    fireEvent.click(screen.getByRole("columnheader", { name: column }));
+
+    await waitFor(() => expect(lastSort()[1]).toBe("asc"));
   });
 });
 

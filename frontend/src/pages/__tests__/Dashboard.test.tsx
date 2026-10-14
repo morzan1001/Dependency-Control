@@ -110,6 +110,14 @@ describe('Dashboard project table sorting', () => {
     expect(lastSort()).toEqual(['critical', 'asc'])
   })
 
+  it('sorts the Name column ascending first', () => {
+    renderDashboard([project('p1', [])])
+
+    fireEvent.click(screen.getByRole('columnheader', { name: 'Name' }))
+
+    expect(lastSort()).toEqual(['name', 'asc'])
+  })
+
   it('returns to the first page when a column is sorted, like the other paged tables', () => {
     useProjectsMock.mockReturnValue({
       data: { items: [project('p1', [])], total: 120, page: 1, size: 50, pages: 3 },

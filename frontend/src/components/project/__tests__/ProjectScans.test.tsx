@@ -381,15 +381,26 @@ describe('ProjectScans - sorting', () => {
     return [filters.sortBy, filters.sortOrder]
   }
 
-  it('lists the newest pipelines first, then sorts a clicked column descending and flips it', () => {
+  it('lists the newest pipelines first, then sorts a text column ascending first and flips it', () => {
     renderScans([makeScan({ id: 's1' })])
     expect(lastSort()).toEqual(['created_at', 'desc'])
 
     fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
-    expect(lastSort()).toEqual(['branch', 'desc'])
+    expect(lastSort()).toEqual(['branch', 'asc'])
 
     fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
-    expect(lastSort()).toEqual(['branch', 'asc'])
+    expect(lastSort()).toEqual(['branch', 'desc'])
+  })
+
+  it.each([
+    ['Status', 'status', 'asc'],
+    ['Findings', 'findings_count', 'desc'],
+  ])('sorts the %s column by %s, %s first', (name, column, order) => {
+    renderScans([makeScan({ id: 's1' })])
+
+    fireEvent.click(screen.getByRole('columnheader', { name }))
+
+    expect(lastSort()).toEqual([column, order])
   })
 
   it('returns to the first page when a column is sorted, like the other paged tables', () => {
@@ -401,6 +412,6 @@ describe('ProjectScans - sorting', () => {
     fireEvent.click(screen.getByRole('columnheader', { name: 'Branch' }))
 
     expect(lastPage()).toBe(1)
-    expect(lastSort()).toEqual(['branch', 'desc'])
+    expect(lastSort()).toEqual(['branch', 'asc'])
   })
 })
