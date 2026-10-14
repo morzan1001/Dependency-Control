@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { SecretInput } from "@/components/settings/SecretInput"
 import { toast } from "sonner"
-import { getErrorMessage } from "@/lib/utils"
+import { getErrorMessage, toggle } from "@/lib/utils"
 import { WEBHOOK_EVENTS } from "@/lib/constants"
 
 // Mirrors the server's detection, which decides the type when the request names none.
@@ -130,15 +130,6 @@ export function WebhookForm(props: WebhookFormProps) {
     }
   }
 
-  const toggleEvent = (eventId: string) => {
-    setForm(prev => {
-      const events = prev.events.includes(eventId)
-        ? prev.events.filter(e => e !== eventId)
-        : [...prev.events, eventId]
-      return { ...prev, events }
-    })
-  }
-
   return (
     <DialogContent>
       <DialogHeader>
@@ -195,7 +186,7 @@ export function WebhookForm(props: WebhookFormProps) {
                 <Checkbox
                   id={event.id}
                   checked={form.events.includes(event.id)}
-                  onCheckedChange={() => toggleEvent(event.id)}
+                  onCheckedChange={() => setForm(prev => ({ ...prev, events: toggle(prev.events, event.id) }))}
                   className="mt-1"
                 />
                 <div className="grid gap-0.5 leading-tight">
