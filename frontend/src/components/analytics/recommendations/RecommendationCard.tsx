@@ -286,7 +286,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                     <span className="text-muted-foreground">New Critical CVEs: </span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {recommendation.action.new_critical_cves.map((cve) => (
-                        <Badge key={cve} variant="destructive">{cve}</Badge>
+                        <AdvisoryLink key={cve} id={cve} variant="destructive" />
                       ))}
                     </div>
                   </div>
@@ -300,7 +300,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
               <ActionSection icon={RefreshCw} title="Recurring Issues">
                 {(recommendation.action.cves as RecurringCve[] | undefined)?.map((row) => (
                   <div key={row.cve} className="flex items-center gap-2">
-                    <Badge variant="outline">{row.cve}</Badge>
+                    <AdvisoryLink id={row.cve} />
                     <span className="text-xs text-muted-foreground">
                       {`${row.components.join(', ')} · ${row.scans} scans`}
                     </span>
@@ -345,7 +345,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                 {(recommendation.action.cves as CrossProjectCve[]).map((cve) => (
                   <div key={cve.cve} className="border-b last:border-0 pb-2 last:pb-0">
                     <div className="flex items-center gap-2">
-                      <Badge variant="destructive">{cve.cve}</Badge>
+                      <AdvisoryLink id={cve.cve} variant="destructive" />
                       <span className="text-muted-foreground">affects {cve.total_affected} projects</span>
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">

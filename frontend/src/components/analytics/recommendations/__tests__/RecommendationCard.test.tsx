@@ -72,6 +72,16 @@ describe('RecommendationCard CVE rendering', () => {
     expect(screen.getAllByText('CVE-2021-0002')).toHaveLength(1)
   })
 
+  it.each([
+    ['regression', { type: 'investigate_regression', new_critical_cves: ['CVE-2021-0003'] }, 'CVE-2021-0003'],
+    ['recurring', { type: 'address_recurring', cves: [{ cve: 'CVE-2021-0001', components: ['lodash'], scans: 3 }] }, 'CVE-2021-0001'],
+    ['cross-project', { type: 'fix_cross_project_vuln', cves: [{ cve: 'CVE-2021-0002', total_affected: 3, affected_projects: ['a'] }] }, 'CVE-2021-0002'],
+  ])('links each %s CVE to its advisory, like the related vulnerabilities', (_list, action, cve) => {
+    renderExpanded(makeRecommendation(action as RecommendationAction))
+
+    expect(screen.getByRole('link', { name: cve })).toHaveAttribute('href', `https://nvd.nist.gov/vuln/detail/${cve}`)
+  })
+
   it('names the components the recommendation covers, not the ones it listed', () => {
     renderExpanded(
       makeRecommendation(
