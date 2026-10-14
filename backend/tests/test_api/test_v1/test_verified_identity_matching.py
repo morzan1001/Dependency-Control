@@ -11,7 +11,7 @@ import fakeredis.aioredis
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
-from app.api.deps import _resolve_initial_member_id
+from app.api.deps import _CiClaim, _GitLabCi
 from app.core.cache import CacheService
 from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
@@ -130,17 +130,19 @@ class TestProjectMemberAdd:
 
 
 class TestCiInitialProjectAdmin:
+    @staticmethod
+    async def _admin(job_email: str, *users: dict) -> str | None:
+        instance = make_gitlab_instance()
+        gitlab = _GitLabCi(instance, GitLabService(instance))
+        return await gitlab.initial_member(_CiClaim(42, "corp/proj", job_email), await _db(*users))
+
     @pytest.mark.asyncio
     async def test_an_unverified_account_holding_the_job_email_is_not_made_admin(self):
-        user_repo = UserRepository(await _db(_UNVERIFIED))
-
-        assert await _resolve_initial_member_id(user_repo, "grace@corp.com") is None
+        assert await self._admin("grace@corp.com", _UNVERIFIED) is None
 
     @pytest.mark.asyncio
     async def test_the_account_that_verified_the_job_email_is_made_admin_whatever_the_case(self):
-        user_repo = UserRepository(await _db(_VERIFIED))
-
-        assert await _resolve_initial_member_id(user_repo, "ADA@corp.com") == "u-ada"
+        assert await self._admin("ADA@corp.com", _VERIFIED) == "u-ada"
 
 
 class TestGitLabTeamSync:

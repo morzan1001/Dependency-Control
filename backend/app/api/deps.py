@@ -1,8 +1,9 @@
 import asyncio
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar, NamedTuple
 
 import jwt
 from fastapi import Depends, Header, HTTPException, status
@@ -28,8 +29,11 @@ from app.core.log_utils import sanitize_for_log
 from app.core.metrics import auth_token_validations_total
 from app.core.permissions import Permissions, has_permission, is_setup_2fa_scope
 from app.db.mongodb import get_database
+from app.models.github_instance import GitHubInstance
+from app.models.gitlab_instance import GitLabInstance
 from app.models.project import Project, ProjectMember
 from app.models.system import SystemSettings
+from app.models.team import TeamSyncResult
 from app.models.user import User
 from app.repositories.api_keys import ApiKeyRepository
 from app.repositories.github_instances import GitHubInstanceRepository
@@ -141,14 +145,6 @@ class PermissionChecker:
         )
 
 
-async def _resolve_initial_member_id(user_repo: UserRepository, email: str | None) -> str | None:
-    """The account that verified the CI job's email, to add as initial project admin; None if none did."""
-    if not email:
-        return None
-    user = await user_repo.get_raw_by_verified_email(email)
-    return str(user["_id"]) if user else None
-
-
 def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
     """Whether the project's whole owner set fits the cap; refused, not truncated, as no sync can pick whom to drop."""
     if len(would_own) <= MAX_PROJECT_TEAMS:
@@ -183,43 +179,6 @@ def _team_subset_stages(project: Project, source: str, resolved: list[str] | Non
     return replace_team_subset_pipeline(source, owners)
 
 
-async def _gitlab_team_sync_stages(
-    project: Project,
-    instance_id: str,
-    gitlab_project_id: int,
-    gitlab_project_path: str,
-    gitlab_service: GitLabService,
-    db: AsyncIOMotorDatabase,
-) -> list[dict]:
-    """GitLab's ownership stages; ``instance_id`` is the instance that authenticated this ingest, not the project's."""
-    source = team_source(TEAM_SOURCE_GITLAB, instance_id)
-    window = f"gitlab_team_sync:{source}:{gitlab_project_id}"
-    if (await cache_service.incr(window, GITLAB_TEAM_SYNC_WINDOW_SECONDS) or 0) > 1:
-        return []
-    resolved = await gitlab_service.sync_team_from_gitlab(
-        db, gitlab_project_id, gitlab_project_path, owner_budget=_owner_budget(project, source)
-    )
-    return _team_subset_stages(project, source, resolved.team_ids, gitlab_project_path)
-
-
-async def _github_team_sync_stages(
-    project: Project,
-    instance_id: str,
-    repository_path: str,
-    github_service: GitHubService,
-    db: AsyncIOMotorDatabase,
-) -> list[dict]:
-    """The ownership stages GitHub sync contributes to this ingest's update."""
-    source = team_source(TEAM_SOURCE_GITHUB, instance_id)
-    result = await github_service.sync_team_from_github(
-        db,
-        repository_path,
-        current_owner_ids=owners_replaced_by(project, source),
-        owner_budget=_owner_budget(project, source),
-    )
-    return _team_subset_stages(project, source, result.team_ids, repository_path)
-
-
 async def _apply_ingest_project_update(
     project: Project,
     new_path: str,
@@ -243,134 +202,177 @@ async def _apply_ingest_project_update(
     return await project_repo.get_by_id(project.id) or project
 
 
-async def _handle_gitlab_oidc(
-    oidc_token: str,
-    gitlab_instance: Any,
-    db: AsyncIOMotorDatabase,
-    project_repo: ProjectRepository,
-    *,
-    create_missing: bool,
-) -> Project:
-    """Resolve the project a GitLab CI token belongs to; ``create_missing`` also creates, renames and syncs it."""
-    if not gitlab_instance.is_active:
-        raise HTTPException(status_code=403, detail=f"GitLab instance '{gitlab_instance.name}' is not active")
+class _CiClaim[IdT](NamedTuple):
+    """The repository a validated CI token ran in, and the account the provider says started the job."""
 
-    gitlab_service = GitLabService(gitlab_instance)
-    payload = await gitlab_service.validate_oidc_token(oidc_token)
-    if not payload:
-        raise HTTPException(status_code=403, detail="Invalid GitLab OIDC Token")
+    external_id: IdT
+    path: str
+    actor: str | None
 
-    gitlab_project_id = int(payload.project_id)
-    gitlab_project_path = payload.project_path
-    instance_id = str(gitlab_instance.id)
 
-    if not gitlab_instance.accepts_project_path(gitlab_project_path):
-        logger.warning(
-            "Refused GitLab OIDC token from %s: outside the namespaces allowed on instance '%s'",
-            sanitize_for_log(gitlab_project_path),
-            gitlab_instance.name,
-        )
-        raise HTTPException(
-            status_code=403,
-            detail=f"Project '{gitlab_project_path}' is outside the namespaces allowed on GitLab instance "
-            f"'{gitlab_instance.name}'",
-        )
+class _CiProvider[IdT: (int, str)](ABC):
+    """One provider's part in resolving the project a CI token belongs to."""
 
-    project_data = await project_repo.get_raw_by_gitlab_composite_key(instance_id, gitlab_project_id)
-    if not create_missing:
-        if not project_data:
-            raise HTTPException(status_code=403, detail=_MSG_CI_PROJECT_MISMATCH)
-        return Project(**project_data)
+    label: ClassVar[str]
+    team_provider: ClassVar[str]
+    instance_field: ClassVar[str]
+    id_field: ClassVar[str]
+    path_field: ClassVar[str]
+    allowlist_rule: ClassVar[str]
+    # Every job of every pipeline ingests; a provider with a window resolves a project's owners once per window.
+    sync_window: ClassVar[int] = 0
 
-    if project_data:
-        project = Project(**project_data)
-        ownership_stages: list[dict] = []
+    instance: GitLabInstance | GitHubInstance
 
-        if gitlab_instance.sync_teams:
-            ownership_stages = await _gitlab_team_sync_stages(
-                project, instance_id, gitlab_project_id, gitlab_project_path, gitlab_service, db
+    @property
+    def instance_id(self) -> str:
+        return str(self.instance.id)
+
+    def key(self, external_id: IdT) -> dict[str, Any]:
+        """The project's composite key on this instance."""
+        return {self.instance_field: self.instance_id, self.id_field: external_id}
+
+    @property
+    @abstractmethod
+    def allowlist(self) -> list[str]: ...
+
+    @abstractmethod
+    async def claim(self, oidc_token: str) -> _CiClaim[IdT] | None:
+        """The repository a valid token ran in, None for an invalid one, and a 403 for one the instance refuses."""
+
+    @abstractmethod
+    async def initial_member(self, claim: _CiClaim[IdT], db: AsyncIOMotorDatabase) -> str | None:
+        """The local account a project created from this token gets as its admin."""
+
+    @abstractmethod
+    async def sync(
+        self, db: AsyncIOMotorDatabase, claim: _CiClaim[IdT], *, current_owner_ids: set[str], owner_budget: int
+    ) -> TeamSyncResult:
+        """The teams holding the repository, created only within ``owner_budget``."""
+
+
+class _GitLabCi(_CiProvider[int]):
+    label = "GitLab"
+    team_provider = TEAM_SOURCE_GITLAB
+    instance_field, id_field, path_field = "gitlab_instance_id", "gitlab_project_id", "gitlab_project_path"
+    allowlist_rule = "auto-creation on gitlab.com needs an allowed namespace list"
+    sync_window = GITLAB_TEAM_SYNC_WINDOW_SECONDS
+
+    instance: GitLabInstance
+
+    def __init__(self, instance: GitLabInstance, service: GitLabService) -> None:
+        self.instance = instance
+        self.service = service
+
+    @property
+    def allowlist(self) -> list[str]:
+        return self.instance.allowed_namespaces
+
+    async def claim(self, oidc_token: str) -> _CiClaim[int] | None:
+        payload = await self.service.validate_oidc_token(oidc_token)
+        if not payload:
+            return None
+        path = payload.project_path
+        if not self.instance.accepts_project_path(path):
+            logger.warning(
+                "Refused GitLab OIDC token from %s: outside the namespaces allowed on instance '%s'",
+                sanitize_for_log(path),
+                self.instance.name,
             )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Project '{path}' is outside the namespaces allowed on GitLab instance '{self.instance.name}'",
+            )
+        return _CiClaim(int(payload.project_id), path, payload.user_email)
 
-        return await _apply_ingest_project_update(
-            project,
-            gitlab_project_path,
-            project_repo,
-            path_field="gitlab_project_path",
-            ownership_stages=ownership_stages,
+    async def initial_member(self, claim: _CiClaim[int], db: AsyncIOMotorDatabase) -> str | None:
+        user = await UserRepository(db).get_raw_by_verified_email(claim.actor) if claim.actor else None
+        return str(user["_id"]) if user else None
+
+    async def sync(
+        self, db: AsyncIOMotorDatabase, claim: _CiClaim[int], *, current_owner_ids: set[str], owner_budget: int
+    ) -> TeamSyncResult:
+        return await self.service.sync_team_from_gitlab(db, claim.external_id, claim.path, owner_budget=owner_budget)
+
+
+class _GitHubCi(_CiProvider[str]):
+    label = "GitHub"
+    team_provider = TEAM_SOURCE_GITHUB
+    instance_field, id_field, path_field = "github_instance_id", "github_repository_id", "github_repository_path"
+    allowlist_rule = "auto-creation on the shared github.com issuer needs an allowed owner list"
+
+    instance: GitHubInstance
+
+    def __init__(self, instance: GitHubInstance, service: GitHubService) -> None:
+        self.instance = instance
+        self.service = service
+
+    @property
+    def allowlist(self) -> list[str]:
+        return self.instance.allowed_owner_ids
+
+    async def claim(self, oidc_token: str) -> _CiClaim[str] | None:
+        payload = await self.service.validate_oidc_token(oidc_token)
+        if not payload:
+            return None
+        if not self.instance.accepts_owner(payload.repository_owner_id):
+            logger.warning(
+                "Refused GitHub OIDC token from %s (owner id %s): owner not allowed on instance '%s'",
+                sanitize_for_log(payload.repository),
+                sanitize_for_log(payload.repository_owner_id),
+                self.instance.name,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Repository owner '{payload.repository_owner}' (id {payload.repository_owner_id}) "
+                f"is not allowed on GitHub instance '{self.instance.name}'",
+            )
+        return _CiClaim(payload.repository_id, payload.repository, payload.actor)
+
+    async def initial_member(self, claim: _CiClaim[str], db: AsyncIOMotorDatabase) -> str | None:
+        actor = await self.service.resolve_login(claim.actor, UserRepository(db)) if claim.actor else None
+        return str(actor["_id"]) if actor else None
+
+    async def sync(
+        self, db: AsyncIOMotorDatabase, claim: _CiClaim[str], *, current_owner_ids: set[str], owner_budget: int
+    ) -> TeamSyncResult:
+        return await self.service.sync_team_from_github(
+            db, claim.path, current_owner_ids=current_owner_ids, owner_budget=owner_budget
         )
 
-    if not gitlab_instance.auto_create_projects:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
-        )
-    if gitlab_instance.is_shared_issuer and not gitlab_instance.allowed_namespaces:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Project not found on instance '{gitlab_instance.name}': auto-creation on gitlab.com needs "
-            "an allowed namespace list",
-        )
 
-    initial_member_id = await _resolve_initial_member_id(UserRepository(db), payload.user_email)
-    members = [ProjectMember(user_id=initial_member_id, role=PROJECT_ROLE_ADMIN)] if initial_member_id else []
-
-    owners: list[str] = []
-    gitlab_source = team_source(TEAM_SOURCE_GITLAB, instance_id)
-    if gitlab_instance.sync_teams:
-        resolved = await gitlab_service.sync_team_from_gitlab(db, gitlab_project_id, gitlab_project_path)
-        owners = resolved.team_ids or []
-
-    new_project = Project(
-        name=gitlab_project_path,
-        members=members,
-        gitlab_instance_id=instance_id,
-        gitlab_project_id=gitlab_project_id,
-        gitlab_project_path=gitlab_project_path,
-        active_analyzers=(await SystemSettingsRepository(db).get()).default_active_analyzers,
-        **ownership_fields(owners, gitlab_source),
+async def _ownership_stages[IdT: (int, str)](
+    ci: _CiProvider[IdT], project: Project, claim: _CiClaim[IdT], db: AsyncIOMotorDatabase
+) -> list[dict]:
+    """The provider's ownership stages; the source is the instance that authenticated this ingest, not the project's."""
+    source = team_source(ci.team_provider, ci.instance_id)
+    window = f"{ci.team_provider}_team_sync:{source}:{claim.external_id}"
+    if ci.sync_window and (await cache_service.incr(window, ci.sync_window) or 0) > 1:
+        return []
+    result = await ci.sync(
+        db, claim, current_owner_ids=owners_replaced_by(project, source), owner_budget=_owner_budget(project, source)
     )
-
-    project, created = await project_repo.find_or_create_by_gitlab_key(instance_id, gitlab_project_id, new_project)
-    if created:
-        logger.info(f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'")
-    return project
+    return _team_subset_stages(project, source, result.team_ids, claim.path)
 
 
-async def _handle_github_oidc(
+async def _resolve_ci_project[IdT: (int, str)](
     oidc_token: str,
-    github_instance: Any,
+    ci: _CiProvider[IdT],
     db: AsyncIOMotorDatabase,
     project_repo: ProjectRepository,
     *,
     create_missing: bool,
 ) -> Project:
-    """Resolve the project a GitHub Actions token belongs to; ``create_missing`` also creates, renames and syncs it."""
-    if not github_instance.is_active:
-        raise HTTPException(status_code=403, detail=f"GitHub instance '{github_instance.name}' is not active")
+    """Resolve the project a CI token belongs to; ``create_missing`` also creates, renames and syncs it."""
+    instance = ci.instance
+    if not instance.is_active:
+        raise HTTPException(status_code=403, detail=f"{ci.label} instance '{instance.name}' is not active")
+    claim = await ci.claim(oidc_token)
+    if claim is None:
+        raise HTTPException(status_code=403, detail=f"Invalid {ci.label} OIDC Token")
 
-    github_service = GitHubService(github_instance)
-    gh_payload = await github_service.validate_oidc_token(oidc_token)
-    if not gh_payload:
-        raise HTTPException(status_code=403, detail="Invalid GitHub Actions OIDC Token")
-
-    instance_id = str(github_instance.id)
-    repo_id = gh_payload.repository_id
-    repo_path = gh_payload.repository
-
-    if not github_instance.accepts_owner(gh_payload.repository_owner_id):
-        logger.warning(
-            "Refused GitHub OIDC token from %s (owner id %s): owner not allowed on instance '%s'",
-            sanitize_for_log(repo_path),
-            sanitize_for_log(gh_payload.repository_owner_id),
-            github_instance.name,
-        )
-        raise HTTPException(
-            status_code=403,
-            detail=f"Repository owner '{gh_payload.repository_owner}' (id {gh_payload.repository_owner_id}) "
-            f"is not allowed on GitHub instance '{github_instance.name}'",
-        )
-
-    project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
+    key = ci.key(claim.external_id)
+    project_data = await project_repo.find_one_raw(key)
     if not create_missing:
         if not project_data:
             raise HTTPException(status_code=403, detail=_MSG_CI_PROJECT_MISMATCH)
@@ -378,53 +380,35 @@ async def _handle_github_oidc(
 
     if project_data:
         project = Project(**project_data)
-        ownership_stages: list[dict] = []
-
-        if github_instance.sync_teams:
-            ownership_stages = await _github_team_sync_stages(project, instance_id, repo_path, github_service, db)
-
+        stages = await _ownership_stages(ci, project, claim, db) if instance.sync_teams else []
         return await _apply_ingest_project_update(
-            project,
-            repo_path,
-            project_repo,
-            path_field="github_repository_path",
-            ownership_stages=ownership_stages,
+            project, claim.path, project_repo, path_field=ci.path_field, ownership_stages=stages
         )
 
-    if not github_instance.auto_create_projects:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Project not found on GitHub instance '{github_instance.name}' and auto-creation is disabled",
-        )
-    if github_instance.is_shared_issuer and not github_instance.allowed_owner_ids:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Project not found on GitHub instance '{github_instance.name}': auto-creation on the shared "
-            "github.com issuer needs an allowed owner list",
-        )
+    not_found = f"Project not found on {ci.label} instance '{instance.name}'"
+    if not instance.auto_create_projects:
+        raise HTTPException(status_code=404, detail=f"{not_found} and auto-creation is disabled")
+    if instance.is_shared_issuer and not ci.allowlist:
+        raise HTTPException(status_code=403, detail=f"{not_found}: {ci.allowlist_rule}")
 
-    actor = await github_service.resolve_login(gh_payload.actor, UserRepository(db))
-    members = [ProjectMember(user_id=str(actor["_id"]), role=PROJECT_ROLE_ADMIN)] if actor else []
-
+    member_id = await ci.initial_member(claim, db)
     owners: list[str] = []
-    github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
-    if github_instance.sync_teams:
-        sync_result = await github_service.sync_team_from_github(db, repo_path, current_owner_ids=set())
-        owners = sync_result.team_ids or []
+    if instance.sync_teams:
+        # A project being created has the whole cap to itself.
+        result = await ci.sync(db, claim, current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS)
+        owners = result.team_ids or []
 
     new_project = Project(
-        name=repo_path,
-        members=members,
-        github_instance_id=instance_id,
-        github_repository_id=repo_id,
-        github_repository_path=repo_path,
+        name=claim.path,
+        members=[ProjectMember(user_id=member_id, role=PROJECT_ROLE_ADMIN)] if member_id else [],
+        **key,
+        **{ci.path_field: claim.path},
         active_analyzers=(await SystemSettingsRepository(db).get()).default_active_analyzers,
-        **ownership_fields(owners, github_source),
+        **ownership_fields(owners, team_source(ci.team_provider, ci.instance_id)),
     )
-
-    project, created = await project_repo.find_or_create_by_github_key(instance_id, repo_id, new_project)
+    project, created = await project_repo.find_or_create_by_key(key, new_project)
     if created:
-        logger.info(f"Auto-created project '{repo_path}' from GitHub instance '{github_instance.name}'")
+        logger.info("Auto-created project '%s' from %s instance '%s'", claim.path, ci.label, instance.name)
     return project
 
 
@@ -463,13 +447,13 @@ async def _authenticate_via_oidc(
 ) -> Project:
     issuer = _extract_oidc_issuer(oidc_token)
 
-    gitlab_instance = await GitLabInstanceRepository(db).get_by_url(issuer)
-    if gitlab_instance:
-        return await _handle_gitlab_oidc(oidc_token, gitlab_instance, db, project_repo, create_missing=create_missing)
+    if gitlab_instance := await GitLabInstanceRepository(db).get_by_url(issuer):
+        gitlab = _GitLabCi(gitlab_instance, GitLabService(gitlab_instance))
+        return await _resolve_ci_project(oidc_token, gitlab, db, project_repo, create_missing=create_missing)
 
-    github_instance = await GitHubInstanceRepository(db).get_by_url(issuer)
-    if github_instance:
-        return await _handle_github_oidc(oidc_token, github_instance, db, project_repo, create_missing=create_missing)
+    if github_instance := await GitHubInstanceRepository(db).get_by_url(issuer):
+        github = _GitHubCi(github_instance, GitHubService(github_instance))
+        return await _resolve_ci_project(oidc_token, github, db, project_repo, create_missing=create_missing)
 
     raise HTTPException(
         status_code=403,

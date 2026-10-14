@@ -1,56 +1,39 @@
-"""ProjectRepository's GitLab multi-instance lookups, driven through FakeDatabase."""
+"""ProjectRepository's find-or-create by a VCS composite key, driven through FakeDatabase."""
 
 import pytest
 
+from app.models.project import Project
 from app.repositories.projects import ProjectRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
-_INSTANCE_A = "instance-a"
-_INSTANCE_B = "instance-b"
 _GITLAB_PROJECT_ID = 12345
-_INSTANCE_A_PROJECTS = 3
 
 
-def _project_doc(project_id, instance_id, gitlab_project_id):
-    return {
-        "_id": project_id,
-        "name": project_id,
-        "owner_id": "u1",
-        "gitlab_instance_id": instance_id,
-        "gitlab_project_id": gitlab_project_id,
-    }
+def _key(instance_id: str) -> dict:
+    return {"gitlab_instance_id": instance_id, "gitlab_project_id": _GITLAB_PROJECT_ID}
 
 
 @pytest.fixture
 def db():
     database = FakeDatabase()
-    for index in range(_INSTANCE_A_PROJECTS):
-        database.projects._docs[f"a-{index}"] = _project_doc(f"a-{index}", _INSTANCE_A, _GITLAB_PROJECT_ID + index)
-    # Same numeric project id on a second instance: the composite key is what tells them apart.
-    database.projects._docs["b-0"] = _project_doc("b-0", _INSTANCE_B, _GITLAB_PROJECT_ID)
+    database.projects._docs["a-0"] = {"_id": "a-0", "name": "a-0", **_key("instance-a")}
     return database
 
 
-class TestCompositeKeyLookup:
+class TestFindOrCreateByKey:
     @pytest.mark.asyncio
-    async def test_the_instance_id_decides_between_two_rows_sharing_a_gitlab_project_id(self, db):
-        repo = ProjectRepository(db)
+    async def test_the_project_holding_the_key_is_returned_untouched(self, db):
+        project, created = await ProjectRepository(db).find_or_create_by_key(
+            _key("instance-a"), Project(name="new", **_key("instance-a"))
+        )
 
-        raw = await repo.get_raw_by_gitlab_composite_key(_INSTANCE_B, _GITLAB_PROJECT_ID)
-
-        assert raw["_id"] == "b-0"
-
-    @pytest.mark.asyncio
-    async def test_an_unknown_pair_resolves_to_nothing(self, db):
-        repo = ProjectRepository(db)
-
-        assert await repo.get_raw_by_gitlab_composite_key(_INSTANCE_A, 99999) is None
-        assert await repo.get_raw_by_gitlab_composite_key("absent", _GITLAB_PROJECT_ID) is None
+        assert (project.id, project.name, created) == ("a-0", "a-0", False)
 
     @pytest.mark.asyncio
-    async def test_the_raw_lookup_returns_the_stored_document(self, db):
-        repo = ProjectRepository(db)
+    async def test_the_same_project_id_on_another_instance_is_another_project(self, db):
+        new = Project(name="b-0", **_key("instance-b"))
 
-        raw = await repo.get_raw_by_gitlab_composite_key(_INSTANCE_A, _GITLAB_PROJECT_ID)
+        project, created = await ProjectRepository(db).find_or_create_by_key(_key("instance-b"), new)
 
-        assert raw == _project_doc("a-0", _INSTANCE_A, _GITLAB_PROJECT_ID)
+        assert (project.id, created) == (new.id, True)
+        assert (await ProjectRepository(db).find_one_raw(_key("instance-a")))["_id"] == "a-0"
