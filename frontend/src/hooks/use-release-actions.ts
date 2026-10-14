@@ -54,7 +54,7 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
           })
         },
         onError: (error) =>
-          toast.error(`Could not mark this scan as a release in ${environment}`, { description: getErrorMessage(error) }),
+          toast.error(`Failed to mark this scan as a release in ${environment}`, { description: getErrorMessage(error) }),
       },
     )
   }
@@ -83,7 +83,7 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
           })
         },
         onError: (error) =>
-          toast.error(`Could not withdraw this scan from ${withdrawnFrom}`, { description: getErrorMessage(error) }),
+          toast.error(`Failed to withdraw this scan from ${withdrawnFrom}`, { description: getErrorMessage(error) }),
       },
     )
   }

@@ -231,7 +231,7 @@ export function NotificationsSettingsTab({
                           onClick={() => {
                             systemApi.getSlackAuthorizeUrl()
                               .then((url) => { window.location.href = url })
-                              .catch((error) => toast.error("Could not start the Slack install", { description: getErrorMessage(error) }))
+                              .catch((error) => toast.error("Failed to start the Slack install", { description: getErrorMessage(error) }))
                           }}
                         >
                           <Slack className="mr-2 h-4 w-4" />

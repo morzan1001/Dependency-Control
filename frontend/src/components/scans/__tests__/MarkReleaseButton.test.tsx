@@ -259,7 +259,7 @@ describe('MarkReleaseButton', () => {
 
     handlers.onError({ response: { data: { detail: [{ msg: TOO_LONG_REFUSAL }] } } })
 
-    expect(toast.error).toHaveBeenCalledWith(`Could not mark this scan as a release in ${PRODUCTION}`, {
+    expect(toast.error).toHaveBeenCalledWith(`Failed to mark this scan as a release in ${PRODUCTION}`, {
       description: TOO_LONG_REFUSAL,
     })
   })
