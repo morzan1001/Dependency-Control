@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createReport } from "@/api/compliance";
 import { projectApi } from "@/api/projects";
 import { teamApi } from "@/api/teams";
+import { createMutationCache } from "@/lib/mutation-cache";
 import { NewReportDialog } from "../NewReportDialog";
 
 vi.mock("@/api/compliance", () => ({
@@ -38,7 +39,7 @@ vi.mock("@/context/useAuth", () => ({
 }));
 
 function withClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
@@ -136,7 +137,9 @@ describe("NewReportDialog", () => {
     withClient(<NewReportDialog onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Generate" }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to queue report: User not authorised for project x"));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Failed to queue report", { description: "User not authorised for project x" }),
+    );
   });
 
   it("renders the dialog title when open", () => {

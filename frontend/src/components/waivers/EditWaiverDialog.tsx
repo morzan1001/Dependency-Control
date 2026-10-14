@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { getErrorMessage } from '@/lib/utils'
 import { expirationDateInputToIso } from '@/lib/waiver-date'
 
 import { Button } from '@/components/ui/button'
@@ -31,7 +30,7 @@ function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose:
     const storedDate = waiver.expiration_date ? waiver.expiration_date.split('T')[0] : ''
     const [date, setDate] = useState(storedDate)
 
-    const updateMutation = useUpdateWaiver()
+    const updateMutation = useUpdateWaiver({ errorTitle: 'Failed to update waiver' })
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
@@ -49,11 +48,6 @@ function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose:
             onSuccess: () => {
                 toast.success('Waiver updated successfully')
                 onClose()
-            },
-            onError: (error) => {
-                toast.error('Failed to update waiver', {
-                    description: getErrorMessage(error),
-                })
             },
         })
     }

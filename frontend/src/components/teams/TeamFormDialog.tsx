@@ -16,7 +16,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
-import { getErrorMessage } from "@/lib/utils"
 
 const CREATE = { title: 'Create Team', blurb: 'Create a new team to manage projects and members.', submit: 'Create Team', pending: 'Creating...', idPrefix: '' };
 const EDIT = { title: 'Edit Team', blurb: 'Update team details.', submit: 'Save Changes', pending: 'Saving...', idPrefix: 'edit-' };
@@ -26,8 +25,8 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
   const [isOpen, setIsOpen] = useState(false);
   const [name, setName] = useState(team?.name || '');
   const [description, setDescription] = useState(team?.description || '');
-  const createTeamMutation = useCreateTeam();
-  const updateTeamMutation = useUpdateTeam();
+  const createTeamMutation = useCreateTeam({ errorTitle: "Failed to create team" });
+  const updateTeamMutation = useUpdateTeam({ errorTitle: "Failed to update team" });
   const mode = team ? EDIT : CREATE;
   const isPending = createTeamMutation.isPending || updateTeamMutation.isPending;
 
@@ -41,7 +40,6 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
             onClose?.();
             toast.success("Team updated successfully");
           },
-          onError: (error) => toast.error("Failed to update team", { description: getErrorMessage(error) }),
         }
       );
       return;
@@ -55,7 +53,6 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
           setDescription('');
           toast.success("Team created successfully");
         },
-        onError: (error) => toast.error("Failed to create team", { description: getErrorMessage(error) }),
       }
     );
   };

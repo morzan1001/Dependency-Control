@@ -39,7 +39,6 @@ import {
   useCreateApiKey,
   useRevokeApiKey,
 } from '@/hooks/queries/use-api-keys';
-import { getErrorMessage } from '@/lib/utils';
 import { Permissions } from '@/lib/permissions';
 import type { ApiKey, ApiKeySurface } from '@/types/apiKey';
 
@@ -112,8 +111,8 @@ export function ApiKeysCard() {
   const [newSurfaces, setNewSurfaces] = useState<ApiKeySurface[]>([]);
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [keyToRevoke, setKeyToRevoke] = useState<ApiKey | null>(null);
-  const createMutation = useCreateApiKey();
-  const revokeMutation = useRevokeApiKey();
+  const createMutation = useCreateApiKey({ errorTitle: 'Error' });
+  const revokeMutation = useRevokeApiKey({ errorTitle: 'Error' });
 
   const mintableSurfaces = SURFACE_ORDER.filter((surface) =>
     hasPermission(SURFACE_PERMISSIONS[surface]),
@@ -128,22 +127,19 @@ export function ApiKeysCard() {
     );
   };
 
-  const handleCreate = async () => {
-    try {
-      const created = await createMutation.mutateAsync({
-        name: newName.trim(),
-        surfaces: newSurfaces,
-        expires_in_days: newExpiry,
-      });
-      setRevealedToken(created.token);
-      setNewName('');
-      setNewExpiry(DEFAULT_EXPIRY_DAYS);
-      setNewSurfaces([]);
-      setCreateOpen(false);
-    } catch (err) {
-      // The refusal names the surface the caller cannot reach; a generic message would hide it.
-      toast.error('Error', { description: getErrorMessage(err) });
-    }
+  const handleCreate = () => {
+    createMutation.mutate(
+      { name: newName.trim(), surfaces: newSurfaces, expires_in_days: newExpiry },
+      {
+        onSuccess: (created) => {
+          setRevealedToken(created.token);
+          setNewName('');
+          setNewExpiry(DEFAULT_EXPIRY_DAYS);
+          setNewSurfaces([]);
+          setCreateOpen(false);
+        },
+      },
+    );
   };
 
   const handleRevoke = (key: ApiKey) => {
@@ -152,7 +148,6 @@ export function ApiKeysCard() {
         setKeyToRevoke(null);
         toast.success('Key revoked');
       },
-      onError: (err) => toast.error('Error', { description: getErrorMessage(err) }),
     });
   };
 

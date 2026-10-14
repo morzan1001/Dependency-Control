@@ -18,7 +18,7 @@ interface Props {
   // When set, enables merged mode: Status column, per-row Revert, and onSave emits only the override delta.
   systemRules?: CryptoRule[];
   onSave: (rules: CryptoRule[]) => Promise<void>;
-  onResetOverride?: () => Promise<void>;
+  onResetOverride?: () => void;
   readOnly?: boolean;
   title?: string;
   subtitle?: string;

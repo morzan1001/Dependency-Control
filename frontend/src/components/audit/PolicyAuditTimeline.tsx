@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDialogState } from "@/hooks/use-dialog-state";
-import { formatDateTime, getErrorMessage } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import {
   listSystemAudit, listProjectAudit,
   revertSystemPolicy, revertProjectPolicy,
@@ -51,7 +51,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
       toast.success("Policy reverted");
       qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
-    onError: (e: unknown) => toast.error(`Revert failed: ${getErrorMessage(e)}`),
+    meta: { errorTitle: "Revert failed" },
   });
 
   const doPrune = useMutation({
@@ -64,7 +64,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
       qc.invalidateQueries({ queryKey: ["crypto-policy", "audit"] });
       pruneDialog.closeDialog();
     },
-    onError: (e: unknown) => toast.error(`Prune failed: ${getErrorMessage(e)}`),
+    meta: { errorTitle: "Prune failed" },
   });
 
   return (

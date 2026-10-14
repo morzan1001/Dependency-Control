@@ -157,6 +157,18 @@ describe('ScanReleaseControl', () => {
     expect(toast.warning).not.toHaveBeenCalled()
   })
 
+  it('says why the backend refused the withdrawal', () => {
+    renderControl(releasedScan([makeRelease()]))
+    fireEvent.click(screen.getByRole('button', { name: `Withdraw from ${PRODUCTION}` }))
+    const handlers = mockUnmark.mock.calls[0][1] as { onError: (error: unknown) => void }
+
+    handlers.onError({ response: { data: { detail: 'Not enough permissions' } } })
+
+    expect(toast.error).toHaveBeenCalledWith(`Could not withdraw this scan from ${PRODUCTION}`, {
+      description: 'Not enough permissions',
+    })
+  })
+
   it('names when each environment took the release', () => {
     const scan = releasedScan([
       makeRelease({ environment: STAGING, released_at: STAGING_RELEASED_AT }),

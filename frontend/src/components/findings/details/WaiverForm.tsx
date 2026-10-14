@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { getErrorMessage } from '@/lib/utils'
 import { expirationDateInputToIso } from '@/lib/waiver-date'
 import { ShieldAlert } from 'lucide-react'
 
@@ -58,7 +57,7 @@ export function WaiverForm({
   const [scope, setScope] = useState<WaiverScope>(initialScope ?? 'finding')
   const [status, setStatus] = useState<WaiverStatus>(initialStatus ?? 'accepted_risk')
 
-  const createWaiverMutation = useCreateWaiver()
+  const createWaiverMutation = useCreateWaiver({ errorTitle: 'Failed to create waiver' })
 
   const supportsScopes = !vulnId && SCOPE_TYPES.has(finding.type ?? '')
   const ruleId = extractRuleId(finding)
@@ -85,11 +84,6 @@ export function WaiverForm({
             toast.success('Waiver created successfully')
             onSuccess()
         },
-        onError: (error) => {
-            toast.error('Failed to create waiver', {
-                description: getErrorMessage(error),
-            })
-        }
     })
   }
 

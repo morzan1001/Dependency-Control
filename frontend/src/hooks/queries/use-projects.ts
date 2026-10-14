@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData, type MutationMeta } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
 import { ProjectCreate, ProjectNotificationSettings } from '@/types/project';
 import type { ArchiveFilters } from '@/types/archive';
@@ -50,10 +50,11 @@ export const useProject = (id: string) => {
   });
 };
 
-export const useCreateProject = () => {
+export const useCreateProject = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
 
   return useMutation({
+    meta,
     mutationFn: (data: ProjectCreate) => projectApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
@@ -87,9 +88,10 @@ export const useProjectsDropdown = ({ enabled = true }: { enabled?: boolean } = 
   });
 };
 
-export const useUpdateProjectNotifications = () => {
+export const useUpdateProjectNotifications = (meta?: MutationMeta) => {
     const queryClient = useQueryClient();
     return useMutation({
+        meta,
         mutationFn: ({ id, settings }: { id: string, settings: ProjectNotificationSettings }) => projectApi.updateNotificationSettings(id, settings),
         onSuccess: (_, { id }) => {
             queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
@@ -115,9 +117,10 @@ export const useArchiveBranches = (projectId: string) => {
     });
 };
 
-export const useRestoreArchive = () => {
+export const useRestoreArchive = (meta?: MutationMeta) => {
     const queryClient = useQueryClient();
     return useMutation({
+        meta,
         mutationFn: ({ projectId, scanId }: { projectId: string; scanId: string }) =>
             projectApi.restoreArchive(projectId, scanId),
         onSuccess: (_, { projectId }) => {

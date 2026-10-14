@@ -12,7 +12,7 @@ import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-sc
 import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
 import type { TeamRef } from '@/types/team'
 import { User } from '@/types/user'
-import { cn, getErrorMessage } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { memberPreferences, enforcedPreferences } from '@/lib/notification-preferences'
 import { useAuth } from '@/context/useAuth'
 import {
@@ -211,9 +211,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       toast.success("Project Deleted", { description: "The project has been permanently deleted." })
       navigate('/projects')
     },
-    onError: (error) => {
-      toast.error("Delete Failed", { description: getErrorMessage(error) })
-    }
+    meta: { errorTitle: "Failed to delete project" },
   })
 
   const updateProjectMutation = useMutation({
@@ -222,14 +220,10 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       toast.success("Project updated successfully")
     },
-    onError: (error) => {
-      toast.error("Failed to update project", {
-        description: getErrorMessage(error)
-      })
-    }
+    meta: { errorTitle: "Failed to update project" },
   })
 
-  const updateNotificationSettingsMutation = useUpdateProjectNotifications()
+  const updateNotificationSettingsMutation = useUpdateProjectNotifications({ errorTitle: "Failed to update notification settings" })
 
   const rotateKeyMutation = useMutation({
     mutationFn: () => projectApi.rotateApiKey(projectId),
@@ -238,11 +232,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       setIsApiKeyDialogOpen(true)
       toast.success("API Key rotated successfully")
     },
-    onError: (error) => {
-      toast.error("Failed to rotate API key", {
-        description: getErrorMessage(error)
-      })
-    }
+    meta: { errorTitle: "Failed to rotate API key" },
   })
 
 
@@ -739,7 +729,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         }
                     }, {
                         onSuccess: () => toast.success("Notification settings updated"),
-                        onError: () => toast.error("Failed to update notification settings")
                     })}
                     disabled={updateNotificationSettingsMutation.isPending}
                 >

@@ -2,7 +2,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getEffectivePolicy, getSystemPolicy, putProjectPolicy, putSystemPolicy } from '@/api/cryptoPolicy'
+import { toast } from 'sonner'
+
+import { deleteProjectPolicy, getEffectivePolicy, getSystemPolicy, putProjectPolicy, putSystemPolicy } from '@/api/cryptoPolicy'
+import { createMutationCache } from '@/lib/mutation-cache'
 import { listProjectAudit, listSystemAudit, revertProjectPolicy, revertSystemPolicy } from '@/api/policyAudit'
 import type { PolicyAuditEntry } from '@/types/policyAudit'
 
@@ -37,7 +40,11 @@ function auditEntry(scope: 'system' | 'project'): PolicyAuditEntry {
 }
 
 function renderWithClient(ui: React.ReactElement) {
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>)
+  render(
+    <QueryClientProvider client={new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })}>
+      {ui}
+    </QueryClientProvider>,
+  )
 }
 
 async function revertFirstEntry() {
@@ -93,5 +100,14 @@ describe('project crypto policy override', () => {
 
     await waitFor(() => expect(putProjectPolicy).toHaveBeenCalled())
     await waitFor(() => expect(listProjectAudit).toHaveBeenCalledTimes(2))
+  })
+
+  it('names a reset that failed and why', async () => {
+    vi.mocked(deleteProjectPolicy).mockRejectedValue(new Error('Network Error'))
+    renderWithClient(<CryptoPolicyOverridePage projectId={PROJECT_ID} canEdit />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset all overrides' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to remove override', { description: 'Network Error' }))
   })
 })

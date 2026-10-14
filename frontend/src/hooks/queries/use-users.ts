@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type MutationMeta } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
 import type { ApiError } from '@/api/client';
 import { UserUpdate, UserUpdateMe } from '@/types/user';
@@ -51,9 +51,10 @@ export const usePendingInvitations = () => {
   });
 };
 
-export const useUpdateUser = () => {
+export const useUpdateUser = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: ({ id, data }: { id: string; data: UserUpdate }) => userApi.update(id, data),
     onSuccess: () =>
       Promise.all([
@@ -63,17 +64,19 @@ export const useUpdateUser = () => {
   });
 };
 
-export const useUpdateMe = () => {
+export const useUpdateMe = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (data: UserUpdateMe) => userApi.updateMe(data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: userKeys.me }),
   });
 };
 
-export const useDeleteUser = () => {
+export const useDeleteUser = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (userId: string) => userApi.delete(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.lists() });
@@ -81,9 +84,10 @@ export const useDeleteUser = () => {
   });
 };
 
-export const useRevokeInvitation = () => {
+export const useRevokeInvitation = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (invitationId: string) => userApi.revokeInvitation(invitationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.invitations });
@@ -91,9 +95,10 @@ export const useRevokeInvitation = () => {
   });
 };
 
-export const useInviteUser = () => {
+export const useInviteUser = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (email: string) => userApi.invite(email),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.lists() });
@@ -102,9 +107,10 @@ export const useInviteUser = () => {
   });
 };
 
-export const useAdminMigrateUser = () => {
+export const useAdminMigrateUser = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (userId: string) => userApi.adminMigrateToLocal(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.lists() });
@@ -112,15 +118,17 @@ export const useAdminMigrateUser = () => {
   });
 };
 
-export const useAdminResetPassword = () => {
+export const useAdminResetPassword = (meta?: MutationMeta) => {
   return useMutation({
+    meta,
     mutationFn: (userId: string) => userApi.adminResetPassword(userId),
   });
 };
 
-export const useAdminDisable2FA = () => {
+export const useAdminDisable2FA = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta,
     mutationFn: (userId: string) => userApi.adminDisable2FA(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.lists() });

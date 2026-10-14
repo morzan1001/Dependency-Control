@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectSettings } from '../ProjectSettings'
+import { createMutationCache } from '@/lib/mutation-cache'
 import type { Project } from '@/types/project'
 import type { AppConfig } from '@/types/system'
 import type { User } from '@/types/user'
 
 const mockUpdate = vi.fn().mockResolvedValue({})
+const mockDelete = vi.fn()
 const mockRotateApiKey = vi.fn()
 const mockGitHubList = vi.fn()
 const mockGitLabList = vi.fn()
@@ -20,7 +22,7 @@ const mockUseProjectBranches = vi.fn()
 vi.mock('@/api/projects', () => ({
   projectApi: {
     update: (...args: unknown[]) => mockUpdate(...args),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => mockDelete(...args),
     rotateApiKey: (...args: unknown[]) => mockRotateApiKey(...args),
   },
 }))
@@ -82,7 +84,7 @@ function githubProject(overrides: Partial<Project> = {}): Project {
 }
 
 function renderSettings(project: Project) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const queryClient = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <ProjectSettings project={project} projectId="p1" user={USER} />
@@ -449,5 +451,40 @@ describe('ProjectSettings API key rotation', () => {
     )
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/copied/i))
     expect(screen.getByRole('button', { name: 'Copy API key' }).querySelector('.lucide-check')).not.toBeInTheDocument()
+  })
+})
+
+describe('ProjectSettings failures', () => {
+  beforeEach(() => {
+    vi.mocked(toast.error).mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+  })
+
+  it('names a save that failed and why', async () => {
+    mockUpdate.mockRejectedValueOnce(new Error('Network Error'))
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update project', { description: 'Network Error' }))
+  })
+
+  it('names a deletion that failed and why', async () => {
+    mockDelete.mockRejectedValueOnce(new Error('Network Error'))
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Project' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete Project' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to delete project', { description: 'Network Error' }))
+  })
+
+  it('names a key rotation that failed and why', async () => {
+    mockRotateApiKey.mockRejectedValueOnce(new Error('Network Error'))
+    renderSettings(githubProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate Key' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to rotate API key', { description: 'Network Error' }))
   })
 })

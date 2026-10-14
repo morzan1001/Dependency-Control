@@ -6,7 +6,6 @@ import { WaiverExpiryCell } from '@/components/waivers/WaiverExpiryCell'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { getErrorMessage } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -50,7 +49,7 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
         projectId,
         { search: debouncedSearch, sortBy, sortOrder, orphaned: orphanedOnly },
     )
-    const deleteWaiverMutation = useDeleteWaiver()
+    const deleteWaiverMutation = useDeleteWaiver({ errorTitle: 'Failed to delete waiver' })
     const allWaivers = data?.pages.flatMap((page) => page.items) ?? []
 
     useEffect(() => {
@@ -71,10 +70,7 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
     }, [fetchNextPage, hasNextPage, isFetchingNextPage])
 
     const handleDelete = (id: string) => {
-        deleteWaiverMutation.mutate(id, {
-            onSuccess: () => toast.success('Waiver deleted successfully'),
-            onError: (error) => toast.error('Failed to delete waiver', { description: getErrorMessage(error) }),
-        })
+        deleteWaiverMutation.mutate(id, { onSuccess: () => toast.success('Waiver deleted successfully') })
     }
 
     const apiSortKey = (key: string) => (key === 'expires' ? 'expiration_date' : key)

@@ -4,6 +4,7 @@ import { AxiosError, type AxiosResponse } from "axios";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createMutationCache } from "@/lib/mutation-cache";
 import type { Team } from "@/types/team";
 
 import { AddMemberDialog } from "../AddMemberDialog";
@@ -57,7 +58,10 @@ function memberRow(username: string): HTMLElement {
 }
 
 function renderWithClient(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const qc = new QueryClient({
+    mutationCache: createMutationCache(),
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 

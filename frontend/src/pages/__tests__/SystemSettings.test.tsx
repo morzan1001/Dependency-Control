@@ -17,12 +17,16 @@ vi.mock('@/context/useAuth', () => ({
 
 const mockUseSystemSettings = vi.fn()
 const mockMutate = vi.fn()
+const mockUseUpdateSystemSettings = vi.fn()
 vi.mock('@/hooks/queries/use-system', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/queries/use-system')>()
   return {
     ...actual,
     useSystemSettings: () => mockUseSystemSettings(),
-    useUpdateSystemSettings: () => ({ mutate: mockMutate, isPending: false }),
+    useUpdateSystemSettings: (meta: unknown) => {
+      mockUseUpdateSystemSettings(meta)
+      return { mutate: mockMutate, isPending: false }
+    },
   }
 })
 
@@ -144,5 +148,15 @@ describe('SystemSettings - Chat & MCP tab', () => {
     renderPage()
 
     expect(screen.getByRole('tab', { name: 'Chat & MCP' })).toBeInTheDocument()
+  })
+})
+
+describe('SystemSettings - save failure', () => {
+  it('names a failed save, which the error toast completes with the reason', () => {
+    mockUseSystemSettings.mockReturnValue({ data: makeSettings(), isLoading: false })
+
+    renderPage()
+
+    expect(mockUseUpdateSystemSettings).toHaveBeenCalledWith({ errorTitle: 'Failed to update settings' })
   })
 })

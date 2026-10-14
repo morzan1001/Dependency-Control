@@ -2,6 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { toast } from 'sonner'
+
+import { createMutationCache } from '@/lib/mutation-cache'
 import type { Finding } from '@/types/scan'
 import { useWaiverList } from '@/hooks/queries/use-waivers'
 import { WaiverForm } from '../WaiverForm'
@@ -73,6 +76,19 @@ describe('WaiverForm', () => {
       scope: 'rule',
       rule_id: 'kics-1',
     })
+  })
+
+  it('names a creation that failed and why', async () => {
+    vi.mocked(waiverApi.create).mockRejectedValueOnce(new Error('Network Error'))
+    render(
+      <QueryClientProvider client={new QueryClient({ mutationCache: createMutationCache() })}>
+        <WaiverForm finding={finding('vulnerability', {})} vulnId={null} projectId="p1" onCancel={() => {}} onSuccess={() => {}} />
+      </QueryClientProvider>,
+    )
+
+    confirmWaiver('accepted')
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to create waiver', { description: 'Network Error' }))
   })
 
   it("refetches the project's open waiver list once after the waiver is created", async () => {

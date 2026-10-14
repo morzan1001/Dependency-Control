@@ -27,7 +27,7 @@ import { ScmLink } from '@/components/scans/ScmLink'
 import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
-import { formatBytes, formatDateTime, getErrorMessage, shortCommitHash } from '@/lib/utils'
+import { formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -129,8 +129,8 @@ export default function ScanDetails() {
   const { permissions } = useAuth()
   const { data: currentUser } = useCurrentUser()
 
-  const triggerRescanMutation = useTriggerRescan()
-  const unpinMutation = useUnpinScan()
+  const triggerRescanMutation = useTriggerRescan({ errorTitle: "Re-scan not started" })
+  const unpinMutation = useUnpinScan({ errorTitle: "Unpin failed" })
 
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]
@@ -289,11 +289,6 @@ export default function ScanDetails() {
                                     description: "A new scan has been started.",
                                   })
                              },
-                             onError: (error) => {
-                                  toast.error("Re-scan not started", {
-                                    description: getErrorMessage(error),
-                                  })
-                             }
                         })}
                         disabled={triggerRescanMutation.isPending || isScanInProgress(scan.status) || !scan.sbom_refs || scan.sbom_refs.length === 0}
                     >
@@ -310,7 +305,6 @@ export default function ScanDetails() {
                     disabled={unpinMutation.isPending}
                     onClick={() => unpinMutation.mutate({ projectId: projectId!, scanId: scanId! }, {
                         onSuccess: () => toast.success("Scan unpinned", { description: "Retention can archive or delete it again." }),
-                        onError: (error) => toast.error("Unpin failed", { description: getErrorMessage(error) }),
                     })}
                 >
                     <PinOff className="mr-2 h-4 w-4" />

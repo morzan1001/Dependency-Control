@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, keepPreviousData, type MutationMeta } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
 import { scanApi } from '@/api/scans';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
@@ -157,17 +157,19 @@ export const useScanSbom = (scanId: string, index: number) => {
     })
 }
 
-export const useUnpinScan = () => {
+export const useUnpinScan = (meta?: MutationMeta) => {
     const queryClient = useQueryClient();
     return useMutation({
+        meta,
         mutationFn: ({ projectId, scanId }: { projectId: string, scanId: string }) => projectApi.unpinScan(projectId, scanId),
         onSuccess: (_, variables) => queryClient.invalidateQueries({ queryKey: scanKeys.detail(variables.scanId) }),
     })
 }
 
-export const useTriggerRescan = () => {
+export const useTriggerRescan = (meta?: MutationMeta) => {
     const queryClient = useQueryClient();
     return useMutation({
+        meta,
         mutationFn: ({ projectId, scanId }: { projectId: string, scanId: string }) => scanApi.triggerRescan(projectId, scanId),
         onSuccess: (_, variables) => {
              queryClient.invalidateQueries({ queryKey: scanKeys.project(variables.projectId) });

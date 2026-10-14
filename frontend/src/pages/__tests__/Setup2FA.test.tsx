@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createMutationCache } from '@/lib/mutation-cache'
 import type { TwoFASetup } from '@/types/user'
 
 import Setup2FA from '../Setup2FA'
@@ -21,7 +22,7 @@ const refused = (detail: string, status = 400) => ({ response: { status, data: {
 
 function renderPage() {
   return render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
+    <QueryClientProvider client={new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { mutations: { retry: false } } })}>
       <MemoryRouter>
         <Setup2FA />
       </MemoryRouter>
@@ -113,6 +114,17 @@ describe('Setup2FA', () => {
     expect(toast.error).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText(field), { target: { value: '111111' } })
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('names a setup that could not start and why', async () => {
+    setup2FA.mockRejectedValue(refused('2FA is already enabled'))
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Setup' }))
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Failed to start 2FA setup', { description: '2FA is already enabled' }),
+    )
   })
 
   it('toasts a failure that belongs to no field', async () => {

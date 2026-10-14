@@ -11,7 +11,7 @@ import { useCurrentUser } from "@/hooks/queries/use-users";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { downloadServerFile } from "@/lib/download";
 import { Permissions } from "@/lib/permissions";
-import { formatDateTime, getErrorMessage } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
 
@@ -55,9 +55,7 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
       confirm.closeDialog();
       onClose();
     },
-    onError: (e: unknown) => {
-      toast.error(`Failed to delete: ${getErrorMessage(e)}`);
-    },
+    meta: { errorTitle: "Failed to delete report" },
   });
 
   const dl = useMutation({

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { describe, it, expect, vi } from "vitest";
 
 import { pruneSystemAudit, revertSystemPolicy } from "@/api/policyAudit";
+import { createMutationCache } from "@/lib/mutation-cache";
 import { PolicyAuditTimeline } from "../PolicyAuditTimeline";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -35,7 +36,7 @@ vi.mock("@/api/policyAudit", () => ({
 }));
 
 function withClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
@@ -74,9 +75,9 @@ describe("PolicyAuditTimeline", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "back to seed" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirm revert" }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
-      "Revert failed: Version 2 holds rules a write would refuse: rule 'r1': needs a subject matcher",
-    ));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Revert failed", {
+      description: "Version 2 holds rules a write would refuse: rule 'r1': needs a subject matcher",
+    }));
   });
 
   it("opens the revert dialog for another version without the previous revert's comment", async () => {
@@ -104,9 +105,9 @@ describe("PolicyAuditTimeline", () => {
       fireEvent.click(await screen.findByRole("button", { name: /Prune old entries/i }));
       fireEvent.click(screen.getByRole("button", { name: "Prune" }));
 
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
-        "Prune failed: Cutoff must be at least 90 days in the past",
-      ));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Prune failed", {
+        description: "Cutoff must be at least 90 days in the past",
+      }));
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(unhandled).not.toHaveBeenCalled();
       expect(screen.getByRole("dialog")).toBeInTheDocument();

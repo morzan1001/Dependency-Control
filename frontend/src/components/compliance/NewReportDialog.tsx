@@ -14,7 +14,6 @@ import { createReport } from "@/api/compliance";
 import type { ReportFormat, ReportFramework } from "@/types/compliance";
 import { useAuth } from "@/context/useAuth";
 import { useTeams } from "@/hooks/queries/use-teams";
-import { getErrorMessage } from "@/lib/utils";
 
 const FRAMEWORKS: { value: ReportFramework; label: string }[] = [
   // Crypto / CBOM
@@ -101,7 +100,7 @@ export function NewReportDialog({
       qc.invalidateQueries({ queryKey: ["compliance-reports"] });
       onClose();
     },
-    onError: (e: unknown) => toast.error(`Failed to queue report: ${getErrorMessage(e)}`),
+    meta: { errorTitle: "Failed to queue report" },
   });
 
   const handleSubmit = () => {

@@ -29,7 +29,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { toast } from "sonner"
-import { getErrorMessage } from "@/lib/utils"
 import { TEAM_ROLES } from '@/lib/constants';
 
 interface TeamMembersDialogProps {
@@ -39,8 +38,8 @@ interface TeamMembersDialogProps {
 }
 
 export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMembersDialogProps>) {
-  const updateMemberMutation = useUpdateTeamMember();
-  const removeMemberMutation = useRemoveTeamMember();
+  const updateMemberMutation = useUpdateTeamMember({ errorTitle: "Failed to update member role" });
+  const removeMemberMutation = useRemoveTeamMember({ errorTitle: "Failed to remove member" });
   const { permissions } = useAuth();
   const { data: currentUser } = useCurrentUser();
 
@@ -92,10 +91,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                               if (team) {
                                   updateMemberMutation.mutate(
                                     { teamId: team.id, userId: member.user_id, role: value },
-                                    {
-                                      onSuccess: () => toast.success("Member role updated"),
-                                      onError: (error) => toast.error("Failed to update member role", { description: getErrorMessage(error) }),
-                                    }
+                                    { onSuccess: () => toast.success("Member role updated") }
                                   );
                               }
                           }}
@@ -125,10 +121,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                                   if (team) {
                                       removeMemberMutation.mutate(
                                         { teamId: team.id, userId: member.user_id },
-                                        {
-                                          onSuccess: () => toast.success("Member removed"),
-                                          onError: (error) => toast.error("Failed to remove member", { description: getErrorMessage(error) }),
-                                        }
+                                        { onSuccess: () => toast.success("Member removed") }
                                       );
                                   }
                               }}

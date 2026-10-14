@@ -1,4 +1,3 @@
-import { getErrorMessage } from '@/lib/utils';
 import { User } from '@/types/user';
 import { useDeleteUser, useInviteUser, useRevokeInvitation } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
@@ -46,9 +45,9 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
-  const deleteUserMutation = useDeleteUser();
-  const revokeInvitationMutation = useRevokeInvitation();
-  const resendInviteMutation = useInviteUser();
+  const deleteUserMutation = useDeleteUser({ errorTitle: "Failed to delete user" });
+  const revokeInvitationMutation = useRevokeInvitation({ errorTitle: "Failed to revoke invitation" });
+  const resendInviteMutation = useInviteUser({ errorTitle: "Failed to resend invitation" });
   const isInvitation = userToDelete?.status === 'invited';
   const removeMutation = isInvitation ? revokeInvitationMutation : deleteUserMutation;
   const removeLabel = isInvitation ? { idle: "Revoke", pending: "Revoking..." } : { idle: "Delete", pending: "Deleting..." };
@@ -60,11 +59,6 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
           setUserToDelete(null);
           toast.success(isInvitation ? "Invitation revoked" : "User deleted successfully");
         },
-        onError: (error) => {
-          toast.error(isInvitation ? "Failed to revoke invitation" : "Failed to delete user", {
-            description: getErrorMessage(error)
-          })
-        }
       });
   }
 
@@ -73,11 +67,6 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
         onSuccess: () => {
           toast.success("Invitation resent successfully");
         },
-        onError: (error) => {
-          toast.error("Failed to resend invitation", {
-            description: getErrorMessage(error)
-          })
-        }
       });
   }
 

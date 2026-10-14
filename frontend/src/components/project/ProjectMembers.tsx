@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { projectKeys } from '@/hooks/queries/use-projects'
-import { getErrorMessage } from '@/lib/utils'
 import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
 import { useCurrentUser } from '@/hooks/queries/use-users'
@@ -63,11 +62,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
       setInviteRole("viewer")
       toast.success("Member invited successfully")
     },
-    onError: (error) => {
-      toast.error("Failed to invite member", {
-        description: getErrorMessage(error)
-      })
-    }
+    meta: { errorTitle: "Failed to invite member" },
   })
 
   const updateMemberMutation = useMutation({
@@ -76,11 +71,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
       queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       toast.success("Member role updated")
     },
-    onError: (error) => {
-      toast.error("Failed to update member role", {
-        description: getErrorMessage(error)
-      })
-    }
+    meta: { errorTitle: "Failed to update member role" },
   })
 
   const removeMemberMutation = useMutation({
@@ -89,11 +80,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
       queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       toast.success("Member removed")
     },
-    onError: (error) => {
-      toast.error("Failed to remove member", {
-        description: getErrorMessage(error)
-      })
-    }
+    meta: { errorTitle: "Failed to remove member" },
   })
 
   return (

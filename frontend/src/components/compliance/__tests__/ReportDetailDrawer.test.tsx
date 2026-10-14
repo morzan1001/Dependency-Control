@@ -2,7 +2,10 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 
+import { toast } from "sonner";
+
 import { ReportDetailDrawer } from "../ReportDetailDrawer";
+import { createMutationCache } from "@/lib/mutation-cache";
 import type { ComplianceReportMeta } from "@/types/compliance";
 
 const { getServerFile } = vi.hoisted(() => ({ getServerFile: vi.fn() }));
@@ -16,9 +19,10 @@ vi.mock("@/api/compliance", () => ({
 const permissionSet = new Set<string>();
 vi.mock("@/context/useAuth", () => ({ useAuth: () => ({ hasPermission: (p: string) => permissionSet.has(p) }) }));
 vi.mock("@/hooks/queries/use-users", () => ({ useCurrentUser: () => ({ data: { id: "u1" } }) }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 function withClient(ui: React.ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
@@ -165,5 +169,15 @@ describe("ReportDetailDrawer", () => {
     fireEvent.click(confirm);
     await new Promise((r) => setTimeout(r, 0));
     expect(deleteReport).toHaveBeenCalledWith("r1");
+  });
+
+  it("names a deletion that failed and why", async () => {
+    const { deleteReport } = await import("@/api/compliance");
+    vi.mocked(deleteReport).mockRejectedValueOnce(new Error("Network Error"));
+    withClient(<ReportDetailDrawer report={sampleReport} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Delete report/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to delete report", { description: "Network Error" }));
   });
 });

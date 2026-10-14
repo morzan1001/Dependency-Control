@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select"
 import { Archive, RotateCcw, Download, GitBranch, GitCommit, AlertTriangle, Package, FileText } from 'lucide-react'
 import { toast } from "sonner"
-import { formatBytes, getErrorMessage, formatDateTime, shortCommitHash } from '@/lib/utils'
+import { formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
 import { downloadServerFile } from '@/lib/download'
 import {
   Dialog,
@@ -185,7 +185,7 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
 
   const { data, isLoading } = useProjectArchives(projectId, page, size, filters)
   const { data: branches } = useArchiveBranches(projectId)
-  const restoreMutation = useRestoreArchive()
+  const restoreMutation = useRestoreArchive({ errorTitle: "Restore failed" })
 
   const handleRestore = () => {
     if (!restoreScanId) return
@@ -197,11 +197,6 @@ export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
             description: `${result.message} The scan is now pinned and protected from housekeeping.`,
           })
           setRestoreScanId(null)
-        },
-        onError: (error) => {
-          toast.error("Restore failed", {
-            description: getErrorMessage(error),
-          })
         },
       }
     )

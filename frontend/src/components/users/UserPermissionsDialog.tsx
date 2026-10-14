@@ -1,5 +1,4 @@
 import { User } from '@/types/user';
-import { getErrorMessage } from '@/lib/utils';
 import { useUpdateUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -31,7 +30,7 @@ interface UserPermissionsDialogProps {
 export function UserPermissionsDialog({ user, onOpenChange, onUserUpdated }: Readonly<UserPermissionsDialogProps>) {
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user?.permissions || []);
 
-  const updateUserMutation = useUpdateUser();
+  const updateUserMutation = useUpdateUser({ errorTitle: "Failed to update permissions" });
 
   const addPermission = (permission: string) => {
     setSelectedPermissions(prev => [...prev, permission]);
@@ -75,9 +74,6 @@ export function UserPermissionsDialog({ user, onOpenChange, onUserUpdated }: Rea
         onUserUpdated?.(updated);
         toast.success("Permissions updated");
         onOpenChange(false);
-      },
-      onError: (error) => {
-        toast.error("Failed to update permissions", { description: getErrorMessage(error) });
       },
     });
   };

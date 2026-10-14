@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { getErrorMessage } from "@/lib/utils";
 import { useCreateProject } from "@/hooks/queries/use-projects";
 import { useTeams } from "@/hooks/queries/use-teams";
 import { useAppConfig } from "@/hooks/queries/use-system";
@@ -51,7 +50,7 @@ export function CreateProjectDialog({
   const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: open });
   const { data: appConfig } = useAppConfig({ enabled: open });
 
-  const createProjectMutation = useCreateProject();
+  const createProjectMutation = useCreateProject({ errorTitle: "Failed to create project" });
   const analyzers = pickedAnalyzers ?? appConfig?.default_project_analyzers ?? [];
 
   const handleCreateProject = (e: React.FormEvent) => {
@@ -68,11 +67,6 @@ export function CreateProjectDialog({
         onSuccess: (data) => {
           setCreatedProjectData(data);
           toast.success("Project created successfully");
-        },
-        onError: (error) => {
-            toast.error("Failed to create project", {
-                description: getErrorMessage(error)
-            });
         },
       }
     );
