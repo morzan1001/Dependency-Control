@@ -688,4 +688,17 @@ describe('ScanDetails distribution charts', () => {
 
     expect(await legendOf('Category Distribution')).toEqual(['Security', 'Secrets', 'SAST', 'Compliance', 'Quality', 'Other'])
   })
+
+  it("leaves the legend its own height, like the project overview's pie, so a legend wrapped on a phone stays in its card", async () => {
+    mockUseScan.mockReturnValue({
+      data: { ...scan('completed'), stats: { critical: 1, high: 1, medium: 1, low: 1, negligible: 1, info: 1, unknown: 1 } },
+      isLoading: false,
+    })
+
+    renderPage()
+
+    await legendOf('Severity Distribution')
+    const card = screen.getByText('Severity Distribution').closest('.bg-card') as HTMLElement
+    expect(card.querySelector<HTMLElement>('.recharts-legend-wrapper')?.style.height).not.toBe('36px')
+  })
 })

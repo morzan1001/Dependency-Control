@@ -106,7 +106,7 @@ function DistributionPie({ title, data }: Readonly<{ title: string; data: Distri
                 contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
               />
-              <Legend verticalAlign="bottom" height={36} itemSorter={bySliceOrder} />
+              <Legend itemSorter={bySliceOrder} />
             </PieChart>
           </ResponsiveContainer>
         </div>
