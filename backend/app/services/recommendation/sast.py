@@ -8,6 +8,7 @@ from app.services.recommendation.common import (
     get_attr,
     label_by_keywords,
     priority_for,
+    recommend,
     sample_components,
     sampled,
     severity_impact,
@@ -71,8 +72,8 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
         rule_ids = sorted(set().union(*(sast_rule_ids(get_attr(f, "details", {})) for f in cat_findings)))
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.FIX_CODE_SECURITY,
+            recommend(
+                rec_type=RecommendationType.FIX_CODE_SECURITY,
                 priority=priority_for(impact),
                 title=f"Fix {category} Issues",
                 description=(
@@ -80,8 +81,7 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"Includes {impact['critical']} critical and {impact['high']} high severity issues."
                 ),
                 impact=impact,
-                affected_components=files_shown,
-                affected_components_total=files_total,
+                components=files,
                 action={
                     "type": "fix_code",
                     "category": category,

@@ -29,7 +29,7 @@ from app.services.recommendation.common import (
     cve_severities,
     get_attr,
     live_advisories,
-    sample_components,
+    recommend,
     sampled,
     severity_impact,
 )
@@ -89,10 +89,9 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
     impact = severity_impact(new_cves.values())
     critical, high = impact["critical"], impact["high"]
     if critical or high:
-        regression_shown, regression_total = sample_components(sorted(flagged))
         return [
-            Recommendation(
-                type=RecommendationType.REGRESSION_DETECTED,
+            recommend(
+                rec_type=RecommendationType.REGRESSION_DETECTED,
                 priority=Priority.HIGH if critical else Priority.MEDIUM,
                 title=f"Regression: {critical} critical, {high} high severity vulnerabilities introduced",
                 description=(
@@ -101,8 +100,7 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
                     "introduced new vulnerabilities or new code with security issues."
                 ),
                 impact=impact,
-                affected_components=regression_shown,
-                affected_components_total=regression_total,
+                components=sorted(flagged),
                 action={
                     "type": "investigate_regression",
                     **sampled(
@@ -117,13 +115,13 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
         ]
     if new_count > FINDING_DELTA_THRESHOLD:
         return [
-            Recommendation(
-                type=RecommendationType.REGRESSION_DETECTED,
+            recommend(
+                rec_type=RecommendationType.REGRESSION_DETECTED,
                 priority=Priority.LOW,
                 title=f"{new_count} new findings since the last scan",
                 description=f"This scan reports {new_count} security findings the previous scan did not.",
                 impact={"total": 0},
-                affected_components=[],
+                components=[],
                 action={"type": "review_changes", "new_findings": new_count},
                 effort=Effort.LOW,
             )
@@ -173,11 +171,10 @@ def analyze_recurring_issues(
     )
 
     impact = severity_impact(row.severity for _, row in recurring)
-    recurring_shown, recurring_total = sample_components(c for _, row in recurring for c in sorted(row.components))
 
     return [
-        Recommendation(
-            type=RecommendationType.RECURRING_VULNERABILITY,
+        recommend(
+            rec_type=RecommendationType.RECURRING_VULNERABILITY,
             priority=Priority.MEDIUM if impact["critical"] else Priority.LOW,
             title=f"{len(recurring)} vulnerabilities keep recurring across scans",
             description=(
@@ -186,8 +183,7 @@ def analyze_recurring_issues(
                 "waivers with justification, or addressing the root cause architecturally."
             ),
             impact=impact,
-            affected_components=recurring_shown,
-            affected_components_total=recurring_total,
+            components=(c for _, row in recurring for c in sorted(row.components)),
             action={
                 "type": "address_recurring",
                 **sampled(

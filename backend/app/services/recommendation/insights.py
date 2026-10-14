@@ -16,7 +16,7 @@ from app.services.recommendation.common import (
     cve_severities,
     get_attr,
     live_advisories,
-    sample_components,
+    recommend,
     sampled,
     scorecard_details,
     scorecard_score,
@@ -90,17 +90,11 @@ def correlate_scorecard_with_vulnerabilities(
             key=lambda x: (not x["unmaintained"], x["scorecard_score"] is None, x["scorecard_score"] or 0.0)
         )
 
-        risky_shown, risky_total = sample_components(
-            f"{v['component']}@{v['version']} ("
-            + ("no scorecard" if v["scorecard_score"] is None else f"score: {v['scorecard_score']:.1f}/10")
-            + f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
-            for v in high_risk_vulns
-        )
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.CRITICAL_RISK,
+            recommend(
+                rec_type=RecommendationType.CRITICAL_RISK,
                 priority=Priority.CRITICAL,
                 title="Critical Vulnerabilities in Poorly Maintained Packages",
                 description=(
@@ -114,8 +108,12 @@ def correlate_scorecard_with_vulnerabilities(
                     **severity_impact(risky_cves.values()),
                     "unmaintained_count": unmaintained_count,
                 },
-                affected_components=risky_shown,
-                affected_components_total=risky_total,
+                components=(
+                    f"{v['component']}@{v['version']} ("
+                    + ("no scorecard" if v["scorecard_score"] is None else f"score: {v['scorecard_score']:.1f}/10")
+                    + f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
+                    for v in high_risk_vulns
+                ),
                 action={
                     "type": "replace_risky_packages",
                     **sampled(
@@ -201,8 +199,8 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
     if not widespread_cves:
         return None
 
-    return Recommendation(
-        type=RecommendationType.SHARED_VULNERABILITY,
+    return recommend(
+        rec_type=RecommendationType.SHARED_VULNERABILITY,
         priority=Priority.HIGH if len(widespread_cves) > _SHARED_CVES_HIGH_PRIORITY else Priority.MEDIUM,
         title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
         description=(
@@ -211,7 +209,7 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
             "could benefit all affected projects."
         ),
         impact={"total": len(widespread_cves)},
-        affected_components=[],
+        components=[],
         action={
             "type": "fix_cross_project_vuln",
             **sampled(
@@ -238,12 +236,8 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
     if not inconsistent_packages:
         return None
 
-    inconsistent_shown, inconsistent_total = sample_components(
-        f"{p['name']}: {p['version_count']} versions across {p['project_count']} projects"
-        for p in inconsistent_packages
-    )
-    return Recommendation(
-        type=RecommendationType.CROSS_PROJECT_PATTERN,
+    return recommend(
+        rec_type=RecommendationType.CROSS_PROJECT_PATTERN,
         priority=Priority.LOW,
         title=f"Version inconsistency across {len(inconsistent_packages)} shared packages",
         description=(
@@ -252,8 +246,10 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
             "maintenance and reduce security gaps."
         ),
         impact={"total": 0},
-        affected_components=inconsistent_shown,
-        affected_components_total=inconsistent_total,
+        components=(
+            f"{p['name']}: {p['version_count']} versions across {p['project_count']} projects"
+            for p in inconsistent_packages
+        ),
         action={
             "type": "standardize_versions",
             **sampled(
@@ -290,8 +286,8 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
     if not any(p["total_critical"] > _TOP_PROJECT_CRITICAL_GATE for p in top_problematic):
         return None
 
-    return Recommendation(
-        type=RecommendationType.CROSS_PROJECT_PATTERN,
+    return recommend(
+        rec_type=RecommendationType.CROSS_PROJECT_PATTERN,
         priority=Priority.MEDIUM,
         title="Prioritize security fixes in most affected projects",
         description=(
@@ -300,7 +296,7 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
             "on these projects."
         ),
         impact={"total": 0},
-        affected_components=[],
+        components=[],
         action={
             "type": "prioritize_projects",
             "priority_projects": [

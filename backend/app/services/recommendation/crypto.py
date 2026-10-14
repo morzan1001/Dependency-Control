@@ -11,6 +11,7 @@ from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
+    recommend,
     sampled,
     severity_impact,
 )
@@ -145,14 +146,14 @@ def _build_recommendation(finding_type: str, asset_name: str, findings: list[Mod
     if suggested:
         action["suggested_replacement"] = suggested
 
-    return Recommendation(
-        type=card.rec_type,
+    return recommend(
+        rec_type=card.rec_type,
         # A policy rule rated INFO or UNKNOWN still flags a breach, so it is not ranked as LOW.
         priority=_SEVERITY_TO_PRIORITY.get(max_severity(*severities), Priority.MEDIUM),
         title=card.title.format(**wording),
         description=card.description.format(**wording),
         impact=severity_impact(severities),
-        affected_components=[asset_name],
+        components=[asset_name],
         action=action,
         effort=card.effort,
     )

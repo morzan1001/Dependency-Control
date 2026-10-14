@@ -19,7 +19,7 @@ from app.core.constants import (
 from app.core.cve import canonical_cves, counted_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import is_actionable_vulnerability
-from app.schemas.recommendation import Priority, Recommendation
+from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.aggregation.versions import aggregate_fixed_version, newest_first, split_fixed_versions
 
 ModelOrDict = BaseModel | dict[str, Any]
@@ -70,6 +70,36 @@ def sampled(name: str, values: Sequence[Any], cap: int) -> dict[str, Any]:
     is what tells a reader that the list they are acting on is a sample of it.
     """
     return {name: list(values[:cap]), f"{name}_total": len(values)}
+
+
+def recommend(
+    *,
+    rec_type: RecommendationType,
+    priority: Priority,
+    title: str,
+    description: str,
+    impact: dict[str, Any],
+    components: Iterable[str],
+    action: dict[str, Any],
+    effort: Effort,
+    rank: int = 0,
+    ranked_out_of: int = 0,
+) -> Recommendation:
+    """A recommendation that lists a sample of ``components`` and counts every one of them."""
+    shown, total = sample_components(components)
+    return Recommendation(
+        type=rec_type,
+        priority=priority,
+        title=title,
+        description=description,
+        impact=impact,
+        affected_components=shown,
+        affected_components_total=total,
+        action=action,
+        effort=effort,
+        rank=rank,
+        ranked_out_of=ranked_out_of,
+    )
 
 
 _IMPACT_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")

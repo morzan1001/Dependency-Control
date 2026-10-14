@@ -19,7 +19,7 @@ from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
-    sample_components,
+    recommend,
     sampled,
     severity_impact,
 )
@@ -56,11 +56,9 @@ def analyze_version_fragmentation(
     if significant_fragmented:
         priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
 
-        fragmented_shown, fragmented_total = sample_components(f["name"] for f in significant_fragmented)
-
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.VERSION_FRAGMENTATION,
+            recommend(
+                rec_type=RecommendationType.VERSION_FRAGMENTATION,
                 priority=priority,
                 title=(
                     f"Version fragmentation in {len(significant_fragmented)} packages "
@@ -73,8 +71,7 @@ def analyze_version_fragmentation(
                     "single version."
                 ),
                 impact={"total": 0},
-                affected_components=fragmented_shown,
-                affected_components_total=fragmented_total,
+                components=(f["name"] for f in significant_fragmented),
                 action={
                     "type": "deduplicate_versions",
                     **sampled(
@@ -129,11 +126,10 @@ def analyze_dev_in_production(
         if name.lower() not in DEV_DEPENDENCY_RUNTIME_PACKAGES and DEV_DEPENDENCY_PATTERN.match(name.lower()):
             potential_dev_deps.append({"name": name, "version": get_attr(dep, "version")})
 
-    dev_deps_shown, dev_deps_total = sample_components(f"{d['name']}@{d['version']}" for d in potential_dev_deps)
     if potential_dev_deps:
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.DEV_IN_PRODUCTION,
+            recommend(
+                rec_type=RecommendationType.DEV_IN_PRODUCTION,
                 priority=Priority.LOW,
                 title=f"{len(potential_dev_deps)} potential dev dependencies in production",
                 description=(
@@ -142,8 +138,7 @@ def analyze_dev_in_production(
                     "moving them to devDependencies."
                 ),
                 impact={"total": 0},
-                affected_components=dev_deps_shown,
-                affected_components_total=dev_deps_total,
+                components=(f"{d['name']}@{d['version']}" for d in potential_dev_deps),
                 action={
                     "type": "review_dev_deps",
                     **sampled(
@@ -176,12 +171,11 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
         else:
             affected_packages.append(f"{pkg}@{version}")
 
-    eol_shown, eol_total = sample_components(affected_packages)
     impact = severity_impact(get_attr(f, "severity") for f in eol_findings)
 
     return [
-        Recommendation(
-            type=RecommendationType.EOL_DEPENDENCY,
+        recommend(
+            rec_type=RecommendationType.EOL_DEPENDENCY,
             priority=Priority.HIGH if impact["high"] else Priority.MEDIUM,
             title="End-of-Life Dependencies",
             description=(
@@ -190,8 +184,7 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
                 f"to future CVEs that will never be patched."
             ),
             impact=impact,
-            affected_components=eol_shown,
-            affected_components_total=eol_total,
+            components=affected_packages,
             action={
                 "type": "upgrade_eol",
                 **sampled("packages", affected_packages, AFFECTED_COMPONENTS_SHOWN),

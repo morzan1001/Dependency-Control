@@ -28,7 +28,7 @@ from app.services.recommendation.common import (
     get_attr,
     names_fix,
     priority_for,
-    sample_components,
+    recommend,
     sampled,
     severity_impact,
     summarize_vulns,
@@ -148,9 +148,8 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], image: str | None)
             ],
         }
 
-    packages_shown, packages_total = sample_components(sorted(affected_packages))
-    return Recommendation(
-        type=RecommendationType.BASE_IMAGE_UPDATE,
+    return recommend(
+        rec_type=RecommendationType.BASE_IMAGE_UPDATE,
         priority=priority_for(impact),
         title="Update Base Image",
         description=(
@@ -159,8 +158,7 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], image: str | None)
             f"This includes {impact['critical']} critical and {impact['high']} high severity issues."
         ),
         impact=impact,
-        affected_components=packages_shown,
-        affected_components_total=packages_total,
+        components=sorted(affected_packages),
         action={
             "type": "update_base_image",
             "suggestion": f"Check for newer tags of {image_name} or consider switching to a minimal/distroless image",
@@ -213,15 +211,15 @@ def _build_update_recommendation(
     direct_inferred = not transitive and component_vulns[0].direct_inferred
     label = f"{component}@{current_version}"
 
-    return Recommendation(
-        type=RecommendationType.TRANSITIVE_FIX_VIA_PARENT
+    return recommend(
+        rec_type=RecommendationType.TRANSITIVE_FIX_VIA_PARENT
         if transitive
         else RecommendationType.DIRECT_DEPENDENCY_UPDATE,
         priority=vuln_priority(stats),
         title=f"Update transitive dependency {label}" if transitive else f"Update {label}",
         description=_build_update_description(component, current_version, stats, transitive, direct_inferred),
         impact=stats.impact(),
-        affected_components=[label],
+        components=[label],
         action={
             "type": "update_transitive" if transitive else "update_dependency",
             "package": component,
@@ -262,11 +260,10 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
         return []
 
     packages = {v.package_name for v in vulns if any(map(_critical_or_high, v.advisories))}
-    unfixable_shown, unfixable_total = sample_components(sorted(packages))
 
     return [
-        Recommendation(
-            type=RecommendationType.NO_FIX_AVAILABLE,
+        recommend(
+            rec_type=RecommendationType.NO_FIX_AVAILABLE,
             priority=Priority.HIGH,
             title="Vulnerability with No Known Fix",
             description=(
@@ -276,8 +273,7 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
                 "proof that none exists, so confirm upstream before replacing a component."
             ),
             impact=impact,
-            affected_components=unfixable_shown,
-            affected_components_total=unfixable_total,
+            components=sorted(packages),
             action={
                 "type": "consider_alternative",
                 "steps": [

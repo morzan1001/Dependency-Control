@@ -9,7 +9,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, sample_components, sampled
+from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, recommend, sampled
 
 # Chains detailed in the action; paired with the population it was taken from.
 _DEEPEST_CHAINS_SAMPLED = 5
@@ -126,20 +126,17 @@ def _shortest_depths(edges: DependencyEdges) -> tuple[dict[str, int], dict[str, 
 
 
 def _circular_dependency_recommendation(members: set[str], edges: DependencyEdges) -> Recommendation:
-    cycle_shown, cycle_total = sample_components(
-        dependency_label(dep) for key, dep in edges.dep_by_key.items() if key in members
-    )
-    return Recommendation(
-        type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
+    cycle = [dependency_label(dep) for key, dep in edges.dep_by_key.items() if key in members]
+    return recommend(
+        rec_type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
         priority=Priority.MEDIUM,
-        title=f"Circular dependencies detected ({cycle_total} packages)",
+        title=f"Circular dependencies detected ({len(set(cycle))} packages)",
         description=(
             "Circular dependencies were detected in your dependency graph. "
             "This can cause issues with builds, updates, and increases complexity."
         ),
         impact={"total": 0},
-        affected_components=cycle_shown,
-        affected_components_total=cycle_total,
+        components=cycle,
         action={
             "type": "resolve_circular_deps",
             "steps": [
@@ -166,11 +163,8 @@ def _chain_preview(key: str, via: dict[str, str], edges: DependencyEdges) -> str
 def _deep_chain_recommendation(
     deep: list[tuple[str, int]], via: dict[str, str], edges: DependencyEdges, max_dependency_depth: int
 ) -> Recommendation:
-    deep_shown, deep_total = sample_components(
-        f"{dependency_label(edges.dep_by_key[key])} (depth: {depth})" for key, depth in deep
-    )
-    return Recommendation(
-        type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
+    return recommend(
+        rec_type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
         priority=Priority.LOW,
         title=f"Deep dependency chains detected (max depth: {deep[0][1]})",
         description=(
@@ -179,8 +173,7 @@ def _deep_chain_recommendation(
             "supply chain attack surface and make dependency updates more complex."
         ),
         impact={"total": 0},
-        affected_components=deep_shown,
-        affected_components_total=deep_total,
+        components=(f"{dependency_label(edges.dep_by_key[key])} (depth: {depth})" for key, depth in deep),
         action={
             "type": "reduce_chain_depth",
             "steps": [
@@ -232,10 +225,9 @@ def analyze_duplicate_packages(
             )
 
     if duplicates_found:
-        duplicates_shown, duplicates_total = sample_components(p for d in duplicates_found for p in d["found"])
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.DUPLICATE_FUNCTIONALITY,
+            recommend(
+                rec_type=RecommendationType.DUPLICATE_FUNCTIONALITY,
                 priority=Priority.LOW,
                 title=f"Potential duplicate packages in {len(duplicates_found)} categories",
                 description=(
@@ -244,8 +236,7 @@ def analyze_duplicate_packages(
                     "and maintenance burden."
                 ),
                 impact={"total": 0},
-                affected_components=duplicates_shown,
-                affected_components_total=duplicates_total,
+                components=(p for d in duplicates_found for p in d["found"]),
                 action={
                     "type": "consolidate_packages",
                     "duplicates": duplicates_found,

@@ -1,5 +1,7 @@
 """Tests for app.services.recommendation.common."""
 
+from collections.abc import Iterable
+
 import pytest
 from pydantic import BaseModel
 
@@ -18,6 +20,7 @@ from app.services.recommendation.common import (
     label_by_keywords,
     live_cves,
     name_some,
+    recommend,
     sample_components,
     severity_impact,
     sort_key,
@@ -495,34 +498,34 @@ class TestNameSome:
         assert name_some(values, named) == expected
 
 
-class TestRecommendationTotal:
-    """A generator that lists everything need not repeat the number."""
+class TestRecommend:
+    """A card lists a sample of the components it covers and counts every one of them."""
 
     @staticmethod
-    def _rec_with(components: list[str], total: int) -> Recommendation:
-        return Recommendation(
-            type=RecommendationType.NO_FIX_AVAILABLE,
+    def _card(components: Iterable[str]) -> Recommendation:
+        return recommend(
+            rec_type=RecommendationType.NO_FIX_AVAILABLE,
             priority=Priority.HIGH,
-            title="Vulnerability with No Fix Available",
+            title="Vulnerability with No Known Fix",
             description="d",
             impact={},
-            affected_components=components,
+            components=components,
             action={},
-            affected_components_total=total,
+            effort=Effort.HIGH,
         )
 
     def test_a_complete_list_counts_itself(self):
-        rec = self._rec_with(["a", "b"], 0)
+        card = self._card(["a", "b"])
 
-        assert rec.affected_components_total == 2
+        assert (card.affected_components, card.affected_components_total) == (["a", "b"], 2)
 
     def test_a_cut_list_reports_the_population_it_was_drawn_from(self):
         covered = 900
 
-        rec = self._rec_with(["a", "b"], covered)
+        card = self._card(f"pkg{index:04d}" for index in range(covered))
 
-        assert rec.affected_components_total == covered
-        assert rec.to_dict()["affected_components_total"] == covered
+        assert len(card.affected_components) == AFFECTED_COMPONENTS_SHOWN
+        assert card.to_dict()["affected_components_total"] == covered
 
 
 class TestSeverityImpact:

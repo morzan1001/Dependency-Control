@@ -31,7 +31,7 @@ from app.services.recommendation.common import (
     live_advisories,
     malware_kind,
     name_some,
-    sample_components,
+    recommend,
     sampled,
     scorecard_score,
     severity_impact,
@@ -218,10 +218,9 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
     desc_parts = [f"{', '.join(pkg.labels)} {summary}.", *reasons]
     if stats.fixed_versions:
         desc_parts.append(f"Available fix: Update to {stats.best_fix}")
-    components_shown, components_total = sample_components(pkg.labels)
 
-    return Recommendation(
-        type=RecommendationType.CRITICAL_HOTSPOT,
+    return recommend(
+        rec_type=RecommendationType.CRITICAL_HOTSPOT,
         priority=priority,
         title=f"Critical Hotspot: {pkg.name}",
         description=" | ".join(desc_parts),
@@ -231,8 +230,7 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
             "high_epss_count": stats.high_epss,
             "reachable_count": stats.reachable,
         },
-        affected_components=components_shown,
-        affected_components_total=components_total,
+        components=pkg.labels,
         action={
             "type": "fix_hotspot",
             "package": pkg.name,
@@ -300,9 +298,8 @@ def _toxic_recommendation(
     pkg: _PackageRisks, factors: list[dict[str, str]], rank: int, ranked_out_of: int
 ) -> Recommendation:
     stats = pkg.stats
-    components_shown, components_total = sample_components(pkg.labels)
-    return Recommendation(
-        type=RecommendationType.TOXIC_DEPENDENCY,
+    return recommend(
+        rec_type=RecommendationType.TOXIC_DEPENDENCY,
         priority=Priority.HIGH,
         title=f"Toxic Dependency: {pkg.name}",
         description=(
@@ -311,8 +308,7 @@ def _toxic_recommendation(
             f"Consider replacing it with a safer alternative."
         ),
         impact=severity_impact(stats.severity.elements()),
-        affected_components=components_shown,
-        affected_components_total=components_total,
+        components=pkg.labels,
         action={
             "type": "replace_toxic_dependency",
             "package": pkg.name,
@@ -382,15 +378,10 @@ def analyze_attack_surface(
         transitive_with_vulns = sorted(by_label.values(), key=lambda t: t["vuln_count"], reverse=True)
         impact = severity_impact(listed_severities)
         total_vulns = impact["total"]
-        transitive_shown, transitive_total = sample_components(
-            f"{t['name']}@{t['version']}"
-            + (f" (via {name_some(t['parents'], _PARENTS_NAMED)})" if t["parents"] else "")
-            for t in transitive_with_vulns
-        )
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.ATTACK_SURFACE_REDUCTION,
+            recommend(
+                rec_type=RecommendationType.ATTACK_SURFACE_REDUCTION,
                 priority=Priority.MEDIUM,
                 title="Reduce Attack Surface via Transitive Dependencies",
                 description=(
@@ -400,8 +391,11 @@ def analyze_attack_surface(
                     "to reduce attack surface."
                 ),
                 impact=impact,
-                affected_components=transitive_shown,
-                affected_components_total=transitive_total,
+                components=(
+                    f"{t['name']}@{t['version']}"
+                    + (f" (via {name_some(t['parents'], _PARENTS_NAMED)})" if t["parents"] else "")
+                    for t in transitive_with_vulns
+                ),
                 action={
                     "type": "reduce_attack_surface",
                     **sampled("transitive_deps", transitive_with_vulns, AFFECTED_COMPONENTS_SHOWN),
@@ -421,8 +415,8 @@ def analyze_attack_surface(
 
     if total_deps > 500 and direct_deps < total_deps * 0.1:
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.ATTACK_SURFACE_REDUCTION,
+            recommend(
+                rec_type=RecommendationType.ATTACK_SURFACE_REDUCTION,
                 priority=Priority.LOW,
                 title="Large Dependency Tree",
                 description=(
@@ -430,7 +424,7 @@ def analyze_attack_surface(
                     f"This large transitive tree increases attack surface. Consider auditing heavy dependencies."
                 ),
                 impact={"total": 0},
-                affected_components=[],
+                components=[],
                 action={
                     "type": "audit_dependencies",
                     "total_deps": total_deps,
