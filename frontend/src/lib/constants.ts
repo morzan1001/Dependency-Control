@@ -1,3 +1,5 @@
+import type { CryptoFindingType } from '@/types/cryptoPolicy';
+
 export const AVAILABLE_ANALYZERS = [
   { id: 'trivy', label: 'Trivy (Container/FS)', description: 'Scans container images and filesystems for vulnerabilities (CVEs) and misconfigurations.', category: 'vulnerability' },
   { id: 'grype', label: 'Grype (Anchore)', description: 'A vulnerability scanner for container images and filesystems, similar to Trivy.', category: 'vulnerability' },
@@ -33,6 +35,21 @@ export const TEAM_ROLES = [
   { value: 'member', label: 'Member' },
   { value: 'admin', label: 'Admin' },
 ] as const;
+
+export const CRYPTO_FINDING_TYPES: { value: CryptoFindingType; label: string }[] = [
+  { value: 'crypto_weak_algorithm', label: 'Weak algorithm' },
+  { value: 'crypto_weak_key', label: 'Weak key' },
+  { value: 'crypto_quantum_vulnerable', label: 'Quantum-vulnerable' },
+  { value: 'crypto_cert_expired', label: 'Certificate expired' },
+  { value: 'crypto_cert_expiring_soon', label: 'Certificate expiring soon' },
+  { value: 'crypto_cert_not_yet_valid', label: 'Certificate not yet valid' },
+  { value: 'crypto_cert_weak_signature', label: 'Certificate weak signature' },
+  { value: 'crypto_cert_weak_key', label: 'Certificate weak key' },
+  { value: 'crypto_cert_self_signed', label: 'Certificate self-signed' },
+  { value: 'crypto_cert_validity_too_long', label: 'Certificate validity too long' },
+  { value: 'crypto_weak_protocol', label: 'Weak protocol' },
+  { value: 'crypto_key_management', label: 'Key management misuse' },
+];
 
 export const DEFAULT_PAGE_SIZE = 50;
 export const SMALL_PAGE_SIZE = 20;

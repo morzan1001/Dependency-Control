@@ -180,3 +180,21 @@ describe("FindingsTable reload error", () => {
     expect((getFindingsMock.mock.calls[2][1] as { skip: number }).skip).toBe(0);
   });
 });
+
+describe("FindingsTable Type column", () => {
+  beforeEach(() => {
+    getFindingsMock.mockReset();
+    getFindingsMock.mockResolvedValue({
+      ...emptyEnvelope,
+      items: [{ id: "CRYPTO-CERT-EXPIRED-api", type: "crypto_cert_expired", severity: "CRITICAL", component: "api.example.com", version: "", scanners: ["cbomkit"] }],
+      total: 1,
+    });
+  });
+
+  it("fits the widest type badge, so only a long crypto label truncates", async () => {
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+
+    expect(await screen.findByText("Certificate expired")).toHaveClass("truncate");
+    expect(screen.getByRole("columnheader", { name: "Type" })).toHaveClass("w-[160px]");
+  });
+});

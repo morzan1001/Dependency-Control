@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge'
+import { CRYPTO_FINDING_TYPES } from '@/lib/constants'
 import { 
   ShieldAlert, 
   FileCode, 
@@ -80,7 +81,7 @@ export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
           variant: 'outline' as const,
           className: '',
           icon: null,
-          label: type
+          label: CRYPTO_FINDING_TYPES.find((crypto) => crypto.value === type?.toLowerCase())?.label ?? type
         }
     }
   }
@@ -89,12 +90,13 @@ export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
   const Icon = style.icon
 
   return (
-    <Badge 
+    <Badge
       variant={style.variant}
-      className={`${style.className} flex items-center gap-1.5`}
+      className={`${style.className} flex max-w-full items-center gap-1.5`}
+      title={style.label}
     >
-      {Icon && <Icon className="h-3 w-3" />}
-      <span className="capitalize">{style.label}</span>
+      {Icon && <Icon className="h-3 w-3 shrink-0" />}
+      <span className="truncate capitalize">{style.label}</span>
     </Badge>
   )
 }
