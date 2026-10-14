@@ -94,81 +94,80 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Pipelines</CardTitle>
-            <CardDescription>View past pipelines and their latest security status.</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedBranch && (
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={() => {
-                  setSelectedBranch(undefined)
-                  setPage(1)
-                }}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
-            {showReleaseFilter && (
-              <Button
-                variant={releasesOnly ? 'default' : 'outline'}
-                size="sm"
-                aria-pressed={releasesOnly}
-                onClick={() => {
-                  setReleasesOnly((on) => !on)
-                  setPage(1)
-                }}
-              >
-                <Rocket className="mr-2 h-4 w-4" />
-                Releases only
-              </Button>
-            )}
-            <Select
-              value={selectedBranch || "__all__"}
-              onValueChange={(value) => {
-                setSelectedBranch(value === "__all__" ? undefined : value)
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0">
+        <div>
+          <CardTitle>Pipelines</CardTitle>
+          <CardDescription>View past pipelines and their latest security status.</CardDescription>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {selectedBranch && (
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={() => {
+                setSelectedBranch(undefined)
                 setPage(1)
               }}
             >
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Filter by branch" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All Active Branches</SelectItem>
-                {activeBranches.length > 0 && (
-                  <SelectGroup>
-                    <SelectLabel>Active</SelectLabel>
-                    {activeBranches.map((branch) => (
-                      <SelectItem key={branch.name} value={branch.name}>
-                        {branch.name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                )}
-                {deletedBranches.length > 0 && (
-                  <SelectGroup>
-                    <SelectLabel className="flex items-center gap-1">
-                      <Trash2 className="h-3 w-3" /> Deleted
-                    </SelectLabel>
-                    {deletedBranches.map((branch) => (
-                      <SelectItem key={branch.name} value={branch.name}>
-                        <span className="text-muted-foreground">{branch.name}</span>
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+          {showReleaseFilter && (
+            <Button
+              variant={releasesOnly ? 'default' : 'outline'}
+              size="sm"
+              aria-pressed={releasesOnly}
+              onClick={() => {
+                setReleasesOnly((on) => !on)
+                setPage(1)
+              }}
+            >
+              <Rocket className="mr-2 h-4 w-4" />
+              Releases only
+            </Button>
+          )}
+          <Select
+            value={selectedBranch || "__all__"}
+            onValueChange={(value) => {
+              setSelectedBranch(value === "__all__" ? undefined : value)
+              setPage(1)
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-[200px]">
+              <SelectValue placeholder="Filter by branch" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Active Branches</SelectItem>
+              {activeBranches.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel>Active</SelectLabel>
+                  {activeBranches.map((branch) => (
+                    <SelectItem key={branch.name} value={branch.name}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+              {deletedBranches.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel className="flex items-center gap-1">
+                    <Trash2 className="h-3 w-3" /> Deleted
+                  </SelectLabel>
+                  {deletedBranches.map((branch) => (
+                    <SelectItem key={branch.name} value={branch.name}>
+                      <span className="text-muted-foreground">{branch.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+            </SelectContent>
+          </Select>
         </div>
       </CardHeader>
       <CardContent>
         <div className="rounded-md border">
-          <Table>
+          {/* Narrower than its columns, the table squeezes dates and release badges into one word per line. */}
+          <Table className="min-w-[1090px]">
             <TableHeader>
               <TableRow>
                 <SortableHead column="created_at" sort={pagination} className="w-[200px]">Date</SortableHead>

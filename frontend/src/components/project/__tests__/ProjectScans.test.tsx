@@ -428,3 +428,23 @@ describe('ProjectScans - long branch names', () => {
     }
   })
 })
+
+describe('ProjectScans - on a narrow screen', () => {
+  it("stacks its filters under the title on a phone, like the waiver list's header, and wraps them", () => {
+    renderScans([makeScan({})])
+
+    const header = screen.getByRole('heading', { name: 'Pipelines' }).parentElement?.parentElement
+    expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+    const branchSelect = screen.getByRole('combobox')
+    expect(branchSelect).toHaveClass('w-full', 'sm:w-[200px]')
+    expect(branchSelect.parentElement).toHaveClass('flex-wrap')
+  })
+
+  it('keeps the columns at their widths and scrolls the table sideways', () => {
+    renderScans([makeScan({})])
+
+    const table = screen.getByRole('table')
+    expect(table).toHaveClass('min-w-[1090px]')
+    expect(table.parentElement).toHaveClass('overflow-auto')
+  })
+})
