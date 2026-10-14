@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing
@@ -32,8 +31,6 @@ from app.services.chat.context import (
 )
 from app.services.chat.ollama_client import OllamaClient
 from app.services.chat.tools import ChatToolRegistry
-
-logger = logging.getLogger(__name__)
 
 # Seconds between cold-start keepalive info events; module-level so tests can patch it.
 _WARMUP_SLICE_SECONDS = 10.0
