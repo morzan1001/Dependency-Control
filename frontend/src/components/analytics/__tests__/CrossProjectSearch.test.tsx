@@ -180,3 +180,34 @@ describe("CrossProjectSearch source filter", () => {
     expect(iconClasses[2]).toContain("lucide-hard-drive h-4 w-4 text-amber-500");
   });
 });
+
+describe("CrossProjectSearch on a narrow screen", () => {
+  it("holds the table to its columns and 200px for Project, scrolling it sideways, so the rows stay under their headers", async () => {
+    search.mockReset();
+    search.mockResolvedValue({
+      items: [{ project_id: "p", project_name: "P", package: "lodash", version: "4.17.21", type: "npm", direct: true }],
+      total: 1,
+      page: 1,
+      size: 50,
+      pages: 1,
+    });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const main = document.createElement("main");
+    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    document.body.appendChild(main);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+      { container: main },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+
+    const table = (await screen.findByText("lodash")).closest("table");
+    expect(table).toHaveClass("table-fixed", "min-w-[820px]");
+    expect(table?.parentElement).toHaveClass("overflow-auto");
+  });
+});
