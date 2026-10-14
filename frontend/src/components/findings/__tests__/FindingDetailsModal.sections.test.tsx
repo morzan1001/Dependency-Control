@@ -47,7 +47,8 @@ function renderModal(shown: Finding, props: { scanContext?: ScanContext; onSelec
 
 describe("FindingDetailsModal header", () => {
   it("names the finding's type with the findings table's badge, like the other types beside it", () => {
-    renderModal(finding({ type: "crypto_weak_algorithm", details: { additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
+    const cryptoType: string = "crypto_weak_algorithm";
+    renderModal(finding({ type: cryptoType as Finding["type"], details: { additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
 
     expect(screen.getByText("Weak algorithm")).toHaveClass("truncate");
     expect(screen.queryByText("crypto_weak_algorithm")).not.toBeInTheDocument();
