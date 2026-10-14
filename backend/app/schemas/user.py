@@ -25,10 +25,8 @@ def validate_password_strength(password: str) -> str:
 
 
 # No '@': login resolves the username before the email, so an email-shaped name would shadow that account.
-_NEW_USERNAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,63}")
-_USERNAME_RULE = (
-    "A username has 2 to 64 letters, digits, dots, underscores or hyphens and starts with a letter or digit"
-)
+_NEW_USERNAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]| (?=[A-Za-z0-9._-])){1,63}")
+_USERNAME_RULE = "A username has 2 to 64 letters, digits, dots, underscores, hyphens or single spaces and starts with a letter or digit"
 
 
 def check_new_username(username: str) -> str:

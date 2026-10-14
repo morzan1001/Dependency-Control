@@ -31,7 +31,7 @@ const TARGET: User = {
 }
 const MANAGER = ['user:update', 'project:read']
 const OUTSIDE_RULE =
-  'A username has 2 to 64 letters, digits, dots, underscores or hyphens and starts with a letter or digit'
+  'A username has 2 to 64 letters, digits, dots, underscores, hyphens or single spaces and starts with a letter or digit'
 const NOT_MANAGEABLE = "Cannot manage a user who holds permissions you don't hold"
 
 function renderDialog() {

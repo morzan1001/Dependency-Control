@@ -22,7 +22,7 @@ const PENDING_NOTICE = `Open the link sent to ${NEW_EMAIL} to confirm the change
 const REFUSAL = 'Email verification is required, but no mail server is configured to confirm a new address'
 const TAKEN = 'Username already taken'
 const OUTSIDE_RULE =
-  'A username has 2 to 64 letters, digits, dots, underscores or hyphens and starts with a letter or digit'
+  'A username has 2 to 64 letters, digits, dots, underscores, hyphens or single spaces and starts with a letter or digit'
 const SERVER_FAILURE = 'Internal Server Error. Please check the logs for more details.'
 const LOCAL_USER: User = {
   id: 'u-lena',

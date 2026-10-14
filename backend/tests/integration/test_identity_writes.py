@@ -52,8 +52,8 @@ async def test_inviting_a_registered_address_in_another_case_is_refused(client, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "username",
-    ["", "   ", "lena@corp.com", "n", "-nora", "nora k"],
-    ids=["empty", "blank", "email-shaped", "short", "hyphen-first", "space"],
+    ["", "   ", "lena@corp.com", "n", "-nora", "nora  k"],
+    ids=["empty", "blank", "email-shaped", "short", "hyphen-first", "double-space"],
 )
 async def test_accepting_an_invitation_with_an_unusable_username_is_refused(client, db, username):
     await db.system_invitations.insert_one(

@@ -167,7 +167,7 @@ class TestRenames:
         assert (await _stored(db, "u-boss"))["username"] == "boss"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("username", ["ab", "a" * 64, "Lena_K-1.2", "0lena"])
+    @pytest.mark.parametrize("username", ["ab", "a" * 64, "Lena_K-1.2", "0lena", "Lena Kraft", "Anna Lena Kraft"])
     async def test_a_name_within_the_rule_is_taken(self, db, username):
         await _patch_me(db, LOCAL, username=username)
 
@@ -176,8 +176,19 @@ class TestRenames:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "username",
-        ["l", "a" * 65, "-lena", ".lena", "_lena", "lena@corp.com", "lena k", "jörg", "lena/k"],
-        ids=["short", "long", "hyphen-first", "dot-first", "underscore-first", "email", "space", "umlaut", "slash"],
+        ["l", "a" * 65, "-lena", ".lena", "_lena", "lena@corp.com", "lena  k", "lena\tk", "jörg", "lena/k"],
+        ids=[
+            "short",
+            "long",
+            "hyphen-first",
+            "dot-first",
+            "underscore-first",
+            "email",
+            "double-space",
+            "tab",
+            "umlaut",
+            "slash",
+        ],
     )
     @pytest.mark.parametrize("rename", [_patch_me, _admin_put], ids=["profile", "admin"])
     async def test_a_new_name_outside_the_rule_is_refused(self, db, rename, username):
@@ -481,8 +492,8 @@ class TestUsernames:
     )
     @pytest.mark.parametrize(
         "username",
-        ["", "   ", "n", "a" * 65, "-nora", "nora@corp.com", "nora k", "jörg"],
-        ids=["empty", "blank", "short", "long", "hyphen-first", "email-shaped", "space", "umlaut"],
+        ["", "   ", "n", "a" * 65, "-nora", "nora@corp.com", "nora  k", "jörg"],
+        ids=["empty", "blank", "short", "long", "hyphen-first", "email-shaped", "double-space", "umlaut"],
     )
     def test_a_new_account_with_a_name_outside_the_rule_is_refused(self, build, username):
         with pytest.raises(ValidationError):
@@ -491,11 +502,17 @@ class TestUsernames:
     def test_a_new_username_is_stored_trimmed(self):
         assert user_schemas.UserSignup(email="n@corp.com", username=" nora ", password=PASSWORD).username == "nora"
 
+    def test_a_new_account_may_take_a_name_in_the_first_and_last_name_style(self):
+        assert (
+            user_schemas.UserCreate(email="n@corp.com", username="Nora Kraft", password=PASSWORD).username
+            == "Nora Kraft"
+        )
+
     @pytest.mark.asyncio
     async def test_an_sso_account_keeps_a_provider_name_outside_the_rule(self, db):
-        await _oidc_login(db, email="max@corp.com", preferred_username="Max Mustermann")
+        await _oidc_login(db, email="max@corp.com", preferred_username="Max  Müller")
 
-        assert (await UserRepository(db).get_raw_by_email("max@corp.com"))["username"] == "Max Mustermann"
+        assert (await UserRepository(db).get_raw_by_email("max@corp.com"))["username"] == "Max  Müller"
 
     @pytest.mark.asyncio
     async def test_an_sso_first_login_is_not_refused_for_a_case_variant_of_another_name(self, db):
