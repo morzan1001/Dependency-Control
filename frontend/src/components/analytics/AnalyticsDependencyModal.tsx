@@ -179,6 +179,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
     { label: 'Issues', value: depsDev?.open_issues, icon: CircleDot, color: 'text-green-500' },
     { label: 'Dependents', value: depsDev?.dependents?.total, icon: Users, color: 'text-purple-500' },
   ]
+  const knownAdvisories = depsDev?.known_advisories ?? []
   const depsDevLinks = depsDev?.links
     ? Object.entries(depsDev.links)
         .map(([label, url]) => [label, safeHref(url)] as const)
@@ -226,15 +227,15 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
         </div>
       </div>
 
-      {metadata.deps_dev?.known_advisories && metadata.deps_dev.known_advisories.length > 0 && (
+      {knownAdvisories.length > 0 && (
         <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
           <AlertOctagon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
           <div>
             <p className="font-medium text-severity-critical">
-              {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
+              {knownAdvisories.length} Known Security {knownAdvisories.length === 1 ? "Advisory" : "Advisories"}
             </p>
             <div className="flex flex-wrap gap-1 mt-1">
-              {metadata.deps_dev.known_advisories.map((advisory) => (
+              {knownAdvisories.map((advisory) => (
                 <AdvisoryLink key={advisory} id={advisory} variant="destructive" />
               ))}
             </div>

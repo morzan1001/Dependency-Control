@@ -396,6 +396,7 @@ describe("AnalyticsDependencyModal known advisories", () => {
   it("links each known advisory with a public page and names the others", () => {
     renderModal({ ...baseMetadata, deps_dev: { known_advisories: ["GHSA-aaaa-bbbb-cccc", "CVE-2024-1", "OSV-2024-1"] } });
 
+    expect(screen.getByText("3 Known Security Advisories")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "GHSA-aaaa-bbbb-cccc" })).toHaveAttribute(
       "href",
       "https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
