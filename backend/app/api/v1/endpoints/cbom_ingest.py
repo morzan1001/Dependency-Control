@@ -61,18 +61,12 @@ async def ingest_cbom(
     db: DatabaseDep,
     project: ProjectIngestDep,
 ) -> CBOMIngestResponse:
-    """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response."""
+    """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response.
+    A CBOM listing no cryptographic asset is accepted too and records the project as free of cryptography."""
     payload = await read_json_body(request, CBOMIngest)
     manager = ScanManager(db, project)
     scan_id = manager.run_scan_id(payload)
     assets = await asyncio.to_thread(parse_cbom, payload.cbom)
-
-    if not assets:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No cryptographic-asset components found in CBOM payload",
-        )
-
     project_id = str(project.id)
 
     try:
@@ -107,7 +101,7 @@ async def ingest_cbom(
         message=f"{summary['total']} crypto asset(s) ingested for scan {scan_id}.",
         context="cbom_ingest",
     )
-    cbom_ingests_total.labels(status="success").inc()
+    cbom_ingests_total.labels(status="success" if assets else "empty").inc()
 
     return CBOMIngestResponse(
         scan_id=scan_id,
