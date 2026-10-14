@@ -28,17 +28,17 @@ export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 
 export function getSeverityBgColor(severity: string): string {
   switch (severity?.toUpperCase()) {
     case 'CRITICAL':
-      return 'bg-severity-critical hover:bg-severity-critical'
+      return 'bg-severity-critical hover:bg-severity-critical text-severity-critical-foreground'
     case 'HIGH':
-      return 'bg-severity-high hover:bg-severity-high'
+      return 'bg-severity-high hover:bg-severity-high text-severity-high-foreground'
     case 'MEDIUM':
-      return 'bg-severity-medium hover:bg-severity-medium'
+      return 'bg-severity-medium hover:bg-severity-medium text-severity-medium-foreground'
     case 'LOW':
-      return 'bg-severity-low hover:bg-severity-low'
+      return 'bg-severity-low hover:bg-severity-low text-severity-low-foreground'
     case 'INFO':
-      return 'bg-severity-info hover:bg-severity-info'
+      return 'bg-severity-info hover:bg-severity-info text-severity-info-foreground'
     default:
-      return 'bg-muted hover:bg-muted'
+      return 'bg-muted hover:bg-muted text-muted-foreground'
   }
 }
 

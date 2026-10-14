@@ -9,6 +9,7 @@ import {
   isSecretDeprioritized,
   getSecretRemediationHint,
   getReachabilityDisplay,
+  getSeverityBgColor,
 } from '../finding-utils'
 
 // Color bands are on the backend's 0-100 combined-risk scale, not the 0-10 CVSS scale.
@@ -181,5 +182,18 @@ describe('getReachabilityDisplay', () => {
       verdict: 'reachable',
       label: 'Reachable (imported)',
     })
+  })
+})
+
+describe('getSeverityBgColor', () => {
+  it.each([
+    ['CRITICAL', 'bg-severity-critical', 'text-severity-critical-foreground'],
+    ['HIGH', 'bg-severity-high', 'text-severity-high-foreground'],
+    ['medium', 'bg-severity-medium', 'text-severity-medium-foreground'],
+    ['LOW', 'bg-severity-low', 'text-severity-low-foreground'],
+    ['INFO', 'bg-severity-info', 'text-severity-info-foreground'],
+    ['UNKNOWN', 'bg-muted', 'text-muted-foreground'],
+  ])('pairs the %s background with the text colour designed for it', (severity, background, foreground) => {
+    expect(getSeverityBgColor(severity).split(' ')).toEqual(expect.arrayContaining([background, foreground]))
   })
 })
