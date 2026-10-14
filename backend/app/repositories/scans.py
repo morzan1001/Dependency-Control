@@ -47,6 +47,8 @@ USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "
 BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"]}}
 # A scan without an SBOM (SAST only) carries no dependencies, so it heads only where no scan has one.
 HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs": {"$exists": True, "$ne": []}}
+# Builds with a non-empty tag; the scans_tag_builds index filters on this exact predicate, which a query must repeat.
+TAG_BUILD_MATCH: dict[str, Any] = {"commit_tag": {"$gt": ""}}
 # Best first, so a project whose usable scans are all tag builds or rescans still has a tip.
 _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
     {**sbom, **tier}
@@ -435,7 +437,7 @@ class ScanRepository:
         if not current or current.get("created_at") is None:
             return []
         branch, tag = current.get("branch"), current.get("commit_tag")
-        line = {"commit_tag": {"$nin": [None, ""]}} if tag and tag == branch else {"branch": branch}
+        line = TAG_BUILD_MATCH if tag and tag == branch else {"branch": branch}
         query = {
             **USABLE_BUILD_MATCH,
             "project_id": current.get("project_id"),
