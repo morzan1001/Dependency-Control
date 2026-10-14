@@ -248,7 +248,8 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                 </p>
               </div>
               <div className="border rounded-lg overflow-hidden">
-                <Table className="table-fixed">
+                {/* The rows are flex rows that shrink apart from the header once the table is narrower than their columns. */}
+                <Table className="table-fixed min-w-[820px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[250px]">Package</TableHead>

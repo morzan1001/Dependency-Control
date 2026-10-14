@@ -4,8 +4,9 @@ import { projectApi } from '@/api/projects'
 import { projectKeys } from '@/hooks/queries/use-projects'
 import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
-import { useCurrentUser } from '@/hooks/queries/use-users'
+import { refusesEmail, useCurrentUser } from '@/hooks/queries/use-users'
 import { isProjectAdmin } from '@/lib/project-roles'
+import { getErrorMessage } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -52,6 +53,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
     : false
   const [isInviteMemberOpen, setIsInviteMemberOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState("")
+  const [blankEmail, setBlankEmail] = useState(false)
   const [inviteRole, setInviteRole] = useState("viewer")
 
   const inviteMemberMutation = useMutation({
@@ -63,8 +65,13 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
       setInviteRole("viewer")
       toast.success("Member invited successfully")
     },
-    meta: { errorTitle: "Failed to invite member" },
+    onError: (error) => {
+      if (!refusesEmail(error)) toast.error("Failed to invite member", { description: getErrorMessage(error) })
+    },
   })
+  const emailRefusal =
+    inviteMemberMutation.isError && refusesEmail(inviteMemberMutation.error) ? getErrorMessage(inviteMemberMutation.error) : null
+  const emailError = blankEmail ? 'Enter an email address' : emailRefusal
 
   const updateMemberMutation = useMutation({
     mutationFn: (data: { userId: string, role: string }) => projectApi.updateMember(projectId, data.userId, data.role),
@@ -92,7 +99,15 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
           <CardDescription>Manage who has access to this project.</CardDescription>
         </div>
         {canManageMembers && (
-          <Dialog open={isInviteMemberOpen} onOpenChange={setIsInviteMemberOpen}>
+          <Dialog open={isInviteMemberOpen} onOpenChange={(open) => {
+            setIsInviteMemberOpen(open)
+            if (!open) {
+              setInviteEmail("")
+              setBlankEmail(false)
+              setInviteRole("viewer")
+              if (!inviteMemberMutation.isPending) inviteMemberMutation.reset()
+            }
+          }}>
             <DialogTrigger asChild>
               <Button className="gap-2">
                 <UserPlus className="h-4 w-4" />
@@ -103,9 +118,15 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  inviteMemberMutation.mutate({ email: inviteEmail, role: inviteRole })
+                  const nextEmail = inviteEmail.trim()
+                  if (!nextEmail) {
+                    setBlankEmail(true)
+                    return
+                  }
+                  inviteMemberMutation.mutate({ email: nextEmail, role: inviteRole })
                 }}
                 className="grid gap-4"
+                noValidate
               >
                 <DialogHeader>
                   <DialogTitle>Invite Member</DialogTitle>
@@ -117,9 +138,18 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
                     id="email"
                     type="email"
                     value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onChange={(e) => {
+                      setInviteEmail(e.target.value)
+                      setBlankEmail(false)
+                      if (!inviteMemberMutation.isPending) inviteMemberMutation.reset()
+                    }}
+                    aria-invalid={!!emailError}
+                    aria-describedby={emailError ? 'invite-member-email-error' : undefined}
                     required
                   />
+                  {emailError && (
+                    <p id="invite-member-email-error" role="alert" className="text-xs text-destructive">{emailError}</p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="role">Role</Label>

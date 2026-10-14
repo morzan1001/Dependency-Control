@@ -108,6 +108,26 @@ describe('CreateProjectDialog after a project was created', () => {
     expect(screen.getByLabelText('Project Name')).toHaveValue('')
   })
 
+  it('shows the key in the key rotation dialog\'s layout: default width, the one-time warning once, the key in a copy field', () => {
+    mockMutate.mockImplementation((_vars, options: { onSuccess: (data: unknown) => void }) =>
+      options.onSuccess({ project_id: 'p-new', api_key: API_KEY, note: 'This key will only be shown once. Please save it securely.' }),
+    )
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    submit()
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveClass('max-w-lg')
+    expect(dialog).not.toHaveClass('sm:max-w-[600px]')
+    expect(dialog).toHaveAccessibleDescription('Please save your API key securely. It will not be shown again.')
+    expect(screen.queryByText('Success')).not.toBeInTheDocument()
+    expect(screen.queryByText(/only be shown once/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/won't be able to see it again/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy API key' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Project ID')).toHaveValue('p-new')
+    expect(screen.getByLabelText('Project ID')).toHaveAttribute('readonly')
+  })
+
   it('focuses the API key with all of it selected, like the key rotation dialog', () => {
     mockMutate.mockImplementation((_vars, options: { onSuccess: (data: unknown) => void }) =>
       options.onSuccess({ project_id: 'p-new', api_key: API_KEY, note: 'Save the key' }),

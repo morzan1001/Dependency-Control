@@ -588,7 +588,7 @@ describe('CICDInstancesManagement outcomes', () => {
 
     testRow(/Internal GitLab/)
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connection failed', { description: '401 Unauthorized' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to connect to GitLab', { description: '401 Unauthorized' }))
     const row = screen.getByRole('row', { name: /Internal GitLab/ })
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Test' })).toBeEnabled())
   })
@@ -599,7 +599,7 @@ describe('CICDInstancesManagement outcomes', () => {
 
     testRow(/GitHub\.com/)
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connection test failed', { description: 'Network Error' }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to test connection', { description: 'Network Error' }))
     const row = screen.getByRole('row', { name: /GitHub\.com/ })
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Test' })).toBeEnabled())
   })

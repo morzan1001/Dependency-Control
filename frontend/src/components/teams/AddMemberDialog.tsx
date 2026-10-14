@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useAddTeamMember } from '@/hooks/queries/use-teams';
+import { refusesEmail } from '@/hooks/queries/use-users';
+import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,24 +32,38 @@ interface AddMemberDialogProps {
 
 export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberDialogProps>) {
   const [email, setEmail] = useState('');
+  const [blankEmail, setBlankEmail] = useState(false);
   const [role, setRole] = useState('member');
-  const addMemberMutation = useAddTeamMember({ errorTitle: "Failed to add member" });
+  const addMemberMutation = useAddTeamMember();
+  const emailRefusal =
+    addMemberMutation.isError && refusesEmail(addMemberMutation.error) ? getErrorMessage(addMemberMutation.error) : null;
+  const emailError = blankEmail ? 'Enter an email address' : emailRefusal;
 
   const handleClose = () => {
     setEmail('');
+    setBlankEmail(false);
     setRole('member');
+    if (!addMemberMutation.isPending) addMemberMutation.reset();
     onClose();
   };
 
   const handleAddMember = (e: React.FormEvent) => {
     e.preventDefault();
+    const nextEmail = email.trim();
+    if (!nextEmail) {
+      setBlankEmail(true);
+      return;
+    }
     if (teamId) {
       addMemberMutation.mutate(
-        { teamId, data: { email, role } },
+        { teamId, data: { email: nextEmail, role } },
         {
           onSuccess: () => {
             handleClose();
             toast.success("Member added successfully");
+          },
+          onError: (error) => {
+            if (!refusesEmail(error)) toast.error("Failed to add member", { description: getErrorMessage(error) });
           },
         }
       );
@@ -57,7 +73,7 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberD
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent>
-        <form onSubmit={handleAddMember} className="grid gap-4">
+        <form onSubmit={handleAddMember} className="grid gap-4" noValidate>
           <DialogHeader>
             <DialogTitle>Add Team Member</DialogTitle>
             <DialogDescription>
@@ -70,9 +86,18 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberD
               id="email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setBlankEmail(false);
+                if (!addMemberMutation.isPending) addMemberMutation.reset();
+              }}
+              aria-invalid={!!emailError}
+              aria-describedby={emailError ? 'add-member-email-error' : undefined}
               required
             />
+            {emailError && (
+              <p id="add-member-email-error" role="alert" className="text-xs text-destructive">{emailError}</p>
+            )}
           </div>
           <div className="grid gap-2">
             <Label htmlFor="role">Role</Label>

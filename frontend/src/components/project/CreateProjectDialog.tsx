@@ -6,10 +6,9 @@ import { Button } from "@/components/ui/button";
 import { CopyField } from "@/components/ui/copy-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Check } from "lucide-react";
 import { toast } from "sonner";
 import { toggle } from "@/lib/utils";
-import type { RetentionAction } from "@/types/project";
+import type { ProjectApiKeyResponse, RetentionAction } from "@/types/project";
 import { AnalyzerChecklist } from "./AnalyzerChecklist";
 import { DEFAULT_RETENTION_DAYS, RetentionFields } from "./RetentionRescanFields";
 import {
@@ -27,7 +26,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const EMPTY_FORM = {
   name: "",
@@ -51,11 +49,7 @@ export function CreateProjectDialog({
 }: Readonly<CreateProjectDialogProps>) {
   const [form, setForm] = useState(EMPTY_FORM);
   const set = (patch: Partial<CreateProjectForm>) => setForm((current) => ({ ...current, ...patch }));
-  const [createdProjectData, setCreatedProjectData] = useState<{
-    project_id: string;
-    api_key: string;
-    note: string;
-  } | null>(null);
+  const [createdProjectData, setCreatedProjectData] = useState<ProjectApiKeyResponse | null>(null);
 
   const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: open });
   const { data: appConfig } = useAppConfig({ enabled: open });
@@ -93,7 +87,7 @@ export function CreateProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className={createdProjectData ? undefined : "sm:max-w-[600px] max-h-[90vh] overflow-y-auto"}>
         <DialogHeader>
           <DialogTitle>
             {createdProjectData ? "Project Created" : "Create New Project"}
@@ -106,33 +100,19 @@ export function CreateProjectDialog({
         </DialogHeader>
 
         {createdProjectData ? (
-          <div className="space-y-4 py-4">
-            <Alert>
-              <Check className="h-4 w-4" />
-              <AlertTitle>Success</AlertTitle>
-              <AlertDescription>{createdProjectData.note}</AlertDescription>
-            </Alert>
-
-            <div className="space-y-2">
-              <Label>Project ID</Label>
-              <div className="flex items-center space-x-2">
-                <Input
-                  value={createdProjectData.project_id}
-                  readOnly
-                  className="font-mono bg-muted"
-                />
-              </div>
+          <>
+            <div className="grid gap-2">
+              <Label htmlFor="created-project-id">Project ID</Label>
+              <Input id="created-project-id" value={createdProjectData.project_id} readOnly className="font-mono bg-muted" />
             </div>
-
-            <div className="space-y-2">
+            <div className="grid gap-2">
               <Label>API Key</Label>
               <CopyField value={createdProjectData.api_key} what="API key" />
-              <p className="text-sm text-muted-foreground text-red-500 font-medium">
-                Make sure to copy your API Key now. You won't be able to see it
-                again!
-              </p>
             </div>
-          </div>
+            <DialogFooter>
+              <Button onClick={handleClose}>Close</Button>
+            </DialogFooter>
+          </>
         ) : (
           <form onSubmit={handleCreateProject} className="space-y-4 py-4">
             <div className="space-y-2">
@@ -195,11 +175,6 @@ export function CreateProjectDialog({
               </Button>
             </DialogFooter>
           </form>
-        )}
-        {createdProjectData && (
-          <DialogFooter>
-            <Button onClick={handleClose}>Close</Button>
-          </DialogFooter>
         )}
       </DialogContent>
     </Dialog>

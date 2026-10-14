@@ -51,7 +51,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
       toast.success("Policy reverted");
       qc.invalidateQueries({ queryKey: ["crypto-policy"] });
     },
-    meta: { errorTitle: "Revert failed" },
+    meta: { errorTitle: "Failed to revert policy" },
   });
 
   const doPrune = useMutation({
@@ -64,7 +64,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
       qc.invalidateQueries({ queryKey: ["crypto-policy", "audit"] });
       pruneDialog.closeDialog();
     },
-    meta: { errorTitle: "Prune failed" },
+    meta: { errorTitle: "Failed to prune audit entries" },
   });
 
   return (

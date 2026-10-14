@@ -7,6 +7,7 @@ import { GitLabInstanceCreate, GitLabInstanceUpdate } from "@/types/gitlab";
 import { GitHubInstanceCreate, GitHubInstanceUpdate } from "@/types/github";
 import { useGitLabInstances, useGitHubInstances, gitlabInstanceKeys, githubInstanceKeys } from "@/hooks/queries/use-instances";
 import { InstanceType, UnifiedInstance, isSharedIssuer, mergeInstances, parseAllowlist } from "./cicd-instances";
+import { PROVIDER_LABEL } from "@/lib/team-binding";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -60,7 +61,6 @@ interface InstanceFormData {
 
 const INSTANCE_API = { gitlab: gitlabInstancesApi, github: githubInstancesApi };
 const INSTANCE_KEYS = { gitlab: gitlabInstanceKeys, github: githubInstanceKeys };
-const PROVIDER_LABEL: Record<InstanceType, string> = { gitlab: "GitLab", github: "GitHub" };
 
 const emptyFormData: InstanceFormData = {
   type: "gitlab",
@@ -167,7 +167,7 @@ export function CICDInstancesManagement() {
     mutationFn: ({ _type, id }: UnifiedInstance) => INSTANCE_API[_type].testConnection(id),
     onSuccess: (data, { _type }) => {
       if (!data.success) {
-        toast.error("Connection failed", { description: data.message });
+        toast.error(`Failed to connect to ${PROVIDER_LABEL[_type]}`, { description: data.message });
       } else if (_type === "github") {
         toast.success("Connection successful!", { description: data.message });
       } else {
@@ -175,7 +175,7 @@ export function CICDInstancesManagement() {
         toast.success("Connection successful!", { description: version ? `GitLab version: ${version}` : undefined });
       }
     },
-    meta: { errorTitle: "Connection test failed" },
+    meta: { errorTitle: "Failed to test connection" },
     onSettled: () => setTestingInstanceId(null),
   });
 

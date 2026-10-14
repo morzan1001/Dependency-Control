@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotificationsSettingsTab } from '../NotificationsSettingsTab'
@@ -51,6 +52,15 @@ describe('NotificationsSettingsTab - Slack install', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Connect to Slack Workspace' }))
 
     await waitFor(() => expect(location.href).toBe(INSTALL_URL))
+  })
+
+  it('names an install that failed to start and why', async () => {
+    getSlackAuthorizeUrl.mockRejectedValue(new Error('Network Error'))
+    renderTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect to Slack Workspace' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to start the Slack install', { description: 'Network Error' }))
   })
 
   it('asks to save edited scopes before connecting, since the backend installs the saved ones', () => {

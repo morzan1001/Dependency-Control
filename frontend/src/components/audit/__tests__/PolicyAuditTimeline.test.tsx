@@ -75,7 +75,7 @@ describe("PolicyAuditTimeline", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "back to seed" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirm revert" }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Revert failed", {
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to revert policy", {
       description: "Version 2 holds rules a write would refuse: rule 'r1': needs a subject matcher",
     }));
   });
@@ -105,7 +105,7 @@ describe("PolicyAuditTimeline", () => {
       fireEvent.click(await screen.findByRole("button", { name: /Prune old entries/i }));
       fireEvent.click(screen.getByRole("button", { name: "Prune" }));
 
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Prune failed", {
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to prune audit entries", {
         description: "Cutoff must be at least 90 days in the past",
       }));
       await new Promise((resolve) => setTimeout(resolve, 0));

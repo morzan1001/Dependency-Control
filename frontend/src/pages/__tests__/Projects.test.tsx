@@ -62,9 +62,17 @@ describe('ProjectsPage sorting', () => {
   it('returns to the first page when the sort order flips', () => {
     onPageTwo()
 
-    fireEvent.click(screen.getAllByRole('button').find((button) => button.querySelector('svg.lucide-arrow-down'))!)
+    fireEvent.click(screen.getByRole('button', { name: 'Sort ascending' }))
 
     expect(useProjectsMock.mock.calls[useProjectsMock.mock.calls.length - 1][4]).toBe('asc')
     expect(lastPage()).toBe(1)
+  })
+
+  it('names the icon-only sort order button by the order a click gives', () => {
+    renderProjects()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sort ascending' }))
+
+    expect(screen.getByRole('button', { name: 'Sort descending' })).toBeInTheDocument()
   })
 })

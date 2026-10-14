@@ -202,7 +202,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                 >
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
                       {(() => {
                           const { date } = resolveRun(scan);
                           return formatDateTime(date);
@@ -210,7 +210,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                     </div>
                     {scan.latest_run && scan.latest_run.scan_id !== scan.id && (
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                            <RefreshCw className="h-3 w-3" />
+                            <RefreshCw className="h-3 w-3 shrink-0" />
                             {rescanNote(scan.latest_run.status)}
                         </div>
                     )}
@@ -230,10 +230,10 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <GitBranch className="h-4 w-4 text-muted-foreground" />
+                      <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <ScmLink
                         href={buildBranchUrl({ projectUrl: scan.project_url, pipelineUrl: scan.pipeline_url, branch: scan.branch })}
-                        className="font-mono text-xs"
+                        className="font-mono text-xs wrap-anywhere"
                       >
                         {scan.branch}
                       </ScmLink>
@@ -249,7 +249,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <GitCommit className="h-4 w-4 text-muted-foreground" />
+                      <GitCommit className="h-4 w-4 shrink-0 text-muted-foreground" />
                       {scan.commit_hash ? (
                         <ScmLink
                           href={buildCommitUrl({ projectUrl: scan.project_url, pipelineUrl: scan.pipeline_url, commitHash: scan.commit_hash })}

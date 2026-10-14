@@ -19,7 +19,7 @@ import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
+import { SEVERITY_CHART_COLORS, bySeverityOrder } from '@/lib/finding-utils'
 
 interface ProjectOverviewProps {
   projectId: string
@@ -349,7 +349,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                   />
-                  <Legend />
+                  <Legend itemSorter={bySeverityOrder} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -386,11 +386,11 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                                 />
-                                <Legend />
-                                <Bar dataKey="critical" stackId="a" fill={SEVERITY_CHART_COLORS.CRITICAL} />
-                                <Bar dataKey="high" stackId="a" fill={SEVERITY_CHART_COLORS.HIGH} />
-                                <Bar dataKey="medium" stackId="a" fill={SEVERITY_CHART_COLORS.MEDIUM} />
-                                <Bar dataKey="low" stackId="a" fill={SEVERITY_CHART_COLORS.LOW} />
+                                <Legend itemSorter={bySeverityOrder} />
+                                <Bar dataKey="critical" name="Critical" stackId="a" fill={SEVERITY_CHART_COLORS.CRITICAL} />
+                                <Bar dataKey="high" name="High" stackId="a" fill={SEVERITY_CHART_COLORS.HIGH} />
+                                <Bar dataKey="medium" name="Medium" stackId="a" fill={SEVERITY_CHART_COLORS.MEDIUM} />
+                                <Bar dataKey="low" name="Low" stackId="a" fill={SEVERITY_CHART_COLORS.LOW} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>

@@ -34,7 +34,8 @@ vi.mock("@/context/useAuth", () => ({
   useAuth: () => ({ permissions: [], hasPermission: () => false }),
 }));
 
-vi.mock("@/hooks/queries/use-users", () => ({
+vi.mock("@/hooks/queries/use-users", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/queries/use-users")>()),
   useCurrentUser: () => ({ data: { id: "u-admin" } }),
 }));
 
@@ -70,18 +71,15 @@ function renderWithClient(ui: ReactNode) {
 beforeEach(() => vi.clearAllMocks());
 
 describe("team mutations show the server's refusal", () => {
-  it("adding an unverified user", async () => {
+  it("adding an unverified user, under the email field and not in a toast", async () => {
     teamApi.addMember.mockRejectedValue(apiError(404, "No user has verified this email address"));
     renderWithClient(<AddMemberDialog teamId="t-1" isOpen onClose={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "nobody-ui@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Member" }));
 
-    await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Failed to add member", {
-        description: "No user has verified this email address",
-      }),
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("No user has verified this email address");
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("creating a team", async () => {

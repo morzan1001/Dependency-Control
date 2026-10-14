@@ -10,10 +10,14 @@ import type { Project } from '@/types/project'
 
 vi.mock('@/api/projects', () => ({ projectApi: { inviteMember: vi.fn(), updateMember: vi.fn(), removeMember: vi.fn() } }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ permissions: [] }) }))
-vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'a119abd' } }) }))
+vi.mock('@/hooks/queries/use-users', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-users')>()),
+  useCurrentUser: () => ({ data: { id: 'a119abd' } }),
+}))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const CO_OWNED = 'Team: Pickachu, The TOURists'
+const NO_VERIFIED_USER = 'No user has verified this email address'
 
 function renderMembers(inheritedFrom: string) {
   const project = {
@@ -53,6 +57,8 @@ describe('ProjectMembers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to invite member', { description: 'Network Error' }))
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('asks for an email and a role and ends in Cancel and Invite, like the team member dialog', () => {
@@ -78,6 +84,31 @@ describe('ProjectMembers', () => {
     await waitFor(() => expect(projectApi.inviteMember).toHaveBeenCalledWith('p1', 'bob@example.com', 'viewer'))
   })
 
+  it('invites a pasted address without the non-breaking spaces around it', async () => {
+    vi.mocked(projectApi.inviteMember).mockResolvedValue(undefined as never)
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    // An email field strips the plain spaces around its value itself, so only a pasted non-breaking space reaches the dialog.
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: '\u00a0bob@example.com\u00a0' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
+
+    await waitFor(() => expect(projectApi.inviteMember).toHaveBeenCalledWith('p1', 'bob@example.com', 'viewer'))
+  })
+
+  it('opens again on the Viewer role after another role was picked and the dialog cancelled', async () => {
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+    fireEvent.keyDown(within(screen.getByRole('dialog')).getByLabelText('Role'), { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('option', { name: 'Admin' }))
+    expect(within(screen.getByRole('dialog')).getByLabelText('Role')).toHaveTextContent('Admin')
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    expect(within(screen.getByRole('dialog')).getByLabelText('Role')).toHaveTextContent('Viewer')
+  })
+
   it('closes without inviting through Cancel', () => {
     renderMembers('')
     fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
@@ -87,6 +118,52 @@ describe('ProjectMembers', () => {
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(projectApi.inviteMember).not.toHaveBeenCalled()
+  })
+
+  it.each(['', '   '])('says under the field that the blank address %j needs an email address and invites no one', async (blank) => {
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: blank } })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an email address')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter an email address')
+    expect(projectApi.inviteMember).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [404, NO_VERIFIED_USER],
+    [400, 'User already a member'],
+  ])('shows under the field why the server refused the address (%i), without a toast, like the invite user dialog', async (status, detail) => {
+    vi.mocked(projectApi.inviteMember).mockRejectedValue({ response: { status, data: { detail } } })
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'nobody@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(detail)
+    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription(detail)
+    expect(toast.error).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'bob@example.com' } })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('opens again on an empty field without the refusal shown before it was closed', async () => {
+    vi.mocked(projectApi.inviteMember).mockRejectedValue({ response: { status: 404, data: { detail: NO_VERIFIED_USER } } })
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'nobody@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
+    await screen.findByRole('alert')
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    expect(screen.getByLabelText('Email')).toHaveValue('')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('names a role change that failed and why', async () => {

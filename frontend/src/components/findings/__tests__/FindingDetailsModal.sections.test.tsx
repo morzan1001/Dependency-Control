@@ -408,3 +408,13 @@ describe("FindingDetailsModal details by type", () => {
     expect(screen.getByText("GPL in a proprietary app")).toBeInTheDocument();
   });
 });
+
+describe("FindingDetailsModal footer", () => {
+  it("spaces Close apart like every dialog footer, without a gap of its own", () => {
+    renderModal(finding({}));
+
+    const footer = screen.getByText("Close", { selector: "button:not(.absolute)" }).parentElement;
+    expect(footer).toHaveClass("gap-2");
+    expect(footer).not.toHaveClass("sm:gap-0");
+  });
+});

@@ -28,7 +28,7 @@ import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
 import { cn, formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
+import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -70,7 +70,7 @@ function MetaItem({ label, icon: Icon, iconClassName, children }: MetaItemProps)
       <span className="text-sm text-muted-foreground">{label}</span>
       {Icon ? (
         <div className="flex items-center gap-2">
-          <Icon className={cn('h-4 w-4', iconClassName)} />
+          <Icon className={cn('h-4 w-4 shrink-0', iconClassName)} />
           {children}
         </div>
       ) : children}
@@ -86,6 +86,8 @@ interface DistributionSlice {
 
 function DistributionPie({ title, data }: Readonly<{ title: string; data: DistributionSlice[] }>) {
   const slices = data.filter((d) => d.value > 0)
+  // Recharts sorts a legend alphabetically unless given a sorter.
+  const bySliceOrder = (entry: { value?: string }) => slices.findIndex((slice) => slice.name === entry.value)
   return (
     <Card>
       <CardHeader>
@@ -104,7 +106,7 @@ function DistributionPie({ title, data }: Readonly<{ title: string; data: Distri
                 contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
               />
-              <Legend verticalAlign="bottom" height={36} />
+              <Legend verticalAlign="bottom" height={36} itemSorter={bySliceOrder} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -207,8 +209,8 @@ export default function ScanDetails() {
   const { permissions } = useAuth()
   const { data: currentUser } = useCurrentUser()
 
-  const triggerRescanMutation = useTriggerRescan({ errorTitle: "Re-scan not started" })
-  const unpinMutation = useUnpinScan({ errorTitle: "Unpin failed" })
+  const triggerRescanMutation = useTriggerRescan({ errorTitle: "Failed to trigger re-scan" })
+  const unpinMutation = useUnpinScan({ errorTitle: "Failed to unpin scan" })
 
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]
@@ -293,15 +295,11 @@ export default function ScanDetails() {
 
   const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, negligible: 0, info: 0, unknown: 0 };
   
-  const severityData = [
-      { name: 'Critical', value: stats.critical || 0, color: SEVERITY_CHART_COLORS.CRITICAL },
-      { name: 'High', value: stats.high || 0, color: SEVERITY_CHART_COLORS.HIGH },
-      { name: 'Medium', value: stats.medium || 0, color: SEVERITY_CHART_COLORS.MEDIUM },
-      { name: 'Low', value: stats.low || 0, color: SEVERITY_CHART_COLORS.LOW },
-      { name: 'Negligible', value: stats.negligible || 0, color: SEVERITY_CHART_COLORS.NEGLIGIBLE },
-      { name: 'Info', value: stats.info || 0, color: SEVERITY_CHART_COLORS.INFO },
-      { name: 'Unknown', value: stats.unknown || 0, color: SEVERITY_CHART_COLORS.UNKNOWN },
-  ];
+  const severityData = SEVERITY_ORDER.map((severity) => ({
+      name: severity.charAt(0) + severity.slice(1).toLowerCase(),
+      value: stats[severity.toLowerCase() as Lowercase<Severity>] || 0,
+      color: SEVERITY_CHART_COLORS[severity],
+  }));
 
   const categoryData = categoryStats ? [
       { name: 'Security', value: categoryStats.security ?? 0, color: '#ef4444' },
@@ -408,7 +406,7 @@ export default function ScanDetails() {
                                 pipelineUrl: scan.pipeline_url,
                                 branch: scan.branch,
                             })}>
-                                <span className="font-medium">{scan.branch}</span>
+                                <span className="font-medium wrap-anywhere">{scan.branch}</span>
                             </ScmLink>
                         </MetaItem>
                         <ScanReleaseControl projectId={projectId!} scan={scan} canWrite={canWrite} />
@@ -559,7 +557,7 @@ export default function ScanDetails() {
                             size={result.size}
                             badge={isPostProcessorResult(result.analyzer_name) && <Badge variant="outline">Post-Processor</Badge>}
                             preview={<ResultPreview scanId={scanId!} resultId={result.id} />}
-                            onDownload={() => downloadServerFile(() => scanApi.downloadResult(scanId!, result.id), `${result.analyzer_name}.json`, 'Could not download the result')}
+                            onDownload={() => downloadServerFile(() => scanApi.downloadResult(scanId!, result.id), `${result.analyzer_name}.json`, 'Failed to download analyzer result')}
                         />
                     ))}
                 </CardContent>
@@ -585,7 +583,7 @@ export default function ScanDetails() {
                             size={sbom.size}
                             highlighted={highlightedSbomIndex === sbom.index}
                             preview={<SbomPreview scanId={scanId!} index={sbom.index} />}
-                            onDownload={() => downloadServerFile(() => scanApi.downloadSbom(scanId!, sbom.index), `scan_${scanId}_sbom_${sbom.index + 1}.json`, 'Could not download the SBOM')}
+                            onDownload={() => downloadServerFile(() => scanApi.downloadSbom(scanId!, sbom.index), `scan_${scanId}_sbom_${sbom.index + 1}.json`, 'Failed to download SBOM')}
                         />
                     ))}
                 </CardContent>

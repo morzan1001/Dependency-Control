@@ -11,6 +11,7 @@ import {
 import type {
   CryptoRule, Severity, CryptoFindingType, CryptoPolicySource,
 } from "@/types/cryptoPolicy";
+import { CRYPTO_FINDING_TYPES } from "@/lib/constants";
 
 interface Props {
   // Effective rules (system + overrides) in merged mode; diffed against systemRules on save.
@@ -29,20 +30,6 @@ type StatusFilter = "all" | RuleStatus;
 
 const SEVERITIES: Severity[] = [
   "CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO", "UNKNOWN",
-];
-const FINDING_TYPES: { value: CryptoFindingType; label: string }[] = [
-  { value: "crypto_weak_algorithm", label: "Weak algorithm" },
-  { value: "crypto_weak_key", label: "Weak key" },
-  { value: "crypto_quantum_vulnerable", label: "Quantum-vulnerable" },
-  { value: "crypto_cert_expired", label: "Certificate expired" },
-  { value: "crypto_cert_expiring_soon", label: "Certificate expiring soon" },
-  { value: "crypto_cert_not_yet_valid", label: "Certificate not yet valid" },
-  { value: "crypto_cert_weak_signature", label: "Certificate weak signature" },
-  { value: "crypto_cert_weak_key", label: "Certificate weak key" },
-  { value: "crypto_cert_self_signed", label: "Certificate self-signed" },
-  { value: "crypto_cert_validity_too_long", label: "Certificate validity too long" },
-  { value: "crypto_weak_protocol", label: "Weak protocol" },
-  { value: "crypto_key_management", label: "Key management misuse" },
 ];
 const SOURCES: CryptoPolicySource[] = [
   "nist-sp-800-131a", "bsi-tr-02102", "cnsa-2.0", "nist-pqc", "custom",
@@ -252,7 +239,7 @@ export function CryptoPolicyEditor({
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {FINDING_TYPES.map((f) => (
+                        {CRYPTO_FINDING_TYPES.map((f) => (
                           <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
                         ))}
                       </SelectContent>

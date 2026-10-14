@@ -285,7 +285,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                 </div>
 
                 {!showWaiverForm && (
-                    <DialogFooter className="gap-2 sm:gap-0">
+                    <DialogFooter>
                         {canCreateWaiver && (
                             <Button variant="outline" onClick={() => handleWaive()}>
                                 <ShieldAlert className="mr-2 h-4 w-4" />

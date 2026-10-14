@@ -164,7 +164,7 @@ describe('ScanReleaseControl', () => {
 
     handlers.onError({ response: { data: { detail: 'Not enough permissions' } } })
 
-    expect(toast.error).toHaveBeenCalledWith(`Could not withdraw this scan from ${PRODUCTION}`, {
+    expect(toast.error).toHaveBeenCalledWith(`Failed to withdraw this scan from ${PRODUCTION}`, {
       description: 'Not enough permissions',
     })
   })

@@ -263,7 +263,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                 <TableHead className="w-[200px] bg-background">ID</TableHead>
                                 <TableHead className="w-auto bg-background">Component</TableHead>
                                 <TableHead className="w-[80px] bg-background">Source</TableHead>
-                                <TableHead className="w-[120px] bg-background">Type</TableHead>
+                                <TableHead className="w-[160px] bg-background">Type</TableHead>
                                 <TableHead className="w-[150px] bg-background">Scanner</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -294,7 +294,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                             <SortableHead column="vuln_id" sort={sort} firstOrder="asc" className="w-[200px] bg-background">ID</SortableHead>
                             <SortableHead column="component" sort={sort} firstOrder="asc" className="w-auto bg-background">Component</SortableHead>
                             <SortableHead column="source_type" sort={sort} firstOrder="asc" className="w-[80px] bg-background">Source</SortableHead>
-                            <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[120px] bg-background">Type</SortableHead>
+                            <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[160px] bg-background">Type</SortableHead>
                             <SortableHead column="scanner" sort={sort} firstOrder="asc" className="w-[150px] bg-background">Scanner</SortableHead>
                         </TableRow>
                     </TableHeader>

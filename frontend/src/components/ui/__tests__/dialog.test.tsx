@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../dialog'
+import { Button } from '../button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../dialog'
 
 describe('DialogHeader', () => {
   it('keeps the close button corner free, so a long title wraps before it, and stays centred on a phone', () => {
@@ -34,5 +35,26 @@ describe('DialogContent', () => {
     )
 
     expect(screen.getByRole('dialog')).toHaveClass('grid', 'grid-cols-1')
+  })
+})
+
+describe('DialogFooter', () => {
+  it('keeps a gap between its buttons both stacked on a phone and side by side', () => {
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Invite User</DialogTitle>
+          <DialogDescription>Send an invitation email to a new user.</DialogDescription>
+          <DialogFooter>
+            <Button variant="outline">Cancel</Button>
+            <Button>Send Invitation</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>,
+    )
+
+    const footer = screen.getByRole('button', { name: 'Cancel' }).parentElement
+    expect(footer).toHaveClass('flex-col-reverse', 'gap-2', 'sm:flex-row')
+    expect(footer).not.toHaveClass('sm:space-x-2')
   })
 })

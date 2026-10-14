@@ -119,3 +119,14 @@ describe('TeamsPage edit dialog', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
+
+describe('TeamsPage sort order', () => {
+  it('names the icon-only sort order button by the order a click gives', async () => {
+    await renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sort descending' }))
+
+    expect(screen.getByRole('button', { name: 'Sort ascending' })).toBeInTheDocument()
+    await waitFor(() => expect(teamApi.getAll).toHaveBeenLastCalledWith('', 'name', 'desc'))
+  })
+})

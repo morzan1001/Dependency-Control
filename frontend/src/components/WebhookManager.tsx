@@ -103,9 +103,9 @@ export function WebhookManager({
     try {
       const result = await testWebhook.mutateAsync(id)
       if (result.success) toast.success(`Test delivered (HTTP ${result.status_code})`)
-      else toast.error("Test failed", { description: result.error })
+      else toast.error("Failed to deliver test", { description: result.error })
     } catch (error) {
-      toast.error("Test failed", { description: getErrorMessage(error) })
+      toast.error("Failed to send test", { description: getErrorMessage(error) })
     }
   }
 
@@ -144,7 +144,8 @@ export function WebhookManager({
         )}
       </CardHeader>
       <CardContent>
-        <Table className="table-fixed">
+        {/* Narrower than its fixed columns, the table would leave the URL column no width at all. */}
+        <Table className="table-fixed min-w-[880px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-auto">URL</TableHead>

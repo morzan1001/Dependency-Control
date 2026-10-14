@@ -1,8 +1,10 @@
 import { useUpdateTeamMember, useRemoveTeamMember } from '@/hooks/queries/use-teams';
-import { Team } from '@/types/team';
+import { useGitHubInstances, useGitLabInstances } from '@/hooks/queries/use-instances';
+import { BindingProvider, Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { useCurrentUser } from '@/hooks/queries/use-users';
 import { canManageTeamMembers } from '@/lib/team-roles';
+import { PROVIDER_LABEL } from '@/lib/team-binding';
 import { Button } from '@/components/ui/button';
 import { UserMinus, Loader2 } from 'lucide-react';
 import {
@@ -37,11 +39,26 @@ interface TeamMembersDialogProps {
   onClose: () => void;
 }
 
+// A synced member's source is "<provider>:<instance id>"; anything else is shown as stored.
+function syncSource(source: string, instanceNames: Map<string, string>): string {
+  const [provider, instanceId] = source.split(':');
+  const label = PROVIDER_LABEL[provider as BindingProvider] as string | undefined;
+  if (!label) return source;
+  const name = instanceNames.get(instanceId);
+  return name ? `${label} · ${name}` : label;
+}
+
 export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMembersDialogProps>) {
   const updateMemberMutation = useUpdateTeamMember({ errorTitle: "Failed to update member role" });
   const removeMemberMutation = useRemoveTeamMember({ errorTitle: "Failed to remove member" });
-  const { permissions } = useAuth();
+  const { permissions, hasPermission } = useAuth();
   const { data: currentUser } = useCurrentUser();
+  const canListInstances = isOpen && hasPermission('system:manage');
+  const { data: githubInstances } = useGitHubInstances(undefined, canListInstances);
+  const { data: gitlabInstances } = useGitLabInstances(undefined, canListInstances);
+  const instanceNames = new Map(
+    [...(githubInstances?.items ?? []), ...(gitlabInstances?.items ?? [])].map((instance) => [instance.id, instance.name]),
+  );
 
   const canManage = team && currentUser
     ? canManageTeamMembers(team, currentUser.id, permissions)
@@ -80,7 +97,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                           <span className="font-medium truncate">{member.username || 'Unknown'}</span>
                           <span className="text-xs text-muted-foreground break-all">{member.user_id}</span>
                           {member.source && member.source !== 'manual' && (
-                            <span className="text-xs text-muted-foreground">Synced from {member.source}</span>
+                            <span className="text-xs text-muted-foreground">Synced from {syncSource(member.source, instanceNames)}</span>
                           )}
                         </div>
                       </TableCell>
