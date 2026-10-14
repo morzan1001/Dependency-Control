@@ -401,7 +401,7 @@ TYPOSQUATTING_CRITICAL_SIMILARITY: float = 0.95
 # because a name similar to a package below it is not flagged.
 TYPOSQUATTING_POPULAR_PACKAGE_RANKS: int = 5000
 
-# A project's analyzers unless it overrides them; without epss_kev a scan carries no in_kev, epss_score or risk_score.
+# A project's analyzers unless overridden; without epss_kev a scan has no in_kev, epss_score or enrichment risk_score.
 DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
     "trivy",
     "osv",

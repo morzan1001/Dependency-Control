@@ -140,11 +140,7 @@ def _live_default(scope: _HeadScope) -> str | None:
 
 
 def _may_head(doc: dict[str, Any], scope: _HeadScope) -> bool:
-    """Whether this scan may stand in for the project's tip build without re-deriving it.
-
-    With a live default branch only a scan on it may; otherwise any branch may, but a tag build only
-    ranks behind every branch build, so the derived pick has to decide.
-    """
+    """Whether this scan may stand in for the tip build: one on the live default branch, else a live branch build."""
     default = _live_default(scope)
     if default:
         return doc.get("branch") == default
