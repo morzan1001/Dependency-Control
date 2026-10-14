@@ -195,6 +195,7 @@ class BaseRepository[T: BaseModel]:
         limit: int | None = None,
         allow_disk_use: bool = False,
         hint: dict[str, int] | None = None,
+        collation: Collation | None = None,
     ) -> list[dict[str, Any]]:
         """allow_disk_use lets mongod spill large $group/$sort sets to disk past the 100MB limit."""
         options: dict[str, Any] = {}
@@ -202,7 +203,7 @@ class BaseRepository[T: BaseModel]:
             options["allowDiskUse"] = True
         if hint:
             options["hint"] = hint
-        return await self.collection.aggregate(pipeline, **options).to_list(limit)
+        return await self.collection.aggregate(pipeline, collation=collation, **options).to_list(limit)
 
     async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T, None]:
         async for doc in self.collection.find(query or {}):

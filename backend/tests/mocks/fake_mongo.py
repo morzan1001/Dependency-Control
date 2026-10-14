@@ -87,7 +87,7 @@ Supported aggregation expression operators (in ``$project`` / accumulator args)
 - ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``, ``$toString``
 - Strings: ``$concat``, ``$trim``, ``$replaceAll``, ``$regexFind``, ``$regexMatch``
 - Arrays and maps: ``$size``, ``$setUnion``, ``$setDifference``, ``$objectToArray``,
-  ``$arrayToObject``, ``$arrayElemAt``, ``$split``
+  ``$arrayToObject``, ``$arrayElemAt``, ``$split``, ``$getField``
 - Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
 - Logical: ``$and``, ``$or``
 - ``$map``, ``$filter``, ``$let``, ``$mergeObjects``, ``$literal``. A bound ``$$var`` is
@@ -661,6 +661,10 @@ def _eval_expr(doc: dict, expr):
 
     if "$literal" in expr:
         return expr["$literal"]
+    if "$getField" in expr:
+        spec = expr["$getField"]
+        source = _eval_expr(doc, spec.get("input", "$$ROOT"))
+        return source.get(_eval_expr(doc, spec["field"]), _REMOVE) if isinstance(source, dict) else None
     if "$map" in expr:
         return _eval_map(doc, expr["$map"])
     if "$filter" in expr:

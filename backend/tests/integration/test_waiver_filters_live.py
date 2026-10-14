@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE
 from app.repositories.waivers import WaiverRepository
 from app.services.waivers.matching import waiver_query
 from tests.test_services.test_waivers.test_criteria import _CASES, _FINDINGS
@@ -58,7 +59,7 @@ async def test_a_page_by_creator_follows_the_current_usernames(db, sort_order, s
     )
 
     page = await WaiverRepository(db).find_many_by_creator_name(
-        {"project_id": "p"}, skip, 2 if skip else 10, sort_order
+        {"project_id": "p"}, skip, 2 if skip else 10, sort_order, CASE_INSENSITIVE
     )
 
     assert [(w.id, w.created_by) for w in page] == [(wid, creators[wid]) for wid in expected]

@@ -1,10 +1,11 @@
-"""The users, teams and projects lists order names alphabetically whatever their case; the fake ignores collations."""
+"""The users, teams, projects and waiver creator lists sort names whatever their case; the fake ignores collations."""
 
 import pytest
 
 from app.models.project import Project, ProjectMember
 from app.models.team import Team
 from app.models.user import User
+from app.models.waiver import Waiver
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -58,3 +59,24 @@ async def test_the_projects_list_orders_a_members_projects_whatever_their_case(c
     )
 
     assert [project["name"] for project in resp.json()["items"]] == ["alpha-api", "test-project", "Zeta Service"]
+
+
+async def test_the_global_waivers_order_creators_whatever_their_case(client, db, admin_auth_headers):
+    await db.users.insert_many(
+        [
+            User(id="u-1", username="Bob Example", email="bob@corp.com").model_dump(by_alias=True),
+            User(id="u-2", username="alice.jensen", email="alice@corp.com").model_dump(by_alias=True),
+        ]
+    )
+    # "Dave" and "carol" name no account, as a creator stored before waivers kept ids.
+    await db.waivers.insert_many(
+        [Waiver(reason="accepted", created_by=by).model_dump(by_alias=True) for by in ("u-1", "Dave", "u-2", "carol")]
+    )
+
+    resp = await client.get(
+        "/api/v1/waivers/",
+        params={"global_only": True, "sort_by": "created_by", "sort_order": "asc"},
+        headers=admin_auth_headers,
+    )
+
+    assert [waiver["created_by"] for waiver in resp.json()["items"]] == ["alice.jensen", "Bob Example", "carol", "Dave"]
