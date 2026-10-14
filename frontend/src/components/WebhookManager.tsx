@@ -144,7 +144,8 @@ export function WebhookManager({
         )}
       </CardHeader>
       <CardContent>
-        <Table className="table-fixed">
+        {/* Narrower than its fixed columns, the table would leave the URL column no width at all. */}
+        <Table className="table-fixed min-w-[880px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-auto">URL</TableHead>

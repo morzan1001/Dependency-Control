@@ -179,6 +179,15 @@ describe("WebhookManager", () => {
     expect(screen.queryByText("Failing")).not.toBeInTheDocument();
   });
 
+  it("keeps the URL column 200px wide and scrolls the table sideways on a narrow screen", () => {
+    renderWith([slackHook]);
+
+    const table = screen.getByRole("table");
+    expect(table).toHaveClass("table-fixed", "min-w-[880px]");
+    expect(table.parentElement).toHaveClass("overflow-auto");
+    expect(screen.getByRole("columnheader", { name: "URL" })).toHaveClass("w-auto");
+  });
+
   it("shows why a test delivery failed", async () => {
     vi.mocked(webhookApi.test).mockResolvedValue({ success: false, status_code: 400, error: "HTTP 400: no_text" });
     renderWith([slackHook]);
