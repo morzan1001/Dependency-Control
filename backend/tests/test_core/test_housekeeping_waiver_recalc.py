@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from app.core import housekeeping
+from app.core.worker import AnalysisWorkerManager
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OTHER_TASKS = (
@@ -44,7 +45,7 @@ async def _one_iteration(monkeypatch: pytest.MonkeyPatch, recalc: Any) -> FakeDa
     monkeypatch.setattr(housekeeping, "run_waiver_recalc", recalc)
     monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=_sleep))
     with pytest.raises(_StopLoop):
-        await housekeeping.housekeeping_loop()
+        await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
     return db
 
 

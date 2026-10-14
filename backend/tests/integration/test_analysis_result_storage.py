@@ -22,7 +22,13 @@ from app.services.analysis.engine import (
 from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analyzers.outdated import OutdatedAnalyzer
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
-from tests.helpers.analyzers import analyze_cyclonedx, build_analyzer, process_sbom_document, serve_analyzer
+from tests.helpers.analyzers import (
+    analyze_cyclonedx,
+    build_analyzer,
+    process_sbom_document,
+    run_context,
+    serve_analyzer,
+)
 from tests.helpers.sboms import store_sbom
 
 _RUN = {"pipeline_id": 616161, "commit_hash": "d" * 40, "branch": "main"}
@@ -237,7 +243,7 @@ async def test_each_sbom_keeps_its_own_row_and_a_rerun_replaces_it(db, monkeypat
     async def analyze(index: int) -> None:
         # the two images of a multi-arch build share their root component name
         await process_sbom_document(
-            index, _sbom("storefront"), "scan-1", db, ResultAggregator(), ["outdated_packages"], None
+            run_context(db, "scan-1", ["outdated_packages"]), ResultAggregator(), _sbom("storefront"), index + 1
         )
 
     await analyze(0)
@@ -265,7 +271,7 @@ async def test_a_kics_result_over_16_mib_is_stored_and_every_finding_aggregated(
     assert "result" not in row
     assert await _file_length(db, row["result_gridfs_id"]) > _MONGO_DOCUMENT_LIMIT
     aggregator = ResultAggregator()
-    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), row["scan_id"], [])
+    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), row["scan_id"])
     assert len(aggregator.get_findings()) == file_entries
 
 
@@ -284,9 +290,9 @@ async def test_an_engine_license_result_over_16_mib_is_stored_as_a_file(db):
     ]
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
 
-    summary = await process_sbom_document(0, sbom, "scan-1", db, ResultAggregator(), ["license_compliance"], None)
+    summary = await process_sbom_document(run_context(db, "scan-1", ["license_compliance"]), ResultAggregator(), sbom)
 
-    assert summary == ["license_compliance: Success"]
+    assert [str(outcome) for outcome in summary] == ["license_compliance: Success"]
     [row] = await _rows(db, "scan-1")
     assert await _file_length(db, row["result_gridfs_id"]) > _MONGO_DOCUMENT_LIMIT
     assert await _stored(db, row) == await analyze_cyclonedx(build_analyzer("license_compliance"), components)
@@ -327,7 +333,7 @@ async def test_a_legacy_inline_row_is_aggregated_and_listed(db):
     )
     aggregator = ResultAggregator()
 
-    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1", [])
+    await _aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1")
 
     assert [finding.type for finding in aggregator.get_findings()] == ["iac"]
     [listed] = await AnalysisResultRepository(db).find_by_scan("scan-1", limit=10)
@@ -422,8 +428,6 @@ async def test_every_external_row_of_a_scan_is_aggregated(db):
             for i in range(10_001)
         ]
     )
-    summary: list[str] = []
+    outcomes = await _aggregate_external_results(ResultAggregator(), AnalysisResultRepository(db), "scan-1")
 
-    await _aggregate_external_results(ResultAggregator(), AnalysisResultRepository(db), "scan-1", summary)
-
-    assert len(summary) == 10_001
+    assert len(outcomes) == 10_001

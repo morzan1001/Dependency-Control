@@ -17,6 +17,7 @@ from app.models.project import Project
 from app.models.system import SystemSettings
 from app.schemas.project import ProjectCreate
 from app.services.analysis.engine import _run_vuln_enrichments
+from tests.helpers.analyzers import run_context
 
 _SCAN_ID = "scan-1"
 _FINDINGS = [{"finding_id": "log4j-core:2.14.1", "details": {"vulnerabilities": [{"id": "CVE-2021-44228"}]}}]
@@ -26,21 +27,10 @@ def _run(monkeypatch, active_analyzers, unavailable=()):
     enrich = AsyncMock(return_value=({}, list(unavailable)))
     monkeypatch.setattr("app.services.analysis.engine.vulnerability_enrichment_service.enrich_findings", enrich)
     result_repo = SimpleNamespace(save_result=AsyncMock())
-    summary: list[str] = []
+    monkeypatch.setattr("app.services.analysis.engine.AnalysisResultRepository", lambda _db: result_repo)
+    summary: list = []
 
-    asyncio.run(
-        _run_vuln_enrichments(
-            list(active_analyzers),
-            _FINDINGS,
-            _SCAN_ID,
-            None,
-            None,
-            result_repo,
-            None,
-            None,
-            summary,
-        )
-    )
+    asyncio.run(_run_vuln_enrichments(run_context(None, _SCAN_ID, active_analyzers), _FINDINGS, summary))
     return enrich, result_repo, summary
 
 
@@ -48,12 +38,12 @@ def test_default_analyzer_set_runs_the_enrichment(monkeypatch):
     enrich, result_repo, summary = _run(monkeypatch, DEFAULT_ACTIVE_ANALYZERS)
     enrich.assert_awaited_once()
     assert result_repo.save_result.await_args.args[1] == "epss_kev"
-    assert summary == ["epss_kev: Success (1 enriched)"]
+    assert [str(outcome) for outcome in summary] == ["epss_kev: Success (1 enriched)"]
 
 
 def test_an_unreadable_source_marks_the_enrichment_partial(monkeypatch):
     _, _, summary = _run(monkeypatch, DEFAULT_ACTIVE_ANALYZERS, unavailable=["KEV"])
-    assert summary == ["epss_kev: Partial (KEV unavailable) (1 enriched)"]
+    assert [str(outcome) for outcome in summary] == ["epss_kev: Partial (KEV unavailable) (1 enriched)"]
 
 
 def test_a_set_without_the_enrichment_writes_nothing(monkeypatch):

@@ -379,6 +379,4 @@ class AnalysisWorkerManager:
                 await asyncio.sleep(1)  # Prevents tight loop on persistent failure.
 
 
-WorkerManager = AnalysisWorkerManager
-
 worker_manager = AnalysisWorkerManager(num_workers=settings.WORKER_COUNT)

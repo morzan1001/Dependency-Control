@@ -16,6 +16,7 @@ from app.services.analysis.engine import _finalize_scan_and_project, _unwaived_f
 from app.services.analysis.notifications import _categorize_vulnerabilities
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.stats import recalculate_project_stats
+from tests.helpers.analyzers import run_context, verdict
 from tests.helpers.databases import DATABASES
 from tests.helpers.findings import aggregated_vulnerability, persist_findings
 from tests.mocks.fake_mongo import FakeDatabase
@@ -139,21 +140,10 @@ async def _persist(db, scan_id: str, *findings: Finding) -> list[dict]:
 
 
 async def _finalize(db, scan_id: str) -> None:
-    scan_repo = ScanRepository(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing", "worker_id": _WORKER}})
     stats = (await calculate_comprehensive_stats(db, scan_id)).stats
-    await _finalize_scan_and_project(
-        scan_id,
-        await scan_repo.get_by_id(scan_id),
-        _PROJECT,
-        1,
-        0,
-        stats,
-        {"scan_id": scan_id, "status": "completed", "findings_count": 1, "stats": stats.model_dump()},
-        scan_repo,
-        worker_id=_WORKER,
-        external_load_start=datetime.now(timezone.utc),
-    )
+    ctx = run_context(db, await ScanRepository(db).get_by_id(scan_id))
+    await _finalize_scan_and_project(ctx, verdict(stats=stats, findings_count=1), datetime.now(timezone.utc))
 
 
 @pytest.mark.parametrize("_database", DATABASES)

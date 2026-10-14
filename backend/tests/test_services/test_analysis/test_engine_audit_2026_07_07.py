@@ -74,12 +74,10 @@ class TestAggregateExternalSkipsEngineRows:
             asyncio.run(
                 db.analysis_results.insert_one({"scan_id": "scan-1", "analyzer_name": analyzer_name, "result": result})
             )
-        results_summary: list = []
-
-        asyncio.run(_aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1", results_summary))
+        outcomes = asyncio.run(_aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1"))
 
         assert calls == [], f"engine-written rows must not be aggregated; got {calls}"
-        assert results_summary == [], f"no spurious Success lines expected; got {results_summary}"
+        assert outcomes == [], f"no spurious Success lines expected; got {outcomes}"
 
 
 class TestCarryOverExcludesPostProcessors:

@@ -31,7 +31,6 @@ class TestAggregateExternalResultsResilience:
 
     def test_good_results_aggregated_when_one_malformed(self, monkeypatch):
         aggregator = self._make_aggregator()
-        results_summary: list = []
 
         # 'trivy' absent from analyzers -> external results path
         monkeypatch.setattr("app.services.analysis.engine._ENGINE_RESULT_NAMES", frozenset())
@@ -70,7 +69,7 @@ class TestAggregateExternalResultsResilience:
 
         aggregator.aggregate = patched_aggregate
 
-        asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-1", results_summary))
+        asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-1"))
 
         findings = aggregator.get_findings()
 
@@ -91,9 +90,8 @@ class TestAggregateExternalResultsResilience:
             f"got descriptions: {[f.description for f in warning_findings]}"
         )
 
-    def test_results_summary_still_populated_after_bad_result(self, monkeypatch):
+    def test_outcomes_still_reported_after_bad_result(self, monkeypatch):
         aggregator = self._make_aggregator()
-        results_summary: list = []
 
         monkeypatch.setattr("app.services.analysis.engine._ENGINE_RESULT_NAMES", frozenset())
 
@@ -130,6 +128,6 @@ class TestAggregateExternalResultsResilience:
 
         aggregator.aggregate = patched_aggregate
 
-        asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-2", results_summary))
+        outcomes = asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-2"))
 
-        assert any("trivy" in s for s in results_summary), f"Expected trivy in results_summary; got {results_summary}"
+        assert [str(outcome) for outcome in outcomes] == ["bad_analyzer: Failed", "trivy: Success"]

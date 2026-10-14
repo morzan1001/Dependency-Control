@@ -774,9 +774,6 @@ async def trigger_rescan(
     if scan.get("status") in SCAN_ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="Cannot re-scan: the scan is still being analysed.")
 
-    if not worker_manager:
-        raise HTTPException(status_code=500, detail="Worker manager not available")
-
     rescan = await create_rescan(db, scan, worker_manager)
     if rescan is None:
         raise HTTPException(status_code=409, detail="A re-scan of this scan is already under way.")

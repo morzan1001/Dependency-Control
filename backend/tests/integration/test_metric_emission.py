@@ -14,9 +14,10 @@ from app.core.worker import AnalysisWorkerManager
 from app.db import mongodb
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Scan
-from app.repositories.scans import ScanRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
+from app.services.analysis.runner import AnalyzerInput
+from tests.helpers.analyzers import run_context, serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
 _WORKER = "pod-a/worker-0"
@@ -136,12 +137,14 @@ async def test_an_analyzer_run_counts_its_scan_its_duration_and_its_failures(mon
             ("analysis_errors_total", labels),
         ]
     )
-    analyzer = SimpleNamespace(analyze=AsyncMock(return_value={"error": "exit 1"}))
-    kwargs = dict(settings={}, source="s", row_source="s", parsed_components=[], sbom_path=None, sbom_format=None)
+    analyzer = serve_analyzer(
+        monkeypatch, "metric-probe", SimpleNamespace(analyze=AsyncMock(return_value={"error": "exit 1"}))
+    )
+    ctx = run_context(None, "scan")
 
-    await engine.process_analyzer("metric-probe", analyzer, "scan", None, ResultAggregator(), **kwargs)
+    await engine.process_analyzer(ctx, ResultAggregator(), "metric-probe", AnalyzerInput(1, []))
     analyzer.analyze.side_effect = RuntimeError("boom")
-    await engine.process_analyzer("metric-probe", analyzer, "scan", None, ResultAggregator(), **kwargs)
+    await engine.process_analyzer(ctx, ResultAggregator(), "metric-probe", AnalyzerInput(1, []))
 
     assert moved() == [2, 1, 2]
 
@@ -182,7 +185,7 @@ async def test_sbom_downloads_count_their_attempt_success_and_failure(monkeypatc
             for s in ("attempt", "success", "error")
         ]
     )
-    await engine._load_sbom(None, str(ObjectId()), write_file=False)
+    await engine._load_sbom(None, str(ObjectId()), 1, write_file=False)
     engine._sbom_load_failed(ResultAggregator(), "gone")
     assert moved() == [1, 1, 1]
 
@@ -210,6 +213,7 @@ def test_findings_are_counted_by_type_and_by_scanner():
 @pytest.mark.asyncio
 async def test_epss_kev_enrichment_counts_the_enriched_findings_their_scores_and_kev_hits(monkeypatch):
     monkeypatch.setattr(engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=(None, [])))
+    monkeypatch.setattr(engine, "AnalysisResultRepository", lambda _db: MagicMock(save_result=AsyncMock()))
     moved = _deltas(
         [
             ("analysis_enrichment_total", {"type": "epss_kev"}),
@@ -218,7 +222,7 @@ async def test_epss_kev_enrichment_counts_the_enriched_findings_their_scores_and
         ]
     )
     findings = [{"details": {"epss_score": 0.5, DETAILS_KEY_IN_KEV: True}}, {"details": {}}]
-    await engine._run_epss_kev_enrichment(findings, "scan", MagicMock(save_result=AsyncMock()), None, [])
+    await engine._run_epss_kev_enrichment(run_context(None, "scan"), findings, [])
     assert moved() == [2, 1, 1]
 
 
@@ -227,13 +231,10 @@ async def test_a_run_rescheduled_by_new_input_is_counted_as_a_race(db):
     await db.scans.insert_one({"_id": "s", "status": "processing", "worker_id": _WORKER, "sbom_generation": 1})
     moved = _deltas([("analysis_race_conditions_total", {})])
     status = await engine._write_final_state(
-        ScanRepository(db),
-        "s",
+        run_context(db, "s", sbom_generation=2),
         SCAN_STATUS_COMPLETED,
         {"$set": {"status": SCAN_STATUS_COMPLETED}},
-        worker_id=_WORKER,
-        sbom_generation=2,
-        external_load_start=datetime.now(timezone.utc),
+        datetime.now(timezone.utc),
     )
     assert status == SCAN_STATUS_PENDING
     assert moved() == [1]

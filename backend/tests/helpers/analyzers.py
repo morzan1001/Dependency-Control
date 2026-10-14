@@ -1,12 +1,17 @@
 """Registry access for tests: the registry stores factories, not instances."""
 
+from collections.abc import Iterable
 from typing import Any
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED, ScanStatus
 from app.models.crypto_asset import CryptoAsset
+from app.models.project import Scan
+from app.models.stats import Stats
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.services.analysis import engine, registry
+from app.services.analysis.runner import build_settings_resolver
 from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
@@ -34,10 +39,40 @@ async def analyze_cyclonedx(
     )
 
 
-async def process_sbom_document(index: int, sbom: dict[str, Any], *args: Any, **kwargs: Any) -> list[str]:
+def run_context(db: Any, scan: Scan | str, active_analyzers: Iterable[str] = (), **overrides: Any) -> Any:
+    """The context run_analysis builds for a claimed ``scan`` (or a bare one of that id), minus the settings reads."""
+    if isinstance(scan, str):
+        scan = Scan(id=scan, project_id="test-project-id", branch="main")
+    fields = {
+        "scan": scan,
+        "db": db,
+        "worker_id": "pod-a/worker-0",
+        "sbom_generation": scan.sbom_generation,
+        "active_analyzers": list(active_analyzers),
+        "github_token": None,
+        "settings_for": build_settings_resolver(None, None),
+    }
+    return engine._RunContext(**(fields | overrides))
+
+
+def verdict(status: ScanStatus = SCAN_STATUS_COMPLETED, stats: Stats | None = None, **fields: Any) -> Any:
+    """A run's verdict with no findings and no failed analyzers, unless ``fields`` say otherwise."""
+    defaults = {
+        "status": status,
+        "error": None,
+        "stats": stats or Stats(),
+        "findings_count": 0,
+        "ignored_count": 0,
+        "outcomes": [],
+        "failed_analyzers": [],
+        "enrichment_failures": [],
+    }
+    return engine._Verdict(**(defaults | fields))
+
+
+async def process_sbom_document(ctx: Any, aggregator: Any, sbom: dict[str, Any], position: int = 1) -> list[Any]:
     """Run ``engine._process_sbom`` on the document as run_analysis hands it a loaded SBOM, for the non-CLI analyzers."""
-    parsed, components, source, sbom_format = engine._parse_and_track_sbom(sbom)
-    return await engine._process_sbom(index, parsed, components, source, None, sbom_format, *args, **kwargs)
+    return await engine._process_sbom(ctx, aggregator, *engine._parse_and_track_sbom(sbom, position))
 
 
 def bundled_iana_catalog() -> dict[str, CipherSuiteEntry]:

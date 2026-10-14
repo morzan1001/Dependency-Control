@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from itertools import batched
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 
 from app.core import abatched
@@ -59,7 +59,7 @@ from app.services.stats import run_waiver_recalc
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
 if TYPE_CHECKING:
-    from app.core.worker import WorkerManager
+    from app.core.worker import AnalysisWorkerManager
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
 
 
 async def _process_project_rescan(
-    project_data: dict, system_settings: Any, db: Any, worker_manager: "WorkerManager"
+    project_data: dict, system_settings: Any, db: Any, worker_manager: "AnalysisWorkerManager"
 ) -> None:
     """Evaluate a single project and create a rescan for every source that is due."""
     project = Project(**project_data)
@@ -202,13 +202,10 @@ async def _process_project_rescan(
             await create_rescan(db, source_scan, worker_manager)
 
 
-async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
+async def check_scheduled_rescans(worker_manager: "AnalysisWorkerManager") -> None:
     """
     Checks for projects that need a periodic re-scan.
     """
-    if not worker_manager:
-        return
-
     logger.debug("Checking for scheduled re-scans...")
     try:
         db = await get_database()
@@ -568,10 +565,10 @@ async def run_housekeeping() -> None:
         logger.exception("Housekeeping task failed: %s", e)
 
 
-async def trigger_stale_pending_scans(worker_manager: Optional["WorkerManager"] = None) -> None:
+async def trigger_stale_pending_scans(worker_manager: "AnalysisWorkerManager") -> None:
     """Queue the oldest pending scans no scanner result has reached for a while: findings-only runs
     no SBOM triggered, and scans whose queue entry died with its pod."""
-    if not worker_manager or worker_manager.is_saturated():
+    if worker_manager.is_saturated():
         return
     db = await get_database()
     quiet_since = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
@@ -593,9 +590,9 @@ async def trigger_stale_pending_scans(worker_manager: Optional["WorkerManager"] 
         await worker_manager.add_job(str(scan["_id"]))
 
 
-async def requeue_waiting_adhoc_jobs(worker_manager: Optional["WorkerManager"] = None) -> None:
+async def requeue_waiting_adhoc_jobs(worker_manager: "AnalysisWorkerManager") -> None:
     """Queue again the oldest pending ad-hoc jobs whose queue entry died with its pod."""
-    if not worker_manager or worker_manager.is_saturated():
+    if worker_manager.is_saturated():
         return
     db = await get_database()
     waiting_since = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
@@ -608,9 +605,7 @@ async def requeue_waiting_adhoc_jobs(worker_manager: Optional["WorkerManager"] =
         await worker_manager.add_adhoc_job(job["_id"])
 
 
-async def recover_stuck_scans(
-    worker_manager: Optional["WorkerManager"] = None,
-) -> None:
+async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
     """
     Identifies scans that have been stuck in 'processing' state for too long
     and resets them to 'pending' or marks them as 'failed'.
@@ -643,7 +638,7 @@ async def recover_stuck_scans(
                     f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
                 )
                 requeued = await scan_repo.requeue(scan_id, scan.get("worker_id"), counter="stuck_retry_count")
-                if requeued and worker_manager:
+                if requeued:
                     await worker_manager.add_job(str(scan_id))
 
             else:
@@ -701,9 +696,7 @@ async def sync_branch_status() -> None:
         logger.exception("Branch status sync failed: %s", e)
 
 
-async def stale_scan_loop(
-    worker_manager: Optional["WorkerManager"] = None,
-) -> None:
+async def stale_scan_loop(worker_manager: "AnalysisWorkerManager") -> None:
     """
     Fast loop to check for stale pending scans that need aggregation.
     Runs frequently to quickly catch scans without SBOM trigger.
@@ -739,9 +732,7 @@ async def reconcile_update_frequency_ledger() -> None:
         logger.exception("Update-frequency reconcile failed: %s", e)
 
 
-async def housekeeping_loop(
-    worker_manager: Optional["WorkerManager"] = None,
-) -> None:
+async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
     """Runs the housekeeping tasks on a loop; stale pending scan aggregation runs in its own,
     faster loop.
     """

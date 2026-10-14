@@ -26,7 +26,7 @@ from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.rescan import build_rescan
-from tests.helpers.analyzers import process_sbom_document
+from tests.helpers.analyzers import process_sbom_document, run_context
 
 _MIB = 1024 * 1024
 _MONGO_DOCUMENT_LIMIT = 16 * _MIB
@@ -239,7 +239,7 @@ async def test_an_engine_result_over_16_mib_downloads_as_the_stored_file(client,
         for i in range(12_000)
     ]
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
-    await process_sbom_document(0, sbom, scan.id, db, ResultAggregator(), ["license_compliance"], None)
+    await process_sbom_document(run_context(db, scan, ["license_compliance"]), ResultAggregator(), sbom)
     row = await db.analysis_results.find_one({"scan_id": scan.id})
 
     served = await client.get(

@@ -9,7 +9,7 @@ from app.repositories.distributed_locks import DistributedLocksRepository, new_l
 from app.repositories.scans import ScanRepository
 
 if TYPE_CHECKING:
-    from app.core.worker import WorkerManager
+    from app.core.worker import AnalysisWorkerManager
 
 
 # Every field build_rescan and the scheduler's due check read, and nothing of the analysis.
@@ -64,7 +64,7 @@ def build_rescan(source: dict[str, Any]) -> Scan:
     )
 
 
-async def create_rescan(db: Any, source: dict[str, Any], worker_manager: "WorkerManager") -> Scan | None:
+async def create_rescan(db: Any, source: dict[str, Any], worker_manager: "AnalysisWorkerManager") -> Scan | None:
     """Queue a rescan of ``source``, or return None while its lineage already has one under way."""
     rescan = build_rescan(source)
     root_id = rescan.original_scan_id

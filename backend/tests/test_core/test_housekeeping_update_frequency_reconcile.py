@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from app.core import housekeeping
+from app.core.worker import AnalysisWorkerManager
 from app.core.config import settings
 from app.core.constants import HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC as QUIET_HOUR
 from tests.mocks.fake_mongo import FakeDatabase
@@ -115,7 +116,7 @@ class TestLoopWiring:
                 SimpleNamespace(min=_NEVER, now=lambda _tz=None: now),
             )
             with pytest.raises(_StopLoop):
-                await housekeeping.housekeeping_loop()
+                await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
             return calls
 
         return _run

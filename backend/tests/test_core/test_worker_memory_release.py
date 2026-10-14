@@ -1,6 +1,5 @@
 """Every finished job releases its garbage, whatever way the analysis ended."""
 
-import gc
 import weakref
 from unittest.mock import AsyncMock, patch
 
@@ -19,15 +18,6 @@ def _leave_cyclic_garbage(refs: list[weakref.ref]) -> None:
     held = _Payload()
     held.self_ref = held
     refs.append(weakref.ref(held))
-
-
-@pytest.fixture
-def automatic_gc_off():
-    was_enabled = gc.isenabled()
-    gc.disable()
-    yield
-    if was_enabled:
-        gc.enable()
 
 
 async def _scan_db() -> FakeDatabase:

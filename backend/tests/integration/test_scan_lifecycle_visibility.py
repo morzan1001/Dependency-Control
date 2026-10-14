@@ -11,6 +11,7 @@ from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
+from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import serve_analyzer
 from tests.helpers.sboms import sbom_ref, store_sbom
@@ -196,9 +197,12 @@ async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors
 
 
 def test_enrichment_post_processor_failures_do_not_flip_the_status():
-    outcomes = engine._analyzer_outcomes(
-        ["grype: Failed", "epss_kev: Failed", "reachability: Failed", "osv: Partial (7 component(s) were not scanned)"]
-    )
+    outcomes = [
+        AnalyzerOutcome("grype", OutcomeStatus.FAILED),
+        AnalyzerOutcome("epss_kev", OutcomeStatus.FAILED),
+        AnalyzerOutcome("reachability", OutcomeStatus.FAILED),
+        AnalyzerOutcome("osv", OutcomeStatus.PARTIAL, "7 component(s) were not scanned"),
+    ]
     assert engine._failed_analyzer_names(outcomes) == (["grype", "osv"], ["epss_kev", "reachability"])
 
 
@@ -216,10 +220,10 @@ class _PartialOnTheSecondSbom:
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcome(db, _stored_sboms, monkeypatch):
-    announced: list[dict[str, str]] = []
+    announced: list[list[str]] = []
 
-    async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
-        announced.append(analyzer_outcomes)
+    async def _capture(ctx, verdict, findings):
+        announced.append([str(outcome) for outcome in verdict.outcomes])
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     serve_analyzer(monkeypatch, "osv", _PartialOnTheSecondSbom())
@@ -229,7 +233,7 @@ async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcom
 
     assert await run_analysis(scan_id, refs, ["osv"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
-    assert announced == [{"osv": "Partial (7 component(s) were not scanned)"}]
+    assert announced == [["osv: Partial (7 component(s) were not scanned)"]]
 
 
 @pytest.mark.asyncio

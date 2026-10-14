@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -34,11 +35,18 @@ from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
-from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason, _sbom_source
 from app.services.analysis.registry import CRYPTO_ANALYZERS, POST_PROCESSOR_ANALYZERS, analyzer_factories
+from app.services.analysis.runner import (
+    AnalyzerInput,
+    AnalyzerOutcome,
+    OutcomeStatus,
+    build_settings_resolver,
+    run_analyzer,
+    sbom_label,
+    sbom_name,
+)
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
-from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.crypto_policy.seeder import load_seed_rules
@@ -115,8 +123,6 @@ ADHOC_SKIP_REASONS: dict[str, str] = {
     "os_malware": _UNCACHED_FANOUT,
     "typosquatting": "off by default: downloads the PyPI top-packages list, which this path does not cache",
 }
-
-_SBOM_POSITION = "SBOM #{position}"
 
 _CRYPTO_RULES = "crypto_rules"
 _NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
@@ -198,18 +204,8 @@ def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] |
 
 @dataclass(frozen=True)
 class _ParsedInput:
-    """One posted SBOM alongside the pre-parsed components the analyzers consume."""
-
-    # 1-based position in the request, so a finding's source names the SBOM the caller sent
-    # even when an earlier one was skipped.
-    position: int
-    sbom: dict[str, Any]
     parsed: ParsedSBOM
-    components: list[dict[str, Any]]
-
-
-def _input_label(parsed_input: _ParsedInput) -> str:
-    return _SBOM_POSITION.format(position=parsed_input.position)
+    sbom: AnalyzerInput
 
 
 def _record_ran(report: AnalyzerReport, name: str) -> None:
@@ -226,43 +222,25 @@ def _record_errored(report: AnalyzerReport, name: str, reason: str) -> None:
         report.ran.remove(name)
 
 
-async def _run_one_analyzer(
-    name: str,
-    analyzer: Analyzer,
-    sbom: dict[str, Any],
-    settings: dict[str, Any],
-    parsed_components: list[dict[str, Any]],
-    aggregator: ResultAggregator,
-    report: AnalyzerReport,
-    fallback_source: str,
-) -> None:
-    """Run one analyzer and record its outcome.
+async def _aggregate_unless_errored(aggregator: ResultAggregator, name: str, source: str, result: Any) -> None:
+    # The aggregator turns every ``{"error": ...}`` into a HIGH SYSTEM_WARNING finding, which would
+    # read as a real defect instead of as missing coverage; ``report.errored`` carries it instead.
+    if not is_error_result(result):
+        aggregator.aggregate(name, result, source=source)
 
-    A failure and a coverage gap both land in ``report.errored`` and neither is ever aggregated:
-    the aggregator turns every ``{"error": ...}`` into a HIGH SYSTEM_WARNING finding, which would
-    read as a real defect instead of as missing coverage.
-    """
-    try:
-        result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
-        if is_error_result(result):
-            _record_errored(report, name, f"{fallback_source}: {result['error']}")
-            return
-        aggregator.aggregate(name, result, source=_sbom_source(sbom) or fallback_source)
-    except Exception as exc:
-        logger.warning("adhoc: analyzer %s failed: %s", name, exc)
-        # Attributed to the input, so "failed on one of ten" is distinguishable from "failed on ten".
-        _record_errored(report, name, f"{fallback_source}: {exc}")
+
+def _record_outcome(report: AnalyzerReport, outcome: AnalyzerOutcome, label: str) -> None:
+    """Attributed to the input, so "failed on one of ten" is distinguishable from "failed on ten"."""
+    if outcome.status is OutcomeStatus.SUCCESS:
+        _record_ran(report, outcome.name)
         return
-
-    # What the analyzer did find is kept; what it could not reach is a gap, and an unreachable
-    # CVE source must not answer a Log4Shell SBOM with an empty finding list and no reason.
-    partial = _partial_result_reason(result)
-    if partial:
-        logger.warning("adhoc: analyzer %s returned partial coverage: %s", name, partial)
-        _record_errored(report, name, f"{fallback_source}: {_PARTIAL_COVERAGE.format(reason=partial)}")
-        return
-
-    _record_ran(report, name)
+    reason = outcome.reason
+    if outcome.status is OutcomeStatus.PARTIAL:
+        # What the analyzer did find is kept; what it could not reach is a gap, and an unreachable
+        # CVE source must not answer a Log4Shell SBOM with an empty finding list and no reason.
+        reason = _PARTIAL_COVERAGE.format(reason=reason)
+    logger.warning("adhoc: analyzer %s on %s: %s", outcome.name, label, reason)
+    _record_errored(report, outcome.name, f"{label}: {reason}")
 
 
 def _aggregate_atomically(aggregator: ResultAggregator, name: str, payload: dict[str, Any], source: str) -> None:
@@ -368,9 +346,8 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
     none. The caller gets the parser's own message and can fix the document and retry.
     """
     parsed_inputs: list[_ParsedInput] = []
-    for index, sbom in enumerate(request.sboms):
-        position = index + 1
-        label = _SBOM_POSITION.format(position=position)
+    for position, sbom in enumerate(request.sboms, start=1):
+        label = sbom_label(position)
         try:
             parsed = parse_sbom(sbom)
         except Exception as exc:
@@ -380,13 +357,9 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
         defects = _input_defects(parsed)
         if defects:
             report.skipped_inputs[label] = "; ".join(defects)
+        components = [dep.model_dump() for dep in parsed.dependencies]
         parsed_inputs.append(
-            _ParsedInput(
-                position=position,
-                sbom=sbom,
-                parsed=parsed,
-                components=[dep.model_dump() for dep in parsed.dependencies],
-            )
+            _ParsedInput(parsed, AnalyzerInput(position, components, name=sbom_name(sbom), document=sbom))
         )
     return parsed_inputs
 
@@ -437,7 +410,7 @@ def _aggregate_crypto_rules(
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,
                 {"findings": findings},
-                source=_sbom_source(parsed_input.sbom) or _input_label(parsed_input),
+                source=parsed_input.sbom.source,
             )
     _record_ran(report, _CRYPTO_RULES)
 
@@ -554,26 +527,18 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
     license_settings = {"license_compliance": request.license_policy.model_dump()} if request.license_policy else None
-    settings_for = _build_settings_resolver(SystemSettings(), license_settings)
+    settings_for = build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
     # An input without package components must not be analysed into a clean bill of health.
-    package_inputs = [parsed_input for parsed_input in parsed_inputs if parsed_input.components]
+    package_inputs = [parsed_input.sbom for parsed_input in parsed_inputs if parsed_input.sbom.components]
     if not package_inputs:
         report.skipped.update(dict.fromkeys(requested, _NO_PACKAGE_COMPONENTS))
 
-    for parsed_input in package_inputs:
+    for sbom in package_inputs:
         for name in requested:
-            await _run_one_analyzer(
-                name,
-                analyzer_factories[name](),
-                parsed_input.sbom,
-                settings_for(name),
-                parsed_input.components,
-                aggregator,
-                report,
-                _input_label(parsed_input),
-            )
+            keep = partial(_aggregate_unless_errored, aggregator, name, sbom.source)
+            _record_outcome(report, await run_analyzer(name, sbom, settings_for(name), keep), sbom.label)
 
     _aggregate_crypto_rules(parsed_inputs, aggregator, report)
     _aggregate_posted_scanners(request, aggregator, report)

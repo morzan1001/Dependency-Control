@@ -11,9 +11,10 @@ import pytest
 from app.schemas.sbom import SBOMFormat
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
+from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.sbom_parser import parse_sbom
-from tests.helpers.analyzers import process_sbom_document
+from tests.helpers.analyzers import process_sbom_document, run_context
 
 _CBOM_FIXTURE = Path(__file__).parents[2] / "fixtures" / "cbom" / "legacy_crypto_mixed.json"
 
@@ -29,12 +30,12 @@ _UNPARSEABLE_SBOM = {
 async def _components_by_analyzer(monkeypatch, sbom: dict[str, Any], active: list[str]) -> dict[str, Any]:
     seen: dict[str, Any] = {}
 
-    async def record(analyzer_name, *_args, parsed_components, **_kwargs):
-        seen[analyzer_name] = parsed_components
-        return f"{analyzer_name}: Success"
+    async def record(ctx, aggregator, analyzer_name, sbom_input):
+        seen[analyzer_name] = sbom_input.components
+        return AnalyzerOutcome(analyzer_name, OutcomeStatus.SUCCESS)
 
     monkeypatch.setattr(engine, "process_analyzer", record)
-    await process_sbom_document(0, sbom, "scan-1", None, ResultAggregator(), active, None)
+    await process_sbom_document(run_context(None, "scan-1", active), ResultAggregator(), sbom)
     return seen
 
 
@@ -95,11 +96,11 @@ async def test_a_stored_sbom_is_decoded_and_parsed_off_the_event_loop(monkeypatc
     monkeypatch.setattr(engine, "parse_sbom", recording("parse", parse_sbom))
     sbom = json.loads(_UV_SBOM.read_text())
 
-    path, (_, components, source, sbom_format) = await engine._load_sbom(None, "69d5332257c8763c8d8c82d7", False)
+    _, loaded = await engine._load_sbom(None, "69d5332257c8763c8d8c82d7", 1, False)
 
-    assert path is None
-    assert components == [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
-    assert (source, sbom_format) == (sbom["metadata"]["component"]["name"], SBOMFormat.CYCLONEDX)
+    assert loaded.path is None
+    assert loaded.components == [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
+    assert (loaded.name, loaded.format) == (sbom["metadata"]["component"]["name"], SBOMFormat.CYCLONEDX)
     assert threads["loads"]
     assert threads["parse"]
     assert threading.get_ident() not in threads["loads"] + threads["parse"]

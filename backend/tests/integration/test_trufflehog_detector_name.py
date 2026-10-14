@@ -43,7 +43,7 @@ async def test_the_ingested_detector_name_is_stored_and_named(client, db, api_ke
     assert (await repo.load_result(row))["findings"][0]["DetectorName"] == "AWS"
 
     aggregator = ResultAggregator()
-    await _aggregate_external_results(aggregator, repo, scan_id, [])
+    await _aggregate_external_results(aggregator, repo, scan_id)
     (finding,) = aggregator.get_findings()
     assert (
         finding.description,

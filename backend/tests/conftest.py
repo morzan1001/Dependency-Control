@@ -5,6 +5,7 @@ Environment variables are set BEFORE any app imports to prevent
 accidental connections to real databases.
 """
 
+import gc
 import importlib
 import os
 import sys
@@ -220,6 +221,15 @@ def tcp_redis(monkeypatch):
     yield
     server.shutdown()
     server.server_close()
+
+
+@pytest.fixture
+def automatic_gc_off():
+    was_enabled = gc.isenabled()
+    gc.disable()
+    yield
+    if was_enabled:
+        gc.enable()
 
 
 @pytest.fixture

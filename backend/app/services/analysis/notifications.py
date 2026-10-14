@@ -20,6 +20,8 @@ from app.core.epss import HIGH_EPSS_LABEL, bucket_epss
 from app.models.project import Project
 from app.models.stats import Stats
 from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability
+from app.services.analysis.registry import POST_PROCESSOR_ANALYZERS
+from app.services.analysis.runner import AnalyzerOutcome
 from app.services.analysis.types import Database
 from app.services.notifications import notification_service
 from app.services.notifications.mattermost_formatter import (
@@ -142,8 +144,7 @@ async def send_scan_notifications(
     stats: Stats,
     status: ScanStatus,
     failed_analyzers: list[str],
-    analyzer_outcomes: dict[str, str],
-    analyzer_count: int,
+    analyzer_outcomes: list[AnalyzerOutcome],
     db: Database,
 ) -> None:
     """Send notifications and trigger webhooks for a completed scan.
@@ -154,7 +155,8 @@ async def send_scan_notifications(
     severity_counts = {"CRITICAL": stats.critical, "HIGH": stats.high, "MEDIUM": stats.medium, "LOW": stats.low}
     completion = [len(findings), severity_counts, status, failed_analyzers]
     if await _first_announcement(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion):
-        results_summary = [f"{name}: {outcome}" for name, outcome in analyzer_outcomes.items()]
+        results_summary = [str(outcome) for outcome in analyzer_outcomes]
+        analyzer_count = sum(1 for outcome in analyzer_outcomes if outcome.name not in POST_PROCESSOR_ANALYZERS)
         try:
             html_content = get_analysis_completed_template(
                 analysis_link=link,

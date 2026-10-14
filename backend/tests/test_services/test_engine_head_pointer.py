@@ -13,6 +13,7 @@ from app.models.stats import Stats
 from app.repositories.scans import ScanRepository
 from app.services.analysis.engine import _finalize_scan_and_project
 from app.services.rescan import build_rescan
+from tests.helpers.analyzers import run_context, verdict
 
 _PROJECT_ID = "p1"
 _MAIN = "main"
@@ -53,22 +54,9 @@ async def _rescan(db, scan_id, root_id, created_at, status=SCAN_STATUS_COMPLETED
 
 
 async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, sbom_generation=None, holder=_WORKER):
-    scan_repo = ScanRepository(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing", "worker_id": holder}})
-    return await _finalize_scan_and_project(
-        scan_id,
-        await scan_repo.get_by_id(scan_id),
-        _PROJECT_ID,
-        0,
-        0,
-        Stats(critical=critical),
-        {"scan_id": scan_id, "status": status},
-        scan_repo,
-        status=status,
-        sbom_generation=sbom_generation,
-        worker_id=_WORKER,
-        external_load_start=datetime.now(timezone.utc),
-    )
+    ctx = run_context(db, await ScanRepository(db).get_by_id(scan_id), sbom_generation=sbom_generation)
+    return await _finalize_scan_and_project(ctx, verdict(status, Stats(critical=critical)), datetime.now(timezone.utc))
 
 
 async def _pointer(db):
@@ -267,7 +255,7 @@ async def test_a_failed_rescan_moves_neither_the_lineage_nor_the_pointer(db):
 
     root = await db.scans.find_one({"_id": "b1"})
     assert root["latest_rescan_id"] == "r1"
-    assert root["latest_run"] == {"scan_id": "r2", "status": SCAN_STATUS_FAILED}
+    assert (root["latest_run"]["scan_id"], root["latest_run"]["status"]) == ("r2", SCAN_STATUS_FAILED)
     assert await _pointer(db) == "r1"
     assert (await ScanRepository(db).freshest_in_lineage(["b1"]))["b1"].scan_id == "r1"
 
