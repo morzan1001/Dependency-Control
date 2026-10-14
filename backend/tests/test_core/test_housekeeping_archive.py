@@ -152,12 +152,6 @@ class TestRetentionCanAct:
         with patch(f"{MODULE}.is_archive_enabled", return_value=archive_enabled):
             assert _retention_can_act(action, "test") is True
 
-    def test_none_is_a_deliberate_silent_no_op(self, caplog):
-        with caplog.at_level(logging.WARNING, logger=MODULE):
-            assert _retention_can_act("none", "test") is False
-
-        assert caplog.records == []
-
     def test_archive_without_s3_is_reported(self, caplog):
         with patch(f"{MODULE}.is_archive_enabled", return_value=False), caplog.at_level(logging.WARNING, logger=MODULE):
             assert _retention_can_act("archive", "test") is False

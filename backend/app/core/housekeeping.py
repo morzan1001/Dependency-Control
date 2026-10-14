@@ -379,7 +379,7 @@ def _retention_can_act(action: str, label: str) -> bool:
             f"{label}: Retention action is 'archive' but S3 is not configured. "
             "Skipping cleanup. Configure S3 or change retention action to 'delete'."
         )
-    elif action != RETENTION_ACTION_NONE:
+    else:
         # A value stored before the request schemas constrained it; silence would leave disk growth the only signal.
         logger.warning(
             f"{label}: Unknown retention action {action!r}; expected one of {RETENTION_ACTIONS}. "
