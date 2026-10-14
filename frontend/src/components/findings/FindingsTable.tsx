@@ -264,7 +264,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                 <TableHead className="w-auto bg-background">Component</TableHead>
                                 <TableHead className="w-[80px] bg-background">Source</TableHead>
                                 <TableHead className="w-[160px] bg-background">Type</TableHead>
-                                <TableHead className="w-[150px] bg-background">Scanner</TableHead>
+                                <TableHead className="w-[170px] bg-background">Scanner</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -295,7 +295,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                             <SortableHead column="component" sort={sort} firstOrder="asc" className="w-auto bg-background">Component</SortableHead>
                             <SortableHead column="source_type" sort={sort} firstOrder="asc" className="w-[80px] bg-background">Source</SortableHead>
                             <SortableHead column="type" sort={sort} firstOrder="asc" className="w-[160px] bg-background">Type</SortableHead>
-                            <SortableHead column="scanner" sort={sort} firstOrder="asc" className="w-[150px] bg-background">Scanner</SortableHead>
+                            <SortableHead column="scanner" sort={sort} firstOrder="asc" className="w-[170px] bg-background">Scanner</SortableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -353,7 +353,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                             )}
                                         </div>
                                     </TableCell>
-                                    <TableCell className="p-4 align-middle text-sm text-muted-foreground">
+                                    <TableCell className="p-4 align-middle text-sm text-muted-foreground wrap-anywhere">
                                         {finding.scanners?.join(', ') || 'Unknown'}
                                     </TableCell>
                                 </TableRow>

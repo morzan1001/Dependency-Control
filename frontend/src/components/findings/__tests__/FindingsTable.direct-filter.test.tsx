@@ -198,3 +198,21 @@ describe("FindingsTable Type column", () => {
     expect(screen.getByRole("columnheader", { name: "Type" })).toHaveClass("w-[160px]");
   });
 });
+
+describe("FindingsTable Scanner column", () => {
+  beforeEach(() => {
+    getFindingsMock.mockReset();
+    getFindingsMock.mockResolvedValue({
+      ...emptyEnvelope,
+      items: [{ id: "CRYPTO-crypto_cert_validity_too_long-cert-1", type: "crypto_cert_validity_too_long", severity: "LOW", component: "internal.example.com", version: "", scanners: ["crypto_cert_validity_too_long"] }],
+      total: 1,
+    });
+  });
+
+  it("fits the longest analyzer name and breaks a longer crypto scanner name anywhere, like a long branch name", async () => {
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+
+    expect(await screen.findByText("crypto_cert_validity_too_long")).toHaveClass("wrap-anywhere");
+    expect(screen.getByRole("columnheader", { name: "Scanner" })).toHaveClass("w-[170px]");
+  });
+});
