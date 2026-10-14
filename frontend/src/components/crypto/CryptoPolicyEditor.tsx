@@ -195,18 +195,19 @@ export function CryptoPolicyEditor({
         )}
       </div>
 
-      <div className="rounded-md border">
-        <table className="w-full text-sm">
+      <div className="rounded-md border overflow-x-auto">
+        {/* Rule takes what the fixed columns leave, never less than 240px. */}
+        <table className={`w-full table-fixed text-sm ${mergedMode ? "min-w-[1240px]" : "min-w-[1128px]"}`}>
           <thead className="bg-muted/50 text-left">
             <tr>
-              <th className="p-2 w-16">Enabled</th>
-              <th className="p-2">Rule</th>
-              <th className="p-2">Finding type</th>
-              <th className="p-2 w-28">Severity</th>
-              <th className="p-2 w-32">Min key size</th>
-              <th className="p-2">Name patterns</th>
-              <th className="p-2 w-32">Source</th>
-              {mergedMode && <th className="p-2 w-32">Status</th>}
+              <th className="p-2 w-18">Enabled</th>
+              <th className="p-2 w-auto">Rule</th>
+              <th className="p-2 w-48">Finding type</th>
+              <th className="p-2 w-30">Severity</th>
+              <th className="p-2 w-28">Min key size</th>
+              <th className="p-2 w-40">Name patterns</th>
+              <th className="p-2 w-34">Source</th>
+              {mergedMode && <th className="p-2 w-28">Status</th>}
               {!readOnly && <th className="p-2 w-24" />}
             </tr>
           </thead>
@@ -227,6 +228,7 @@ export function CryptoPolicyEditor({
                     <Input
                       disabled={readOnly}
                       value={r.name}
+                      title={r.name}
                       onChange={(e) => updateRule(idx, { name: e.target.value })}
                       className="mt-1"
                     />
