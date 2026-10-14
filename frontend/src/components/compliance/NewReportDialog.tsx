@@ -114,7 +114,7 @@ export function NewReportDialog({
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader><DialogTitle>Generate Compliance Report</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <label className="block text-sm">

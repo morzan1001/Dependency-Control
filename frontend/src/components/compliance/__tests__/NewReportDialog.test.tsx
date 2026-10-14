@@ -56,6 +56,13 @@ describe("NewReportDialog", () => {
     vi.mocked(projectApi.getAll).mockClear();
   });
 
+  it("takes the default dialog width, like the other form dialogs", () => {
+    withClient(<NewReportDialog onClose={vi.fn()} />);
+
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-lg");
+    expect(screen.getByRole("dialog")).not.toHaveClass("max-w-md");
+  });
+
   it("offers the caller's teams by name and sends the picked team's id", async () => {
     withClient(<NewReportDialog onClose={vi.fn()} />);
     await pickOption(screen.getAllByRole("combobox")[0], "Team");
