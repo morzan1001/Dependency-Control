@@ -1,3 +1,16 @@
+# Release 1.9.56
+
+## 🧪 Tests
+
+- test(ingest): pin the invalid-token answer both providers now word alike (#0)
+- test(gitlab): read the version call through the shared IdP stub (#0)
+
+## 📦 Build & CI
+
+- chore(release): 1.9.56 merges the GitHub and GitLab code paths, builds the chat tools from one table, types analyzer outcomes and unifies toasts, sorting and dialogs (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.55. Run mongosh commands in-pod against the application database.
