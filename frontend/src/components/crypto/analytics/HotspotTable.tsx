@@ -27,8 +27,8 @@ export function HotspotTable({ scope, scopeId, groupBy }: Readonly<Props>) {
   }
 
   return (
-    <div className="rounded-md border">
-      <table className="w-full text-sm">
+    <div className="rounded-md border overflow-x-auto">
+      <table className="w-full min-w-[640px] text-sm">
         <thead className="bg-muted/50 text-left">
           <tr>
             <th className="p-2">Key</th>

@@ -38,8 +38,8 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
         </Button>
       </div>
 
-      <div className="rounded-md border">
-        <table className="w-full text-sm">
+      <div className="rounded-md border overflow-x-auto">
+        <table className="w-full min-w-[680px] text-sm">
           <thead className="bg-muted/50 text-left">
             <tr>
               <th className="p-2">Framework</th>

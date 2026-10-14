@@ -96,3 +96,14 @@ describe('ComplianceReportsPanel', () => {
     expect(screen.getByRole('textbox')).toHaveValue('')
   })
 })
+
+describe('ComplianceReportsPanel on a narrow screen', () => {
+  it('keeps the report columns at their widths and scrolls the table sideways', async () => {
+    vi.mocked(listReports).mockResolvedValue({ reports: [report('completed')] })
+    renderPanel()
+
+    const table = (await screen.findByRole('button', { name: /nist-sp-800-131a/ })).closest('table')
+    expect(table).toHaveClass('min-w-[680px]')
+    expect(table?.parentElement).toHaveClass('overflow-x-auto')
+  })
+})

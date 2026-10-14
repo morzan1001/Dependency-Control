@@ -62,4 +62,13 @@ describe("HotspotTable", () => {
     expect(await screen.findByText("Failed to load hotspots.")).toBeInTheDocument();
     expect(screen.queryByText("No hotspots in this scope.")).not.toBeInTheDocument();
   });
+
+  it("keeps its columns at their widths and scrolls sideways on a narrow screen", async () => {
+    renderWithClient(
+      <HotspotTable scope="project" scopeId="p" groupBy="name" />,
+    );
+    const table = (await screen.findByText("MD5")).closest("table");
+    expect(table).toHaveClass("min-w-[640px]");
+    expect(table?.parentElement).toHaveClass("overflow-x-auto");
+  });
 });

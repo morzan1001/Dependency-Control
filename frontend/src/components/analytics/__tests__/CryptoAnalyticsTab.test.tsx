@@ -133,3 +133,12 @@ describe("CryptoAnalyticsTab PQC export", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
+
+describe("CryptoAnalyticsTab hotspots on a phone", () => {
+  it("wraps the view switcher under Group by instead of running it off the screen", () => {
+    renderTab();
+
+    const switcher = screen.getByRole("button", { name: "Heatmap" }).parentElement;
+    expect(switcher?.parentElement?.parentElement).toHaveClass("flex-wrap");
+  });
+});
