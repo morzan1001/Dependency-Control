@@ -14,6 +14,7 @@ import { UserPlus, UserMinus } from 'lucide-react'
 import { toast } from "sonner"
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -99,24 +100,32 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
               </Button>
             </DialogTrigger>
             <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Invite Member</DialogTitle>
-                <DialogDescription>Add a user to this project.</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  inviteMemberMutation.mutate({ email: inviteEmail, role: inviteRole })
+                }}
+                className="grid gap-4"
+              >
+                <DialogHeader>
+                  <DialogTitle>Invite Member</DialogTitle>
+                  <DialogDescription>Add a user to this project.</DialogDescription>
+                </DialogHeader>
                 <div className="grid gap-2">
                   <Label htmlFor="email">Email</Label>
-                  <Input 
-                    id="email" 
-                    value={inviteEmail} 
-                    onChange={(e) => setInviteEmail(e.target.value)} 
+                  <Input
+                    id="email"
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
                     placeholder="user@example.com"
+                    required
                   />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="role">Role</Label>
                   <Select value={inviteRole} onValueChange={setInviteRole}>
-                    <SelectTrigger>
+                    <SelectTrigger id="role">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -126,12 +135,15 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-              <DialogFooter>
-                <Button onClick={() => inviteMemberMutation.mutate({ email: inviteEmail, role: inviteRole })} disabled={inviteMemberMutation.isPending}>
-                  {inviteMemberMutation.isPending ? "Inviting..." : "Invite"}
-                </Button>
-              </DialogFooter>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button type="button" variant="outline">Cancel</Button>
+                  </DialogClose>
+                  <Button type="submit" disabled={inviteMemberMutation.isPending}>
+                    {inviteMemberMutation.isPending ? "Inviting..." : "Invite"}
+                  </Button>
+                </DialogFooter>
+              </form>
             </DialogContent>
           </Dialog>
         )}

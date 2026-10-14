@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { toast } from 'sonner'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ProjectMembers } from '../ProjectMembers'
 import { projectApi } from '@/api/projects'
@@ -30,6 +30,8 @@ function renderMembers(inheritedFrom: string) {
 }
 
 describe('ProjectMembers', () => {
+  beforeEach(() => vi.clearAllMocks())
+
   it('shows every owning team a member was inherited from, whole and in one badge', () => {
     renderMembers(CO_OWNED)
 
@@ -51,6 +53,40 @@ describe('ProjectMembers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to invite member', { description: 'Network Error' }))
+  })
+
+  it('asks for an email and a role and ends in Cancel and Invite, like the team member dialog', () => {
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+    const dialog = screen.getByRole('dialog')
+
+    expect(screen.getByLabelText('Email')).toHaveAttribute('type', 'email')
+    expect(screen.getByLabelText('Email')).toBeRequired()
+    expect(within(dialog).getByLabelText('Role')).toHaveRole('combobox')
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveClass('border')
+    expect(within(dialog).getByRole('button', { name: 'Invite' })).toHaveAttribute('type', 'submit')
+  })
+
+  it('invites when the form is submitted from the keyboard', async () => {
+    vi.mocked(projectApi.inviteMember).mockResolvedValue(undefined as never)
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'bob@example.com' } })
+    fireEvent.submit(screen.getByLabelText('Email').closest('form')!)
+
+    await waitFor(() => expect(projectApi.inviteMember).toHaveBeenCalledWith('p1', 'bob@example.com', 'viewer'))
+  })
+
+  it('closes without inviting through Cancel', () => {
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'bob@example.com' } })
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(projectApi.inviteMember).not.toHaveBeenCalled()
   })
 
   it('names a role change that failed and why', async () => {
