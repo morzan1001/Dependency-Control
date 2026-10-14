@@ -495,6 +495,20 @@ describe('ScanDetails finding tabs', () => {
     expect(tabNames()).toEqual(['All Findings', ...tabs, 'Raw Data'])
   })
 
+  it('opens the SAST tab for CBOMkit, which the analyzer list files under SAST', () => {
+    analyzers.active = ['cbomkit']
+    renderPage()
+
+    expect(tabNames()).toEqual(['All Findings', 'SAST', 'Raw Data'])
+  })
+
+  it('opens only the Security tab for Trivy, which reports vulnerabilities and no licenses', () => {
+    analyzers.active = ['trivy']
+    renderPage()
+
+    expect(tabNames()).toEqual(['All Findings', 'Security', 'Raw Data'])
+  })
+
   it.each([
     ['overview', undefined],
     ['security', 'security'],
