@@ -1,7 +1,6 @@
 """Tests for GitLabService multi-instance support."""
 
 import asyncio
-from functools import partial
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
@@ -390,32 +389,22 @@ class TestVersion:
     """The connection test and the create check both read GET /version, and both report a transport error."""
 
     def test_asks_the_version_endpoint_with_the_token(self, gitlab_instance_a, monkeypatch):
-        seen = serve_api(monkeypatch, lambda request: httpx.Response(200, json={"version": "17.4.1"}))
+        def answer(request: httpx.Request) -> httpx.Response:
+            authorised = request.headers.get("PRIVATE-TOKEN") == "glpat-token-a"
+            return httpx.Response(200 if authorised else 401, json={"version": "17.4.1"})
+
+        requested = serve_idp(monkeypatch, answer)
 
         response = asyncio.run(GitLabService(gitlab_instance_a).get_version())
 
-        assert response.json() == {"version": "17.4.1"}
-        assert [(str(r.url), r.headers["PRIVATE-TOKEN"]) for r in seen] == [
-            ("https://gitlab-a.com/api/v4/version", "glpat-token-a")
-        ]
+        assert (response.status_code, response.json()) == (200, {"version": "17.4.1"})
+        assert requested == ["https://gitlab-a.com/api/v4/version"]
 
     def test_a_transport_error_reaches_the_caller(self, gitlab_instance_a, monkeypatch):
         def refuse(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("connection refused", request=request)
 
-        serve_api(monkeypatch, refuse)
+        serve_idp(monkeypatch, refuse)
 
         with pytest.raises(httpx.ConnectError):
             asyncio.run(GitLabService(gitlab_instance_a).get_version())
-
-
-def serve_api(monkeypatch, handler) -> list[httpx.Request]:
-    """The instance's API answered by ``handler``; returns the requests that went out."""
-    seen: list[httpx.Request] = []
-
-    def record(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return handler(request)
-
-    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(record)))
-    return seen
