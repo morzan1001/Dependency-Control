@@ -181,13 +181,13 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                       <div className="space-y-6 pt-2 pb-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <DetailSection label="Component" compact>
-                                    <p className="font-medium">{finding.component || 'Unknown'}</p>
+                                    <p className="font-medium wrap-anywhere">{finding.component || 'Unknown'}</p>
                                 </DetailSection>
                                 <DetailSection label="Version" compact>
-                                    <p className="font-medium">{finding.version}</p>
+                                    <p className="font-medium wrap-anywhere">{finding.version}</p>
                                 </DetailSection>
                                 <DetailSection label="Fixed Version" compact>
-                                    <p className="font-medium text-success">{finding.details?.fixed_version || "None"}</p>
+                                    <p className="font-medium text-success wrap-anywhere">{finding.details?.fixed_version || "None"}</p>
                                 </DetailSection>
                                 <DetailSection label="ID" compact>
                                     <p className="font-mono text-sm break-all">{finding.id}</p>

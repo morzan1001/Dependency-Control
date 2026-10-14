@@ -429,3 +429,17 @@ describe("FindingDetailsModal footer", () => {
     expect(footer).not.toHaveClass("sm:gap-0");
   });
 });
+
+describe("FindingDetailsModal on a phone", () => {
+  it("breaks a long component, version and fix anywhere, so none runs under the column beside it", () => {
+    renderModal(finding({
+      component: "org.apache.logging.log4j:log4j-core",
+      version: "2.14.1-SNAPSHOT+build.20261014",
+      details: { fixed_version: "2.17.1-hotfix-for-the-jndi-lookup" },
+    }));
+
+    expect(screen.getByText("org.apache.logging.log4j:log4j-core")).toHaveClass("wrap-anywhere");
+    expect(screen.getByText("2.14.1-SNAPSHOT+build.20261014")).toHaveClass("wrap-anywhere");
+    expect(screen.getByText("2.17.1-hotfix-for-the-jndi-lookup")).toHaveClass("wrap-anywhere");
+  });
+});
