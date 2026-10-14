@@ -422,12 +422,12 @@ def _severity_tiers(requested: Any) -> list[Any]:
 
 async def _ranked_findings(
     db: AsyncIOMotorDatabase, query: dict[str, Any], limit: int
-) -> tuple[list[dict[str, Any]], str | None]:
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """The `limit` worst findings for `query`, filled one severity tier at a time so a scan whose
     natural order opens with thousands of LOW findings cannot hide its criticals. Also returns the
-    caveat to relay when a tier that fed the answer held more candidates than the cap."""
+    ranking_note to relay when a tier that fed the answer held more candidates than the cap."""
     out: list[dict[str, Any]] = []
-    note: str | None = None
+    ranking: dict[str, str] = {}
     for tier in _severity_tiers(query.get("severity")):
         if len(out) >= limit:
             break
@@ -436,8 +436,8 @@ async def _ranked_findings(
         candidates = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
         if not candidates:
             continue
-        if note is None and len(candidates) >= _FINDING_RANK_FETCH_CAP:
-            note = _RANKING_SAMPLED.format(
+        if not ranking and len(candidates) >= _FINDING_RANK_FETCH_CAP:
+            ranking["ranking_note"] = _RANKING_SAMPLED.format(
                 tier=tier if isinstance(tier, str) else "lowest-severity",
                 total=await db["findings"].count_documents(tier_query),
                 cap=_FINDING_RANK_FETCH_CAP,
@@ -450,11 +450,15 @@ async def _ranked_findings(
             reverse=True,
         )
         out.extend(candidates[: limit - len(out)])
-    return out, note
+    return out, ranking
 
 
 class _ToolRefusal(Exception):
-    """The answer a handler stops with; `_dispatch` returns it as the tool's error."""
+    """The answer a handler stops with: the tool's error, or an empty `listing` the error explains."""
+
+    def __init__(self, error: str, listing: str | None = None):
+        super().__init__(error)
+        self.answer: dict[str, Any] = {listing: [], "message": error} if listing else {"error": error}
 
 
 async def _gated[T](check: Awaitable[T], refusal: str) -> T:
@@ -556,7 +560,7 @@ class ChatToolRegistry:
         try:
             return await self._HANDLERS[tool_name](self, ctx)
         except _ToolRefusal as refusal:
-            return {"error": str(refusal)}
+            return refusal.answer
 
     async def _tool_list_projects(self, ctx: _ToolContext) -> dict[str, Any]:
         search = ctx.args.get("search")
@@ -651,7 +655,7 @@ class ChatToolRegistry:
         if ctx.args.get("type"):
             query["type"] = ctx.args["type"]
         limit = ctx.args["limit"]
-        findings, ranking_note = await _ranked_findings(ctx.db, query, limit)
+        findings, ranking = await _ranked_findings(ctx.db, query, limit)
         return {
             "findings": [_serialize_finding_for_llm(f) for f in findings],
             "count": len(findings),
@@ -660,7 +664,7 @@ class ChatToolRegistry:
             else await ctx.db["findings"].count_documents(query),
             "project_name": project.get("name"),
             "scan": build,
-            **({"ranking_note": ranking_note} if ranking_note else {}),
+            **ranking,
         }
 
     async def _tool_get_vulnerability_details(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -696,10 +700,7 @@ class ChatToolRegistry:
         }
 
     async def _head_breakdown(self, ctx: _ToolContext, field: str) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        head_scan_id = await self._head_scan_id(project, ctx.db)
-        if not head_scan_id:
-            return {"error": _ERR_NO_SCAN_DATA}
+        head_scan_id = await self._require_head(ctx, await self._require_project(ctx))
         pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": head_scan_id, **_ACTIVE}},
             {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
@@ -736,13 +737,11 @@ class ChatToolRegistry:
     async def _tool_get_risk_trends(self, ctx: _ToolContext) -> dict[str, Any]:
         window = timedelta(days=ctx.args["days"])
         bucket = auto_bucket(window)
-        head, _ = await self._heads_in_scope(ctx)
-        if not head:
-            return {"trend": [], "message": _ERR_NO_SCAN_DATA}
+        heads, _ = await self._require_heads(ctx, "trend")
         head_scans = [
             scan
             async for scan in ctx.db["scans"].find(
-                {"_id": {"$in": list(head.values())}}, {"project_id": 1, "branch": 1, "original_scan_id": 1}
+                {"_id": {"$in": heads}}, {"project_id": 1, "branch": 1, "original_scan_id": 1}
             )
         ]
         head_roots = [scan.get("original_scan_id") or scan["_id"] for scan in head_scans]
@@ -791,10 +790,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_dependency_tree(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        head_scan_id = await self._head_scan_id(project, ctx.db)
-        if not head_scan_id:
-            return {"error": _ERR_NO_SCAN_DATA}
+        head_scan_id = await self._require_head(ctx, await self._require_project(ctx))
         deps, deps_total = await bounded_read(
             ctx.db["dependencies"],
             {"scan_id": head_scan_id, **({"direct": True} if ctx.args.get("direct_only") else {})},
@@ -890,9 +886,7 @@ class ChatToolRegistry:
         project = await self._require_project(ctx)
         wanted = ctx.args["finding_id"]
         vulnerability_id = advisory_id(wanted) or ""
-        head_scan_id = await self._head_scan_id(project, ctx.db)
-        if not head_scan_id:
-            return {"error": _ERR_NO_SCAN_DATA}
+        head_scan_id = await self._require_head(ctx, project)
         findings, findings_total = await bounded_read(
             ctx.db["findings"],
             {"scan_id": head_scan_id, "$or": [{"finding_id": wanted}, advisory_match(vulnerability_id)]},
@@ -948,20 +942,14 @@ class ChatToolRegistry:
         return await _waiver_rows(ctx.db, {"project_id": None}, "global waivers")
 
     async def _tool_get_top_priority_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        limit = ctx.args["limit"]
-        head, names = await self._heads_in_scope(ctx)
-        if not head:
-            return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        query = {"scan_id": {"$in": list(head.values())}, "severity": {"$in": ["CRITICAL", "HIGH"]}, **_ACTIVE}
+        urgent = {"severity": {"$in": ["CRITICAL", "HIGH"]}}
         exploited_maturity = list(ACTIVELY_EXPLOITED_MATURITY)
-        exploited, exploited_note = await _ranked_findings(
-            ctx.db, {**query, "details.exploit_maturity": {"$in": exploited_maturity}}, limit
+        rows, names, ranking = await self._ranked_head_findings(
+            ctx,
+            {**urgent, "details.exploit_maturity": {"$in": exploited_maturity}},
+            {**urgent, "details.exploit_maturity": {"$nin": exploited_maturity}},
         )
-        rest, rest_note = await _ranked_findings(
-            ctx.db, {**query, "details.exploit_maturity": {"$nin": exploited_maturity}}, limit - len(exploited)
-        )
-        findings = _slim_with_project(exploited + rest, names)
-        ranking_note = exploited_note or rest_note
+        findings = _slim_with_project(rows, names)
         return {
             "findings": findings,
             "count": len(findings),
@@ -970,14 +958,12 @@ class ChatToolRegistry:
                 "include project_name, CVE, component@version, severity, and the "
                 "fixed_version if present. Do not call further tools unless asked."
             ),
-            **({"ranking_note": ranking_note} if ranking_note else {}),
+            **ranking,
         }
 
     async def _tool_generate_remediation_plan(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        head_scan_id = await self._head_scan_id(project, ctx.db)
-        if not head_scan_id:
-            return {"plan": [], "message": _ERR_NO_SCAN_DATA}
+        head_scan_id = await self._require_head(ctx, project, "plan")
 
         findings, findings_total = await bounded_read(
             ctx.db["findings"],
@@ -1059,16 +1045,11 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_auto_fixable_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        head, names = await self._heads_in_scope(ctx)
-        if not head:
-            return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        rows, ranking_note = await _ranked_findings(
-            ctx.db,
+        rows, names, ranking = await self._ranked_head_findings(
+            ctx,
             {
-                "scan_id": {"$in": list(head.values())},
                 "type": "vulnerability",
                 "severity": {"$in": ["CRITICAL", "HIGH"]},
-                **_ACTIVE,
                 # The live_fixed_version rule: a live advisory names a fix and no live CRITICAL/HIGH one lacks one.
                 "details.vulnerabilities": {"$elemMatch": {"fixed_version": {"$nin": [None, ""]}, **_ACTIVE}},
                 "$nor": [
@@ -1083,7 +1064,6 @@ class ChatToolRegistry:
                     }
                 ],
             },
-            ctx.args["limit"],
         )
         out = []
         for slim, f in zip(_slim_with_project(rows, names), rows, strict=True):
@@ -1116,7 +1096,7 @@ class ChatToolRegistry:
                 "breaking_change_risk 'high' needs a major upgrade: list it apart from the quick wins. The "
                 "lower-severity advisories under still_open stay after the upgrade: call that a partial fix."
             ),
-            **({"ranking_note": ranking_note} if ranking_note else {}),
+            **ranking,
         }
 
     async def _tool_suggest_waiver_for_finding(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1214,17 +1194,8 @@ class ChatToolRegistry:
         return delta.model_dump(mode="json")
 
     async def _tool_get_kev_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        head, names = await self._heads_in_scope(ctx)
-        if not head:
-            return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        rows, ranking_note = await _ranked_findings(
-            ctx.db,
-            {
-                "scan_id": {"$in": list(head.values())},
-                "details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, **_ACTIVE}},
-                **_ACTIVE,
-            },
-            ctx.args["limit"],
+        rows, names, ranking = await self._ranked_head_findings(
+            ctx, {"details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, **_ACTIVE}}}
         )
         out = _slim_with_project(rows, names)
         return {
@@ -1234,7 +1205,7 @@ class ChatToolRegistry:
                 "Each has an unwaived advisory in CISA KEV, named as cve: it has real-world exploits. "
                 "Prioritise above plain CVSS-only critical findings."
             ),
-            **({"ranking_note": ranking_note} if ranking_note else {}),
+            **ranking,
         }
 
     async def _tool_find_component_usage(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1285,10 +1256,8 @@ class ChatToolRegistry:
 
     async def _tool_get_findings_by_cve(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""
-        head, names = await self._heads_in_scope(ctx)
-        if not head:
-            return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        query = {"scan_id": {"$in": list(head.values())}, **advisory_match(cve)}
+        heads, names = await self._require_heads(ctx, "findings")
+        query = {"scan_id": {"$in": heads}, **advisory_match(cve)}
         counts = await (
             ctx.db["findings"]
             .aggregate(
@@ -1354,9 +1323,6 @@ class ChatToolRegistry:
             for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
             if get_severity_value(s) >= SEVERITY_ORDER.get(sev_min, SEVERITY_ORDER["HIGH"])
         ]
-        head, names = await self._heads_in_scope(ctx)
-        if not head:
-            return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         # Aged as the CVE SLA ages it: by a live advisory in range, one stored without a date by its finding's,
         # and a finding stored without one by its scan's.
@@ -1365,10 +1331,9 @@ class ChatToolRegistry:
             "$or": [{"first_seen_at": {"$lt": cutoff}}, {"first_seen_at": None}],
             **_ACTIVE,
         }
-        stale, ranking_note = await _ranked_findings(
-            ctx.db,
+        stale, names, ranking = await self._ranked_head_findings(
+            ctx,
             {
-                "scan_id": {"$in": list(head.values())},
                 "severity": {"$in": allowed_sev},
                 "$and": [
                     {
@@ -1384,9 +1349,7 @@ class ChatToolRegistry:
                         ]
                     },
                 ],
-                **_ACTIVE,
             },
-            ctx.args["limit"],
         )
         out = []
         for f in stale:
@@ -1398,22 +1361,13 @@ class ChatToolRegistry:
             "count": len(out),
             "days_open_threshold": days,
             "hint": "These findings have lingered for more than the threshold. Suggest either fixing or escalating.",
-            **({"ranking_note": ranking_note} if ranking_note else {}),
+            **ranking,
         }
 
     async def _tool_get_license_violations(self, ctx: _ToolContext) -> dict[str, Any]:
-        head, names = await self._heads_in_scope(ctx)
-        if not head:
-            return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        rows, ranking_note = await _ranked_findings(
-            ctx.db, {"scan_id": {"$in": list(head.values())}, "type": "license", **_ACTIVE}, ctx.args["limit"]
-        )
+        rows, names, ranking = await self._ranked_head_findings(ctx, {"type": "license"})
         out = _slim_with_project(rows, names)
-        return {
-            "findings": out,
-            "count": len(out),
-            **({"ranking_note": ranking_note} if ranking_note else {}),
-        }
+        return {"findings": out, "count": len(out), **ranking}
 
     async def _tool_get_expiring_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
         days = ctx.args["days"]
@@ -1809,6 +1763,36 @@ class ChatToolRegistry:
         projects = await read_scope_projects(ctx.db, ctx.user_project_query)
         heads = await ScanRepository(ctx.db).get_latest_active_scan_ids(list(projects))
         return heads, {p.id: p.name for p in projects}
+
+    async def _require_head(self, ctx: _ToolContext, project: dict[str, Any], listing: str | None = None) -> str:
+        """The project's head scan id; a project with no usable build ends the tool with no scan data."""
+        head_scan_id = await self._head_scan_id(project, ctx.db)
+        if not head_scan_id:
+            raise _ToolRefusal(_ERR_NO_SCAN_DATA, listing)
+        return head_scan_id
+
+    async def _require_heads(self, ctx: _ToolContext, listing: str) -> tuple[list[str], dict[str, str]]:
+        """`_heads_in_scope` as a list of head scan ids; with none the tool answers an empty `listing`."""
+        heads, names = await self._heads_in_scope(ctx)
+        if not heads:
+            raise _ToolRefusal(_ERR_NO_SCAN_DATA, listing)
+        return list(heads.values()), names
+
+    async def _ranked_head_findings(
+        self, ctx: _ToolContext, *queries: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]:
+        """The `limit` worst unwaived head findings in scope, filled from `queries` in turn, with the project
+        names and the ranking note of the first query whose tier was sampled."""
+        heads, names = await self._require_heads(ctx, "findings")
+        rows: list[dict[str, Any]] = []
+        ranking: dict[str, str] = {}
+        for query in queries:
+            found, sampled = await _ranked_findings(
+                ctx.db, {"scan_id": {"$in": heads}, **query, **_ACTIVE}, ctx.args["limit"] - len(rows)
+            )
+            rows += found
+            ranking = ranking or sampled
+        return rows, names, ranking
 
 
 # A declared tool dispatches to the method named after it; one without such a method fails the import.
