@@ -54,8 +54,9 @@ import {
   Copy,
   Check,
 } from "lucide-react"
-import { getDisplayId, getSeverityBgColor, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { getDisplayId, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
+import { SeverityBadge } from '@/components/findings/SeverityBadge'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { SortIcon } from './VulnerabilityHotspots'
 
@@ -592,9 +593,7 @@ export function AnalyticsDependencyModal({
                         <Badge variant="outline">{finding.type}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge className={getSeverityBgColor(finding.severity || 'UNKNOWN')}>
-                          {finding.severity || 'UNKNOWN'}
-                        </Badge>
+                        <SeverityBadge severity={finding.severity || 'UNKNOWN'} showIcon={false} />
                       </TableCell>
                       <TableCell className="truncate">
                         <Link

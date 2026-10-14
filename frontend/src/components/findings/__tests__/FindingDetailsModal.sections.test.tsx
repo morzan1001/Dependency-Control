@@ -343,6 +343,24 @@ describe("FindingDetailsModal details by type", () => {
     expect(screen.getByText("typosquat of lodash")).toBeInTheDocument();
   });
 
+  it("writes each of several quality issues' severity in the pill colours of that severity", () => {
+    renderModal(
+      finding({
+        type: "quality",
+        details: {
+          quality_issues: [
+            { id: "Q-1", type: "maintainer_risk", severity: "MEDIUM", details: {} },
+            { id: "Q-2", type: "scorecard", severity: "UNKNOWN", details: {} },
+          ],
+        },
+      }),
+    );
+
+    expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium", "text-severity-medium-foreground");
+    expect(screen.getByText("UNKNOWN")).toHaveClass("bg-muted", "text-muted-foreground");
+    expect(screen.getByText("MEDIUM").querySelector("svg")).toBeNull();
+  });
+
   it("shows an end-of-life finding's banners beside its own details", () => {
     renderModal(finding({ type: "eol", details: { eol_info: { is_eol: true, cycle: "4" }, explanation: "support ended" } }));
 
