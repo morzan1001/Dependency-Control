@@ -430,7 +430,7 @@ class TestIngestGitHubOidcInstanceRouting:
         outcome, _, _ = _ingest_via_github(github_instance_doc, token_valid=False)
 
         assert outcome.status_code == 403
-        assert "GitHub" in outcome.detail
+        assert outcome.detail == "Invalid GitHub OIDC Token"
 
 
 class TestIngestGitHubOidcProjectLookup:
