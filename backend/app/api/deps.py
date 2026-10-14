@@ -21,7 +21,6 @@ from app.core.constants import (
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
-    team_source,
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import auth_token_validations_total
@@ -217,13 +216,9 @@ class _CiProvider[IdT: (int, str)](ABC):
 
     service: GitLabService | GitHubService
 
-    @property
-    def instance_id(self) -> str:
-        return str(self.service.instance.id)
-
     def key(self, external_id: IdT) -> dict[str, Any]:
         """The project's composite key on this instance."""
-        return {self.instance_field: self.instance_id, self.id_field: external_id}
+        return {self.instance_field: self.service.instance_id, self.id_field: external_id}
 
     @abstractmethod
     async def claim(self, oidc_token: str) -> _CiClaim[IdT] | None:
@@ -322,7 +317,7 @@ async def _ownership_stages[IdT: (int, str)](
     ci: _CiProvider[IdT], project: Project, claim: _CiClaim[IdT], db: AsyncIOMotorDatabase
 ) -> list[dict]:
     """The provider's ownership stages; the source is the instance that authenticated this ingest, not the project's."""
-    source = team_source(ci.service.team_provider, ci.instance_id)
+    source = ci.service.member_source
     window = f"{ci.service.team_provider}_team_sync:{source}:{claim.external_id}"
     if ci.sync_window and (await cache_service.incr(window, ci.sync_window) or 0) > 1:
         return []
@@ -381,7 +376,7 @@ async def _resolve_ci_project[IdT: (int, str)](
         **key,
         **{ci.path_field: claim.path},
         active_analyzers=(await SystemSettingsRepository(db).get()).default_active_analyzers,
-        **ownership_fields(owners, team_source(ci.service.team_provider, ci.instance_id)),
+        **ownership_fields(owners, ci.service.member_source),
     )
     project, created = await project_repo.find_or_create_by_key(key, new_project)
     if created:

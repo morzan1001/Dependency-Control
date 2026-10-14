@@ -66,11 +66,11 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
 
     def __init__(self, instance: InstanceT) -> None:
         self.instance = instance
-        self._instance_id = str(instance.id)
+        self.instance_id = str(instance.id)
         self.base_url = instance.url.rstrip("/")
 
     def _get_cache_key(self, suffix: str) -> str:
-        return f"{self._cache_prefix}:{self._instance_id}:{suffix}"
+        return f"{self._cache_prefix}:{self.instance_id}:{suffix}"
 
     @abstractmethod
     def _token_headers(self, token: str) -> dict[str, str]: ...
@@ -270,7 +270,7 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
 
         async def fetch_one(account: K) -> None:
             nonlocal refused
-            async with request_gate(self._instance_id):
+            async with request_gate(self.instance_id):
                 if refused:
                     return
                 email = await self._fetch_public_email(account)
@@ -289,9 +289,9 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
         return None if refused else {**emails, **answered}
 
     @property
-    def _member_source(self) -> str:
-        """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(self.team_provider, self._instance_id)
+    def member_source(self) -> str:
+        """The provenance of what this instance's sync writes, and the subset it replaces."""
+        return team_source(self.team_provider, self.instance_id)
 
     def _team_members(self, resolved: Iterable[tuple[str, str]]) -> list[TeamMember]:
         """One member per local user from (user id, role) pairs, an admin role kept over any other."""
@@ -299,7 +299,7 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
         for user_id, role in resolved:
             # Two accounts can resolve to one user: a duplicate breaks add_member's $ne guard, and last-wins demotes.
             if (previous := members.get(user_id)) is None or previous.role != TEAM_ROLE_ADMIN:
-                members[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
+                members[user_id] = TeamMember(user_id=user_id, role=role, source=self.member_source)
         return list(members.values())
 
     async def _write_team_refresh(
@@ -315,7 +315,7 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
         # Handed to the server as the subset to replace rather than merged here: the snapshot is several round
         # trips old, and a member added in between would be written back out after the add had reported success.
         subset = (
-            MemberSubset(self._member_source, [member.model_dump() for member in team_members])
+            MemberSubset(self.member_source, [member.model_dump() for member in team_members])
             if team_members is not None
             else None
         )
@@ -324,7 +324,7 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
         await team_repo.update_with_binding(
             team["_id"],
             renamed,
-            team_binding_key(self.team_provider, self._instance_id, external_id),
+            team_binding_key(self.team_provider, self.instance_id, external_id),
             binding_fields,
             subset,
         )

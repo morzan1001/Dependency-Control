@@ -220,7 +220,7 @@ class TestMemberResolution:
         assert members[0].source == _OWN
 
     def test_two_instances_of_one_provider_claim_different_subsets(self):
-        assert _service("gh-inst-a")._member_source != _service("gh-inst-b")._member_source
+        assert _service("gh-inst-a").member_source != _service("gh-inst-b").member_source
 
     @pytest.mark.asyncio
     async def test_two_logins_resolving_to_one_user_yield_a_single_member(self):

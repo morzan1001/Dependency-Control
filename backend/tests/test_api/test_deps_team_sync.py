@@ -51,11 +51,13 @@ async def _seed(db, **ownership) -> Project:
 
 def _gitlab(service, instance_id: str = _GITLAB_INSTANCE) -> _GitLabCi:
     service.instance, service.team_provider = make_gitlab_instance(id=instance_id), TEAM_SOURCE_GITLAB
+    service.instance_id, service.member_source = instance_id, team_source(TEAM_SOURCE_GITLAB, instance_id)
     return _GitLabCi(service)
 
 
 def _github(service) -> _GitHubCi:
     service.instance, service.team_provider = make_github_instance(id=_GITHUB_INSTANCE), TEAM_SOURCE_GITHUB
+    service.instance_id, service.member_source = _GITHUB_INSTANCE, _GITHUB
     return _GitHubCi(service)
 
 

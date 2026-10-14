@@ -24,7 +24,8 @@ def _service_stub(service_class):
     stub = MagicMock(provider=service_class.provider, team_provider=service_class.team_provider)
 
     def build(instance):
-        stub.instance = instance
+        stub.instance, stub.instance_id = instance, str(instance.id)
+        stub.member_source = team_source(service_class.team_provider, stub.instance_id)
         return stub
 
     with patch(f"app.api.deps.{service_class.__name__}", side_effect=build):

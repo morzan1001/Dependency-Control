@@ -198,7 +198,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     @property
     def rate_limited_until(self) -> datetime | None:
         """When the rate limit GitHub refused this instance's token with lifts; None once it has."""
-        lifts_at = _rate_limit_holds.get(self._instance_id)
+        lifts_at = _rate_limit_holds.get(self.instance_id)
         return lifts_at if lifts_at is not None and datetime.now(timezone.utc) < lifts_at else None
 
     def _token_headers(self, token: str) -> dict[str, str]:
@@ -216,8 +216,8 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
             return
         refused_until = datetime.fromtimestamp(lifts_at, tz=timezone.utc)
         # Requests already in flight answer in any order; the later lift is the one still in force.
-        until = max(refused_until, _rate_limit_holds.get(self._instance_id, refused_until))
-        _rate_limit_holds[self._instance_id] = until
+        until = max(refused_until, _rate_limit_holds.get(self.instance_id, refused_until))
+        _rate_limit_holds[self.instance_id] = until
         logger.warning(
             "GitHub rate-limited the token of instance '%s' until %s; no call goes out before then.",
             self.instance.name,
@@ -269,7 +269,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
             return cached
 
         endpoint = f"/orgs/{org}/teams/{team_slug}/repos/{org}/{repo}"
-        async with request_gate(self._instance_id):
+        async with request_gate(self.instance_id):
             response = await self._api_get(endpoint, headers={"Accept": _REPOSITORY_ACCEPT})
         if response is None:
             return None
@@ -305,7 +305,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
         async def fetch() -> bool | None:
             endpoint = f"/repos/{org}/{repo}"
-            async with request_gate(self._instance_id):
+            async with request_gate(self.instance_id):
                 response = await self._api_get(endpoint)
             if response is None:
                 return None
@@ -325,7 +325,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         """Whether a repository owner is a user, whose repositories no team can hold, not an organisation."""
 
         async def fetch() -> bool | None:
-            async with request_gate(self._instance_id):
+            async with request_gate(self.instance_id):
                 response = await self._get_ok(f"/users/{owner}")
             return None if response is None else json_document(response).get("type") == "User"
 
@@ -335,7 +335,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         """Every team of an organisation, with the parent that tells two same-named ones apart."""
 
         async def fetch() -> list[dict[str, Any]] | None:
-            async with request_gate(self._instance_id):
+            async with request_gate(self.instance_id):
                 teams = await self._api_get_paginated(f"/orgs/{org}/teams")
             if teams is None:
                 return None
@@ -361,7 +361,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         A team with mere read access is not an owner: the people who can change the code are.
         """
         written: list[str] = []
-        async with request_gate(self._instance_id):
+        async with request_gate(self.instance_id):
             if budget.when() is None:
                 budget.reschedule(asyncio.get_running_loop().time() + _GITHUB_ORG_WALK_TIMEOUT)
             async with aclosing(self._iter_pages(f"/orgs/{org}/teams/{slug}/repos")) as pages:
@@ -443,7 +443,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
             members: list[dict[str, Any]] = []
             # The endpoint returns plain user objects, so the role can only come from the query.
             for github_role, role in _GITHUB_TEAM_ROLES:
-                async with request_gate(self._instance_id):
+                async with request_gate(self.instance_id):
                     page = await self._api_get_paginated(endpoint, params={"role": github_role})
                 if page is None:
                     return None
@@ -531,7 +531,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: barely a login resolves here, so a name would otherwise never follow a renamed team.
         """
-        binding = binding_of(team, self._instance_id) or {}
+        binding = binding_of(team, self.instance_id) or {}
         # The binding is the numeric team id, so a renamed slug has to follow it.
         await self._write_team_refresh(
             team_repo,
@@ -560,14 +560,14 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         sync does — would mean never creating anything. An empty team its owner fills by hand is
         worth more than a group that never appears.
         """
-        existing = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, self._instance_id, team_id)
+        existing = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, self.instance_id, team_id)
         if existing:
             return existing
 
         team = Team(
             name=_auto_team_name(org, slug),
             description=_auto_team_description(org, slug),
-            bindings=[GitHubTeamBinding(instance_id=self._instance_id, org=org, external_id=team_id, slug=slug)],
+            bindings=[GitHubTeamBinding(instance_id=self.instance_id, org=org, external_id=team_id, slug=slug)],
         )
         created = await team_repo.create_bound(team)
         if created is not None and created["_id"] == team.id:
@@ -587,7 +587,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         addressed = []
         for team in bound_teams:
             owns = str(team["_id"]) in current_owner_ids
-            team_id = (binding_of(team, self._instance_id) or {}).get("external_id")
+            team_id = (binding_of(team, self.instance_id) or {}).get("external_id")
             if not isinstance(team_id, int) or (slug := slug_map.get(team_id)) is None:
                 logger.warning(
                     "Team %s is bound to GitHub team %s of %s, which the organisation listing does not show; %s.",
@@ -743,7 +743,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
                 return TeamSyncResult(None)
             org, repo = parts
             team_repo = TeamRepository(db)
-            bound_teams = await team_repo.find_raw_by_github_org(self._instance_id, org)
+            bound_teams = await team_repo.find_raw_by_github_org(self.instance_id, org)
 
             deadline = asyncio.get_running_loop().time() + _GITHUB_RESOLUTION_TIMEOUT
             try:

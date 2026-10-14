@@ -322,7 +322,7 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: a group whose members none resolve would otherwise never follow a rename.
         """
-        stored_path = (binding_of(team, self._instance_id) or {}).get("path")
+        stored_path = (binding_of(team, self.instance_id) or {}).get("path")
         # A group that was renamed or moved has to carry the path GitLab reports now, including on
         # a team bound by hand before any sync ran.
         await self._write_team_refresh(
@@ -352,7 +352,7 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
             Team(
                 name=_auto_team_name(group_path),
                 description=_auto_team_description(group_path),
-                bindings=[GitLabGroupBinding(instance_id=self._instance_id, external_id=group_id, path=group_path)],
+                bindings=[GitLabGroupBinding(instance_id=self.instance_id, external_id=group_id, path=group_path)],
                 members=team_members,
             )
         )
@@ -406,7 +406,7 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
 
             group_id, group_path = target.group
             # Only by the (instance, group) key: two instances can each carry a group of the same path.
-            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self._instance_id, group_id)
+            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self.instance_id, group_id)
 
             if members is None:
                 logger.warning(
