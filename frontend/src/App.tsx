@@ -32,6 +32,7 @@ import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { authApi } from '@/api/auth'
 import { usePublicConfig } from '@/hooks/queries/use-system'
+import { createMutationCache } from '@/lib/mutation-cache'
 import { ANALYTICS_ROUTE_PERMISSIONS, LOGIN_RETURN_KEY } from '@/lib/constants'
 import { lazy, Suspense } from 'react'
 
@@ -44,6 +45,7 @@ const queryClient = new QueryClient({
       }
     }
   }),
+  mutationCache: createMutationCache(),
   defaultOptions: {
     queries: {
       retry: 1,
