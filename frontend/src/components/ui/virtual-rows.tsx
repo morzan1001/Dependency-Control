@@ -30,7 +30,7 @@ export function VirtualRows<T>({ list, scrollContainer, tableOffsetRef, estimate
     estimateSize: () => estimateSize,
     overscan: VIRTUAL_SCROLL_OVERSCAN,
     observeElementOffset,
-    getItemKey: (index) => (index < rows.length ? rowKey(rows[index]) : `loader-${index}`),
+    getItemKey: (index) => (index < rows.length ? `${rowKey(rows[index])}-${index}` : `loader-${index}`),
   })
 
   const virtualItems = virtualizer.getVirtualItems()
