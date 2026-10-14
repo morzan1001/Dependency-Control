@@ -18,7 +18,7 @@ export function SortableHead<T extends string>({ column, sort, firstOrder, class
   const Arrow = sort.sortOrder === 'asc' ? ArrowUp : ArrowDown
   return (
     <TableHead
-      className={cn('cursor-pointer hover:text-foreground', className)}
+      className={cn('cursor-pointer whitespace-nowrap hover:text-foreground', className)}
       aria-sort={active ? (sort.sortOrder === 'asc' ? 'ascending' : 'descending') : undefined}
       onClick={() => sort.toggleSort(column, firstOrder)}
     >
