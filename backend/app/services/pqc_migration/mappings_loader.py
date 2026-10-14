@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from app.core import ensure_utc
 from app.models.crypto_asset import CryptoAsset
 
 CURRENT_MAPPINGS_VERSION = 1
@@ -57,7 +58,7 @@ def load_mappings() -> PQCMappings:
     timelines = [
         Timeline(
             name=t["name"],
-            deadline=_parse_date(t["deadline"]),
+            deadline=ensure_utc(datetime.fromisoformat(t["deadline"])),
             applies_to=list(t.get("applies_to", [])),
         )
         for t in (doc.get("timelines") or [])
@@ -65,12 +66,6 @@ def load_mappings() -> PQCMappings:
     families = {m.source_family.upper(): m.source_family for m in mappings}
     families.update({alias.upper(): family for alias, family in (doc.get("family_aliases") or {}).items()})
     return PQCMappings(mappings=mappings, timelines=timelines, families=families)
-
-
-def _parse_date(s: str) -> datetime:
-    from datetime import timezone
-
-    return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
 
 
 def normalise_family(name: str | None, mappings: PQCMappings) -> str:

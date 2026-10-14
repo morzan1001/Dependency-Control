@@ -57,14 +57,8 @@ class TestSystemSettingsDefaults:
         assert s.oidc_userinfo_endpoint is None
         assert s.oidc_scopes == "openid profile email"
 
-    def test_gitlab_integration_defaults(self):
-        s = SystemSettings()
-        assert s.gitlab_integration_enabled is False
-        assert s.gitlab_url == "https://gitlab.com"
-        assert s.gitlab_access_token is None
-        assert s.gitlab_auto_create_projects is False
-        assert s.gitlab_sync_teams is False
-        assert s.gitlab_oidc_audience is None
+    def test_gitlab_access_token_default(self):
+        assert SystemSettings().gitlab_access_token is None
 
     def test_rescan_defaults(self):
         s = SystemSettings()
@@ -180,5 +174,4 @@ class TestSystemSettingsIdAlias:
         }
         s = SystemSettings(**legacy_doc)
         assert s.default_active_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
-        assert s.gitlab_oidc_audience is None
         assert s.retention_mode == "project"

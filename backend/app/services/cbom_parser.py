@@ -5,9 +5,9 @@ import json
 import logging
 import re
 from collections import Counter
-from datetime import datetime
 from typing import Any
 
+from app.core import parse_iso_utc
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
 
 logger = logging.getLogger(__name__)
@@ -179,8 +179,8 @@ def _parse_primitive(raw: Any) -> CryptoPrimitive | None:
 def _populate_certificate(asset: ParsedCryptoAsset, props: dict[str, Any], refs: dict[str, str]) -> None:
     asset.subject_name = props.get("subjectName")
     asset.issuer_name = props.get("issuerName")
-    asset.not_valid_before = _parse_iso_date(props.get("notValidBefore"))
-    asset.not_valid_after = _parse_iso_date(props.get("notValidAfter"))
+    asset.not_valid_before = parse_iso_utc(props.get("notValidBefore"))
+    asset.not_valid_after = parse_iso_utc(props.get("notValidAfter"))
     asset.signature_algorithm_ref = _remapped(props.get("signatureAlgorithmRef"), refs)
     asset.subject_public_key_ref = _remapped(props.get("subjectPublicKeyRef"), refs)
     asset.certificate_format = props.get("certificateFormat")
@@ -232,12 +232,3 @@ def _populate_evidence(asset: ParsedCryptoAsset, evidence: dict[str, Any]) -> No
     confidence = evidence.get("confidence")
     if isinstance(confidence, (int, float)):
         asset.confidence = float(confidence)
-
-
-def _parse_iso_date(raw: Any) -> datetime | None:
-    if not raw or not isinstance(raw, str):
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None

@@ -59,20 +59,12 @@ class SystemSettingsFields(BaseModel):
     oidc_auto_provision: bool = True
 
     # GitLab Integration
-    gitlab_integration_enabled: bool = False
-    gitlab_url: str = "https://gitlab.com"
     gitlab_access_token: str | None = Field(
         None,
         description=(
             "Personal or Group Access Token with 'api' scope. "
             "Must have at least 'Reporter' role in the projects to post comments."
         ),
-    )
-    gitlab_auto_create_projects: bool = False
-    gitlab_sync_teams: bool = False
-    gitlab_oidc_audience: str | None = Field(
-        None,
-        description="Expected audience claim for GitLab OIDC tokens. If set, tokens must contain this audience.",
     )
 
     # Periodic Scanning Defaults

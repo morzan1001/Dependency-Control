@@ -19,6 +19,7 @@ from app.core.security import get_password_hash
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.repositories.findings import FIRST_DETECTION_INDEX, NEWEST_VULNERABILITY_INDEX, VULNERABILITIES_ONLY
+from app.repositories.scans import TAG_BUILD_MATCH
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
 logger = logging.getLogger(__name__)
@@ -293,6 +294,11 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="scans_released_list",
         partialFilterExpression={"is_release": True},
     )  # Partial so only released scans are indexed; serves the released-only scan list.
+    await database["scans"].create_index(
+        [("project_id", pymongo.ASCENDING), *SCANS_TIP_SORT],
+        name="scans_tag_builds",
+        partialFilterExpression=TAG_BUILD_MATCH,
+    )
 
     await database["releases"].create_index(
         RELEASES_LATEST_LOOKUP_KEY,

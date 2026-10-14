@@ -1,18 +1,5 @@
-"""Repository for scans, and the one rule for what a project's head is.
-
-Head is the freshest readable analysis of the tip build of the project's head branch.
-
-The head branch is the default branch while the VCS still has one and it holds a usable scan, else
-any branch it has not deleted. The tip build is the newest build there: a rescan carries
-``created_at = now`` over an older commit and a tag pipeline writes its tag into ``branch``, so a
-branch build outranks a tag build and both outrank a rescan; any scan with an SBOM outranks every
-scan without one. The freshest analysis is the newest usable scan in that build's rescan lineage.
-``latest_scan_id`` caches the answer, written only by ``sync_project_head``, and is trusted only
-while it names a readable scan that may head the project.
-
-The same two steps answer per branch (``branch_tips``) and per release (``freshest_in_lineage`` on
-the marked scan), so the project tile, head-mode analytics and the release view cannot disagree.
-"""
+"""Scans, and the one head rule: the freshest analysis of the tip build on the project's live default branch, else
+on any branch it has not deleted; ``latest_scan_id`` caches it, and only ``sync_project_head`` writes it."""
 
 import asyncio
 import logging
@@ -47,7 +34,10 @@ USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "
 BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"]}}
 # A scan without an SBOM (SAST only) carries no dependencies, so it heads only where no scan has one.
 HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs": {"$exists": True, "$ne": []}}
-# Best first, so a project whose usable scans are all tag builds or rescans still has a tip.
+# Builds with a non-empty tag; the scans_tag_builds index filters on this exact predicate, which a query must repeat.
+TAG_BUILD_MATCH: dict[str, Any] = {"commit_tag": {"$gt": ""}}
+# Best first: a rescan is dated today over an older commit, so it ranks last, yet a project of only tag builds or
+# rescans still has a tip.
 _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
     {**sbom, **tier}
     for sbom in (HAS_SBOM_MATCH, {})
@@ -150,11 +140,7 @@ def _live_default(scope: _HeadScope) -> str | None:
 
 
 def _may_head(doc: dict[str, Any], scope: _HeadScope) -> bool:
-    """Whether this scan may stand in for the project's tip build without re-deriving it.
-
-    With a live default branch only a scan on it may; otherwise any branch may, but a tag build only
-    ranks behind every branch build, so the derived pick has to decide.
-    """
+    """Whether this scan may stand in for the tip build: one on the live default branch, else a live branch build."""
     default = _live_default(scope)
     if default:
         return doc.get("branch") == default
@@ -307,12 +293,8 @@ class ScanRepository:
     async def branch_tips(
         self, project_id: str, deleted_branches: list[str] | None = None, since: datetime | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
-        """``(branch, scan_count, tip)`` per branch the project has not deleted, sorted by branch; ``since``
-        keeps the branches scanned at or after it and counts only those scans.
-
-        The tip is ``branch_tip``'s answer and ``scan_count`` counts the branch's builds, so neither
-        depends on a page of the scan list.
-        """
+        """``(branch, build count, branch_tip's answer)`` per branch the project has not deleted, sorted by branch;
+        ``since`` keeps the branches scanned at or after it and counts only those scans."""
         match: dict[str, Any] = {"project_id": project_id, **BRANCH_SCAN_FILTER}
         if deleted_branches:
             match["branch"] = {"$nin": list(deleted_branches)}
@@ -435,7 +417,7 @@ class ScanRepository:
         if not current or current.get("created_at") is None:
             return []
         branch, tag = current.get("branch"), current.get("commit_tag")
-        line = {"commit_tag": {"$nin": [None, ""]}} if tag and tag == branch else {"branch": branch}
+        line = TAG_BUILD_MATCH if tag and tag == branch else {"branch": branch}
         query = {
             **USABLE_BUILD_MATCH,
             "project_id": current.get("project_id"),
@@ -447,14 +429,8 @@ class ScanRepository:
     async def freshest_in_lineage(
         self, scan_ids: Iterable[str], seeds: dict[str, dict[str, Any]] | None = None
     ) -> dict[str, LineageAnalysis]:
-        """The freshest readable analysis of each of these scans, following its rescan chain.
-
-        Both rescan creators root a rescan at its lineage root, and the root's ``latest_rescan_id``
-        moves only onto a rescan that finished usable, so a chain is normally one link deep. Bounded,
-        so a cyclic pointer cannot hang a request; a scan whose chain was still going at the bound is
-        marked. A scan with no usable analysis in its chain is absent rather than a misleading id.
-        ``seeds`` are scans the caller already read with the chain fields, spared a second read.
-        """
+        """The freshest readable analysis of each scan along its rescan chain, absent when the chain has none; the
+        walk is bounded against a cyclic pointer, and ``seeds`` are scans already read with the chain fields."""
         frontier: dict[str, str] = {scan_id: scan_id for scan_id in scan_ids}
         seeded = seeds or {}
         visited: set[str] = set()
@@ -496,12 +472,7 @@ class ScanRepository:
         }
 
     async def oldest_analysis_at(self, scan_ids: Sequence[str]) -> datetime | None:
-        """The date of the oldest of these scans: how far back the answer they carry reaches.
-
-        Release mode resolves to a build that was deliberately not rebuilt, so its findings are the
-        vulnerability landscape of that date and not of today; a reader given the number without
-        the date reads it as current.
-        """
+        """The date of the oldest of these scans: how far back the answer they carry reaches."""
         if not scan_ids:
             return None
         doc = await self.collection.find_one(

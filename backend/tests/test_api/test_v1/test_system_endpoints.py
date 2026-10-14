@@ -196,7 +196,6 @@ class TestGetAppConfig:
         from app.api.v1.endpoints.system import get_app_config
 
         settings = _make_settings(
-            gitlab_integration_enabled=True,
             gitlab_access_token="glpat-tok",
             slack_bot_token="xoxb-tok",
             smtp_host="mail.test.com",

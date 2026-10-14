@@ -391,6 +391,16 @@ class TestAnalyze:
         assert _risk_types(answered) == ["archived_repo"]
 
     @pytest.mark.asyncio
+    async def test_a_pypi_upload_time_without_a_zone_is_read_as_utc(self, fake_cache, monkeypatch):
+        uploaded = (datetime.now(timezone.utc) - timedelta(days=800)).strftime("%Y-%m-%dT%H:%M:%S")
+        project = {**_pypi_project(), "releases": {"1.0.0": [{"upload_time": uploaded}]}}
+        _serve(monkeypatch, fake_cache, {f"{PYPI_API_URL}/oldlib/json": project})
+
+        result = await analyze_cyclonedx(MaintainerRiskAnalyzer(), [_component("pypi", "oldlib")])
+
+        assert _risk_types(result) == ["stale_package"]
+
+    @pytest.mark.asyncio
     async def test_pypi_project_urls_name_the_repository(self, fake_cache, monkeypatch):
         project_urls = {
             "Funding": "https://github.com/sponsors/acme",

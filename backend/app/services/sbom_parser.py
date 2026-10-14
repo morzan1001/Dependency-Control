@@ -52,6 +52,7 @@ _SPDX_OPERATORS = frozenset({"AND", "OR", "WITH"})
 # Maven's POM model and npm's legacy licenses array list licences a consumer may choose between.
 _LICENSE_CHOICE_PURL_TYPES = frozenset({"maven", "npm"})
 _SPDX_LICENSE_REF = re.compile(r"LicenseRef-[A-Za-z0-9.\-]+")
+_HEX_SHA512 = re.compile(r"[0-9a-fA-F]{128}")
 
 
 def _join_licenses(entries: list[str], purl: str | None) -> str:
@@ -525,7 +526,9 @@ class SBOMParser:
         try:
             parsed = parse_one(item, *args)
         except Exception:
-            logger.warning("Skipping malformed %s %r", label, item.get("name"), exc_info=True)
+            # One traceback per document; the parse summary counts the rest.
+            if "parse-error" not in result.skipped_reasons:
+                logger.warning("Skipping malformed %s %r", label, item.get("name"), exc_info=True)
             self._count_skipped(result, "parse-error")
             return None
         if parsed is None:
@@ -896,6 +899,9 @@ class SBOMParser:
             if alg in ("sha1", "sha256", "sha512"):
                 with contextlib.suppress(ValueError):
                     entries.append({"algorithm": alg, "value": base64.b64decode(digest, validate=True).hex()})
+        sha512 = metadata.get("sha512")
+        if isinstance(sha512, str) and _HEX_SHA512.fullmatch(sha512):
+            entries.append({"algorithm": "sha512", "value": sha512})
         if pkg_type == "cargo":
             entries.append({"algorithm": "sha256", "value": metadata.get("checksum")})
         return {**_hash_map(entries, "algorithm", "value"), **_hash_map(metadata.get("digest"), "algorithm", "value")}

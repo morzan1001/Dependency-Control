@@ -31,11 +31,15 @@ _SORT_FIELDS = {"name", "version", "type", "license", "direct"}
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "license": 1, "license_category": 1, "direct": 1, "purl": 1}
 
 
-async def _lifecycle_by_component(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, dict[str, Any]]:
+async def _lifecycle_by_component(
+    db: AsyncIOMotorDatabase, scan_id: str, names: list[str] | None = None
+) -> dict[str, dict[str, Any]]:
+    query: dict[str, Any] = {"scan_id": scan_id, "type": {"$in": [FindingType.EOL.value, FindingType.OUTDATED.value]}}
+    if names is not None:
+        query["component"] = {"$in": names}
     lifecycle: dict[str, dict[str, Any]] = {}
     docs = FindingRepository(db).iterate_raw(
-        {"scan_id": scan_id, "type": {"$in": [FindingType.EOL.value, FindingType.OUTDATED.value]}},
-        {"component": 1, "version": 1, "type": 1, "details.fixed_version": 1, "details.ahead_of_default": 1},
+        query, {"component": 1, "version": 1, "type": 1, "details.fixed_version": 1, "details.ahead_of_default": 1}
     )
     async for doc in docs:
         if is_ahead_of_default(doc["type"], doc.get("details")):
@@ -100,7 +104,7 @@ async def get_components_page(
     cursor = deps.collection.find(query, _DEP_PROJECTION).sort(sort_spec).skip((page - 1) * page_size).limit(page_size)
     docs = await cursor.to_list(page_size)
 
-    lifecycle = await _lifecycle_by_component(db, scan.id)
+    lifecycle = await _lifecycle_by_component(db, scan.id, list(dict.fromkeys(d.get("name") for d in docs)))
     return [_to_item(d, lifecycle) for d in docs], total
 
 

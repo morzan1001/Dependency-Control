@@ -1,19 +1,4 @@
-"""CVSS base-score computation from a vector string.
-
-OSV rates a vulnerability with a vector and no numeric score — a census of 242 records
-fetched for real production purls found 217 of 217 severity entries to be vector strings —
-so a vector we cannot score is a rating thrown away.
-
-v3.x is computed here: the base formula is short, exactly specified, and verified identical
-to the `cvss` package across all 5,184 possible v3 vectors, so delegating it would swap a
-proven implementation for no measurable gain. v4.0 is delegated to `cvss` instead of being
-hand-written: it needs a 270-entry MacroVector table plus max-vector interpolation, which is
-neither short nor checkable by inspection.
-
-`cvss` raises on anything it cannot parse and rejects surrounding whitespace, so every call
-goes through an adapter that preserves this module's `float | None` contract and its input
-tolerance. One implementation per version, and neither shadows the other.
-"""
+"""CVSS base scores from vector strings: v3.x is computed here, v4.0 is delegated to the `cvss` package."""
 
 import math
 
