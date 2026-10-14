@@ -8,6 +8,7 @@ import { createMutationCache } from "@/lib/mutation-cache";
 import type { Team } from "@/types/team";
 
 import { AddMemberDialog } from "../AddMemberDialog";
+import { DeleteTeamDialog } from "../DeleteTeamDialog";
 import { TeamFormDialog } from "../TeamFormDialog";
 import { TeamMembersDialog } from "../TeamMembersDialog";
 
@@ -15,6 +16,7 @@ const { teamApi, toastError } = vi.hoisted(() => ({
   teamApi: {
     create: vi.fn(),
     update: vi.fn(),
+    delete: vi.fn(),
     addMember: vi.fn(),
     updateMember: vi.fn(),
     removeMember: vi.fn(),
@@ -103,6 +105,17 @@ describe("team mutations show the server's refusal", () => {
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Failed to update team", { description: "Team not found" }),
+    );
+  });
+
+  it("deleting a team", async () => {
+    teamApi.delete.mockRejectedValue(apiError(404, "Team not found"));
+    renderWithClient(<DeleteTeamDialog teamId="t-1" isOpen onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Failed to delete team", { description: "Team not found" }),
     );
   });
 

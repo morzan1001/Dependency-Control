@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CreateProjectDialog } from '../CreateProjectDialog'
 
 const mockMutate = vi.fn()
+const mockUseCreateProject = vi.fn()
 let appConfig: { retention_mode: string; default_project_analyzers: string[]; global_retention_days?: number } | undefined
 
 vi.mock('@/hooks/queries/use-system', () => ({
@@ -12,7 +13,10 @@ vi.mock('@/hooks/queries/use-system', () => ({
 }))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => ({ data: [] }) }))
 vi.mock('@/hooks/queries/use-projects', () => ({
-  useCreateProject: () => ({ mutate: mockMutate, isPending: false }),
+  useCreateProject: (meta: unknown) => {
+    mockUseCreateProject(meta)
+    return { mutate: mockMutate, isPending: false }
+  },
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -149,5 +153,13 @@ describe('CreateProjectDialog after a project was created', () => {
       expect(copy.querySelector('.lucide-check')).not.toBeInTheDocument()
       expect(screen.getByDisplayValue(API_KEY)).not.toHaveAttribute('type', 'password')
     })
+  })
+})
+
+describe('CreateProjectDialog failure', () => {
+  it('names a failed creation, which the error toast completes with the reason', () => {
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    expect(mockUseCreateProject).toHaveBeenCalledWith({ errorTitle: 'Failed to create project' })
   })
 })

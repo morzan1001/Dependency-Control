@@ -4,9 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CreateGlobalWaiverDialog } from '../CreateGlobalWaiverDialog'
 
 const mutate = vi.fn()
+const mockUseCreateWaiver = vi.fn()
 
 vi.mock('@/hooks/queries/use-waivers', () => ({
-  useCreateWaiver: () => ({ mutate, isPending: false }),
+  useCreateWaiver: (meta: unknown) => {
+    mockUseCreateWaiver(meta)
+    return { mutate, isPending: false }
+  },
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -64,5 +68,13 @@ describe('CreateGlobalWaiverDialog', () => {
     render(<CreateGlobalWaiverDialog open onOpenChange={() => {}} />)
 
     expect(screen.queryByPlaceholderText(RULE_PLACEHOLDER)).toBeNull()
+  })
+})
+
+describe('CreateGlobalWaiverDialog failure', () => {
+  it('names a failed creation, which the error toast completes with the reason', () => {
+    render(<CreateGlobalWaiverDialog open onOpenChange={() => {}} />)
+
+    expect(mockUseCreateWaiver).toHaveBeenCalledWith({ errorTitle: 'Failed to create global waiver' })
   })
 })

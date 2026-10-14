@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -51,5 +51,24 @@ describe('ProjectMembers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to invite member', { description: 'Network Error' }))
+  })
+
+  it('names a role change that failed and why', async () => {
+    vi.mocked(projectApi.updateMember).mockRejectedValue(new Error('Network Error'))
+    renderMembers('')
+
+    fireEvent.keyDown(within(screen.getByRole('table')).getByRole('combobox'), { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('option', { name: 'Viewer' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update member role', { description: 'Network Error' }))
+  })
+
+  it('names a removal that failed and why', async () => {
+    vi.mocked(projectApi.removeMember).mockRejectedValue(new Error('Network Error'))
+    renderMembers('')
+
+    fireEvent.click(within(screen.getByRole('table')).getByRole('button'))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to remove member', { description: 'Network Error' }))
   })
 })

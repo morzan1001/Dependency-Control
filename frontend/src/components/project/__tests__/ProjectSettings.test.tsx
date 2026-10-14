@@ -21,6 +21,7 @@ const mockUseAppConfig = vi.fn()
 const mockUseNotificationChannels = vi.fn()
 const mockUseProjectBranches = vi.fn()
 const mockUpdateNotifications = vi.fn()
+const mockUseUpdateProjectNotifications = vi.fn()
 
 vi.mock('@/api/projects', () => ({
   projectApi: {
@@ -37,7 +38,10 @@ vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => mockUseTeams() }))
 vi.mock('@/hooks/queries/use-projects', () => ({
   projectKeys: { detail: (id: string) => ['project', id] },
   useProjectBranches: () => mockUseProjectBranches(),
-  useUpdateProjectNotifications: () => ({ mutate: mockUpdateNotifications, isPending: false }),
+  useUpdateProjectNotifications: (meta: unknown) => {
+    mockUseUpdateProjectNotifications(meta)
+    return { mutate: mockUpdateNotifications, isPending: false }
+  },
 }))
 vi.mock('@/hooks/queries/use-webhooks', () => ({
   useProjectWebhooks: () => ({ data: [], isLoading: false }),
@@ -508,6 +512,12 @@ describe('ProjectSettings failures', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Rotate API Key' })).getByRole('button', { name: 'Rotate Key' }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to rotate API key', { description: 'Network Error' }))
+  })
+
+  it('names a failed notification settings save, which the error toast completes with the reason', () => {
+    renderSettings(githubProject())
+
+    expect(mockUseUpdateProjectNotifications).toHaveBeenCalledWith({ errorTitle: 'Failed to update notification settings' })
   })
 })
 

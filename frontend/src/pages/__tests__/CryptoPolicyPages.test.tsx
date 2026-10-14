@@ -39,13 +39,13 @@ function auditEntry(scope: 'system' | 'project'): PolicyAuditEntry {
   }
 }
 
-function renderWithClient(ui: React.ReactElement) {
-  render(
-    <QueryClientProvider client={new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })}>
-      {ui}
-    </QueryClientProvider>,
-  )
+function renderWithClient(ui: React.ReactElement): QueryClient {
+  const client = new QueryClient({ mutationCache: createMutationCache(), defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+  return client
 }
+
+const mutationMetas = (client: QueryClient) => client.getMutationCache().getAll().map((mutation) => mutation.meta)
 
 async function revertFirstEntry() {
   fireEvent.click(await screen.findByTitle('Revert to this version'))
@@ -83,6 +83,13 @@ describe('system crypto policy', () => {
     await waitFor(() => expect(putSystemPolicy).toHaveBeenCalled())
     await waitFor(() => expect(listSystemAudit).toHaveBeenCalledTimes(2))
   })
+
+  it('names a failed save, which the error toast completes with the reason', async () => {
+    const client = renderWithClient(<CryptoPolicyPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(mutationMetas(client)).toEqual([{ errorTitle: 'Failed to save system policy' }]))
+  })
 })
 
 describe('project crypto policy override', () => {
@@ -100,6 +107,13 @@ describe('project crypto policy override', () => {
 
     await waitFor(() => expect(putProjectPolicy).toHaveBeenCalled())
     await waitFor(() => expect(listProjectAudit).toHaveBeenCalledTimes(2))
+  })
+
+  it('names a failed save, which the error toast completes with the reason', async () => {
+    const client = renderWithClient(<CryptoPolicyOverridePage projectId={PROJECT_ID} canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(mutationMetas(client)).toEqual([{ errorTitle: 'Failed to save override' }]))
   })
 
   it('names a reset that failed and why', async () => {

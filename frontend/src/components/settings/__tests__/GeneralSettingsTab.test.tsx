@@ -44,4 +44,12 @@ describe('GeneralSettingsTab', () => {
       ['global_rescan_interval', 12],
     ])
   })
+
+  it('falls back to a 24-hour interval when the field is cleared, as a project does', () => {
+    renderTab({ rescan_mode: 'global', global_rescan_enabled: true, global_rescan_interval: 12 })
+
+    fireEvent.change(screen.getByLabelText('Interval (Hours)'), { target: { value: '' } })
+
+    expect(handleInputChange).toHaveBeenCalledWith('global_rescan_interval', 24)
+  })
 })

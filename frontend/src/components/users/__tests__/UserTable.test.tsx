@@ -6,9 +6,21 @@ import type { User } from '@/types/user'
 import { UserTable } from '../UserTable'
 
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: () => true }) }))
+const mockUseInviteUser = vi.fn()
+const mockUseRevokeInvitation = vi.fn()
 vi.mock('@/hooks/queries/use-users', () => {
   const mutation = () => ({ mutate: vi.fn(), isPending: false })
-  return { useDeleteUser: mutation, useInviteUser: mutation, useRevokeInvitation: mutation }
+  return {
+    useDeleteUser: mutation,
+    useInviteUser: (meta: unknown) => {
+      mockUseInviteUser(meta)
+      return mutation()
+    },
+    useRevokeInvitation: (meta: unknown) => {
+      mockUseRevokeInvitation(meta)
+      return mutation()
+    },
+  }
 })
 
 describe('UserTable sorting', () => {
@@ -39,5 +51,14 @@ describe('UserTable status', () => {
 
     const statuses = screen.getAllByRole('row').slice(1).map((tr) => within(tr).getAllByRole('cell')[2].textContent)
     expect(statuses).toEqual(['Invited', 'Active', 'Inactive'])
+  })
+})
+
+describe('UserTable invitation failures', () => {
+  it('names a failed revocation and a failed resend, which the error toast completes with the reason', () => {
+    render(<UserTable users={[]} page={0} limit={20} onPageChange={vi.fn()} />)
+
+    expect(mockUseRevokeInvitation).toHaveBeenCalledWith({ errorTitle: 'Failed to revoke invitation' })
+    expect(mockUseInviteUser).toHaveBeenCalledWith({ errorTitle: 'Failed to resend invitation' })
   })
 })

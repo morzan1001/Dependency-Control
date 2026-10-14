@@ -18,6 +18,7 @@ vi.mock('@/api/users', () => ({
     update: vi.fn(),
     delete: vi.fn(),
     adminMigrateToLocal: vi.fn(),
+    adminResetPassword: vi.fn(),
     adminDisable2FA: vi.fn(),
   },
 }))
@@ -236,6 +237,26 @@ describe('UsersPage user details toasts', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete User' })).getByRole('button', { name: 'Delete' }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to delete user', { description: 'Network Error' }))
+  })
+
+  it('names a migration to local login that failed and why', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), auth_provider: 'oidc' }])
+    vi.mocked(userApi.adminMigrateToLocal).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Migrate to Local' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Migration Failed', { description: 'Network Error' }))
+  })
+
+  it('names a password reset that failed and why', async () => {
+    vi.mocked(userApi.getAll).mockResolvedValue([{ ...lena([]), auth_provider: 'local' }])
+    vi.mocked(userApi.adminResetPassword).mockRejectedValue(new Error('Network Error'))
+    await openLena()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send Reset Email' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Reset Failed', { description: 'Network Error' }))
   })
 
   it('names a 2FA disable that failed and why', async () => {

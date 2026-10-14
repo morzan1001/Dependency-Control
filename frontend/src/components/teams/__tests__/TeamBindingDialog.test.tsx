@@ -214,6 +214,17 @@ describe("TeamBindingDialog", () => {
     expect(clearBinding).toHaveBeenCalledTimes(1);
   });
 
+  it("names a removal that failed and why", async () => {
+    clearBinding.mockRejectedValue({ response: { data: { detail: "Team not found" } } });
+    renderDialog(team([GITLAB_BINDING]));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove the binding on GitLab Corp" }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Failed to remove binding", { description: "Team not found" }),
+    );
+  });
+
   it("says what removing a binding costs, so a mis-binding is reversed knowingly", async () => {
     renderDialog(team([GITLAB_BINDING]));
 

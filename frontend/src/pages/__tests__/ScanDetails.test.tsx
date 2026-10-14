@@ -385,6 +385,16 @@ describe('ScanDetails for a scan pinned by an archive restore', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalled())
   })
 
+  it('names an unpin that failed and why', async () => {
+    vi.mocked(projectApi.unpinScan).mockRejectedValueOnce(new Error('Network Error'))
+    mockUseScan.mockReturnValue({ data: pinned(), isLoading: false })
+
+    renderPage()
+    fireEvent.click(screen.getByRole('button', UNPIN_BUTTON))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Unpin failed', { description: 'Network Error' }))
+  })
+
   it('offers no unpin for a scan that is not pinned', () => {
     mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
 
