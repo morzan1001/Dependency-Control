@@ -57,10 +57,6 @@ class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: datetime | None = None
 
-    @property
-    def is_shared_issuer(self) -> bool:
-        return is_shared_github_issuer(self.url)
-
     def accepts_owner(self, owner_id: str | None) -> bool:
         return not self.allowed_owner_ids or owner_id in self.allowed_owner_ids
 

@@ -58,10 +58,6 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: datetime | None = None
 
-    @property
-    def is_shared_issuer(self) -> bool:
-        return is_shared_gitlab_issuer(self.url)
-
     def lacks_required_allowlist(self) -> bool:
         return lacks_required_namespaces(self.url, self.auto_create_projects, self.allowed_namespaces)
 
