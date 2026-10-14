@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { toggle } from "@/lib/utils";
 import type { RetentionAction } from "@/types/project";
 import { AnalyzerChecklist } from "./AnalyzerChecklist";
-import { RetentionFields } from "./RetentionRescanFields";
+import { DEFAULT_RETENTION_DAYS, RetentionFields } from "./RetentionRescanFields";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +32,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 const EMPTY_FORM = {
   name: "",
   team_id: undefined as string | undefined,
-  retention_days: 90,
+  retention_days: DEFAULT_RETENTION_DAYS,
   retention_action: "delete" as RetentionAction,
   // null until the user picks: the selection follows the backend default until then.
   pickedAnalyzers: null as string[] | null,

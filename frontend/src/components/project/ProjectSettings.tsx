@@ -35,7 +35,7 @@ import { AlertTriangle, RefreshCw, Trash2, Info, Settings, Check, ChevronDown } 
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { AnalyzerChecklist } from './AnalyzerChecklist'
-import { ManagedGlobally, RescanFields, RetentionFields } from './RetentionRescanFields'
+import { DEFAULT_RESCAN_HOURS, DEFAULT_RETENTION_DAYS, ManagedGlobally, RescanFields, RetentionFields } from './RetentionRescanFields'
 import {
   Select,
   SelectContent,
@@ -123,7 +123,7 @@ function settingsForm(project: Project) {
   return {
     name: project.name,
     team_ids: project.team_ids ?? [],
-    retention_days: project.retention_days || 90,
+    retention_days: project.retention_days || DEFAULT_RETENTION_DAYS,
     retention_action: project.retention_action || 'delete',
     active_analyzers: project.active_analyzers || [],
     default_branch: project.default_branch,
@@ -382,7 +382,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     ) : (
                         <RescanFields
                             enabled={effectiveRescanEnabled}
-                            interval={form.rescan_interval ?? appConfig?.global_rescan_interval ?? 24}
+                            interval={form.rescan_interval ?? appConfig?.global_rescan_interval ?? DEFAULT_RESCAN_HOURS}
                             onEnabledChange={(rescan_enabled) => set({ rescan_enabled })}
                             onIntervalChange={(rescan_interval) => set({ rescan_interval })}
                             description="Automatically re-scan the latest SBOMs periodically."

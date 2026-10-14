@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AnalyzerChecklist } from "@/components/project/AnalyzerChecklist"
-import { RescanFields, RetentionActionSelect } from "@/components/project/RetentionRescanFields"
+import { DEFAULT_RESCAN_HOURS, DEFAULT_RETENTION_DAYS, RescanFields, RetentionActionSelect } from "@/components/project/RetentionRescanFields"
 import { useAppConfig } from "@/hooks/queries/use-system"
 import { toggle } from "@/lib/utils"
 import { SettingsTabProps } from "@/types/system"
@@ -98,7 +98,7 @@ export function GeneralSettingsTab({
                   type="number"
                   min="0"
                   max="36500"
-                  value={formData.global_retention_days ?? 90}
+                  value={formData.global_retention_days ?? DEFAULT_RETENTION_DAYS}
                   onChange={(e) => handleInputChange('global_retention_days', Number.parseInt(e.target.value) || 0)}
                 />
                 <p className="text-sm text-muted-foreground">
@@ -157,7 +157,7 @@ export function GeneralSettingsTab({
           {formData.rescan_mode === 'global' && (
             <RescanFields
               enabled={formData.global_rescan_enabled || false}
-              interval={formData.global_rescan_interval ?? 24}
+              interval={formData.global_rescan_interval ?? DEFAULT_RESCAN_HOURS}
               onEnabledChange={(enabled) => handleInputChange('global_rescan_enabled', enabled)}
               onIntervalChange={(hours) => handleInputChange('global_rescan_interval', hours)}
               description="Automatically re-scan projects to detect new vulnerabilities in existing dependencies."

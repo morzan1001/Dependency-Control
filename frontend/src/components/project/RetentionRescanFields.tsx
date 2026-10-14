@@ -5,8 +5,8 @@ import { Switch } from '@/components/ui/switch'
 import type { RetentionAction } from '@/types/project'
 import type { AppConfig } from '@/types/system'
 
-const DEFAULT_RETENTION_DAYS = 90
-const DEFAULT_RESCAN_HOURS = 24
+export const DEFAULT_RETENTION_DAYS = 90
+export const DEFAULT_RESCAN_HOURS = 24
 
 const RETENTION_OUTCOME: Record<RetentionAction, string> = { archive: 'archived to S3', none: 'kept forever', delete: 'deleted' }
 
