@@ -12,6 +12,37 @@ db.token_blacklist.getIndexes().some((i) => i.name === "jti_1")
 
 If it prints `true`, run `db.token_blacklist.dropIndex("jti_1")` first. That is safe while 1.9.55 runs, because it reads the blacklist by `_id` and its startup no longer creates `jti_1`.
 
+## Before the rollout (recommended): build the tag-build index
+
+Startup builds the partial index `scans_tag_builds` over the builds with a tag, which the predecessor lookup of a tag build reads instead of sorting every build of the project. The build reads every scan once; to have it done before the pods start, build it with exactly these options, since other options conflict with the startup declaration:
+
+```js
+db.scans.createIndex({ project_id: 1, created_at: -1, _id: 1 }, { name: "scans_tag_builds", partialFilterExpression: { commit_tag: { $gt: "" } } })
+```
+
+## After the rollout (optional): remove the retired GitLab system settings
+
+`gitlab_integration_enabled`, `gitlab_url`, `gitlab_auto_create_projects`, `gitlab_sync_teams` and `gitlab_oidc_audience` predate the GitLab instances, which carry the URL, the sync switches and the OIDC audience. Nothing reads them, and `GET /system/settings` no longer returns them; the stored document keeps them until removed:
+
+```js
+db.system_settings.updateOne({ _id: "current" }, { $unset: { gitlab_integration_enabled: "", gitlab_url: "", gitlab_auto_create_projects: "", gitlab_sync_teams: "", gitlab_oidc_audience: "" } })
+```
+
+## Rolling back to 1.9.55
+
+Nothing to undo: 1.9.55 reads the blacklist by `_id`, leaves `scans_tag_builds` unused and falls back to defaults for the removed settings. A rollback to 1.9.52 or older fails its startup build of the unique `jti_1` index while two or more blacklist entries have no `jti`; they expire after `REFRESH_TOKEN_EXPIRE_DAYS` (7 days by default).
+
+## Behaviour changes
+
+- One-sentence API refusals no longer end with a period, like most of them already did; refusals of several sentences keep theirs. A client that compares refusal texts exactly needs the new text.
+- The ingest refusal for an invalid GitHub CI token reads "Invalid GitHub OIDC Token", like GitLab's, and GitLab's auto-creation refusals name the provider ("Project not found on GitLab instance …").
+- A GitLab profile answer that is not a JSON object counts as no public email, as on GitHub, instead of failing the whole team sync.
+- Retention warns once per group when its action cannot run (archive without S3, an unknown stored action) and skips the group instead of walking its expired scans.
+- The SBOM parser logs a traceback for the first malformed component of a document and counts the rest under `skipped_reasons["parse-error"]`; a Syft `sha512` of 128 hex digits is kept again.
+- The users, teams and projects lists and the waivers' Created By column sort names regardless of letter case.
+- The critical hotspot recommendation names its packages in plain text instead of markdown the cards showed raw.
+- The UI follows one pattern in more places: failures show one toast titled "Failed to …" with the reason; every sortable table sorts text ascending and numbers and dates descending on the first click; Rotate Key asks first, like Delete Project; a refused member address shows under the email field, as in Invite User; a new project's key view matches the other key dialogs; webhook events and finding types (crypto included) show their titles; severity pills carry their icon, the medium one with dark text; chart legends follow the severity order; and on phones long dialog titles stay clear of the close button while footers, card headers and the scan page header stack.
+
 
 
 # Release 1.9.55
