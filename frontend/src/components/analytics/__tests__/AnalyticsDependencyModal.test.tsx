@@ -339,3 +339,17 @@ describe("AnalyticsDependencyModal findings list", () => {
     expect(shown).toEqual(["CVE-2024-1", "CVE-2024-9"]);
   });
 });
+
+describe("AnalyticsDependencyModal known advisories", () => {
+  it("links each known advisory with a public page and names the others", () => {
+    renderModal({ ...baseMetadata, deps_dev: { known_advisories: ["GHSA-aaaa-bbbb-cccc", "CVE-2024-1", "OSV-2024-1"] } });
+
+    expect(screen.getByRole("link", { name: "GHSA-aaaa-bbbb-cccc" })).toHaveAttribute(
+      "href",
+      "https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
+    );
+    expect(screen.getByRole("link", { name: "CVE-2024-1" })).toHaveAttribute("href", "https://nvd.nist.gov/vuln/detail/CVE-2024-1");
+    expect(screen.getByText("OSV-2024-1")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "OSV-2024-1" })).not.toBeInTheDocument();
+  });
+});
