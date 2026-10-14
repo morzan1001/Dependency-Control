@@ -67,7 +67,7 @@ from app.schemas.cbom import CryptoAssetType
 from app.schemas.sbom import ParsedSBOM, SBOMFormat
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
-from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
+from app.services.analysis.integrations import decorate_reviews
 from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
 from app.services.analysis.registry import (
     CRYPTO_ANALYZERS,
@@ -913,8 +913,7 @@ async def _send_integrations_and_notifications(
     project = await ProjectRepository(db).get_by_id(project_id)
     if not project:
         return
-    await decorate_gitlab_mr(scan_id, stats, status, error, scan_doc, project, db)
-    await decorate_github_pr(scan_id, stats, status, error, scan_doc, project, db)
+    await decorate_reviews(scan_id, stats, status, error, scan_doc, project, db)
     await send_scan_notifications(
         scan_id,
         project,

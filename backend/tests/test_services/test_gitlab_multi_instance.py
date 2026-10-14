@@ -110,11 +110,11 @@ class TestMrDecorationEarlyReturns:
 
     @classmethod
     def _run_and_assert_no_service(cls, project, scan_doc, instance_doc=_USABLE_INSTANCE_DOC):
-        from app.services.analysis.integrations import decorate_gitlab_mr
+        from app.services.analysis.integrations import decorate_reviews
 
         db = cls._db(instance_doc)
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
-            asyncio.run(decorate_gitlab_mr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
+            asyncio.run(decorate_reviews("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
 
         MockService.assert_not_called()
 
@@ -194,7 +194,7 @@ class TestMrDecorationInstanceRouting:
     """MR decoration must use the correct GitLab instance for each project."""
 
     def test_creates_service_with_correct_instance(self):
-        from app.services.analysis.integrations import decorate_gitlab_mr
+        from app.services.analysis.integrations import decorate_reviews
 
         project = Project(
             name="Test",
@@ -219,7 +219,7 @@ class TestMrDecorationInstanceRouting:
             MockService.return_value = mock_svc
 
             asyncio.run(
-                decorate_gitlab_mr(
+                decorate_reviews(
                     scan_id="s1",
                     stats=Stats(),
                     status=SCAN_STATUS_COMPLETED,
@@ -237,7 +237,7 @@ class TestMrDecorationInstanceRouting:
 
     def test_two_projects_use_different_instances(self):
         """Two projects linked to different instances should use different services."""
-        from app.services.analysis.integrations import decorate_gitlab_mr
+        from app.services.analysis.integrations import decorate_reviews
 
         projects = [
             Project(
@@ -285,7 +285,7 @@ class TestMrDecorationInstanceRouting:
                 MockService.return_value = mock_svc
 
                 asyncio.run(
-                    decorate_gitlab_mr(
+                    decorate_reviews(
                         scan_id="s1",
                         stats=Stats(),
                         status=SCAN_STATUS_COMPLETED,
@@ -302,7 +302,7 @@ class TestMrDecorationInstanceRouting:
         assert urls_used == ["https://gitlab-a.com", "https://gitlab-b.com"]
 
     def test_filters_to_open_non_draft_mrs(self):
-        from app.services.analysis.integrations import decorate_gitlab_mr
+        from app.services.analysis.integrations import decorate_reviews
 
         project = Project(
             name="Test",
@@ -337,7 +337,7 @@ class TestMrDecorationInstanceRouting:
             MockService.return_value = mock_svc
 
             asyncio.run(
-                decorate_gitlab_mr(
+                decorate_reviews(
                     scan_id="s1",
                     stats=Stats(),
                     status=SCAN_STATUS_COMPLETED,
@@ -354,7 +354,7 @@ class TestMrDecorationInstanceRouting:
             assert call_args[1] == 1  # mr_iid
 
     def test_updates_existing_comment_instead_of_creating(self):
-        from app.services.analysis.integrations import decorate_gitlab_mr
+        from app.services.analysis.integrations import decorate_reviews
 
         project = Project(
             name="Test",
@@ -388,7 +388,7 @@ class TestMrDecorationInstanceRouting:
             MockService.return_value = mock_svc
 
             asyncio.run(
-                decorate_gitlab_mr(
+                decorate_reviews(
                     scan_id="s1",
                     stats=Stats(),
                     status=SCAN_STATUS_COMPLETED,
@@ -409,7 +409,7 @@ class TestMrDecorationInstanceRouting:
         from app.core.config import scan_link
         from app.services.analysis.integrations import (
             _build_scan_comment,
-            decorate_gitlab_mr,
+            decorate_reviews,
         )
 
         project = Project(
@@ -446,7 +446,7 @@ class TestMrDecorationInstanceRouting:
             MockService.return_value = mock_svc
 
             asyncio.run(
-                decorate_gitlab_mr(
+                decorate_reviews(
                     scan_id="s1",
                     stats=stats,
                     status=SCAN_STATUS_COMPLETED,
@@ -470,7 +470,7 @@ class TestMrCommentTarget:
 
     @staticmethod
     def _decorate(mrs, notes, bot_id=BOT_USER_ID):
-        from app.services.analysis.integrations import decorate_gitlab_mr
+        from app.services.analysis.integrations import decorate_reviews
 
         project = Project(
             name="Test",
@@ -487,7 +487,7 @@ class TestMrCommentTarget:
         svc.post_merge_request_comment = AsyncMock(return_value=True)
         with patch("app.services.analysis.integrations.GitLabService", return_value=svc):
             scan_doc = _make_scan(commit_hash="abc")
-            asyncio.run(decorate_gitlab_mr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
+            asyncio.run(decorate_reviews("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
         return svc
 
     def test_an_mr_whose_head_moved_past_the_scanned_commit_is_left_alone(self):

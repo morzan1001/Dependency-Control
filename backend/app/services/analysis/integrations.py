@@ -1,19 +1,24 @@
-"""External integrations for scan results (GitLab MR and GitHub PR comments)."""
+"""The scan result as a comment on the merge and pull requests of the scanned commit."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorDatabase
+
+    from app.models.github_instance import GitHubInstance
+    from app.models.gitlab_instance import GitLabInstance
 
 from app.core.config import scan_link
 from app.core.constants import SCAN_STATUS_COMPLETED, ScanStatus
 from app.models.project import Project, Scan
 from app.models.stats import Stats
+from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.services.github import GitHubService, split_repo_path
 from app.services.gitlab import GitLabService
 
@@ -51,25 +56,103 @@ def _build_scan_comment(stats: Stats, scan_url: str, status: ScanStatus, error: 
     )
 
 
-async def _upsert_scan_comment(
-    comments: list[tuple[int, str]] | None,
-    body: str,
-    update: Callable[[int, str], Awaitable[bool]],
-    post: Callable[[str], Awaitable[bool]],
-    label: str,
-) -> None:
+class _Review(NamedTuple):
+    """An open merge or pull request whose head is the scanned commit, and the calls on its comments."""
+
+    label: str
+    comments_by: Callable[[int], Awaitable[list[tuple[int, str]] | None]]
+    update: Callable[[int, str], Awaitable[bool]]
+    post: Callable[[str], Awaitable[bool]]
+
+
+class _Site(NamedTuple):
+    """A provider a project comments its scans on, and how its open reviews of a commit are read."""
+
+    provider: str
+    instance_id: str
+    instances: type[GitLabInstanceRepository] | type[GitHubInstanceRepository]
+    reviews: Callable[[Any, str], Awaitable[tuple[GitLabService | GitHubService, list[_Review]]]]
+
+
+async def _merge_requests(
+    instance: GitLabInstance, commit: str, *, project_id: int
+) -> tuple[GitLabService, list[_Review]]:
+    service = GitLabService(instance)
+
+    async def notes_by(iid: int, author: int) -> list[tuple[int, str]] | None:
+        notes = await service.get_merge_request_notes(project_id, iid)
+        # GitLab lists notes newest first.
+        return None if notes is None else [(note.id, note.body) for note in reversed(notes) if note.author_id == author]
+
+    mrs = await service.get_merge_requests_for_commit(project_id, commit)
+    return service, [
+        _Review(
+            f"MR !{mr.iid}",
+            partial(notes_by, mr.iid),
+            partial(service.update_merge_request_comment, project_id, mr.iid),
+            partial(service.post_merge_request_comment, project_id, mr.iid),
+        )
+        for mr in mrs
+        if mr.state == "opened" and not mr.draft and not mr.work_in_progress and mr.sha == commit
+    ]
+
+
+async def _pull_requests(
+    instance: GitHubInstance, commit: str, *, repo: tuple[str, str], branch: str
+) -> tuple[GitHubService, list[_Review]]:
+    service = GitHubService(instance)
+    owner, name = repo
+
+    async def comments_by(number: int, author: int) -> list[tuple[int, str]] | None:
+        comments = await service.get_pull_request_comments(owner, name, number)
+        return None if comments is None else [(c.id, c.body or "") for c in comments if c.user_id == author]
+
+    head_sha, prs = await service.get_pull_requests_for_commit(owner, name, commit, branch)
+    return service, [
+        _Review(
+            f"PR #{pr.number}",
+            partial(comments_by, pr.number),
+            partial(service.update_pull_request_comment, owner, name),
+            partial(service.post_pull_request_comment, owner, name, pr.number),
+        )
+        for pr in prs
+        if pr.state == "open" and pr.draft is False and pr.head_sha == head_sha
+    ]
+
+
+def _sites(project: Project, scan: Scan) -> list[_Site]:
+    """The providers this project has scan comments on for, warning about one it has no link to."""
+    sites = []
+    if project.gitlab_mr_comments_enabled:
+        if project.gitlab_instance_id and project.gitlab_project_id:
+            merge_requests = partial(_merge_requests, project_id=project.gitlab_project_id)
+            sites.append(_Site("GitLab", project.gitlab_instance_id, GitLabInstanceRepository, merge_requests))
+        else:
+            logger.warning("Project %s has MR comments enabled but missing GitLab instance/project ID", project.id)
+    if project.github_pr_comments_enabled:
+        repo = split_repo_path(project.github_repository_path)
+        if project.github_instance_id and repo:
+            pull_requests = partial(_pull_requests, repo=repo, branch=scan.branch)
+            sites.append(_Site("GitHub", project.github_instance_id, GitHubInstanceRepository, pull_requests))
+        else:
+            logger.warning("Project %s has PR comments enabled but missing GitHub instance/repository path", project.id)
+    return sites
+
+
+async def _upsert_scan_comment(review: _Review, author: int, body: str, label: str) -> None:
     """Edit the first marked comment (the bot's own, oldest first) or post one; an unread list (None) posts no second."""
+    comments = await review.comments_by(author)
     if comments is None:
         logger.warning("Scan comment on %s skipped: its comments could not be read", label)
         return
     existing = next(((cid, text) for cid, text in comments if _SCAN_COMMENT_MARKER in text), None)
     if existing is None:
-        action, success = "post", await post(body)
+        action, success = "post", await review.post(body)
     elif existing[1] == body:
         logger.info("Scan comment on %s is already up to date", label)
         return
     else:
-        action, success = "update", await update(existing[0], body)
+        action, success = "update", await review.update(existing[0], body)
 
     if success:
         logger.info("Scan comment on %s: %s done", label, action)
@@ -77,133 +160,56 @@ async def _upsert_scan_comment(
         logger.warning("Scan comment on %s: %s failed", label, action)
 
 
-async def decorate_gitlab_mr(
-    scan_id: str,
-    stats: Stats,
-    status: ScanStatus,
-    error: str | None,
-    scan_doc: Scan,
-    project: Project,
-    db: AsyncIOMotorDatabase,
+async def _decorate(
+    site: _Site, commit: str, body: str, project: Project, scan_id: str, db: AsyncIOMotorDatabase
 ) -> None:
-    """Comment the scan result on the open GitLab merge requests whose head is the scanned commit."""
-    if not project.gitlab_mr_comments_enabled:
-        return
-    if not project.gitlab_instance_id or not project.gitlab_project_id:
-        logger.warning(f"Project {project.id} has MR comments enabled but missing GitLab instance/project ID")
-        return
-    if not scan_doc.commit_hash:
-        return
-
-    try:
-        from app.repositories.gitlab_instances import GitLabInstanceRepository
-
-        gitlab_instance = await GitLabInstanceRepository(db).get_usable(project.gitlab_instance_id)
-        if not gitlab_instance:
-            logger.warning(
-                "GitLab instance %s is missing, inactive or has no token; skipping MR decoration for project %s",
-                project.gitlab_instance_id,
-                project.id,
-            )
-            return
-
-        gitlab_service = GitLabService(gitlab_instance)
-        gitlab_project_id = project.gitlab_project_id
-        mrs = await gitlab_service.get_merge_requests_for_commit(gitlab_project_id, scan_doc.commit_hash)
-        relevant_mrs = [
-            mr
-            for mr in mrs
-            if mr.state == "opened" and not mr.draft and not mr.work_in_progress and mr.sha == scan_doc.commit_hash
-        ]
-        if not relevant_mrs:
-            logger.info(f"No open MR has scan {scan_id}'s commit as head in project {project.id}")
-            return
-
-        bot_id = await gitlab_service.get_current_user_id()
-        if bot_id is None:
-            logger.warning("GitLab token user unresolved; skipping MR decoration for project %s", project.id)
-            return
-
-        body = _build_scan_comment(stats, scan_link(str(project.id), scan_id), status, error)
-        for mr in relevant_mrs:
-            try:
-                notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr.iid)
-                # GitLab lists notes newest first.
-                own = None if notes is None else [(n.id, n.body) for n in reversed(notes) if n.author_id == bot_id]
-                await _upsert_scan_comment(
-                    own,
-                    body,
-                    partial(gitlab_service.update_merge_request_comment, gitlab_project_id, mr.iid),
-                    partial(gitlab_service.post_merge_request_comment, gitlab_project_id, mr.iid),
-                    f"MR !{mr.iid} of project {project.id}",
-                )
-            except Exception:
-                logger.exception("Failed to decorate MR !%s for project %s, scan %s", mr.iid, project.id, scan_id)
-
-    except Exception:
-        logger.exception("Failed to decorate GitLab MR for project %s, scan %s", project.id, scan_id)
-
-
-async def decorate_github_pr(
-    scan_id: str,
-    stats: Stats,
-    status: ScanStatus,
-    error: str | None,
-    scan_doc: Scan,
-    project: Project,
-    db: AsyncIOMotorDatabase,
-) -> None:
-    """Comment the scan result on the open GitHub pull requests whose head is the scanned commit."""
-    if not project.github_pr_comments_enabled:
-        return
-    repo_path = split_repo_path(project.github_repository_path)
-    if not project.github_instance_id or not repo_path:
-        logger.warning(f"Project {project.id} has PR comments enabled but missing GitHub instance/repository path")
-        return
-    if not scan_doc.commit_hash:
-        return
-
-    try:
-        from app.repositories.github_instances import GitHubInstanceRepository
-
-        github_instance = await GitHubInstanceRepository(db).get_usable(project.github_instance_id)
-        if not github_instance:
-            logger.warning(
-                "GitHub instance %s is missing, inactive or has no token; skipping PR decoration for project %s",
-                project.github_instance_id,
-                project.id,
-            )
-            return
-
-        owner, repo = repo_path
-        github_service = GitHubService(github_instance)
-        head_sha, prs = await github_service.get_pull_requests_for_commit(
-            owner, repo, scan_doc.commit_hash, scan_doc.branch
+    instance = await site.instances(db).get_usable(site.instance_id)
+    if not instance:
+        logger.warning(
+            "%s instance %s is missing, inactive or has no token; skipping review decoration for project %s",
+            site.provider,
+            site.instance_id,
+            project.id,
         )
-        relevant_prs = [pr for pr in prs if pr.state == "open" and pr.draft is False and pr.head_sha == head_sha]
-        if not relevant_prs:
-            logger.info(f"No open PR has scan {scan_id}'s commit as head in project {project.id}")
-            return
+        return
 
-        bot_id = await github_service.get_current_user_id()
-        if bot_id is None:
-            logger.warning("GitHub token user unresolved; skipping PR decoration for project %s", project.id)
-            return
+    service, reviews = await site.reviews(instance, commit)
+    if not reviews:
+        logger.info("No open %s review has scan %s's commit as head in project %s", site.provider, scan_id, project.id)
+        return
 
-        body = _build_scan_comment(stats, scan_link(str(project.id), scan_id), status, error)
-        for pr in relevant_prs:
-            try:
-                comments = await github_service.get_pull_request_comments(owner, repo, pr.number)
-                own = None if comments is None else [(c.id, c.body or "") for c in comments if c.user_id == bot_id]
-                await _upsert_scan_comment(
-                    own,
-                    body,
-                    partial(github_service.update_pull_request_comment, owner, repo),
-                    partial(github_service.post_pull_request_comment, owner, repo, pr.number),
-                    f"PR #{pr.number} of project {project.id}",
-                )
-            except Exception:
-                logger.exception("Failed to decorate PR #%s for project %s, scan %s", pr.number, project.id, scan_id)
+    bot_id = await service.get_current_user_id()
+    if bot_id is None:
+        logger.warning("%s token user unresolved; skipping review decoration for project %s", site.provider, project.id)
+        return
 
-    except Exception:
-        logger.exception("Failed to decorate GitHub PR for project %s, scan %s", project.id, scan_id)
+    for review in reviews:
+        label = f"{review.label} of project {project.id}"
+        try:
+            await _upsert_scan_comment(review, bot_id, body, label)
+        except Exception:
+            logger.exception("Failed to decorate %s, scan %s", label, scan_id)
+
+
+async def decorate_reviews(
+    scan_id: str,
+    stats: Stats,
+    status: ScanStatus,
+    error: str | None,
+    scan_doc: Scan,
+    project: Project,
+    db: AsyncIOMotorDatabase,
+) -> None:
+    """Comment the scan result on the open merge and pull requests whose head is the scanned commit."""
+    sites = _sites(project, scan_doc)
+    commit = scan_doc.commit_hash
+    if not commit:
+        return
+    body = _build_scan_comment(stats, scan_link(str(project.id), scan_id), status, error)
+    for site in sites:
+        try:
+            await _decorate(site, commit, body, project, scan_id, db)
+        except Exception:
+            logger.exception(
+                "Failed to decorate %s reviews for project %s, scan %s", site.provider, project.id, scan_id
+            )
