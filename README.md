@@ -204,7 +204,7 @@ The backend serves a reusable `scanner.sh` for SBOM/CBOM/secret/SAST/IaC ingesti
 curl -sSL "$DEP_CONTROL_URL/api/v1/scripts" | jq
 
 # Pin the version + hash you reviewed; future deploys won't change the bytes
-SCANNER_VERSION="1.1.0"
+SCANNER_VERSION="1.3.2"
 SCANNER_SHA256="<from manifest>"
 
 curl -sSfL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
