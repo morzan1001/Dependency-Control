@@ -1,11 +1,14 @@
-"""The users, teams, projects and waiver creator lists sort names whatever their case; the fake ignores collations."""
+"""The users, teams, projects and waiver lists and the chat team list sort names whatever their case; the fake ignores
+collations."""
 
 import pytest
 
+from app.core.permissions import Permissions
 from app.models.project import Project, ProjectMember
 from app.models.team import Team
 from app.models.user import User
 from app.models.waiver import Waiver
+from app.services.chat.tools import ChatToolRegistry
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -80,3 +83,51 @@ async def test_the_global_waivers_order_creators_whatever_their_case(client, db,
     )
 
     assert [waiver["created_by"] for waiver in resp.json()["items"]] == ["alice.jensen", "Bob Example", "carol", "Dave"]
+
+
+@pytest.mark.parametrize("sort_by", ["finding_id", "package_name", "reason"])
+async def test_the_waivers_order_finding_ids_packages_and_reasons_whatever_their_case(
+    client, db, admin_auth_headers, sort_by
+):
+    await db.waivers.insert_many(
+        [
+            Waiver(**{"reason": "accepted", "created_by": "u-1", sort_by: value}).model_dump(by_alias=True)
+            for value in ("Bob", "carol", "alice")
+        ]
+    )
+
+    resp = await client.get(
+        "/api/v1/waivers/",
+        params={"global_only": True, "sort_by": sort_by, "sort_order": "asc"},
+        headers=admin_auth_headers,
+    )
+
+    assert [waiver[sort_by] for waiver in resp.json()["items"]] == ["alice", "Bob", "carol"]
+
+
+async def test_the_waiver_total_counts_what_the_case_insensitive_page_lists(client, db, admin_auth_headers):
+    await db.waivers.insert_many(
+        [
+            Waiver(reason="accepted", created_by="u-1", finding_id=finding_id).model_dump(by_alias=True)
+            for finding_id in ("CVE-2024-1", "cve-2024-1", "CVE-2024-2")
+        ]
+    )
+
+    resp = await client.get(
+        "/api/v1/waivers/",
+        params={"global_only": True, "finding_id": "CVE-2024-1", "sort_by": "finding_id"},
+        headers=admin_auth_headers,
+    )
+
+    assert resp.json()["total"] == len(resp.json()["items"]) == 2
+
+
+async def test_the_chat_team_list_orders_names_whatever_their_case(db):
+    await db.teams.insert_many(
+        [Team(name=name).model_dump(by_alias=True) for name in ("Platform Engineering", "api-gateway", "Core")]
+    )
+    caller = User(id="u-1", username="u-1", email="u-1@corp.com", permissions=[Permissions.TEAM_READ_ALL])
+
+    result = await ChatToolRegistry().execute_tool("list_teams", {}, caller, db)
+
+    assert [team["name"] for team in result["teams"]] == ["api-gateway", "Core", "Platform Engineering"]

@@ -229,12 +229,14 @@ async def list_waivers(
 
     waiver_repo = WaiverRepository(db)
 
-    total = await waiver_repo.count(query)
+    total = await waiver_repo.count(query, collation=CASE_INSENSITIVE)
     sort_direction = parse_sort_direction(sort_order)
     if sort_by == "created_by":
         waivers = await waiver_repo.find_many_by_creator_name(query, skip, limit, sort_direction, CASE_INSENSITIVE)
     else:
-        waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
+        waivers = await waiver_repo.find_many(
+            query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction, collation=CASE_INSENSITIVE
+        )
 
     return build_pagination_response(await _with_creator_names(db, waivers), total, skip, limit)
 
