@@ -119,6 +119,12 @@ describe("AnalyticsDependencyModal project statistics", () => {
     expect(tiles).toEqual([`${(12345).toLocaleString()}Stars`, "7Issues", "300Dependents"]);
   });
 
+  it("marks a package deps.dev reports as deprecated", () => {
+    renderModal({ ...baseMetadata, deps_dev: { is_deprecated: true } });
+
+    expect(screen.getByText("Deprecated")).toBeInTheDocument();
+  });
+
   it("offers the homepage, repository and download links in that order", () => {
     renderModal({
       ...baseMetadata,

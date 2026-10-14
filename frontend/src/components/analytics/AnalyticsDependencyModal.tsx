@@ -177,13 +177,12 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
     { label: 'Issues', value: depsDev?.open_issues, icon: CircleDot, color: 'text-green-500' },
     { label: 'Dependents', value: depsDev?.dependents?.total, icon: Users, color: 'text-purple-500' },
   ]
-  const depsDevLinks = metadata.deps_dev?.links
-    ? Object.entries(metadata.deps_dev.links)
+  const depsDevLinks = depsDev?.links
+    ? Object.entries(depsDev.links)
         .map(([label, url]) => [label, safeHref(url)] as const)
         .filter((entry): entry is readonly [string, string] => Boolean(entry[1]))
     : []
 
-  const hasDepsDevData = metadata.deps_dev
   const hasMaintainerInfo = metadata.author || metadata.publisher
   
   return (
@@ -200,7 +199,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
               </span>
             )}
             <Badge variant="secondary">{metadata.type}</Badge>
-            {metadata.deps_dev?.is_deprecated && (
+            {depsDev?.is_deprecated && (
               <Badge variant="destructive">Deprecated</Badge>
             )}
             {metadata.license && (
@@ -257,7 +256,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
         </div>
       )}
 
-      {hasDepsDevData && (
+      {depsDev && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {statTiles.map(({ label, value, icon: Icon, color }) => value !== undefined && (
             <div key={label} className="flex items-center gap-2 p-2 bg-background rounded-md">
@@ -383,11 +382,11 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
             </div>
           )}
 
-          {metadata.deps_dev?.published_at && (
+          {depsDev?.published_at && (
             <InfoRow
               icon={Calendar}
               label="Published"
-              value={formatDate(metadata.deps_dev.published_at, {
+              value={formatDate(depsDev.published_at, {
                 year: "numeric",
                 month: "long",
                 day: "numeric"
