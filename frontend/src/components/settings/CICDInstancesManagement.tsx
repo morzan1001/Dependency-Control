@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Plus, Trash2, Edit2, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Plus, Trash2, Edit2, Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { gitlabInstancesApi } from "@/api/gitlab-instances";
 import { githubInstancesApi } from "@/api/github-instances";
@@ -10,6 +10,7 @@ import { InstanceType, UnifiedInstance, isSharedIssuer, mergeInstances, parseAll
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { StatusPill } from "@/components/users/UserStatusBadge";
 import {
   Table,
   TableBody,
@@ -285,17 +286,7 @@ export function CICDInstancesManagement() {
                     {instance.url}
                   </TableCell>
                   <TableCell>
-                    {instance.is_active ? (
-                      <Badge variant="default" className="gap-1">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Active
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="gap-1">
-                        <XCircle className="h-3 w-3" />
-                        Inactive
-                      </Badge>
-                    )}
+                    {instance.is_active ? <StatusPill tone="green">Active</StatusPill> : <StatusPill tone="red">Inactive</StatusPill>}
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
