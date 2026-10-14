@@ -20,7 +20,7 @@ export function RevertConfirmDialog({ open, targetVersion, onClose, onConfirm }:
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader><DialogTitle>Revert to version {targetVersion}?</DialogTitle></DialogHeader>
         <p className="text-sm text-muted-foreground">
           This creates a new policy version whose rules match version{" "}

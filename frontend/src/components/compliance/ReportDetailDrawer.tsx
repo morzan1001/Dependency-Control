@@ -137,7 +137,7 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
       </Dialog>
 
       <Dialog open={confirm.open} onOpenChange={confirm.setOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete this report?</DialogTitle>
           </DialogHeader>

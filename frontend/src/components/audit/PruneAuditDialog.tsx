@@ -28,7 +28,7 @@ export function PruneAuditDialog({ open, onClose, onConfirm, busy }: Readonly<Pr
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Prune audit entries</DialogTitle>
         </DialogHeader>

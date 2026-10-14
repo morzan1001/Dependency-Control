@@ -88,6 +88,13 @@ describe("CryptoPolicyEditor add rule dialog", () => {
     for (const name of ["Rule ID", "Name", "Description", "Name patterns (comma-separated)"]) expectFieldLabel(name);
   });
 
+  it("opens at the default dialog width, like the other form dialogs", () => {
+    render(<CryptoPolicyEditor initialRules={[]} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add custom rule" }));
+
+    expect(screen.getByRole("dialog", { name: "Add custom crypto rule" })).toHaveClass("max-w-lg");
+  });
+
   it.each([
     ["no rule ID", "", "Block RC4", "Rule ID", "Enter a rule ID"],
     ["a rule ID already taken", "sys-rc4", "Block RC4", "Rule ID", "A rule with this ID already exists"],

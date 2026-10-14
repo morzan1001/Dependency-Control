@@ -81,6 +81,16 @@ describe("PolicyAuditTimeline", () => {
     expect(screen.getByLabelText("Prune entries before")).toHaveClass("border-input");
   });
 
+  it("opens the revert and prune dialogs at the default dialog width, like the other confirmations", async () => {
+    withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+    fireEvent.click((await screen.findAllByTitle("Revert to this version"))[0]);
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-lg");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Prune old entries/i }));
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-lg");
+  });
+
   it("shows the server's reason when a revert is refused", async () => {
     vi.mocked(revertSystemPolicy).mockRejectedValueOnce(
       Object.assign(new Error("Request failed with status code 422"), {
