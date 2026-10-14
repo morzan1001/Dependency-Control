@@ -10,7 +10,7 @@ import { SortableHead } from '@/components/ui/sortable-head'
 import { TableHead } from '@/components/ui/table'
 import { usePaginationState } from '@/hooks/use-pagination-state'
 import { Pagination } from '@/components/ui/pagination'
-import { formatDate } from '@/lib/utils'
+import { formatDate, truncateLabel } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
@@ -146,12 +146,13 @@ export default function Dashboard() {
                     <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis 
-                        dataKey="name" 
-                        stroke="#888888" 
-                        fontSize={12} 
-                        tickLine={false} 
-                        axisLine={false} 
+                        <XAxis
+                        dataKey="name"
+                        stroke="#888888"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(name: string) => truncateLabel(name, 11)}
                         />
                         <YAxis
                         stroke="#888888"

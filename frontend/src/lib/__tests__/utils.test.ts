@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { formatUpdatesPerMonth, toggle } from '../utils'
+import { formatUpdatesPerMonth, toggle, truncateLabel } from '../utils'
 
 describe('formatUpdatesPerMonth', () => {
   it('reports N/A when no calendar window was requested', () => {
@@ -24,5 +24,13 @@ describe('toggle', () => {
     expect(toggle(list, 'c')).toEqual(['a', 'b', 'c'])
     expect(toggle(list, 'a')).toEqual(['b'])
     expect(list).toEqual(['a', 'b'])
+  })
+})
+
+describe('truncateLabel', () => {
+  it('keeps a label as long as the limit and cuts a longer one with an ellipsis', () => {
+    expect(truncateLabel('a'.repeat(20))).toBe('a'.repeat(20))
+    expect(truncateLabel('a'.repeat(21))).toBe(`${'a'.repeat(20)}…`)
+    expect(truncateLabel('payments-service', 11)).toBe('payments-se…')
   })
 })

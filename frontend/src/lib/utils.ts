@@ -9,6 +9,11 @@ export function toggle<T extends string>(list: readonly T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
 }
 
+// A chart axis drops a category label that would overlap its neighbour, so long ones are cut to fit.
+export function truncateLabel(label: string, max = 20): string {
+  return label.length > max ? `${label.slice(0, max)}…` : label
+}
+
 interface ValidationError {
   msg?: string;
   type?: string;

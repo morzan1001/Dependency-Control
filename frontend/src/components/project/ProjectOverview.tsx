@@ -18,7 +18,7 @@ import { SecretPriorityCard } from '@/components/findings/SecretPriorityCard'
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
-import { formatDate } from '@/lib/utils'
+import { formatDate, truncateLabel } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS, bySeriesOrder, bySeverityOrder } from '@/lib/finding-utils'
 
 interface ProjectOverviewProps {
@@ -380,7 +380,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                               }}
                             >
                                 <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="name" />
+                                <XAxis dataKey="name" tickFormatter={(name: string) => truncateLabel(name)} />
                                 <YAxis />
                                 <Tooltip
                                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}

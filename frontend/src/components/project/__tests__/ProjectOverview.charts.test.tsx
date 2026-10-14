@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cloneElement, type ReactElement } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ScanWithReleases } from '@/types/scan'
 
@@ -19,6 +19,11 @@ const SCAN: ScanWithReleases = {
   stats: { critical: 1, high: 2, medium: 3, low: 4 },
 }
 
+const LONG_BRANCH = 'feature/PAY-4821-checkout-redesign'
+const { branchTips } = vi.hoisted(() => ({
+  branchTips: { current: [] as { branch: string; scan_count: number; tip: ScanWithReleases }[] },
+}))
+
 vi.mock('recharts', async (importOriginal) => {
   const recharts = await importOriginal<typeof import('recharts')>()
   return {
@@ -32,7 +37,7 @@ vi.mock('@/api/scans')
 vi.mock('@/hooks/queries/use-scans', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/queries/use-scans')>()),
   useProjectScans: () => ({ data: [SCAN], isLoading: false }),
-  useProjectBranchTips: () => ({ data: { branches: [{ branch: 'main', scan_count: 1, tip: SCAN }] }, isLoading: false }),
+  useProjectBranchTips: () => ({ data: { branches: branchTips.current }, isLoading: false }),
   useScan: () => ({ data: SCAN }),
   useScanResults: () => ({ data: [] }),
 }))
@@ -41,6 +46,10 @@ vi.mock('@/hooks/queries/use-releases', () => ({
 }))
 vi.mock('@/hooks/queries/use-waivers', () => ({ useWaiverList: () => ({ data: undefined }) }))
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
+
+beforeEach(() => {
+  branchTips.current = [{ branch: 'main', scan_count: 1, tip: SCAN }]
+})
 
 async function legendOf(title: string) {
   const card = screen.getByText(title).closest('.bg-card') as HTMLElement
@@ -70,5 +79,24 @@ describe('ProjectOverview trend legend', () => {
     )
 
     expect(await legendOf('Vulnerability Trends')).toEqual(['main', 'develop'])
+  })
+})
+
+describe('ProjectOverview branch chart', () => {
+  it('shortens a long branch name under its bars and names it in full in the tooltip', async () => {
+    branchTips.current = [{ branch: LONG_BRANCH, scan_count: 1, tip: { ...SCAN, id: 's-long', branch: LONG_BRANCH } }]
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectOverview projectId="p1" selectedBranches={[LONG_BRANCH]} />
+      </QueryClientProvider>,
+    )
+
+    const card = screen.getByText('Severity Distribution by Branch').closest('.bg-card') as HTMLElement
+    expect(await within(card).findByText('feature/PAY-4821-che…')).toBeInTheDocument()
+    expect(within(card).queryByText(LONG_BRANCH)).not.toBeInTheDocument()
+
+    fireEvent.focus(card.querySelector('.recharts-wrapper')!)
+
+    expect(await within(card).findByText(LONG_BRANCH)).toBeInTheDocument()
   })
 })
