@@ -1,3 +1,15 @@
+# Release 1.9.55
+
+## 🐛 Fixes
+
+- fix(users): allow single spaces between words in a chosen username, like the names identity providers give (#0)
+
+## 📦 Build & CI
+
+- chore(release): 1.9.55 lets everyone rename themselves, changes the email in place, closes the webhook and MCP gaps, adds forgot password and unifies the UI (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.54. Run mongosh commands in-pod against the application database.
