@@ -31,7 +31,7 @@ export function ProjectCombobox({
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const { data: projectsData, isLoading } = useProjects(debouncedSearch || undefined, 1, 50)
+  const { data: projectsData, isLoading } = useProjects(debouncedSearch || undefined, 1, 50, 'name', 'asc')
 
   const projects = projectsData?.items || []
   // Resolve the selection separately so the trigger shows its name even when it is off the current page.

@@ -32,6 +32,15 @@ describe('ProjectCombobox', () => {
     vi.clearAllMocks()
   })
 
+  it('lists the projects by name, like the team pickers, instead of newest first', () => {
+    vi.mocked(useProjects).mockReturnValue(asListResult(mkListResponse([])))
+    vi.mocked(useProject).mockReturnValue(asDetailResult(undefined))
+
+    render(<ProjectCombobox value="" onValueChange={vi.fn()} />)
+
+    expect(useProjects).toHaveBeenCalledWith(undefined, 1, 50, 'name', 'asc')
+  })
+
   it('shows the selected project name even when it is not on the current list page', () => {
     vi.mocked(useProjects).mockReturnValue(
       asListResult(mkListResponse([mkProject('p1', 'Alpha'), mkProject('p3', 'Gamma')])),
