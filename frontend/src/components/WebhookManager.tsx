@@ -90,8 +90,8 @@ export function WebhookManager({
       await onDelete(webhook.id)
       setWebhookToDelete(null)
       toast.success("Webhook deleted")
-    } catch {
-      toast.error("Failed to delete webhook")
+    } catch (error) {
+      toast.error("Failed to delete webhook", { description: getErrorMessage(error) })
     } finally {
       setDeleting(false)
     }
@@ -103,9 +103,9 @@ export function WebhookManager({
     try {
       const result = await testWebhook.mutateAsync(id)
       if (result.success) toast.success(`Test delivered (HTTP ${result.status_code})`)
-      else toast.error(`Test failed: ${result.error}`)
+      else toast.error("Test failed", { description: result.error })
     } catch (error) {
-      toast.error(getErrorMessage(error))
+      toast.error("Test failed", { description: getErrorMessage(error) })
     }
   }
 

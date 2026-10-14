@@ -185,8 +185,17 @@ describe("WebhookManager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Send test/i }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("HTTP 400: no_text")));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Test failed", { description: "HTTP 400: no_text" }));
     expect(webhookApi.test).toHaveBeenCalledWith("w-slack");
+  });
+
+  it("names a test that could not be sent and why", async () => {
+    vi.mocked(webhookApi.test).mockRejectedValue(new Error("Network Error"));
+    renderWith([slackHook]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Send test/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Test failed", { description: "Network Error" }));
   });
 
   it("deletes a webhook from its named Delete button once confirmed in a dialog naming its URL in bold, like the user deletion", async () => {
@@ -223,7 +232,7 @@ describe("WebhookManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete webhook" }));
     fireEvent.click(within(screen.getByRole("dialog", { name: "Delete Webhook" })).getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to delete webhook"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to delete webhook", { description: "boom" }));
     expect(screen.getByRole("dialog", { name: "Delete Webhook" })).toBeInTheDocument();
   });
 
