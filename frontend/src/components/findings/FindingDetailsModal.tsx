@@ -152,7 +152,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                     </DialogTitle>
                     <DialogDescription className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
                         <span className="flex items-center gap-1">
-                            <Badge variant="outline">{finding.type}</Badge>
+                            <FindingTypeBadge type={finding.type} />
                             {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }) => (
                                 <FindingTypeBadge key={addType.type} type={addType.type} />
                             ))}

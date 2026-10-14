@@ -45,6 +45,16 @@ function renderModal(shown: Finding, props: { scanContext?: ScanContext; onSelec
   );
 }
 
+describe("FindingDetailsModal header", () => {
+  it("names the finding's type with the findings table's badge, like the other types beside it", () => {
+    renderModal(finding({ type: "crypto_weak_algorithm", details: { additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
+
+    expect(screen.getByText("Weak algorithm")).toHaveClass("truncate");
+    expect(screen.queryByText("crypto_weak_algorithm")).not.toBeInTheDocument();
+    expect(screen.getByText("Outdated")).toHaveClass("truncate");
+  });
+});
+
 describe("FindingDetailsModal severity", () => {
   it("colours the finding's and each advisory's severity like the findings table row", () => {
     renderModal(finding({ severity: "MEDIUM", details: { vulnerabilities: [{ id: "CVE-2024-1", severity: "LOW" }] } }));
