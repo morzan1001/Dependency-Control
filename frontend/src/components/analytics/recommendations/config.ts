@@ -24,10 +24,10 @@ import {
 } from 'lucide-react'
 
 export const priorityConfig = {
-  critical: { color: 'bg-severity-critical', textColor: 'text-severity-critical', label: 'Critical' },
-  high: { color: 'bg-severity-high', textColor: 'text-severity-high', label: 'High' },
-  medium: { color: 'bg-severity-medium', textColor: 'text-severity-medium', label: 'Medium' },
-  low: { color: 'bg-severity-low', textColor: 'text-severity-low', label: 'Low' },
+  critical: { textColor: 'text-severity-critical', label: 'Critical' },
+  high: { textColor: 'text-severity-high', label: 'High' },
+  medium: { textColor: 'text-severity-medium', label: 'Medium' },
+  low: { textColor: 'text-severity-low', label: 'Low' },
 }
 
 export const typeConfig: Record<string, { icon: typeof Container; label: string; color: string; bgColor: string }> = {
