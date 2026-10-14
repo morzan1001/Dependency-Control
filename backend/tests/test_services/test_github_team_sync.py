@@ -48,6 +48,7 @@ def _empty_cache(monkeypatch):
     cache._pool = object()
     cache._available = True
     monkeypatch.setattr("app.services.github.cache_service", cache)
+    monkeypatch.setattr("app.services.git_provider.cache_service", cache)
 
 
 def _response(status_code: int, payload: dict) -> MagicMock:
