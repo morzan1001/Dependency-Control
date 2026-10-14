@@ -38,7 +38,6 @@ export interface SystemSettings {
   mattermost_bot_token?: string | null;
   github_token?: string | null;
   open_source_malware_api_key?: string | null;
-  gitlab_access_token?: string | null;
   // Secret values are never echoed by the API; these flags report stored state.
   github_token_configured?: boolean;
   smtp_password_configured?: boolean;
@@ -47,7 +46,6 @@ export interface SystemSettings {
   slack_client_secret_configured?: boolean;
   slack_refresh_token_configured?: boolean;
   oidc_client_secret_configured?: boolean;
-  gitlab_access_token_configured?: boolean;
   mattermost_bot_token_configured?: boolean;
   default_active_analyzers: string[];
   chat_rate_limit_per_minute?: number;

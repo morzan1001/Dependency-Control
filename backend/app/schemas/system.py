@@ -60,7 +60,6 @@ class SystemSettingsResponse(SystemSettingsFields):
     slack_client_secret: str | None = Field(default=None, exclude=True)
     slack_refresh_token: str | None = Field(default=None, exclude=True)
     oidc_client_secret: str | None = Field(default=None, exclude=True)
-    gitlab_access_token: str | None = Field(default=None, exclude=True)
     mattermost_bot_token: str | None = Field(default=None, exclude=True)
 
     @computed_field
@@ -97,11 +96,6 @@ class SystemSettingsResponse(SystemSettingsFields):
     @property
     def oidc_client_secret_configured(self) -> bool:
         return bool(self.oidc_client_secret)
-
-    @computed_field
-    @property
-    def gitlab_access_token_configured(self) -> bool:
-        return bool(self.gitlab_access_token)
 
     @computed_field
     @property

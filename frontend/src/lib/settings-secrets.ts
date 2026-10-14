@@ -8,7 +8,6 @@ export const SECRET_SETTINGS_FIELDS = [
   'slack_client_secret',
   'slack_refresh_token',
   'oidc_client_secret',
-  'gitlab_access_token',
   'mattermost_bot_token',
 ] as const;
 

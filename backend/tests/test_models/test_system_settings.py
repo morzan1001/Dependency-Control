@@ -57,9 +57,6 @@ class TestSystemSettingsDefaults:
         assert s.oidc_userinfo_endpoint is None
         assert s.oidc_scopes == "openid profile email"
 
-    def test_gitlab_access_token_default(self):
-        assert SystemSettings().gitlab_access_token is None
-
     def test_rescan_defaults(self):
         s = SystemSettings()
         assert s.rescan_mode == "project"

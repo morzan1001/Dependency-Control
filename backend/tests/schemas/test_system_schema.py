@@ -13,7 +13,6 @@ SECRET_FIELDS = {
     "slack_client_secret": "slack-cs-SECRET",
     "slack_refresh_token": "xoxr-SECRET",
     "oidc_client_secret": "oidc-cs-SECRET",
-    "gitlab_access_token": "glpat-SECRET",
     "mattermost_bot_token": "mm-SECRET",
 }
 
@@ -52,6 +51,12 @@ def test_response_configured_booleans_false_when_unset():
         assert dumped[flag] is False, f"{flag} should be False when secret is unset"
 
 
+def test_the_response_reports_a_configured_flag_for_each_secret_and_no_other():
+    dumped = SystemSettingsResponse.model_validate(SystemSettings()).model_dump()
+
+    assert {key for key in dumped if key.endswith("_configured")} == {f"{field}_configured" for field in SECRET_FIELDS}
+
+
 def test_each_configured_flag_reports_only_its_own_secret():
     for field, value in SECRET_FIELDS.items():
         dumped = SystemSettingsResponse.model_validate(SystemSettings(**{field: value})).model_dump()
@@ -88,6 +93,7 @@ def test_a_stored_document_with_the_retired_gitlab_keys_loads_without_them():
         "gitlab_auto_create_projects": True,
         "gitlab_sync_teams": True,
         "gitlab_oidc_audience": "dependency-control",
+        "gitlab_access_token": "glpat-SECRET",
     }
 
     dumped = SystemSettingsResponse.model_validate(SystemSettings(_id="current", **retired)).model_dump()

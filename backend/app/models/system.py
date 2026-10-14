@@ -58,15 +58,6 @@ class SystemSettingsFields(BaseModel):
     oidc_scopes: str = "openid profile email"
     oidc_auto_provision: bool = True
 
-    # GitLab Integration
-    gitlab_access_token: str | None = Field(
-        None,
-        description=(
-            "Personal or Group Access Token with 'api' scope. "
-            "Must have at least 'Reporter' role in the projects to post comments."
-        ),
-    )
-
     # Periodic Scanning Defaults
     rescan_mode: str = SETTINGS_MODE_PROJECT
     global_rescan_enabled: bool = False
