@@ -215,7 +215,7 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
         if priority == Priority.CRITICAL
         else "is a security hotspot that should be addressed soon"
     )
-    desc_parts = [f"**{', '.join(pkg.labels)}** {summary}.", *reasons]
+    desc_parts = [f"{', '.join(pkg.labels)} {summary}.", *reasons]
     if stats.fixed_versions:
         desc_parts.append(f"Available fix: Update to {stats.best_fix}")
     components_shown, components_total = sample_components(pkg.labels)

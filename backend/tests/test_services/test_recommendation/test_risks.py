@@ -721,7 +721,7 @@ class TestCardsNameTheFlaggedCopies:
 
         assert rec.affected_components == ["lodash@4.17.15", "lodash@3.10.1"]
         assert rec.action["current_versions"] == ["4.17.15", "3.10.1"]
-        assert rec.description.startswith("**lodash@4.17.15, lodash@3.10.1** is a critical security hotspot")
+        assert rec.description.startswith("lodash@4.17.15, lodash@3.10.1 is a critical security hotspot")
 
     def test_a_toxic_card_lists_the_vulnerable_and_the_eol_copy_but_not_a_quality_only_one(self):
         [rec] = _toxic(self._lodash())
