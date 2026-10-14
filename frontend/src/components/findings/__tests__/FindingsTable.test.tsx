@@ -86,6 +86,11 @@ describe("resolveRelatedFindingInRows", () => {
     expect(resolveRelatedFindingInRows(rows, "openssl:1.1.1", FROM)?.id).toBe("v1");
   });
 
+  it("matches no other version for a vulnerability id whose own version holds a colon", () => {
+    const rows = [makeFinding({ id: "zlib1g:1", type: "vulnerability", component: "zlib1g", version: "1" })];
+    expect(resolveRelatedFindingInRows(rows, "zlib1g:1:1.2.13.dfsg-1", FROM)).toBeUndefined();
+  });
+
   it("prefers an exact id match over format-specific dispatch", () => {
     const rows = [
       makeFinding({ id: "OUTDATED-react", type: "vulnerability", component: "pkg" }),
@@ -215,6 +220,21 @@ describe("fetchRelatedFinding", () => {
     expect(getFindingsMock).toHaveBeenCalledWith("scan1", {
       type: "outdated",
       search: "react",
+      skip: 0,
+      limit: RELATED_FINDING_SEARCH_LIMIT,
+    });
+  });
+
+  it("searches a QUALITY id whose segments leave the version open by everything after the prefix", async () => {
+    const coordinate = { component: "org.apache.logging.log4j:log4j-core", version: "2.14.1" };
+    const vuln = makeFinding({ id: "org.apache.logging.log4j:log4j-core:2.14.1", type: "vulnerability", ...coordinate });
+    const quality = makeFinding({ id: "QUALITY:org.apache.logging.log4j:log4j-core:2.14.1", type: "quality", ...coordinate });
+    getFindingsMock.mockResolvedValue({ items: [quality], total: 1, page: 1, size: 1, pages: 1 });
+
+    expect(await fetchRelatedFinding("scan1", quality.id, vuln)).toEqual({ status: "found", finding: quality });
+    expect(getFindingsMock).toHaveBeenCalledWith("scan1", {
+      type: "quality",
+      search: "org.apache.logging.log4j:log4j-core:2.14.1",
       skip: 0,
       limit: RELATED_FINDING_SEARCH_LIMIT,
     });

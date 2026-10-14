@@ -12,7 +12,7 @@ import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSecti
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, PlayCircle, RefreshCw, Download, Eye, EyeOff, PinOff, X } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, PlayCircle, RefreshCw, Download, Eye, EyeOff, PinOff, X, type LucideIcon } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -27,13 +27,91 @@ import { ScmLink } from '@/components/scans/ScmLink'
 import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
-import { formatBytes, formatDateTime, getErrorMessage, shortCommitHash } from '@/lib/utils'
+import { cn, formatBytes, formatDateTime, getErrorMessage, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 // Pretty-printing a larger file into the DOM stalls the tab, so those stay download-only.
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024
+
+interface FindingTab {
+  readonly value: string
+  readonly label: string
+  readonly category?: string
+}
+
+// Listed per tab because AVAILABLE_ANALYZERS files CBOMkit under SAST, while its crypto findings are category "other".
+const FINDING_TABS: readonly (FindingTab & { readonly analyzers: readonly string[] })[] = [
+  { value: 'security', label: 'Security', category: 'security', analyzers: ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev', 'hash_verification'] },
+  { value: 'secrets', label: 'Secrets', category: 'secret', analyzers: ['trufflehog'] },
+  { value: 'sast', label: 'SAST', category: 'sast', analyzers: ['opengrep', 'kics', 'bearer'] },
+  { value: 'compliance', label: 'Compliance', category: 'compliance', analyzers: ['trivy', 'license_compliance', 'end_of_life'] },
+  { value: 'quality', label: 'Quality', category: 'quality', analyzers: ['outdated_packages', 'maintainer_risk'] },
+]
+
+function findingTabsFor(activeAnalyzers: readonly string[]): FindingTab[] {
+  return [
+    { value: 'overview', label: 'All Findings' },
+    ...FINDING_TABS.filter((tab) => tab.analyzers.some((a) => activeAnalyzers.includes(a))),
+  ]
+}
+
+interface MetaItemProps {
+  readonly label: string
+  readonly icon?: LucideIcon
+  readonly iconClassName?: string
+  readonly children: React.ReactNode
+}
+
+function MetaItem({ label, icon: Icon, iconClassName, children }: MetaItemProps) {
+  return (
+    <div className="flex flex-col space-y-1">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      {Icon ? (
+        <div className="flex items-center gap-2">
+          <Icon className={cn('h-4 w-4', iconClassName)} />
+          {children}
+        </div>
+      ) : children}
+    </div>
+  )
+}
+
+interface DistributionSlice {
+  readonly name: string
+  readonly value: number
+  readonly color: string
+}
+
+function DistributionPie({ title, data }: Readonly<{ title: string; data: DistributionSlice[] }>) {
+  const slices = data.filter((d) => d.value > 0)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[300px] w-full min-w-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={slices} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                {slices.map((entry) => (
+                  <Cell key={`cell-${entry.name}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
+                itemStyle={{ color: 'hsl(var(--foreground))' }}
+              />
+              <Legend verticalAlign="bottom" height={36} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 function JsonPreview({ query }: Readonly<{ query: UseQueryResult<unknown> }>) {
   if (query.isPending) return <Skeleton className="h-40" />
@@ -211,12 +289,7 @@ export default function ScanDetails() {
     projectUrl: scan.project_url, pipelineUrl: scan.pipeline_url, pipelineId: scan.pipeline_id,
   })
 
-  const activeAnalyzers = project.active_analyzers || [];
-  const showSecurity = activeAnalyzers.some(a => ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev', 'hash_verification'].includes(a));
-  const showSecrets = activeAnalyzers.includes('trufflehog');
-  const showSast = activeAnalyzers.some(a => ['opengrep', 'kics', 'bearer'].includes(a));
-  const showCompliance = activeAnalyzers.some(a => ['trivy', 'license_compliance', 'end_of_life'].includes(a));
-  const showQuality = activeAnalyzers.some(a => ['outdated_packages', 'maintainer_risk'].includes(a));
+  const findingTabs = findingTabsFor(project.active_analyzers || [])
 
   const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, negligible: 0, info: 0, unknown: 0 };
   
@@ -228,7 +301,7 @@ export default function ScanDetails() {
       { name: 'Negligible', value: stats.negligible || 0, color: SEVERITY_CHART_COLORS.NEGLIGIBLE },
       { name: 'Info', value: stats.info || 0, color: SEVERITY_CHART_COLORS.INFO },
       { name: 'Unknown', value: stats.unknown || 0, color: SEVERITY_CHART_COLORS.UNKNOWN },
-  ].filter(d => d.value > 0);
+  ];
 
   const categoryData = categoryStats ? [
       { name: 'Security', value: categoryStats.security ?? 0, color: '#ef4444' },
@@ -237,7 +310,7 @@ export default function ScanDetails() {
       { name: 'Compliance', value: categoryStats.compliance ?? 0, color: '#3b82f6' },
       { name: 'Quality', value: categoryStats.quality ?? 0, color: '#10b981' },
       { name: 'Other', value: categoryStats.other ?? 0, color: '#9ca3af' },
-  ].filter(d => d.value > 0) : [];
+  ] : [];
 
   return (
     <div className="space-y-6">
@@ -327,158 +400,73 @@ export default function ScanDetails() {
                 </CardHeader>
                 <CardContent className="h-[300px] overflow-y-auto pr-2">
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="flex flex-col space-y-1">
-                            <span className="text-sm text-muted-foreground">Status</span>
+                        <MetaItem label="Status">
                             <div>
                                 <ScanStatusBadge status={scan.status} failedAnalyzers={scan.failed_analyzers} />
                             </div>
                             {scan.status === SCAN_STATUS_COMPLETED_WITH_ERRORS && scan.error && (
                                 <p className="text-xs text-amber-600">{scan.error}</p>
                             )}
-                        </div>
-                        <div className="flex flex-col space-y-1">
-                            <span className="text-sm text-muted-foreground">Branch</span>
-                            <div className="flex items-center gap-2">
-                                <GitBranch className="h-4 w-4" />
-                                <ScmLink external className="flex items-center gap-2" href={buildBranchUrl({
-                                    projectUrl: scan.project_url,
-                                    pipelineUrl: scan.pipeline_url,
-                                    branch: scan.branch,
-                                })}>
-                                    <span className="font-medium">{scan.branch}</span>
-                                </ScmLink>
-                            </div>
-                        </div>
+                        </MetaItem>
+                        <MetaItem label="Branch" icon={GitBranch}>
+                            <ScmLink external className="flex items-center gap-2" href={buildBranchUrl({
+                                projectUrl: scan.project_url,
+                                pipelineUrl: scan.pipeline_url,
+                                branch: scan.branch,
+                            })}>
+                                <span className="font-medium">{scan.branch}</span>
+                            </ScmLink>
+                        </MetaItem>
                         <ScanReleaseControl projectId={projectId!} scan={scan} canWrite={canWrite} />
                         {scan.commit_hash && (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Commit</span>
-                                <div className="flex items-center gap-2">
-                                    <GitCommit className="h-4 w-4" />
-                                    <ScmLink external className="flex items-center gap-2" href={buildCommitUrl({
-                                        projectUrl: scan.project_url,
-                                        pipelineUrl: scan.pipeline_url,
-                                        commitHash: scan.commit_hash,
-                                    })}>
-                                        <span className="font-medium font-mono text-xs">{shortCommitHash(scan.commit_hash)}</span>
-                                    </ScmLink>
-                                </div>
-                            </div>
+                            <MetaItem label="Commit" icon={GitCommit}>
+                                <ScmLink external className="flex items-center gap-2" href={buildCommitUrl({
+                                    projectUrl: scan.project_url,
+                                    pipelineUrl: scan.pipeline_url,
+                                    commitHash: scan.commit_hash,
+                                })}>
+                                    <span className="font-medium font-mono text-xs">{shortCommitHash(scan.commit_hash)}</span>
+                                </ScmLink>
+                            </MetaItem>
                         )}
-                        <div className="flex flex-col space-y-1">
-                            <span className="text-sm text-muted-foreground">Ignored</span>
-                            <div className="flex items-center gap-2">
-                                <ShieldAlert className="h-4 w-4 text-muted-foreground" />
-                                <span className="font-medium">{scan.ignored_count || 0}</span>
-                            </div>
-                        </div>
-                        <div className="flex flex-col space-y-1">
-                            <span className="text-sm text-muted-foreground">Scan Started</span>
-                            <div className="flex items-center gap-2">
-                                <Calendar className="h-4 w-4" />
-                                <span className="text-sm">{formatDateTime(scan.created_at)}</span>
-                            </div>
-                        </div>
+                        <MetaItem label="Ignored" icon={ShieldAlert} iconClassName="text-muted-foreground">
+                            <span className="font-medium">{scan.ignored_count || 0}</span>
+                        </MetaItem>
+                        <MetaItem label="Scan Started" icon={Calendar}>
+                            <span className="text-sm">{formatDateTime(scan.created_at)}</span>
+                        </MetaItem>
                         {scan.completed_at && (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Scan Completed</span>
-                                <div className="flex items-center gap-2">
-                                    <CheckCircle className="h-4 w-4 text-success" />
-                                    <span className="text-sm">{formatDateTime(scan.completed_at)}</span>
-                                </div>
-                            </div>
+                            <MetaItem label="Scan Completed" icon={CheckCircle} iconClassName="text-success">
+                                <span className="text-sm">{formatDateTime(scan.completed_at)}</span>
+                            </MetaItem>
                         )}
                         {scan.job_started_at && (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Pipeline Started</span>
-                                <div className="flex items-center gap-2">
-                                    <PlayCircle className="h-4 w-4 text-blue-500" />
-                                    <span className="text-sm">{formatDateTime(scan.job_started_at)}</span>
-                                </div>
-                            </div>
+                            <MetaItem label="Pipeline Started" icon={PlayCircle} iconClassName="text-blue-500">
+                                <span className="text-sm">{formatDateTime(scan.job_started_at)}</span>
+                            </MetaItem>
                         )}
                         {pipelineHref && scan.pipeline_id ? (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Pipeline</span>
+                            <MetaItem label="Pipeline">
                                 <ScmLink external className="flex items-center gap-2" href={pipelineHref}>
                                     <PlayCircle className="h-4 w-4" />
                                     <span className="font-medium">#{scan.pipeline_id}</span>
                                 </ScmLink>
-                            </div>
+                            </MetaItem>
                         ) : null}
                     </div>
                 </CardContent>
             </Card>
 
-            <Card>
-                <CardHeader>
-                    <CardTitle>Severity Distribution</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="h-[300px] w-full min-w-0">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={severityData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={80}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
-                                    {severityData.map((entry) => (
-                                        <Cell key={`cell-${entry.name}`} fill={entry.color} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                                <Legend verticalAlign="bottom" height={36}/>
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>Category Distribution</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="h-[300px] w-full min-w-0">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={categoryData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={80}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
-                                    {categoryData.map((entry) => (
-                                        <Cell key={`cell-${entry.name}`} fill={entry.color} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                                <Legend verticalAlign="bottom" height={36}/>
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </div>
-                </CardContent>
-            </Card>
+            <DistributionPie title="Severity Distribution" data={severityData} />
+            <DistributionPie title="Category Distribution" data={categoryData} />
       </div>
 
             <Tabs value={activeTab} onValueChange={(val) => setParam('tab', val)} className="space-y-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
             <TabsList>
-                <TabsTrigger value="overview">All Findings</TabsTrigger>
-                {showSecurity && <TabsTrigger value="security">Security</TabsTrigger>}
-                {showSecrets && <TabsTrigger value="secrets">Secrets</TabsTrigger>}
-                {showSast && <TabsTrigger value="sast">SAST</TabsTrigger>}
-                {showCompliance && <TabsTrigger value="compliance">Compliance</TabsTrigger>}
-                {showQuality && <TabsTrigger value="quality">Quality</TabsTrigger>}
-
+                {findingTabs.map((tab) => (
+                    <TabsTrigger key={tab.value} value={tab.value}>{tab.label}</TabsTrigger>
+                ))}
                 <TabsTrigger value="raw">Raw Data</TabsTrigger>
             </TabsList>
 
@@ -513,78 +501,52 @@ export default function ScanDetails() {
             )}
         </div>
 
-        <TabsContent value="overview" className="space-y-4">
-            <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
-            <WaivedFindingsSection scanId={scanId!} projectId={projectId!} scanContext={scanContext} />
-        </TabsContent>
-
-        {showSecurity && (
-            <TabsContent value="security" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
-                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} />
-            </TabsContent>
-        )}
-
-        {showSecrets && (
-            <TabsContent value="secrets" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} hideHistoricalSecrets={hideHistoricalSecrets} />
-                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} />
-            </TabsContent>
-        )}
-
-        {showSast && (
-            <TabsContent value="sast" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
-                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} />
-            </TabsContent>
-        )}
-
-        {showCompliance && (
-            <TabsContent value="compliance" className="space-y-4">
-                <div className="flex items-center gap-3 flex-wrap">
-                    <Select
-                        value={complianceLicenseCategory || "all"}
-                        onValueChange={(val) => setComplianceLicenseCategory(val === "all" ? undefined : val)}
-                    >
-                        <SelectTrigger className="w-[200px]">
-                            <SelectValue placeholder="License Category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">All Categories</SelectItem>
-                            <SelectItem value="weak_copyleft">Weak Copyleft</SelectItem>
-                            <SelectItem value="strong_copyleft">Strong Copyleft</SelectItem>
-                            <SelectItem value="network_copyleft">Network Copyleft</SelectItem>
-                            <SelectItem value="proprietary">Proprietary</SelectItem>
-                            <SelectItem value="unknown">Unknown</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
-                <FindingsTable
-                    scanId={scanId!}
-                    projectId={projectId!}
-                    category="compliance"
-                    scanContext={scanContext}
-                    stickyHeaderTop={0}
-                    licenseCategory={complianceLicenseCategory}
-                    hideInfo={hideInfo}
-                    directOnly={directOnly}
-                />
-                <WaivedFindingsSection
-                    scanId={scanId!}
-                    projectId={projectId!}
-                    category="compliance"
-                    licenseCategory={complianceLicenseCategory}
-                    scanContext={scanContext}
-                />
-            </TabsContent>
-        )}
-
-        {showQuality && (
-            <TabsContent value="quality" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
-                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} />
-            </TabsContent>
-        )}
+        {findingTabs.map((tab) => {
+            const licenseCategory = tab.value === 'compliance' ? complianceLicenseCategory : undefined
+            return (
+                <TabsContent key={tab.value} value={tab.value} className="space-y-4">
+                    {tab.value === 'compliance' && (
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <Select
+                                value={complianceLicenseCategory || "all"}
+                                onValueChange={(val) => setComplianceLicenseCategory(val === "all" ? undefined : val)}
+                            >
+                                <SelectTrigger className="w-[200px]">
+                                    <SelectValue placeholder="License Category" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Categories</SelectItem>
+                                    <SelectItem value="weak_copyleft">Weak Copyleft</SelectItem>
+                                    <SelectItem value="strong_copyleft">Strong Copyleft</SelectItem>
+                                    <SelectItem value="network_copyleft">Network Copyleft</SelectItem>
+                                    <SelectItem value="proprietary">Proprietary</SelectItem>
+                                    <SelectItem value="unknown">Unknown</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
+                    <FindingsTable
+                        scanId={scanId!}
+                        projectId={projectId!}
+                        category={tab.category}
+                        severity={tab.value === 'overview' ? severityFilter : undefined}
+                        scanContext={scanContext}
+                        stickyHeaderTop={0}
+                        licenseCategory={licenseCategory}
+                        directOnly={directOnly}
+                        hideInfo={hideInfo}
+                        hideHistoricalSecrets={tab.value === 'secrets' && hideHistoricalSecrets}
+                    />
+                    <WaivedFindingsSection
+                        scanId={scanId!}
+                        projectId={projectId!}
+                        category={tab.category}
+                        licenseCategory={licenseCategory}
+                        scanContext={scanContext}
+                    />
+                </TabsContent>
+            )
+        })}
 
         <TabsContent value="raw" className="space-y-4">
             <Card>

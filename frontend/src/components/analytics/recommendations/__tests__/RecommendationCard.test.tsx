@@ -191,6 +191,15 @@ describe('RecommendationCard CVE rendering', () => {
     expect(screen.queryByText('Dependency Update')).not.toBeInTheDocument()
   })
 
+  it('links each related advisory with a public page and names the others', () => {
+    renderExpanded(makeRecommendation({ type: 'update_dependency', cves: ['CVE-2021-0003', 'GHSA-aaaa-bbbb-cccc', 'OSV-2021-1'] }))
+
+    expect(screen.getByRole('link', { name: 'CVE-2021-0003' })).toHaveAttribute('href', 'https://nvd.nist.gov/vuln/detail/CVE-2021-0003')
+    expect(screen.getByRole('link', { name: 'GHSA-aaaa-bbbb-cccc' })).toHaveAttribute('href', 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc')
+    expect(screen.getByText('OSV-2021-1')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'OSV-2021-1' })).not.toBeInTheDocument()
+  })
+
   it('still renders the generic Related Vulnerabilities block for other action types', () => {
     renderExpanded(
       makeRecommendation({

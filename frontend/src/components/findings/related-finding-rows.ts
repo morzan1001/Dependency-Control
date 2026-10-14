@@ -13,32 +13,55 @@ export type RelatedFindingLookup =
 type ParsedRelatedId =
     | { kind: 'outdated'; component: string }
     | { kind: 'quality'; component: string; version?: string }
-    | { kind: 'license' }
-    | { kind: 'eol'; component: string }
-    | { kind: 'vulnerability'; component?: string; version?: string }
+    | { kind: 'license'; license: string }
+    | { kind: 'eol'; component: string; release: string }
+    | { kind: 'vulnerability'; component: string; version?: string }
     | { kind: 'exact' }
+
+export type RelatedFindingKind = ParsedRelatedId['kind']
 
 function parseRelatedFindingId(id: string): ParsedRelatedId {
     if (id.startsWith('OUTDATED-')) {
         return { kind: 'outdated', component: id.replace('OUTDATED-', '') }
     }
     if (id.startsWith('QUALITY:')) {
-        const parts = id.split(':')
-        return { kind: 'quality', component: parts[1] ?? '', version: parts[2] }
+        const key = id.slice('QUALITY:'.length)
+        const [component, version, ...rest] = key.split(':')
+        return rest.length > 0 ? { kind: 'quality', component: key } : { kind: 'quality', component, version }
     }
     // LIC- encodes the license name, not a finding id; resolve via exact-id/API instead.
     if (id.startsWith('LIC-')) {
-        return { kind: 'license' }
+        return { kind: 'license', license: id.replace('LIC-', '') }
     }
-    // Strip only the trailing cycle segment so hyphenated names (EOL-spring-boot-2) resolve to "spring-boot".
     if (id.startsWith('EOL-')) {
-        return { kind: 'eol', component: id.replace(/^EOL-/, '').replace(/-[^-]+$/, '') }
+        const release = id.replace('EOL-', '')
+        // Strip only the trailing cycle segment so hyphenated names (EOL-spring-boot-2) resolve to "spring-boot".
+        return { kind: 'eol', release, component: release.replace(/-[^-]+$/, '') }
     }
-    if (id.includes(':') && !id.startsWith('AGG:')) {
-        const [component, version] = id.split(':')
-        return { kind: 'vulnerability', component, version }
+    if (id.includes(':')) {
+        const [component, version, ...rest] = id.split(':')
+        // A third segment leaves open where the component ends (group:artifact) or the version starts (an epoch).
+        return { kind: 'vulnerability', component, version: rest.length > 0 ? undefined : version }
     }
     return { kind: 'exact' }
+}
+
+export function describeRelatedFinding(id: string): { kind: RelatedFindingKind; label: string } {
+    const parsed = parseRelatedFindingId(id)
+    switch (parsed.kind) {
+        case 'outdated':
+            return { kind: parsed.kind, label: `Outdated: ${parsed.component}` }
+        case 'quality':
+            return { kind: parsed.kind, label: parsed.version ? `Quality: ${parsed.component} (${parsed.version})` : `Quality: ${parsed.component}` }
+        case 'license':
+            return { kind: parsed.kind, label: `License: ${parsed.license}` }
+        case 'eol':
+            return { kind: parsed.kind, label: `EOL: ${parsed.release}` }
+        case 'vulnerability':
+            return { kind: parsed.kind, label: parsed.version === undefined ? id : `Vuln: ${parsed.component} (${parsed.version})` }
+        default:
+            return { kind: parsed.kind, label: id }
+    }
 }
 
 // The backend's extract_artifact_name, under which it links one package's spellings (group:artifact, artifact).
@@ -84,9 +107,9 @@ export function resolveRelatedFindingInRows<T extends Finding>(rows: readonly T[
                 )
                 : undefined
         case 'vulnerability':
-            return rows.find(f =>
+            return parsed.version === undefined ? undefined : rows.find(f =>
                 f.type === 'vulnerability' &&
-                f.component?.toLowerCase() === parsed.component?.toLowerCase() &&
+                f.component?.toLowerCase() === parsed.component.toLowerCase() &&
                 f.version === parsed.version
             )
         case 'license':

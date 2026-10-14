@@ -7,14 +7,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { AlertTriangle, Calendar, Lock, Shield } from 'lucide-react'
-import { formatEpssScore } from '@/lib/finding-utils'
-
-/** Text colour class for an EPSS probability (0-1 scale). */
-function getEpssColorClass(score: number): string {
-  if (score >= 0.1) return 'text-severity-critical'
-  if (score >= 0.01) return 'text-severity-high'
-  return 'text-muted-foreground'
-}
+import { formatEpssScore, getEpssColorClass } from '@/lib/finding-utils'
 
 interface EpssCellProps {
   score?: number | null

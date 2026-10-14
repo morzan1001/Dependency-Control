@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { SeverityBadge } from '../SeverityBadge'
 import { AdditionalDetailsView } from './AdditionalDetailsView'
 import { DetailSection } from './shared'
 import type { FindingDetails } from '@/types/scan'
@@ -7,7 +8,6 @@ import {
   formatScorecardCriticalIssue,
   getScoreBorderColor,
   getScoreColor,
-  getSeverityBgColor,
 } from '@/lib/finding-utils'
 import {
   Activity,
@@ -447,7 +447,7 @@ export function AggregatedQualityView({ details }: Readonly<{ details: FindingDe
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{getIssueLabel(issue.type)}</span>
-                    <Badge className={getSeverityBgColor(issue.severity)}>{issue.severity}</Badge>
+                    <SeverityBadge severity={issue.severity} showIcon={false} />
                     {issue.scanners && issue.scanners.length > 0 && (
                       <Badge variant="outline" className="text-xs">
                         {issue.scanners.join(', ')}

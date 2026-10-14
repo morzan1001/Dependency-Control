@@ -7,35 +7,27 @@ import {
   CircleAlert,
   type LucideIcon,
 } from 'lucide-react'
+import { getSeverityBgColor } from '@/lib/finding-utils'
+import { cn } from '@/lib/utils'
 
 interface SeverityBadgeProps {
   severity: string
   showIcon?: boolean
 }
 
-interface SeverityConfig {
-  color: string
-  icon: LucideIcon
-}
-
-function getSeverityConfig(severity: string): SeverityConfig {
-  const configs: Record<string, SeverityConfig> = {
-    CRITICAL: { color: 'bg-severity-critical', icon: AlertOctagon },
-    HIGH: { color: 'bg-severity-high', icon: AlertTriangle },
-    MEDIUM: { color: 'bg-severity-medium text-severity-medium-foreground', icon: AlertCircle },
-    LOW: { color: 'bg-severity-low', icon: Info },
-    INFO: { color: 'bg-severity-info', icon: Info },
-    UNKNOWN: { color: 'bg-muted', icon: CircleAlert },
-  }
-  return configs[severity?.toUpperCase()] || { color: 'bg-muted', icon: CircleAlert }
+const SEVERITY_ICONS: Record<string, LucideIcon> = {
+  CRITICAL: AlertOctagon,
+  HIGH: AlertTriangle,
+  MEDIUM: AlertCircle,
+  LOW: Info,
+  INFO: Info,
 }
 
 export function SeverityBadge({ severity, showIcon = true }: Readonly<SeverityBadgeProps>) {
-  const config = getSeverityConfig(severity)
-  const Icon = config.icon
+  const Icon = SEVERITY_ICONS[severity?.toUpperCase()] ?? CircleAlert
 
   return (
-    <Badge className={`${config.color} hover:${config.color} text-white flex w-fit items-center gap-1`}>
+    <Badge className={cn(getSeverityBgColor(severity), 'flex w-fit items-center gap-1')}>
       {showIcon && <Icon className="h-3 w-3" />}
       {severity}
     </Badge>

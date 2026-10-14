@@ -314,6 +314,19 @@ describe("AnalyticsDependencyModal findings list", () => {
     expect(screen.queryByText("pkg:1.0")).not.toBeInTheDocument();
   });
 
+  it("writes each row's severity in the pill colours of that severity, UNKNOWN without one", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [finding("CVE-1", "MEDIUM"), finding("CVE-2", "")], total: 2 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium", "text-severity-medium-foreground");
+    expect(screen.getByText("UNKNOWN")).toHaveClass("bg-muted", "text-muted-foreground");
+    expect(screen.getByText("MEDIUM").querySelector("svg")).toBeNull();
+  });
+
   it("marks the column the findings are sorted by and the direction", () => {
     (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [finding("CVE-1", "HIGH")], total: 1 },
@@ -345,5 +358,19 @@ describe("AnalyticsDependencyModal findings list", () => {
 
     const shown = screen.getAllByText(/^CVE-2024-/).map((cell) => cell.textContent);
     expect(shown).toEqual(["CVE-2024-1", "CVE-2024-9"]);
+  });
+});
+
+describe("AnalyticsDependencyModal known advisories", () => {
+  it("links each known advisory with a public page and names the others", () => {
+    renderModal({ ...baseMetadata, deps_dev: { known_advisories: ["GHSA-aaaa-bbbb-cccc", "CVE-2024-1", "OSV-2024-1"] } });
+
+    expect(screen.getByRole("link", { name: "GHSA-aaaa-bbbb-cccc" })).toHaveAttribute(
+      "href",
+      "https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
+    );
+    expect(screen.getByRole("link", { name: "CVE-2024-1" })).toHaveAttribute("href", "https://nvd.nist.gov/vuln/detail/CVE-2024-1");
+    expect(screen.getByText("OSV-2024-1")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "OSV-2024-1" })).not.toBeInTheDocument();
   });
 });

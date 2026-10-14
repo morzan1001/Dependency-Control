@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { advisoryUrl } from '@/lib/finding-utils'
+import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import {
   Tooltip,
@@ -19,7 +19,6 @@ import {
   Code,
   Container,
   Copy,
-  ExternalLink,
   FolderTree,
   GitBranch,
   Globe,
@@ -420,25 +419,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                 <div className="flex flex-wrap gap-1">
                   {recommendation.action.cves.map((cveItem) => {
                     const cve = typeof cveItem === 'string' ? cveItem : cveItem.cve
-                    const link = advisoryUrl(cve)
-
-                    return link ? (
-                      <a
-                        key={cve}
-                        href={link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1"
-                      >
-                        <Badge variant="outline" className="hover:bg-muted cursor-pointer">
-                          {cve}
-                          <ExternalLink className="h-3 w-3 ml-1" />
-                        </Badge>
-                      </a>
-                    ) : (
-                      <Badge key={cve} variant="outline">{cve}</Badge>
-                    );
+                    return <AdvisoryLink key={cve} id={cve} />
                   })}
                 </div>
               </div>
