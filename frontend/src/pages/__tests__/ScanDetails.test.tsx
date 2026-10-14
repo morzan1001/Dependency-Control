@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cloneElement, type ReactElement } from 'react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
@@ -16,10 +17,11 @@ const mockUseScan = vi.fn()
 const releaseControlProps = vi.fn()
 const findingsTableProps = vi.fn()
 const waivedSectionProps = vi.fn()
-const { member, auth, analyzers } = vi.hoisted(() => ({
+const { member, auth, analyzers, categories } = vi.hoisted(() => ({
   member: { current: undefined as ProjectMember | undefined },
   auth: { permissions: [] as string[] },
   analyzers: { active: [] as string[] },
+  categories: { stats: undefined as Record<string, number> | undefined },
 }))
 const ALREADY_UNDER_WAY = 'A re-scan of this scan is already under way'
 const RESCAN_BUTTON = { name: /trigger re-scan/i }
@@ -48,8 +50,18 @@ vi.mock('@/hooks/queries/use-scans', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/queries/use-scans')>()),
   useScan: (...args: unknown[]) => mockUseScan(...args),
   useScanHistory: () => ({ data: undefined }),
-  useScanStats: () => ({ data: undefined }),
+  useScanStats: () => ({ data: categories.stats }),
 }))
+
+vi.mock('recharts', async (importOriginal) => {
+  const recharts = await importOriginal<typeof import('recharts')>()
+  return {
+    ...recharts,
+    // jsdom lays nothing out, so the chart gets the size a browser would measure.
+    ResponsiveContainer: ({ children }: { children: ReactElement<{ width?: number; height?: number }> }) =>
+      cloneElement(children, { width: 400, height: 300 }),
+  }
+})
 
 vi.mock('@/hooks/queries/use-projects', () => ({
   useProject: () => ({
@@ -116,6 +128,7 @@ beforeEach(() => {
   member.current = teamMember('editor')
   auth.permissions = []
   analyzers.active = []
+  categories.stats = undefined
 })
 
 afterEach(cleanup)
@@ -622,5 +635,33 @@ describe('ScanDetails metadata', () => {
     expect(branch).toHaveClass('wrap-anywhere')
     expect(branch.closest('a')?.querySelector('svg.lucide-external-link')).toHaveClass('shrink-0')
     expect(branch.closest('a')?.parentElement?.querySelector('svg.lucide-git-branch')).toHaveClass('shrink-0')
+  })
+})
+
+describe('ScanDetails distribution charts', () => {
+  async function legendOf(title: string) {
+    const card = screen.getByText(title).closest('.bg-card') as HTMLElement
+    await waitFor(() => expect(card.querySelectorAll('.recharts-legend-item-text').length).toBeGreaterThan(0))
+    return [...card.querySelectorAll('.recharts-legend-item-text')].map((item) => item.textContent)
+  }
+
+  it('lists the severities most severe first, in the app\'s severity order', async () => {
+    mockUseScan.mockReturnValue({
+      data: { ...scan('completed'), stats: { critical: 1, high: 1, medium: 1, low: 1, negligible: 1, info: 1, unknown: 1 } },
+      isLoading: false,
+    })
+
+    renderPage()
+
+    expect(await legendOf('Severity Distribution')).toEqual(['Critical', 'High', 'Medium', 'Low', 'Negligible', 'Info', 'Unknown'])
+  })
+
+  it('lists the categories in the order of the finding tabs', async () => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+    categories.stats = { security: 1, secret: 1, sast: 1, compliance: 1, quality: 1, other: 1 }
+
+    renderPage()
+
+    expect(await legendOf('Category Distribution')).toEqual(['Security', 'Secrets', 'SAST', 'Compliance', 'Quality', 'Other'])
   })
 })
