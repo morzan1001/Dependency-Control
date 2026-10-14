@@ -246,6 +246,7 @@ describe("RecommendationCard action sections", () => {
     [{ type: "update_transitive", package: "lodash", target_version: "2" }, "How to Fix", "bg-muted rounded-lg p-3 text-sm space-y-2"],
     [{ type: "fix_code", files: ["a.py"] }, "Code Security Issues", "bg-muted rounded-lg p-3 text-sm space-y-2"],
     [{ type: "deduplicate_versions", packages: [{ name: "lodash", versions: ["1", "2"] }] }, "Version Fragmentation", "bg-muted rounded-lg p-3 text-sm space-y-3 max-h-[300px] overflow-y-auto"],
+    [{ type: "upgrade_outdated", packages: [{ name: "express", current_version: "4.17.1", latest_version: "4.21.2" }] }, "Outdated Packages", "bg-muted rounded-lg p-3 text-sm space-y-2 max-h-[300px] overflow-y-auto"],
     [{ type: "investigate_regression", suggestion: "Look" }, "Regression Details", "bg-muted rounded-lg p-3 text-sm space-y-2"],
     [{ type: "address_recurring", cves: [] }, "Recurring Issues", "bg-muted rounded-lg p-3 text-sm space-y-2"],
     [{ type: "reduce_chain_depth", deepest_chains: [{ package: "a", depth: 9 }] }, "Deep Dependency Chains", "bg-muted rounded-lg p-3 text-sm space-y-2"],
@@ -266,6 +267,25 @@ describe("RecommendationCard action sections", () => {
     renderExpanded(makeRecommendation({ type: "investigate_regression", suggestion: "Look" }));
 
     expect(screen.getByText("Regression Details").querySelector("svg")!.classList).toContain("text-destructive");
+  });
+
+  it("lists each outdated package with the version installed and the registry's latest", () => {
+    renderExpanded(
+      makeRecommendation(
+        {
+          type: "upgrade_outdated",
+          packages: [
+            { name: "express", current_version: "4.17.1", latest_version: "4.21.2" },
+            { name: "express", current_version: "4.18.0", latest_version: "4.21.2" },
+          ],
+        },
+        { type: "outdated_dependency" },
+      ),
+    );
+
+    expect(screen.getByText("Outdated Dependency")).toBeInTheDocument();
+    const rows = Array.from(actionBox("Outdated Packages").children, (row) => row.textContent);
+    expect(rows).toEqual(["express 4.17.1 → 4.21.2", "express 4.18.0 → 4.21.2"]);
   });
 
   it("lists the deduplication commands below the package box", () => {

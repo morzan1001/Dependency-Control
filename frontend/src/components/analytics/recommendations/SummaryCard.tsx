@@ -33,6 +33,7 @@ function TileGroup({ title, icon: Icon, tiles }: Readonly<{ title: string; icon:
 export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }>) {
   const { summary } = data
   const healthTiles = nonZero([
+    { label: 'Outdated', value: summary.outdated_deps ?? 0, color: 'text-amber-600' },
     { label: 'Fragmentation', value: summary.fragmentation_issues ?? 0, color: 'text-violet-500' },
     { label: 'Trend Alerts', value: summary.trend_alerts ?? 0, color: 'text-rose-500' },
     { label: 'Cross-Project', value: summary.cross_project_issues ?? 0, color: 'text-sky-500' },
