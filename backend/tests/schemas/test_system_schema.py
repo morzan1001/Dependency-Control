@@ -68,7 +68,7 @@ def test_response_still_exposes_non_secret_fields():
         smtp_host="mail.example.com",
         smtp_user="mailer",
         slack_client_id="client-123",
-        gitlab_url="https://gitlab.example.com",
+        mattermost_url="https://mattermost.example.com",
         oidc_enabled=True,
     )
     dumped = SystemSettingsResponse.model_validate(settings).model_dump()
@@ -77,8 +77,22 @@ def test_response_still_exposes_non_secret_fields():
     assert dumped["smtp_host"] == "mail.example.com"
     assert dumped["smtp_user"] == "mailer"
     assert dumped["slack_client_id"] == "client-123"
-    assert dumped["gitlab_url"] == "https://gitlab.example.com"
+    assert dumped["mattermost_url"] == "https://mattermost.example.com"
     assert dumped["oidc_enabled"] is True
+
+
+def test_a_stored_document_with_the_retired_gitlab_keys_loads_without_them():
+    retired = {
+        "gitlab_integration_enabled": True,
+        "gitlab_url": "https://gitlab.example.com",
+        "gitlab_auto_create_projects": True,
+        "gitlab_sync_teams": True,
+        "gitlab_oidc_audience": "dependency-control",
+    }
+
+    dumped = SystemSettingsResponse.model_validate(SystemSettings(_id="current", **retired)).model_dump()
+
+    assert not set(retired) & set(dumped)
 
 
 def test_a_setting_the_stored_model_requires_cannot_be_written_as_null():
