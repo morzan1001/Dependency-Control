@@ -255,7 +255,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                     <TableHead className="w-[120px]">Version</TableHead>
                     <TableHead className="w-[100px]">Type</TableHead>
                     <TableHead className="w-[150px]">License</TableHead>
-                    <TableHead className="w-[200px]">Project</TableHead>
+                    <TableHead>Project</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -290,7 +290,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                         <div className="w-[150px] px-4 py-2 truncate">
                           <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
                         </div>
-                        <div className="w-[200px] px-4 py-2 truncate">
+                        <div className="flex-1 min-w-0 px-4 py-2 truncate">
                           <Link
                             to={`/projects/${result.project_id}`}
                             className="hover:underline text-primary truncate block"
