@@ -120,6 +120,7 @@ export default function TeamsPage() {
           <Button
             variant="outline"
             size="icon"
+            aria-label={sortOrder === "asc" ? "Sort descending" : "Sort ascending"}
             onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
           >
             {sortOrder === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
