@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 from packaging.version import InvalidVersion, Version
 
-from app.core import ensure_utc
+from app.core import parse_iso_utc
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import DEPS_DEV_API_URL
 from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
@@ -155,22 +155,13 @@ def aggregate_upstream_metrics(
 
 
 def parse_deps_dev_response(payload: dict[str, Any]) -> list[ReleaseInfo]:
-    """Translate a deps.dev GetPackage response into ReleaseInfo entries.
-
-    Versions without a parsable ``publishedAt`` are dropped — keeping them
-    would treat them as released at epoch 0.
-    """
+    """The dated versions of a deps.dev GetPackage response; an undated one would count as released at epoch 0."""
     out: list[ReleaseInfo] = []
     for entry in payload.get("versions", []) or []:
         version = (entry.get("versionKey") or {}).get("version")
-        published_at_str = entry.get("publishedAt")
-        if not version or not published_at_str:
-            continue
-        try:
-            published_at = ensure_utc(datetime.fromisoformat(published_at_str.replace("Z", "+00:00")))
-        except ValueError:
-            continue
-        out.append(ReleaseInfo(version=str(version), published_at=published_at))
+        published_at = parse_iso_utc(entry.get("publishedAt"))
+        if version and published_at:
+            out.append(ReleaseInfo(version=str(version), published_at=published_at))
     return out
 
 
@@ -221,12 +212,7 @@ def _release_list_from_cache(raw: Any) -> list[ReleaseInfo]:
         if not isinstance(item, dict):
             continue
         version = item.get("version")
-        published_at_str = item.get("published_at")
-        if not version or not published_at_str:
-            continue
-        try:
-            published_at = ensure_utc(datetime.fromisoformat(str(published_at_str)))
-        except ValueError:
-            continue
-        out.append(ReleaseInfo(version=str(version), published_at=published_at))
+        published_at = parse_iso_utc(item.get("published_at"))
+        if version and published_at:
+            out.append(ReleaseInfo(version=str(version), published_at=published_at))
     return out

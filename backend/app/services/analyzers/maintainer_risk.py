@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 import httpx
 
+from app.core import parse_iso_utc
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
@@ -51,16 +52,6 @@ class MaintainerRiskAnalyzer(Analyzer):
     name = "maintainer_risk"
     _stale_after_days = STALE_PACKAGE_THRESHOLD_DAYS
     _warn_after_days = STALE_PACKAGE_WARNING_DAYS
-
-    @staticmethod
-    def _parse_iso_datetime(dt_string: str | None) -> datetime | None:
-        """Parse ISO datetime string, handling Z suffix."""
-        if not dt_string:
-            return None
-        try:
-            return datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            return None
 
     FREE_EMAIL_PROVIDERS: ClassVar[set[str]] = {
         "gmail.com",
@@ -139,7 +130,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             except (httpx.HTTPError, ValueError) as e:
                 logger.debug(f"deps.dev release lookup failed for {name}: {e}")
                 package = {}
-            released = self._parse_iso_datetime(package.get("published_at"))
+            released = parse_iso_utc(package.get("published_at"))
             if released:
                 maintainer_info["latest_release_date"] = released.isoformat()
                 maintainer_info["days_since_release"] = (datetime.now(timezone.utc) - released).days
@@ -213,7 +204,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         for files in releases.values():
             for f in files:
                 upload_time = f.get("upload_time_iso_8601") or f.get("upload_time")
-                dt = self._parse_iso_datetime(upload_time)
+                dt = parse_iso_utc(upload_time)
                 if dt and (latest_release_date is None or dt > latest_release_date):
                     latest_release_date = dt
 
@@ -257,7 +248,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         response.raise_for_status()
 
         data = response.json()
-        pushed_at = self._parse_iso_datetime(data.get("pushed_at"))
+        pushed_at = parse_iso_utc(data.get("pushed_at"))
         return {
             "stars": data.get("stargazers_count", 0),
             "forks": data.get("forks_count", 0),

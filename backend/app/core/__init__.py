@@ -19,6 +19,16 @@ def ensure_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def parse_iso_utc(value: object) -> datetime | None:
+    """An ISO 8601 timestamp, naive ones read as UTC; None for anything else."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return ensure_utc(datetime.fromisoformat(value))
+    except ValueError:
+        return None
+
+
 async def abatched[T](items: AsyncIterable[T], size: int) -> AsyncIterator[list[T]]:
     """The async counterpart of itertools.batched, as lists."""
     batch: list[T] = []
