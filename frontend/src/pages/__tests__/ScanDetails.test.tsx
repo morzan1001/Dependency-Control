@@ -593,6 +593,8 @@ describe('ScanDetails finding tabs', () => {
 })
 
 describe('ScanDetails metadata', () => {
+  const LONG_BRANCH = 'feature/checkout-redesign-with-a-rather-long-branch-name'
+
   it('lists status, branch, ignored count and every time the scan carries', () => {
     mockUseScan.mockReturnValue({
       data: {
@@ -632,10 +634,6 @@ describe('ScanDetails metadata', () => {
     expect(screen.getByText('Severity Distribution')).toBeInTheDocument()
     expect(screen.getByText('Category Distribution')).toBeInTheDocument()
   })
-})
-
-describe('ScanDetails metadata', () => {
-  const LONG_BRANCH = 'feature/checkout-redesign-with-a-rather-long-branch-name'
 
   it('breaks a long branch name anywhere inside the card and keeps its icons whole, like the finding id', () => {
     mockUseScan.mockReturnValue({
