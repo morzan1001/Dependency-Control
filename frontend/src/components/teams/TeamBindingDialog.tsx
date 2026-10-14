@@ -97,6 +97,7 @@ function BoundInstance({
           type="button"
           variant="outline"
           size="sm"
+          className="h-6 text-xs ml-2"
           onClick={onRemove}
           disabled={isRemoving}
           aria-label={`Remove the binding on ${instanceName}`}

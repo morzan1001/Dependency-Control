@@ -163,6 +163,12 @@ describe("TeamBindingDialog", () => {
     expect(summary.parentElement?.parentElement).toHaveClass("grid", "grid-cols-1");
   });
 
+  it("sizes Remove like Deactivate, the small action beside a value", async () => {
+    renderDialog(team([GITLAB_BINDING]));
+
+    expect(await screen.findByRole("button", { name: /^Remove the binding on/ })).toHaveClass("h-6", "text-xs", "ml-2", "border");
+  });
+
   it("closes without binding through Cancel", async () => {
     const onClose = vi.fn();
     render(<TeamBindingDialog team={team()} isOpen onClose={onClose} />, { wrapper: Wrapper });
