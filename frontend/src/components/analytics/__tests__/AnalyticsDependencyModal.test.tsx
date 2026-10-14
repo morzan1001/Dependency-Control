@@ -111,6 +111,31 @@ describe("AnalyticsDependencyModal metadata link hardening", () => {
   });
 });
 
+describe("AnalyticsDependencyModal project statistics", () => {
+  it("shows the deps.dev counts it has, in order, and leaves out the missing ones", () => {
+    renderModal({ ...baseMetadata, deps_dev: { stars: 12345, open_issues: 7, dependents: { total: 300 } } });
+
+    const tiles = screen.getAllByText(/^(Stars|Forks|Issues|Dependents)$/).map((label) => label.parentElement?.textContent);
+    expect(tiles).toEqual([`${(12345).toLocaleString()}Stars`, "7Issues", "300Dependents"]);
+  });
+
+  it("offers the homepage, repository and download links in that order", () => {
+    renderModal({
+      ...baseMetadata,
+      download_url: "https://registry.example.com/pkg.tgz",
+      homepage: "https://home.example.com",
+      repository_url: "https://github.com/acme/pkg",
+    });
+
+    const links = screen.getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
+    expect(links).toEqual([
+      ["Homepage", "https://home.example.com"],
+      ["Repository", "https://github.com/acme/pkg"],
+      ["Download", "https://registry.example.com/pkg.tgz"],
+    ]);
+  });
+});
+
 describe("AnalyticsDependencyModal copy button", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -164,17 +164,25 @@ function ScorecardDisplay({ metadata }: Readonly<{ metadata: DependencyMetadata 
 function DependencyMetadataSection({ metadata }: Readonly<{ metadata: DependencyMetadata }>) {
   const [showDetails, setShowDetails] = useState(false)
 
-  const homepageHref = safeHref(metadata.homepage)
-  const repositoryHref = safeHref(metadata.repository_url)
-  const downloadHref = safeHref(metadata.download_url)
   const licenseHref = safeHref(metadata.license_url)
+  const externalLinks = [
+    { label: 'Homepage', href: safeHref(metadata.homepage), icon: Globe },
+    { label: 'Repository', href: safeHref(metadata.repository_url), icon: GitBranch },
+    { label: 'Download', href: safeHref(metadata.download_url), icon: Download },
+  ].filter((link) => link.href)
+  const depsDev = metadata.deps_dev
+  const statTiles = [
+    { label: 'Stars', value: depsDev?.stars, icon: Star, color: 'text-yellow-500' },
+    { label: 'Forks', value: depsDev?.forks, icon: GitFork, color: 'text-blue-500' },
+    { label: 'Issues', value: depsDev?.open_issues, icon: CircleDot, color: 'text-green-500' },
+    { label: 'Dependents', value: depsDev?.dependents?.total, icon: Users, color: 'text-purple-500' },
+  ]
   const depsDevLinks = metadata.deps_dev?.links
     ? Object.entries(metadata.deps_dev.links)
         .map(([label, url]) => [label, safeHref(url)] as const)
         .filter((entry): entry is readonly [string, string] => Boolean(entry[1]))
     : []
 
-  const hasExternalLinks = homepageHref || repositoryHref || downloadHref
   const hasDepsDevData = metadata.deps_dev
   const hasMaintainerInfo = metadata.author || metadata.publisher
   
@@ -251,85 +259,35 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
 
       {hasDepsDevData && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {metadata.deps_dev?.stars !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <Star className="h-4 w-4 text-yellow-500" />
+          {statTiles.map(({ label, value, icon: Icon, color }) => value !== undefined && (
+            <div key={label} className="flex items-center gap-2 p-2 bg-background rounded-md">
+              <Icon className={cn("h-4 w-4", color)} />
               <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.stars.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Stars</p>
+                <p className="text-sm font-medium">{value.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">{label}</p>
               </div>
             </div>
-          )}
-          {metadata.deps_dev?.forks !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <GitFork className="h-4 w-4 text-blue-500" />
-              <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.forks.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Forks</p>
-              </div>
-            </div>
-          )}
-          {metadata.deps_dev?.open_issues !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <CircleDot className="h-4 w-4 text-green-500" />
-              <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.open_issues.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Issues</p>
-              </div>
-            </div>
-          )}
-          {metadata.deps_dev?.dependents?.total !== undefined && (
-            <div className="flex items-center gap-2 p-2 bg-background rounded-md">
-              <Users className="h-4 w-4 text-purple-500" />
-              <div>
-                <p className="text-sm font-medium">{metadata.deps_dev.dependents.total.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Dependents</p>
-              </div>
-            </div>
-          )}
+          ))}
         </div>
       )}
 
       <ScorecardDisplay metadata={metadata} />
 
-      {hasExternalLinks && (
+      {externalLinks.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {homepageHref && (
+          {externalLinks.map(({ label, href, icon: Icon }) => (
             <a
-              href={homepageHref}
+              key={label}
+              href={href}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
             >
-              <Globe className="h-4 w-4" />
-              Homepage
+              <Icon className="h-4 w-4" />
+              {label}
               <ExternalLink className="h-3 w-3" />
             </a>
-          )}
-          {repositoryHref && (
-            <a
-              href={repositoryHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
-            >
-              <GitBranch className="h-4 w-4" />
-              Repository
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
-          {downloadHref && (
-            <a
-              href={downloadHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
-            >
-              <Download className="h-4 w-4" />
-              Download
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
+          ))}
         </div>
       )}
 
