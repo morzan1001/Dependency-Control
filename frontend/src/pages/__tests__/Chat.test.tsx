@@ -144,6 +144,36 @@ describe('Chat history deletion', () => {
     expect(await screen.findByRole('heading', { name: 'Chat' })).toBeInTheDocument();
   });
 
+  it('closes the open conversation when a second deletion starts before the first one finishes', async () => {
+    chatApi.listConversations.mockResolvedValue({
+      conversations: [RISK_TALK, { ...RISK_TALK, id: 'conv-2', title: 'Old talk' }],
+      total: 2,
+    });
+    chatApi.getConversation.mockResolvedValue({
+      conversation: RISK_TALK,
+      messages: [{ id: 'm1', conversation_id: 'conv-1', role: 'user', content: 'Hello there', tool_calls: [], created_at: RISK_TALK.created_at }],
+    });
+    let finishFirstDelete = () => {};
+    chatApi.deleteConversation
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstDelete = resolve; }))
+      .mockResolvedValueOnce(undefined);
+    renderChat();
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }));
+    fireEvent.click(await screen.findByText('Risk talk'));
+    await screen.findByText('Hello there');
+
+    fireEvent.click(screen.getByRole('button', { name: /History/ }));
+    const [deleteOpen, deleteOther] = await screen.findAllByRole('button', { name: 'Delete conversation' });
+    fireEvent.click(deleteOpen);
+    fireEvent.click(deleteOther);
+    await waitFor(() => expect(chatApi.deleteConversation).toHaveBeenCalledWith('conv-2'));
+    finishFirstDelete();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(await screen.findByText('How can I help with your supply chain today?')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Chat' })).toBeInTheDocument();
+  });
+
   it('names a deletion that failed and why', async () => {
     chatApi.deleteConversation.mockRejectedValueOnce(new Error('Network Error'));
     renderChat();

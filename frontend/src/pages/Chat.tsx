@@ -87,11 +87,10 @@ export default function Chat() {
   const handleNewConversation = () => setActiveConversationId(null);
 
   const handleDeleteConversation = (id: string) =>
-    deleteConversation.mutate(id, {
-      onSuccess: () => {
-        if (activeConversationId === id) setActiveConversationId(null);
-      },
-    });
+    deleteConversation.mutateAsync(id).then(
+      () => setActiveConversationId((current) => (current === id ? null : current)),
+      () => undefined,
+    );
 
   const handleSend = (content: string) => {
     if (!activeConversationId) {
