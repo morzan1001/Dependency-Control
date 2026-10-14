@@ -5,6 +5,8 @@ import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SortableHead } from '@/components/ui/sortable-head'
+import { AnalyticsErrorCard } from '@/components/analytics/AnalyticsErrorCard'
+import { useInfiniteRows } from '@/hooks/use-infinite-rows'
 import { useSortState } from '@/hooks/use-pagination-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { InlineError, NoData } from '@/components/ui/state-components'
@@ -171,7 +173,6 @@ function reportUnresolved(outcome: RelatedFindingLookup): void {
 }
 
 export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false, hideHistoricalSecrets = false }: FindingsTableProps) {
-    const sentinelRef = useRef<HTMLDivElement>(null)
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const sort = useSortState('severity')
     const [searchParams, setSearchParams] = useSearchParams()
@@ -220,14 +221,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         }
     }
 
-    const {
-        data,
-        fetchNextPage,
-        hasNextPage,
-        isFetchingNextPage,
-        isLoading,
-        isError
-    } = useInfiniteQuery({
+    const findings = useInfiniteQuery({
         queryKey: ['findings', scanId, category, search, severity, sort.sortBy, sort.sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly, hideHistoricalSecrets],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
@@ -255,24 +249,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         },
     })
 
-    const allRows = data ? data.pages.flatMap((d) => d.items) : []
-
-    // Load the next page when the sentinel nears the viewport.
-    useEffect(() => {
-        const sentinel = sentinelRef.current
-        if (!sentinel) return
-
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
-                    fetchNextPage()
-                }
-            },
-            { rootMargin: '300px' }
-        )
-        observer.observe(sentinel)
-        return () => observer.disconnect()
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+    const { isFetchingNextPage, isLoading, isError, error, fetchNextPage } = findings
+    const { rows: allRows, nextPageFailed, observeEnd } = useInfiniteRows(findings, (page) => page.items)
 
     return (
         <div className="relative w-full overflow-x-auto">
@@ -304,13 +282,13 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     </table>
                 </div>
             )}
-            {!isLoading && isError && (
+            {!isLoading && isError && allRows.length === 0 && (
                 <InlineError message="Error loading findings" />
             )}
             {!isLoading && !isError && allRows.length === 0 && (
                 <NoData entityName="findings" />
             )}
-            {!isLoading && !isError && allRows.length > 0 && (
+            {!isLoading && allRows.length > 0 && (
                 <TooltipProvider>
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <TableHeader className="sticky bg-background z-50 shadow-sm" style={{ top: stickyHeaderTop }}>
@@ -397,8 +375,10 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 </TooltipProvider>
             )}
 
-            {/* Sentinel element — IntersectionObserver triggers load-more when this approaches the viewport */}
-            <div ref={sentinelRef} className="h-1" />
+            {nextPageFailed && (
+                <AnalyticsErrorCard title="Failed to load more findings" error={error} onRetry={() => fetchNextPage()} />
+            )}
+            <div ref={observeEnd} className="h-1" />
 
             {selectedFinding && (
                 <FindingDetailsModal

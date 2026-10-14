@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
+import { showObservedElements } from "@/test/intersection-observer";
 import { FindingsTable } from "../FindingsTable";
 
 vi.mock("@/api/scans", () => ({
@@ -84,5 +85,35 @@ describe("FindingsTable sorting", () => {
     await screen.findByText("lodash");
     fireEvent.click(screen.getByRole("columnheader", { name: "Component" }));
     await waitFor(() => expect(lastSort()).toEqual(["component", "asc"]));
+  });
+});
+
+describe("FindingsTable later page error", () => {
+  let restoreObserver: () => void;
+
+  beforeEach(() => {
+    restoreObserver = showObservedElements();
+    getFindingsMock.mockReset();
+    getFindingsMock.mockImplementation(async (_scanId: string, params: { skip: number }) => {
+      if (params.skip > 0) throw new Error("Request failed with status code 504");
+      const finding = { id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: [] };
+      return { ...emptyEnvelope, items: [finding], total: 2 };
+    });
+  });
+
+  afterEach(() => restoreObserver());
+
+  it("keeps the loaded findings, stops requesting the failed page and offers a retry", async () => {
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load more findings");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(screen.getByText("lodash")).toBeInTheDocument();
+    expect(getFindingsMock.mock.calls.map(([, params]) => (params as { skip: number }).skip)).toEqual([0, 1]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(getFindingsMock).toHaveBeenCalledTimes(3));
+    expect((getFindingsMock.mock.calls[2][1] as { skip: number }).skip).toBe(1);
   });
 });

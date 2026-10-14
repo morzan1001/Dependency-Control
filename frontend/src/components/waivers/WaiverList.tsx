@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useWaiverList, useDeleteWaiver } from '@/hooks/queries/use-waivers'
 import { Waiver } from '@/types/waiver'
 import { EditWaiverDialog } from '@/components/waivers/EditWaiverDialog'
@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label'
 import { Pencil, Trash2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useInfiniteRows } from '@/hooks/use-infinite-rows'
 import { useSortState } from '@/hooks/use-pagination-state'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
@@ -43,32 +44,15 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
     const [waiverToEdit, setWaiverToEdit] = useState<Waiver | null>(null)
     const [editDialogOpen, setEditDialogOpen] = useState(false)
 
-    const loadMoreRef = useRef<HTMLTableRowElement>(null)
     const debouncedSearch = useDebounce(searchInput, DEBOUNCE_DELAY_MS)
 
-    const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } = useWaiverList(
+    const waivers = useWaiverList(
         projectId,
         { search: debouncedSearch, sortBy: sort.sortBy, sortOrder: sort.sortOrder, orphaned: orphanedOnly },
     )
+    const { fetchNextPage, isFetchingNextPage, isLoading, isError, refetch } = waivers
+    const { rows: allWaivers, hasMore, nextPageFailed, observeEnd } = useInfiniteRows(waivers, (page) => page.items)
     const deleteWaiverMutation = useDeleteWaiver({ errorTitle: 'Failed to delete waiver' })
-    const allWaivers = data?.pages.flatMap((page) => page.items) ?? []
-
-    useEffect(() => {
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
-                    fetchNextPage()
-                }
-            },
-            { threshold: 0.1 }
-        )
-
-        if (loadMoreRef.current) {
-            observer.observe(loadMoreRef.current)
-        }
-
-        return () => observer.disconnect()
-    }, [fetchNextPage, hasNextPage, isFetchingNextPage])
 
     const handleDelete = (id: string) => {
         deleteWaiverMutation.mutate(id, { onSuccess: () => toast.success('Waiver deleted successfully') })
@@ -215,8 +199,8 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                                     </TableCell>
                                 </TableRow>
                             ))}
-                            {hasNextPage && (
-                                <TableRow ref={loadMoreRef}>
+                            {hasMore && (
+                                <TableRow ref={observeEnd}>
                                     <TableCell colSpan={columns} className="text-center py-4">
                                         {isFetchingNextPage ? (
                                             <div className="flex items-center justify-center gap-2">
@@ -232,7 +216,12 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                             {isError && (
                                 <TableRow>
                                     <TableCell colSpan={columns} className="text-center text-destructive py-8">
-                                        Failed to load waivers. Please try again.
+                                        <div className="flex flex-col items-center gap-2">
+                                            <span>Failed to load waivers. Please try again.</span>
+                                            <Button variant="outline" size="sm" onClick={() => (nextPageFailed ? fetchNextPage() : refetch())}>
+                                                Retry
+                                            </Button>
+                                        </div>
                                     </TableCell>
                                 </TableRow>
                             )}

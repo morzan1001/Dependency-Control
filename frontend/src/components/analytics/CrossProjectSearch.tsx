@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { analyticsApi } from '@/api/analytics'
 import { AdvancedSearchResult } from '@/types/analytics'
 import { analyticsKeys, useDependencyTypes } from '@/hooks/queries/use-analytics'
 import { useAnalyticsMode } from '@/context/analytics-mode'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { VirtualRows } from '@/components/ui/virtual-rows'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
@@ -23,8 +23,9 @@ import {
 import { Search, Package, Filter, X, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
-import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants'
-import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
+import { useInfiniteRows } from '@/hooks/use-infinite-rows'
+import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
+import { useScrollContainer } from '@/hooks/use-scroll-container'
 import { getSourceInfo } from '@/lib/finding-utils'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
@@ -59,16 +60,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     project: selectedProject,
   }
 
-  const {
-    data,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    isFetchNextPageError,
-    isLoading,
-    error,
-    refetch,
-  } = useInfiniteQuery({
+  const results = useInfiniteQuery({
     queryKey: analyticsKeys.advancedSearch(filters, releaseEnvironment),
     queryFn: async ({ pageParam = 0 }) => {
       return analyticsApi.searchDependenciesAdvanced(debouncedQuery, {
@@ -90,39 +82,10 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     enabled: debouncedQuery.length >= 2,
   })
 
-  const allResults = data ? data.pages.flatMap((d) => d.items) : []
-  const totalCount = data?.pages[0]?.total ?? 0
-  const nextPageFailed = isFetchNextPageError && !isFetchingNextPage
-
-  const scrollObserver = useMemo(
-    () => createScrollObserver(scrollContainer, tableOffsetRef),
-    [scrollContainer, tableOffsetRef]
-  )
-
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const rowVirtualizer = useVirtualizer({
-    count: hasNextPage && !nextPageFailed ? allResults.length + 1 : allResults.length,
-    getScrollElement: () => scrollContainer,
-    estimateSize: () => 52,
-    overscan: VIRTUAL_SCROLL_OVERSCAN,
-    observeElementOffset: scrollObserver,
-    getItemKey: (index) => {
-      if (index >= allResults.length) return `loader-${index}`
-      const item = allResults[index]
-      return item ? `${item.project_id}-${item.package}-${item.version}` : `row-${index}`
-    },
-  })
-
-  const virtualItems = rowVirtualizer.getVirtualItems()
-  const lastItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]?.index : -1
-
-  // A failed page waits for Retry; requesting it again on the next render would loop.
-  useEffect(() => {
-    if (lastItemIndex === -1) return
-    if (lastItemIndex >= allResults.length - 1 && hasNextPage && !isFetchingNextPage && !nextPageFailed) {
-      fetchNextPage()
-    }
-  }, [hasNextPage, fetchNextPage, allResults.length, isFetchingNextPage, nextPageFailed, lastItemIndex])
+  const { isFetchingNextPage, isLoading, error, refetch, fetchNextPage } = results
+  const list = useInfiniteRows(results, (page) => page.items)
+  const allResults = list.rows
+  const totalCount = results.data?.pages[0]?.total ?? 0
 
   const clearFilters = () => {
     setVersion('')
@@ -302,81 +265,53 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  <tr>
-                    <td colSpan={5} className="p-0">
+                  <VirtualRows
+                    list={list}
+                    scrollContainer={scrollContainer}
+                    tableOffsetRef={tableOffsetRef}
+                    estimateSize={52}
+                    rowKey={(result) => `${result.project_id}-${result.package}-${result.version}`}
+                    colSpan={5}
+                    renderRow={(result, style) => (
                       <div
-                        style={{
-                          height: `${rowVirtualizer.getTotalSize()}px`,
-                          position: 'relative',
-                        }}
+                        className="flex items-center border-b cursor-pointer hover:bg-muted transition-colors"
+                        role="button"
+                        tabIndex={0}
+                        style={style}
+                        onClick={() => onSelectResult?.(result)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectResult?.(result); } }}
                       >
-                        {virtualItems.map((virtualRow) => {
-                          const isLoaderRow = virtualRow.index >= allResults.length
-                          if (isLoaderRow) {
-                            return (
-                              <div
-                                key="loader"
-                                className="absolute left-0 right-0 flex items-center justify-center py-4"
-                                style={{
-                                  top: `${virtualRow.start}px`,
-                                  height: `${virtualRow.size}px`,
-                                }}
-                              >
-                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                              </div>
-                            )
-                          }
-                          const result = allResults[virtualRow.index]
-                          return (
-                            <div
-                              key={`${result.project_id}-${result.package}-${result.version}-${virtualRow.index}`}
-                              className="flex items-center border-b cursor-pointer hover:bg-muted transition-colors"
-                              role="button"
-                              tabIndex={0}
-                              style={{
-                                position: 'absolute',
-                                top: `${virtualRow.start}px`,
-                                left: 0,
-                                right: 0,
-                                height: `${virtualRow.size}px`,
-                              }}
-                              onClick={() => onSelectResult?.(result)}
-                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectResult?.(result); } }}
-                            >
-                              <div className="w-[250px] px-4 py-2 truncate">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                                  <span className="font-medium truncate">{result.package}</span>
-                                </div>
-                              </div>
-                              <div className="w-[120px] px-4 py-2 truncate">
-                                <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
-                              </div>
-                              <div className="w-[100px] px-4 py-2">
-                                <Badge variant="secondary" className="truncate">{result.type}</Badge>
-                              </div>
-                              <div className="w-[150px] px-4 py-2 truncate">
-                                <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
-                              </div>
-                              <div className="w-[200px] px-4 py-2 truncate">
-                                <Link
-                                  to={`/projects/${result.project_id}`}
-                                  className="hover:underline text-primary truncate block"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  {result.project_name}
-                                </Link>
-                              </div>
-                            </div>
-                          )
-                        })}
+                        <div className="w-[250px] px-4 py-2 truncate">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span className="font-medium truncate">{result.package}</span>
+                          </div>
+                        </div>
+                        <div className="w-[120px] px-4 py-2 truncate">
+                          <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
+                        </div>
+                        <div className="w-[100px] px-4 py-2">
+                          <Badge variant="secondary" className="truncate">{result.type}</Badge>
+                        </div>
+                        <div className="w-[150px] px-4 py-2 truncate">
+                          <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
+                        </div>
+                        <div className="w-[200px] px-4 py-2 truncate">
+                          <Link
+                            to={`/projects/${result.project_id}`}
+                            className="hover:underline text-primary truncate block"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {result.project_name}
+                          </Link>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
+                    )}
+                  />
                 </TableBody>
               </Table>
             </div>
-            {nextPageFailed && (
+            {list.nextPageFailed && (
               <AnalyticsErrorCard title="Failed to load more dependencies" error={error} onRetry={() => fetchNextPage()} />
             )}
           </div>
