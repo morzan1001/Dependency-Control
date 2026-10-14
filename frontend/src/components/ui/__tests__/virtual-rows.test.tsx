@@ -20,7 +20,7 @@ function renderRows(): HTMLElement {
   Object.defineProperty(main, 'offsetHeight', { value: 800, configurable: true })
   Object.defineProperty(main, 'scrollTop', { value: 0, writable: true, configurable: true })
   document.body.appendChild(main)
-  const list = { rows: ROWS, hasMore: false, nextPageFailed: false, loadMore: vi.fn(), observeEnd: vi.fn() }
+  const list = { rows: ROWS, hasMore: false, nextPageFailed: false, retry: vi.fn(), loadMore: vi.fn(), observeEnd: vi.fn() }
   render(
     <table>
       <tbody>

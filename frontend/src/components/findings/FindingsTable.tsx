@@ -249,8 +249,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         },
     })
 
-    const { isFetchingNextPage, isLoading, isError, error, fetchNextPage, refetch } = findings
-    const { rows: allRows, nextPageFailed, observeEnd } = useInfiniteRows(findings, (page) => page.items)
+    const { isFetchingNextPage, isLoading, isError, error } = findings
+    const { rows: allRows, nextPageFailed, retry, observeEnd } = useInfiniteRows(findings, (page) => page.items)
 
     return (
         <div className="relative w-full overflow-x-auto">
@@ -379,7 +379,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 <AnalyticsErrorCard
                     title={nextPageFailed ? 'Failed to load more findings' : 'Error loading findings'}
                     error={error}
-                    onRetry={() => (nextPageFailed ? fetchNextPage() : refetch())}
+                    onRetry={retry}
                 />
             )}
             <div ref={observeEnd} className="h-1" />

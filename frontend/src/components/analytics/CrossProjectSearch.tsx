@@ -82,7 +82,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
     enabled: debouncedQuery.length >= 2,
   })
 
-  const { isFetchingNextPage, isLoading, error, refetch, fetchNextPage } = results
+  const { isFetchingNextPage, isLoading, error } = results
   const list = useInfiniteRows(results, (page) => page.items)
   const allResults = list.rows
   const totalCount = results.data?.pages[0]?.total ?? 0
@@ -237,7 +237,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               )
             }
             if (error && allResults.length === 0) {
-              return <AnalyticsErrorCard title="Failed to search dependencies" error={error} onRetry={() => refetch()} />
+              return <AnalyticsErrorCard title="Failed to search dependencies" error={error} onRetry={list.retry} />
             }
             if (allResults.length > 0) {
               return (
@@ -312,7 +312,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               </Table>
             </div>
             {list.nextPageFailed && (
-              <AnalyticsErrorCard title="Failed to load more dependencies" error={error} onRetry={() => fetchNextPage()} />
+              <AnalyticsErrorCard title="Failed to load more dependencies" error={error} onRetry={list.retry} />
             )}
           </div>
               )

@@ -7,7 +7,7 @@ export function useInfiniteRows<TPage, TRow>(
   query: UseInfiniteQueryResult<InfiniteData<TPage>>,
   rowsOf: (page: TPage) => TRow[],
 ) {
-  const { data, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query
+  const { data, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage, refetch } = query
   const nextPageFailed = isFetchNextPageError && !isFetchingNextPage
   // A failed page waits for Retry; asking for it again on the next render would loop.
   const canLoadMore = hasNextPage && !isFetchingNextPage && !nextPageFailed
@@ -35,6 +35,7 @@ export function useInfiniteRows<TPage, TRow>(
     rows: data?.pages.flatMap(rowsOf) ?? [],
     hasMore: hasNextPage && !nextPageFailed,
     nextPageFailed,
+    retry: () => (nextPageFailed ? fetchNextPage() : refetch()),
     loadMore,
     observeEnd,
   }

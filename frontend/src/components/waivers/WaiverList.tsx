@@ -50,8 +50,8 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
         projectId,
         { search: debouncedSearch, sortBy: sort.sortBy, sortOrder: sort.sortOrder, orphaned: orphanedOnly },
     )
-    const { fetchNextPage, isFetchingNextPage, isLoading, isError, refetch } = waivers
-    const { rows: allWaivers, hasMore, nextPageFailed, observeEnd } = useInfiniteRows(waivers, (page) => page.items)
+    const { isFetchingNextPage, isLoading, isError } = waivers
+    const { rows: allWaivers, hasMore, retry, observeEnd } = useInfiniteRows(waivers, (page) => page.items)
     const deleteWaiverMutation = useDeleteWaiver({ errorTitle: 'Failed to delete waiver' })
 
     const handleDelete = (id: string) => {
@@ -218,7 +218,7 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                                     <TableCell colSpan={columns} className="text-center text-destructive py-8">
                                         <div className="flex flex-col items-center gap-2">
                                             <span>Failed to load waivers. Please try again.</span>
-                                            <Button variant="outline" size="sm" onClick={() => (nextPageFailed ? fetchNextPage() : refetch())}>
+                                            <Button variant="outline" size="sm" onClick={retry}>
                                                 Retry
                                             </Button>
                                         </div>
