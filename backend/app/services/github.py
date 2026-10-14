@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import urllib.parse
-import weakref
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager
+from collections.abc import Awaitable, Callable
+from contextlib import aclosing
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
@@ -20,19 +19,16 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITHUB,
-    team_binding_key,
-    team_source,
 )
-from app.core.http_utils import InstrumentedAsyncClient, quota_lifts_at
-from app.core.log_utils import sanitize_for_log
+from app.core.http_utils import quota_lifts_at
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, TeamSyncResult, binding_of
-from app.repositories.teams import MemberSubset, TeamRepository
+from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.github_instance import GitHubOrgTeam
-from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
-from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
+from app.services.git_provider import GitProviderService, ResponseHooks, json_document, request_gate
+from app.services.oidc_utils import discover_jwks_uri
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +36,6 @@ _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/
 
 _PUBLIC_GITHUB_WEB_HOSTS = frozenset({"github.com", "www.github.com"})
 
-
-_GITHUB_API_TIMEOUT = 10.0
 
 # The resolution runs inside the ingest request. One deadline covers every call it makes -- the
 # per-team checks and the per-member reads that follow them -- so a GitHub that answers slowly costs
@@ -52,11 +46,6 @@ _DEFAULT_ACCEPT = "application/vnd.github+json"
 # Without this media type the team/repository check answers 204 with no body, and the body is the
 # only place the team's permission level on the repository is reported.
 _REPOSITORY_ACCEPT = "application/vnd.github.v3.repository+json"
-
-# One request per team of the organisation, and the largest one here has 204 of them. Run in
-# sequence they would outlast the resolution budget; this many at a time finishes the walk well
-# inside it and stays far below the hundred concurrent requests GitHub tolerates.
-_GITHUB_ORG_WALK_CONCURRENCY = 16
 
 # The walk's share of the resolution budget, from its first gated listing; a timeout is cached as a failure.
 _GITHUB_ORG_WALK_TIMEOUT = 15.0
@@ -70,10 +59,6 @@ _WRITE_PERMISSIONS = ("push", "maintain", "admin")
 
 _GITHUB_TEAM_ROLES = (("maintainer", TEAM_ROLE_ADMIN), ("member", TEAM_ROLE_MEMBER))
 
-_org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Semaphore]]" = (
-    weakref.WeakKeyDictionary()
-)
-
 # Per pod is enough: branch sync, which builds a service per project, runs on one pod under its lock.
 _rate_limit_holds: dict[str, datetime] = {}
 
@@ -82,115 +67,6 @@ def split_repo_path(path: str | None) -> tuple[str, str] | None:
     """``owner/repo`` as its two parts, or None unless both are present."""
     owner, _, repo = (path or "").partition("/")
     return (owner, repo) if owner and repo else None
-
-
-def _org_walk_gate(instance_id: str) -> asyncio.Semaphore:
-    """Per instance, as GitHub limits concurrency per token; process-wide, as one run's ingests put 112 in flight."""
-    gates = _org_walk_gates.setdefault(asyncio.get_running_loop(), {})
-    return gates.setdefault(instance_id, asyncio.Semaphore(_GITHUB_ORG_WALK_CONCURRENCY))
-
-
-async def cached_public_emails[K](
-    cache_keys: dict[K, str], fetch: Callable[[K], Awaitable[str | None]], instance_id: str, ttl_seconds: int
-) -> dict[K, str] | None:
-    """Key -> public email ("" for none) in one cache read; None once a fetch was refused, cancelling those queued."""
-    cached = await cache_service.mget(list(cache_keys.values()))
-    emails = {key: value for key, cache_key in cache_keys.items() if isinstance(value := cached.get(cache_key), str)}
-    answered: dict[K, str] = {}
-    refused = False
-
-    async def fetch_one(key: K) -> None:
-        nonlocal refused
-        async with _org_walk_gate(instance_id):
-            if refused:
-                return
-            email = await fetch(key)
-        if email is None:
-            refused = True
-        else:
-            answered[key] = email
-
-    try:
-        await asyncio.gather(*(fetch_one(key) for key in cache_keys if key not in emails))
-    finally:
-        # Also when the caller's deadline cancels the batch, so the next sync resumes from these answers.
-        await cache_service.mset({cache_keys[key]: email for key, email in answered.items()}, ttl_seconds)
-    return None if refused else {**emails, **answered}
-
-
-async def iter_link_pages(
-    provider: str,
-    client: AbstractAsyncContextManager[InstrumentedAsyncClient],
-    base_url: str,
-    endpoint: str,
-    headers: dict[str, str],
-    params: dict[str, Any] | None = None,
-    max_pages: int | None = None,
-) -> AsyncGenerator[list[dict[str, Any]] | None]:
-    """Each page of a GET paginated by its Link header, then a final None if one failed; a hit ``max_pages`` warns."""
-    failed = False
-    page = 1
-    try:
-        async with client as session:
-            while True:
-                response = await session.get(
-                    f"{base_url}{endpoint}", headers=headers, params={**(params or {}), "page": page, "per_page": 100}
-                )
-                if not response_ok(provider, endpoint, response):
-                    failed = True
-                    break
-
-                items = response.json()
-                if not items:
-                    break
-                yield items
-
-                if 'rel="next"' not in response.headers.get("link", ""):
-                    break
-                if page == max_pages:
-                    logger.warning(
-                        '%s API GET %s hit the pagination cap of %d page(s) but the Link header still offers rel="next". '
-                        "Result is TRUNCATED.",
-                        provider,
-                        sanitize_for_log(endpoint),
-                        max_pages,
-                    )
-                    break
-                page += 1
-    except Exception as e:
-        logger.warning(
-            "%s API paginated GET %s failed: %s: %s", provider, sanitize_for_log(endpoint), type(e).__name__, e
-        )
-        failed = True
-    if failed:
-        yield None
-
-
-async def collect_pages(pages: AsyncIterator[list[dict[str, Any]] | None]) -> list[dict[str, Any]] | None:
-    """Every item of the pages, or None when one failed."""
-    items: list[dict[str, Any]] = []
-    async for page in pages:
-        if page is None:
-            return None
-        items.extend(page)
-    return items
-
-
-def response_ok(provider: str, endpoint: str, response: httpx.Response) -> bool:
-    """True for 200. A rejected read must not be mistaken for an empty one, so a non-200 is logged here."""
-    if response.status_code == 200:
-        return True
-    logger.warning("%s API GET %s returned HTTP %d", provider, sanitize_for_log(endpoint), response.status_code)
-    return False
-
-
-def _json_document(response: httpx.Response) -> dict[str, Any]:
-    """The response body as a document; ``{}`` for anything else, which reads as "GitHub did not say"."""
-    try:
-        body = response.json()
-    except ValueError:
-        return {}
-    return body if isinstance(body, dict) else {}
 
 
 def _team_writes_to(repository: dict[str, Any]) -> bool | None:
@@ -298,17 +174,19 @@ def github_api_headers(token: str | None) -> dict[str, str]:
     return headers
 
 
-class GitHubService:
+class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     """OIDC token validation and API operations for github.com and GHES instances."""
 
-    def __init__(self, github_instance: GitHubInstance):
-        self.instance = github_instance
-        self._instance_id = str(github_instance.id)
-        self.base_url = github_instance.url.rstrip("/")
-        self._cache_key_prefix = f"gh_instance:{github_instance.id}"
+    provider = "GitHub"
+    _cache_prefix = "github:gh_instance"
+    team_provider = TEAM_SOURCE_GITHUB
+    _email_field = "email"
+    _email_cache_ttl = GITHUB_USER_EMAIL_CACHE_TTL
+    _oidc_payload = GitHubOIDCPayload
 
+    def __init__(self, github_instance: GitHubInstance):
+        super().__init__(github_instance)
         github_url = (github_instance.github_url or "").rstrip("/")
-        self.api_url: str | None
         if is_public_github(github_url, github_instance.url):
             self.api_url = GITHUB_API_URL
         elif github_url:
@@ -323,14 +201,14 @@ class GitHubService:
         lifts_at = _rate_limit_holds.get(self._instance_id)
         return lifts_at if lifts_at is not None and datetime.now(timezone.utc) < lifts_at else None
 
-    def _get_cache_key(self, suffix: str) -> str:
-        """Generate cache key for this specific instance."""
-        return f"github:{self._cache_key_prefix}:{suffix}"
+    def _token_headers(self, token: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}", "Accept": _DEFAULT_ACCEPT}
 
-    def _get_auth_headers(self, accept: str = _DEFAULT_ACCEPT) -> dict[str, str]:
-        if not self.instance.access_token:
-            raise ValueError(f"No access token configured for GitHub instance '{self.instance.name}'")
-        return {"Authorization": f"Bearer {self.instance.access_token}", "Accept": accept}
+    def _can_call(self) -> bool:
+        return super()._can_call() and self.rate_limited_until is None
+
+    def _response_hooks(self) -> ResponseHooks:
+        return {"response": [self._note_rate_limit]}
 
     async def _note_rate_limit(self, response: httpx.Response) -> None:
         """Async only because httpx.AsyncClient awaits its event hooks."""
@@ -346,78 +224,14 @@ class GitHubService:
             f"{until:%Y-%m-%d %H:%M:%S UTC}",
         )
 
-    def _rate_limited(self) -> bool:
-        return self.rate_limited_until is not None
-
-    @asynccontextmanager
-    async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
-        async with InstrumentedAsyncClient(
-            "GitHub API", timeout=_GITHUB_API_TIMEOUT, event_hooks={"response": [self._note_rate_limit]}
-        ) as client:
-            yield client
-
-    async def _api_request(
-        self,
-        method: str,
-        endpoint: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json_data: dict[str, Any] | None = None,
-        accept: str = _DEFAULT_ACCEPT,
-    ) -> httpx.Response | None:
-        if not self.instance.access_token or self.api_url is None or self._rate_limited():
-            return None
-
-        try:
-            async with self._api_client() as client:
-                return await client.request(
-                    method,
-                    f"{self.api_url}{endpoint}",
-                    headers=self._get_auth_headers(accept),
-                    params=params,
-                    json=json_data,
-                )
-        except Exception as e:
-            logger.exception("GitHub API %s %s failed: %s", method, endpoint, e)
-            return None
-
-    async def _api_get(
-        self, endpoint: str, params: dict[str, Any] | None = None, accept: str = _DEFAULT_ACCEPT
-    ) -> httpx.Response | None:
-        return await self._api_request("GET", endpoint, params=params, accept=accept)
-
-    async def _iter_pages(
-        self, endpoint: str, params: dict[str, Any] | None = None
-    ) -> AsyncGenerator[list[dict[str, Any]] | None]:
-        """Each page of a paginated GET, then a final None if one failed."""
-        if not self.instance.access_token or self.api_url is None or self._rate_limited():
-            yield None
-            return
-        headers = self._get_auth_headers()
-        async with aclosing(
-            iter_link_pages("GitHub", self._api_client(), self.api_url, endpoint, headers, params)
-        ) as pages:
-            async for page in pages:
-                yield page
-
-    async def _api_get_paginated(
-        self, endpoint: str, params: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]] | None:
-        """Every item of a paginated GET, or None when a page failed."""
-        return await collect_pages(self._iter_pages(endpoint, params))
-
     async def list_branches(self, owner: str, repo: str) -> list[str] | None:
-        """Fetches all branch names from a GitHub repository. Returns None on API failure."""
-        branches = await self._api_get_paginated(f"/repos/{owner}/{repo}/branches")
-        if branches is None:
-            return None
-        return [b["name"] for b in branches]
+        """Every branch name of a GitHub repository; None on API failure."""
+        return await self._branch_names(f"/repos/{owner}/{repo}/branches")
 
     async def get_default_branch(self, owner: str, repo: str) -> str | None:
         """The repository's default branch. Returns None on API failure."""
-        endpoint = f"/repos/{owner}/{repo}"
-        response = await self._api_get(endpoint)
-        if response is None or not response_ok("GitHub", endpoint, response):
+        response = await self._get_ok(f"/repos/{owner}/{repo}")
+        if response is None:
             return None
         branch = response.json().get("default_branch")
         return str(branch) if branch else None
@@ -455,8 +269,8 @@ class GitHubService:
             return cached
 
         endpoint = f"/orgs/{org}/teams/{team_slug}/repos/{org}/{repo}"
-        async with _org_walk_gate(self._instance_id):
-            response = await self._api_get(endpoint, accept=_REPOSITORY_ACCEPT)
+        async with request_gate(self._instance_id):
+            response = await self._api_get(endpoint, headers={"Accept": _REPOSITORY_ACCEPT})
         if response is None:
             return None
 
@@ -464,7 +278,7 @@ class GitHubService:
             # This endpoint is a permission check, not a write check: it answers 200 on pull as
             # readily as on admin, so the level in the body is what decides, exactly as it does
             # when the organisation walk reads the same repository from the team's listing.
-            writes = _team_writes_to(_json_document(response))
+            writes = _team_writes_to(json_document(response))
             if writes is None:
                 logger.warning(
                     "GitHub answered for team %s/%s on %s/%s without saying what the team's access "
@@ -491,7 +305,7 @@ class GitHubService:
 
         async def fetch() -> bool | None:
             endpoint = f"/repos/{org}/{repo}"
-            async with _org_walk_gate(self._instance_id):
+            async with request_gate(self._instance_id):
                 response = await self._api_get(endpoint)
             if response is None:
                 return None
@@ -511,12 +325,9 @@ class GitHubService:
         """Whether a repository owner is a user, whose repositories no team can hold, not an organisation."""
 
         async def fetch() -> bool | None:
-            endpoint = f"/users/{owner}"
-            async with _org_walk_gate(self._instance_id):
-                response = await self._api_get(endpoint)
-            if response is None or not response_ok("GitHub", endpoint, response):
-                return None
-            return _json_document(response).get("type") == "User"
+            async with request_gate(self._instance_id):
+                response = await self._get_ok(f"/users/{owner}")
+            return None if response is None else json_document(response).get("type") == "User"
 
         return await self._cached(f"owner_kind:{owner}", fetch, bool) is True
 
@@ -524,7 +335,7 @@ class GitHubService:
         """Every team of an organisation, with the parent that tells two same-named ones apart."""
 
         async def fetch() -> list[dict[str, Any]] | None:
-            async with _org_walk_gate(self._instance_id):
+            async with request_gate(self._instance_id):
                 teams = await self._api_get_paginated(f"/orgs/{org}/teams")
             if teams is None:
                 return None
@@ -550,7 +361,7 @@ class GitHubService:
         A team with mere read access is not an owner: the people who can change the code are.
         """
         written: list[str] = []
-        async with _org_walk_gate(self._instance_id):
+        async with request_gate(self._instance_id):
             if budget.when() is None:
                 budget.reschedule(asyncio.get_running_loop().time() + _GITHUB_ORG_WALK_TIMEOUT)
             async with aclosing(self._iter_pages(f"/orgs/{org}/teams/{slug}/repos")) as pages:
@@ -632,7 +443,7 @@ class GitHubService:
             members: list[dict[str, Any]] = []
             # The endpoint returns plain user objects, so the role can only come from the query.
             for github_role, role in _GITHUB_TEAM_ROLES:
-                async with _org_walk_gate(self._instance_id):
+                async with request_gate(self._instance_id):
                     page = await self._api_get_paginated(endpoint, params={"role": github_role})
                 if page is None:
                     return None
@@ -662,25 +473,6 @@ class GitHubService:
             logger.warning("GitHub rate limit response could not be read: %s", e)
             return None
 
-    async def _fetch_public_email(self, login: str) -> str | None:
-        """The profile's public email, "" when it shows none; None when GitHub would not answer."""
-        response = await self._api_get(f"/users/{login}")
-        if response is None:
-            return None
-        if response.status_code == 404:
-            return ""
-        if response.status_code != 200:
-            logger.warning("GitHub API GET /users/%s failed: %s", login, response.status_code)
-            return None
-        return str(_json_document(response).get("email") or "")
-
-    async def _public_emails(self, logins: list[str]) -> dict[str, str] | None:
-        """Login -> public email ("" for none); None once GitHub refused one."""
-        keys = {login: self._get_cache_key(f"user_email:{login}") for login in logins}
-        return await cached_public_emails(
-            keys, self._fetch_public_email, self._instance_id, GITHUB_USER_EMAIL_CACHE_TTL
-        )
-
     async def _resolve_logins(self, logins: list[str], user_repo: UserRepository) -> dict[str, dict[str, Any]] | None:
         """Login -> existing local user by verified public email, never by username; None when GitHub won't say."""
         emails = await self._public_emails(logins)
@@ -693,11 +485,6 @@ class GitHubService:
         """The EXISTING local user that verified the login's public email, if GitHub names one."""
         return (await self._resolve_logins([login], user_repo) or {}).get(login)
 
-    @property
-    def _member_source(self) -> str:
-        """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(TEAM_SOURCE_GITHUB, self._instance_id)
-
     async def _build_team_members(
         self,
         members: list[dict[str, Any]],
@@ -707,24 +494,15 @@ class GitHubService:
         users = await self._resolve_logins([member["login"] for member in members], user_repo)
         if users is None:
             return None
-        resolved: dict[str, TeamMember] = {}
+        resolved: list[tuple[str, str]] = []
         for member in members:
-            login = member["login"]
-            user = users.get(login)
+            user = users.get(member["login"])
             if user is None:
-                # Sync never creates users; a real member is added on their next sync after
-                # logging in via OIDC.
-                logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", login)
+                # Sync never creates users; a real member is added on their next sync after logging in via OIDC.
+                logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", member["login"])
                 continue
-            role = member["role"]
-            user_id = str(user["_id"])
-            # Two logins can resolve to one local user. A duplicate entry breaks add_member's $ne
-            # guard, and the next sync's last-wins merge would silently demote the admin entry.
-            previous = resolved.get(user_id)
-            if previous is not None and previous.role == TEAM_ROLE_ADMIN:
-                continue
-            resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return list(resolved.values())
+            resolved.append((str(user["_id"]), member["role"]))
+        return self._team_members(resolved)
 
     @staticmethod
     def _renamed_fields(team: dict[str, Any], binding: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
@@ -754,25 +532,14 @@ class GitHubService:
         on: barely a login resolves here, so a name would otherwise never follow a renamed team.
         """
         binding = binding_of(team, self._instance_id) or {}
-        updates: dict[str, Any] = self._renamed_fields(team, binding, org, holder.slug)
-        # Handed to the server as the subset to replace rather than merged here: the snapshot is
-        # several round trips old, and a member added in between would be written back out of the
-        # team after the add had already reported success.
-        subset = (
-            MemberSubset(self._member_source, [member.model_dump() for member in team_members])
-            if team_members is not None
-            else None
-        )
         # The binding is the numeric team id, so a renamed slug has to follow it.
-        binding_fields = {"slug": holder.slug} if binding.get("slug") != holder.slug else {}
-        if not updates and not binding_fields and subset is None:
-            return
-        await team_repo.update_with_binding(
-            team["_id"],
-            updates,
-            team_binding_key(TEAM_SOURCE_GITHUB, self._instance_id, holder.team_id),
-            binding_fields,
-            subset,
+        await self._write_team_refresh(
+            team_repo,
+            team,
+            holder.team_id,
+            self._renamed_fields(team, binding, org, holder.slug),
+            {"slug": holder.slug} if binding.get("slug") != holder.slug else {},
+            team_members,
         )
 
     async def _team_for_github_group(
@@ -1089,17 +856,13 @@ class GitHubService:
         return commit_sha, []
 
     async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
-        endpoint = f"/repos/{owner}/{repo}/commits/{sha}/pulls"
-        response = await self._api_get(endpoint)
-        if response is None or not response_ok("GitHub", endpoint, response):
-            return []
-        return [GitHubPullRequest(**pr) for pr in response.json()]
+        response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{sha}/pulls")
+        return [] if response is None else [GitHubPullRequest(**pr) for pr in response.json()]
 
     async def _merge_commit_head_parent(self, owner: str, repo: str, commit_sha: str) -> str | None:
         """Second parent of a two-parent merge commit. Parent order is a git convention, not an API guarantee."""
-        endpoint = f"/repos/{owner}/{repo}/commits/{commit_sha}"
-        response = await self._api_get(endpoint)
-        if response is None or not response_ok("GitHub", endpoint, response):
+        response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{commit_sha}")
+        if response is None:
             return None
         parents = response.json().get("parents") or []
         if len(parents) != 2:
@@ -1113,57 +876,13 @@ class GitHubService:
         return None if comments is None else [GitHubIssueComment(**c) for c in comments]
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
-        """Post a comment on a pull request."""
-        response = await self._api_request(
-            "POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 201:
-                return True
-            logger.error(f"Failed to post PR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", body)
 
     async def update_pull_request_comment(self, owner: str, repo: str, comment_id: int, body: str) -> bool:
-        """Update an existing pull-request comment."""
-        response = await self._api_request(
-            "PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 200:
-                return True
-            logger.error(f"Failed to update PR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", body)
 
     async def _jwks_uris(self) -> list[str]:
         if "token.actions.githubusercontent.com" in self.base_url:
             return [_GITHUB_COM_JWKS_URI]
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
         return [discovered or f"{self.base_url}/.well-known/jwks"]
-
-    async def refresh_jwks(self) -> dict | None:
-        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitHub")
-
-    async def get_jwks(self) -> dict | None:
-        """The instance's cached key set, fetched on a miss; None while the issuer serves none."""
-        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
-        return cached or await self.refresh_jwks()
-
-    async def validate_oidc_token(self, token: str) -> GitHubOIDCPayload | None:
-        """Validate a GitHub Actions OIDC JWT, refreshing JWKS on key rotation."""
-        return await _validate_oidc_token(
-            token=token,
-            get_jwks=self.get_jwks,
-            refresh_jwks=self.refresh_jwks,
-            issuer=self.base_url,
-            audience=self.instance.oidc_audience,
-            payload_model=GitHubOIDCPayload,
-            provider_name="GitHub",
-        )
-
-    async def get_current_user_id(self) -> int | None:
-        """The id of the account the token belongs to; None when GET /user does not answer it."""
-        response = await self._api_get("/user")
-        if response is None or not response_ok("GitHub", "/user", response):
-            return None
-        user_id = _json_document(response).get("id")
-        return user_id if isinstance(user_id, int) else None

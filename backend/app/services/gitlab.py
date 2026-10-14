@@ -1,14 +1,11 @@
 import asyncio
 import logging
 import urllib.parse
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Any, NamedTuple
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.cache import cache_service
 from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
     GITLAB_TEAM_MEMBER_MIN_ACCESS,
@@ -17,10 +14,7 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITLAB,
-    team_binding_key,
-    team_source,
 )
-from app.core.http_utils import InstrumentedAsyncClient
 from app.models.gitlab_api import (
     GitLabMember,
     GitLabMergeRequest,
@@ -30,16 +24,13 @@ from app.models.gitlab_api import (
 )
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult, binding_of
-from app.repositories.teams import MemberSubset, TeamRepository
+from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.gitlab_instance import GitLabGroupOption
-from app.services.github import cached_public_emails, collect_pages, iter_link_pages, response_ok
-from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
-from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
+from app.services.git_provider import GitProviderService
+from app.services.oidc_utils import discover_jwks_uri
 
 logger = logging.getLogger(__name__)
-
-_GITLAB_API_TIMEOUT = 10.0
 
 # Bounds the in-request project, group and uncapped member reads together; a large group is many 10s pages.
 _GITLAB_RESOLUTION_TIMEOUT = 30.0
@@ -102,101 +93,40 @@ _UNDETERMINED_TARGET = GitLabSyncTarget(None, determined=False)
 _NO_OWNING_GROUP = GitLabSyncTarget(None)
 
 
-class GitLabService:
+class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
+    provider = "GitLab"
+    _cache_prefix = "gitlab:instance"
+    team_provider = TEAM_SOURCE_GITLAB
+    # GitLab accepts a public email only from the account's confirmed addresses.
+    _email_field = "public_email"
+    _email_cache_ttl = GITLAB_USER_EMAIL_CACHE_TTL
+    _oidc_payload = OIDCPayload
+
     def __init__(self, gitlab_instance: GitLabInstance):
-        self.instance = gitlab_instance
-        self._instance_id = str(gitlab_instance.id)
-        self.base_url = gitlab_instance.url.rstrip("/")
+        super().__init__(gitlab_instance)
         self.api_url = f"{self.base_url}/api/v4"
-        self._cache_key_prefix = f"instance:{gitlab_instance.id}"
 
-    def _get_cache_key(self, suffix: str) -> str:
-        """Generate cache key for this specific instance."""
-        return f"gitlab:{self._cache_key_prefix}:{suffix}"
+    def _token_headers(self, token: str) -> dict[str, str]:
+        return {"PRIVATE-TOKEN": token}
 
-    def _get_auth_headers(self) -> dict[str, str]:
-        if not self.instance.access_token:
-            raise ValueError(f"No access token configured for GitLab instance '{self.instance.name}'")
-        return {"PRIVATE-TOKEN": self.instance.access_token}
-
-    @asynccontextmanager
-    async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
-        async with InstrumentedAsyncClient("GitLab API", timeout=_GITLAB_API_TIMEOUT) as client:
-            yield client
-
-    async def _api_request(
-        self,
-        method: str,
-        endpoint: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json_data: dict[str, Any] | None = None,
-    ) -> httpx.Response | None:
-        if not self.instance.access_token:
-            return None
-
-        try:
-            async with self._api_client() as client:
-                return await client.request(
-                    method, f"{self.api_url}{endpoint}", headers=self._get_auth_headers(), params=params, json=json_data
-                )
-        except Exception as e:
-            logger.exception("GitLab API %s %s failed: %s: %s", method, endpoint, type(e).__name__, e)
-            return None
-
-    async def _api_get(self, endpoint: str, params: dict[str, Any] | None = None) -> httpx.Response | None:
-        return await self._api_request("GET", endpoint, params=params)
-
-    async def _api_get_paginated(
-        self, endpoint: str, params: dict[str, Any] | None = None, max_pages: int | None = None
-    ) -> list[dict[str, Any]] | None:
-        """Every item of a paginated GET, or None when a page failed or no token is configured."""
-        if not self.instance.access_token:
-            return None
-        pages = iter_link_pages(
-            "GitLab", self._api_client(), self.api_url, endpoint, self._get_auth_headers(), params, max_pages
-        )
-        return await collect_pages(pages)
+    async def get_version(self) -> httpx.Response:
+        """GET /version with the token; a transport error reaches the caller, which reports it."""
+        async with self._api_client() as client:
+            return await client.get(f"{self.api_url}/version", headers=self._get_auth_headers())
 
     async def _jwks_uris(self) -> list[str]:
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
         fallbacks = [f"{self.base_url}/oauth/discovery/keys", f"{self.base_url}/-/jwks"]
         return list(dict.fromkeys([discovered, *fallbacks] if discovered else fallbacks))
 
-    async def refresh_jwks(self) -> dict | None:
-        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitLab")
-
-    async def get_jwks(self) -> dict | None:
-        """The instance's cached key set, fetched on a miss; None while GitLab serves none."""
-        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
-        return cached or await self.refresh_jwks()
-
-    async def validate_oidc_token(self, token: str) -> OIDCPayload | None:
-        """Validate a GitLab OIDC JWT, refreshing JWKS on key rotation."""
-        return await _validate_oidc_token(
-            token=token,
-            get_jwks=self.get_jwks,
-            refresh_jwks=self.refresh_jwks,
-            issuer=self.base_url,
-            audience=self.instance.oidc_audience,
-            payload_model=OIDCPayload,
-            provider_name="GitLab",
-        )
-
     async def list_branches(self, project_id: int) -> list[str] | None:
-        """Fetches all branch names from a GitLab project. Returns None on API failure."""
-        branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches")
-        if branches is None:
-            return None
-        return [b["name"] for b in branches]
+        """Every branch name of a GitLab project; None on API failure."""
+        return await self._branch_names(f"/projects/{project_id}/repository/branches")
 
     async def get_project_details(self, project_id: int) -> GitLabProjectDetails | None:
         """Fetches project details using the system token."""
-        endpoint = f"/projects/{project_id}"
-        response = await self._api_get(endpoint)
-        if response is None or not response_ok("GitLab", endpoint, response):
-            return None
-        return GitLabProjectDetails(**response.json())
+        response = await self._get_ok(f"/projects/{project_id}")
+        return None if response is None else GitLabProjectDetails(**response.json())
 
     async def get_default_branch(self, project_id: int) -> str | None:
         """The project's default branch. Returns None on API failure."""
@@ -205,22 +135,11 @@ class GitLabService:
 
     async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> list[GitLabMergeRequest]:
         """Fetches merge requests associated with a specific commit."""
-        endpoint = f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests"
-        response = await self._api_get(endpoint)
-        if response is None or not response_ok("GitLab", endpoint, response):
-            return []
-        return [GitLabMergeRequest(**mr) for mr in response.json()]
+        response = await self._get_ok(f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests")
+        return [] if response is None else [GitLabMergeRequest(**mr) for mr in response.json()]
 
     async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
-        """Posts a comment to a merge request."""
-        response = await self._api_request(
-            "POST", f"/projects/{project_id}/merge_requests/{mr_iid}/notes", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 201:
-                return True
-            logger.error(f"Failed to post MR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("POST", f"/projects/{project_id}/merge_requests/{mr_iid}/notes", body)
 
     async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> list[GitLabNote] | None:
         """Every note on a merge request, newest first; None when a page failed."""
@@ -228,15 +147,7 @@ class GitLabService:
         return None if notes is None else [GitLabNote(**n) for n in notes]
 
     async def update_merge_request_comment(self, project_id: int, mr_iid: int, note_id: int, body: str) -> bool:
-        """Updates an existing comment on a merge request."""
-        response = await self._api_request(
-            "PUT", f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}", json_data={"body": body}
-        )
-        if response:
-            if response.status_code == 200:
-                return True
-            logger.error(f"Failed to update MR comment: {response.status_code} - {response.text}")
-        return False
+        return await self._send_comment("PUT", f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}", body)
 
     async def get_group_members(self, group_id: int) -> list[GitLabMember] | None:
         """Fetch all group members via the system token."""
@@ -244,27 +155,10 @@ class GitLabService:
         # An empty list is a group nobody is left in, and stays a list; only None is a failure.
         return None if members is None else [GitLabMember(**m) for m in members]
 
-    async def _fetch_public_email(self, user_id: int) -> str | None:
-        """The profile's public email, which GitLab accepts only from confirmed addresses; "" for none, None unanswered."""
-        response = await self._api_get(f"/users/{user_id}")
-        if response is None:
-            return None
-        if response.status_code == 404:
-            return ""
-        if response.status_code != 200:
-            logger.warning("GitLab API GET /users/%s answered %s", user_id, response.status_code)
-            return None
-        return str(response.json().get("public_email") or "")
-
     async def _with_public_emails(self, members: list[GitLabMember]) -> list[GitLabMember] | None:
         """The members, each one listed without an email carrying its public one; None if GitLab would not say."""
-        keys = {
-            member_id: self._get_cache_key(f"user_email:{member_id}")
-            for member in members
-            if not member.email and (member_id := member.id) is not None
-        }
-        emails = await cached_public_emails(
-            keys, self._fetch_public_email, self._instance_id, GITLAB_USER_EMAIL_CACHE_TTL
+        emails = await self._public_emails(
+            member_id for member in members if not member.email and (member_id := member.id) is not None
         )
         if emails is None:
             # Written without them, the members GitLab would not describe would lose the team.
@@ -294,7 +188,7 @@ class GitLabService:
         # 404 is also what GitLab answers for a group the token may not see: this instance cannot resolve it.
         if response is not None and response.status_code == 404:
             return GitLabGroupLookup(reachable=True, group=None)
-        if response is None or not response_ok("GitLab", endpoint, response):
+        if response is None or not self._ok(endpoint, response):
             return GitLabGroupLookup(reachable=False, group=None)
         return GitLabGroupLookup(reachable=True, group=response.json())
 
@@ -354,11 +248,6 @@ class GitLabService:
         )
         return _UNDETERMINED_TARGET
 
-    @property
-    def _member_source(self) -> str:
-        """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(TEAM_SOURCE_GITLAB, self._instance_id)
-
     async def _build_team_members(
         self,
         gitlab_members: list[GitLabMember],
@@ -366,7 +255,7 @@ class GitLabService:
     ) -> tuple[list[TeamMember], int, bool]:
         """(owners, unresolved count, any resolved), matching only verified local users, tagged with this instance."""
         by_email = await user_repo.verified_users_by_email({member.email for member in gitlab_members if member.email})
-        resolved: dict[str, TeamMember] = {}
+        resolved: list[tuple[str, str]] = []
         unresolved = 0
         resolved_any = False
         for member in gitlab_members:
@@ -389,14 +278,8 @@ class GitLabService:
             ):
                 continue
             role = TEAM_ROLE_ADMIN if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else TEAM_ROLE_MEMBER
-            user_id = str(user["_id"])
-            # Two GitLab members can resolve to one local user. A duplicate entry breaks
-            # add_member's $ne guard, and a last-wins merge would silently demote the admin entry.
-            previous = resolved.get(user_id)
-            if previous is not None and previous.role == TEAM_ROLE_ADMIN:
-                continue
-            resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return list(resolved.values()), unresolved, resolved_any
+            resolved.append((str(user["_id"]), role))
+        return self._team_members(resolved), unresolved, resolved_any
 
     async def _resolve_group_members(
         self,
@@ -440,26 +323,15 @@ class GitLabService:
         on: a group whose members none resolve would otherwise never follow a rename.
         """
         stored_path = (binding_of(team, self._instance_id) or {}).get("path")
-        updates: dict[str, Any] = self._renamed_fields(team, stored_path, group_path)
-        # Handed to the server as the subset to replace rather than merged here: the snapshot is
-        # several round trips old, and a member added in between would be written back out of the
-        # team after the add had already reported success.
-        subset = (
-            MemberSubset(self._member_source, [member.model_dump() for member in team_members])
-            if team_members is not None
-            else None
-        )
         # A group that was renamed or moved has to carry the path GitLab reports now, including on
         # a team bound by hand before any sync ran.
-        binding_fields = {"path": group_path} if stored_path != group_path else {}
-        if not updates and not binding_fields and subset is None:
-            return
-        await team_repo.update_with_binding(
-            team["_id"],
-            updates,
-            team_binding_key(TEAM_SOURCE_GITLAB, self._instance_id, group_id),
-            binding_fields,
-            subset,
+        await self._write_team_refresh(
+            team_repo,
+            team,
+            group_id,
+            self._renamed_fields(team, stored_path, group_path),
+            {"path": group_path} if stored_path != group_path else {},
+            team_members,
         )
 
     async def _upsert_team_with_members(
@@ -566,11 +438,3 @@ class GitLabService:
                 e,
             )
             return TeamSyncResult(None)
-
-    async def get_current_user_id(self) -> int | None:
-        """The id of the account the token belongs to; None when GET /user does not answer it."""
-        response = await self._api_get("/user")
-        if response is None or not response_ok("GitLab", "/user", response):
-            return None
-        user_id = response.json().get("id")
-        return user_id if isinstance(user_id, int) else None

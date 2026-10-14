@@ -13,6 +13,10 @@ def is_shared_gitlab_issuer(url: str) -> bool:
     return url.rstrip("/") == GITLAB_SHARED_OIDC_ISSUER
 
 
+def lacks_required_namespaces(url: str, auto_create_projects: bool, allowed_namespaces: list[str]) -> bool:
+    return auto_create_projects and is_shared_gitlab_issuer(url) and not allowed_namespaces
+
+
 class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     """A configured GitLab instance."""
 
@@ -54,9 +58,8 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: datetime | None = None
 
-    @property
-    def is_shared_issuer(self) -> bool:
-        return is_shared_gitlab_issuer(self.url)
+    def lacks_required_allowlist(self) -> bool:
+        return lacks_required_namespaces(self.url, self.auto_create_projects, self.allowed_namespaces)
 
     def accepts_project_path(self, project_path: str) -> bool:
         if not self.allowed_namespaces:

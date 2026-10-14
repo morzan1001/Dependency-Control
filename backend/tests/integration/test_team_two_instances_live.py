@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.api.deps import _github_team_sync_stages
+from app.api.deps import _CiClaim, _GitHubCi, _ownership_stages
 from app.core.constants import TEAM_SOURCE_GITHUB, team_source
 from app.core.init_db import create_team_indexes
 from app.models.project import Project
@@ -56,7 +56,7 @@ async def _ingest(
     org_reads, check_reads, member_reads, map_reads = _reads(service, org_teams, repo_map)
 
     with org_reads, check_reads, member_reads, map_reads:
-        stages = await _github_team_sync_stages(project, instance_id, path, service, db)
+        stages = await _ownership_stages(_GitHubCi(service), project, _CiClaim("1", path, None), db)
 
     if stages:
         await project_repo.update_raw(project_id, stages)

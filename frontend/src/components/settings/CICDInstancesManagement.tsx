@@ -78,6 +78,36 @@ const emptyFormData: InstanceFormData = {
   allowed_owner_ids: "",
 };
 
+// An optional field the admin emptied is sent as null on update, which clears it, and left out on create.
+function toPayload(formData: InstanceFormData, cleared: undefined): GitLabInstanceCreate | GitHubInstanceCreate;
+function toPayload(formData: InstanceFormData, cleared: null): GitLabInstanceUpdate | GitHubInstanceUpdate;
+function toPayload(
+  formData: InstanceFormData,
+  cleared: null | undefined,
+): GitLabInstanceCreate | GitHubInstanceCreate | GitLabInstanceUpdate | GitHubInstanceUpdate {
+  const common = {
+    name: formData.name,
+    url: formData.url,
+    description: formData.description || cleared,
+    access_token: formData.access_token || undefined,
+    oidc_audience: formData.oidc_audience,
+    auto_create_projects: formData.auto_create_projects,
+    sync_teams: formData.sync_teams,
+    is_active: formData.is_active,
+  };
+  return formData.type === "gitlab"
+    ? {
+        ...common,
+        team_sync_depth: formData.team_sync_depth,
+        allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
+      }
+    : {
+        ...common,
+        github_url: formData.github_url || cleared,
+        allowed_owner_ids: parseAllowlist(formData.allowed_owner_ids),
+      };
+}
+
 function lacksRequiredAllowlist(formData: InstanceFormData): boolean {
   const allowlist = formData.type === "github" ? formData.allowed_owner_ids : formData.allowed_namespaces;
   return (
@@ -160,70 +190,11 @@ export function CICDInstancesManagement() {
     setFormData(emptyFormData);
   };
 
-  const handleCreate = () => {
-    if (formData.type === "gitlab") {
-      const data: GitLabInstanceCreate = {
-        name: formData.name,
-        url: formData.url,
-        description: formData.description || undefined,
-        access_token: formData.access_token,
-        oidc_audience: formData.oidc_audience,
-        auto_create_projects: formData.auto_create_projects,
-        sync_teams: formData.sync_teams,
-        team_sync_depth: formData.team_sync_depth,
-        is_active: formData.is_active,
-        allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
-      };
-      createMutation.mutate({ type: "gitlab", data });
-    } else {
-      const data: GitHubInstanceCreate = {
-        name: formData.name,
-        url: formData.url,
-        github_url: formData.github_url || undefined,
-        description: formData.description || undefined,
-        oidc_audience: formData.oidc_audience,
-        auto_create_projects: formData.auto_create_projects,
-        sync_teams: formData.sync_teams,
-        is_active: formData.is_active,
-        access_token: formData.access_token || undefined,
-        allowed_owner_ids: parseAllowlist(formData.allowed_owner_ids),
-      };
-      createMutation.mutate({ type: "github", data });
-    }
-  };
+  const handleCreate = () => createMutation.mutate({ type: formData.type, data: toPayload(formData, undefined) });
 
   const handleUpdate = () => {
     if (!editingInstance) return;
-
-    if (editingInstance._type === "gitlab") {
-      const data: GitLabInstanceUpdate = {
-        name: formData.name,
-        url: formData.url,
-        description: formData.description || null,
-        access_token: formData.access_token || undefined,
-        oidc_audience: formData.oidc_audience,
-        auto_create_projects: formData.auto_create_projects,
-        sync_teams: formData.sync_teams,
-        team_sync_depth: formData.team_sync_depth,
-        is_active: formData.is_active,
-        allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
-      };
-      updateMutation.mutate({ type: "gitlab", id: editingInstance.id, data });
-    } else {
-      const data: GitHubInstanceUpdate = {
-        name: formData.name,
-        url: formData.url,
-        github_url: formData.github_url || null,
-        description: formData.description || null,
-        oidc_audience: formData.oidc_audience,
-        auto_create_projects: formData.auto_create_projects,
-        sync_teams: formData.sync_teams,
-        is_active: formData.is_active,
-        access_token: formData.access_token || undefined,
-        allowed_owner_ids: parseAllowlist(formData.allowed_owner_ids),
-      };
-      updateMutation.mutate({ type: "github", id: editingInstance.id, data });
-    }
+    updateMutation.mutate({ type: editingInstance._type, id: editingInstance.id, data: toPayload(formData, null) });
   };
 
   const handleEdit = (instance: UnifiedInstance) => {

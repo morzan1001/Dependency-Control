@@ -11,7 +11,7 @@ import fakeredis.aioredis
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
-from app.api.deps import _resolve_initial_member_id
+from app.api.deps import _CiClaim, _GitLabCi
 from app.core.cache import CacheService
 from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
@@ -130,17 +130,18 @@ class TestProjectMemberAdd:
 
 
 class TestCiInitialProjectAdmin:
+    @staticmethod
+    async def _admin(job_email: str, *users: dict) -> str | None:
+        gitlab = _GitLabCi(GitLabService(make_gitlab_instance()))
+        return await gitlab.initial_member(_CiClaim(42, "corp/proj", job_email), await _db(*users))
+
     @pytest.mark.asyncio
     async def test_an_unverified_account_holding_the_job_email_is_not_made_admin(self):
-        user_repo = UserRepository(await _db(_UNVERIFIED))
-
-        assert await _resolve_initial_member_id(user_repo, "grace@corp.com") is None
+        assert await self._admin("grace@corp.com", _UNVERIFIED) is None
 
     @pytest.mark.asyncio
     async def test_the_account_that_verified_the_job_email_is_made_admin_whatever_the_case(self):
-        user_repo = UserRepository(await _db(_VERIFIED))
-
-        assert await _resolve_initial_member_id(user_repo, "ADA@corp.com") == "u-ada"
+        assert await self._admin("ADA@corp.com", _VERIFIED) == "u-ada"
 
 
 class TestGitLabTeamSync:
@@ -206,8 +207,7 @@ def gitlab_cache(monkeypatch):
     cache._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     cache._pool = object()
     cache._available = True
-    monkeypatch.setattr("app.services.gitlab.cache_service", cache)
-    monkeypatch.setattr("app.services.github.cache_service", cache)
+    monkeypatch.setattr("app.services.git_provider.cache_service", cache)
     return cache
 
 
@@ -275,7 +275,11 @@ class TestGitLabTeamSyncWithoutListedEmails:
         profile_read.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("refusal", [None, _answer(429), _answer(403)], ids=["unreachable", "429", "403"])
+    @pytest.mark.parametrize(
+        "refusal",
+        [None, _answer(429), _answer(403), _answer(200, ["no", "profile"])],
+        ids=["unreachable", "429", "403", "no-document"],
+    )
     async def test_a_member_gitlab_would_not_describe_leaves_the_stored_members_alone(self, refusal):
         db = await _db(_VERIFIED)
         await self._bound_team(db)
@@ -329,6 +333,17 @@ class TestGitLabTeamSyncWithoutListedEmails:
         assert refused is None
         assert answered[0].email == cached[0].email == "ada@corp.com"
         assert read.await_count == len(answers)
+
+    @pytest.mark.asyncio
+    async def test_a_profile_answer_that_is_no_document_is_refused_and_not_cached(self, gitlab_cache):
+        """Read as no email, it would drop the member and keep it dropped until the cached answer expired."""
+        service = GitLabService(make_gitlab_instance(id="inst-1"))
+        listing = [GitLabMember(id=7, username="ada-gl", access_level=30)]
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_answer(200, ["no", "profile"]))):
+            answered = await service._with_public_emails(listing)
+
+        assert answered is None
+        assert await gitlab_cache._client.keys("*user_email*") == []
 
     @pytest.mark.asyncio
     async def test_a_lookup_the_budget_cut_short_keeps_its_answers_so_the_next_one_resumes(self):

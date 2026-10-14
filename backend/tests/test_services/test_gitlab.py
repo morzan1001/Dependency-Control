@@ -208,7 +208,7 @@ _JWKS = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
 @pytest.fixture
 def jwks_cache(fake_cache, monkeypatch):
     monkeypatch.setattr("app.services.oidc_utils.cache_service", fake_cache)
-    monkeypatch.setattr("app.services.gitlab.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.git_provider.cache_service", fake_cache)
     return fake_cache
 
 
@@ -383,3 +383,28 @@ class TestGetCurrentUserId:
     @pytest.mark.parametrize("response", [None, httpx.Response(401, json={"message": "401 Unauthorized"})])
     def test_an_unanswered_or_refused_lookup_resolves_no_one(self, gitlab_instance_a, response):
         assert self._resolve(GitLabService(gitlab_instance_a), response)[0] is None
+
+
+class TestVersion:
+    """The connection test and the create check both read GET /version, and both report a transport error."""
+
+    def test_asks_the_version_endpoint_with_the_token(self, gitlab_instance_a, monkeypatch):
+        def answer(request: httpx.Request) -> httpx.Response:
+            authorised = request.headers.get("PRIVATE-TOKEN") == "glpat-token-a"
+            return httpx.Response(200 if authorised else 401, json={"version": "17.4.1"})
+
+        requested = serve_idp(monkeypatch, answer)
+
+        response = asyncio.run(GitLabService(gitlab_instance_a).get_version())
+
+        assert (response.status_code, response.json()) == (200, {"version": "17.4.1"})
+        assert requested == ["https://gitlab-a.com/api/v4/version"]
+
+    def test_a_transport_error_reaches_the_caller(self, gitlab_instance_a, monkeypatch):
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
+
+        serve_idp(monkeypatch, refuse)
+
+        with pytest.raises(httpx.ConnectError):
+            asyncio.run(GitLabService(gitlab_instance_a).get_version())

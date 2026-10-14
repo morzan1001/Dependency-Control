@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.api.deps import _gitlab_team_sync_stages
+from app.api.deps import _CiClaim, _GitLabCi, _ownership_stages
 from app.api.v1.endpoints.projects import update_project
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.project import Project
@@ -25,7 +25,9 @@ from app.repositories.projects import (
     set_owners_pipeline,
 )
 from app.schemas.project import ProjectUpdate
+from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.mocks.gitlab import make_gitlab_instance
 
 _GITLAB_A = team_source(TEAM_SOURCE_GITLAB, "gl-inst-a")
 _GITLAB_B = team_source(TEAM_SOURCE_GITLAB, "gl-inst-b")
@@ -92,10 +94,10 @@ async def _assert_an_ingest_leaves_unmigrated_owners_as_they_are(db) -> None:
     """A bare provider value names no instance, so it stays as a hand assignment would, with no write."""
     await db.projects.insert_one(dict(_UNMIGRATED_PROJECT))
     project = Project(**_UNMIGRATED_PROJECT)
-    service = MagicMock()
+    service = GitLabService(make_gitlab_instance(id="gl-inst-a"))
     service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(["gl-still-held"]))
 
-    stages = await _gitlab_team_sync_stages(project, "gl-inst-a", 100, "grp/proj", service, db)
+    stages = await _ownership_stages(_GitLabCi(service), project, _CiClaim(100, "grp/proj", None), db)
 
     assert stages == []
     await ProjectRepository(db).update_raw("p-unmigrated", replace_team_subset_pipeline(_GITLAB_A, ["gl-still-held"]))

@@ -12,14 +12,8 @@ import pytest
 from app.core.cache import CacheService
 from app.core.constants import GITHUB_API_URL, GITHUB_TEAM_SYNC_CACHE_TTL
 from app.repositories.users import UserRepository
-from app.services.github import (
-    _GITHUB_ORG_WALK_CONCURRENCY,
-    _REPOSITORY_ACCEPT,
-    GitHubService,
-    _HolderBinding,
-    _org_walk_gate,
-    build_team_slug_map,
-)
+from app.services.git_provider import _REQUEST_CONCURRENCY, request_gate
+from app.services.github import _REPOSITORY_ACCEPT, GitHubService, _HolderBinding, build_team_slug_map
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -120,6 +114,7 @@ def fake_cache(monkeypatch):
     svc._pool = object()
     svc._available = True
     monkeypatch.setattr("app.services.github.cache_service", svc)
+    monkeypatch.setattr("app.services.git_provider.cache_service", svc)
     return svc
 
 
@@ -331,7 +326,7 @@ class TestTeamRepositoryCheck:
                 *(service.team_writes_to_repository("acme", f"t{index}", index, "widgets") for index in range(40))
             )
 
-        assert api.peak == _GITHUB_ORG_WALK_CONCURRENCY
+        assert api.peak == _REQUEST_CONCURRENCY
 
     @pytest.mark.asyncio
     async def test_a_renamed_slug_still_hits_the_answer_of_the_same_team_id(self, fake_cache):
@@ -735,7 +730,7 @@ class TestOrgRepositoryMap:
         with patch.object(service, "_api_client", new=api.client):
             await service.get_org_repository_map("acme", self._teams(64))
 
-        assert api.peak == _GITHUB_ORG_WALK_CONCURRENCY
+        assert api.peak == _REQUEST_CONCURRENCY
 
     @pytest.mark.asyncio
     async def test_the_limit_holds_across_the_walks_of_concurrent_ingests(self, fake_cache):
@@ -749,7 +744,7 @@ class TestOrgRepositoryMap:
                 *(service.get_org_repository_map(f"acme-{index}", self._teams(64)) for index in range(4))
             )
 
-        assert api.peak <= _GITHUB_ORG_WALK_CONCURRENCY
+        assert api.peak <= _REQUEST_CONCURRENCY
 
     @pytest.mark.asyncio
     async def test_a_team_the_listing_cannot_address_is_left_out_rather_than_fatal(self, fake_cache):
@@ -833,8 +828,8 @@ class TestOrgRepositoryMap:
         """The queue before the gate counts against no budget, so a waiter giving up there would stampede."""
         service = _service()
         api = self._listings({"payments": ["acme/widgets"]})
-        gate = _org_walk_gate(str(service.instance.id))
-        for _ in range(_GITHUB_ORG_WALK_CONCURRENCY):
+        gate = request_gate(str(service.instance.id))
+        for _ in range(_REQUEST_CONCURRENCY):
             await gate.acquire()
 
         with (
@@ -846,7 +841,7 @@ class TestOrgRepositoryMap:
             await asyncio.sleep(0.01)
             waiter = asyncio.create_task(service.get_org_repository_map("acme", {4711: "payments"}))
             await asyncio.sleep(0.5)
-            for _ in range(_GITHUB_ORG_WALK_CONCURRENCY):
+            for _ in range(_REQUEST_CONCURRENCY):
                 gate.release()
             results = await asyncio.gather(walker, waiter)
 
@@ -959,7 +954,7 @@ class TestTeamMembers:
         with patch.object(service, "_api_client", new=api.client):
             await asyncio.gather(*(service.get_team_members("acme", f"t{index}", index) for index in range(40)))
 
-        assert api.peak == _GITHUB_ORG_WALK_CONCURRENCY
+        assert api.peak == _REQUEST_CONCURRENCY
 
 
 class TestViewerOrganisations:
@@ -1182,7 +1177,7 @@ class TestMemberResolution:
             members = await service._resolve_holder_members(await self._users(), "acme", "widgets", self._HOLDER)
 
         assert members is None
-        assert len([path for path in api.paths if path.startswith("/users/")]) <= _GITHUB_ORG_WALK_CONCURRENCY
+        assert len([path for path in api.paths if path.startswith("/users/")]) <= _REQUEST_CONCURRENCY
 
     @pytest.mark.asyncio
     async def test_a_profile_email_is_kept_for_hours(self, fake_cache):

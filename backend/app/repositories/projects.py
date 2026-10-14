@@ -107,14 +107,6 @@ def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
     return {"team_ids": owners, "team_sources": dict.fromkeys(owners, source)}
 
 
-def _gitlab_key(instance_id: str, project_id: int) -> dict[str, Any]:
-    return {"gitlab_instance_id": instance_id, "gitlab_project_id": project_id}
-
-
-def _github_key(instance_id: str, repository_id: str) -> dict[str, Any]:
-    return {"github_instance_id": instance_id, "github_repository_id": repository_id}
-
-
 def surviving_admin_filter(admin_owners: list[str], leaving_member: str | None = None) -> dict[str, Any]:
     """Match only while an admin other than ``leaving_member`` remains; the write checks it, so no race removes both."""
     other_admin: dict[str, Any] = {"role": PROJECT_ROLE_ADMIN}
@@ -127,27 +119,7 @@ class ProjectRepository(BaseRepository[Project]):
     collection_name = "projects"
     model_class = Project
 
-    async def get_raw_by_gitlab_composite_key(
-        self, gitlab_instance_id: str, gitlab_project_id: int
-    ) -> dict[str, Any] | None:
-        return await self.find_one_raw(_gitlab_key(gitlab_instance_id, gitlab_project_id))
-
-    async def get_raw_by_github_composite_key(
-        self, github_instance_id: str, github_repository_id: str
-    ) -> dict[str, Any] | None:
-        return await self.find_one_raw(_github_key(github_instance_id, github_repository_id))
-
-    async def find_or_create_by_gitlab_key(
-        self, gitlab_instance_id: str, gitlab_project_id: int, project: Project
-    ) -> tuple[Project, bool]:
-        return await self._find_or_create(_gitlab_key(gitlab_instance_id, gitlab_project_id), project)
-
-    async def find_or_create_by_github_key(
-        self, github_instance_id: str, github_repository_id: str, project: Project
-    ) -> tuple[Project, bool]:
-        return await self._find_or_create(_github_key(github_instance_id, github_repository_id), project)
-
-    async def _find_or_create(self, key: dict[str, Any], project: Project) -> tuple[Project, bool]:
+    async def find_or_create_by_key(self, key: dict[str, Any], project: Project) -> tuple[Project, bool]:
         """Atomic find-or-create by a VCS composite key ($setOnInsert leaves existing projects untouched); returns (project, created)."""
         result = await self.collection.find_one_and_update(
             key,

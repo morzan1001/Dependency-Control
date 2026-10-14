@@ -13,6 +13,10 @@ def is_shared_github_issuer(url: str) -> bool:
     return url.rstrip("/") == GITHUB_SHARED_OIDC_ISSUER
 
 
+def lacks_required_owners(url: str, auto_create_projects: bool, allowed_owner_ids: list[str]) -> bool:
+    return auto_create_projects and is_shared_github_issuer(url) and not allowed_owner_ids
+
+
 class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     """A configured GitHub instance (github.com or GitHub Enterprise Server)."""
 
@@ -53,9 +57,8 @@ class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: datetime | None = None
 
-    @property
-    def is_shared_issuer(self) -> bool:
-        return is_shared_github_issuer(self.url)
-
     def accepts_owner(self, owner_id: str | None) -> bool:
         return not self.allowed_owner_ids or owner_id in self.allowed_owner_ids
+
+    def lacks_required_allowlist(self) -> bool:
+        return lacks_required_owners(self.url, self.auto_create_projects, self.allowed_owner_ids)

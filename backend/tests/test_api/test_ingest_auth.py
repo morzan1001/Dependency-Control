@@ -1,6 +1,7 @@
 """Tests for the get_project_for_ingest authentication flow."""
 
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,10 +9,27 @@ from fastapi import HTTPException
 
 from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.system import SystemSettings
+from app.services.github import GitHubService
+from app.services.gitlab import GitLabService
 from tests.helpers.oidc import ci_token
+from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_oidc_payload
 from tests.mocks.gitlab import make_oidc_payload
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
+
+
+@contextmanager
+def _service_stub(service_class):
+    """Patch the service class with one stub that, like the real service, holds the instance it was built for."""
+    stub = MagicMock(provider=service_class.provider, team_provider=service_class.team_provider)
+
+    def build(instance):
+        stub.instance = instance
+        return stub
+
+    with patch(f"app.api.deps.{service_class.__name__}", side_effect=build):
+        yield stub
+
 
 _GITHUB_COM_ISSUER = "https://token.actions.githubusercontent.com"
 _GHES_ISSUER = "https://github.corp.example.com/_services/token"
@@ -69,14 +87,12 @@ def _ingest_via_github(
         "repository_owner_id": "111",
         **payload_overrides,
     }
-    with patch("app.api.deps.GitHubService") as MockService:
-        mock_svc = MagicMock()
+    with _service_stub(GitHubService) as mock_svc:
         mock_svc.validate_oidc_token = AsyncMock(
             return_value=make_github_oidc_payload(**payload) if token_valid else None
         )
         mock_svc.sync_team_from_github = AsyncMock(return_value=TeamSyncResult([]))
         mock_svc.resolve_login = AsyncMock(return_value=actor_resolution)
-        MockService.return_value = mock_svc
         try:
             outcome = asyncio.run(get_project_for_ingest(x_api_key=None, oidc_token=ci_token({"iss": issuer}), db=db))
         except HTTPException as exc:
@@ -119,10 +135,8 @@ def _ingest_via_gitlab(
         }
     )
     payload = {"project_id": "42", "project_path": "acme/widgets", **payload_overrides}
-    with patch("app.api.deps.GitLabService") as MockService:
-        mock_svc = MagicMock()
+    with _service_stub(GitLabService) as mock_svc:
         mock_svc.validate_oidc_token = AsyncMock(return_value=make_oidc_payload(**payload) if token_valid else None)
-        MockService.return_value = mock_svc
         try:
             outcome = asyncio.run(
                 get_project_for_ingest(x_api_key=None, oidc_token=ci_token({"iss": instance_doc["url"]}), db=db)
@@ -360,51 +374,44 @@ class TestIngestOidcProjectLookup:
         outcome, _ = _ingest_via_gitlab(instance_doc, project_id="99", project_path="group/proj")
 
         assert outcome.status_code == 404
-        assert "auto-creation is disabled" in outcome.detail
+        assert outcome.detail == "Project not found on GitLab instance 'B' and auto-creation is disabled"
 
     def test_same_project_id_different_instances_returns_correct_project(self):
-        instance_a_doc = {
-            "_id": "inst-a",
-            "name": "A",
-            "url": "https://gitlab-a.com",
-            "access_token": "tok-a",
-            "is_active": True,
-            "created_by": "admin",
-            "sync_teams": False,
-        }
-        project_a_doc = {
-            "_id": "proj-a",
-            "name": "Project on A",
-            "owner_id": "u1",
-            "gitlab_instance_id": "inst-a",
-            "gitlab_project_id": 42,
-        }
+        """The instance the token's issuer names is half of the project's key."""
+        from app.api.deps import get_project_for_ingest
 
-        instance_b_doc = {
-            "_id": "inst-b",
-            "name": "B",
-            "url": "https://gitlab-b.com",
-            "access_token": "tok-b",
-            "is_active": True,
-            "created_by": "admin",
-            "sync_teams": False,
-        }
-        project_b_doc = {
-            "_id": "proj-b",
-            "name": "Project on B",
-            "owner_id": "u1",
-            "gitlab_instance_id": "inst-b",
-            "gitlab_project_id": 42,
-        }
+        db = FakeDatabase()
+        for name in ("a", "b"):
+            asyncio.run(
+                db.gitlab_instances.insert_one(
+                    {
+                        "_id": f"inst-{name}",
+                        "name": name.upper(),
+                        "url": f"https://gitlab-{name}.com",
+                        "access_token": f"tok-{name}",
+                        "is_active": True,
+                        "created_by": "admin",
+                        "sync_teams": False,
+                    }
+                )
+            )
+            project = {
+                "_id": f"proj-{name}",
+                "name": f"Project on {name.upper()}",
+                "gitlab_instance_id": f"inst-{name}",
+            }
+            asyncio.run(db.projects.insert_one({**project, "gitlab_project_id": 42}))
 
-        results = [
-            _ingest_via_gitlab(instance_doc, project_doc, project_path="group/proj")[0]
-            for instance_doc, project_doc in [(instance_a_doc, project_a_doc), (instance_b_doc, project_b_doc)]
-        ]
+        with _service_stub(GitLabService) as mock_svc:
+            mock_svc.validate_oidc_token = AsyncMock(
+                return_value=make_oidc_payload(project_id="42", project_path="group/proj")
+            )
+            results = [
+                asyncio.run(get_project_for_ingest(x_api_key=None, oidc_token=ci_token({"iss": url}), db=db))
+                for url in ("https://gitlab-a.com", "https://gitlab-b.com")
+            ]
 
-        assert results[0].name == "Project on A"
-        assert results[1].name == "Project on B"
-        assert results[0].id != results[1].id
+        assert [result.id for result in results] == ["proj-a", "proj-b"]
 
 
 class TestIngestGitHubOidcInstanceRouting:
@@ -436,7 +443,7 @@ class TestIngestGitHubOidcInstanceRouting:
         outcome, _, _ = _ingest_via_github(github_instance_doc, token_valid=False)
 
         assert outcome.status_code == 403
-        assert "GitHub" in outcome.detail
+        assert outcome.detail == "Invalid GitHub OIDC Token"
 
 
 class TestIngestGitHubOidcProjectLookup:
@@ -568,8 +575,7 @@ class TestIngestGitHubTeamSync:
             }
         )
 
-        with patch("app.api.deps.GitHubService") as MockService:
-            mock_svc = MagicMock()
+        with _service_stub(GitHubService) as mock_svc:
             mock_svc.validate_oidc_token = AsyncMock(
                 return_value=make_github_oidc_payload(
                     repository_id="123456",
@@ -580,7 +586,6 @@ class TestIngestGitHubTeamSync:
             )
             mock_svc.sync_team_from_github = AsyncMock(return_value=TeamSyncResult(sync_result))
             mock_svc.resolve_login = AsyncMock(return_value=None)
-            MockService.return_value = mock_svc
 
             asyncio.run(
                 get_project_for_ingest(
@@ -629,7 +634,9 @@ class TestIngestGitHubTeamSync:
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
         mock_svc, projects_coll, db = self._run(instance, ["t-9", "t-4"])
         # A project being created has the whole cap to itself.
-        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme/widgets", current_owner_ids=set())
+        mock_svc.sync_team_from_github.assert_awaited_once_with(
+            db, "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
+        )
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-4", "t-9"]
         expected_source = team_source(TEAM_SOURCE_GITHUB, _TEAM_SYNC_INSTANCE["_id"])
@@ -673,8 +680,7 @@ class TestIngestGitLabTeamSync:
             }
         )
 
-        with patch("app.api.deps.GitLabService") as MockService:
-            mock_svc = MagicMock()
+        with _service_stub(GitLabService) as mock_svc:
             mock_svc.validate_oidc_token = AsyncMock(
                 return_value=make_oidc_payload(
                     project_id="99",
@@ -683,7 +689,6 @@ class TestIngestGitLabTeamSync:
                 )
             )
             mock_svc.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(team_ids))
-            MockService.return_value = mock_svc
 
             asyncio.run(
                 get_project_for_ingest(x_api_key=None, oidc_token=ci_token({"iss": "https://gitlab.com"}), db=db)
@@ -693,7 +698,9 @@ class TestIngestGitLabTeamSync:
     def test_an_auto_created_project_carries_the_synced_team(self):
         instance = {**_GITLAB_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
         mock_svc, projects_coll, db = self._run(instance, ["t-gl-1"])
-        mock_svc.sync_team_from_gitlab.assert_awaited_once_with(db, 99, "group/new-project")
+        mock_svc.sync_team_from_gitlab.assert_awaited_once_with(
+            db, 99, "group/new-project", owner_budget=MAX_PROJECT_TEAMS
+        )
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-gl-1"]
         expected_source = team_source(TEAM_SOURCE_GITLAB, _GITLAB_TEAM_SYNC_INSTANCE["_id"])
@@ -954,8 +961,7 @@ def _authorize_write_via_gitlab(project_doc, target_project_id):
             "system_settings": create_mock_collection(find_one=None),
         }
     )
-    with patch("app.api.deps.GitLabService") as MockService:
-        mock_svc = MockService.return_value
+    with _service_stub(GitLabService) as mock_svc:
         mock_svc.validate_oidc_token = AsyncMock(
             return_value=make_oidc_payload(project_id="99", project_path="group/renamed", user_email="dev@test.com")
         )
@@ -1029,8 +1035,7 @@ class TestCiWriteAuthorizationProvisionsNothing:
                 "system_settings": create_mock_collection(find_one=None),
             }
         )
-        with patch("app.api.deps.GitHubService") as MockService:
-            mock_svc = MockService.return_value
+        with _service_stub(GitHubService) as mock_svc:
             mock_svc.validate_oidc_token = AsyncMock(
                 return_value=make_github_oidc_payload(repository_owner_id="111", repository_owner="acme")
             )

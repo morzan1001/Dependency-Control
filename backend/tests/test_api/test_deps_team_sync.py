@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.api.deps import _github_team_sync_stages, _gitlab_team_sync_stages
+from app.api.deps import _CiClaim, _GitHubCi, _GitLabCi, _ownership_stages
 from app.core.constants import (
     GITLAB_TEAM_SYNC_WINDOW_SECONDS,
     MAX_PROJECT_TEAMS,
@@ -21,6 +21,8 @@ from app.models.project import Project
 from app.models.team import TeamSyncResult
 from app.repositories.projects import ProjectRepository
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.mocks.github import make_github_instance
+from tests.mocks.gitlab import make_gitlab_instance
 
 _PROJECT_ID = "p-1"
 _GITLAB_INSTANCE = "inst-1"
@@ -29,6 +31,8 @@ _SECOND_GITLAB_INSTANCE = "inst-2"
 _GITLAB = team_source(TEAM_SOURCE_GITLAB, _GITLAB_INSTANCE)
 _SECOND_GITLAB = team_source(TEAM_SOURCE_GITLAB, _SECOND_GITLAB_INSTANCE)
 _GITHUB = team_source(TEAM_SOURCE_GITHUB, _GITHUB_INSTANCE)
+_GITLAB_CLAIM = _CiClaim(100, "grp/proj", None)
+_GITHUB_CLAIM = _CiClaim("123456", "acme/widgets", "ada")
 
 
 async def _seed(db, **ownership) -> Project:
@@ -45,6 +49,16 @@ async def _seed(db, **ownership) -> Project:
     return Project(**doc)
 
 
+def _gitlab(service, instance_id: str = _GITLAB_INSTANCE) -> _GitLabCi:
+    service.instance, service.team_provider = make_gitlab_instance(id=instance_id), TEAM_SOURCE_GITLAB
+    return _GitLabCi(service)
+
+
+def _github(service) -> _GitHubCi:
+    service.instance, service.team_provider = make_github_instance(id=_GITHUB_INSTANCE), TEAM_SOURCE_GITHUB
+    return _GitHubCi(service)
+
+
 async def _apply(db, project: Project, stages: list[dict]) -> dict:
     if stages:
         await ProjectRepository(db).update_raw(str(project.id), stages)
@@ -56,14 +70,14 @@ async def _gitlab_sync(
 ) -> tuple[dict, list[dict]]:
     service = MagicMock()
     service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(resolved))
-    stages = await _gitlab_team_sync_stages(project, instance_id, 100, "grp/proj", service, db)
+    stages = await _ownership_stages(_gitlab(service, instance_id), project, _GITLAB_CLAIM, db)
     return await _apply(db, project, stages), stages
 
 
 async def _github_sync(db, project: Project, resolved: list[str] | None) -> tuple[dict, list[dict]]:
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=TeamSyncResult(resolved))
-    stages = await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
+    stages = await _ownership_stages(_github(service), project, _GITHUB_CLAIM, db)
     return await _apply(db, project, stages), stages
 
 
@@ -261,7 +275,7 @@ async def test_the_service_is_asked_about_the_repository_the_token_names():
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=TeamSyncResult([]))
 
-    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
+    await _ownership_stages(_github(service), project, _GITHUB_CLAIM, db)
 
     service.sync_team_from_github.assert_awaited_once_with(
         db, "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
@@ -282,7 +296,7 @@ async def test_the_provider_is_told_which_owners_it_replaces_and_how_much_room_i
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=TeamSyncResult(["gh-a"]))
 
-    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
+    await _ownership_stages(_github(service), project, _GITHUB_CLAIM, db)
 
     assert service.sync_team_from_github.await_args.kwargs == {
         "current_owner_ids": {"gh-a"},
@@ -302,7 +316,7 @@ async def test_gitlab_reads_the_project_itself_and_is_told_how_much_room_is_left
     service = MagicMock()
     service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(["gl-a"]))
 
-    await _gitlab_team_sync_stages(project, _GITLAB_INSTANCE, 100, "grp/proj", service, db)
+    await _ownership_stages(_gitlab(service), project, _GITLAB_CLAIM, db)
 
     service.sync_team_from_gitlab.assert_awaited_once_with(db, 100, "grp/proj", owner_budget=MAX_PROJECT_TEAMS - 4)
     service.get_project_details.assert_not_called()
@@ -329,7 +343,7 @@ async def _resolutions(cache, monkeypatch, ingests: int) -> int:
     service = MagicMock()
     service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(["gl-new"]))
     for _ in range(ingests):
-        await _gitlab_team_sync_stages(project, _GITLAB_INSTANCE, 100, "grp/proj", service, db)
+        await _ownership_stages(_gitlab(service), project, _GITLAB_CLAIM, db)
     return service.sync_team_from_gitlab.await_count
 
 
