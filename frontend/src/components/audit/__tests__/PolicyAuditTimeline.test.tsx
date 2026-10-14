@@ -115,4 +115,14 @@ describe("PolicyAuditTimeline", () => {
       process.off("unhandledRejection", unhandled);
     }
   });
+
+  it("wraps an entry's summary, date and revert button on a phone instead of pushing the button off the screen", async () => {
+    withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+
+    const summary = await screen.findByText("Added 1 rule");
+    const toggle = summary.closest("button");
+    expect(toggle).toHaveClass("flex-wrap");
+    expect(toggle?.parentElement).toHaveClass("flex-wrap");
+    expect(screen.getByText("Policy audit history").parentElement).toHaveClass("flex-wrap", "gap-2");
+  });
 });
