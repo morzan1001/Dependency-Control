@@ -1147,12 +1147,3 @@ class TestCheckScheduledRescans:
         await check_scheduled_rescans(worker)
 
         worker.add_job.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_without_a_worker_manager_the_database_is_never_opened(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        get_database = AsyncMock()
-        monkeypatch.setattr(housekeeping, "get_database", get_database)
-
-        await check_scheduled_rescans(None)
-
-        get_database.assert_not_awaited()

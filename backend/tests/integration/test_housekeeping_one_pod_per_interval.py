@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core import housekeeping
+from app.core.worker import AnalysisWorkerManager
 from app.core.constants import HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
@@ -61,7 +62,7 @@ async def test_pods_starting_within_an_interval_sweep_and_sync_branches_once(db,
 
     for _pod in range(2):
         with pytest.raises(_StopLoop):
-            await housekeeping.housekeeping_loop()
+            await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
 
     assert (len(sweeps), synced) == (1, ["p1"])
     held_for = {lock["_id"]: lock["expires_at"] - lock["acquired_at"] async for lock in db.distributed_locks.find()}

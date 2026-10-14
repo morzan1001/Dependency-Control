@@ -17,6 +17,7 @@ from app.api.v1.endpoints import callgraph, cbom_ingest
 from app.core import housekeeping
 from app.core.constants import ARCHIVE_BATCH_SIZE, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS, RESCAN_HISTORY_RUNS
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
+from app.core.worker import AnalysisWorkerManager
 from app.models.release import Release
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
@@ -256,7 +257,7 @@ async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
     monkeypatch.setattr(housekeeping, "_expire_scans", expire)
     monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=AsyncMock(side_effect=[None, _StopLoop])))
     with pytest.raises(_StopLoop):
-        await housekeeping.housekeeping_loop()
+        await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
 
     assert (bid.await_count, expire.await_count) == (2, 0)
 
