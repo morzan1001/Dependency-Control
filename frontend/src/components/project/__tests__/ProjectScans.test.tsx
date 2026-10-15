@@ -440,11 +440,11 @@ describe('ProjectScans - on a narrow screen', () => {
     expect(branchSelect.parentElement).toHaveClass('flex-wrap')
   })
 
-  it('keeps the columns at their widths and scrolls the table sideways', () => {
+  it('keeps the columns at their widths and scrolls the table sideways below lg, so a desktop still shows the Delta column', () => {
     renderScans([makeScan({})])
 
     const table = screen.getByRole('table')
-    expect(table).toHaveClass('min-w-[1090px]')
+    expect(table).toHaveClass('min-w-[1090px]', 'lg:min-w-0')
     expect(table.parentElement).toHaveClass('overflow-auto')
   })
 

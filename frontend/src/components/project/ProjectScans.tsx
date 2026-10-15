@@ -166,8 +166,8 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
       </CardHeader>
       <CardContent>
         <div className="rounded-md border">
-          {/* Narrower than its columns, the table squeezes dates and release badges into one word per line. */}
-          <Table className="min-w-[1090px]">
+          {/* Below lg, narrower than its columns, the table squeezes dates and release badges into one word per line. */}
+          <Table className="min-w-[1090px] lg:min-w-0">
             <TableHeader>
               <TableRow>
                 <SortableHead column="created_at" sort={pagination} className="w-[200px]">Date</SortableHead>
