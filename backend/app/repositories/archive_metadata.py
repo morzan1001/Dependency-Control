@@ -40,10 +40,7 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         return result.deleted_count > 0
 
     async def get_distinct_branches(self, project_id: str) -> list[str]:
-        branches: list[str] = await self.collection.distinct(
-            "branch", {"project_id": project_id, "branch": {"$ne": None}}
-        )
-        return sorted(branches)
+        return await self.collection.distinct("branch", {"project_id": project_id, "branch": {"$ne": None}})
 
     async def find_all(
         self,

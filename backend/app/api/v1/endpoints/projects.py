@@ -751,7 +751,8 @@ async def read_project_branch_tips(
     tips = await ScanRepository(db).branch_tips(project_id, list(project.deleted_branches or []))
     return ProjectBranchTips(
         branches=[
-            BranchTip(branch=branch, scan_count=count, tip=Scan(**tip) if tip else None) for branch, count, tip in tips
+            BranchTip(branch=branch, scan_count=count, tip=Scan(**tip) if tip else None)
+            for branch, count, tip in sorted(tips, key=lambda t: case_insensitive_key(t[0]))
         ]
     )
 

@@ -446,11 +446,11 @@ class TestDownloadArchive:
 
 
 class TestListArchiveBranches:
-    def test_returns_branch_list(self, admin_user):
+    def test_orders_the_branches_whatever_their_case(self, admin_user):
         from app.api.v1.endpoints.archives import list_archive_branches
 
         mock_repo = MagicMock()
-        mock_repo.get_distinct_branches = AsyncMock(return_value=["main", "develop", "feature/test"])
+        mock_repo.get_distinct_branches = AsyncMock(return_value=["main", "Release-2", "develop"])
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -465,7 +465,7 @@ class TestListArchiveBranches:
                 )
             )
 
-        assert result == ["main", "develop", "feature/test"]
+        assert result == ["develop", "main", "Release-2"]
 
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import list_archive_branches

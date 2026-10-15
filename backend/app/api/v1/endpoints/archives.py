@@ -15,6 +15,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.metrics import (
     ArchiveFailureReason,
@@ -117,7 +118,7 @@ async def list_archive_branches(
     _require_archive_enabled()
 
     repo = ArchiveMetadataRepository(db)
-    return await repo.get_distinct_branches(project_id)
+    return sorted(await repo.get_distinct_branches(project_id), key=case_insensitive_key)
 
 
 @router.post(

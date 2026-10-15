@@ -67,6 +67,25 @@ async def test_lists_a_branch_the_scan_list_page_cannot_reach(seeded, member_aut
 
 
 @pytest.mark.asyncio
+async def test_orders_the_branches_whatever_their_case(client, db, member_auth_headers):
+    for branch in ("Release-2", "main", "develop"):
+        await db.scans.insert_one(
+            {
+                "_id": f"tip-{branch}",
+                "project_id": _PROJECT,
+                "branch": branch,
+                "status": _STATUS,
+                "is_rescan": False,
+                "created_at": _NOW,
+            }
+        )
+
+    response = await client.get(f"/api/v1/projects/{_PROJECT}/scans/branch-tips", headers=member_auth_headers)
+
+    assert [row["branch"] for row in response.json()["branches"]] == ["develop", "main", "Release-2"]
+
+
+@pytest.mark.asyncio
 async def test_counts_the_whole_branch_rather_than_a_page_of_it(seeded, member_auth_headers):
     response = await seeded.get(f"/api/v1/projects/{_PROJECT}/scans/branch-tips", headers=member_auth_headers)
 
