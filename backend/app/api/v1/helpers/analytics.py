@@ -187,6 +187,7 @@ def process_cve_enrichments(
         kev_ransomware_use=worst.kev_ransomware_use,
         kev_due_date=worst.kev_due_date,
         exploit_maturity=worst.exploit_maturity,
+        days_until_due=calculate_days_until_due(worst.kev_due_date),
     )
 
 

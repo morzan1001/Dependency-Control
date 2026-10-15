@@ -14,7 +14,6 @@ from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
     build_priority_reasons,
     calculate_days_known,
-    calculate_days_until_due,
     calculate_impact_score,
     extract_fix_versions,
     get_projects_with_scans,
@@ -159,8 +158,6 @@ async def _impact(
         enrichment_data = process_cve_enrichments(r["details_list"], enrichments)
 
         days_known = calculate_days_known(r["first_seen"])
-        days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
-        enrichment_data.days_until_due = days_until_due
 
         base_impact = calculate_impact_score(
             severity_counts,
@@ -195,7 +192,7 @@ async def _impact(
                 kev_count=enrichment_data.kev_count,
                 kev_ransomware_use=enrichment_data.kev_ransomware_use,
                 kev_due_date=enrichment_data.kev_due_date,
-                days_until_due=days_until_due,
+                days_until_due=enrichment_data.days_until_due,
                 exploit_maturity=enrichment_data.exploit_maturity,
                 max_risk_score=enrichment_data.max_risk,
                 days_known=days_known,
@@ -241,8 +238,6 @@ def _build_hotspot(
     top_cves = cves[:_CVES_SHOWN]
 
     enrichment_data = process_cve_enrichments(details_list, enrichments)
-    days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
-    enrichment_data.days_until_due = days_until_due
     priority_reasons = build_priority_reasons(
         severity_counts, enrichment_data, len(r["project_ids"]), has_fix, days_known
     )
@@ -262,7 +257,7 @@ def _build_hotspot(
         kev_count=enrichment_data.kev_count,
         kev_ransomware_use=enrichment_data.kev_ransomware_use,
         kev_due_date=enrichment_data.kev_due_date,
-        days_until_due=days_until_due,
+        days_until_due=enrichment_data.days_until_due,
         exploit_maturity=enrichment_data.exploit_maturity,
         max_risk_score=enrichment_data.max_risk,
         days_known=days_known,
