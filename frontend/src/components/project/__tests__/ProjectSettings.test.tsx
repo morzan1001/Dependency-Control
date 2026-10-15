@@ -642,6 +642,14 @@ describe('ProjectSettings on a phone', () => {
     expect(await screen.findByLabelText('GitLab Instance')).toHaveClass('min-w-0')
   })
 
+  it('lets the Default Branch select shrink to the card like the GitLab select, so a long branch name truncates', () => {
+    const branch = 'feature/PAY-4711-migrate-the-settlement-batch-export-to-the-new-cross-border-clearing-api-v2'
+    mockUseProjectBranches.mockReturnValue({ data: [{ name: branch }] })
+    renderSettings(githubProject({ default_branch: branch }))
+
+    expect(screen.getByLabelText('Default Branch')).toHaveClass('min-w-0')
+  })
+
   it('stacks a danger action\'s button under its description on a phone, like the waiver list\'s header', () => {
     renderSettings(githubProject())
 

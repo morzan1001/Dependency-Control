@@ -351,7 +351,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 <div className="grid gap-2">
                     <Label htmlFor="defaultBranch">Default Branch</Label>
                     <Select value={form.default_branch || "none"} onValueChange={(val) => set({ default_branch: val === "none" ? undefined : val })}>
-                        <SelectTrigger id="defaultBranch">
+                        <SelectTrigger id="defaultBranch" className="min-w-0">
                             <SelectValue placeholder="Select default branch" />
                         </SelectTrigger>
                         <SelectContent>
