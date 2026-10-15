@@ -32,7 +32,7 @@ export function PruneAuditDialog({ open, onClose, onConfirm, busy }: Readonly<Pr
         <DialogHeader>
           <DialogTitle>Prune audit entries</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3 text-sm">
+        <div className="grid gap-4 text-sm">
           <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-destructive">
             <strong>Destructive:</strong> audit entries older than the selected
             date will be permanently removed and cannot be recovered.
