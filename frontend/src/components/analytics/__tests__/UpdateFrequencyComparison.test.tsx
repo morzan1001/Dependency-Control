@@ -270,7 +270,6 @@ describe("UpdateFrequencyComparison", () => {
     const row = rowFor("half-measured");
     const badge = within(row).getByText("Partial window");
     expect(badge.closest("[title]")).toHaveAttribute("title", expect.stringContaining("only 2 scans"));
-    // The numbers it does carry are shown rather than replaced by a status placeholder.
     const cells = within(row).getAllByRole("cell");
     expect(cells[4]).toHaveTextContent("9");
     expect(cells[5]).toHaveTextContent("9%");
@@ -293,7 +292,6 @@ describe("UpdateFrequencyComparison", () => {
     expect(screen.getByText("1 on a partial window")).toBeInTheDocument();
     expect(screen.getByText("1 project measured on part of the window")).toBeInTheDocument();
     expect(screen.getByText(/1 of 2 projects ranked/i)).toBeInTheDocument();
-    // The rank column stays empty for a row that was not ranked.
     expect(within(rowFor("half-measured")).getAllByRole("cell")[0]).toHaveTextContent("—");
     expect(within(rowFor("project-1")).getAllByRole("cell")[0]).toHaveTextContent("1");
   });

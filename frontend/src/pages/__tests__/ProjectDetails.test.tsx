@@ -58,7 +58,7 @@ beforeEach(() => {
 
 describe('ProjectDetails branch-filter initialization', () => {
   it('selects one branch even when the project has no default_branch (W8)', () => {
-    // 530 of 656 production projects have no default_branch; the backend resolves one anyway.
+    // Most production projects have no default_branch; the backend resolves one anyway.
     mockUseProject.mockReturnValue({ data: undefined, isLoading: true })
     mockUseProjectBranches.mockReturnValue({
       data: [branch('main'), branch('dev', { is_default: true }), branch('feature-x')],
@@ -103,7 +103,6 @@ describe('ProjectDetails branch-filter initialization', () => {
 
     fireEvent.click(screen.getByLabelText('Select All Active'))
 
-    // Selection must stay empty; the init guard must not snap it back.
     expect(screen.getByTestId('overview-branches').textContent).toBe('')
   })
 })

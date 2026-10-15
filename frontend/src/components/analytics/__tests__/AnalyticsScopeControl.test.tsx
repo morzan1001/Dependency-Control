@@ -128,8 +128,7 @@ describe('AnalyticsScopeControl coverage caption', () => {
     ).toBeInTheDocument()
   })
 
-  // The bare-list tabs have their own permissions and report no counters, so the caption cannot
-  // depend on the mode switch being there.
+  // The bare-list tabs report no counters of their own, so the caption cannot depend on the mode switch.
   it('is shown even where no environment exists to switch to', () => {
     renderControl({ ...base, release_environments: [] })
 
@@ -148,8 +147,7 @@ describe('AnalyticsScopeControl coverage caption', () => {
     expect(screen.queryByText(/contributed no scan/)).not.toBeInTheDocument()
   })
 
-  // Without a release environment the backend fills projects_without_release with the projects
-  // that have no usable scan at all, so wording it as a release count would state something false.
+  // Without a release environment projects_without_release holds projects with no usable scan at all.
   it('does not blame the missing projects on a release they never made', () => {
     renderControl({ ...base, release_environments: [] })
 
@@ -160,8 +158,7 @@ describe('AnalyticsScopeControl coverage caption', () => {
 describe('AnalyticsScopeControl as-of caption', () => {
   afterEach(() => vi.clearAllMocks())
 
-  // A release resolves to a build nobody rebuilt, so "0 criticals in production" is a statement
-  // about the day it was analysed. Without the date the reader takes it for today's answer.
+  // A release's numbers date from the day its build was analysed; without the date they read as today's.
   it('dates the oldest analysis the numbers rest on', () => {
     renderControl(base, PRODUCTION)
 

@@ -16,9 +16,7 @@ vi.mock("@/components/ui/project-combobox", () => ({
   ),
 }));
 
-// Everything but ResponsiveContainer stays real -- the behaviour under test is how recharts
-// draws a null-neighboured point. ResponsiveContainer measures zero in jsdom, so it is replaced
-// by a stand-in that hands the chart the fixed size the real one would have measured.
+// ResponsiveContainer measures zero in jsdom, so only it is replaced; recharts' drawing is what is tested.
 vi.mock("recharts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("recharts")>()),
   ResponsiveContainer: ({ children }: { children?: ReactNode }) =>

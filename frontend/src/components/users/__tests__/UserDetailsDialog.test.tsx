@@ -12,7 +12,7 @@ interface ProjectStub {
   team_ids?: string[]
 }
 
-// useProjects returns only the first 100-project page (no Project 150); useProjectsDropdown paginates the full list, so the dialog must use the latter.
+// useProjects returns only the first 100 projects; useProjectsDropdown pages the full list.
 const targetUserId = 'user-target'
 const firstPage: ProjectStub[] = Array.from({ length: 100 }, (_, i) => ({
   id: `p-${i}`,

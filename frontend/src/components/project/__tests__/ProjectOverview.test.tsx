@@ -87,8 +87,7 @@ function makeScan(overrides: Partial<ScanWithReleases>, stats: EnhancedStats): S
 // Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
 const noReleases: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: false }
 
-// The endpoint answers this over every scan the project holds; here it answers over the fixture,
-// so a test that says nothing about branch tips still gets the tips its scans imply.
+// Derives the tips the endpoint would answer from the fixture's scans, for tests that set no tips.
 function deriveTips(scans: ScanWithReleases[]): ProjectBranchTips {
   const byBranch = new Map<string, BranchTip>()
   for (const scan of scans) {
@@ -301,8 +300,7 @@ describe('ProjectOverview - the branch headline is the branch tip', () => {
   const OLD_COMMIT_CRITICAL = 77
 
   it('ignores a rescan of an older commit that ran after the tip was built', () => {
-    // A rescan carries today's date over an older commit, so ordering by time alone puts the
-    // released commit's numbers under the branch name.
+    // A rescan carries today's date over an older commit, so time order alone would mislabel its numbers.
     renderOverview([
       makeScan({ id: TIP_SCAN_ID, created_at: TIP_BUILT_AT }, { critical: TIP_CRITICAL }),
       makeScan({ id: OLD_COMMIT_SCAN_ID, created_at: OLD_COMMIT_BUILT_AT }, { critical: OLD_COMMIT_CRITICAL }),
@@ -496,11 +494,7 @@ describe('ProjectOverview - release tile', () => {
     { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
   )
 
-  // The tiles are scoped with within() because the numbers are not unique on the page:
-  // in the `head` fixture Critical Issues and High Issues both render 9, and after the
-  // switch the release's Critical Issues (2) collides with Total Scans (2 scans loaded).
-  // getByText returns the CardTitle <h3>; this repo's Card is a plain div with no data-slot,
-  // so `rounded-lg` is the nearest identifying ancestor class.
+  // Tile numbers repeat on the page, and Card has no data-slot, so rounded-lg finds the tile around a title.
   function tile(title: string) {
     return screen.getByText(title).closest('.rounded-lg') as HTMLElement
   }

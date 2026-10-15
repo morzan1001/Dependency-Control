@@ -24,7 +24,7 @@ function makeWrapper() {
   return ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
-// The scan page's findings table and waived-findings probe, keyed as FindingsTable and WaivedFindingsSection key them.
+// Keyed as FindingsTable and WaivedFindingsSection key the scan page's findings queries.
 function renderScanPageWith<T>(useMutationUnderTest: () => T) {
   const findings = vi.fn().mockResolvedValue({ total: 1 });
   const waivedProbe = vi.fn().mockResolvedValue({ total: 0 });

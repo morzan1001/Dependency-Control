@@ -35,7 +35,7 @@ function Location() {
   return <output data-testid="location">{location.pathname + location.search}</output>;
 }
 
-// Rendered without a scanContext, as the analytics dependency modal renders it.
+// Rendered without a scanContext, as outside a scan page.
 function clickSource(source: string): string | null {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(

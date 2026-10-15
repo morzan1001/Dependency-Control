@@ -11,8 +11,6 @@ function project(members: Project["members"]): Project {
 
 describe("memberPreferences", () => {
   it("reads an admin's own overrides", () => {
-    // The settings form used to branch on role here and read a field the backend never sends,
-    // so an admin's saved project preferences never loaded.
     const p = project([{ user_id: "u1", role: "admin", notification_preferences: ADMIN_PREFS }]);
 
     expect(memberPreferences(p, "u1")).toEqual(ADMIN_PREFS);

@@ -35,7 +35,6 @@ const summary: AnalyticsSummary = {
   },
 }
 
-// Every endpoint that accepts release_environment, keyed the way its caller keys it.
 const modeSensitiveKeys: [string, (releaseEnvironment?: string) => readonly unknown[]][] = [
   ['scope', (mode) => analyticsKeys.scope(mode)],
   ['summary', (mode) => analyticsKeys.summary(mode)],

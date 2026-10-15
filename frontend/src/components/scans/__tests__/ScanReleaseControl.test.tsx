@@ -189,7 +189,6 @@ describe('ScanReleaseControl', () => {
   it('renders nothing at all for a scan that is not a release', () => {
     const { container } = renderControl(makeScan())
 
-    // The panel used to occupy the metadata card with an input and a button on every scan.
     expect(container).toBeEmptyDOMElement()
   })
 

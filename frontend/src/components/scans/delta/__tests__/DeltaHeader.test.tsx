@@ -31,8 +31,7 @@ const STAGING_QUICK_PICK_LABEL = `Latest ${STAGING} release`
 const ANY_QUICK_PICK_LABEL = /^Latest .+ release$/
 const RELEASE_MARKER_LABEL = 'Release'
 
-// 'rescan-1' is a rescan the project-scans hook excludes from its option list.
-// Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+// The project-scans hook excludes this rescan from its options; annotated so no field drops silently.
 const rescan: ScanWithReleases = { id: 'rescan-1', project_id: PROJECT_ID, branch: 'feature-x', status: 'completed', created_at: '2026-08-10T12:00:00Z', releases: [] }
 const toScan: ScanWithReleases = { id: 'b', project_id: PROJECT_ID, branch: 'main', status: 'completed', created_at: '2026-08-09T12:00:00Z', releases: [] }
 const releasedOption: ScanWithReleases = { id: 'released-option', project_id: PROJECT_ID, branch: 'main', status: 'completed', created_at: '2026-08-08T12:00:00Z', is_release: true, releases: [] }
@@ -189,8 +188,7 @@ describe('DeltaHeader - release quick pick', () => {
     expect(screen.queryByRole('button', { name: ANY_QUICK_PICK_LABEL })).not.toBeInTheDocument()
   })
 
-  // An unqualified fetch returns the newest release of any environment, so a project that deploys
-  // to staging on every merge would otherwise offer a staging scan under a production-sounding name.
+  // An unqualified fetch returns any environment's newest release, so staging could pose as production.
   it('names the environment it resolved, which need not be production', () => {
     mockScanSources()
 
