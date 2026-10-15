@@ -31,5 +31,5 @@ class MatchSignature(BaseModel):
 
     @property
     def effective_rule_keys(self) -> set[str]:
-        """Rule keys for group membership. Falls back to {rule_key} for un-migrated signatures."""
+        """Un-migrated signatures carry only rule_key."""
         return set(self.rule_keys) if self.rule_keys else {self.rule_key}

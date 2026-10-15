@@ -18,22 +18,17 @@ def lacks_required_namespaces(url: str, auto_create_projects: bool, allowed_name
 
 
 class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
-    """A configured GitLab instance."""
-
-    # Identity
     name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
     url: str = Field(..., description="Base URL of the GitLab instance (e.g. 'https://gitlab.com')")
     description: str | None = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
 
-    # Authentication
     access_token: str | None = Field(
         None,
-        exclude=True,  # Never expose in API responses
+        exclude=True,
         description="Personal or Group Access Token with 'api' scope for GitLab API operations",
     )
-    # oidc_audience is effectively required (enforced by API schemas and fail-closed
-    # OIDC validation); stored Optional only so legacy documents still hydrate.
+    # Required by the API schemas and fail-closed OIDC validation; Optional only so legacy documents still hydrate.
     oidc_audience: str | None = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
     allowed_namespaces: list[str] = Field(
         default_factory=list,
@@ -41,7 +36,6 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
         "project",
     )
 
-    # Features
     auto_create_projects: bool = Field(
         False, description="Automatically create projects from OIDC tokens if they don't exist"
     )
@@ -54,7 +48,6 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
         "0 = full path (current behavior)",
     )
 
-    # Metadata
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: datetime | None = None
 

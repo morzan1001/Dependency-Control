@@ -2,8 +2,6 @@ from pydantic import BaseModel, Field
 
 
 class ThreatIntelligenceStats(BaseModel):
-    """Statistics from EPSS/KEV enrichment."""
-
     kev_count: int = Field(0, description="Count of findings in CISA KEV catalog")
     kev_ransomware_count: int = Field(0, description="Count of KEV findings with known ransomware use")
     high_epss_count: int = Field(0, description="Count of findings with EPSS >= 10%")
@@ -17,7 +15,7 @@ class ThreatIntelligenceStats(BaseModel):
 
 
 class ReachabilityStats(BaseModel):
-    """Reachability analysis statistics; prefer the ``*_high_confidence`` fields for headline numbers."""
+    """Headline numbers should use the ``*_high_confidence`` fields."""
 
     analyzed_count: int = Field(0, description="Count of vulnerabilities analyzed for reachability")
     coverable_count: int = Field(
@@ -50,8 +48,6 @@ class ReachabilityStats(BaseModel):
 
 
 class PrioritizedCounts(BaseModel):
-    """Vulnerability counts focused on exploitability + reachability."""
-
     total: int = Field(0, description="Total vulnerability count")
     critical: int = Field(0, description="Critical severity count")
     high: int = Field(0, description="High severity count")
@@ -66,8 +62,6 @@ class PrioritizedCounts(BaseModel):
 
 
 class SecretPrioritizedCounts(BaseModel):
-    """Secret finding counts focused on git-context-aware priorisation."""
-
     total: int = Field(0, description="Total secret finding count")
     verified_count: int = Field(0, description="Secrets TruffleHog confirmed as live/valid")
     in_current_tree_count: int = Field(0, description="Secrets whose file exists at the scanned commit's tree")

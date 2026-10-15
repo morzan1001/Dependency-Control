@@ -1,11 +1,7 @@
-"""Pydantic models for GitLab API responses and OIDC token payloads (extra="ignore" discards unused fields)."""
-
 from pydantic import AliasPath, BaseModel, ConfigDict, Field
 
 
 class OIDCPayload(BaseModel):
-    """Validated OIDC JWT token payload from GitLab CI/CD."""
-
     model_config = ConfigDict(extra="ignore")
 
     project_id: str
@@ -14,8 +10,6 @@ class OIDCPayload(BaseModel):
 
 
 class GitLabNamespace(BaseModel):
-    """Namespace sub-object within a GitLab project response."""
-
     model_config = ConfigDict(extra="ignore")
 
     kind: str

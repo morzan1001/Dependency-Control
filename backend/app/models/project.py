@@ -22,7 +22,7 @@ class ProjectMember(BaseModel):
     role: ProjectRole = PROJECT_ROLE_VIEWER
     notification_preferences: NotificationPreferences = Field(default_factory=dict)
     username: str | None = None
-    inherited_from: str | None = None  # e.g. "Team: DevOps"
+    inherited_from: str | None = None
     # Read-side only: the role check_project_access grants, MAX(direct, owning teams).
     effective_role: ProjectRole | None = None
 
@@ -30,8 +30,7 @@ class ProjectMember(BaseModel):
 class Project(MongoDocument, CreatedAtModel):
     name: str
     team_ids: list[str] = Field(default_factory=list, description="Every team that owns this project")
-    # Per owner, "manual" or the "<provider>:<instance id>" of the sync that may retire it; unconstrained,
-    # as an unmigrated value rejected here would fail every read of the project instead of staying in place.
+    # Per owner, "manual" or "<provider>:<instance id>"; unconstrained, so an unmigrated value cannot fail every read.
     team_sources: dict[str, str] = Field(default_factory=dict)
     members: list[ProjectMember] = Field(default_factory=list)
     api_key_hash: str | None = Field(None, exclude=True)
@@ -47,7 +46,6 @@ class Project(MongoDocument, CreatedAtModel):
     enforced_notification_preferences: NotificationPreferences = Field(default_factory=dict)
     # Preferences of users who reach the project only through an owning team, keyed by user id.
     notification_overrides: dict[str, NotificationPreferences] = Field(default_factory=dict)
-    # GitLab Integration (Multi-Instance Support)
     gitlab_instance_id: str | None = Field(
         None, description="Reference to GitLabInstance._id. Required if gitlab_project_id is set."
     )
@@ -60,7 +58,6 @@ class Project(MongoDocument, CreatedAtModel):
     gitlab_mr_comments_enabled: bool = Field(
         False, description="Enable posting scan results as comments on merge requests"
     )
-    # GitHub Integration (Multi-Instance Support)
     github_instance_id: str | None = Field(
         None, description="Reference to GitHubInstance._id. Required if github_repository_id is set."
     )
@@ -74,17 +71,14 @@ class Project(MongoDocument, CreatedAtModel):
         False, description="Enable posting scan results as comments on pull requests"
     )
 
-    # Per-analyzer settings: {analyzer_id: {setting_key: value}}
     analyzer_settings: dict[str, dict[str, Any]] | None = Field(
         None,
         description="Per-analyzer configuration overrides keyed by analyzer ID.",
     )
 
-    # Branch Lifecycle
     deleted_branches: list[str] = Field(default_factory=list)
     branches_checked_at: datetime | None = None
 
-    # Periodic Scanning
     rescan_enabled: bool | None = None  # If None, use system default
     rescan_interval: int | None = None  # Hours. If None, use system default
 
@@ -94,11 +88,9 @@ class Scan(MongoDocument, CreatedAtModel):
     branch: str
     commit_hash: str | None = None
 
-    # Pipeline identification
     pipeline_id: int | None = None
     pipeline_iid: int | None = None
 
-    # CI/CD Context
     project_url: str | None = None
     pipeline_url: str | None = None
     job_id: int | None = None
@@ -108,7 +100,7 @@ class Scan(MongoDocument, CreatedAtModel):
     commit_tag: str | None = None
     pipeline_user: str | None = None
 
-    # This allows us to keep the Scan document small while preserving the raw data.
+    # GridFS references, so the scan document stays small while the raw SBOMs are kept.
     sbom_refs: list[dict[str, Any]] = Field(default_factory=list)
     # Bumped with every SBOM replacement and CBOM post, so a run can tell its inputs were superseded.
     sbom_generation: int | None = None
@@ -133,10 +125,9 @@ class Scan(MongoDocument, CreatedAtModel):
     stats: Stats | None = None
     completed_at: datetime | None = None
 
-    # Reachability enrichment
     reachability_pending: bool | None = None
 
-    # Pinned scans are exempt from retention cleanup (housekeeping filters "pinned": {"$ne": True}).
+    # Pinned scans are exempt from retention cleanup.
     pinned: bool = False
     # Archive metadata written before this restore is stale: the scan is live again.
     restored_at: datetime | None = None
@@ -144,7 +135,6 @@ class Scan(MongoDocument, CreatedAtModel):
     # Monotone: ingest only ever promotes it. Where the artefact runs lives in the releases collection.
     is_release: bool = False
 
-    # Re-scan metadata
     is_rescan: bool = False
     original_scan_id: str | None = None
     latest_rescan_id: str | None = None
@@ -154,9 +144,9 @@ class Scan(MongoDocument, CreatedAtModel):
     # Summary of the latest run (either this scan itself, or the latest re-scan if this is the original)
     latest_run: dict[str, Any] | None = None
 
-    # Pipeline result tracking - prevents premature completion when multiple scanners run
-    last_result_at: datetime | None = None  # When the last scanner result was received
-    received_results: list[str] = Field(default_factory=list)  # List of analyzer names that have submitted results
+    # Prevents premature completion when multiple scanners run.
+    last_result_at: datetime | None = None
+    received_results: list[str] = Field(default_factory=list)
 
 
 class AnalysisResult(MongoDocument, CreatedAtModel):

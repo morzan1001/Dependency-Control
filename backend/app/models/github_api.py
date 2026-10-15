@@ -1,11 +1,7 @@
-"""Pydantic models for GitHub API responses and Actions OIDC token payloads (extra="ignore" discards unused fields)."""
-
 from pydantic import AliasPath, BaseModel, ConfigDict, Field
 
 
 class GitHubOIDCPayload(BaseModel):
-    """Validated OIDC JWT token payload from GitHub Actions."""
-
     model_config = ConfigDict(extra="ignore")
 
     repository_id: str
@@ -13,7 +9,7 @@ class GitHubOIDCPayload(BaseModel):
     repository_owner: str
     # Optional so a GHES without the claim keeps working; an owner allowlist refuses its absence.
     repository_owner_id: str | None = None
-    actor: str  # Username who triggered the workflow
+    actor: str
     ref: str | None = None
     sha: str | None = None
     workflow: str | None = None

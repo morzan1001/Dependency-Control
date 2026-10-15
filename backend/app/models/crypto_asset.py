@@ -1,5 +1,3 @@
-"""CryptoAsset model (collection `crypto_assets`): one document per detected cryptographic component per scan."""
-
 from datetime import datetime, timezone
 
 from pydantic import Field
@@ -18,7 +16,6 @@ class CryptoAsset(MongoDocument):
         ..., description="Type of crypto asset: algorithm, certificate, protocol, or related-crypto-material"
     )
 
-    # Algorithm-only
     primitive: CryptoPrimitive | None = Field(
         None, description="Cryptographic primitive classification for algorithm assets (hash, block-cipher, pke, etc.)"
     )
@@ -31,7 +28,6 @@ class CryptoAsset(MongoDocument):
     key_size_bits: int | None = Field(None, description="Key size in bits for algorithm and key material assets")
     curve: str | None = Field(None, description="Elliptic curve identifier (e.g. P-256, secp384r1)")
 
-    # Certificate-only
     subject_name: str | None = Field(None, description="X.509 subject distinguished name for certificate assets")
     issuer_name: str | None = Field(None, description="X.509 issuer distinguished name for certificate assets")
     not_valid_before: datetime | None = Field(None, description="Certificate validity start timestamp")
@@ -44,10 +40,8 @@ class CryptoAsset(MongoDocument):
     )
     certificate_format: str | None = Field(None, description="Certificate format identifier (e.g. X.509)")
 
-    # Related-crypto-material-only
     algorithm_ref: str | None = Field(None, description="bom-ref of the algorithm this key material belongs to")
 
-    # Protocol-only
     protocol_type: str | None = Field(
         None, description="Protocol identifier (e.g. tls, ssh, ipsec) for protocol assets"
     )
@@ -60,7 +54,6 @@ class CryptoAsset(MongoDocument):
         description="IANA code point of each cipher suite (0xHH,0xHH), None where the CBOM has none",
     )
 
-    # Context
     occurrence_locations: list[str] = Field(
         default_factory=list, description="Source locations (file paths, binary offsets) where this asset was detected"
     )

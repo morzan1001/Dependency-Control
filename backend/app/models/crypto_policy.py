@@ -1,5 +1,3 @@
-"""CryptoPolicy model: one 'system' seed document plus one 'project' document per project override."""
-
 import uuid
 from datetime import datetime, timezone
 from typing import Literal

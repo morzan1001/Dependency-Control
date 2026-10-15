@@ -11,8 +11,7 @@ from app.models.types import MongoDocument
 class TeamMember(BaseModel):
     user_id: str
     role: TeamRole = TEAM_ROLE_MEMBER
-    # "manual" or the "<provider>:<instance id>" of the sync that may replace it; unconstrained, as an
-    # unmigrated value rejected here would fail every read of the team instead of staying in place.
+    # "manual" or "<provider>:<instance id>"; unconstrained, so an unmigrated value cannot fail every read.
     source: str = TEAM_SOURCE_MANUAL
 
 
@@ -44,7 +43,7 @@ TeamBinding = Annotated[GitHubTeamBinding | GitLabGroupBinding, Field(discrimina
 
 
 def binding_of(team: dict[str, Any], instance_id: str) -> dict[str, Any] | None:
-    """The team's binding for one instance, as stored. At most one exists per (team, instance)."""
+    """At most one binding exists per (team, instance)."""
     for binding in team.get("bindings") or []:
         if binding.get("instance_id") == instance_id:
             return dict(binding)

@@ -1,5 +1,3 @@
-"""One document per compliance-report job with its artifact in GridFS; expiry deletes both together."""
-
 from datetime import datetime
 from typing import Any
 
@@ -26,8 +24,7 @@ class ComplianceReport(MongoDocument):
     policy_version_snapshot: int | None = None
     iana_catalog_version_snapshot: int | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
-    # What the stored summary's verdicts were computed over; a caller reading `summary` without it
-    # cannot tell a full evaluation from a windowed one.
+    # Without it, a reader of summary cannot tell a full evaluation from a windowed one.
     coverage: EvaluationCoverage | None = None
     error_message: str | None = None
     expires_at: datetime | None = None
