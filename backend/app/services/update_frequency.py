@@ -1,8 +1,4 @@
-"""Update-frequency analytics: compare dependency versions across scans.
-
-Streaming model — one scan pair at a time so peak memory stays at
-~2 x deps/scan regardless of project size.
-"""
+"""One scan pair at a time, so peak memory stays at ~2 x deps/scan regardless of project size."""
 
 import asyncio
 import logging
@@ -51,10 +47,6 @@ from app.services.release_history import (
 
 logger = logging.getLogger(__name__)
 
-# asyncio.Semaphore binds to the running loop on first use. Creating it per
-# call (inside compute_update_frequency_comparison) keeps it tied to the loop
-# actually running the gather, so reuse across event loops (e.g. successive
-# pytest-asyncio tests) can't raise "bound to a different event loop".
 _COMPARISON_CONCURRENCY = 3
 
 DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "group": 1}
@@ -63,7 +55,6 @@ DAYS_PER_MONTH = 30.44
 
 
 def _release_tuple(version: Version) -> tuple[int, int]:
-    """``(major, minor)`` padded with zeros for shorter release tuples."""
     release = version.release
     return (
         release[0] if len(release) > 0 else 0,
@@ -72,14 +63,7 @@ def _release_tuple(version: Version) -> tuple[int, int]:
 
 
 def classify_version_change(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
-    """Classify a version change via PEP 440 parsing.
-
-    Returns ``"major" | "minor" | "patch" | "downgrade" | "none" | "unknown"``.
-    Any backwards move is ``"downgrade"`` regardless of distance, so rollbacks
-    are never counted as update activity. Same release tuple with differing
-    pre/post/local segments collapses to ``"patch"`` since the smallest
-    meaningful tier still applies.
-    """
+    """Backwards moves are downgrades, so rollbacks never count as activity; pre/post/local changes count as patch."""
     try:
         old_v = Version(old_version)
         new_v = Version(new_version)
@@ -104,7 +88,7 @@ def classify_version_change(old_version: str, new_version: str) -> UpdateKind | 
 
 
 def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
-    """``(package_identity, info)`` of a dependency; info keeps the bare ``name`` analyzer results are keyed by."""
+    """info keeps the bare name that analyzer results are keyed by."""
     name = dep.get("name", "")
     if not name:
         return None
@@ -134,12 +118,7 @@ def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
 
 
 def _resolve_duplicate(candidates: list[dict[str, str]]) -> dict[str, str]:
-    """Deterministic survivor when one identity appears at several versions in a scan.
-
-    Highest parseable version wins (nested trees usually hoist the newest);
-    the tie-break must not depend on Mongo document order, which is unstable
-    across scans and would fabricate version changes.
-    """
+    """The tie-break must not depend on Mongo document order, which is unstable and would fabricate version changes."""
     if len(candidates) == 1:
         return candidates[0]
     parseable: list[tuple[Version, dict[str, str]]] = []
@@ -154,7 +133,6 @@ def _resolve_duplicate(candidates: list[dict[str, str]]) -> dict[str, str]:
 
 
 def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
-    """Fold one scan's dependency documents into ``{identity: info}``."""
     candidates: dict[str, list[dict[str, str]]] = defaultdict(list)
     for dep in deps:
         record = _dep_record(dep)
@@ -171,16 +149,7 @@ async def load_scan_deps(dep_repo: DependencyRepository, scan_id: str) -> dict[s
 async def load_outdated_entries(
     analysis_repo: AnalysisResultRepository, scan_id: str
 ) -> tuple[list[dict[str, Any]], set[str]] | None:
-    """The scan's ``outdated_dependencies`` entries and the components whose lookup failed; None without the analysis.
-
-    An analyzer that raised leaves no document behind and one that failed stores a
-    result without ``outdated_dependencies``; reading either as an empty backlog
-    would report the whole backlog of the previous scan as brought up to date. A
-    component whose lookup failed is merely unflagged, so it is returned apart.
-
-    One row is stored per SBOM of the scan and the caller folds them into a set, so the
-    cursor is walked whole: a bounded read would drop an arbitrary SBOM's backlog.
-    """
+    """None without an analysis, which must not read as an empty backlog; each SBOM stores a row, so read all."""
     entries: list[dict[str, Any]] = []
     failed: set[str] = set()
     measured = False
@@ -202,12 +171,7 @@ async def _load_outdated_for_scan(
     scan_id: str,
     package_latest_info: dict[str, dict[str, str]],
 ) -> tuple[set[str] | None, set[str]]:
-    """Component names the scan flagged as outdated (None without the analysis) and those whose lookup failed.
-
-    Updates ``package_latest_info`` in-place; later writes for the same
-    package overwrite earlier ones, which is fine since ``slowest_packages``
-    only needs one consistent current/latest pair per name.
-    """
+    """Updates package_latest_info in place; last write wins, as slowest_packages needs one pair per name."""
     loaded = await load_outdated_entries(analysis_repo, scan_id)
     if loaded is None:
         return None, set()
@@ -237,7 +201,6 @@ def _update_sample_order(event: DependencyUpdateEvent) -> tuple[int, str, str]:
 def version_changes(
     prev_deps: dict[str, dict[str, str]], curr_deps: dict[str, dict[str, str]]
 ) -> Iterator[tuple[str, dict[str, str], dict[str, str], UpdateKind]]:
-    """``(identity, previous, current, kind)`` of every dependency whose version moved between two scans."""
     for identity, curr in curr_deps.items():
         prev = prev_deps.get(identity)
         if prev is None or prev["version"] == curr["version"]:
@@ -254,7 +217,6 @@ def _compare_scan_pair(
     curr_scan_date: datetime,
     prev_outdated: set[str] | None,
 ) -> list[tuple[DependencyUpdateEvent, str]]:
-    """Compare two consecutive scans, returning ``(event, identity)`` pairs."""
     days_between = max(1, (curr_scan_date - prev_scan_date).days)
     return [
         (
@@ -282,7 +244,6 @@ def _build_timeline_entry(
     events: list[DependencyUpdateEvent],
     outdated_count: int | None,
 ) -> ScanTimelineEntry:
-    """Build a timeline entry from a list of update events for a scan."""
     type_counts = Counter(e.update_type for e in events)
     return ScanTimelineEntry(
         scan_id=scan_id,
@@ -298,7 +259,6 @@ def _build_timeline_entry(
 
 
 def _mean_outdated(entries: Sequence[ScanTimelineEntry]) -> float | None:
-    """Mean backlog over the scans that carried an outdated analysis, or None if none did."""
     measured = [s.outdated_count for s in entries if s.outdated_count is not None]
     if not measured:
         return None
@@ -306,14 +266,7 @@ def _mean_outdated(entries: Sequence[ScanTimelineEntry]) -> float | None:
 
 
 def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]:
-    """Trend ``(direction, detail)`` from comparing the first vs second half of the timeline.
-
-    The leading entry is excluded because its incoming edge lies outside the
-    window: its height is not comparable with the others, and averaging it in
-    would report "improving" for every project with a steady update rate. The
-    backlog signal is dropped when either half has no outdated analysis, since
-    a missing measurement is not a backlog of zero.
-    """
+    """The leading entry's incoming edge lies outside the window, so it is excluded; a missing backlog is not zero."""
     timeline = scan_timeline[1:]
     if len(timeline) < 4:
         return "unknown", "Not enough scans to determine trend (need at least 5)"
@@ -359,7 +312,6 @@ def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]
 
 
 def granularity_ratio(kinds: Mapping[str, int], total_updates: int) -> dict[str, float]:
-    """Per-update-type share of all updates, rounded to 2 dp."""
     return {
         bucket: round(kinds.get(bucket, 0) / total_updates, 2) if total_updates else 0.0
         for bucket in COUNTED_UPDATE_KINDS
@@ -367,20 +319,13 @@ def granularity_ratio(kinds: Mapping[str, int], total_updates: int) -> dict[str,
 
 
 def window_cutoff(window_days: int | None) -> datetime | None:
-    """UTC timestamp ``window_days`` back, or None when no calendar window was selected."""
     if window_days is None:
         return None
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
 
 
 def updates_per_month(total_updates: int, window_days: int | None) -> float | None:
-    """Monthly update rate over the selected calendar window, or None without one.
-
-    Deriving the denominator from the observed scan span instead would make the
-    number mean something different for every CI cadence — a project scanning
-    twice an hour would outrank a weekly one on the same activity — and this is
-    the ranking's primary sort key.
-    """
+    """Per calendar window, not scan span, so CI cadence cannot skew the ranking's primary sort key."""
     if window_days is None:
         return None
     return round(total_updates / (window_days / DAYS_PER_MONTH), 2)
@@ -391,8 +336,6 @@ _NOT_ENOUGH_SCANS = "Not enough scans to analyze (need at least 2)"
 
 @dataclass(frozen=True)
 class FoldedWindow:
-    """Everything ``UpdateFrequencyMetrics`` and ``ProjectUpdateSummary`` need, minus project identity."""
-
     scan_count: int
     time_range_days: float
     first_scan_date: str
@@ -477,11 +420,7 @@ class FoldedWindow:
         data_status: Literal["ready", "partial"] = "ready",
         window_scan_cap: int | None = None,
     ) -> ProjectUpdateSummary:
-        """A row carrying the folded numbers.
-
-        ``data_status`` is the caller's verdict from ``window_coverage_status``:
-        the fold knows what it summed, not how many scans the window really held.
-        """
+        """data_status comes from window_coverage_status: the fold knows what it summed, not what the window held."""
         return ProjectUpdateSummary(
             project_id=project_id,
             project_name=project_name,
@@ -509,7 +448,7 @@ def summarise_window(
     rate_days: int | None,
     ecosystem: str | None,
 ) -> FoldedWindow:
-    """Metrics of a window of two or more bars for both read paths; rate_days is None without a calendar window."""
+    """Needs two or more bars; rate_days is None without a calendar window."""
     total_updates = sum(kinds.get(kind, 0) for kind in COUNTED_UPDATE_KINDS)
     num_intervals = len(bars) - 1
 
@@ -539,8 +478,7 @@ def summarise_window(
         avg_days_between_scans=round(raw_range_days / num_intervals, 1),
         total_outdated_detected=len(ever_outdated),
         outdated_resolved=resolved_count,
-        # Both sets carry measured scans only, so None means "no backlog was ever
-        # measured here" -- distinct from 0.0 ("measured, nothing resolved").
+        # None means no backlog was ever measured, unlike 0.0 (measured, nothing resolved).
         update_coverage_pct=(round(resolved_count / len(ever_outdated) * 100, 1) if ever_outdated else None),
         trend_direction=trend_direction,
         trend_detail=trend_detail,
@@ -578,13 +516,7 @@ def short_window(bars: Sequence[ScanTimelineEntry]) -> FoldedWindow:
 
 
 def _final_versions_by_name(final_deps: dict[str, dict[str, str]]) -> dict[str, str]:
-    """Newest-scan version per bare name, only where the name is unambiguous.
-
-    The outdated analyzer keys by bare name, but two purl identities can
-    share one name (npm scopes are dropped in storage). Mapping such a name
-    to a single version would show one sibling's version for the other, so
-    ambiguous names are omitted and the analyzer's own current_version stands.
-    """
+    """Ambiguous bare names (npm scopes are dropped in storage) are omitted so a sibling's version never shows."""
     counts: Counter = Counter(info["name"] for info in final_deps.values())
     return {info["name"]: info["version"] for info in final_deps.values() if counts[info["name"]] == 1}
 
@@ -596,13 +528,7 @@ def _build_slowest_packages(
     latest_outdated: set[str],
     final_versions: dict[str, str],
 ) -> tuple[list[SlowPackage], int]:
-    """The rows of the slowest-to-update table and the backlog they are the head of.
-
-    Only packages still outdated in the newest scan that carried an outdated
-    analysis qualify — resolved ones are history, not backlog, and a scan
-    without the analysis is not a cleared backlog. ``current_version`` comes
-    from the newest scan's dependency set; analyzer entries may be scans old.
-    """
+    """A scan without the analysis is no cleared backlog; analyzer entries may be stale, so current_version is fresh."""
     remaining = {pkg: count for pkg, count in package_outdated_counts.items() if pkg in latest_outdated}
     slowest = sorted(remaining.items(), key=lambda entry: (-entry[1], entry[0]))[:SLOWEST_PACKAGES_LIMIT]
     return [
@@ -618,19 +544,14 @@ def _build_slowest_packages(
     ], len(remaining)
 
 
-# Bounds the (package, version) -> first_scan_date map used for adoption-latency.
-# Far above realistic projects; protects against pathological version churn.
+# Far above realistic projects; it guards the adoption-latency map against pathological version churn.
 _MAX_OBSERVATIONS = 10_000
 
 ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
 
 
 def dominant_ecosystem(eco: Mapping[str, Any]) -> str | None:
-    """Ecosystem owning >=70% of the newest scan's classified deps; ``"mixed"`` otherwise.
-
-    Only the newest scan counts: dominance describes what the project holds now,
-    while summing the window would let long-removed deps sway it.
-    """
+    """Only the newest scan counts, so long-removed deps cannot sway what the project holds now."""
     counts = {name: int(n) for name, n in eco.items() if name and name != "unknown" and int(n) > 0}
     if not counts:
         return None
@@ -642,8 +563,6 @@ def dominant_ecosystem(eco: Mapping[str, Any]) -> str | None:
 
 @dataclass
 class _AccumulatorState:
-    """Streaming-loop state, bundled so each helper takes a single argument."""
-
     type_counter: Counter = field(default_factory=Counter)
     recent_events_by_scan: deque[list[DependencyUpdateEvent]] = field(
         default_factory=lambda: deque(maxlen=RECENT_UPDATES_LIMIT)
@@ -683,13 +602,7 @@ class _AccumulatorState:
         curr_deps: dict[str, dict[str, str]],
         curr_failed: set[str],
     ) -> None:
-        """Resolved = still present, looked up, and no longer flagged outdated.
-
-        A version bump that stays behind latest is not a resolution, and
-        neither is removing the package. Both scans must carry an outdated
-        analysis: a missing one is not an empty backlog, and reading it as
-        one would report the predecessor's whole backlog as resolved.
-        """
+        """Both scans need an outdated analysis: a missing one would report the predecessor's whole backlog resolved."""
         if prev_outdated is None or curr_outdated is None:
             return
         curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
@@ -710,7 +623,6 @@ class _AccumulatorState:
             self.recent_events_by_scan.append(ranked[:RECENT_UPDATES_LIMIT])
 
     def recent_events(self) -> list[DependencyUpdateEvent]:
-        """Newest scan first, rank-ordered within a scan, cut at the limit."""
         return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
 
 
@@ -722,14 +634,7 @@ def select_primary_branch(
     default_branch: str | None,
     deleted_branches: Sequence[str] | None = None,
 ) -> str | None:
-    """The branch a project's numbers describe, from what each branch was scanned in the window.
-
-    The configured ``default_branch`` wins as soon as it can be compared at all;
-    otherwise the busiest branch does, because a one-off scan on a feature
-    branch must not hijack a project and most projects configure no default
-    branch. Ties go to the branch scanned last, then to its name, so the pick
-    never depends on document order.
-    """
+    """Busiest branch absent a comparable default, so a one-off feature-branch scan cannot hijack the project."""
     deleted = set(deleted_branches or ())
     live = {branch: seen for branch, seen in activity.items() if branch not in deleted}
     if not live:
@@ -746,39 +651,21 @@ async def elect_primary_branch(
     default_branch: str | None,
     deleted_branches: Sequence[str] | None,
 ) -> str | None:
-    """One project's primary branch in the window."""
     activity = await window_scans_by_branch(scan_repo, [project_id], since)
     return select_primary_branch(activity.get(project_id, {}), default_branch, deleted_branches)
 
 
-# Slack for the scans the ledger reached between the two reads. A missing backfill
-# or a broken delta chain loses far more than a fifth of a window.
+# Slack for scans the ledger reached between the two reads; a real gap loses far more than a fifth.
 READY_COVERAGE_RATIO = 0.8
 
 
 def window_coverage_status(accounted_commits: int, window_commits: int) -> Literal["ready", "partial"]:
-    """``partial`` when the ledger accounts for noticeably less than the branch really holds.
-
-    A partial row's numbers are exact for what they cover, but they measure a
-    shorter stretch than a fully covered project's, so callers must keep them out
-    of averages, best/worst and the ranking. Both arguments count commits of the
-    same stretch; a caller that truncated its own stretch to a document cap knows
-    no commit count for what it kept and must not ask.
-    """
+    """Partial rows stay out of averages, best/worst and ranking; both arguments count commits of one stretch."""
     return "ready" if accounted_commits >= window_commits * READY_COVERAGE_RATIO else "partial"
 
 
 def same_commit_runs[T](items: Sequence[T], *, commit_of: Callable[[T], str | None]) -> list[list[T]]:
-    """Group one branch's window scans into same-commit runs, oldest first.
-
-    Both read paths sum movement over every consecutive pair of window scans. A
-    run only merges those scans into one timeline bar, named by the run's last
-    scan; it never removes a pair from a sum. The bars therefore tile the pairs:
-    ``sum(bar.updates_count) == total_updates``, so a rate over the bars still
-    accounts for the pairs that fall inside a run.
-
-    A scan naming no commit stands for itself.
-    """
+    """A run merges scans into one bar but drops no pair, so sum(bar.updates_count) == total_updates."""
     runs: list[list[T]] = []
     for item in items:
         commit = commit_of(item)
@@ -790,7 +677,6 @@ def same_commit_runs[T](items: Sequence[T], *, commit_of: Callable[[T], str | No
 
 
 def fold_runs_into_bars(entries: Sequence[ScanTimelineEntry], commits: Sequence[str | None]) -> list[ScanTimelineEntry]:
-    """One bar per same-commit run, named and dated by the run's last scan."""
     pairs = list(zip(entries, commits, strict=True))
     bars: list[ScanTimelineEntry] = []
     for run in same_commit_runs(pairs, commit_of=lambda pair: pair[1]):
@@ -812,8 +698,7 @@ def fold_runs_into_bars(entries: Sequence[ScanTimelineEntry], commits: Sequence[
     return bars
 
 
-# max_scans counts timeline bars, and a bar can hold a whole run; over-fetch so a
-# burst of CI retries on the head commit can't starve the window below max_scans.
+# A bar can hold a whole run, so over-fetch lest a CI retry burst starves the window below max_scans.
 _BAR_FETCH_HEADROOM = 5
 
 
@@ -825,14 +710,9 @@ async def _load_completed_scans(
     since: datetime | None,
     hard_limit: int,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Completed non-rescan scans of one branch, chronologically ordered.
-
-    When ``since`` is set the calendar window dominates (capped by
-    ``hard_limit``) and ``max_scans`` is ignored.
-    """
+    """With since set, the calendar window (capped by hard_limit) applies and max_scans is ignored."""
     fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _BAR_FETCH_HEADROOM)
-    # Filter status and window in the query so the limit counts only scans the walk can use;
-    # filtering after the limit would empty the window when the newest scans are failed/processing.
+    # Filtered in the query so the limit counts only usable scans, even when the newest ones failed.
     docs = await scan_repo.find_many_raw(
         {**usable_scan_match(since), "project_id": project_id, "branch": branch},
         sort=[("created_at", -1), ("_id", -1)],
@@ -842,9 +722,7 @@ async def _load_completed_scans(
     scans_raw: list[dict[str, Any]] = [
         {"_id": d["_id"], "created_at": d["created_at"], "commit_hash": d.get("commit_hash")}
         for d in docs
-        # Archive restore inserts bundle JSON verbatim, so a date can arrive as an ISO string.
-        # Neither the window aggregation nor the delta writer matches those, so analysing them
-        # here would put scans on the timeline that nothing else in the pipeline accounts for.
+        # A restored bundle can carry ISO-string dates, which the aggregation and delta writer also skip.
         if isinstance(d.get("created_at"), datetime)
     ]
     scans_raw.reverse()
@@ -852,13 +730,12 @@ async def _load_completed_scans(
         # Cap whole runs, so a retry storm cannot thin the window below max_scans bars.
         runs = same_commit_runs(scans_raw, commit_of=lambda scan: scan["commit_hash"])
         return [scan for run in runs[-max_scans:] for scan in run], False
-    # A full fetch means older scans of the window went unread, so the window the caller
-    # asked for is wider than the stretch it is about to fold.
+    # A full fetch means older scans went unread, so the stretch folded is narrower than the window asked for.
     return scans_raw, len(docs) >= fetch_limit
 
 
 def spanned_days(first: datetime, last: datetime) -> int:
-    """Whole days a folded stretch covers, floored at one so a burst cannot inflate a rate."""
+    """Floored at one day so a burst cannot inflate a rate."""
     return max(1, round((last - first).total_seconds() / 86400))
 
 
@@ -874,7 +751,7 @@ async def compute_update_frequency(
     release_fetcher: ReleaseHistoryFetcher | None = None,
     hard_limit: int = WINDOW_HARD_LIMIT,
 ) -> UpdateFrequencyMetrics:
-    """One branch's metrics (other branches' differences are no updates); only ``window_days`` yields a monthly rate."""
+    """One branch only, since other branches' differences are no updates; only window_days yields a monthly rate."""
     if branch is None:
         return short_window([]).to_metrics(project_id, project_name)
     since = window_cutoff(window_days)
@@ -899,9 +776,7 @@ async def compute_update_frequency(
 
     for curr_scan in completed_scans:
         curr_deps = await load_scan_deps(dep_repo, curr_scan["_id"])
-        # A scan that produced no SBOM measured nothing, so the delta ledger drops it.
-        # Keeping it here would frame the update that happened across it as two quiet
-        # intervals and put a structural zero-update bar on the timeline.
+        # An SBOM-less scan measured nothing, so it is dropped as in the delta ledger.
         if not curr_deps:
             continue
         state.accumulate_types(curr_deps)
@@ -946,8 +821,7 @@ async def compute_update_frequency(
         latest_outdated or set(),
         _final_versions_by_name(prev_deps),
     )
-    # Past the cap the walk never saw the older part of the window, so the rate divides by
-    # the stretch it did fold rather than by a window it only partly covered.
+    # Past the cap the rate divides by the stretch the walk folded, not by a window it only partly saw.
     rate_days = (
         spanned_days(datetime.fromisoformat(bars[0].date), datetime.fromisoformat(bars[-1].date))
         if truncated
@@ -978,11 +852,7 @@ async def _maybe_fetch_upstream_cadence(
     package_specs: dict[str, tuple[str, str]],
     first_seen_versions: dict[tuple[str, str], datetime],
 ) -> UpstreamCadenceMetrics | None:
-    """Call the fetcher and aggregate cadence; supplementary, never load-bearing.
-
-    Failures and a missing fetcher both yield ``None`` so the rest of the
-    report still ships.
-    """
+    """Supplementary: failures and a missing fetcher yield None so the rest of the report still ships."""
     if release_fetcher is None or not package_specs:
         return None
 
@@ -1021,20 +891,11 @@ def placeholder_summary(
 
 
 def _rate(summary: ProjectUpdateSummary) -> float:
-    """Sort key: an unavailable monthly rate ranks below every measured one."""
     return summary.updates_per_month if summary.updates_per_month is not None else -1.0
 
 
 def rank_summaries(summaries: list[ProjectUpdateSummary]) -> UpdateFrequencyComparison:
-    """Order the fully measured projects and list the rest behind them, unranked.
-
-    Coverage of None means no backlog was ever measured, so those rank after
-    every measured project and never become best or worst. A ``partial`` row
-    carries numbers for a shorter stretch of the window than a ready one, so it
-    is listed with its caveat but stays out of the averages and the ranking.
-    Rows without any metrics are listed last and named: a bare count of projects
-    that could not be measured leaves the reader unable to go and look at them.
-    """
+    """Unmeasured rows are named, not counted, so a reader can go and look at them."""
     ready = [s for s in summaries if s.data_status == "ready"]
     partial = sorted((s for s in summaries if s.data_status == "partial"), key=lambda s: (-_rate(s), s.project_name))
     pending = sorted((s for s in summaries if s.data_status == "pending"), key=lambda s: s.project_name)
@@ -1071,16 +932,8 @@ async def compute_update_frequency_comparison(
     analysis_repo: AnalysisResultRepository,
     window_days: int = 90,
 ) -> UpdateFrequencyComparison:
-    """Cross-project update-frequency ranking.
-
-    Per-project computations run with bounded concurrency. ``window_days``
-    aligns every project on the same calendar window; ranking projects across
-    different spans would compare scan cadence rather than update activity.
-    One batched read of the scan window feeds both the branch choice and the
-    coverage verdict, so a project scanned outside the window costs no query.
-    """
-    # Created per call so it binds to the loop running this gather (see note
-    # at module top); a module-global semaphore would pin to the first loop.
+    """One calendar window for every project: different spans would rank scan cadence, not update activity."""
+    # Per call: a Semaphore binds to the loop of first use, so a module-level one would pin to the first loop.
     semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
     since = window_cutoff(window_days)
 
@@ -1118,8 +971,7 @@ async def compute_update_frequency_comparison(
                 project_id=metrics.project_id,
                 project_name=metrics.project_name,
                 teams=teams,
-                # The walk reads the very scans coverage is measured against, so it
-                # cannot fall behind them the way the delta ledger can.
+                # The walk reads the very scans coverage is measured against, so it cannot lag like the delta ledger.
                 data_status="ready",
                 branch=metrics.branch,
                 window_days=window_days,

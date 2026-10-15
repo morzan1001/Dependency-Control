@@ -21,8 +21,7 @@ from app.services.recommendation.common import (
     vuln_info,
 )
 
-# A quick win is one recommendation per package, so this bounds the advice feed rather than a
-# list inside one card; each emitted card carries the rank it was cut at.
+# Bounds the advice feed (one card per package), not a list in a card; each card carries its cut rank.
 QUICK_WINS_SHOWN = 5
 
 # Keyed by directness: True/False where the SBOM graph records it, None where it does not.
@@ -30,7 +29,6 @@ _DEPENDENCY_KIND = {True: "direct dependency", False: "transitive dependency", N
 
 
 def _confirmed_directness(dependencies: list[ModelOrDict]) -> dict[str, bool]:
-    """Directness per package name, from graph-confirmed rows only; a direct copy wins."""
     confirmed: dict[str, bool] = {}
     for dep in dependencies:
         if not get_attr(dep, "direct_inferred", False):
@@ -44,7 +42,6 @@ def identify_quick_wins(
     vuln_findings: list[ModelOrDict],
     dependencies: list[ModelOrDict],
 ) -> list[Recommendation]:
-    """Identify quick wins - single updates that fix many or critical/KEV vulnerabilities."""
     fixable: dict[str, list[VulnerabilityInfo]] = defaultdict(list)
     for f in vuln_findings:
         vuln = vuln_info(f)

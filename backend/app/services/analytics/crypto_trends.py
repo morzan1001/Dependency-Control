@@ -1,7 +1,3 @@
-"""
-CryptoTrendService — time-bucketed crypto finding + asset aggregations.
-"""
-
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -125,9 +121,7 @@ class CryptoTrendService:
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
         trunc = {"$dateTrunc": {"date": "$scan_created_at", "unit": bucket}}
-        # Per bucket we count the latest scan per project regardless of scan status;
-        # a partial/failed latest scan may under-report, accepted since failed scans
-        # typically write no crypto findings.
+        # A failed latest scan may under-report a bucket; accepted, as failed scans rarely write crypto findings.
         pipeline = [
             {"$match": match},
             # Carry project/bucket as fields so later stages don't depend on composite-_id sub-paths.
@@ -140,8 +134,7 @@ class CryptoTrendService:
                     "cnt": {"$sum": 1},
                 }
             },
-            # Pick the latest scan per (project, bucket) so re-scans in one bucket
-            # (e.g. CI + nightly) count a persistent issue once, not per scan.
+            # Latest scan per (project, bucket) so re-scans in one bucket count a persistent issue once.
             {"$sort": {"scan_created_at": -1}},
             {
                 "$group": {
@@ -150,7 +143,6 @@ class CryptoTrendService:
                     "value": {"$first": "$cnt"},
                 }
             },
-            # Sum the per-project latest-scan counts into one value per bucket.
             {"$group": {"_id": "$bucket", "value": {"$sum": "$value"}}},
             {"$sort": {"_id": 1}},
         ]

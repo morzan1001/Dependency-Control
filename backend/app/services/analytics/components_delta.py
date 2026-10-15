@@ -1,7 +1,4 @@
-"""Components-delta: match SBOM components across two scans by version-free package identity,
-so a version bump reads as ``version_changed`` (with both transitions) rather than
-added+removed, and a license-only change reads as ``license_changed``.
-"""
+"""Version-free package identity makes a bump read as version_changed instead of removed + added."""
 
 from __future__ import annotations
 

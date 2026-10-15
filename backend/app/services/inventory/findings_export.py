@@ -1,5 +1,3 @@
-"""Row builder for the multi-branch findings CSV export."""
-
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any, NamedTuple
@@ -50,8 +48,7 @@ FINDINGS_COLUMNS = [
     "cves",
 ]
 
-# Findings carry no top-level purl/direct; those come from the dependencies join below.
-# `details.purl` is the license normalizer's nesting spot, used as a fallback.
+# Findings lack top-level purl/direct (added by the dependencies join); the license normalizer nests purl in details.
 _PROJECTION = {
     "finding_id": 1,
     "type": 1,
@@ -133,8 +130,7 @@ async def iter_findings_rows(db: AsyncIOMotorDatabase, scans: list[ExportedScan]
     findings = FindingRepository(db)
     for scan in scans:
         dep_lookup = await _dependency_lookup(db, scan)
-        # One query per severity, most severe first; the (scan_id, severity, type, finding_id) index
-        # hands each bucket over in streaming order.
+        # One query per severity so the (scan_id, severity, type, finding_id) index streams each bucket in order.
         for severity in Severity:
             query = {"scan_id": scan.id, "severity": severity.value}
             async for doc in findings.iterate_raw(query, _PROJECTION, [("type", 1), ("finding_id", 1)]):

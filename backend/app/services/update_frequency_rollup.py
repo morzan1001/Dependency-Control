@@ -1,8 +1,4 @@
-"""Per-scan update-frequency rollup: one delta document per usable scan.
-
-Both dependency sets of a comparison are read straight from ``dependencies``,
-so a recomputation always reproduces the same document.
-"""
+"""Both dependency sets are read straight from dependencies, so a recomputation reproduces the same document."""
 
 import logging
 from collections import Counter
@@ -33,7 +29,6 @@ _SCAN_PROJECTION = {
 
 _ERROR_MESSAGE_CAP = 300
 _STALE_DEPENDENCIES_ERROR = "StaleDelta: the scan's dependencies changed after this delta was written"
-# Bounds the self-healing walks along a branch timeline.
 _MAX_REPAIR_HOPS = 5
 
 
@@ -58,11 +53,7 @@ class _Diff:
 
 
 async def record_scan_update_delta(db: Any, scan_id: str) -> None:
-    """Record the dependency movement of one scan against its branch predecessor.
-
-    Never raises: a rollup for the analytics tab must not fail the ingest or the
-    restore that triggered it, both of which treat an exception as a lost scan.
-    """
+    """Never raises: the triggering ingest or restore would treat an exception as a lost scan."""
     try:
         if not settings.UPDATE_FREQUENCY_ROLLUP_ENABLED:
             return
@@ -83,7 +74,6 @@ async def record_scan_update_delta(db: Any, scan_id: str) -> None:
 
 
 async def _record(db: Any, scan_id: str) -> ScanUpdateDelta | None:
-    """The delta of ``scan_id``, or None when the scan is skipped or its computation failed."""
     scan = await _load_scan(db, scan_id)
     if scan is None:
         return None
@@ -156,13 +146,7 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
 
 
 async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] | None, dict[str, dict[str, str]]]:
-    """The newest branch predecessor whose dependencies still match its delta, and those dependencies.
-
-    An ingest deletes a scan's dependencies before rewriting them, so a scan that
-    dies in between holds fewer of them than its delta recorded. Diffing against
-    that leftover reports the missing packages as absent rather than unchanged,
-    so it is demoted to an error document and the search continues further back.
-    """
+    """A scan that died mid-ingest holds fewer dependencies than its delta; it is demoted and the search goes on."""
     repo = ScanUpdateDeltaRepository(db)
     for _ in range(_MAX_REPAIR_HOPS):
         prev = await repo.find_predecessor(scan.project_id, scan.branch, scan.created_at, scan.scan_id)
@@ -191,11 +175,7 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
 
 
 async def _discard_delta(db: Any, scan: _ScanRef) -> None:
-    """Drop the delta of a scan that lost its usable status, e.g. a failed re-ingest.
-
-    The delta would keep counting dependencies the re-ingest already deleted, so
-    the successors that compared against it are recomputed against an older scan.
-    """
+    """The delta would keep counting dependencies the re-ingest already deleted."""
     if not await ScanUpdateDeltaRepository(db).delete(scan.scan_id):
         return
     await ScanOutdatedSetRepository(db).delete(scan.scan_id)
@@ -222,9 +202,7 @@ def _diff_scans(
     if curr_outdated is None:
         return diff
     if prev_outdated is None:
-        # Nothing to subtract, so every outdated package here is newly observed.
-        # The fold sums these lists, and dropping them would leave packages that
-        # went outdated across the unmeasured scan out of the coverage denominator.
+        # The fold sums these; dropping them would keep packages outdated across the gap out of the denominator.
         diff.outdated_added = sorted(curr_outdated)
         return diff
     curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
@@ -235,7 +213,6 @@ def _diff_scans(
 
 
 async def _load_outdated(db: Any, scan_id: str) -> tuple[set[str] | None, set[str]]:
-    """Component names the scan flagged outdated (None without the analysis) and those whose lookup failed."""
     loaded = await load_outdated_entries(AnalysisResultRepository(db), scan_id)
     if loaded is None:
         return None, set()
@@ -260,11 +237,7 @@ async def _persist(db: Any, delta: ScanUpdateDelta, outdated: set[str] | None) -
 
 
 async def _record_failure(db: Any, scan: _ScanRef, exc: Exception) -> None:
-    """Keep count(deltas) == count(usable scans) even when the computation failed.
-
-    An outdated set only ever accompanies a delta that was computed, so an
-    earlier one must not survive next to the error document.
-    """
+    """Keeps count(deltas) == count(usable scans); an outdated set must not survive next to an error document."""
     await ScanUpdateDeltaRepository(db).save(
         ScanUpdateDelta(
             id=scan.scan_id,
@@ -287,16 +260,7 @@ async def _repair_successors(
     *,
     only_when_linked: bool,
 ) -> None:
-    """Recompute later deltas of the branch whose predecessor changed under them.
-
-    A delta describes a diff against the dependencies the anchor held when it was
-    written, so writing the anchor invalidates its successor whatever the successor
-    records as its predecessor. ``only_when_linked`` narrows that to successors
-    pointing at the anchor, which is all a *deleted* anchor can have affected.
-
-    SBOM-less scans keep the walk going: they cannot be a predecessor, so the
-    next scan that carries dependencies is affected as well.
-    """
+    """only_when_linked: a deleted anchor can only have affected the successors pointing at it."""
     repo = ScanUpdateDeltaRepository(db)
     anchor_id = after_id
     for _ in range(_MAX_REPAIR_HOPS):
@@ -313,8 +277,7 @@ async def _repair_successors(
         recomputed = await _record(db, successor["_id"])
         if recomputed is not None and recomputed.dep_count > 0:
             return
-        # A failed recomputation leaves an error document, which is never a
-        # predecessor either, so the scan behind it is affected as well.
+        # A failed recomputation leaves an error document, never a predecessor, so the scan behind it is affected too.
         after = successor["scan_created_at"]
         after_id = successor["_id"]
     logger.warning(

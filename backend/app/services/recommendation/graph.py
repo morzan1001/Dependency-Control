@@ -11,16 +11,12 @@ from app.schemas.recommendation import (
 )
 from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, recommend, sampled
 
-# Chains detailed in the action; paired with the population it was taken from.
 _DEEPEST_CHAINS_SAMPLED = 5
 _CHAIN_ENDS_SHOWN = 2
 
 
 @dataclass(frozen=True)
 class DependencyEdges[D: ModelOrDict]:
-    """A dependency list as a graph over node keys; documents sharing a key are one node."""
-
-    # First document per key, in first-seen order.
     dep_by_key: dict[str, D]
     parents_by_key: dict[str, list[str]]
     children_by_parent: dict[str, list[str]]
@@ -28,7 +24,6 @@ class DependencyEdges[D: ModelOrDict]:
 
 
 def build_dependency_edges[D: ModelOrDict](dependencies: list[D]) -> DependencyEdges[D]:
-    """Merge every document's parents per node key; a node is direct when any of its documents is."""
     dep_by_key: dict[str, D] = {}
     parents_by_key: dict[str, dict[str, None]] = {}
     direct_keys: set[str] = set()
@@ -54,7 +49,6 @@ def build_dependency_edges[D: ModelOrDict](dependencies: list[D]) -> DependencyE
 def analyze_deep_dependency_chains(
     dependencies: list[ModelOrDict], max_dependency_depth: int = MAX_DEPENDENCY_DEPTH
 ) -> list[Recommendation]:
-    """Report dependency cycles, and dependencies nested deeper than ``max_dependency_depth``."""
     edges = build_dependency_edges(dependencies)
     recommendations = []
 
@@ -73,7 +67,6 @@ def analyze_deep_dependency_chains(
 
 
 def _cycle_members(edges: DependencyEdges) -> set[str]:
-    """Nodes of every strongly connected component larger than one node, plus self-parents (Kosaraju)."""
     finished: list[str] = []
     seen: set[str] = set()
     for start in edges.dep_by_key:
@@ -111,7 +104,6 @@ def _cycle_members(edges: DependencyEdges) -> set[str]:
 
 
 def _shortest_depths(edges: DependencyEdges) -> tuple[dict[str, int], dict[str, str]]:
-    """Each reachable node's shortest depth (a direct dependency is 1) and the parent that chain runs through."""
     depths = {key: 1 for key in edges.dep_by_key if key in edges.direct_keys}
     via: dict[str, str] = {}
     queue = deque(depths)
@@ -150,7 +142,6 @@ def _circular_dependency_recommendation(members: set[str], edges: DependencyEdge
 
 
 def _chain_preview(key: str, via: dict[str, str], edges: DependencyEdges) -> str:
-    """The shortest chain from a direct dependency down to ``key``."""
     path = [key]
     while path[-1] in via:
         path.append(via[path[-1]])
@@ -201,7 +192,6 @@ def _deep_chain_recommendation(
 def analyze_duplicate_packages(
     dependencies: list[ModelOrDict],
 ) -> list[Recommendation]:
-    """Detect packages that likely provide similar/duplicate functionality."""
     if not dependencies:
         return []
 

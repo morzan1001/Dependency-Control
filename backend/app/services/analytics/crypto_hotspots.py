@@ -1,7 +1,3 @@
-"""Aggregate crypto_assets + findings into HotspotResponse, grouped by one of
-name, primitive, asset_type, weakness_tag, or severity.
-"""
-
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,25 +9,20 @@ from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
 
-# Asset-first groupings: the asset field grouped on and the findings field joined to it. Names group bare,
-# because findings carry details.asset_name == asset.name without the variant. The other groupings live
-# on findings alone.
+# Names group bare because findings carry details.asset_name without the variant.
 _ASSET_GROUPINGS = {
     "name": ("$name", "$details.asset_name"),
     "primitive": ("$primitive", "$details.primitive"),
     "asset_type": ("$asset_type", "$details.asset_type"),
 }
 
-# $push of every occurrence_locations array can exceed MongoDB's 16MB group-doc limit on a hot
-# group, so the accumulator reads the arrays of this many assets and no more.
+# Pushing every occurrence_locations array can exceed MongoDB's 16MB group-doc limit on a hot group.
 _LOCATION_SAMPLE_ASSETS = 20
-# Distinct locations one entry lists. Matches the heatmap's column budget so a row can mark
-# every column it belongs to rather than reading as absent from the ones past the cut.
+# Matches the heatmap's column budget so a row can mark every column it belongs to.
 _LOCATIONS_PER_ENTRY = 30
 
 
 def _distinct_locations(sampled: list[Any]) -> list[str]:
-    """Flatten the sampled assets' location arrays, first occurrence wins."""
     flat: list[str] = []
     for entry in sampled:
         if isinstance(entry, list):
@@ -105,8 +96,7 @@ class CryptoHotspotService:
             )
         group_key, join_field = _ASSET_GROUPINGS[group_by]
 
-        # Empty scan_ids must match nothing ($in: []), not disable the filter
-        # (which would aggregate every historical scan).
+        # Empty scan_ids must match nothing ($in: []), not drop the filter and aggregate every historical scan.
         match: dict[str, Any] = {"scan_id": {"$in": scan_ids}}
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
@@ -161,12 +151,7 @@ class CryptoHotspotService:
         group_by: GroupBy,
         limit: int,
     ) -> list[HotspotEntry]:
-        """Aggregate hotspots whose grouping dimension lives on findings (severity/weakness_tag).
-
-        asset_count is the count of distinct (scan_id, bom_ref) assets; finding_count the raw match count.
-        """
-        # Exclude waived findings (a risk decision, not current posture) so hotspots
-        # agree with crypto_trends. Empty scan_ids matches nothing ($in: []).
+        # Waived findings are a risk decision, not posture; excluding them keeps hotspots in line with crypto_trends.
         match: dict[str, Any] = {
             "type": {"$in": sorted(CRYPTO_FINDING_TYPES)},
             "waived": {"$ne": True},

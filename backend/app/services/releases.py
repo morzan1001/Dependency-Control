@@ -1,4 +1,4 @@
-"""Release lookup and the single resolver for 'which scan counts for this project'."""
+"""The single resolver for which scan counts for a project."""
 
 import logging
 from collections.abc import Sequence
@@ -18,18 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequence[str]) -> set[str]:
-    """Which of these scans a release cannot lose: the marked scan and the analysis it resolves to.
-
-    Keyed on db.releases rather than on the denormalised Scan.is_release, because every writer of
-    that flag is a two-step sequence whose second step can be lost, and a row without a flag is
-    then indistinguishable from a scan nothing ever released.
-    """
+    """Keyed on db.releases, not Scan.is_release: the flag is written second and can be lost."""
     candidates = list(scan_ids)
     if not candidates:
         return set()
     candidate_set = set(candidates)
-    # Both rescan creators re-root original_scan_id at the lineage root, so a release's chain is one
-    # link deep and one backward hop reaches every scan freshest_in_lineage can answer with.
+    # Rescans re-root original_scan_id at the lineage root, so one backward hop reaches every candidate.
     chain_parents = await db.scans.distinct("_id", {"latest_rescan_id": {"$in": candidates}})
     marked = await ReleaseRepository(db).released_among(candidates + chain_parents)
     protected = candidate_set & marked
@@ -41,16 +35,10 @@ async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequenc
 
 
 async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
-    """Bring Scan.is_release back to what db.releases says. Returns (cleared, restored).
-
-    Every writer records the row and then the flag, so either half can be the one lost. Both
-    directions are reconciled, so a clear that races an in-flight mark is itself repaired on the
-    next pass instead of becoming the next divergence.
-    """
+    """Both directions are reconciled, so a clear racing an in-flight mark is repaired on the next pass."""
     release_repo = ReleaseRepository(db)
     cleared = 0
-    # The filter equals the partial filter, so the hinted index holds every match; without the hint
-    # the planner never picks it (project_id is its prefix) and falls back to a COLLSCAN.
+    # The filter equals the partial filter; unhinted, the planner skips this index (project_id prefix) for a COLLSCAN.
     flagged = (
         str(doc["_id"]) async for doc in db.scans.find({"is_release": True}, {"_id": 1}).hint("scans_released_list")
     )
@@ -77,7 +65,7 @@ async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
 
 
 async def released_scan_ids(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, str]:
-    """environment -> the scan that was marked for it, before any rescan chain."""
+    """The marked scans, before any rescan chain is followed."""
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
         # Index-served per-environment pick.
@@ -114,10 +102,7 @@ async def resolve_scan_ids(
     release_environment: str | None = None,
     projects: Sequence[ProjectWithScanId] | None = None,
 ) -> dict[str, str]:
-    """project_id -> the scan that represents it; None project_ids means every project.
-    Projects that resolve to no scan are omitted, so callers reporting a scope size must count
-    elsewhere. A caller that already read the scope passes it as projects to spare the head path
-    its own read; the release path ignores it."""
+    """Omits projects without a scan, so scope sizes must be counted elsewhere; None project_ids means every project."""
     if project_ids is not None and not project_ids:
         return {}
 

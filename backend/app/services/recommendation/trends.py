@@ -47,8 +47,6 @@ PREVIOUS_SCAN_PROJECTION = {
 
 @dataclass
 class PreviousScan:
-    """What the regression check keeps of the preceding scan: identity keys and per-artifact advisories."""
-
     keys: set[tuple[str, str, str]] = field(default_factory=set)
     advisories: set[tuple[str, str]] = field(default_factory=set)
 
@@ -60,7 +58,6 @@ class PreviousScan:
 
 
 def _introduced_cves(doc: dict[str, Any], previous: PreviousScan) -> list[tuple[str, str | None]]:
-    """Each live CVE the previous scan did not report on this artifact, with its own advisory's severity."""
     new = {cve for _, cve in advisory_keys(doc) - previous.advisories}
     return [
         (cve, entry.get("severity"))
@@ -70,7 +67,6 @@ def _introduced_cves(doc: dict[str, Any], previous: PreviousScan) -> list[tuple[
 
 
 def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousScan) -> list[Recommendation]:
-    """Findings and advisories the preceding scan did not report."""
     new_count = 0
     new_cves: dict[str, str | None] = {}
     flagged: set[str] = set()
@@ -131,15 +127,12 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
 
 @dataclass
 class CveRecurrence:
-    """The scans and components one CVE was found in, and its severity."""
-
     scans: set[str] = field(default_factory=set)
     components: set[str] = field(default_factory=set)
     severity: str | None = None
 
 
 async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, Any]]) -> dict[str, CveRecurrence]:
-    """Fold vulnerability findings of a scan window into the scan set and worst advisory severity of each CVE."""
     recurrence: dict[str, CveRecurrence] = defaultdict(CveRecurrence)
     async for finding in vulnerability_findings:
         for cve, severity in cve_severities((finding.get("details") or {}).get("vulnerabilities") or []).items():
@@ -155,7 +148,6 @@ def analyze_recurring_issues(
     recurrence: dict[str, CveRecurrence],
     window_scans: int,
 ) -> list[Recommendation]:
-    """Identify issues that keep appearing across the scan window the caller folded."""
     recurring = [(cve, row) for cve, row in recurrence.items() if len(row.scans) >= RECURRING_ISSUE_THRESHOLD]
 
     if not recurring:

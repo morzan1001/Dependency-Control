@@ -15,7 +15,6 @@ from app.services.recommendation.common import (
     worth_a_card,
 )
 
-# Rules named per category card; `sampled` pairs the sample with its population.
 _RULES_SAMPLED = 10
 
 _CWE_CATEGORIES = {
@@ -35,7 +34,7 @@ _CATEGORY_KEYWORDS = (
 
 
 def _finding_category(details: dict[str, Any]) -> str:
-    """CWE first; OpenGrep registry rules all set category 'security', so it names a card only when more specific."""
+    """OpenGrep registry rules all set category 'security', so the category names a card only when more specific."""
     entries = details.get("sast_findings") or []
     scanner_details = [entry.get("details") or {} for entry in entries]
     by_cwe = [_CWE_CATEGORIES[cwe] for d in scanner_details for cwe in d.get("cwe_ids") or [] if cwe in _CWE_CATEGORIES]
@@ -55,7 +54,6 @@ def _finding_category(details: dict[str, Any]) -> str:
 
 
 def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Process SAST (Static Application Security Testing) findings."""
     findings_by_category = defaultdict(list)
     for f in findings:
         findings_by_category[_finding_category(get_attr(f, "details", {}))].append(f)

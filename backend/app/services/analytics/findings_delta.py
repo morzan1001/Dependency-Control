@@ -1,7 +1,3 @@
-"""Findings-delta: match findings across two scans by a type-specific semantic key
-(CVE id, secret finding_id, SAST rule id, ...) into the unified envelope.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -46,7 +42,7 @@ def sast_rule_ids(details: dict[str, Any]) -> list[str]:
 
 
 def _sast_identifier(finding: dict[str, Any]) -> str:
-    """The merged rule-id set; the line moves with every edit above the hit, so it stays out."""
+    """The line moves with every edit above the hit, so it stays out of the identity."""
     return ",".join(sorted(sast_rule_ids(finding.get("details") or {})))
 
 
@@ -83,7 +79,7 @@ def _first_detail(*keys: str) -> tuple[Callable[[dict[str, Any]], str], tuple[st
     return (lambda f: _first_id(f.get("details") or {}, *keys)), tuple(f"details.{k}" for k in keys)
 
 
-# Each extractor with the document paths it reads; "" means no stable id, and the description hash applies.
+# An extractor returning "" has no stable id, so the description hash applies.
 _FINDING_TYPE_IDENTIFIER: dict[str, tuple[Callable[[dict[str, Any]], str], tuple[str, ...]]] = {
     "sast": (_sast_identifier, ("details.sast_findings.id",)),
     "iac": (_iac_identifier, ("details.rule_id", "details.search_key", "details.start.line")),
@@ -109,9 +105,7 @@ def finding_identity_key(finding: dict[str, Any], *, include_waived: bool = Fals
     component = finding.get("component") or ""
 
     if ftype == "vulnerability":
-        # Scanners disagree on how far a package name is qualified; fold to the artifact name
-        # so a requalified component reads as unchanged instead of removed + added. Other
-        # types keep the raw component because theirs is a file path, not a package name.
+        # Scanners qualify package names differently; other finding types keep theirs raw since it is a file path.
         component = extract_artifact_name(component)
         identifier = _vulnerability_identifier(finding, include_waived)
     else:
@@ -126,7 +120,6 @@ def finding_identity_key(finding: dict[str, Any], *, include_waived: bool = Fals
 
 
 def advisory_keys(finding: dict[str, Any]) -> set[tuple[str, str]]:
-    """One (artifact, CVE) pair per live advisory, independent of the version the record sits at."""
     artifact = extract_artifact_name(finding.get("component") or "")
     return {(artifact, cve) for cve in live_cves([finding.get("details")])}
 
@@ -160,7 +153,6 @@ _FETCH_PROJECTION: dict[str, int] = {
 
 
 def _side_query(project_id: str, scan_id: str, finding_type: Iterable[str] | None) -> dict:
-    """The item set of one side before the waiver filter splits it."""
     query: dict = {"project_id": project_id, "scan_id": scan_id}
     if finding_type:
         query["type"] = {"$in": list(finding_type)}
@@ -174,9 +166,8 @@ def _waiver_touched(doc: dict) -> bool:
 
 
 async def _read_side(db: AsyncIOMotorDatabase, query: dict) -> tuple[list[dict], list[dict], int]:
-    """The side's live records, every record and how many a waiver touches."""
     read = await db["findings"].find(query, _FETCH_PROJECTION).to_list(None)
-    # The delivered risk, as in every other metric; documents predating the flag lack the key and count as unwaived.
+    # Documents predating the flag lack the key and count as unwaived.
     live = [doc for doc in read if doc.get("waived") is not True]
     return live, read, sum(map(_waiver_touched, read))
 
@@ -230,7 +221,6 @@ def _to_changed_item(from_doc: dict, to_doc: dict) -> FindingDeltaItem:
 def _match(
     from_docs: Iterable[dict], to_docs: Iterable[dict], *, include_waived: bool = False
 ) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
-    """Pair the documents sharing an identity; returns the pairs and each side's unpaired documents."""
     pairs, removed, added = [], [], []
     for from_group, to_group in by_side(
         lambda doc: finding_identity_key(doc, include_waived=include_waived), from_docs, to_docs

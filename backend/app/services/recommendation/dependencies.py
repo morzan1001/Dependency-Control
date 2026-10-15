@@ -26,7 +26,6 @@ from app.services.recommendation.common import (
     severity_impact,
 )
 
-# A package held at this many versions is fragmented.
 _FRAGMENTATION_MIN_VERSIONS = 3
 # Counts that must be exceeded: fragmented packages for a MEDIUM card, outdated transitives for a card at all.
 _FRAGMENTED_PACKAGES_FOR_MEDIUM = 3
@@ -38,7 +37,6 @@ def analyze_outdated_dependencies(
     upgrading_findings: list[ModelOrDict],
     join_dependencies: list[ModelOrDict],
 ) -> list[Recommendation]:
-    """Installs behind their registry's default release that no vulnerability or end-of-life card upgrades."""
     upgraded = installed_copy_lookup(upgrading_findings, "component")
     row_of = installed_copy_lookup(join_dependencies, "name")
     direct: list[ModelOrDict] = []
@@ -107,7 +105,6 @@ def _outdated_card(
 def analyze_version_fragmentation(
     dependencies: list[ModelOrDict],
 ) -> list[Recommendation]:
-    """Detect multiple versions of the same package in the dependency tree."""
     recommendations = []
 
     versions_by_package: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -178,9 +175,6 @@ def analyze_version_fragmentation(
 def analyze_dev_in_production(
     dependencies: list[ModelOrDict],
 ) -> list[Recommendation]:
-    """
-    Identify development dependencies that may be included in production builds.
-    """
     recommendations = []
 
     potential_dev_deps: list[dict[str, Any]] = []
@@ -230,7 +224,6 @@ def analyze_dev_in_production(
 
 
 def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Process end-of-life dependency findings."""
     if not eol_findings:
         return []
 

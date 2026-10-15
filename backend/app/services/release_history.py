@@ -1,5 +1,3 @@
-"""Upstream release-history analytics: cadence and adoption-latency math, and the cached deps.dev fetcher."""
-
 from __future__ import annotations
 
 import logging
@@ -35,7 +33,6 @@ _SEMVER_SYSTEMS = frozenset({"npm", "go", "cargo", "nuget"})
 
 
 def _is_stable_release(version: str, system: str) -> bool:
-    """True for X.Y.Z; False for pre-releases under the ecosystem's version scheme."""
     if system in _SEMVER_SYSTEMS:
         return "-" not in version.split("+", 1)[0]
     try:
@@ -66,8 +63,6 @@ class UpstreamCadenceMetrics:
 
 
 class ReleaseHistoryFetcher(Protocol):
-    """Loads release histories for a set of packages, with caching."""
-
     async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory: ...
 
 
@@ -76,13 +71,11 @@ def releases_in_last_n_days(
     window_days: int,
     ref: datetime,
 ) -> int:
-    """Count releases within ``window_days`` of ``ref``."""
     cutoff = ref - timedelta(days=window_days)
     return sum(1 for r in releases if r.published_at >= cutoff)
 
 
 def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> float | None:
-    """Median gap (in days) between consecutive releases, or None if <2."""
     if len(releases) < 2:
         return None
     sorted_dates = sorted(r.published_at for r in releases)
@@ -94,7 +87,6 @@ def days_since_latest_release(
     releases: Sequence[ReleaseInfo],
     ref: datetime,
 ) -> int:
-    """Days between ``ref`` and the most recent of a non-empty ``releases``."""
     return (ref - max(r.published_at for r in releases)).days
 
 
@@ -102,11 +94,6 @@ def compute_adoption_latencies(
     history: ReleaseHistory,
     observations: Sequence[Observation],
 ) -> list[int]:
-    """Days between upstream publish and first observed scan, per package/version.
-
-    An observation matches only the release of its own ``(system, name, version)``; one
-    whose version is missing from the history is skipped.
-    """
     published = {
         (system, name, release.version): release.published_at
         for (system, name), releases in history.items()
@@ -124,7 +111,6 @@ def aggregate_upstream_metrics(
     observations: Sequence[Observation],
     ref: datetime | None = None,
 ) -> UpstreamCadenceMetrics:
-    """Project-level aggregation: median across all packages with data."""
     ref = ref or datetime.now(tz=timezone.utc)
 
     if not history:
@@ -155,7 +141,7 @@ def aggregate_upstream_metrics(
 
 
 def parse_deps_dev_response(payload: dict[str, Any]) -> list[ReleaseInfo]:
-    """The dated versions of a deps.dev GetPackage response; an undated one would count as released at epoch 0."""
+    """Undated versions are dropped: they would count as released at epoch 0."""
     out: list[ReleaseInfo] = []
     for entry in payload.get("versions", []) or []:
         version = (entry.get("versionKey") or {}).get("version")
@@ -166,8 +152,6 @@ def parse_deps_dev_response(payload: dict[str, Any]) -> list[ReleaseInfo]:
 
 
 class DepsDevReleaseHistoryFetcher:
-    """Per-package release histories from deps.dev, read through the Redis cache in one round trip."""
-
     async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
         keys = {package: CacheKeys.release_history(*package) for package in packages}
         cached = await cache_service.mget(list(keys.values()))

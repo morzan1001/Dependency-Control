@@ -23,7 +23,6 @@ _HIGH_PRIORITY_DRIFT_MIN_RANK = CATEGORY_RESTRICTIVENESS[LicenseCategory.STRONG_
 
 
 def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """License compliance card over the findings the project policy did not accept."""
     severities = []
     components = set()
     licenses = set()
@@ -80,7 +79,6 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
 
 
 def _most_restrictive_by_package(dependencies: Iterable[ModelOrDict]) -> dict[tuple[str, str], tuple[int, ModelOrDict]]:
-    """Per version-free package, the dependency with the highest known licence category and its rank."""
     by_package: dict[tuple[str, str], tuple[int, ModelOrDict]] = {}
     for dep in dependencies:
         rank = CATEGORY_RESTRICTIVENESS.get(get_attr(dep, "license_category"), -1)
@@ -97,7 +95,6 @@ def detect_license_drift(
     current_dependencies: Iterable[ModelOrDict],
     previous_dependencies: Iterable[ModelOrDict],
 ) -> list[Recommendation]:
-    """Flag packages whose licence moved to a more restrictive category since the previous scan (e.g. MIT → GPL)."""
     previous = _most_restrictive_by_package(previous_dependencies)
     drifted: list[dict[str, Any]] = []
     for key, (rank, dep) in _most_restrictive_by_package(current_dependencies).items():

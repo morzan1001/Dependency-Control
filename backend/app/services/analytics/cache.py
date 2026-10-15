@@ -1,8 +1,4 @@
-"""In-process LRU cache with per-entry TTL for expensive MongoDB analytics aggregations.
-
-Process-local (not shared across pods). Callers that mutate underlying state must
-call ``get_analytics_cache().clear()`` to avoid serving stale aggregations.
-"""
+"""Process-local: writers of the underlying data must call get_analytics_cache().clear() to avoid stale reads."""
 
 import asyncio
 import functools
@@ -26,7 +22,7 @@ class _Entry:
 
 
 class TTLCache:
-    """LRU cache with per-entry TTL, bounded by the summed ``size_of``; not thread-safe (one event loop)."""
+    """Not thread-safe: it relies on running in one event loop."""
 
     def __init__(self, maxsize: int, ttl_seconds: int, size_of: Callable[[Any], int] = lambda _value: 1):
         self.maxsize = maxsize
@@ -37,7 +33,6 @@ class TTLCache:
         self._in_flight: dict[Hashable, asyncio.Task[Any]] = {}
 
     def get(self, key: Hashable) -> tuple[bool, Any]:
-        """Return (hit, value); drops the entry if missing or expired."""
         now = time.monotonic()
         if key not in self._store:
             return False, None
@@ -52,7 +47,6 @@ class TTLCache:
         self._size -= self._store.pop(key).size
 
     def set(self, key: Hashable, value: Any) -> None:
-        """A value heavier than the whole cache is not stored; it only drops the stale entry under its key."""
         now = time.monotonic()
         # get() reorders without refreshing expiry, so LRU order is not expiry order.
         for stale in [k for k, entry in self._store.items() if entry.expires_at < now or k == key]:
@@ -66,7 +60,6 @@ class TTLCache:
             self._pop(next(iter(self._store)))
 
     async def get_or_compute[T](self, key: Hashable, compute: Callable[[], Coroutine[Any, Any, T]]) -> T:
-        """The cached value, else one computation shared by every concurrent miss on ``key``."""
         hit, value = self.get(key)
         if hit:
             return value  # type: ignore[no-any-return]
@@ -93,11 +86,9 @@ class TTLCache:
 
 @functools.cache
 def get_analytics_cache() -> TTLCache:
-    """Return the shared process-level analytics cache singleton."""
     return TTLCache(_MAXSIZE, _TTL_SECONDS)
 
 
 @functools.cache
 def get_delta_cache() -> TTLCache:
-    """Scan-delta comparisons, weighed by their item count."""
     return TTLCache(_DELTA_ROW_BUDGET, _TTL_SECONDS, size_of=lambda comparison: 1 + len(comparison.items))

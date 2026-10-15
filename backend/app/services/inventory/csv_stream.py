@@ -1,5 +1,3 @@
-"""Streaming CSV rendering shared by the findings export and inventory table downloads."""
-
 import csv
 import io
 import re

@@ -53,28 +53,19 @@ AFFECTED_COMPONENTS_SHOWN = 20
 
 
 def name_some(values: Sequence[str], shown: int) -> str:
-    """Prose list of the first `shown` values, saying how many it left unnamed."""
     head = ", ".join(values[:shown])
     remaining = len(values) - shown
     return f"{head} and {remaining} more" if remaining > 0 else head
 
 
 def sample_components(components: Iterable[str]) -> tuple[list[str], int]:
-    """The components a recommendation lists, and how many it actually covers.
-
-    Order is the caller's, so a ranked population keeps its ranking; pass a sorted sequence
-    where the source is a set, whose iteration order changes between runs.
-    """
+    """Keeps the caller's order: pass a sorted sequence where the source is a set."""
     unique = list(dict.fromkeys(component for component in components if component))
     return unique[:AFFECTED_COMPONENTS_SHOWN], len(unique)
 
 
 def sampled(name: str, values: Sequence[Any], cap: int) -> dict[str, Any]:
-    """A sample of `values` under `name`, alongside how many there are under "<name>_total".
-
-    Evidence inside an ``action`` block is read as the whole of what a card found; the population
-    is what tells a reader that the list they are acting on is a sample of it.
-    """
+    """Evidence in an action block reads as everything a card found unless <name>_total gives the population."""
     return {name: list(values[:cap]), f"{name}_total": len(values)}
 
 
@@ -91,7 +82,6 @@ def recommend(
     rank: int = 0,
     ranked_out_of: int = 0,
 ) -> Recommendation:
-    """A recommendation that lists a sample of ``components`` and counts every one of them."""
     shown, total = sample_components(components)
     return Recommendation(
         type=rec_type,
@@ -115,7 +105,6 @@ MIN_FINDINGS_FOR_CARD = 3
 
 
 def severity_impact(severities: Iterable[str | None]) -> dict[str, int]:
-    """The impact block calculate_score reads; severities outside the four scored ones count only in total."""
     counts = Counter(severities)
     return {severity.lower(): counts[severity] for severity in _IMPACT_SEVERITIES} | {"total": counts.total()}
 
@@ -129,24 +118,18 @@ def worth_a_card(impact: dict[str, int]) -> bool:
 
 
 def label_by_keywords(raw: str, table: Sequence[tuple[tuple[str, ...], str]]) -> str:
-    """The label of the first row with a keyword inside `raw`; `raw` itself when no row matches."""
     lowered = raw.lower()
     return next((label for keywords, label in table if any(keyword in lowered for keyword in keywords)), raw)
 
 
 def take_top(candidates: Sequence[Any], cap: int) -> list[tuple[int, Any, int]]:
-    """The highest-ranked `cap` candidates as (rank, candidate, population).
-
-    Rank and population are both 0 while everything ranked is emitted; past the cap a generator
-    passes them on so a reader who sees `cap` recommendations of one kind knows more were ranked.
-    """
+    """Rank and population stay 0 unless the cap cut, so a reader learns more were ranked only when they were."""
     cut = len(candidates) > cap
     population = len(candidates) if cut else 0
     return [(rank if cut else 0, candidate, population) for rank, candidate in enumerate(candidates[:cap], start=1)]
 
 
 def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
-    """Standard model-or-dict accessor used by all recommendation modules."""
     if isinstance(obj, BaseModel):
         return getattr(obj, key, default)
     return obj.get(key, default)
@@ -157,7 +140,6 @@ def dependency_label(dep: ModelOrDict) -> str:
 
 
 def installed_copy_lookup(rows: Iterable[ModelOrDict], name_field: str) -> Callable[[ModelOrDict], Any]:
-    """The row naming a finding's package at the finding's version, under either spelling of the package."""
     by_version: dict[str, dict[str, ModelOrDict]] = defaultdict(dict)
     for row in rows:
         by_version[normalize_version(get_attr(row, "version"))][get_attr(row, name_field)] = row
@@ -185,14 +167,12 @@ def malware_kind(finding: ModelOrDict) -> str:
 
 
 def scorecard_score(details: dict[str, Any]) -> float | None:
-    """A quality finding's OpenSSF Scorecard score; None when it carries maintainer risk only."""
     score = details.get("overall_score")
     return None if score is None else float(score)
 
 
 def scorecard_details(details: Any) -> dict[str, Any]:
-    """Per-issue scorecard fields (critical_issues, failed_checks, project_url) live
-    one level down in the aggregated shape: details.quality_issues[].details."""
+    """In the aggregated shape the per-issue scorecard fields live at details.quality_issues[].details."""
     if not isinstance(details, dict):
         return {}
     for issue in details.get("quality_issues") or []:
@@ -204,14 +184,12 @@ def scorecard_details(details: Any) -> dict[str, Any]:
 
 
 def live_advisories(details: Any) -> list[dict[str, Any]]:
-    """A vulnerability finding's advisories that no per-CVE waiver covers."""
     if not isinstance(details, dict):
         return []
     return [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict) and not a.get("waived")]
 
 
 def live_fixed_version(finding: ModelOrDict) -> str | None:
-    """The version fixing every live advisory that names a fix; None while a live CRITICAL/HIGH one names none."""
     advisories = live_advisories(get_attr(finding, "details", {}))
     if any(a.get("severity") in ("CRITICAL", "HIGH") and not a.get("fixed_version") for a in advisories):
         return None
@@ -229,18 +207,15 @@ def max_advisory_cvss(details: dict[str, Any]) -> float | None:
 
 
 def live_cves(details_list: Iterable[Any]) -> list[str]:
-    """Distinct CVEs across advisory lists that no per-CVE waiver covers."""
     return canonical_cves([{"vulnerabilities": live_advisories(details)} for details in details_list])
 
 
 def display_vulnerability_id(details: Any) -> str | None:
-    """The id a finding is shown under: its first CVE, else its first advisory's id; a waived one once all are."""
     ids = live_cves([details]) or canonical_cves([details])
     return next((i for i in ids if i.startswith("CVE-")), next(iter(ids), None))
 
 
 def cve_severities(advisories: Iterable[dict[str, Any]]) -> dict[str, str | None]:
-    """Each CVE the advisories name, at the worst severity any of them gives it."""
     worst: dict[str, str | None] = {}
     for advisory in advisories:
         for cve in counted_cves(advisory):
@@ -253,7 +228,6 @@ ACTION_VERSION_SAMPLE = 5
 
 
 def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
-    """A vulnerability finding in the shape every per-package roll-up counts, marked by its worst live advisory."""
     details = get_attr(f, "details", {})
     advisories = live_advisories(details)
     epss = [a["epss_score"] for a in advisories if a.get("epss_score") is not None]
@@ -279,8 +253,6 @@ def names_fix(advisory: dict[str, Any]) -> bool:
 
 @dataclass(frozen=True)
 class VulnStats:
-    """What the CVEs of a set of vulnerability findings add up to; every per-package card reads it."""
-
     total: int
     severity: Counter[str]
     cves: list[str]
@@ -321,8 +293,6 @@ _REACHABILITY_RANK = {False: 0, None: 1, True: 2}
 def summarize_vulns(
     vulns: list[VulnerabilityInfo], counted: Callable[[dict[str, Any]], bool] = lambda _: True
 ) -> VulnStats:
-    """One row per CVE of the advisories ``counted`` picks, merged across installed versions; each row takes its
-    finding's reachability."""
     severity: dict[str, str] = {}
     reachability: dict[str, bool | None] = {}
     epss: dict[str, float] = {}
@@ -374,7 +344,6 @@ def summarize_vulns(
 
 
 def vuln_priority(stats: VulnStats) -> Priority:
-    """Urgency of a set of vulnerabilities: KEV or a reachable critical first; all-unreachable criticals one lower."""
     critical = stats.severity["CRITICAL"]
     if stats.kev or stats.reachable_critical:
         return Priority.CRITICAL
@@ -418,7 +387,6 @@ def _reachability_modifier(impact: dict[str, Any]) -> float:
 
 
 def calculate_score(rec: Recommendation) -> int:
-    """Score a recommendation for sorting; mostly-unreachable findings get a multiplicative penalty."""
     impact = rec.impact
     reachable_other = (
         impact.get("reachable_count", 0) - impact.get("reachable_critical", 0) - impact.get("reachable_high", 0)
@@ -437,7 +405,5 @@ _PRIORITY_RANK = {Priority.CRITICAL: 3, Priority.HIGH: 2, Priority.MEDIUM: 1, Pr
 
 
 def sort_key(rec: Recommendation) -> tuple[int, int]:
-    """Order recommendations by priority tier first, then by score. Priority must dominate so a
-    high-volume medium item (e.g. "445 recurring vulns") never outranks a critical KEV/exploit fix;
-    calculate_score alone let raw counts overwhelm the priority base."""
+    """Priority must dominate so a high-volume medium item never outranks a critical KEV/exploit fix."""
     return (_PRIORITY_RANK.get(rec.priority, 0), calculate_score(rec))

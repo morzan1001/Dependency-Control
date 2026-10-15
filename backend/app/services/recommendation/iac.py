@@ -24,7 +24,6 @@ _PLATFORM_KEYWORDS = (
 
 
 def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Process IAC (Infrastructure as Code) findings."""
     findings_by_platform = defaultdict(list)
     for f in findings:
         findings_by_platform[label_by_keywords(get_attr(f, "details")["platform"], _PLATFORM_KEYWORDS)].append(f)

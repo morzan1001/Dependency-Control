@@ -28,7 +28,6 @@ _CVES_NAMED = 5
 def _cve_signals(
     finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
 ) -> Iterator[tuple[str, bool, bool, float]]:
-    """(cve, KEV, ransomware, EPSS) per CVE of the unwaived advisories."""
     for advisory in live_advisories(get_attr(finding, "details", {})):
         cves = counted_cves(advisory)
         for cve in cves:
@@ -44,7 +43,7 @@ def _cve_signals(
 def _exploited_cves(
     finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
 ) -> tuple[set[str], set[str], dict[str, float]]:
-    """Ransomware CVEs, other KEV CVEs, and high-EPSS CVEs outside KEV: confirmed exploitation outranks prediction."""
+    """Confirmed exploitation (ransomware, then KEV) outranks prediction (high EPSS)."""
     ransomware: set[str] = set()
     kev: set[str] = set()
     epss: dict[str, float] = {}
@@ -165,7 +164,6 @@ def process_typosquatting(typosquat_findings: list[ModelOrDict]) -> list[Recomme
 def detect_known_exploits(
     vuln_findings: list[ModelOrDict], threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None
 ) -> list[Recommendation]:
-    """Cards per CVE with a known exploit (KEV, ransomware, high EPSS); one record can join several."""
     recommendations = []
 
     kev_vulns: list[ModelOrDict] = []

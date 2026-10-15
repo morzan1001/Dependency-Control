@@ -31,7 +31,6 @@ def correlate_scorecard_with_vulnerabilities(
     vulnerability_findings: list[ModelOrDict],
     quality_findings: list[ModelOrDict],
 ) -> list[Recommendation]:
-    """Flag vulnerabilities in packages that also have poor OpenSSF Scorecard ratings."""
     recommendations: list[Recommendation] = []
 
     if not vulnerability_findings or not quality_findings:
@@ -148,7 +147,6 @@ def correlate_scorecard_with_vulnerabilities(
 
 
 def _build_cve_project_map(projects: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Build a mapping of CVE -> list of project names from cross-project data."""
     cve_project_map: dict[str, list[str]] = defaultdict(list)
     for proj in projects:
         for cve in proj["cves"]:
@@ -167,7 +165,6 @@ _TOP_PROJECT_CRITICAL_GATE = 5
 
 
 def analyze_cross_project_patterns(cross_project_data: dict[str, Any]) -> list[Recommendation]:
-    """Shared-CVE, version-inconsistency and most-affected-project cards across the user's projects."""
     projects = cross_project_data["projects"]
     if not projects:
         return []
@@ -231,8 +228,7 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
 
 
 def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], scope_note: str) -> Recommendation | None:
-    # Counted and ordered by the cross-project package aggregation, which sees every dependency
-    # row of every compared scan rather than a per-scan sample of them.
+    # The cross-project package aggregation sees every dependency row of every compared scan, not a sample.
     if not inconsistent_packages:
         return None
 

@@ -1,5 +1,3 @@
-"""Shared side reads, paging, side grouping and version pairing for scan-delta services."""
-
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +15,6 @@ K = TypeVar("K")
 
 
 async def both_sides(read: Callable[[str], Awaitable[T]], from_scan: str, to_scan: str) -> tuple[T, T]:
-    """Each side's read, concurrently; a pair resolved onto one scan is read once."""
     if from_scan == to_scan:
         side = await read(from_scan)
         return side, side
@@ -25,7 +22,7 @@ async def both_sides(read: Callable[[str], Awaitable[T]], from_scan: str, to_sca
 
 
 def page_of(comparison: ScanDeltaResponse, change: str | None, page: int, page_size: int) -> ScanDeltaResponse:
-    """One 1-indexed page of a sorted comparison's items of the ``change`` kind; assumes page/page_size >= 1."""
+    """page is 1-indexed; page and page_size must be >= 1."""
     items = [i for i in comparison.items if change in (None, "all", _FILTER_OF.get(i.change, i.change))]
     start = (page - 1) * page_size
     return comparison.model_copy(
@@ -39,7 +36,6 @@ def page_of(comparison: ScanDeltaResponse, change: str | None, page: int, page_s
 
 
 def by_side(key: Callable[[T], K], from_items: Iterable[T], to_items: Iterable[T]) -> dict[K, tuple[list[T], list[T]]]:
-    """Both sides' items grouped under one key, as (from items, to items)."""
     groups: dict[K, tuple[list[T], list[T]]] = defaultdict(lambda: ([], []))
     for side, items in enumerate((from_items, to_items)):
         for item in items:
@@ -48,7 +44,6 @@ def by_side(key: Callable[[T], K], from_items: Iterable[T], to_items: Iterable[T
 
 
 def pair_versions(from_docs: list[dict], to_docs: list[dict]) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
-    """A lone doc per side pairs whatever its version, else equal versions pair; returns pairs, removed, added."""
     if len(from_docs) == len(to_docs) == 1:
         return [(from_docs[0], to_docs[0])], [], []
     by_version: dict[str, list[dict]] = defaultdict(list)
