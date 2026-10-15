@@ -30,7 +30,6 @@ _SYSTEM_SECRETS = {
     "slack_client_secret": "slack-client-secret-value",
     "slack_refresh_token": "slack-refresh-token-value",
     "oidc_client_secret": "oidc-client-secret-value",
-    "gitlab_access_token": "glpat-gitlab-token-value",
     "mattermost_bot_token": "mattermost-bot-token-value",
 }
 

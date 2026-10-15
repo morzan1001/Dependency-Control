@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from itertools import batched
@@ -207,24 +207,20 @@ async def check_scheduled_rescans(worker_manager: "AnalysisWorkerManager") -> No
     Checks for projects that need a periodic re-scan.
     """
     logger.debug("Checking for scheduled re-scans...")
-    try:
-        db = await get_database()
+    db = await get_database()
 
-        repo = SystemSettingsRepository(db)
-        system_settings = await repo.get()
+    repo = SystemSettingsRepository(db)
+    system_settings = await repo.get()
 
-        # Pre-filter to projects that have been scanned at least once.
-        async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}, _RESCAN_PROJECT_PROJECTION):
-            # The due targets left over stay due, so a later pass, in whichever process has room, takes them.
-            if worker_manager.is_saturated():
-                break
-            try:
-                await _process_project_rescan(project_data, system_settings, db, worker_manager)
-            except Exception as e:
-                logger.exception("Error processing project %s: %s", project_data.get("name"), e)
-
-    except Exception as e:
-        logger.exception("Scheduled re-scan check failed: %s", e)
+    # Pre-filter to projects that have been scanned at least once.
+    async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}, _RESCAN_PROJECT_PROJECTION):
+        # The due targets left over stay due, so a later pass, in whichever process has room, takes them.
+        if worker_manager.is_saturated():
+            break
+        try:
+            await _process_project_rescan(project_data, system_settings, db, worker_manager)
+        except Exception as e:
+            logger.exception("Error processing project %s: %s", project_data.get("name"), e)
 
 
 async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
@@ -519,50 +515,32 @@ async def _expire_scans(db: Any) -> None:
         await _expire_group(db, days, {"project_id": {"$in": project_ids}}, action, label)
 
 
+async def _best_effort[*Ts](label: str, task: Callable[[*Ts], Awaitable[object]], *args: *Ts) -> None:
+    """Run ``task(*args)``; a failure is logged under ``label`` and keeps the caller's other tasks running."""
+    try:
+        await task(*args)
+    except Exception as e:
+        logger.exception("%s failed: %s", label, e)
+
+
 async def run_housekeeping() -> None:
     """The cluster's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
-    try:
-        db = await get_database()
-        # Held to expiry, never released: its TTL is the cadence across pods.
-        if not await DistributedLocksRepository(db).acquire_lock(
-            "housekeeping", new_lock_holder(), ttl_seconds=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
-        ):
-            return
-        logger.info("Starting housekeeping task...")
-
-        try:
-            await reconcile_release_flags(db)
-        except Exception as e:
-            logger.exception("Housekeeping: release flag reconcile failed: %s", e)
-
-        try:
-            await prune_old_audit_entries(db)
-        except Exception as e:
-            logger.exception("Housekeeping: policy audit retention failed: %s", e)
-
-        try:
-            await sweep_expired_compliance_reports(db)
-        except Exception as e:
-            logger.exception("Housekeeping: compliance report sweep failed: %s", e)
-
-        # Orphan-reaper: delete S3 archive objects with no matching metadata
-        try:
-            await _reap_orphan_s3_objects(db)
-        except Exception as e:
-            logger.exception("Orphan reaper failed: %s", e)
-
-        try:
-            await _reap_orphan_callgraphs(db)
-        except Exception as e:
-            logger.exception("Callgraph orphan reaper failed: %s", e)
-
-        try:
-            await reap_orphan_gridfs_files(db)
-        except Exception as e:
-            logger.exception("GridFS orphan reaper failed: %s", e)
-
-    except Exception as e:
-        logger.exception("Housekeeping task failed: %s", e)
+    db = await get_database()
+    # Held to expiry, never released: its TTL is the cadence across pods.
+    if not await DistributedLocksRepository(db).acquire_lock(
+        "housekeeping", new_lock_holder(), ttl_seconds=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
+    ):
+        return
+    logger.info("Starting housekeeping task...")
+    for label, sweep in (
+        ("Housekeeping: release flag reconcile", reconcile_release_flags),
+        ("Housekeeping: policy audit retention", prune_old_audit_entries),
+        ("Housekeeping: compliance report sweep", sweep_expired_compliance_reports),
+        ("Orphan reaper", _reap_orphan_s3_objects),
+        ("Callgraph orphan reaper", _reap_orphan_callgraphs),
+        ("GridFS orphan reaper", reap_orphan_gridfs_files),
+    ):
+        await _best_effort(label, sweep, db)
 
 
 async def trigger_stale_pending_scans(worker_manager: "AnalysisWorkerManager") -> None:
@@ -611,89 +589,80 @@ async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
     and resets them to 'pending' or marks them as 'failed'.
     """
     logger.debug("Running stuck scan recovery...")
-    try:
-        db = await get_database()
-        timeout_threshold = datetime.now(timezone.utc) - timedelta(
-            seconds=settings.HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS
-        )
-        max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
-        scan_repo = ScanRepository(db)
+    db = await get_database()
+    timeout_threshold = datetime.now(timezone.utc) - timedelta(seconds=settings.HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS)
+    max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
+    scan_repo = ScanRepository(db)
 
-        cursor = db.scans.find(
-            {
-                "status": SCAN_STATUS_PROCESSING,
-                "$or": [
-                    {"analysis_started_at": {"$lt": timeout_threshold}},
-                    {"analysis_started_at": None},
-                ],
-            }
-        )
+    cursor = db.scans.find(
+        {
+            "status": SCAN_STATUS_PROCESSING,
+            "$or": [
+                {"analysis_started_at": {"$lt": timeout_threshold}},
+                {"analysis_started_at": None},
+            ],
+        }
+    )
 
-        async for scan in cursor:
-            scan_id = scan["_id"]
-            retry_count = scan.get("stuck_retry_count", 0)
+    async for scan in cursor:
+        scan_id = scan["_id"]
+        retry_count = scan.get("stuck_retry_count", 0)
 
-            if retry_count < max_retries:
-                logger.warning(
-                    f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
-                )
-                requeued = await scan_repo.requeue(scan_id, scan.get("worker_id"), counter="stuck_retry_count")
-                if requeued:
-                    await worker_manager.add_job(str(scan_id))
+        if retry_count < max_retries:
+            logger.warning(
+                f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
+            )
+            requeued = await scan_repo.requeue(scan_id, scan.get("worker_id"), counter="stuck_retry_count")
+            if requeued:
+                await worker_manager.add_job(str(scan_id))
 
-            else:
-                logger.error(f"Scan {scan_id} failed after {max_retries} retries.")
-                error = "Analysis timed out or worker crashed multiple times."
-                # Every pod runs this loop; only the one whose write lands announces the failure.
-                if await scan_repo.mark_failed(scan_id, error, worker_id=scan.get("worker_id")):
-                    await notify_analysis_failed(db, scan_id, scan.get("project_id"), error)
-
-    except Exception as e:
-        logger.exception("Stuck scan recovery failed: %s", e)
+        else:
+            logger.error(f"Scan {scan_id} failed after {max_retries} retries.")
+            error = "Analysis timed out or worker crashed multiple times."
+            # Every pod runs this loop; only the one whose write lands announces the failure.
+            if await scan_repo.mark_failed(scan_id, error, worker_id=scan.get("worker_id")):
+                await notify_analysis_failed(db, scan_id, scan.get("project_id"), error)
 
 
 async def sync_branch_status() -> None:
     """Sync branch status for all projects with VCS connections, on one pod per interval."""
-    try:
-        db = await get_database()
-        # Held to expiry, never released: its TTL is the cadence across pods.
-        if not await DistributedLocksRepository(db).acquire_lock(
-            "branch_sync", new_lock_holder(), ttl_seconds=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS * 3600
-        ):
-            return
-        logger.info("Starting branch status sync...")
+    db = await get_database()
+    # Held to expiry, never released: its TTL is the cadence across pods.
+    if not await DistributedLocksRepository(db).acquire_lock(
+        "branch_sync", new_lock_holder(), ttl_seconds=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS * 3600
+    ):
+        return
+    logger.info("Starting branch status sync...")
 
-        branch_sync_projection = {
-            "_id": 1,
-            "name": 1,
-            "latest_scan_id": 1,
-            "default_branch": 1,
-            "gitlab_instance_id": 1,
-            "gitlab_project_id": 1,
-            "github_instance_id": 1,
-            "github_repository_path": 1,
-        }
-        cursor = db.projects.find(
-            {
-                "$or": [
-                    {"gitlab_instance_id": {"$exists": True, "$ne": None}},
-                    {"github_instance_id": {"$exists": True, "$ne": None}},
-                ]
-            },
-            branch_sync_projection,
-        )
+    branch_sync_projection = {
+        "_id": 1,
+        "name": 1,
+        "latest_scan_id": 1,
+        "default_branch": 1,
+        "gitlab_instance_id": 1,
+        "gitlab_project_id": 1,
+        "github_instance_id": 1,
+        "github_repository_path": 1,
+    }
+    cursor = db.projects.find(
+        {
+            "$or": [
+                {"gitlab_instance_id": {"$exists": True, "$ne": None}},
+                {"github_instance_id": {"$exists": True, "$ne": None}},
+            ]
+        },
+        branch_sync_projection,
+    )
 
-        count = 0
-        async for project_data in cursor:
-            try:
-                await sync_project_branches(project_data, db)
-            except Exception as e:
-                logger.exception("Branch sync failed for project %s: %s", project_data.get("name"), e)
-            count += 1
+    count = 0
+    async for project_data in cursor:
+        try:
+            await sync_project_branches(project_data, db)
+        except Exception as e:
+            logger.exception("Branch sync failed for project %s: %s", project_data.get("name"), e)
+        count += 1
 
-        logger.info(f"Branch status sync completed for {count} project(s)")
-    except Exception as e:
-        logger.exception("Branch status sync failed: %s", e)
+    logger.info(f"Branch status sync completed for {count} project(s)")
 
 
 async def stale_scan_loop(worker_manager: "AnalysisWorkerManager") -> None:
@@ -703,10 +672,7 @@ async def stale_scan_loop(worker_manager: "AnalysisWorkerManager") -> None:
     """
     while True:
         for requeue in (trigger_stale_pending_scans, requeue_waiting_adhoc_jobs):
-            try:
-                await requeue(worker_manager)
-            except Exception as e:
-                logger.exception("Stale scan loop: %s failed: %s", requeue.__name__, e)
+            await _best_effort(f"Stale scan loop: {requeue.__name__}", requeue, worker_manager)
 
         await asyncio.sleep(HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS)
 
@@ -725,11 +691,7 @@ async def reconcile_update_frequency_ledger() -> None:
     """Check the update-frequency delta ledger against the scans and repair what drifted."""
     if not settings.UPDATE_FREQUENCY_RECONCILE_ENABLED:
         return
-    try:
-        db = await get_database()
-        await run_update_frequency_reconcile(db)
-    except Exception as e:
-        logger.exception("Update-frequency reconcile failed: %s", e)
+    await _best_effort("Update-frequency reconcile", run_update_frequency_reconcile, await get_database())
 
 
 async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
@@ -739,27 +701,18 @@ async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
     last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
-        await recover_stuck_scans(worker_manager)
-        await check_scheduled_rescans(worker_manager)
+        await _best_effort("Stuck scan recovery", recover_stuck_scans, worker_manager)
+        await _best_effort("Scheduled re-scan check", check_scheduled_rescans, worker_manager)
 
         db = await get_database()
         await update_db_stats(db)
         await update_archive_stats(db)
         await update_cache_stats()
 
-        try:
-            await run_waiver_recalc(db)
-        except Exception as e:
-            logger.exception("Waiver recalculation failed: %s", e)
-
-        await run_housekeeping()
-
-        try:
-            await _run_retention(db)
-        except Exception as e:
-            logger.exception("Housekeeping: retention failed: %s", e)
-
-        await sync_branch_status()
+        await _best_effort("Waiver recalculation", run_waiver_recalc, db)
+        await _best_effort("Housekeeping task", run_housekeeping)
+        await _best_effort("Housekeeping: retention", _run_retention, db)
+        await _best_effort("Branch status sync", sync_branch_status)
 
         # Stamped whatever the reconcile did: only one pod gets the lock, and the others
         # must not come back for it every five minutes.

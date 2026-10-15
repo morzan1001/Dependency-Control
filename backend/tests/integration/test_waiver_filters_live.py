@@ -63,3 +63,19 @@ async def test_a_page_by_creator_follows_the_current_usernames(db, sort_order, s
     )
 
     assert [(w.id, w.created_by) for w in page] == [(wid, creators[wid]) for wid in expected]
+
+
+async def test_a_page_by_creator_names_the_creators_of_case_variant_matches(db):
+    await db.users.insert_many([{"_id": "u-zoe", "username": "zoe"}, {"_id": "zz-adam", "username": "adam"}])
+    await db.waivers.insert_many(
+        [
+            {"_id": "upper", "finding_id": "CVE-2024-1", "reason": "r", "created_by": "u-zoe"},
+            {"_id": "lower", "finding_id": "cve-2024-1", "reason": "r", "created_by": "zz-adam"},
+        ]
+    )
+
+    page = await WaiverRepository(db).find_many_by_creator_name(
+        {"finding_id": "CVE-2024-1"}, 0, 10, 1, CASE_INSENSITIVE
+    )
+
+    assert [w.id for w in page] == ["lower", "upper"]

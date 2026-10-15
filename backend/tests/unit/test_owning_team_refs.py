@@ -23,6 +23,12 @@ def test_owners_are_ordered_by_name_not_by_stored_order():
     assert _names(refs) == ["Alpha", "Zulu"]
 
 
+def test_owners_are_ordered_by_name_whatever_its_case():
+    refs = team_refs(["t-z", "t-a"], {"t-z": "Zulu", "t-a": "alpha"})
+
+    assert _names(refs) == ["alpha", "Zulu"]
+
+
 def test_two_teams_sharing_a_name_are_ordered_by_id():
     """Without the tie-break the pair would swap between reads and the row would flicker."""
     refs = team_refs(["t-b", "t-a"], {"t-a": "Same", "t-b": "Same"})

@@ -187,6 +187,7 @@ def process_cve_enrichments(
         kev_ransomware_use=worst.kev_ransomware_use,
         kev_due_date=worst.kev_due_date,
         exploit_maturity=worst.exploit_maturity,
+        days_until_due=calculate_days_until_due(worst.kev_due_date),
     )
 
 
@@ -374,39 +375,6 @@ async def vuln_details_by(
         for r in rows
         if r["_id"].get(fields[0])
     }
-
-
-def build_hotspot_priority_reasons(
-    enrichment_data: CVEEnrichmentResult,
-    severity_counts: dict[str, int],
-    has_fix: bool,
-    days_until_due: int | None,
-) -> list[str]:
-    """Build priority reasons for vulnerability hotspots."""
-    reasons = []
-
-    if enrichment_data.kev_ransomware_use:
-        reasons.append("ransomware:Used in ransomware campaigns")
-
-    if days_until_due is not None and days_until_due < 0:
-        reasons.append(f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days")
-    elif days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
-        reasons.append(f"deadline:CISA deadline in {days_until_due} days")
-
-    if enrichment_data.has_kev and not enrichment_data.kev_ransomware_use:
-        reasons.append("kev:Actively exploited (CISA KEV)")
-
-    max_epss = enrichment_data.max_epss
-    if max_epss and max_epss >= EPSS_HIGH_THRESHOLD:
-        reasons.append(f"epss:High EPSS ({max_epss * 100:.1f}%)")
-
-    if severity_counts.get("critical", 0) > 0:
-        reasons.append(f"critical:{severity_counts['critical']} critical vulns")
-
-    if has_fix:
-        reasons.append("fix_available:Fix available")
-
-    return reasons
 
 
 def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:

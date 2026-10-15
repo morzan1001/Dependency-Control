@@ -47,7 +47,8 @@ class WaiverRepository(BaseRepository[Waiver]):
     ) -> list[Waiver]:
         """A page ordered by the name each waiver shows for its creator: the account's username, else what it stored."""
         # Under the collation a users $lookup scans users per waiver, since their _id index cannot carry it.
-        names = await UserRepository(self.db).usernames_by_id(await self.collection.distinct("created_by", query))
+        creators = await self.collection.distinct("created_by", query, collation=collation)
+        names = await UserRepository(self.db).usernames_by_id(creators)
         creator = {"$getField": {"field": "$created_by", "input": {"$literal": names}}}
         pipeline: list[dict[str, Any]] = [
             {"$match": query},

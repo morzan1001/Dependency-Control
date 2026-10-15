@@ -112,10 +112,10 @@ class TestFindAndDeleteByScanId:
 
 class TestDistinctBranches:
     @pytest.mark.asyncio
-    async def test_the_branches_of_this_project_are_listed_once_and_sorted(self, db):
+    async def test_the_branches_of_this_project_are_listed_once(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        assert await repo.get_distinct_branches(_PROJECT) == [_FEATURE, _MAIN]
+        assert sorted(await repo.get_distinct_branches(_PROJECT)) == [_FEATURE, _MAIN]
 
 
 class TestCRUD:

@@ -44,7 +44,7 @@ from app.api.v1.helpers.projects import (
     load_project_with_members,
     reject_unknown_analyzers,
 )
-from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, case_insensitive_key
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -636,7 +636,8 @@ async def read_project_branches(
     )
     last_scans = {row["_id"]: row["last_scan_at"] for row in rows if isinstance(row["_id"], str) and row["_id"]}
     deleted = set(project.deleted_branches or [])
-    active = [branch for branch in sorted(last_scans) if branch not in deleted]
+    names = sorted(last_scans, key=case_insensitive_key)
+    active = [branch for branch in names if branch not in deleted]
 
     head = await scan_repo.get_latest_active_scan(project)
     default_branch = head.branch if head and head.branch in active else next(iter(active), None)
@@ -648,7 +649,7 @@ async def read_project_branches(
             last_scan_at=last_scans[branch],
             is_default=branch == default_branch,
         )
-        for branch in sorted(last_scans)
+        for branch in names
     ]
 
 
@@ -750,7 +751,8 @@ async def read_project_branch_tips(
     tips = await ScanRepository(db).branch_tips(project_id, list(project.deleted_branches or []))
     return ProjectBranchTips(
         branches=[
-            BranchTip(branch=branch, scan_count=count, tip=Scan(**tip) if tip else None) for branch, count, tip in tips
+            BranchTip(branch=branch, scan_count=count, tip=Scan(**tip) if tip else None)
+            for branch, count, tip in sorted(tips, key=lambda t: case_insensitive_key(t[0]))
         ]
     )
 

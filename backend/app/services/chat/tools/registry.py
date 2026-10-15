@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ValidationError
 
 from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query, load_project_with_members
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE
 from app.api.v1.helpers.teams import (
     check_team_access,
     enrich_teams_with_usernames,
@@ -847,6 +848,7 @@ class ChatToolRegistry:
             subject="teams",
             limit=_TEAM_LIST_READ,
             sort=[("name", 1)],
+            collation=CASE_INSENSITIVE,
             projection={"name": 1, "description": 1},
         )
         return {

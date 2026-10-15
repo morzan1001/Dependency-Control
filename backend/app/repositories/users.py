@@ -80,9 +80,9 @@ class UserRepository(BaseRepository[User]):
         return {user["email"].lower(): user for user in await cursor.to_list(None)}
 
     async def usernames_by_id(self, user_ids: Iterable[str]) -> dict[str, str]:
-        """Id -> username of every account among ``user_ids``, in one read; a deleted account is absent."""
+        """Id -> username of every account among ``user_ids``, in one read; a deleted or nameless account is absent."""
         cursor = self.collection.find({"_id": {"$in": sorted(set(user_ids))}}, {"username": 1})
-        return {doc["_id"]: doc["username"] async for doc in cursor}
+        return {doc["_id"]: doc["username"] async for doc in cursor if doc.get("username")}
 
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         cursor = self.collection.find({"_id": {"$in": user_ids}})

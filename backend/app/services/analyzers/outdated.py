@@ -6,7 +6,7 @@ from packaging.version import InvalidVersion, Version
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV_API_URL
-from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 from app.schemas.sbom import has_known_version
 
@@ -33,20 +33,22 @@ def _is_ahead_of(current: str, latest: str) -> bool:
         return False
 
 
+async def _fetch_package_info(
+    client: InstrumentedAsyncClient, system: str, deps_dev_name: str
+) -> dict[str, Any] | None:
+    url = f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(deps_dev_name, safe='')}"
+    document = await fetch_deps_dev_json(client, url)
+    if document is None:
+        return None
+    default: dict[str, Any] = next((v for v in document.get("versions", []) if v.get("isDefault")), {})
+    return {"default": default.get("versionKey", {}).get("version"), "published_at": default.get("publishedAt")}
+
+
 async def fetch_package_info(client: InstrumentedAsyncClient, system: str, deps_dev_name: str) -> dict[str, Any] | None:
     """A package's deps.dev default version and its publish date, fetched once and cached; a failure raises."""
-
-    async def fetch() -> dict[str, Any] | None:
-        url = f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(deps_dev_name, safe='')}"
-        document = await fetch_deps_dev_json(client, url)
-        if document is None:
-            return None
-        default: dict[str, Any] = next((v for v in document.get("versions", []) if v.get("isDefault")), {})
-        return {"default": default.get("versionKey", {}).get("version"), "published_at": default.get("publishedAt")}
-
     info: dict[str, Any] | None = await cache_service.get_or_fetch_with_lock(
         key=CacheKeys.latest_version(system, deps_dev_name),
-        fetch_fn=fetch,
+        fetch_fn=lambda: _fetch_package_info(client, system, deps_dev_name),
         ttl_seconds=CacheTTL.LATEST_VERSION,
         reraise_fetch_errors=True,
     )
@@ -104,21 +106,13 @@ class OutdatedAnalyzer(Analyzer):
 
         # Dedupe by cache key so a package at several versions is fetched only once.
         key_targets = {target[0]: (target[1], target[2]) for target in targets if target}
-        cached: dict[str, Any] = await cache_service.mget(list(key_targets))
-        infos: dict[str, Any] = {key: info for key, info in cached.items() if info is not None}
-        missing = [key for key in key_targets if key not in infos]
-        logger.debug(f"Outdated: {len(infos)} packages from cache, {len(missing)} to fetch")
-
-        if missing:
-            timeout = ANALYZER_TIMEOUTS["outdated"]
-            async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-                fetched = await gather_bounded(
-                    missing,
-                    lambda cache_key: fetch_package_info(client, *key_targets[cache_key]),
-                    ANALYZER_BATCH_SIZES["outdated"],
-                )
-            infos.update(zip(missing, fetched, strict=True))
-
+        async with InstrumentedAsyncClient("deps.dev API", timeout=ANALYZER_TIMEOUTS["outdated"]) as client:
+            infos = await cache_service.get_many_or_fetch(
+                key_targets,
+                lambda key: _fetch_package_info(client, *key_targets[key]),
+                CacheTTL.LATEST_VERSION,
+                ANALYZER_BATCH_SIZES["outdated"],
+            )
         return [infos.get(target[0]) if target else None for target in targets]
 
     def _classify_version(

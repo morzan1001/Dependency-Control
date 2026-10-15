@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
-from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.purl import parse_purl
 from app.models.finding import Severity
 from app.schemas.sbom import has_known_version
@@ -74,26 +74,17 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _registry_hashes(self, lookups: dict[str, tuple[str, str, str]]) -> tuple[dict[str, Any], int]:
         """Registry digests per cache key, and how many lookups failed: one batched cache read, then a bounded fetch."""
-        registry_hashes = await cache_service.mget(list(lookups))
-        missing = [key for key, value in registry_hashes.items() if value is None]
-        timeout = ANALYZER_TIMEOUTS["hash_verification"]
-
-        async with InstrumentedAsyncClient("Package Registry API", timeout=timeout) as client:
-
-            async def fetch(key: str) -> Any:
-                return await cache_service.get_or_fetch_with_lock(
-                    key=key,
-                    fetch_fn=lambda: self._fetch_registry_hashes(client, *lookups[key]),
-                    ttl_seconds=CacheTTL.PACKAGE_HASH,
-                    reraise_fetch_errors=True,
-                )
-
-            fetched = await gather_bounded(missing, fetch, ANALYZER_BATCH_SIZES["hash_verification"])
-
-        registry_hashes.update(
-            (key, value) for key, value in zip(missing, fetched, strict=True) if isinstance(value, dict)
-        )
-        return registry_hashes, sum(isinstance(value, BaseException) for value in fetched)
+        async with InstrumentedAsyncClient(
+            "Package Registry API", timeout=ANALYZER_TIMEOUTS["hash_verification"]
+        ) as client:
+            values = await cache_service.get_many_or_fetch(
+                lookups,
+                lambda key: self._fetch_registry_hashes(client, *lookups[key]),
+                CacheTTL.PACKAGE_HASH,
+                ANALYZER_BATCH_SIZES["hash_verification"],
+            )
+        registry_hashes = {key: value for key, value in values.items() if isinstance(value, dict)}
+        return registry_hashes, sum(isinstance(value, BaseException) for value in values.values())
 
     @staticmethod
     def _compare_hashes(

@@ -1,11 +1,19 @@
 """Shared utilities for sorting across endpoints."""
 
+import unicodedata
 from typing import Annotated, Literal
 
 from fastapi import Query
 from pymongo.collation import Collation, CollationStrength
 
 CASE_INSENSITIVE = Collation(locale="en", strength=CollationStrength.SECONDARY)
+
+
+def case_insensitive_key(text: str) -> tuple[str, str]:
+    """Case and combining accents decide only between otherwise equal texts, as under CASE_INSENSITIVE."""
+    base = "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
+    return base.casefold(), text
+
 
 SORT_FIELDS: dict[str, dict[str, str]] = {
     "projects": {

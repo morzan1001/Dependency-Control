@@ -1,6 +1,6 @@
 """Hotspots and impact score each advisory's risk on its own CVSS, as scan-time enrichment does."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -13,6 +13,7 @@ pytestmark = pytest.mark.live_mongo
 
 _SCAN = "scan-risk"
 _EPSS = 0.5
+_DAYS_OVERDUE = 10
 
 
 def _finding(component: str, advisory: dict) -> dict:
@@ -129,3 +130,26 @@ async def test_the_kev_count_counts_each_live_kev_advisory(client, db, seeded, m
     assert resp.status_code == 200, resp.text
     kev_counts = {r["component"]: r["kev_count"] for r in resp.json()}
     assert (kev_counts["exploited"], kev_counts["elsewhere"]) == (2, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/analytics/hotspots", "/api/v1/analytics/impact"])
+async def test_an_overdue_kev_deadline_is_counted_and_named_among_the_reasons(client, db, seeded, monkeypatch, path):
+    due_date = (datetime.now(timezone.utc).date() - timedelta(days=_DAYS_OVERDUE)).isoformat()
+
+    async def _kev():
+        return {
+            "CVE-2026-0030": KEVEntry(
+                cve="CVE-2026-0030", date_added="2026-01-01", required_action="Patch", due_date=due_date
+            )
+        }
+
+    monkeypatch.setattr(vulnerability_enrichment_service._kev_provider, "load_kev_catalog", _kev)
+    await db.findings.insert_one(_finding("exploited", {"id": "CVE-2026-0030", "severity": "HIGH", "cvss_score": 7.5}))
+
+    resp = await client.get(path, headers=seeded)
+
+    assert resp.status_code == 200, resp.text
+    [exploited] = [r for r in resp.json() if r["component"] == "exploited"]
+    assert exploited["days_until_due"] == -_DAYS_OVERDUE
+    assert f"deadline_overdue:CISA deadline overdue by {_DAYS_OVERDUE} days" in exploited["priority_reasons"]

@@ -516,6 +516,19 @@ class TestTeamScopingAndRolePersistence:
         assert names(detail) == [("u-ada", "ada"), ("u-gone", None)]
 
     @pytest.mark.asyncio
+    async def test_an_account_stored_without_a_username_is_listed_unnamed(self, admin_user):
+        from app.api.v1.endpoints.teams import read_teams
+
+        db = await self._seeded(
+            teams=[self._team_doc("t-1", "One", ["u-ada", "u-nameless"])],
+            users=[{"_id": "u-ada", "username": "ada"}, {"_id": "u-nameless", "email": "n@corp.com"}],
+        )
+
+        [team] = await read_teams(search=None, sort_by="name", sort_order="asc", current_user=admin_user, db=db)
+
+        assert [(m["user_id"], m["username"]) for m in team["members"]] == [("u-ada", "ada"), ("u-nameless", None)]
+
+    @pytest.mark.asyncio
     async def test_the_requested_role_is_the_one_persisted(self, admin_user):
         from app.api.v1.endpoints.teams import update_team_member
         from app.schemas.team import TeamMemberUpdate

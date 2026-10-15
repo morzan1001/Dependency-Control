@@ -1,11 +1,14 @@
-"""The users, teams, projects and waiver creator lists sort names whatever their case; the fake ignores collations."""
+"""The users, teams, projects and waiver lists and the chat team list sort names whatever their case; the fake ignores
+collations."""
 
 import pytest
 
+from app.core.permissions import Permissions
 from app.models.project import Project, ProjectMember
 from app.models.team import Team
 from app.models.user import User
 from app.models.waiver import Waiver
+from app.services.chat.tools import ChatToolRegistry
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -80,3 +83,59 @@ async def test_the_global_waivers_order_creators_whatever_their_case(client, db,
     )
 
     assert [waiver["created_by"] for waiver in resp.json()["items"]] == ["alice.jensen", "Bob Example", "carol", "Dave"]
+
+
+@pytest.mark.parametrize("sort_by", ["finding_id", "package_name", "reason"])
+async def test_the_waivers_order_finding_ids_packages_and_reasons_whatever_their_case(
+    client, db, admin_auth_headers, sort_by
+):
+    await db.waivers.insert_many(
+        [
+            Waiver(**{"reason": "accepted", "created_by": "u-1", sort_by: value}).model_dump(by_alias=True)
+            for value in ("Bob", "carol", "alice")
+        ]
+    )
+
+    resp = await client.get(
+        "/api/v1/waivers/",
+        params={"global_only": True, "sort_by": sort_by, "sort_order": "asc"},
+        headers=admin_auth_headers,
+    )
+
+    assert [waiver[sort_by] for waiver in resp.json()["items"]] == ["alice", "Bob", "carol"]
+
+
+@pytest.mark.parametrize("sort_by", ["created_at", "created_by"])
+@pytest.mark.parametrize(
+    ("field", "values"),
+    [("finding_id", ("CVE-2024-1", "cve-2024-1", "CVE-2024-2")), ("package_name", ("Django", "django", "Flask"))],
+)
+async def test_the_waiver_filters_match_case_exactly_as_waivers_apply(
+    client, db, admin_auth_headers, sort_by, field, values
+):
+    await db.waivers.insert_many(
+        [
+            Waiver(**{"reason": "accepted", "created_by": "u-1", field: value}).model_dump(by_alias=True)
+            for value in values
+        ]
+    )
+
+    resp = await client.get(
+        "/api/v1/waivers/",
+        params={"global_only": True, field: values[0], "sort_by": sort_by},
+        headers=admin_auth_headers,
+    )
+
+    assert resp.json()["total"] == 1
+    assert [waiver[field] for waiver in resp.json()["items"]] == [values[0]]
+
+
+async def test_the_chat_team_list_orders_names_whatever_their_case(db):
+    await db.teams.insert_many(
+        [Team(name=name).model_dump(by_alias=True) for name in ("Platform Engineering", "api-gateway", "Core")]
+    )
+    caller = User(id="u-1", username="u-1", email="u-1@corp.com", permissions=[Permissions.TEAM_READ_ALL])
+
+    result = await ChatToolRegistry().execute_tool("list_teams", {}, caller, db)
+
+    assert [team["name"] for team in result["teams"]] == ["api-gateway", "Core", "Platform Engineering"]

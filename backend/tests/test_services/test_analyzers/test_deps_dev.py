@@ -6,12 +6,14 @@ from typing import Any
 import httpx
 import pytest
 
+from app.core.cache import CacheService
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers.deps_dev import DepsDevAnalyzer
 
 
-class _FakeCache:
+class _FakeCache(CacheService):
     def __init__(self, stored: dict[str, Any], peer_payload: dict[str, Any] | None = None) -> None:
+        super().__init__()
         self.stored = stored
         self.peer_payload = peer_payload
         self.looked_up: list[str] = []
@@ -193,12 +195,10 @@ class _DepsDev:
     def __init__(self, routes: dict[str, Any]) -> None:
         self.routes = routes
         self.requested: list[str] = []
-        self.sessions = 0
         self.in_flight = 0
         self.peak_in_flight = 0
 
     async def __aenter__(self) -> "_DepsDev":
-        self.sessions += 1
         return self
 
     async def __aexit__(self, *_a: object) -> None:
@@ -238,7 +238,7 @@ class TestDepsDevLookups:
 
         result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
 
-        assert api.sessions == 0
+        assert api.requested == []
         assert result == {"scorecard_issues": [], "package_metadata": {}}
 
     @pytest.mark.asyncio

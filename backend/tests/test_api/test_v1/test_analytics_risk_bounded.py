@@ -12,7 +12,7 @@ from app.api.v1.helpers.analytics import (
     select_impact_candidates,
     severity_counts_from_details,
 )
-from app.core.constants import BLAST_RADIUS_THRESHOLD, IMPACT_MAX_SCORE_BOOST
+from app.core.constants import BLAST_RADIUS_THRESHOLD, DAYS_KNOWN_OVERDUE_THRESHOLD, IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import CVEEnrichmentResult, SeverityBreakdown
@@ -802,6 +802,24 @@ class TestPriorityReasons:
         reasons = self._reasons(BLAST_RADIUS_THRESHOLD - 1)
 
         assert not any(r.startswith("blast_radius:") for r in reasons)
+
+    def test_a_hotspot_names_the_reasons_the_impact_analysis_names(self):
+        from app.api.v1.endpoints.analytics.risk import _build_hotspot
+
+        projects = [f"p{i}" for i in range(BLAST_RADIUS_THRESHOLD)]
+        advisory = {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL", "fixed_version": "1.0.1"}
+        group = {
+            "_id": {"component": "left-pad", "version": "1.0.0"},
+            "details_list": [{"vulnerabilities": [advisory]}],
+            "project_ids": projects,
+            "first_seen": datetime.now(timezone.utc) - timedelta(days=DAYS_KNOWN_OVERDUE_THRESHOLD + 30),
+        }
+
+        hotspot = _build_hotspot(group, {}, {}, {}, {})
+
+        assert hotspot.priority_reasons == build_priority_reasons(
+            {"critical": 1}, CVEEnrichmentResult(), len(projects), has_fix=True, days_known=hotspot.days_known
+        )
 
 
 class TestImpactEndpointRanksByScoreNotBlastRadius:
