@@ -411,7 +411,7 @@ export function UpdateFrequency() {
 
       {isFetching && selectedProjectId && (
         <div className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (
               <Skeleton key={`skeleton-${i}`} className="h-28 w-full" />
             ))}

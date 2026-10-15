@@ -183,6 +183,19 @@ describe("UpdateFrequency on a phone", () => {
     expect(card).toHaveClass("grid-cols-1", "md:grid-cols-2");
   });
 
+  it("lays the four loading tiles out like the summary cards they stand for, two by two until xl", async () => {
+    mockedFrequency.mockReturnValue(new Promise(() => {}));
+    renderFrequency();
+
+    const grid = (await waitFor(() => {
+      const tile = document.querySelector(".animate-pulse.h-28");
+      expect(tile).not.toBeNull();
+      return tile;
+    }))?.parentElement;
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
+  });
+
   it("lays the four summary cards out two by two until xl, so a trend such as \"Deteriorating\" keeps inside its card", async () => {
     mockedFrequency.mockResolvedValue({ ...metrics, trend_direction: "deteriorating" });
     renderFrequency();
