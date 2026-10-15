@@ -633,4 +633,12 @@ describe('ProjectSettings on a phone', () => {
     await screen.findByLabelText('GitLab Instance')
     expect(screen.getByText('GitLab Integration').nextElementSibling).toHaveClass('min-w-0')
   })
+
+  it('lets the GitLab instance select shrink to its box, truncating an instance URL instead of running past the box', async () => {
+    mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
+    mockGitLabList.mockResolvedValue(gitlabInstances())
+    renderSettings(gitlabProject())
+
+    expect(await screen.findByLabelText('GitLab Instance')).toHaveClass('min-w-0', 'text-left')
+  })
 })
