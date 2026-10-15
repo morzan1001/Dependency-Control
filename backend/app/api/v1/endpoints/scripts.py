@@ -159,7 +159,7 @@ async def get_script(
         Query(description="Pin a specific frozen release (e.g. '1.1.0'); omit for the latest pointer"),
     ] = None,
 ) -> PlainTextResponse:
-    """Download a CI/CD script for pipeline integration; pass ?v=X.Y.Z for a frozen release, omit for the latest pointer."""
+    """Download a CI/CD script; pass ?v=X.Y.Z for a frozen release, omit it for the latest pointer."""
     validate_script_name(script_name)
 
     try:

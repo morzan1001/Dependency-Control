@@ -77,6 +77,7 @@ async def mark_release(
     db: DatabaseDep,
 ) -> ReleaseItem:
     """Mark the newest build of a commit, a failed one only as a last resort, as released; re-marking rolls back."""
+    # A rescan copies the commit under a fresh created_at, so a re-mark would resolve to it and open a second record.
     builds = {"project_id": project_id, "commit_hash": payload.commit_hash, "is_rescan": {"$ne": True}}
     scan_repo = ScanRepository(db)
     scan = await scan_repo.find_one(

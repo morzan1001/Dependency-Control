@@ -51,6 +51,7 @@ _WILDCARD_SEGMENT = re.compile(r"(^|[.-])[xX*](\.|$)")
 
 
 def _names_release(version: str) -> bool:
+    """Ignores an epoch prefix, such as the "1:" of a Debian "1:2.30-1"."""
     return _RELEASE.match(version.strip().split(":", 1)[-1]) is not None
 
 

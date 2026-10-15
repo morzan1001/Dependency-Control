@@ -117,7 +117,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def earliest_detections(
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[FindingIdentity, datetime]:
-        """Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys; older copies count from their scan."""
+        """Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys."""
         earliest: dict[FindingIdentity, datetime] = {}
         # One $match naming every finding outgrows the 16 MiB command limit on large scans.
         for start in range(0, len(records), _DETECTION_CHUNK):
@@ -143,7 +143,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
                     }
                 },
             ]
-            # Unhinted, the planner races candidate plans on every persist, which took most of the lookup's time in prod.
+            # Unhinted, the planner races candidate plans on every persist, which took most of the lookup time in prod.
             cursor = self.collection.aggregate(pipeline, hint=dict(FIRST_DETECTION_INDEX), allowDiskUse=True)
             earliest.update(
                 {

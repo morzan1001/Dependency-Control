@@ -147,13 +147,14 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     )
     targets = [tip] if tip else []
 
-    # The marked scan, never its rescan, which would grow the chain past effective_scan_ids' bound; failed ones retry.
+    # The marked scan, never its rescan, which would grow the chain past effective_scan_ids' bound.
     marked_ids = set((await released_scan_ids(db, project.id)).values()) - {target["_id"] for target in targets}
     if marked_ids:
         marked = db.scans.find(
             {
                 "project_id": project.id,
                 "_id": {"$in": sorted(marked_ids)},
+                # A failed one is retried as well, since nothing else analyses it.
                 "status": {"$nin": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
                 **HAS_SBOM_MATCH,
             },

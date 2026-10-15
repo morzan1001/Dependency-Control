@@ -1,4 +1,4 @@
-"""Per-chunk GCM tags leave chunk reordering, deletion and splicing undetected: this guards confidentiality only."""
+"""Per-chunk GCM tags miss reordering, deletion and splicing: confidentiality only, enough for access-controlled S3."""
 
 import hashlib
 import os

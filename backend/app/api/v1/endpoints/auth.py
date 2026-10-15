@@ -655,7 +655,7 @@ async def forgot_password(
     email: Annotated[str, Body(embed=True)],
     db: DatabaseDep,
 ) -> ForgotPasswordResponse:
-    """Request a password reset email; always returns success with a constant-time response to prevent email enumeration and timing attacks."""
+    """Request a password reset email; every address gets one constant-time answer, so none can be enumerated."""
     await _check_rate_limit(f"forgot_pw:{_client_host(request)}", max_attempts=3, window_seconds=600)
     import asyncio
     import time
