@@ -1,5 +1,3 @@
-"""Loader for the PQC mappings YAML snapshot, cached in-memory per-process."""
-
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -69,14 +67,12 @@ def load_mappings() -> PQCMappings:
 
 
 def normalise_family(name: str | None, mappings: PQCMappings) -> str:
-    """Resolve an asset name to its canonical source_family; an alias wins over a family of the same spelling."""
     if not name:
         return ""
     return mappings.families.get(name.upper(), name)
 
 
 def resolve_family(asset: CryptoAsset, mappings: PQCMappings) -> str:
-    """The canonical source_family of the asset's name, else of its variant, else ""."""
     canonical = {m.source_family for m in mappings.mappings}
     for candidate in (asset.name, asset.variant):
         if (family := normalise_family(candidate, mappings)) in canonical:

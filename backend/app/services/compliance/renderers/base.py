@@ -1,5 +1,3 @@
-"""Renderer protocol — each format implements render(eval, report) → bytes."""
-
 import re
 from typing import Protocol
 
@@ -37,7 +35,6 @@ def _input_statement(coverage: InputCoverage, subject: str) -> str:
 
 
 def coverage_statement(coverage: EvaluationCoverage) -> str:
-    """The sentence a reader needs to know whether the verdicts cover the scope."""
     plan = coverage.plan_items
     parts = [] if plan is None else [_input_statement(plan, "migration plan items")]
     if coverage.gaps:
@@ -61,6 +58,5 @@ class Renderer(Protocol):
 
 
 def build_filename(report: ComplianceReport, extension: str) -> str:
-    """A filesystem-safe filename, e.g. nist-sp-800-131a_project-p1_20260420T100000Z.pdf."""
     scope = re.sub(r"[^A-Za-z0-9\-]", "_", f"{report.scope}-{report.scope_id}" if report.scope_id else report.scope)
     return f"{report.framework}_{scope}_{report.requested_at:%Y%m%dT%H%M%SZ}.{extension}"

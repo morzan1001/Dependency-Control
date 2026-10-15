@@ -1,5 +1,4 @@
-# PQC migration mappings — source: NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA),
-# FIPS 205 (SLH-DSA), CNSA 2.0 algorithm suite.
+# Sources: NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA) and the CNSA 2.0 suite.
 version: 1
 snapshot_date: "2026-04-20"
 
@@ -73,7 +72,6 @@ timelines:
     deadline: "2035-01-01"
     applies_to: ["RSA", "ECDSA", "EdDSA", "DH", "DSA"]
 
-# Vulnerable-family aliases that may appear in asset names from CBOM tools.
 family_aliases:
   "Diffie-Hellman": "DH"
   "DHE": "DH"

@@ -1,5 +1,3 @@
-"""SARIF 2.1.0 renderer: each control maps to a rule and a result."""
-
 import json
 
 from app.models.compliance_report import ComplianceReport
@@ -20,8 +18,7 @@ _SEVERITY_TO_LEVEL = {
     Severity.UNKNOWN.value: "warning",
 }
 
-# SARIF result properties per non-failing control status. "open" is SARIF's kind for a rule that
-# was evaluated with insufficient information to decide whether a problem exists.
+# SARIF's "open" kind means evaluated with too little information to decide.
 _STATUS_TO_RESULT: dict[str, dict[str, str]] = {
     ControlStatus.PASSED.value: {"kind": "pass"},
     ControlStatus.WAIVED.value: {"kind": "pass", "baselineState": "unchanged"},

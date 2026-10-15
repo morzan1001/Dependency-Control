@@ -1,4 +1,4 @@
-"""The one waiver restamp: brings a scan's stored waiver flags in line with the active waiver set."""
+"""The one place that rewrites a scan's stored waiver flags."""
 
 import hashlib
 import logging
@@ -36,7 +36,6 @@ _NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "match", "expiration_da
 
 
 def waiver_fingerprint(waivers: list[Waiver]) -> str:
-    """Names the waiver set a scan was stamped with, from what decides the stamping."""
     dumps = sorted(w.model_dump_json(exclude=_NOT_STAMPED) for w in waivers)
     return hashlib.sha256("\n".join(dumps).encode()).hexdigest()
 
@@ -44,7 +43,7 @@ def waiver_fingerprint(waivers: list[Waiver]) -> str:
 async def restamp_waivers(
     finding_repo: FindingRepository, waiver_repo: WaiverRepository | None, scan_id: str, waivers: list[Waiver]
 ) -> Counter[str]:
-    """Write the scan's changed waiver flags; returns each waiver's match count. ``waiver_repo`` records outcomes."""
+    """Passing waiver_repo records the outcomes."""
     finding_fields: _FieldsById = defaultdict(dict)
     counts: Counter[str] = Counter()
 
@@ -70,7 +69,6 @@ async def restamp_waivers(
 
 
 def _safe_match_signature(raw: dict, context: str) -> MatchSignature | None:
-    """Build a MatchSignature from a stored finding dict, returning None (and logging) if malformed."""
     try:
         return MatchSignature(**raw)
     except ValidationError:
@@ -81,7 +79,6 @@ def _safe_match_signature(raw: dict, context: str) -> MatchSignature | None:
 async def _signed_location_findings(
     finding_repo: FindingRepository, scan_id: str, waivers: list[Waiver], finding_fields: _FieldsById
 ) -> list[tuple[str, MatchFinding]]:
-    """The scan's signed location findings when a waiver can use them; a recomputed signature is staged to persist."""
     if not any(route_waiver(w) == "signature" or may_bind_signature(w) for w in waivers):
         return []
     signed = []
@@ -103,7 +100,6 @@ async def _stamp_advisories(
     counts: Counter[str],
     finding_fields: _FieldsById,
 ) -> dict[str, str | None]:
-    """Restage advisories of documents a waiver names or that hold a waived one; returns waived ones' reasons."""
     ids = [w.vulnerability_id for w in waivers if w.vulnerability_id]
     clause = {"$or": [{"details.vulnerabilities.waived": True}, *(advisory_match({"$in": ids})["$or"] if ids else [])]}
     scoped = [(waiver, waiver_criteria(waiver)) for waiver in waivers]
@@ -198,7 +194,6 @@ async def _stage_flag_changes(
     lapsed: dict[str, str],
     finding_fields: _FieldsById,
 ) -> None:
-    """Stage the waived and lapsed flags that differ from what the scan stores; a stored flag nothing targets clears."""
     current = {doc["_id"]: doc for doc in await finding_repo.find_waiver_state(scan_id)}
     for fid, doc in current.items():
         if doc.get("waived") and fid not in waived:
@@ -222,7 +217,7 @@ def _waiver_bookkeeping(
     bound: dict[str, MatchSignature],
     app: WaiverApplication,
 ) -> _FieldsById:
-    """Each project waiver's changed match count and signature; a global waiver spans projects and records none."""
+    """A global waiver spans projects, so it records no match count or signature."""
     fields: _FieldsById = defaultdict(dict)
     for waiver in waivers:
         if waiver.last_eval_scan_id != scan_id or waiver.last_match_count != counts[waiver.id]:

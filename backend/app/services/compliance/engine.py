@@ -1,5 +1,3 @@
-"""Orchestrates compliance report generation: pending -> generating -> completed|failed."""
-
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -199,7 +197,6 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         producers: frozenset[str],
     ) -> tuple[dict[str, str], list[str], list[ProjectWithScanId]]:
-        """project_id -> evaluated scan, the gaps (no project, no usable scan, a failed or no producer), the projects."""
         from app.services.releases import resolve_scan_ids
 
         projects = resolved.projects
@@ -243,7 +240,6 @@ class ComplianceReportEngine:
     def _finding_type_filter(
         self, framework: ComplianceFramework
     ) -> tuple[dict[str, Any], tuple[str, ...], frozenset[str]] | None:
-        """Findings clause, extra fields and producing analyzers; None for a framework that reads no findings."""
         if framework.key == ReportFramework.PQC_MIGRATION_PLAN:
             return None
         if framework.key == ReportFramework.CVE_REMEDIATION_SLA:
@@ -269,7 +265,6 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         framework: ComplianceFramework,
     ) -> LicensePolicySchema:
-        """The single project's saved policy; every other scope, and a crypto framework, gets the default."""
         project_ids = resolved.project_ids or []
         if framework.key != ReportFramework.LICENSE_AUDIT or resolved.scope != "project" or len(project_ids) != 1:
             return LicensePolicySchema()

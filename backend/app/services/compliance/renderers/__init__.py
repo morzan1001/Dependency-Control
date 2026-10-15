@@ -1,5 +1,3 @@
-"""Compliance report renderers; RENDERER_REGISTRY maps each ReportFormat to its renderer."""
-
 from app.schemas.compliance import ReportFormat
 from app.services.compliance.renderers.base import Renderer
 from app.services.compliance.renderers.csv_renderer import CsvRenderer

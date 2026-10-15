@@ -1,5 +1,3 @@
-"""Framework-evaluation modules, keyed into FRAMEWORK_REGISTRY."""
-
 from app.schemas.compliance import ReportFramework
 from app.services.compliance.frameworks.base import ComplianceFramework, SeedFramework
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework

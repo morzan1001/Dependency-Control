@@ -1,7 +1,4 @@
-# Protocol / cipher-suite defaults — Phase 2
-# Most cipher-suite findings are emitted by the analyzer directly (using
-# IANA catalog weakness tags). These rules exist for policy-driven amplification
-# on per-project baselines.
+# The analyzer emits most cipher-suite findings from IANA weakness tags; these rules amplify them per project policy.
 
 rules:
   - rule_id: cnsa20-require-pfs

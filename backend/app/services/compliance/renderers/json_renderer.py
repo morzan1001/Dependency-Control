@@ -1,5 +1,3 @@
-"""JSON renderer — machine-readable structured output."""
-
 import json
 
 from app.models.compliance_report import ComplianceReport

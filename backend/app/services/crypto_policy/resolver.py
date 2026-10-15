@@ -1,5 +1,3 @@
-"""Merges the system default crypto policy with a project override."""
-
 import functools
 from dataclasses import dataclass
 

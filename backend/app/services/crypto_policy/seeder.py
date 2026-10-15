@@ -1,5 +1,3 @@
-"""Seeds the system crypto policy from ./seed/*.yaml and holds the one write path of every crypto policy."""
-
 import functools
 import logging
 from collections.abc import Sequence
@@ -50,7 +48,7 @@ async def write_policy(
     reverted_from_version: int | None = None,
     editor: str | None = None,
 ) -> CryptoPolicy | None:
-    """The one write path of a crypto policy; rules=None deletes the project override and returns None if none existed."""
+    """The one write path of a crypto policy; rules=None deletes the project override."""
     repo = CryptoPolicyRepository(db)
     if scope == "system":
         current = await repo.get_system_policy()

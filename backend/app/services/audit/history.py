@@ -1,5 +1,3 @@
-"""Policy audit history: change summaries and persistence for crypto/license policy edits."""
-
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -36,7 +34,6 @@ _POLICY_EVENTS: dict[PolicyType, tuple[str, NotificationEvent, str]] = {
 
 
 def compute_change_summary(old: CryptoPolicy | None, new: CryptoPolicy) -> str:
-    """Deterministic human-readable diff summary."""
     if old is None:
         return f"Initial policy ({len(new.rules)} rules)"
 
@@ -81,7 +78,6 @@ async def record_policy_change(
     comment: str | None,
     reverted_from_version: int | None = None,
 ) -> PolicyAuditEntry:
-    """Persist an audit entry and fire webhook + notifications (best-effort)."""
     entry = PolicyAuditEntry(
         policy_scope=policy_scope,
         project_id=project_id,
@@ -100,7 +96,6 @@ async def record_policy_change(
 
 
 async def _persist_and_announce(db: AsyncIOMotorDatabase, entry: PolicyAuditEntry) -> None:
-    """Persist the entry, then fire its webhook and notifications; each step is best-effort."""
     try:
         await PolicyAuditRepository(db).create(entry)
     except Exception:
@@ -140,7 +135,6 @@ async def _dispatch_webhook(db: AsyncIOMotorDatabase, entry: PolicyAuditEntry) -
 
 
 async def _notify_relevant_users(db: AsyncIOMotorDatabase, entry: PolicyAuditEntry) -> None:
-    """Notify users affected by a policy change; system-scope hits system:manage/analytics:global holders, project-scope hits members. Skipped for SEED."""
     if entry.action == PolicyAuditAction.SEED:
         return
 
@@ -169,7 +163,6 @@ async def _notify_relevant_users(db: AsyncIOMotorDatabase, entry: PolicyAuditEnt
 
 
 def compute_license_policy_change_summary(old: dict[str, Any], new: dict[str, Any]) -> str:
-    """Deterministic one-line summary of the change between two resolved license policies."""
     parts = [
         f"{field}: {old[field]} -> {new[field]}"
         for field in LicensePolicySchema.model_fields
@@ -187,7 +180,7 @@ async def record_license_policy_change(
     action: PolicyAuditAction,
     actor: User,
 ) -> PolicyAuditEntry | None:
-    """Persist a license-policy audit entry (best-effort); returns None if no effective change. Version continues the highest audited one since the project doc has no version column."""
+    """Version continues the highest audited one because the project doc has no version column."""
     if old_policy == new_policy:
         return None
 

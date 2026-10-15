@@ -1,5 +1,3 @@
-"""PDF renderer: renders a Jinja2 template with evaluation data to PDF bytes via WeasyPrint."""
-
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +13,7 @@ def build_template_context(
     report: ComplianceReport,
     disclaimer: str | None = None,
 ) -> dict[str, Any]:
-    """Every name `base_report.html` reads. Importable without WeasyPrint's native stack, so a
-    test can render the page the renderer renders instead of a hand-built stand-in that drifts."""
+    """Must stay importable without WeasyPrint's native stack so tests render this exact context."""
     return {
         "framework_name": evaluation.framework_name,
         "framework_version": evaluation.framework_version,

@@ -1,4 +1,4 @@
-"""FIPS 140-3 and ISO/IEC 19790 algorithm-level conformance; no module-level certification check."""
+"""Algorithm-level conformance only; module-level CMVP certification is out of scope."""
 
 import functools
 from collections.abc import Callable
@@ -27,7 +27,6 @@ from app.services.compliance.frameworks.base import (
 
 _DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "fips_disallowed_functions.yaml"
 
-# Disallowed category -> primitives whose assets the control judges.
 _CATEGORY_PRIMITIVES: dict[str, frozenset[CryptoPrimitive]] = {
     "hash_functions": frozenset({CryptoPrimitive.HASH}),
     "symmetric_ciphers": frozenset({CryptoPrimitive.BLOCK_CIPHER, CryptoPrimitive.STREAM_CIPHER, CryptoPrimitive.AE}),
@@ -37,8 +36,6 @@ _CATEGORY_PRIMITIVES: dict[str, frozenset[CryptoPrimitive]] = {
 
 @dataclass
 class AlgorithmConformanceFramework:
-    """One control per disallowed-function category plus the RSA key-size control."""
-
     key: ReportFramework
     name: str
     version: str
@@ -93,7 +90,6 @@ def _make_disallowed_evaluator(
     algos: list[str],
     category: str,
 ) -> Callable[[ControlDefinition, EvaluationInput], ControlResult]:
-    """FAILED when a category asset uses a disallowed algorithm and its weak-algorithm finding is not waived."""
     primitives = _CATEGORY_PRIMITIVES[category]
 
     def evaluator(control: ControlDefinition, data: EvaluationInput) -> ControlResult:

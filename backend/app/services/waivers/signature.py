@@ -1,8 +1,4 @@
-"""Compute a line-independent MatchSignature for location-based findings.
-
-Dispatch is by anchor shape (finding_id prefix / details structure), not by FindingType,
-so crypto-misuse SAST findings (id OPENGREP-...) are also covered.
-"""
+"""Dispatch is by anchor shape, not FindingType, so crypto-misuse SAST findings (OPENGREP-...) are covered too."""
 
 import hashlib
 import re
@@ -19,7 +15,6 @@ _WS = re.compile(r"\s+")
 
 
 def snippet_hash(text: str | None) -> str | None:
-    """SHA-1 of whitespace-normalized text; None for blank input."""
     if not text:
         return None
     lines = [_WS.sub(" ", ln).strip() for ln in text.splitlines()]
@@ -30,7 +25,6 @@ def snippet_hash(text: str | None) -> str | None:
 
 
 def _select_sast_entry(entries: list[dict[str, Any]]) -> dict[str, Any]:
-    """Pick a deterministic per-scanner entry (preference list, then sorted by (scanner, id))."""
     for pref in _SCANNER_PREFERENCE:
         matches = [e for e in entries if (e.get("scanner") or "") == pref]
         if matches:
@@ -108,7 +102,6 @@ def _secret_signature(finding_id: str, details: Mapping[str, Any], component: st
 def compute_match_signature(
     finding_id: str | None, details: Mapping[str, Any] | None, component: str
 ) -> MatchSignature | None:
-    """Return a MatchSignature for SAST/IaC/Secret findings (dispatched by id prefix / details), else None."""
     fid = finding_id or ""
     details = details or {}
 

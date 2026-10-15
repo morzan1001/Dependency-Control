@@ -1,5 +1,3 @@
-"""Priority scoring for PQC migration items: 0..100 per asset, higher = migrate sooner."""
-
 import math
 from datetime import datetime
 from typing import Any
@@ -12,7 +10,6 @@ KEY_WEAKNESS_WEIGHT = 0.30
 DEADLINE_WEIGHT = 0.25
 COUNT_WEIGHT = 0.10
 
-# Exposure scores on a 0..100 scale (higher = more exposed = migrate sooner).
 EXPOSURE_CERTIFICATE = 100.0
 EXPOSURE_RELATED_MATERIAL = 60.0
 EXPOSURE_SOURCE = 50.0
@@ -48,7 +45,6 @@ def priority_score(
     now: datetime,
     asset_count: int = 1,
 ) -> int:
-    """Weighted sum of exposure, key-weakness, deadline, count components."""
     exposure = _score_exposure(asset)
     weakness = _score_key_weakness(asset, source_family)
     deadline = _score_deadline(source_family, timelines, now)
@@ -108,7 +104,6 @@ def _score_deadline(source_family: str, timelines: list[Timeline], now: datetime
 
 
 def _score_count(count: int) -> float:
-    """Log-scaled 0..100 contribution from an asset's occurrence count."""
     if count <= 0:
         return 0.0
     raw = _COUNT_BASELINE + math.log10(count) * _COUNT_LOG_MULTIPLIER

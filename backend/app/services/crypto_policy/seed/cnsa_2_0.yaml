@@ -1,8 +1,5 @@
-# CNSA Suite 2.0 — NSA's Commercial National Security Algorithm Suite
-# https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF
-#
-# All CNSA 2.0 rules are disabled by default. Enable them explicitly in
-# environments that must comply with NSA/US national security requirements.
+# Source: https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF
+# Disabled by default: enable only where NSA/US national security requirements apply.
 
 rules:
   - rule_id: cnsa20-rsa-min-3072

@@ -1,5 +1,4 @@
-# NIST Post-Quantum Cryptography migration
-# https://csrc.nist.gov/Projects/post-quantum-cryptography
+# Source: https://csrc.nist.gov/Projects/post-quantum-cryptography
 
 rules:
   - rule_id: pqc-quantum-vulnerable-pke

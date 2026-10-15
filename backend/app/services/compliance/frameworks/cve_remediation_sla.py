@@ -1,5 +1,3 @@
-"""CVE Remediation SLA: one control per severity bucket; FAILED when overdue."""
-
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
