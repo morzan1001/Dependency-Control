@@ -1,5 +1,4 @@
-"""An update schema types every field optional so it can be omitted; one the stored document requires
-must still refuse an explicit null, which exclude_unset would otherwise write."""
+"""A field the stored document requires must refuse an explicit null, which exclude_unset would otherwise write."""
 
 
 def reject_null[T](value: T | None) -> T:

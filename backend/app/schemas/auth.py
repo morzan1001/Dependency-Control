@@ -1,11 +1,7 @@
-"""Pydantic models for authentication API endpoints."""
-
 from pydantic import BaseModel
 
 
 class MessageResponse(BaseModel):
-    """Generic message response for auth endpoints."""
-
     message: str
 
 

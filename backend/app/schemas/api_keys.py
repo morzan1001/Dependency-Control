@@ -1,5 +1,3 @@
-"""Request and response models for the unified API key system."""
-
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
@@ -8,8 +6,7 @@ from app.core.constants import ApiKeySurface
 
 
 class KeyListTruncation(BaseModel):
-    """What a saturated key listing left out. A credential the owner cannot see is one they
-    cannot revoke, so the page may not end without the response saying that it did."""
+    """A key the owner cannot see cannot be revoked, so a cut listing has to say so."""
 
     limit: int
     returned: int
@@ -17,7 +14,6 @@ class KeyListTruncation(BaseModel):
 
 
 def key_list_truncation(*, returned: int, total: int, limit: int) -> KeyListTruncation | None:
-    """The disclosure for a key listing, or None when the listing is the whole of it."""
     return KeyListTruncation(limit=limit, returned=returned, total=total) if total > returned else None
 
 

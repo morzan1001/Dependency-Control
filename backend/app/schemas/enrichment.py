@@ -1,5 +1,3 @@
-"""Models for aggregating dependency enrichment data from multiple sources."""
-
 from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
@@ -8,8 +6,6 @@ from app.core.constants import ExploitMaturity
 
 
 class EPSSData(BaseModel):
-    """EPSS (Exploit Prediction Scoring System) data for a CVE."""
-
     cve: str
     epss_score: float  # probability of exploitation in next 30 days (0.0 - 1.0)
     percentile: float
@@ -17,8 +13,6 @@ class EPSSData(BaseModel):
 
 
 class KEVEntry(BaseModel):
-    """CISA Known Exploited Vulnerability entry."""
-
     cve: str
     date_added: str
     required_action: str
@@ -27,8 +21,6 @@ class KEVEntry(BaseModel):
 
 
 class GHSAData(BaseModel):
-    """GitHub Security Advisory data."""
-
     ghsa_id: str
     cve_id: str | None = None
     github_url: str = ""
@@ -42,8 +34,6 @@ class GHSAData(BaseModel):
 
 
 class VulnerabilityEnrichment(BaseModel):
-    """Enriched vulnerability data combining multiple sources."""
-
     cve: str
 
     epss_score: float | None = None  # 0.0 - 1.0
@@ -61,8 +51,6 @@ class VulnerabilityEnrichment(BaseModel):
 
 
 class DependencyEnrichment(BaseModel):
-    """Enrichment data for a dependency merged from SBOM, deps.dev and the license scanner."""
-
     name: str
     version: str
     # Canonical purl (qualifiers/subpath stripped) — the cross-scan join key.
@@ -72,7 +60,7 @@ class DependencyEnrichment(BaseModel):
     primary_license: str | None = None
     # Raw SBOM-declared SPDX expression when composite (e.g. "A AND (B WITH exception)").
     license_expression: str | None = None
-    license_category: str | None = None  # permissive, copyleft, etc.
+    license_category: str | None = None
     license_risks: list[str] = Field(default_factory=list)
     license_obligations: list[str] = Field(default_factory=list)
 
@@ -85,7 +73,6 @@ class DependencyEnrichment(BaseModel):
     sources: list[str] = Field(default_factory=list)
 
     def to_mongo_dict(self) -> dict[str, Any]:
-        """Convert to a sparse dict for MongoDB storage (no None values)."""
         result = self._license_fields()
 
         if self.homepage:

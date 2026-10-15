@@ -51,7 +51,6 @@ _WILDCARD_SEGMENT = re.compile(r"(^|[.-])[xX*](\.|$)")
 
 
 def _names_release(version: str) -> bool:
-    """Whether the version, epoch dropped, starts at a numeric release."""
     return _RELEASE.match(version.strip().split(":", 1)[-1]) is not None
 
 
@@ -86,7 +85,7 @@ class AdvisoryPackage(BaseModel):
         return value
 
     def covers(self, version: str) -> bool | None:
-        """Whether ``version`` is at or below this rule's inclusive max version; None if it names no release."""
+        """None when ``version`` names no release, so it cannot be compared."""
         if self.version is None:
             return True
         if not _names_release(version):
@@ -99,7 +98,6 @@ class BroadcastRequest(BaseModel):
     target_teams: list[str] | None = Field(None, description="List of Team IDs if target_type is 'teams'")
     channels: list[str] | None = Field(None, description="Channels to send to (email, slack, mattermost)")
 
-    # For Advisory
     packages: list[AdvisoryPackage] | None = Field(None, description="List of affected packages for advisory")
 
     subject: str
@@ -130,8 +128,6 @@ class BroadcastHistoryItem(BaseModel):
 
 
 class PackageSuggestions(BaseModel):
-    """Head of the alphabetical matches for a typeahead query."""
-
     names: list[str] = Field(..., description="Alphabetical, at most the endpoint's suggestion limit")
     more: bool = Field(
         ...,

@@ -1,5 +1,3 @@
-"""Request and response models for marking, unmarking and listing releases."""
-
 from datetime import datetime
 from typing import Annotated
 
@@ -23,8 +21,7 @@ class ReleaseMarkRequest(BaseModel):
 
 
 class ReleaseItem(BaseModel):
-    """One release record plus the state of the analysis behind it, so a deploy whose scan has not
-    finished analysing reads differently from an environment nothing is deployed to."""
+    """Carries the analysis state, so a deploy whose scan is still analysing differs from an empty environment."""
 
     scan_id: str = Field(..., description="The released artefact's scan")
     project_id: str

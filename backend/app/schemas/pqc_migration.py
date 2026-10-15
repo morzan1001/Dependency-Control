@@ -1,5 +1,3 @@
-"""Response schemas for the PQC migration plan generator."""
-
 from datetime import datetime
 from enum import Enum
 

@@ -1,5 +1,3 @@
-"""Fields and validators the GitHub and GitLab instance schemas share."""
-
 from datetime import datetime
 from typing import Self
 

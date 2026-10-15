@@ -1,5 +1,3 @@
-"""Request and response models for the ad-hoc analysis endpoint."""
-
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -10,11 +8,9 @@ from app.schemas.project import LicensePolicySchema
 
 
 class AdhocScannerPayloads(BaseModel):
-    """Inner scanner result shapes, not the ingest envelopes: TruffleHog/OpenGrep/Bearer
-    carry ``findings``, KICS carries ``queries``."""
+    """Inner scanner results, not the ingest envelopes: TruffleHog, OpenGrep and Bearer carry findings, KICS queries."""
 
-    # A misspelled scanner name must not silently analyse nothing: the response is the caller's
-    # only feedback channel.
+    # A misspelled scanner name must not silently analyse nothing, as the response is the caller's only feedback.
     model_config = ConfigDict(extra="forbid")
 
     trufflehog: dict[str, Any] | None = None
@@ -38,16 +34,14 @@ class AdhocAnalyzeRequest(BaseModel):
 
     @model_validator(mode="after")
     def _require_input(self) -> "AdhocAnalyzeRequest":
-        # An SBOM document with no keys carries nothing to analyse, just as an empty scanners
-        # object does; either way the caller would get a 200 over an empty analysis.
+        # A keyless SBOM, like empty scanners, would get a 200 over an empty analysis.
         if not any(self.sboms) and not (self.scanners and self.scanners.carries_payload()):
             raise ValueError("at least one non-empty entry in 'sboms' or 'scanners' must be supplied")
         return self
 
 
 class AnalyzerReport(BaseModel):
-    """Which analyzers contributed. Reasons are carried per name so a timeout is
-    distinguishable from missing coverage."""
+    """Reasons per analyzer name, so a timeout is distinguishable from missing coverage."""
 
     ran: list[str] = Field(default_factory=list)
     skipped: dict[str, str] = Field(default_factory=dict)
@@ -55,8 +49,7 @@ class AnalyzerReport(BaseModel):
     errored: dict[str, list[str]] = Field(default_factory=dict)
     # Defects in the posted inputs, keyed by input label rather than analyzer name.
     skipped_inputs: dict[str, str] = Field(default_factory=dict)
-    # What a stage did that its findings do not show: where the posted data went, which
-    # policy graded it.
+    # What a stage did that its findings do not show, such as where the data went or which policy graded it.
     notes: dict[str, str] = Field(default_factory=dict)
 
 

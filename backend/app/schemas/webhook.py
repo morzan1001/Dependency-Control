@@ -44,7 +44,6 @@ def _parse_ip(host: str) -> IPAddress | None:
 
 
 def validate_webhook_url(url: str) -> str:
-    """Reject empty, non-http(s), userinfo-bypass, and private/metadata targets."""
     if not url:
         raise ValueError("URL cannot be empty")
 
@@ -129,8 +128,6 @@ WebhookHeaders = Annotated[dict[str, str], AfterValidator(validate_webhook_heade
 
 
 class WebhookCreate(BaseModel):
-    """Schema for creating a new webhook."""
-
     url: WebhookUrl
     events: WebhookEvents
     secret: str | None = None
@@ -176,16 +173,12 @@ class WebhookResponse(BaseModel):
 
 
 class WebhookTestRequest(BaseModel):
-    """Schema for testing a webhook."""
-
     event_type: str = WEBHOOK_EVENT_SCAN_COMPLETED
 
     _event_type_valid = field_validator("event_type")(validate_webhook_event_type)
 
 
 class WebhookTestResponse(BaseModel):
-    """Schema for webhook test response."""
-
     success: bool
     status_code: int | None = None
     error: str | None = None

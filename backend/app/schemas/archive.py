@@ -4,8 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class ArchiveListItem(BaseModel):
-    """Single archive entry in listing response."""
-
     id: str
     scan_id: str
     branch: str | None = None
@@ -21,15 +19,11 @@ class ArchiveListItem(BaseModel):
 
 
 class AdminArchiveListItem(ArchiveListItem):
-    """Archive entry with project info for admin overview."""
-
     project_id: str
     project_name: str | None = None
 
 
 class ArchiveRestoreResponse(BaseModel):
-    """Response after restoring an archive."""
-
     scan_id: str
     project_id: str
     message: str = "Archive restored successfully"
@@ -37,7 +31,5 @@ class ArchiveRestoreResponse(BaseModel):
 
 
 class ScanPinResponse(BaseModel):
-    """Response after pinning/unpinning a scan."""
-
     scan_id: str
     pinned: bool

@@ -22,8 +22,6 @@ class OpenGrepFinding(BaseModel):
 
 
 class OpenGrepIngest(BaseIngest):
-    """Schema for OpenGrep SAST scan results."""
-
     findings: list[OpenGrepFinding] = Field(
         default_factory=list,
         description="List of SAST findings from OpenGrep.",

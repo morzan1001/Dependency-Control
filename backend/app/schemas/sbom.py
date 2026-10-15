@@ -1,5 +1,3 @@
-"""Pydantic models for normalized SBOM representations (CycloneDX, SPDX, Syft)."""
-
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -14,8 +12,6 @@ def has_known_version(version: str | None) -> bool:
 
 
 class SBOMFormat(Enum):
-    """Supported SBOM formats."""
-
     CYCLONEDX = "cyclonedx"
     SPDX = "spdx"
     SYFT = "syft"
@@ -23,19 +19,14 @@ class SBOMFormat(Enum):
 
 
 class ParsedDependency(BaseModel):
-    """Normalized dependency representation with all available SBOM fields."""
-
-    # Core Identity
     name: str
     version: str
     purl: str | None = None
     type: str = "unknown"
 
-    # Licensing
     license: str = ""
     license_url: str | None = None
 
-    # Scope and relationships
     scope: str | None = None
     direct: bool = False
     direct_inferred: bool = Field(
@@ -44,50 +35,39 @@ class ParsedDependency(BaseModel):
     )
     parent_components: list[str] = Field(default_factory=list)
 
-    # Source/Origin information
     source_type: str | None = None
     source_target: str | None = None
     layer_digest: str | None = None
     found_by: str | None = None
     locations: list[str] = Field(default_factory=list)
 
-    # Security identifiers
     cpes: list[str] = Field(default_factory=list)
 
-    # Package metadata
     description: str | None = None
     author: str | None = None
     publisher: str | None = None
     group: str | None = None
 
-    # External references
     homepage: str | None = None
     repository_url: str | None = None
     download_url: str | None = None
 
-    # Checksums
     hashes: dict[str, str] = Field(default_factory=dict)
 
-    # Additional properties from SBOM
     properties: dict[str, str] = Field(default_factory=dict)
 
 
 class ParsedSBOM(BaseModel):
-    """Normalized SBOM representation."""
-
     format: SBOMFormat
 
-    # Source information
     source_type: str | None = None
     source_target: str | None = None
 
-    # Components/Dependencies
     dependencies: list[ParsedDependency] = Field(default_factory=list)
 
-    # Statistics
     skipped_components: int = 0
     merged_components: int = 0
     skipped_reasons: dict[str, int] = Field(default_factory=dict)
 
-    # CBOM extension — populated if SBOM contains cryptographic-asset components
+    # Filled only when the SBOM holds cryptographic-asset components.
     crypto_assets: list["ParsedCryptoAsset"] = Field(default_factory=list)

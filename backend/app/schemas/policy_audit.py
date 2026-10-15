@@ -1,5 +1,3 @@
-"""Policy audit schemas — shared enums and API shapes."""
-
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,8 +14,7 @@ class PolicyAuditAction(str, Enum):
 
 
 class PolicyRevertRequest(BaseModel):
-    """Body of a policy revert. Mirrors PolicyAuditEntry's own comment limit so an over-long
-    comment is a 422 here rather than a failure when the audit entry is persisted."""
+    """Shares PolicyAuditEntry's comment limit, so an over-long comment is a 422 rather than a failed audit write."""
 
     target_version: int
     comment: str | None = Field(None, max_length=POLICY_COMMENT_MAX_LENGTH)

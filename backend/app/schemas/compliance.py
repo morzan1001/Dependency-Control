@@ -1,8 +1,3 @@
-"""
-Compliance reporting schemas — enums, control definitions, framework
-evaluation result, residual risks. Pure data types, no I/O.
-"""
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime

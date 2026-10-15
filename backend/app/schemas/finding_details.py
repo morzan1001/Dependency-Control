@@ -1,14 +1,4 @@
-"""Typed contracts for ``Finding.details`` payloads, one model per finding type.
-
-Writers (normalizers/analyzers) construct these models and store
-``model_dump(exclude_none=True)``; readers may only consume keys declared here.
-``tests/schemas/test_finding_details_contract.py`` walks the backend source and
-fails on any ``details`` key that no model declares, so writer/reader drift is a
-test failure instead of a silently-empty feature.
-
-``extra="allow"`` keeps analyzer-specific extras round-tripping through
-re-validation; it does not exempt readers from declaring what they consume.
-"""
+"""Typed Finding.details contracts: a test fails on any details key read or written that no model here declares."""
 
 from collections.abc import Mapping
 from datetime import datetime
@@ -18,11 +8,12 @@ from pydantic import BaseModel, ConfigDict
 
 
 class _DetailsModel(BaseModel):
+    # Extras round-trip through re-validation; readers must still declare every key they consume.
     model_config = ConfigDict(extra="allow")
 
 
 class ScorecardContext(_DetailsModel):
-    """Cross-link block from a package's quality aggregate onto its other findings (``aggregation.cross_link``)."""
+    """Cross-link block a package's quality aggregate puts on its other findings."""
 
     overall_score: float | None = None
     project_url: str | None = None
@@ -37,8 +28,6 @@ class LineSpan(_DetailsModel):
 
 
 class ReachabilityInfo(_DetailsModel):
-    """Written by ``reachability_enrichment`` under ``details.reachability``."""
-
     is_reachable: bool | None = None
     confidence_score: float | None = None
     analysis_level: str | None = None
@@ -52,8 +41,6 @@ class ReachabilityInfo(_DetailsModel):
 
 
 class OutdatedInfo(_DetailsModel):
-    """Cross-link block on vulnerability findings (``aggregation.cross_link``)."""
-
     is_outdated: bool = True
     current_version: str | None = None
     latest_version: str | None = None
@@ -81,8 +68,6 @@ class EolInfo(_DetailsModel):
 
 
 class VulnerabilityContextInfo(_DetailsModel):
-    """Cross-link block on non-vulnerability findings (``aggregation.cross_link``)."""
-
     has_vulnerabilities: bool = True
     vuln_count: int = 0
     critical_count: int = 0
@@ -90,16 +75,13 @@ class VulnerabilityContextInfo(_DetailsModel):
 
 
 class AdditionalFindingType(_DetailsModel):
-    """One entry of ``details.additional_finding_types``: another type on the same package."""
+    """Another finding type on the same package."""
 
     type: str
     severity: str
 
 
 class VulnerabilityScannerDetails(_DetailsModel):
-    """Per-scanner details of a single vulnerability (trivy/grype/osv), nested in
-    ``details.vulnerabilities[].details``."""
-
     fixed_version: str | None = None
     cvss_score: float | None = None
     cvss_vector: str | None = None
@@ -118,8 +100,6 @@ class VulnerabilityScannerDetails(_DetailsModel):
 
 
 class VulnerabilityEntryDetails(_DetailsModel):
-    """One entry of ``details.vulnerabilities`` on an aggregated vulnerability finding."""
-
     id: str | None = None
     severity: str | None = None
     description: str | None = None
@@ -131,7 +111,6 @@ class VulnerabilityEntryDetails(_DetailsModel):
     scanners: list[str] = []
     details: VulnerabilityScannerDetails | None = None
     ecosystem_specific: dict[str, Any] | None = None
-    # enrichment (enrichment.service)
     epss_score: float | None = None
     epss_percentile: float | None = None
     in_kev: bool | None = None
@@ -143,19 +122,16 @@ class VulnerabilityEntryDetails(_DetailsModel):
     risk_score: float | None = None
     github_advisory_url: str | None = None
     resolved_cve: str | None = None
-    # per-entry waiver state (services.waivers.apply.restamp_waivers)
+    # Per-advisory waiver state.
     waived: bool | None = None
     waiver_reason: str | None = None
-    # earliest detection on the component in the project, any version (analysis.engine._stamp_first_seen)
+    # Earliest detection on the component in the project, any version.
     first_seen_at: datetime | None = None
 
 
 class VulnerabilityDetails(_DetailsModel):
-    """Aggregated vulnerability finding: entry list plus finding-level enrichment."""
-
     vulnerabilities: list[VulnerabilityEntryDetails] = []
     fixed_version: str | None = None
-    # enrichment (enrichment.service)
     epss_score: float | None = None
     epss_percentile: float | None = None
     epss_date: str | None = None
@@ -167,10 +143,8 @@ class VulnerabilityDetails(_DetailsModel):
     exploit_maturity: str | None = None
     risk_score: float | None = None
     github_advisory_url: str | None = None
-    # reachability (reachability_enrichment)
     reachability: ReachabilityInfo | None = None
     adjusted_risk_score: float | None = None
-    # cross-links (aggregation.cross_link)
     outdated_info: OutdatedInfo | None = None
     quality_info: QualityInfo | None = None
     license_info: LicenseInfo | None = None
@@ -233,8 +207,6 @@ class OutdatedDetails(_DetailsModel):
 
 
 class ScorecardIssueDetails(_DetailsModel):
-    """Details of a single scorecard quality issue (normalize_scorecard)."""
-
     scorecard: dict[str, Any] = {}
     overall_score: float | None = None
     failed_checks: list[Any] = []
@@ -247,16 +219,12 @@ class ScorecardIssueDetails(_DetailsModel):
 
 
 class MaintainerRiskDetails(_DetailsModel):
-    """Details of a single maintainer-risk quality issue (normalize_maintainer_risk)."""
-
     risks: list[Any] = []
     maintainer_info: dict[str, Any] = {}
     risk_count: int | None = None
 
 
 class QualityIssueEntry(_DetailsModel):
-    """One entry of ``details.quality_issues`` on an aggregated quality finding."""
-
     id: str | None = None
     type: str | None = None
     severity: str | None = None
@@ -275,8 +243,7 @@ class QualityDetails(_DetailsModel):
 
 
 class SastScannerDetails(_DetailsModel):
-    """Per-scanner SAST details (opengrep/bearer); also the shape of
-    ``crypto_key_management`` findings and of ``details.sast_findings[].details``."""
+    """Per-scanner SAST details, also the whole details of a crypto_key_management finding."""
 
     rule_id: str | None = None
     check_id: str | None = None
@@ -304,8 +271,6 @@ class SastScannerDetails(_DetailsModel):
 
 
 class SastFindingEntry(_DetailsModel):
-    """One entry of ``details.sast_findings`` on a merged SAST finding."""
-
     id: str | None = None
     scanner: str | None = None
     severity: str | None = None
@@ -313,8 +278,6 @@ class SastFindingEntry(_DetailsModel):
 
 
 class SastDetails(_DetailsModel):
-    """SAST finding as persisted (aggregation.merging.to_sast_aggregate)."""
-
     sast_findings: list[SastFindingEntry] = []
     file: str | None = None
     line: int | None = None
@@ -379,8 +342,6 @@ class SystemWarningDetails(_DetailsModel):
 
 
 class MatchedRuleEntry(_DetailsModel):
-    """One entry of ``details.matched_rules`` on a crypto policy-rule finding."""
-
     rule_id: str | None = None
     rule_name: str | None = None
     policy_source: str | None = None
@@ -404,7 +365,6 @@ class CryptoRuleDetails(_DetailsModel):
 
 
 def all_rule_ids(details: Mapping[str, Any] | None) -> set[str]:
-    """Every rule a crypto finding belongs to: the lead rule_id plus each matched_rules entry."""
     details = details or {}
     ids = {entry["rule_id"] for entry in details.get("matched_rules") or [] if entry.get("rule_id")}
     if lead := details.get("rule_id"):
@@ -413,7 +373,7 @@ def all_rule_ids(details: Mapping[str, Any] | None) -> set[str]:
 
 
 class CryptoCertificateDetails(_DetailsModel):
-    """Details for the crypto_cert_* finding family (certificate_lifecycle checks)."""
+    """Details of the crypto_cert_* finding family."""
 
     bom_ref: str | None = None
     subject_name: str | None = None
@@ -435,7 +395,7 @@ class CryptoCertificateDetails(_DetailsModel):
 
 
 class CryptoProtocolDetails(_DetailsModel):
-    """Details for crypto_weak_protocol findings (protocol_cipher analyzer)."""
+    """Details of crypto_weak_protocol findings."""
 
     bom_ref: str | None = None
     protocol_type: str | None = None

@@ -1,5 +1,3 @@
-"""Request/response schemas for the chat API."""
-
 from datetime import datetime
 from typing import Any, Literal
 

@@ -1,65 +1,46 @@
-"""Data classes for the recommendation engine output structures."""
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 
 class RecommendationType(str, Enum):
-    """Types of remediation recommendations."""
-
-    # Vulnerability-related
     BASE_IMAGE_UPDATE = "base_image_update"
     DIRECT_DEPENDENCY_UPDATE = "direct_dependency_update"
     TRANSITIVE_FIX_VIA_PARENT = "transitive_fix_via_parent"
     NO_FIX_AVAILABLE = "no_fix_available"
-    # Secret-related
     ROTATE_SECRETS = "rotate_secrets"
-    # SAST-related
     FIX_CODE_SECURITY = "fix_code_security"
-    # IAC-related
     FIX_INFRASTRUCTURE = "fix_infrastructure"
-    # License-related
     LICENSE_COMPLIANCE = "license_compliance"
     LICENSE_DRIFT = "license_drift"
-    # Quality-related
     SUPPLY_CHAIN_RISK = "supply_chain_risk"
     CRITICAL_RISK = "critical_risk"  # Combined vuln + scorecard risk
-    # Dependency Health & Hygiene
     OUTDATED_DEPENDENCY = "outdated_dependency"
     VERSION_FRAGMENTATION = "version_fragmentation"
     DEV_IN_PRODUCTION = "dev_in_production"
-    # Trend-based
     RECURRING_VULNERABILITY = "recurring_vulnerability"
     REGRESSION_DETECTED = "regression_detected"
-    # Dependency Graph
     DEEP_DEPENDENCY_CHAIN = "deep_dependency_chain"
     DUPLICATE_FUNCTIONALITY = "duplicate_functionality"
-    # Cross-Project
     CROSS_PROJECT_PATTERN = "cross_project_pattern"
     SHARED_VULNERABILITY = "shared_vulnerability"
 
-    # Critical Hotspots - highest priority issues requiring immediate action
     CRITICAL_HOTSPOT = "critical_hotspot"  # Package with multiple severe issues
     KNOWN_EXPLOIT = "known_exploit"  # KEV or known exploit available
-    RANSOMWARE_RISK = "ransomware_risk"  # Used in ransomware campaigns
-    ACTIVELY_EXPLOITED = "actively_exploited"  # Currently being exploited in wild
+    RANSOMWARE_RISK = "ransomware_risk"
+    ACTIVELY_EXPLOITED = "actively_exploited"
 
-    # Supply Chain Risks
-    MALWARE_DETECTED = "malware_detected"  # OSS malware found
-    TYPOSQUAT_DETECTED = "typosquat_detected"  # Potential typosquatting package
-    HASH_MISMATCH = "hash_mismatch"  # Package integrity issue
-    EOL_DEPENDENCY = "eol_dependency"  # End-of-life dependency
+    MALWARE_DETECTED = "malware_detected"
+    TYPOSQUAT_DETECTED = "typosquat_detected"
+    HASH_MISMATCH = "hash_mismatch"
+    EOL_DEPENDENCY = "eol_dependency"
 
-    # Quick Wins - high impact, low effort fixes
     QUICK_WIN = "quick_win"  # Easy fix with high impact
-    SINGLE_UPDATE_MULTI_FIX = "single_update_multi_fix"  # One update fixes many issues
+    SINGLE_UPDATE_MULTI_FIX = "single_update_multi_fix"
 
-    # Risk Aggregation
     TOXIC_DEPENDENCY = "toxic_dependency"  # Package with multiple risk factors
     ATTACK_SURFACE_REDUCTION = "attack_surface_reduction"  # Remove unnecessary deps
 
-    # Crypto-related
     REPLACE_WEAK_ALGORITHM = "replace_weak_algorithm"  # Broken/disallowed primitive
     INCREASE_KEY_SIZE = "increase_key_size"  # Key shorter than policy minimum
     UPGRADE_PROTOCOL = "upgrade_protocol"  # Deprecated TLS / SSH / IPsec version
@@ -68,8 +49,6 @@ class RecommendationType(str, Enum):
 
 
 class Priority(str, Enum):
-    """Recommendation priority levels."""
-
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -77,8 +56,6 @@ class Priority(str, Enum):
 
 
 class Effort(str, Enum):
-    """Effort level required to implement a recommendation."""
-
     LOW = "low"  # Quick fix, minimal testing needed
     MEDIUM = "medium"  # Some development and testing required
     HIGH = "high"  # Significant development, testing, and coordination needed
@@ -86,19 +63,16 @@ class Effort(str, Enum):
 
 @dataclass
 class Recommendation:
-    """A remediation recommendation."""
-
     type: RecommendationType
     priority: Priority
     title: str
     description: str
     impact: dict[str, Any]  # {critical: X, high: Y, total: Z, ...} + optional metadata
     affected_components: list[str]
-    action: dict[str, Any]  # Specific action details
+    action: dict[str, Any]
     effort: Effort = Effort.MEDIUM
     affected_components_total: int = 0
-    # Where this sat in the ranked list its generator emitted, and how many were ranked; both 0
-    # unless that list was cut, in which case they are what says the rest exist.
+    # Position in, and size of, its generator's ranked list; both 0 unless the list was cut.
     rank: int = 0
     ranked_out_of: int = 0
 

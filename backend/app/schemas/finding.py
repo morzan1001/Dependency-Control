@@ -23,8 +23,6 @@ class VulnerabilityAggregatedDetails(TypedDict, total=False):
 
 
 class QualityEntry(TypedDict, total=False):
-    """A single quality issue entry (from scorecard, maintainer_risk, etc.)."""
-
     id: str
     type: str  # "scorecard", "maintainer_risk", etc.
     severity: str
@@ -34,8 +32,6 @@ class QualityEntry(TypedDict, total=False):
 
 
 class QualityAggregatedDetails(TypedDict, total=False):
-    """Aggregated quality data from multiple sources."""
-
     quality_issues: list[QualityEntry]
     overall_score: float | None
     has_maintenance_issues: bool
