@@ -416,6 +416,14 @@ describe('ProjectScans - sorting', () => {
   })
 })
 
+describe('ProjectScans - findings counts', () => {
+  it('writes the high count in the severity colour beside the critical count', () => {
+    renderScans([makeScan({ id: 'risky', stats: { critical: 2, high: 13, medium: 0, low: 0 } })])
+
+    expect(screen.getByText('13')).toHaveClass('text-severity-high')
+  })
+})
+
 describe('ProjectScans - long branch names', () => {
   it('breaks a long branch name anywhere and keeps the row icons whole beside it', () => {
     const branch = 'feature/checkout-redesign-with-a-rather-long-branch-name'

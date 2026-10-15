@@ -41,9 +41,9 @@ function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChil
   const getSeverityBorder = () => {
     if (!node.findings_severity) return ''
     if (node.findings_severity.critical > 0) return 'border-l-red-500'
-    if (node.findings_severity.high > 0) return 'border-l-orange-500'
+    if (node.findings_severity.high > 0) return 'border-l-severity-high'
     if (node.findings_severity.medium > 0) return 'border-l-yellow-500'
-    if (node.findings_severity.low > 0) return 'border-l-blue-500'
+    if (node.findings_severity.low > 0) return 'border-l-severity-low'
     return ''
   }
 

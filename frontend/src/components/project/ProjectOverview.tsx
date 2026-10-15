@@ -254,10 +254,10 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">High Issues</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-orange-500" />
+            <AlertTriangle className="h-4 w-4 text-severity-high" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-500">{stats.high ?? 0}</div>
+            <div className="text-2xl font-bold text-severity-high">{stats.high ?? 0}</div>
             <p className="text-xs text-muted-foreground">
               {headlineSource ? `${headlineSource} — click to view findings` : 'Click to view findings'}
             </p>
