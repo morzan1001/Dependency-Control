@@ -8,7 +8,6 @@ export const PROJECT_ROLE_ADMIN = 'admin';
 
 const ROLE_HIERARCHY: string[] = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN];
 
-// The effective member role, or null if not a member.
 export function getUserProjectRole(
   project: Project,
   userId: string
@@ -17,9 +16,7 @@ export function getUserProjectRole(
   return ((member?.effective_role ?? member?.role) as 'admin' | 'editor' | 'viewer') ?? null;
 }
 
-// Minimum-role gate: viewer = read, editor/admin = write. project:update bypasses
-// membership for any request (write implies read); project:read_all grants read only.
-// project:delete opens canDeleteProject alone.
+// project:delete is no bypass here: it opens canDeleteProject alone.
 export function hasProjectRole(
   project: Project,
   userId: string,
@@ -57,7 +54,7 @@ export function isProjectEditor(
   return hasProjectRole(project, userId, PROJECT_ROLE_EDITOR, globalPermissions);
 }
 
-/** Delete project: project admin by role OR global project:delete (project:update does not delete) */
+// isProjectAdmin gets no global permissions: project:update must not delete.
 export function canDeleteProject(
   project: Project,
   userId: string,
@@ -66,8 +63,7 @@ export function canDeleteProject(
   return isProjectAdmin(project, userId) || globalPermissions.includes('project:delete');
 }
 
-// The project admin gate already opens for the global write grant, so a webhook permission only
-// has to add membership in any role.
+// isProjectAdmin already admits project:update, so a webhook permission only needs membership in any role.
 function canWriteProjectWebhook(
   project: Project,
   userId: string,
@@ -78,7 +74,6 @@ function canWriteProjectWebhook(
     || (globalPermissions.includes(webhookPermission) && getUserProjectRole(project, userId) !== null);
 }
 
-/** Create project webhook: project admin OR webhook:create plus membership */
 export function canCreateProjectWebhook(
   project: Project,
   userId: string,
@@ -87,7 +82,6 @@ export function canCreateProjectWebhook(
   return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:create');
 }
 
-/** Delete project webhook: project admin OR webhook:delete plus membership */
 export function canDeleteProjectWebhook(
   project: Project,
   userId: string,
@@ -96,7 +90,6 @@ export function canDeleteProjectWebhook(
   return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:delete');
 }
 
-/** Update or test project webhook: project admin OR webhook:update plus membership */
 export function canUpdateProjectWebhook(
   project: Project,
   userId: string,
@@ -105,7 +98,7 @@ export function canUpdateProjectWebhook(
   return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:update');
 }
 
-/** Create waiver (project-scoped): project editor or higher; waiver:manage covers global waivers only */
+// waiver:manage covers global waivers only.
 export function canCreateProjectWaiver(
   project: Project,
   userId: string,
@@ -114,7 +107,6 @@ export function canCreateProjectWaiver(
   return isProjectEditor(project, userId, globalPermissions);
 }
 
-/** Delete waiver (project-scoped): project admin OR global waiver:delete */
 export function canDeleteProjectWaiver(
   project: Project,
   userId: string,
