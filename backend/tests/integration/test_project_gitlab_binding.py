@@ -16,7 +16,6 @@ from tests.helpers.permission_presets import PRESET_USER
 _BOUND = {"gitlab_instance_id": "gl-1", "gitlab_project_id": 4242, "gitlab_project_path": "group/sub/project"}
 _UNBOUND = {"gitlab_instance_id": None, "gitlab_project_id": None, "gitlab_project_path": None}
 
-# Shape of a gitlab_instances document as written by VcsInstanceRepository.create.
 _INSTANCE = {
     "_id": "gl-1",
     "name": "Internal GitLab",
@@ -29,7 +28,6 @@ _INSTANCE = {
 
 
 def _system_manager_headers() -> dict[str, str]:
-    """A project admin who also administers the estate, without the global project write grant."""
     return bearer_headers("ownerp", [*PRESET_USER, Permissions.SYSTEM_MANAGE])
 
 

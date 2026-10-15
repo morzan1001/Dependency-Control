@@ -1,5 +1,3 @@
-"""Project stores team_ids and team_sources as written."""
-
 from app.models.project import Project
 
 _NAME = "demo"

@@ -1,8 +1,4 @@
-"""The stuck-scan recovery window: a scan inside it belongs to the worker still running it.
-
-Recovery resets `processing` back to `pending` and requeues it, so a scan wrongly judged stuck
-loses the analysis in flight and is run a second time.
-"""
+"""Recovery requeues a processing scan, so one wrongly judged stuck loses the analysis in flight and runs twice."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock

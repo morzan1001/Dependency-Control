@@ -1,5 +1,3 @@
-"""Licence names, URLs and comma-bearing titles as SBOM generators write them resolve to SPDX ids."""
-
 import asyncio
 import itertools
 from typing import Any

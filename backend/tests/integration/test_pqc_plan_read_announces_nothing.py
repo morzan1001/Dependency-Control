@@ -1,5 +1,3 @@
-"""Reading a PQC migration plan reaches no webhook subscriber and no project member."""
-
 from unittest.mock import AsyncMock
 
 import pytest

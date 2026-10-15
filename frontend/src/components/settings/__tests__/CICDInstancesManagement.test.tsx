@@ -171,8 +171,7 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     expect(table.queryByText('No PAT')).toBeNull()
   })
 
-  // Spec §8: GHES has no IdP team sync, so its teams may be hand-maintained and less
-  // authoritative than an operator expects.
+  // GHES has no IdP team sync, so its teams may be hand-maintained and less authoritative than expected.
   it('warns that GHES team structure is hand-maintained once sync is on', () => {
     mockUseGitLabInstances.mockReturnValue(gitlabInstance())
     mockUseGitHubInstances.mockReturnValue(githubInstance({ sync_teams: true }))
@@ -226,8 +225,7 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     expect(mockGitHubCreate.mock.calls[0][0]).toMatchObject({ sync_teams: true })
   })
 
-  // The switch needs a token to be operable, but clearing the field afterwards leaves it on.
-  // Without the guard the backend answers a raw 422 envelope instead of the update path's sentence.
+  // Clearing the token leaves the switch on, and without the guard the backend answers a raw 422 envelope.
   it('refuses to create a tokenless GitHub instance that syncs teams', () => {
     renderManagement()
 

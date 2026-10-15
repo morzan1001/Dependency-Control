@@ -1,5 +1,3 @@
-"""Tests for sorting helper."""
-
 from app.api.v1.helpers.sorting import case_insensitive_key, get_sort_field, parse_sort_direction
 
 

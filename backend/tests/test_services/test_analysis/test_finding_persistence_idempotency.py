@@ -1,5 +1,3 @@
-"""Finding persistence must be idempotent: a raced double-persist must not double the finding set."""
-
 import pytest
 
 from app.models.finding import Finding, FindingType, Severity

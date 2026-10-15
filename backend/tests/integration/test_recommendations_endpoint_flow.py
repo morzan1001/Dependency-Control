@@ -1,5 +1,3 @@
-"""get_project_recommendations: access checks, scan resolution, what reaches the engine, and the summary tally."""
-
 import asyncio
 import json
 import time
@@ -95,7 +93,6 @@ def _counting_engine(runs: list[int]):
 
 
 def _vulnerability_records(scan_id: str, component: str, version: str, advisories: list[dict]) -> list[dict]:
-    """What the analysis engine persists for one aggregated vulnerability."""
     finding = Finding.model_validate(stored_vulnerability(component, version, advisories))
     records, _ = _prepare_finding_records([finding], scan_id, "p", None)
     return records
@@ -124,7 +121,6 @@ def redis_cache(monkeypatch):
 
 
 async def _reanalyse(db, scan_id: str, finding: dict) -> None:
-    """A re-ingest or a late analyzer result: the same scan id gets a new finding set and completion."""
     await db.findings.insert_one(finding)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"completed_at": _NOW + timedelta(hours=1)}})
 
@@ -433,8 +429,6 @@ _CROSS_PROJECT_COMPARISON_LIMIT = 20
 async def test_cross_project_cards_compare_the_viewed_project_first_among_projects_with_a_scan(
     client, db, owner_auth_headers_proj, monkeypatch
 ):
-    """Unscanned projects ahead of the scanned ones used to fill every comparison slot, and the viewed
-    project was never compared, so its own cards described only other projects."""
     member = [{"user_id": "ownerp", "role": "viewer"}]
     await db.projects.insert_many(
         [

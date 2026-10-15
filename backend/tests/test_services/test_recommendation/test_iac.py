@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.iac."""
-
 import pytest
 
 from app.schemas.recommendation import Priority, RecommendationType

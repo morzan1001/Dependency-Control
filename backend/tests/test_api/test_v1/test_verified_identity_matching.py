@@ -1,5 +1,4 @@
-"""Identity matching trusts only what an account has proven: an unverified email or a bare username
-names whoever typed it, not the person the external identity belongs to."""
+"""An unverified email or a bare username names whoever typed it, so matching trusts only proven identities."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -213,8 +212,7 @@ def gitlab_cache(monkeypatch):
 
 @pytest.mark.usefixtures("gitlab_cache")
 class TestGitLabTeamSyncWithoutListedEmails:
-    """Only an administrator's token sees members' emails in the listing; any other token must fall
-    back to the public profile email, which GitLab accepts only from the user's confirmed addresses."""
+    """Non-admin tokens see no member emails, only the public one, which GitLab takes from confirmed addresses only."""
 
     @staticmethod
     async def _bound_team(db: FakeDatabase) -> None:

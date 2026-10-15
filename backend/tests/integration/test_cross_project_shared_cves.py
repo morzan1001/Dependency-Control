@@ -1,5 +1,3 @@
-"""The shared-vulnerability card joins projects on each live advisory's CVE identity, not its raw id."""
-
 from datetime import datetime, timezone
 
 import pytest

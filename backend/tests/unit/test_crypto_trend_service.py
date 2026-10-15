@@ -58,7 +58,6 @@ async def _seed_findings(db, findings):
 
 @pytest.mark.asyncio
 async def test_trend_excludes_waived_findings(db):
-    """Waived crypto findings must not inflate the trend."""
     now = datetime.now(timezone.utc)
     ts = now - timedelta(days=2)
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
@@ -78,7 +77,6 @@ async def test_trend_excludes_waived_findings(db):
 
 @pytest.mark.asyncio
 async def test_trend_dedups_rescans_in_same_bucket(db):
-    """Two scans in one bucket count the latest scan, not every scan."""
     now = datetime.now(timezone.utc)
     ts = now - timedelta(days=2)
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
@@ -97,7 +95,6 @@ async def test_trend_dedups_rescans_in_same_bucket(db):
 
 @pytest.mark.asyncio
 async def test_trend_buckets_by_month_and_latest_scan_wins(db):
-    """Two scans in a month collapse to the latest scan's count; distinct months stay separate."""
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
     jan_old = datetime(2026, 1, 10, tzinfo=timezone.utc)
     jan_new = datetime(2026, 1, 20, tzinfo=timezone.utc)
@@ -121,7 +118,7 @@ async def test_trend_buckets_by_month_and_latest_scan_wins(db):
         datetime(2025, 12, 1, tzinfo=timezone.utc),
         datetime(2026, 3, 1, tzinfo=timezone.utc),
     )
-    assert len(points) == 2  # one bucket per month, not one per scan
+    assert len(points) == 2
     by_month = {p.timestamp.month: p.value for p in points}
     assert by_month == {1: 1.0, 2: 3.0}  # Jan = latest scan count (1); Feb = 3
 

@@ -1,5 +1,4 @@
-"""A license policy that is not what the caller wrote is worse than a rejected one: it is stored on
-the project and re-applied to every future scan, and the only symptom is a severity that moved."""
+"""A policy other than the caller wrote is worse than a rejected one: it is re-applied to every future scan."""
 
 import pytest
 from pydantic import ValidationError
@@ -64,7 +63,7 @@ def test_only_the_keys_the_caller_sent_are_stored():
     ],
 )
 def test_analyzer_settings_reject_values_the_analyzer_will_refuse(settings):
-    """These wrote fine and then raised inside LicenseAnalyzer on every later scan of the project."""
+    """Stored, these would raise inside LicenseAnalyzer on every later scan of the project."""
     with pytest.raises(ValidationError):
         ProjectUpdate(analyzer_settings=settings)
 

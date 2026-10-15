@@ -1,5 +1,3 @@
-"""Unit tests for _build_dependency_graph, the flat-nodes + adjacency dependency graph."""
-
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph, _tree_findings_map
 from app.models.dependency import Dependency
 
@@ -24,7 +22,6 @@ def _dep(name, version="1.0.0", direct=False, parents=None, direct_inferred=Fals
 
 
 def _findings(critical=0, high=0, medium=0, low=0):
-    """A component's live advisories at version 1.0.0, one distinct CVE per counted severity."""
     severities = ["CRITICAL"] * critical + ["HIGH"] * high + ["MEDIUM"] * medium + ["LOW"] * low
     advisories = [{"id": f"CVE-2026-{index:04d}", "severity": sev} for index, sev in enumerate(severities)]
     return {"1.0.0": [{"vulnerabilities": advisories}]}
@@ -82,7 +79,7 @@ class TestDependencyGraphBuilder:
         by_name = _by_name(graph)
         assert _child_names(graph, by_name["a"]) == ["b"]
         assert _child_names(graph, by_name["c"]) == ["b"]
-        assert sum(1 for n in graph.nodes if n.name == "b") == 1  # b exists exactly once
+        assert sum(1 for n in graph.nodes if n.name == "b") == 1
 
     def test_two_node_cycle_is_represented_without_recursion(self):
         a = _dep("a", direct=True, parents=["pkg:pypi/b@1.0.0"])
@@ -174,13 +171,11 @@ class TestDependencyGraphBuilder:
         graph = _graph([a, b, c, orphan], {})
 
         assert _reachable_ids(graph) == {n.id for n in graph.nodes}
-        # Resolvable transitives (b, c) must not leak into roots.
         assert set(_root_names(graph)) == {"a", "orphan"}
         assert _child_names(graph, _by_name(graph)["b"]) == ["c"]
 
     def test_disconnected_cycle_with_tail_yields_single_root(self):
-        # d hangs off a cycle a->b->c->a; even when d precedes its component entry in input
-        # order, d must not be promoted to a top-level root (it is reachable via a).
+        # d hangs off the cycle a->b->c->a and, though first in input order, is reachable via a, so it is no root.
         d = _dep("d", parents=["pkg:pypi/a@1.0.0"])
         a = _dep("a", parents=["pkg:pypi/c@1.0.0"])
         b = _dep("b", parents=[a.purl])
@@ -193,8 +188,7 @@ class TestDependencyGraphBuilder:
         assert _reachable_ids(graph) == {n.id for n in graph.nodes}
 
     def test_duplicate_purl_across_sboms_merges_parent_edges(self):
-        # The same purl can arrive in several SBOMs (e.g. container layers) with different
-        # parents; every parent -> child edge must survive the per-purl dedup.
+        # One purl can arrive in several SBOMs with different parents, and every edge must survive the dedup.
         a = _dep("a", direct=True)
         c = _dep("c", direct=True)
         x_from_sbom1 = _dep("x", parents=[a.purl])
@@ -203,7 +197,7 @@ class TestDependencyGraphBuilder:
         graph = _graph([a, c, x_from_sbom1, x_from_sbom2], {})
 
         by_name = _by_name(graph)
-        assert sum(1 for n in graph.nodes if n.name == "x") == 1  # x deduped to one node
+        assert sum(1 for n in graph.nodes if n.name == "x") == 1
         assert _child_names(graph, by_name["a"]) == ["x"]
         assert _child_names(graph, by_name["c"]) == ["x"]
 

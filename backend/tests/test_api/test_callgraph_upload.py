@@ -1,8 +1,4 @@
-"""End-to-end callgraph upload: the exact payload each CI job posts, the stored document, the reachability verdict.
-
-Payload shapes are transcribed from ``dependency-control-pipeline-templates/callgraph.yaml``
-(the shared upload anchor plus the js/python/go/java producers).
-"""
+"""Payloads transcribed from dependency-control-pipeline-templates/callgraph.yaml, as each CI job posts them."""
 
 import copy
 import uuid
@@ -28,8 +24,7 @@ _PIPELINE_ID = 776655
 _BRANCH = "main"
 _COMMIT = "9f1c0d3a2b5e4f6a7c8d9e0f1a2b3c4d5e6f7a8b"
 
-# uuid5 over "<project>-<pipeline>-<commit>" is the contract between the upload endpoint
-# and the scan the CI job produced; spelled out here so a change to it fails loudly.
+# Spelled out: this uuid5 is the contract between the upload endpoint and the scan the CI job produced.
 _SCAN_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{_PROJECT_ID}-{_PIPELINE_ID}-{_COMMIT}"))
 
 
@@ -47,8 +42,6 @@ def _envelope(fmt: str, language: str | None, data: dict) -> dict:
         del body["language"]
     return body
 
-
-# --- producer payloads -------------------------------------------------------
 
 # madge --json --include-npm, with package.json deps+devDeps merged in by the job.
 _MADGE_DATA = {
@@ -115,9 +108,7 @@ _PRODUCERS = [
     pytest.param(
         _envelope("generic", "python", _PYTHON_DATA),
         "python",
-        # Keys keep the imported module path: a first-party absolute import ("app.config") is
-        # indistinguishable from a distribution at parse time, so it gets a usage entry; only
-        # analyzed_modules gates the unreachable verdict.
+        # A first-party import reads as a distribution at parse time, so only analyzed_modules gates the verdict.
         {"requests", "urllib3.util.retry", "app.config"},
         ["pyyaml", "requests", "urllib3"],
         id="python-ast",
@@ -139,9 +130,6 @@ _PRODUCERS = [
 ]
 
 
-# --- fixtures ----------------------------------------------------------------
-
-
 @pytest_asyncio.fixture
 async def db(fake_gridfs):
     return FakeDatabase()
@@ -149,7 +137,6 @@ async def db(fake_gridfs):
 
 @pytest_asyncio.fixture
 async def client(db):
-    """The real app with only the database swapped for the in-process fake."""
     from app.api.deps import get_database
     from app.main import app
 
@@ -166,7 +153,6 @@ async def client(db):
 
 
 def _ci_credentials(resolved_project_id: str = _PROJECT_ID):
-    """Stand in for the Job-Token exchange, resolving to ``resolved_project_id``."""
     return patch(
         f"{DEPS}._authenticate_ci",
         new_callable=AsyncMock,
@@ -184,7 +170,6 @@ async def _upload(client, payload: dict, *, resolved_project_id: str = _PROJECT_
 
 
 async def _stored(db, **query) -> dict:
-    """The project's stored callgraph with its graph loaded, as every reader sees it."""
     # A copy, because the fake hands out its live documents and the loader merges into what it gets.
     doc = dict(await db.callgraphs.find_one({"project_id": _PROJECT_ID, **query}))
     return await CallgraphRepository(db).load_graph(doc)
@@ -208,9 +193,6 @@ async def _add_member(db, user_id: str, role: str) -> None:
         {"_id": _PROJECT_ID},
         {"$set": {"members": [{"user_id": user_id, "role": role}]}},
     )
-
-
-# --- producers ---------------------------------------------------------------
 
 
 class TestProducerUploads:
@@ -271,9 +253,6 @@ class TestProducerUploads:
         assert "calls" not in stored
 
 
-# --- authentication and authorization ----------------------------------------
-
-
 class TestUploadAuthorization:
     @pytest.mark.asyncio
     async def test_ci_credentials_for_another_project_are_forbidden(self, client, db):
@@ -317,9 +296,6 @@ class TestUploadAuthorization:
 
         assert response.status_code == 403
         assert await db.callgraphs.count_documents({}) == 1
-
-
-# --- payload validation ------------------------------------------------------
 
 
 class TestPayloadValidation:
@@ -425,9 +401,6 @@ class TestReupload:
         assert second["created_at"] == first["created_at"]
 
 
-# --- reachability ------------------------------------------------------------
-
-
 def _finding(finding_id: str, component: str, *, scan_id: str = _SCAN_ID, project_id: str = _PROJECT_ID) -> dict:
     return {
         "_id": f"f-{finding_id}",
@@ -476,7 +449,6 @@ _RESCAN_ID = "rescan-of-pipeline-scan"
 
 
 async def _seed_rescan(db) -> None:
-    """A rescan of the pipeline scan: its own findings and inventory, no pipeline id of its own."""
     await db.scans.insert_one(
         {
             "_id": _RESCAN_ID,
@@ -506,7 +478,7 @@ async def _seed_rescan(db) -> None:
 class TestReachabilityVerdicts:
     @pytest.mark.asyncio
     async def test_second_language_upload_is_also_applied(self, client, db):
-        """Every upload re-runs enrichment, so language two is not silently dropped after language one cleared the flag."""
+        """Every upload re-runs enrichment, so a second language is not dropped after the first cleared the flag."""
         await _seed_scan_with_findings(db)
 
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))

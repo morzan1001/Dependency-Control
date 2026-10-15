@@ -115,7 +115,6 @@ def _spec_protocol(cipher_suites, evidence=None):
 
 
 async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=None, extra_rules=()):
-    """A CycloneDX 1.6 protocol asset judged by the seeded policy, with the PFS rule toggled."""
     assets = parse_cbom({"specVersion": "1.6", "components": [_spec_protocol(cipher_suites, evidence)]})
     await CryptoAssetRepository(db).bulk_upsert(
         "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets]

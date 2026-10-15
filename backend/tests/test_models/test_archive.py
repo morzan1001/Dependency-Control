@@ -1,5 +1,3 @@
-"""Tests for ArchiveMetadata model."""
-
 from datetime import datetime, timezone
 
 from app.models.archive import ArchiveMetadata

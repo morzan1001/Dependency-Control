@@ -1,5 +1,3 @@
-"""A failed Slack token request raises SlackOAuthError whose text is the reason the callback shows."""
-
 import httpx
 import pytest
 

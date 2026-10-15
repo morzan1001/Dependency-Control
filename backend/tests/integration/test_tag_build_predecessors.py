@@ -1,5 +1,3 @@
-"""A tag build's predecessors come off an index of the tag builds, not a walk over every build of the project."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

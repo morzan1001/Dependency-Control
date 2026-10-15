@@ -1,5 +1,3 @@
-"""Expiry and deletion stop serving a report at once; the orphan reaper frees its artifact afterwards."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

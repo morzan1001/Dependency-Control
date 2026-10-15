@@ -1,10 +1,3 @@
-"""deps.dev fields must round-trip: what the analyzer fetches, to_mongo_dict persists and the UI reads.
-
-Metadata dicts mirror `DepsDevAnalyzer._extract_metadata` / `_enrich_with_project`
-output (prod: deps_dev.project_url was written on 0 of 12,876 docs, so the
-Scorecard link never rendered).
-"""
-
 from app.services.aggregation import ResultAggregator
 from tests.helpers.enrichment import enrichment_payload
 

@@ -1,5 +1,3 @@
-"""The OSV analyzer's real HTTP client, answered in-process through httpx.MockTransport."""
-
 import json
 from collections.abc import Callable, Collection
 from typing import Any
@@ -14,7 +12,6 @@ from app.services.analyzers.osv import OSVAnalyzer
 def serve_osv(
     monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Request], httpx.Response]
 ) -> list[httpx.Request]:
-    """Answer every OSV request with ``handler``, backoff delays zeroed; returns the requests in arrival order."""
     seen: list[httpx.Request] = []
 
     def _record(request: httpx.Request) -> httpx.Response:
@@ -31,7 +28,6 @@ def serve_osv(
 
 
 def osv_cache(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """An in-memory cache_service for the OSV analyzer; the returned dict is its store."""
     store: dict[str, Any] = {}
 
     async def _mget(keys: list[str]) -> dict[str, Any]:
@@ -47,8 +43,6 @@ def osv_cache(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 class FakeOsv:
-    """The OSV analyzer's wire shape: ``advisories`` on every parsed component, or on those named in ``components``."""
-
     name = "osv"
 
     def __init__(self, *advisories: dict[str, Any], components: Collection[str] | None = None) -> None:
@@ -66,7 +60,6 @@ class FakeOsv:
 
 
 def batch_queries(requests: list[httpx.Request]) -> list[dict[str, Any]]:
-    """Every querybatch query among ``requests``, in the order they were sent."""
     return [
         query for request in requests if request.method == "POST" for query in json.loads(request.content)["queries"]
     ]

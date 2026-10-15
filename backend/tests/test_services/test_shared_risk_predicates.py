@@ -1,5 +1,3 @@
-"""The three predicates the stats fold, the recommendation schema and the secret normalizer share."""
-
 import pytest
 
 from app.core.constants import REACHABILITY_LEVEL_IMPORT, REACHABILITY_LEVEL_SYMBOL
@@ -101,8 +99,6 @@ class TestReachabilityRiskModifier:
 
 
 class TestConsumersDelegate:
-    """The three call sites must answer identically to the shared predicates."""
-
     @pytest.mark.parametrize(
         ("epss", "kev", "reachable"),
         [

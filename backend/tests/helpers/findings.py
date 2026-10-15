@@ -14,7 +14,6 @@ _NPM_MATCH = _GRYPE_OUTPUT["matches"][0]
 
 
 def aggregated_vulnerability(component: str, version: str, *advisories: dict[str, Any]) -> Finding:
-    """The aggregator's one finding for component@version holding each advisory's id, severity and fix."""
     aggregator = ResultAggregator()
     for advisory in advisories:
         aggregator.add_finding(
@@ -34,7 +33,6 @@ def aggregated_vulnerability(component: str, version: str, *advisories: dict[str
 
 
 def stored_vulnerability(component: str, version: str, advisories: list[dict[str, Any]]) -> dict[str, Any]:
-    """The aggregator's document for one component@version; other advisory keys are set on it afterwards."""
     doc = aggregated_vulnerability(component, version, *advisories).model_dump()
     later = {a["id"]: {k: v for k, v in a.items() if k not in _SCANNER_KEYS} for a in advisories}
     for entry in doc["details"]["vulnerabilities"]:
@@ -55,8 +53,6 @@ def _grype_match(name: str, version: str, cve: str | None, severity: str | None)
 
 
 def grype_findings(matches: Iterable[tuple[str, str, str | None]], *, severity: str | None = None) -> list[Finding]:
-    """The aggregator's findings for grype 0.119 output that repeats the fixture's npm match once per
-    (package, version, CVE id); a None id keeps the fixture's advisory."""
     report = {**_GRYPE_OUTPUT, "matches": [_grype_match(*match, severity) for match in matches]}
     aggregator = ResultAggregator()
     aggregator.aggregate("grype", report)

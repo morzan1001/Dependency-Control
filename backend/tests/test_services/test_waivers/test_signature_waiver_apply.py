@@ -1,5 +1,3 @@
-"""How the restamp back-fills, heals and reports signature waivers against one scan's location findings."""
-
 import logging
 
 import pytest

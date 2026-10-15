@@ -1,5 +1,3 @@
-"""SAST findings with crypto-misuse-* rule IDs are tagged CRYPTO_KEY_MANAGEMENT; other SAST rules keep the SAST type."""
-
 import json
 from pathlib import Path
 
@@ -36,8 +34,7 @@ async def test_sast_ingest_tags_crypto_misuse_findings(client, db, running_worke
 
     import asyncio
 
-    # OpenGrep ingest registers its result with trigger_analysis=False by design, so nothing
-    # aggregates the raw result into findings until a job is queued.
+    # OpenGrep ingest registers its result with trigger_analysis=False, so only a queued job aggregates it.
     await running_worker.add_job(scan_id)
 
     for _ in range(_POLL_ATTEMPTS):

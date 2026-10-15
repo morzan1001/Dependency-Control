@@ -1,5 +1,3 @@
-"""One rule names the CVE identity of an advisory entry, for every view that counts or labels it."""
-
 import pytest
 
 from app.core.cve import canonical_cve, canonical_cves

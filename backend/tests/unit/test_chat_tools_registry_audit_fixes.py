@@ -1,5 +1,3 @@
-"""Tests for chat tool registry: numeric severity ranking, the system-scope gate on list_policy_audit_entries, and the visibility filter on list_compliance_reports."""
-
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -155,5 +153,4 @@ class TestComplianceReportsVisibility:
         assert {"scope": "user", "requested_by": "u-1"} in branches
         assert {"scope": "project", "scope_id": {"$in": ["p-1"]}} in branches
         assert {"scope": "team", "scope_id": {"$in": ["t-1"]}} in branches
-        # A non-super / non-analytics:global user must NOT see global reports.
         assert {"scope": "global"} not in branches

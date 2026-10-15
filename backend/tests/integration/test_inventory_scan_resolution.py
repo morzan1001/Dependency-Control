@@ -1,5 +1,3 @@
-"""Which scan the inventory and findings-export views read: the head rule, per branch or for the project."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

@@ -1,5 +1,3 @@
-"""Tests for is_high_confidence_reachable — the gate distinguishing solid 'function actually called' evidence from import-only heuristics."""
-
 import copy
 
 import pytest
@@ -27,7 +25,6 @@ class TestIsHighConfidenceReachable:
         assert is_high_confidence_reachable(True, 0.9) is True
 
     def test_reachable_at_threshold_returns_true(self):
-        # Inclusive boundary: a finding exactly on the threshold is high-confidence.
         assert is_high_confidence_reachable(True, REACHABILITY_HIGH_CONFIDENCE_THRESHOLD) is True
 
     def test_reachable_below_threshold_returns_false(self):
@@ -45,8 +42,6 @@ class TestIsHighConfidenceReachable:
 
 
 class TestPendingSummaryTiers:
-    """The persisted pending summary must map analysis_level (none/import/symbol) onto the display tiers (confirmed/likely/unreachable)."""
-
     @staticmethod
     def _f(_id, reachable, level):
         return {
@@ -72,7 +67,6 @@ class TestPendingSummaryTiers:
         assert levels["unknown"] == 0
 
     def test_shared_summary_includes_high_confidence_flag(self):
-        # The canonical builder includes is_high_confidence.
         findings = [self._f("a", True, "symbol")]
         cg = [_callgraph()]
         summary = build_reachability_summary(findings, cg)
@@ -125,10 +119,9 @@ class TestImportMatchingUsesWholePackageKeys:
 
 
 class TestEcosystemFromDependencyMap:
-    """Real vulnerability findings carry no details.purl, so the ecosystem gate must derive it from the scan's dependencies, not details.purl."""
+    """Vulnerability findings carry no details.purl, so the ecosystem gate reads the scan's dependencies."""
 
     def test_downweight_without_purl_via_component_map(self):
-        # Real-shape finding: no details.purl. Ecosystem comes from the dep map.
         finding = _vuln_finding(component="requests", risk_score=80.0)
         assert "purl" not in finding["details"]
         cg = _prepared(
@@ -184,7 +177,7 @@ class TestEcosystemFromDependencyMap:
 
 
 class TestMatchSymbols:
-    """Symbol matching must be conservative: a spurious match falsely confirms reachability and boosts risk, so substring matching is unacceptable."""
+    """A spurious symbol match falsely confirms reachability and boosts risk, so substrings never match."""
 
     def test_exact_match(self):
         assert _match_symbols(["SSL_read"], ["SSL_read"]) == ["SSL_read"]
@@ -198,7 +191,7 @@ class TestMatchSymbols:
         assert _match_symbols(["SSL_read"], ["openssl.SSL_read"]) == ["openssl.SSL_read"]
 
     def test_qualified_vuln_matches_bare_used_symbol(self):
-        # Callgraphs store bare last-segments (e.g. "Read"); a qualified vuln symbol (e.g. "Conn.Read") must match on last segment without substring false positives.
+        # Callgraphs store bare last segments, so a qualified symbol matches on its last segment only.
         assert _match_symbols(["Conn.Read"], ["Read"]) == ["Read"]
         assert _match_symbols(["pkg.forget"], ["get"]) == []  # not a boundary match
 
@@ -209,13 +202,11 @@ class TestMatchSymbols:
         assert _match_symbols(["open"], ["reopen"]) == []
 
     def test_mixed_real_and_spurious(self):
-        # only the exact and qualified hits count; the substring noise is dropped
         result = _match_symbols(["read"], ["read", "thread", "io.read", "already"])
         assert result == ["read", "io.read"]
 
 
 def _callgraph(module_usage=None, language="python", analyzed_modules=None):
-    """The projection production reads a stored callgraph through."""
     return CallgraphMinimal(
         _id="cg-1", module_usage=module_usage or {}, language=language, analyzed_modules=analyzed_modules or []
     )
@@ -243,7 +234,6 @@ def _vuln_finding(component="requests", risk_score=80.0, cve="CVE-2024-0001"):
 
 class TestReachabilityAdjustedScoreWiring:
     def test_unreachable_persists_reduced_adjusted_score(self):
-        """A package inside the coverage universe but absent from the graph is not reachable -> adjusted = base * 0.4."""
         finding = _vuln_finding(component="not-imported-pkg", risk_score=80.0)
         cg = _prepared(
             module_usage=_usage("other", "a.py"),
@@ -258,7 +248,7 @@ class TestReachabilityAdjustedScoreWiring:
 
 
 class TestReachabilityFailClosed:
-    """Absence of evidence is not evidence of unreachability: a package missing from a callgraph that doesn't cover its ecosystem (or unknown ecosystem) must be recorded as unknown, not down-weighted."""
+    """A callgraph that does not cover the package's ecosystem proves nothing, so the verdict stays unknown."""
 
     def test_wrong_language_callgraph_does_not_downweight(self):
         # pypi finding, but only a JS callgraph analyzed -> absence is meaningless.
@@ -341,7 +331,7 @@ class TestReachabilityFailClosed:
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_qualified_component_resolves_to_the_bare_usage_key(self):
-        """Gate and verdict resolve the alias through the same lookup, so a resolved package can't be stamped 'not imported'."""
+        """Gate and verdict resolve the alias through one lookup, so a resolved package cannot read 'not imported'."""
         finding = _vuln_finding(component="org.example:left-pad", risk_score=80.0)
         cg = _prepared(
             module_usage=_usage("left-pad", "a.js"),
@@ -357,7 +347,6 @@ class TestReachabilityFailClosed:
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_symbol_reachable_persists_boosted_adjusted_score(self):
-        """A matched vulnerable symbol -> confirmed -> adjusted = base * 1.1."""
         finding = _vuln_finding(component="requests", risk_score=80.0)
         # Symbols only ever come from the structured OSV payload, never from prose.
         finding["details"]["vulnerabilities"] = [{"id": "CVE-2024-0001", "ecosystem_specific": {"symbols": ["get"]}}]
@@ -369,7 +358,6 @@ class TestReachabilityFailClosed:
         assert finding["details"]["adjusted_risk_score"] == 88.0
 
     def test_import_only_reachable_is_identity(self):
-        """Imported but no extracted symbols -> import-level reachable -> identity (no boost)."""
         finding = _vuln_finding(component="requests", risk_score=80.0)
         _enrich_finding_from_callgraphs(finding, [_prepared(_usage("requests", "a.py"))], {})
         reach = finding["details"]["reachability"]
@@ -379,8 +367,6 @@ class TestReachabilityFailClosed:
 
 
 class TestPureEnrichmentEntryPoint:
-    """The reachability loop must run without a database, callgraph repository or scan id."""
-
     def test_enriches_only_vulnerability_findings_and_returns_the_count(self):
         vuln = _vuln_finding(component="requests", risk_score=80.0)
         secret = {"type": "secret", "component": "config/aws.env", "details": {}}
@@ -419,8 +405,6 @@ class TestReachabilitySetFields:
 
 
 class TestRunPendingBulkPersist:
-    """run_pending_reachability_for_scan must persist via a chunked bulk_write, not one sequential update per finding."""
-
     @pytest.mark.asyncio
     async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch, fake_gridfs):
         from app.services.reachability_enrichment import run_pending_reachability_for_scan
@@ -457,7 +441,6 @@ class TestRunPendingBulkPersist:
                 }
             )
 
-        # The persist must go through bulk_write, not per-doc update_one.
         calls = {"bulk": 0, "update_one": 0}
         orig_bulk = db.findings.bulk_write
         orig_update_one = db.findings.update_one
@@ -478,7 +461,6 @@ class TestRunPendingBulkPersist:
         assert calls["bulk"] == 1
         assert calls["update_one"] == 0
 
-        # All three findings persisted with reachability data.
         for i in range(3):
             doc = await db.findings.find_one({"_id": f"f{i}"})
             assert doc["reachable"] is True

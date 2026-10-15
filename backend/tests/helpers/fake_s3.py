@@ -1,13 +1,9 @@
-"""In-memory fake aiobotocore S3 client for archive tests."""
-
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 
 class FakeS3StreamingBody:
-    """Mimics aiobotocore's StreamingBody."""
-
     def __init__(self, data: bytes):
         self._data = data
 
@@ -26,14 +22,12 @@ class FakeS3StreamingBody:
 
 
 class FakeS3Client:
-    """Records and serves S3 operations from in-memory state."""
-
     def __init__(self) -> None:
-        self.objects: dict[str, bytes] = {}  # key -> body
-        self.content_types: dict[str, str] = {}  # key -> MIME type as sent to S3
+        self.objects: dict[str, bytes] = {}
+        self.content_types: dict[str, str] = {}
         self.bucket_exists: bool = True
-        self._multipart_uploads: dict[str, list[bytes]] = {}  # upload_id -> parts
-        self._multipart_keys: dict[str, str] = {}  # upload_id -> key
+        self._multipart_uploads: dict[str, list[bytes]] = {}
+        self._multipart_keys: dict[str, str] = {}
         self.aborted_uploads: list[str] = []
         self.put_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict[str, Any]] = []
@@ -102,5 +96,4 @@ class FakeS3Client:
 
 @asynccontextmanager
 async def fake_get_s3_client(fake: FakeS3Client):
-    """Context manager replacement for get_s3_client."""
     yield fake

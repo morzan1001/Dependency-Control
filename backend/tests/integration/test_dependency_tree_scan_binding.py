@@ -1,5 +1,3 @@
-"""The dependency tree answers from a scan of the project in the path, whatever scan_id is asked for."""
-
 from datetime import datetime, timezone
 
 import pytest

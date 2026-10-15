@@ -1,5 +1,3 @@
-"""POST /api/v1/analyze: a unified key gets in."""
-
 import pytest
 
 from app.core.constants import API_KEY_SURFACE_ADHOC
@@ -74,5 +72,4 @@ async def test_a_request_without_an_authorization_header_is_401_with_a_challenge
     resp = await client.post(_ANALYZE, json=_BODY)
 
     assert resp.status_code == _UNAUTHORIZED, resp.text
-    # Without the challenge a client has nothing to tell it what kind of credential to send.
     assert resp.headers["WWW-Authenticate"] == f'Bearer realm="{API_KEY_SURFACE_ADHOC}"'

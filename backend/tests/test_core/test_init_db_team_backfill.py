@@ -1,5 +1,3 @@
-"""The startup provenance backfill: it stamps the GitLab instance onto a bound team's owner entries, never a member."""
-
 import asyncio
 
 from app.core.constants import TEAM_SOURCE_GITLAB, team_binding_key, team_source
@@ -24,7 +22,6 @@ def _seed_team(db, _id, name, **fields):
 
 
 def _seed_project(db, _id, team_id, provenance=None, **fields):
-    """A project with one owner and, when given, that owner's provenance entry."""
     doc = {
         "_id": _id,
         "name": _id,
@@ -80,8 +77,7 @@ class TestBackfillProvenance:
 
         members = {m["user_id"]: m for m in db.teams._docs["t-mixed"]["members"]}
         assert members["manual-u"]["source"] == "manual"
-        # A legacy (unstamped) member is intentionally left unstamped so it defaults
-        # to 'manual' on read and survives the next sync merge.
+        # An unstamped member stays unstamped, reading as 'manual', so it survives the next sync merge.
         assert members["legacy-u"].get("source") != "gitlab"
 
     def test_stamps_the_owner_entry_of_projects_of_a_synced_team(self):
@@ -108,8 +104,7 @@ class TestBackfillProvenance:
         }
 
     def test_a_team_bound_to_two_gitlab_instances_leaves_the_owner_unstamped(self):
-        """Either instance could have established the owner, and stamping the wrong one hands it to
-        that instance's next ingest to delete. Unstamped reads as hand-assigned, which keeps it."""
+        """Stamping the wrong instance would let its next ingest delete the owner; unstamped reads as hand-assigned."""
         db = FakeDatabase()
         _seed_team(
             db,
@@ -149,7 +144,6 @@ class TestBackfillProvenance:
     def test_does_not_overwrite_existing_team_source(self):
         db = FakeDatabase()
         _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
-        # A project already explicitly marked manual must be preserved.
         _seed_project(db, "p1", "t-synced", provenance="manual")
 
         asyncio.run(_backfill_member_and_team_provenance(db))
@@ -157,9 +151,7 @@ class TestBackfillProvenance:
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "manual"}
 
     def test_does_not_move_an_owner_to_this_teams_instance(self):
-        """The guard is absent-and-null and nothing else. An entry already naming another instance
-        is that instance's attribution, and restamping it on a startup would hand the owner to this
-        instance's next ingest to retire."""
+        """An entry naming another instance is its attribution; restamped, this instance's ingest would retire it."""
         db = FakeDatabase()
         _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
         _seed_project(db, "p1", "t-synced", provenance=team_source(TEAM_SOURCE_GITLAB, "inst-b"))
@@ -216,8 +208,7 @@ class TestBackfillProvenance:
         db.projects.update_many = failing_update_many  # type: ignore[method-assign]
 
         with caplog.at_level("ERROR", logger="app.core.init_db"):
-            asyncio.run(_backfill_member_and_team_provenance(db))  # must NOT raise
+            asyncio.run(_backfill_member_and_team_provenance(db))
 
-        # The good team's project must still have been stamped despite the bad team failing.
         assert db.projects._docs["p-good"]["team_sources"] == {"t-good": team_source(TEAM_SOURCE_GITLAB, "inst-a")}
         assert any("t-bad" in r.message for r in caplog.records)

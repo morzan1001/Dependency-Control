@@ -1,8 +1,4 @@
-"""Limits a caller has to state, and limits a caller derives from an id list.
-
-Mongo reads ``limit(0)`` as unbounded, so a repository taking ``len(ids)`` as its limit opens a
-whole-collection cursor the moment the list is empty; only ``to_list(0)`` keeps the rows out.
-"""
+"""Mongo reads limit(0) as unbounded, so len(ids) as a limit opens a whole-collection cursor for an empty list."""
 
 import inspect
 

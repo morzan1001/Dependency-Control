@@ -1,6 +1,3 @@
-"""The four list endpoints resolve the release of an environment when asked; they keep
-returning bare lists, so the scope counters live on /summary alone."""
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -134,7 +131,6 @@ def _resolver_per_environment():
 
 
 def _matched_scan_ids(pipeline: list[dict[str, Any]]) -> list[str] | None:
-    """The scan set the main grouping aggregation read, or None for any other pipeline."""
     if not any("details_list" in (stage.get("$group") or {}) for stage in pipeline):
         return None
     return pipeline[0]["$match"]["scan_id"]["$in"]

@@ -1,5 +1,3 @@
-"""Stateless ad-hoc orchestrator."""
-
 import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
@@ -34,8 +32,7 @@ _TRUFFLEHOG_NAME = "trufflehog"
 _OSV_NAME = "osv"
 _OSV_UPSTREAM = "api.osv.dev"
 _CRYPTO_ANALYZER = "crypto_weak_algorithm"
-# The stage that evaluates the crypto rules; it reports itself as skipped for an SBOM
-# carrying no cryptographic-asset components.
+# Reports itself as skipped for an SBOM carrying no cryptographic-asset components.
 _CRYPTO_RULES = "crypto_rules"
 # The EPSS/KEV stage reports itself as skipped for a run that yields no vulnerability finding.
 _ENRICHMENT = "epss_kev"
@@ -88,8 +85,7 @@ _TRUFFLEHOG = {
     ]
 }
 
-# A scanner version that reshapes a list into a map, or drops a nested object, reaches the
-# normalizers as caller-controlled data they were never written to defend against.
+# A scanner version reshaping a list or dropping an object reaches the normalizers as unchecked caller data.
 _MALFORMED_SCANNER_PAYLOADS = [
     ("trufflehog", {"findings": "no"}),
     ("trufflehog", {"findings": [None]}),
@@ -103,8 +99,7 @@ _KICS_QUERIES_WITHOUT_FILES = 200
 _TRUFFLEHOG_LOWERCASE_KEYS = 5000
 _ONE_UNREADABLE_OF_TWO = "1 of 2"
 
-# The container each normalizer reads, filled with entries it cannot: a KICS report whose queries
-# carry no hits, and a TruffleHog version that lowercased its field names.
+# Readable containers, unreadable entries: KICS queries without hits, TruffleHog with lowercased field names.
 _WRONG_SHAPED_ENTRIES = [
     (
         "kics",
@@ -139,8 +134,7 @@ _WRONG_SHAPED_ENTRIES = [
     ),
 ]
 
-# Shapes a caller reaches this endpoint with by accident: an error body, a wrapper around the
-# real document, and the right format with the component list misspelled.
+# Accidental inputs: an error body, a wrapper around the real document, a misspelled component list.
 _UNREADABLE_SBOMS = [
     {"detail": "Not Found"},
     {"hello": "world"},
@@ -172,8 +166,7 @@ _PARTLY_MALFORMED_SBOM = {
     "components": ["a string", 42, None, *_SBOM["components"]],
 }
 
-# One unusable sub-field alongside 201 healthy components: the graph builders, unlike the
-# component loop, do not tolerate a non-list ``dependsOn``.
+# The graph builders, unlike the component loop, do not tolerate a non-list dependsOn.
 _ONE_BAD_SUBFIELD_SBOM = {
     "bomFormat": "CycloneDX",
     "specVersion": "1.5",
@@ -283,7 +276,6 @@ async def test_unknown_analyzer_name_is_reported_not_silently_dropped():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.skipped[_UNKNOWN_NAME] == _UNKNOWN_ANALYZER
-    # Every registered analyzer the request left out is accounted for alongside it.
     assert set(response.analyzers.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS | {
         _UNKNOWN_NAME,
         _ENRICHMENT,
@@ -404,8 +396,7 @@ def _opengrep_item(index: int) -> dict:
     }
 
 
-# The normalizer reads the list in order, so where the unreadable item sits decides how much
-# of the payload it accepted before it gave up.
+# The normalizer reads in order, so the unreadable item's position decides how much it accepted first.
 _UNREADABLE_FIRST = [None, _opengrep_item(0), _opengrep_item(1)]
 _UNREADABLE_LAST = [_opengrep_item(0), _opengrep_item(1), None]
 
@@ -424,8 +415,7 @@ async def test_where_the_unreadable_item_sits_does_not_change_the_result(items):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("scanner", "payload", "field"), _WRONG_SHAPED_ENTRIES)
 async def test_entries_the_normalizer_cannot_read_are_not_reported_as_coverage(scanner, payload, field):
-    """The container is the shape the endpoint documents and the entries in it are not, so the
-    run normalises to nothing and would otherwise answer with an unqualified all-clear."""
+    """The entries are not the documented shape, so the run normalises to nothing, which must not read as all-clear."""
     request = AdhocAnalyzeRequest(scanners={scanner: payload}, analyzers=[], apply_global_waivers=False)
 
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -450,8 +440,7 @@ async def test_the_shortfall_counts_the_unreadable_entries_against_the_posted_on
 
 @pytest.mark.asyncio
 async def test_entries_that_dedup_to_one_finding_are_still_full_coverage():
-    """The same secret twice in one file is one finding by design, so comparing entry count to
-    finding count would report a shortfall on a payload the pipeline read completely."""
+    """One secret twice in a file is one finding by design, so entry and finding counts must not be compared."""
     payload = {"findings": [_TRUFFLEHOG["findings"][0], dict(_TRUFFLEHOG["findings"][0])]}
     request = AdhocAnalyzeRequest(scanners={_TRUFFLEHOG_NAME: payload}, analyzers=[], apply_global_waivers=False)
 
@@ -739,8 +728,7 @@ async def test_a_component_routed_to_crypto_assets_is_not_reported_as_dropped():
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    # An empty ``skipped_inputs`` is what proves the asset was read: an SBOM the parser got
-    # nothing out of is reported there instead.
+    # An empty skipped_inputs proves the asset was read: an SBOM yielding nothing would be listed there.
     assert response.analyzers.skipped_inputs == {}
     # The routed asset is what the crypto stage evaluates, so it reports itself as having run.
     assert response.analyzers.ran == [_CRYPTO_RULES]
@@ -827,8 +815,7 @@ def _partial_osv(monkeypatch, result):
 async def test_an_analyzer_that_covered_only_part_of_its_input_is_not_reported_as_ran(
     monkeypatch, result_key, expected
 ):
-    """An unreachable CVE source answers a vulnerable SBOM with zero findings; the caller has to
-    be able to tell that from a clean bill of health."""
+    """An unreachable CVE source answers a vulnerable SBOM with zero findings, which must not read as clean."""
     _partial_osv(monkeypatch, {"osv_vulnerabilities": [], result_key: _SKIPPED_COMPONENTS})
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[_OSV_NAME], apply_global_waivers=False)
@@ -838,8 +825,7 @@ async def test_an_analyzer_that_covered_only_part_of_its_input_is_not_reported_a
     assert response.analyzers.errored == {
         _OSV_NAME: [f"{_FIRST_SBOM_SOURCE}: {_PARTIAL_COVERAGE}: {expected.format(count=_SKIPPED_COMPONENTS)}"]
     }
-    # Trap 4: the engine surfaces the same gap through the aggregator, which would mint a HIGH
-    # SYSTEM_WARNING finding on a path whose caller asked only for what it posted.
+    # The engine would surface the same gap as a HIGH SYSTEM_WARNING finding the caller never posted.
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
 

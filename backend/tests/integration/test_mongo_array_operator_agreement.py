@@ -1,9 +1,4 @@
-"""Array operators on the attrappe and on a real server, pinned to what Percona Server for MongoDB 8.0.17-6 answers.
-
-Project ownership is a ``team_ids`` array whose syncs must replace their own subset of owners, so
-these operators carry the whole feature. A case the two backends answer differently fails on one of
-them instead of drifting apart unnoticed.
-"""
+"""Array operators on the fake and on a real server, pinned to what Percona Server for MongoDB 8.0.17-6 answers."""
 
 import pytest
 from pymongo.errors import OperationFailure
@@ -68,8 +63,7 @@ async def test_aggregation_stage_matches_the_server(db, database, case):
 
 
 async def test_a_conflicting_update_is_refused_even_when_nothing_matched(db, database):
-    """The server parses the whole update before it looks for a document, so a filter that
-    selects nothing still reports the conflict rather than reporting a clean no-op."""
+    """The server parses the whole update before matching, so an empty match still reports the conflict."""
     with pytest.raises(OperationFailure) as raised:
         await db.probe.update_one({"_id": "absent"}, {"$set": {"n": 1}, "$inc": {"n": 1}})
 
@@ -77,8 +71,7 @@ async def test_a_conflicting_update_is_refused_even_when_nothing_matched(db, dat
 
 
 async def test_replacing_one_syncs_owners_needs_two_writes(db, database):
-    """What the multi-team sync has to do instead of one $pull + $addToSet: the conflict makes
-    the combined form impossible, so the replacement runs as two updates."""
+    """A $pull and $addToSet on one field conflict, so the multi-team sync replaces its owners in two updates."""
     await db.probe.insert_one({"_id": "p", "team_ids": ["gitlab-a", "manual-b"]})
 
     await db.probe.update_one({"_id": "p"}, {"$pull": {"team_ids": {"$in": ["gitlab-a"]}}})

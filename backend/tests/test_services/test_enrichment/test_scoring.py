@@ -1,5 +1,3 @@
-"""Tests for risk scoring and exploit maturity calculation."""
-
 import pytest
 
 from app.core.risk_scoring import calculate_exploit_maturity
@@ -69,13 +67,11 @@ class TestCalculateRiskScore:
         ],
     )
     def test_epss_contribution_continuous_at_boundary(self, epss_below, epss_above):
-        # EPSS contribution must be continuous across the bucket boundaries (no cliff).
         below = calculate_risk_score(None, epss_below, False, False)
         above = calculate_risk_score(None, epss_above, False, False)
         assert abs(above - below) < 0.5
 
     def test_epss_contribution_monotonic(self):
-        # Higher EPSS must always yield a >= contribution across the full range.
         epss_grid = [0.0, 0.005, 0.0099, 0.01, 0.05, 0.099, 0.1, 0.3, 0.7, 1.0]
         scores = [calculate_risk_score(None, e, False, False) for e in epss_grid]
         for i in range(1, len(scores)):
@@ -136,9 +132,7 @@ class TestCalculateSecretRiskScore:
 
 
 class TestCalculateSecretSeverity:
-    """Only unverified secrets that are gone from the current tree drop to LOW; this must
-    match the secret_deprioritized_count predicate (type=secret AND verified!=True AND
-    in_current_tree=False) so the downgraded findings are exactly the deprioritized bucket."""
+    """Must match the secret_deprioritized_count predicate, so the downgraded findings are exactly that bucket."""
 
     @pytest.mark.parametrize(
         ("verified", "in_current_tree", "expected"),

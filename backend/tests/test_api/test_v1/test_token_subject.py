@@ -1,5 +1,4 @@
-"""Tokens name the account by its immutable id: a username can pass to someone else, so a token
-naming one would outlive a rename and open whichever account takes the name next."""
+"""A username can pass to someone else, so a token naming one would open whichever account takes it next."""
 
 import time
 from datetime import datetime, timedelta, timezone
@@ -99,8 +98,7 @@ def local_zone_ahead_of_utc(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("local_zone_ahead_of_utc")
 async def test_ending_every_session_refuses_a_token_minted_for_a_username_equal_to_an_account_id():
-    # A user renamed to bob's id before the switch got a refresh token naming "u-bob"; the rollout
-    # ends every session at once because by-id lookup cannot tell that token from bob's own.
+    # A user renamed to bob's id holds a refresh token naming "u-bob" that by-id lookup cannot tell from bob's.
     db = await _db_with(_BOB, {"_id": "u-eve", "username": "eve", "email": "eve@test.com", "is_active": True})
     minted_before = datetime.now(timezone.utc) - timedelta(hours=1)
     token = jwt.encode(

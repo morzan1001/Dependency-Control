@@ -1,11 +1,4 @@
-"""Every consumer that joins a finding component against a dependency name.
-
-The list was enumerated mechanically (see the task report): all `$lookup` stages from the
-dependencies collection, all `$expr`/`$eq` name comparisons, every `dep_repo.aggregate`
-pipeline, and every Python dict/set built from dependency documents. Each case below seeds
-a Maven package the way prod stores it — dependency named `jackson-databind` with the group
-in its own field, vulnerability finding carrying the full coordinate.
-"""
+"""Prod stores a Maven dependency bare (group in its own field) while its finding carries the full coordinate."""
 
 from datetime import datetime, timezone
 
@@ -83,7 +76,6 @@ async def seeded(db, owner_auth_headers_proj):
 
 @pytest.mark.asyncio
 async def test_scan_findings_table_still_carries_dependency_info(client, db, seeded):
-    """projects.py $lookup — purl/direct/origin drive the main findings table."""
     resp = await client.get(f"/api/v1/projects/scans/{SCAN_ID}/findings", headers=seeded)
     assert resp.status_code == 200, resp.text
     row = resp.json()["items"][0]
@@ -94,7 +86,6 @@ async def test_scan_findings_table_still_carries_dependency_info(client, db, see
 
 @pytest.mark.asyncio
 async def test_scan_findings_lookup_prefers_the_exact_spelling(client, db, seeded):
-    """A bare-named finding must take its own row, not a same-artifact sibling's."""
     await db.dependencies.insert_one(_dependency("d2", name=QUALIFIED, direct=False))
     await db.findings.insert_one(_finding("f2", BARE))
 
@@ -107,7 +98,6 @@ async def test_scan_findings_lookup_prefers_the_exact_spelling(client, db, seede
 
 @pytest.mark.asyncio
 async def test_hotspots_report_the_dependency_type(client, db, seeded):
-    """risk.py hotspot type — the type comes from the inventory."""
     resp = await client.get("/api/v1/analytics/hotspots", headers=seeded)
     assert resp.status_code == 200, resp.text
     assert resp.json()[0]["type"] == "maven"
@@ -115,7 +105,6 @@ async def test_hotspots_report_the_dependency_type(client, db, seeded):
 
 @pytest.mark.asyncio
 async def test_dependency_search_vulnerability_filter_matches(client, db, seeded):
-    """search.py vulnerability filter — has_vulnerabilities=true must find the Maven dependency."""
     resp = await client.get(
         "/api/v1/analytics/search",
         params={"q": "jackson", "has_vulnerabilities": "true"},
@@ -127,7 +116,6 @@ async def test_dependency_search_vulnerability_filter_matches(client, db, seeded
 
 @pytest.mark.asyncio
 async def test_findings_export_row_carries_purl_and_direct(db, seeded):
-    """inventory/findings_export.py _dependency_lookup."""
     from app.models.project import Scan
     from app.services.inventory.findings_export import iter_findings_rows
 
@@ -140,7 +128,6 @@ async def test_findings_export_row_carries_purl_and_direct(db, seeded):
 
 @pytest.mark.asyncio
 async def test_remediation_plan_marks_the_package_direct(db, seeded):
-    """chat/tools/registry.py dep_index — drives is_direct, ecosystem and the plan ordering."""
     from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
@@ -161,12 +148,7 @@ async def test_remediation_plan_marks_the_package_direct(db, seeded):
 
 @pytest.mark.asyncio
 async def test_dependency_metadata_resolves_a_hotspot_component(client, db, seeded):
-    """The Hotspots and Impact tabs pass a finding-derived component straight to this endpoint.
-
-    frontend/src/pages/Analytics.tsx:99,107 hand `result.component` / `hotspot.component` to
-    the modal, which calls /dependency-metadata and /component-findings side by side, so an
-    unresolvable dependency query leaves a populated findings list next to an empty panel.
-    """
+    """The Hotspots and Impact tabs pass a finding-derived component straight to this endpoint."""
     resp = await client.get("/api/v1/analytics/dependency-metadata", params={"component": QUALIFIED}, headers=seeded)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -178,7 +160,6 @@ async def test_dependency_metadata_resolves_a_hotspot_component(client, db, seed
 
 @pytest.mark.asyncio
 async def test_dependency_metadata_does_not_guess_an_ambiguous_hotspot_component(client, db, seeded):
-    """Two inventory packages end in 'core'; a bare hotspot component must not pick one."""
     for idx, name in enumerate(["@angular/core", "@messageformat/core"]):
         await db.dependencies.insert_one(_dependency(f"amb{idx}", name=name))
 
@@ -201,7 +182,7 @@ async def test_hotspot_type_resolves_for_a_mixed_case_maven_artifact(client, db,
 
 @pytest.mark.asyncio
 async def test_find_component_usage_accepts_a_qualified_component(db, seeded):
-    """chat/MCP: the caller quotes a finding's component, the inventory holds the bare name."""
+    """The caller quotes a finding's component; the inventory holds the bare name."""
     from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
@@ -294,10 +275,7 @@ async def test_find_component_usage_skips_a_same_named_package_under_another_qua
 
 @pytest.mark.asyncio
 async def test_findings_export_prefers_the_direct_row_on_a_name_version_collision(db, seeded):
-    """Multi-SBOM scans store the same name@version under two purl spellings (bare and
-    ?type=jar). On 60 sampled production multi-SBOM scans 2,452 of 11,882 dependency docs
-    sit in such groups and 1,635 of the groups disagree on `direct`, so keeping whichever
-    document the cursor yielded last made the exported column a coin flip."""
+    """Multi-SBOM scans store a name@version under two purl spellings (bare, ?type=jar) that disagree on direct."""
     from app.models.project import Scan
     from app.services.inventory.findings_export import iter_findings_rows
 
@@ -315,8 +293,7 @@ async def test_findings_export_prefers_the_direct_row_on_a_name_version_collisio
 
 @pytest.mark.asyncio
 async def test_findings_export_prefers_the_direct_row_stored_after_the_transitive_one(db, seeded):
-    """The sibling case above seeds the direct row first, where first-wins looks like the
-    tie-break; only the reverse insertion order tells the two apart."""
+    """Only the reverse insertion order tells a prefer-direct rule from first-wins."""
     from app.models.project import Scan
     from app.services.inventory.findings_export import iter_findings_rows
 
@@ -339,9 +316,6 @@ async def test_findings_export_prefers_the_direct_row_stored_after_the_transitiv
 
 @pytest.mark.asyncio
 async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded):
-    """generate_remediation_plan treated an inferred-direct package as transitive while
-    find_component_usage treated it as direct (and never read the flag). Both now report
-    `direct_confidence` so the collapse is the reader's choice, not the tool's."""
     from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
@@ -367,8 +341,6 @@ async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded
 
 @pytest.mark.asyncio
 async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, seeded):
-    """The old `and not direct_inferred` collapse existed to deprioritise guesses; that
-    intent moves into the ordering instead of into the reported flag."""
     from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry

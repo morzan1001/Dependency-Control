@@ -1,9 +1,4 @@
-"""Who hears about a project's events, once several teams own it.
-
-An owning team's members can read the project, so leaving one of them out of a notification or
-skipping its webhook is an under-reach. Both are asserted from the other side too — a team that
-owns nothing must reach nobody.
-"""
+"""An owning team's members can read the project, so leaving them out of a notification or webhook under-reaches."""
 
 import pytest
 

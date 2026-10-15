@@ -1,8 +1,4 @@
-"""The weighted sum that orders the toxic-dependency feed.
-
-The score decides which packages reach the operator at all, and it is otherwise pinned only by
-which cards appear — an ordering a single term can dominate without changing the set.
-"""
+"""Card presence alone cannot pin the toxic-dependency score, which one term can dominate without changing the set."""
 
 import itertools
 

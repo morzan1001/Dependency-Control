@@ -1,5 +1,3 @@
-"""Unit tests for the crypto-asset chat tools in app.services.chat.tools."""
-
 from datetime import datetime, timezone
 
 import pytest

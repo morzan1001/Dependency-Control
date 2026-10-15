@@ -1,5 +1,3 @@
-"""Tests for lifecycle normalizers (outdated packages, end-of-life)."""
-
 from app.services.aggregation import ResultAggregator
 
 

@@ -1,5 +1,3 @@
-"""A malformed stored `match` dict on one finding is logged and skipped; the other findings are still matched during recalc."""
-
 import pytest
 
 from app.models.match_signature import MatchSignature
@@ -37,7 +35,6 @@ def _Waiver(id, status, match):
 @pytest.mark.asyncio
 async def test_malformed_finding_match_dict_is_skipped_recalc_completes():
     scan = "s1"
-    # f_bad has a malformed stored match dict; f_good is well-formed.
     docs = [
         _finding_doc(scan, "f_bad", "x", "x", 1, match={"rule_key": "r", "anchor_kind": "bogus"}),
         _finding_doc(scan, "f_good", "fpB", "c2", 20),
@@ -55,7 +52,6 @@ async def test_malformed_finding_match_dict_is_skipped_recalc_completes():
         ),
     )
 
-    # Must NOT raise despite the malformed finding match; f_good still matched + waived.
     db, _ = await restamp_docs(docs, [w_good], scan)
 
     assert "f_good" in await waived(db, scan)

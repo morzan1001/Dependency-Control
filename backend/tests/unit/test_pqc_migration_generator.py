@@ -111,7 +111,7 @@ def _scanned_project(db, project_id, scans):
 
 @pytest.mark.asyncio
 async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
-    # global scope has project_ids=None ("all projects"); it must not be coerced to [] (empty plan) — enumerate every project with a usable scan.
+    # Global scope passes project_ids=None for all projects, which must not be coerced to an empty list.
     db = FakeDatabase()
     for pid in ("p1", "p2"):
         _scanned_project(db, pid, [(f"scan-{pid}", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
@@ -142,8 +142,7 @@ async def test_list_vulnerable_assets_empty_project_ids_stays_empty():
 
 @pytest.mark.asyncio
 async def test_list_vulnerable_assets_reads_the_head_build_not_a_deleted_branch():
-    """The newest scan sits on a branch the VCS no longer has, so a plan built from it would name
-    crypto that shipped nowhere."""
+    """The newest scan sits on a branch the VCS no longer has, so a plan from it would name crypto shipped nowhere."""
     db = FakeDatabase()
     _scanned_project(
         db,
@@ -185,8 +184,7 @@ _PLAN_LIMIT = 5
 
 @pytest.mark.asyncio
 async def test_the_summary_counts_every_migratable_group_not_the_page_it_returns():
-    """A migration plan that under-counts the work is a planning document wrong in the direction
-    that matters."""
+    """A migration plan that under-counts the work is wrong in the direction that matters."""
     db = MagicMock()
     gen = PQCMigrationPlanGenerator(db)
     assets = [_asset(bom_ref=f"r{index}") for index in range(_GROUPS_BEYOND_LIMIT)]
@@ -203,7 +201,6 @@ async def test_the_summary_counts_every_migratable_group_not_the_page_it_returns
 
 
 async def _plan_for(assets):
-    """The plan for one project whose head scan holds these assets, through the vulnerability filter."""
     db = FakeDatabase()
     _scanned_project(db, "p1", [("scan-head", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
     _store(db, *(asset.model_copy(update={"scan_id": "scan-head"}) for asset in assets))

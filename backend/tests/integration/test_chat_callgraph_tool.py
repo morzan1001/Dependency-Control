@@ -1,5 +1,3 @@
-"""The chat's get_callgraph answers with each language's most recently uploaded graph and names its build."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -18,7 +16,6 @@ _SEPTEMBER = datetime(2026, 9, 5, tzinfo=timezone.utc)
 
 
 def _stored(language: str, module: str, *, created_at: datetime, updated_at: datetime, **build) -> dict:
-    """A callgraph document as the upload endpoint stores it."""
     doc = Callgraph(
         project_id=_PROJECT,
         language=language,
@@ -90,7 +87,6 @@ async def test_a_language_without_callgraph_support_is_refused(db, database):
 
 
 def _graph(modules: int, details: int) -> dict:
-    """A python graph whose module pkg-{i} is imported and called i times, each with `details` files and symbols."""
     usage = {
         f"pkg-{i}": ModuleUsage(
             module=f"pkg-{i}",

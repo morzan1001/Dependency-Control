@@ -1,5 +1,3 @@
-"""Tests for the Callgraph and ModuleUsage models."""
-
 from datetime import datetime, timezone
 
 import pytest

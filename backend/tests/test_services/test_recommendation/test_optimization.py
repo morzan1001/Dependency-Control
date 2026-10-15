@@ -1,5 +1,3 @@
-"""Tests for optimization recommendations: identify_quick_wins."""
-
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.optimization import QUICK_WINS_SHOWN, identify_quick_wins
 from tests.helpers.findings import stored_vulnerability
@@ -109,7 +107,6 @@ class TestIdentifyQuickWinsDirectDepBonus:
         ]
         result = identify_quick_wins(vulns, deps)
         assert len(result) == 2
-        # Direct dep should appear first due to bonus
         assert result[0].action["package"] == "direct-pkg"
         assert result[0].action["is_direct"] is True
 
@@ -194,10 +191,8 @@ class TestIdentifyQuickWinsTop5Limit:
 class TestIdentifyQuickWinsSortedByScore:
     def test_sorted_by_score_descending(self):
         vulns = [
-            # Low score: 2 MEDIUM vulns, transitive
             _vuln("low-pkg", severity="MEDIUM", finding_id="CVE-2024-001"),
             _vuln("low-pkg", severity="MEDIUM", finding_id="CVE-2024-002"),
-            # High score: 2 CRITICAL vulns, direct
             _vuln("high-pkg", severity="CRITICAL", finding_id="CVE-2024-003"),
             _vuln("high-pkg", severity="CRITICAL", finding_id="CVE-2024-004"),
         ]
@@ -221,13 +216,12 @@ class TestIdentifyQuickWinsNoFixedVersion:
 
     def test_mix_of_fixable_and_unfixable(self):
         vulns = [
-            _vuln("pkg", finding_id="CVE-2024-001"),  # fixable
-            _vuln("pkg", finding_id="CVE-2024-002"),  # fixable
-            _vuln_no_fix("pkg", finding_id="CVE-2024-003"),  # not fixable
+            _vuln("pkg", finding_id="CVE-2024-001"),
+            _vuln("pkg", finding_id="CVE-2024-002"),
+            _vuln_no_fix("pkg", finding_id="CVE-2024-003"),
         ]
         deps = [_dep("pkg")]
         result = identify_quick_wins(vulns, deps)
-        # Only fixable vulns are counted
         assert len(result) == 1
         assert result[0].impact["total"] == 2
 

@@ -1,5 +1,3 @@
-"""Tests for the ResultAggregator."""
-
 import json
 import time
 from pathlib import Path
@@ -102,8 +100,6 @@ class TestNewestFirst:
 
 
 class TestNormalizeVersion:
-    """Tests for _normalize_version - strips Go/v prefixes."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -127,8 +123,6 @@ class TestNormalizeVersion:
 
 
 class TestNormalizeComponent:
-    """Tests for _normalize_component."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -146,8 +140,6 @@ class TestNormalizeComponent:
 
 
 class TestExtractArtifactName:
-    """Tests for _extract_artifact_name - artifact extraction for grouping."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -252,8 +244,6 @@ def _deduped(*entries):
 
 
 class TestDedupeVulnerabilityEntries:
-    """Entries sharing an id or alias fold into the earliest of them."""
-
     def test_a_lone_entry_is_kept(self):
         target = _deduped({"id": "CVE-2023-1234", "severity": "HIGH", "aliases": []})
         assert len(target) == 1
@@ -278,15 +268,11 @@ class TestDedupeVulnerabilityEntries:
         }
         target = _deduped(*target, entry)
         assert len(target) == 1
-        # Severity: higher wins
         assert target[0]["severity"] == "HIGH"
-        # Description: longer wins
         assert target[0]["description"] == "longer description here"
-        # Scanners: merged
         assert set(target[0]["scanners"]) == {"trivy", "grype"}
 
     def test_alias_intersection_triggers_merge(self):
-        """If target has alias that matches source ID, they should merge."""
         target = [
             {
                 "id": "CVE-2023-1234",
@@ -303,9 +289,7 @@ class TestDedupeVulnerabilityEntries:
         }
         target = _deduped(*target, entry)
         assert len(target) == 1
-        # Should keep the original ID (CVE)
         assert target[0]["id"] == "CVE-2023-1234"
-        # GHSA should be in aliases
         assert "GHSA-xxxx" in target[0]["aliases"]
 
     def test_entries_sharing_no_id_stay_apart(self):
@@ -407,8 +391,6 @@ def _osv_ghsa_entry_with_cve_alias():
 
 
 class TestConvergentVulnerabilityMerge:
-    """Entries linked by an alias contributed later must collapse into one (C10)."""
-
     def test_late_alias_collapses_previously_split_entries(self):
         target = _deduped(_grype_ghsa_entry(), _trivy_cve_entry())
         assert len(target) == 2
@@ -469,7 +451,6 @@ _AGGREGATION_BUDGET_SECONDS = 5.0
 
 
 def _scanner_outputs_sharing(cve_count: int) -> tuple[dict, dict]:
-    """Trivy and grype reports on grype's brace-expansion match, both naming the same ``cve_count`` CVEs."""
     grype = json.loads(_GRYPE_OUTPUT.read_text())
     template = json.dumps(grype["matches"][0])
     artifact = grype["matches"][0]["artifact"]
@@ -517,8 +498,6 @@ class TestOnePackageWithThousandsOfSharedCves:
 
 
 class TestAddVulnerabilityFinding:
-    """Tests for _add_vulnerability_finding - aggregation by component+version."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -563,14 +542,12 @@ class TestAddVulnerabilityFinding:
         assert len(self.agg.findings) == 2
 
     def test_severity_escalation(self):
-        """Aggregate severity should be the max of all findings."""
         self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "1.0", severity="LOW"))
         self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", severity="CRITICAL"))
         agg = next(iter(self.agg.findings.values()))
         assert agg.severity == "CRITICAL"
 
     def test_v_prefix_normalization(self):
-        """v1.0.0 and 1.0.0 should be same version."""
         self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "v1.0.0"))
         self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0.0"))
         assert len(self.agg.findings) == 1
@@ -640,8 +617,6 @@ class TestAddVulnerabilityFinding:
 
 
 class TestAddQualityFinding:
-    """Tests for _add_quality_finding - quality issue aggregation."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -660,7 +635,6 @@ class TestAddQualityFinding:
         assert len(self.agg.findings) == 1
 
     def test_multiple_quality_issues_aggregated(self):
-        """Scorecard + maintainer risk for same component should aggregate."""
         scorecard = Finding(
             id="SCORECARD-pkg",
             type=FindingType.QUALITY,
@@ -686,7 +660,6 @@ class TestAddQualityFinding:
         assert len(self.agg.findings) == 1
         agg = next(iter(self.agg.findings.values()))
         assert len(agg.details["quality_issues"]) == 2
-        # Severity should escalate to HIGH
         assert agg.severity == "HIGH"
 
 
@@ -732,8 +705,6 @@ class TestMaintenanceIssueFlag:
 
 
 class TestMergeFindingsData:
-    """Tests for _merge_findings_data - merging two findings into one."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -787,8 +758,6 @@ class TestMergeFindingsData:
 
 
 class TestGetFindings:
-    """Tests for get_findings - the main output method with post-processing."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -835,7 +804,6 @@ class TestGetFindings:
         assert len(findings) == 1
 
     def test_non_vuln_non_sast_passed_through(self):
-        """Non-vulnerability, non-SAST findings should pass through directly."""
         self.agg.add_finding(
             Finding(
                 id="SECRET-1",
@@ -852,8 +820,6 @@ class TestGetFindings:
         assert findings[0].type == "secret"
 
     def test_cross_format_component_names_merged(self):
-        """Findings for 'org.postgresql:postgresql' and 'postgresql' with same
-        version should be merged in get_findings() instead of appearing as duplicates."""
         self.agg.add_finding(
             Finding(
                 id="CVE-1",
@@ -880,13 +846,10 @@ class TestGetFindings:
         )
         findings = self.agg.get_findings()
         vuln_findings = [f for f in findings if f.type == "vulnerability"]
-        # Should be merged into one finding, not two
         assert len(vuln_findings) == 1
-        # Both scanners should be present
         assert set(vuln_findings[0].scanners) >= {"trivy", "grype"}
 
     def test_related_findings_linked_by_component(self):
-        """Different finding types for same component should be cross-linked."""
         self.agg.add_finding(
             Finding(
                 id="CVE-1",
@@ -913,15 +876,12 @@ class TestGetFindings:
         )
         findings = self.agg.get_findings()
         assert len(findings) == 2
-        # Both should reference each other
         vuln_f = next(f for f in findings if f.type == "vulnerability")
         out_f = next(f for f in findings if f.type == "outdated")
         assert out_f.id in vuln_f.related_findings
         assert vuln_f.id in out_f.related_findings
 
     def test_cross_format_related_findings_linked(self):
-        """Quality for 'org.postgresql:postgresql' and Vulnerability for 'postgresql'
-        should be linked as related findings via artifact name normalization."""
         self.agg.add_finding(
             Finding(
                 id="CVE-1",
@@ -949,12 +909,11 @@ class TestGetFindings:
         findings = self.agg.get_findings()
         vuln_f = next(f for f in findings if f.type == "vulnerability")
         out_f = next(f for f in findings if f.type == "outdated")
-        # Should be linked despite different component name formats
         assert out_f.id in vuln_f.related_findings
         assert vuln_f.id in out_f.related_findings
 
     def test_findings_are_returned_in_ascending_sort_key_order(self):
-        """adhoc's finding cap slices this list and documents the direction it relies on."""
+        """Callers slice this list, so the ascending order is part of the contract."""
         self.agg.add_finding(
             Finding(
                 id="SECRET-1",
@@ -985,7 +944,7 @@ class TestGetFindings:
         assert [f.component for f in findings] == ["zzz-config.yaml", "alpha", "mbedtls", "zlib"]
 
     def test_vulnerability_entries_are_ordered_by_id(self):
-        """The chat tool quotes the first five entries, so arrival order must not pick them."""
+        """Readers quote the first entries, so arrival order must not pick them."""
         for cve in ("CVE-2026-9", "CVE-2026-1", "CVE-2026-5"):
             self.agg.add_finding(
                 Finding(
@@ -1099,8 +1058,6 @@ class TestGetFindings:
 
 
 class TestAggregateDispatch:
-    """Tests for the aggregate() dispatcher method."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -1143,8 +1100,6 @@ class TestAggregateDispatch:
 
 
 class TestStoredEntryShape:
-    """Each advisory entry stores a field once, at the level its readers use."""
-
     def test_lifted_scanner_fields_are_not_copied_into_the_entry_details(self):
         agg = ResultAggregator()
         agg.add_finding(

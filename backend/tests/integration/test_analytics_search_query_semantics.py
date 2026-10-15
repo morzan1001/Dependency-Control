@@ -1,10 +1,3 @@
-"""The two analytics search endpoints hand the caller's query and sort order straight to Mongo.
-
-The query text becomes a ``$regex`` and the sort order becomes the direction of a skip/limit page,
-so a query that is not escaped and a direction that is inverted both change which rows a caller is
-shown without any Python-side pass to repair them.
-"""
-
 from datetime import datetime, timezone
 
 import pytest

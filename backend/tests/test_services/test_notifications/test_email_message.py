@@ -1,5 +1,3 @@
-"""Tests for the MIME structure of outgoing notification emails."""
-
 from aiosmtplib.email import flatten_message
 
 from app.models.system import SystemSettings

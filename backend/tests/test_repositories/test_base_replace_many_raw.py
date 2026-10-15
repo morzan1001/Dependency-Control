@@ -1,5 +1,3 @@
-"""Tests for BaseRepository.replace_many_raw: whole-document upserts by _id and partial-failure behavior."""
-
 import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock

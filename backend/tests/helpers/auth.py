@@ -13,7 +13,7 @@ def make_admin() -> User:
     return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
 
-# Minted by python-jose 3.5.0 with the test SECRET_KEY; tokens issued before the PyJWT switch must still decode.
+# Minted by python-jose 3.5.0 with the test SECRET_KEY: tokens it issued must still decode.
 JOSE_SUBJECT_ID = "64b7f0c2a1b2c3d4e5f60718"
 JOSE_SUBJECT_EMAIL = "legacy.user@example.com"
 JOSE_RESET_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$legacyhash"

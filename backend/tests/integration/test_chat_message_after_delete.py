@@ -1,5 +1,3 @@
-"""A chat message written after its conversation was deleted leaves nothing behind."""
-
 import pytest
 
 from app.repositories.chat import ChatRepository

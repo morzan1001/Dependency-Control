@@ -1,5 +1,3 @@
-"""The ingest path must record an update-frequency delta, and a rollup failure must not fail the scan."""
-
 from unittest.mock import AsyncMock
 
 import pytest
@@ -98,7 +96,6 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_del
 
 @pytest.mark.asyncio
 async def test_scan_still_completes_when_the_delta_write_fails(db, _stored_sboms, monkeypatch):
-    """The rollup's own handler must absorb a Mongo failure, including the error-doc fallback."""
     failing_write = AsyncMock(side_effect=RuntimeError("no space left on device"))
     monkeypatch.setattr(ScanUpdateDeltaRepository, "save", failing_write)
 

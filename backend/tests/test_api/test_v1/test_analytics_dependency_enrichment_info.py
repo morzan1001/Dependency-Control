@@ -1,5 +1,3 @@
-"""_get_enrichment_info reads the shape DependencyEnrichment.to_mongo_dict() persists."""
-
 import asyncio
 from unittest.mock import AsyncMock
 

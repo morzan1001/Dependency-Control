@@ -1,5 +1,3 @@
-"""Tests for webhook API endpoints (CRUD for project/global webhooks, update validation, test-webhook)."""
-
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -15,7 +13,6 @@ MODULE = "app.api.v1.endpoints.webhooks"
 
 
 def _make_webhook(id="wh-1", project_id="proj-1", url="https://example.com/hook", events=None, **kwargs):
-    """Create a Webhook with sensible defaults."""
     if events is None:
         events = ["scan_completed"]
     return Webhook(id=id, project_id=project_id, url=url, events=events, **kwargs)
@@ -130,7 +127,7 @@ class TestGetWebhook:
         assert result.url == "https://example.com/hook"
 
     def test_project_viewer_holding_only_webhook_read_may_read(self):
-        """Reading is gated on webhook:read; demanding webhook:update would push every read-only holder onto the project-admin branch."""
+        """Reading needs webhook:read only; webhook:update would push read-only holders onto the admin branch."""
         from app.api.v1.endpoints.webhooks import get_webhook
         from app.core.permissions import Permissions
         from app.models.project import Project, ProjectMember

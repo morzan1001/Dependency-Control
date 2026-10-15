@@ -1,5 +1,3 @@
-"""Retention expires scans by age, yet a project's head has to survive it however old it is."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

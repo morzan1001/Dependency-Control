@@ -1,5 +1,3 @@
-"""Enrichment must not corrupt license data: deps.dev sentinels and composite SPDX expressions."""
-
 import pytest
 
 from app.services.aggregation import ResultAggregator

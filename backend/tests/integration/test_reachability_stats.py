@@ -1,8 +1,4 @@
-"""Reachability verdicts must reach ``scan.stats``, inline and on the deferred path.
-
-The stats pipeline reads the top-level ``reachable``/``reachability_level`` mirrors, so a
-verdict written only under ``details.reachability`` leaves every counter at zero.
-"""
+"""The stats pipeline counts the top-level reachable/reachability_level mirrors, not details.reachability."""
 
 from datetime import datetime, timezone
 
@@ -365,11 +361,7 @@ async def test_a_second_language_supersedes_the_first_summary(db):
 
 @pytest.mark.asyncio
 async def test_coverable_count_excludes_os_packages(db):
-    """Container scans are almost all OS packages, which no callgraph tool can ever cover.
-
-    Without this figure a team cannot tell "reachability found nothing yet" from "reachability
-    can never say anything here", and enables callgraph jobs that cannot help them.
-    """
+    """Container scans are almost all OS packages, which no callgraph tool can ever cover."""
     await db.dependencies.insert_many(
         [
             {"scan_id": _SCAN_ID, "name": "libssl3", "type": "deb", "purl": "pkg:deb/debian/libssl3@3.5.5"},

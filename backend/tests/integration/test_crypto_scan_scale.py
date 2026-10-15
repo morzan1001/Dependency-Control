@@ -1,5 +1,3 @@
-"""Crypto readers over scans holding more than 50,000 assets."""
-
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED

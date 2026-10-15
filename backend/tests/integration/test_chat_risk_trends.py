@@ -1,5 +1,3 @@
-"""get_risk_trends sums each project's last usable head build per period, newest first so truncation cuts the oldest."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

@@ -69,7 +69,6 @@ async def test_audit_prune_enforces_min_cutoff(client, db, admin_auth_headers):
 
 @pytest.mark.asyncio
 async def test_project_audit_prune_enforces_min_cutoff(client, db, owner_auth_headers_proj):
-    """Same guard applies to the per-project prune endpoint."""
     recent = datetime.now(timezone.utc) - timedelta(days=15)
     resp = await client.delete(
         f"/api/v1/projects/p/crypto-policy/audit?before={recent.isoformat()}",
@@ -80,7 +79,6 @@ async def test_project_audit_prune_enforces_min_cutoff(client, db, owner_auth_he
 
 @pytest.mark.asyncio
 async def test_audit_prune_allows_cutoff_at_minimum_boundary(client, db, admin_auth_headers):
-    """The min-cutoff check is strictly-greater-than, so a boundary cutoff is accepted."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=91)
     resp = await client.delete(
         f"/api/v1/crypto-policies/system/audit?before={cutoff.isoformat()}",

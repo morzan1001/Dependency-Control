@@ -1,5 +1,3 @@
-"""HTTP contract and job-document transitions for compliance report lifecycle endpoints."""
-
 from datetime import datetime, timezone
 
 import pytest

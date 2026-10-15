@@ -1,5 +1,3 @@
-"""Hotspots and impact age a vulnerability from its first detection in the project, which outlives retention."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -46,7 +44,6 @@ async def _scan(db, scan_id: str, created_at: datetime, *findings: Finding) -> N
 
 @pytest_asyncio.fixture
 async def retained(db, owner_auth_headers_proj):
-    """lodash was first seen by a scan that retention has since deleted; minimist is new in the head scan."""
     await create_indexes(db)
     await _scan(db, "scan-old", _days_ago(200), _vulnerability("lodash", "CVE-2021-23337"))
     await _scan(

@@ -1,5 +1,3 @@
-"""get_dependency_details finds a package's enrichment by any spelling of its purl, or by its name."""
-
 import pytest
 
 from app.models.user import User

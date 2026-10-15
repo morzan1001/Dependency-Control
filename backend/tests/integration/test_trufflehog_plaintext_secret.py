@@ -1,5 +1,3 @@
-"""TruffleHog's plaintext secret reaches neither Mongo nor the results API, and the finding_id stays put."""
-
 import hashlib
 import json
 

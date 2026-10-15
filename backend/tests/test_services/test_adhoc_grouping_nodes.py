@@ -1,5 +1,3 @@
-"""A node that only structures an SBOM is not reported as a component the parser dropped."""
-
 import json
 from pathlib import Path
 

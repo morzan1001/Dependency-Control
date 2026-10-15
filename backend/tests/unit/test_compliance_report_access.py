@@ -1,5 +1,3 @@
-"""A report is shown or served only to a caller whose scope resolves, and a database failure is not a refusal."""
-
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 

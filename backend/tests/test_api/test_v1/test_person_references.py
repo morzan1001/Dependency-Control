@@ -1,6 +1,3 @@
-"""A stored reference to a person is the account's id, and every read names the account by its current
-username; a value that names no account, like a username stored before the ids, reads as stored."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

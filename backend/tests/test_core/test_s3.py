@@ -1,5 +1,3 @@
-"""Tests for the async S3-compatible storage client."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,15 +11,9 @@ from app.core.s3 import (
 MODULE = "app.core.s3"
 
 
-# ---------------------------------------------------------------------------
-# get_s3_client
-# ---------------------------------------------------------------------------
-
-
 class TestGetS3Client:
     def test_checksums_only_when_required(self):
-        # botocore >= 1.36 injects x-amz-checksum-* headers by default, which
-        # S3-compatible providers (GCS interop) reject with SignatureDoesNotMatch.
+        # botocore >= 1.36 sends x-amz-checksum-* headers, which GCS interop rejects with SignatureDoesNotMatch.
         captured = {}
 
         class FakeClientCtx:
@@ -55,11 +47,6 @@ class TestGetS3Client:
         assert config.response_checksum_validation == "when_required"
 
 
-# ---------------------------------------------------------------------------
-# is_archive_enabled
-# ---------------------------------------------------------------------------
-
-
 class TestIsArchiveEnabled:
     def test_enabled_when_both_set(self):
         with patch(f"{MODULE}.settings") as mock_settings:
@@ -86,15 +73,9 @@ class TestIsArchiveEnabled:
             assert is_archive_enabled() is False
 
 
-# ---------------------------------------------------------------------------
-# ensure_bucket_exists
-# ---------------------------------------------------------------------------
-
-
 class TestEnsureBucketExists:
     def test_skips_when_not_enabled(self):
         with patch(f"{MODULE}.is_archive_enabled", return_value=False):
-            # Nothing to assert: the test passes as long as no exception is raised.
             asyncio.run(ensure_bucket_exists())
 
     def test_does_not_create_if_bucket_exists(self):
@@ -134,11 +115,6 @@ class TestEnsureBucketExists:
             asyncio.run(ensure_bucket_exists())
 
         mock_s3.create_bucket.assert_called_once_with(Bucket="dc-archives")
-
-
-# ---------------------------------------------------------------------------
-# delete_object
-# ---------------------------------------------------------------------------
 
 
 class TestDeleteObject:

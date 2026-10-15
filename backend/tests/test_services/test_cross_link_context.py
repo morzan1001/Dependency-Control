@@ -1,5 +1,4 @@
-"""K4: the frontend renders details.additional_finding_types and details.vulnerability_info;
-the aggregator has always known both relationships but wrote neither."""
+"""The frontend renders details.additional_finding_types and details.vulnerability_info."""
 
 import asyncio
 

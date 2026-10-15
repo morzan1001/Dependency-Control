@@ -108,8 +108,7 @@ async function saveBinding() {
   fireEvent.click(await screen.findByRole("button", { name: /Save Binding/ }));
 }
 
-// The listing selects stay disabled until their query settles, and a click on a disabled
-// trigger is silently dropped.
+// The listing selects stay disabled until their query settles, and a disabled trigger drops clicks.
 async function openSelect(label: string) {
   const trigger = await screen.findByLabelText(label);
   await waitFor(() => expect(trigger).toBeEnabled());

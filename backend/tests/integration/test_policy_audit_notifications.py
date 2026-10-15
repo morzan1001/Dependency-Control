@@ -1,5 +1,3 @@
-"""Policy audit changes trigger in-app notifications via the correct NotificationService methods."""
-
 from unittest.mock import AsyncMock
 
 import pytest
@@ -43,7 +41,6 @@ async def test_project_policy_change_notifies_project_members(
     owner_auth_headers_proj,
     monkeypatch,
 ):
-    """notify_project_members receives the resolved Project object, not the bare id."""
     from app.services.notifications import service as svc_mod
 
     mock_perm = AsyncMock()

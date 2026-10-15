@@ -1,5 +1,3 @@
-"""Legacy snake_case webhook event names are canonicalised on input."""
-
 from __future__ import annotations
 
 from app.core.constants import WEBHOOK_EVENT_ALIASES

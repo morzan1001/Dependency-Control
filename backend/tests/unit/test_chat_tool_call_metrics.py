@@ -1,5 +1,4 @@
-"""Every tool call lands in dc_chat_tool_calls_total under a status that says how it ended, so a
-dashboard can tell a refusal or an error answer from a success."""
+"""dc_chat_tool_calls_total labels each call's outcome so a dashboard can tell refusals and errors from success."""
 
 import logging
 

@@ -182,8 +182,7 @@ describe("ApiKeysCard", () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(NOW));
-    // App.tsx sets no mutation defaults, so neither does this: a `mutations.gcTime` here would
-    // hide whether the create mutation clears its own plaintext.
+    // No mutation defaults, as in App.tsx: a mutations.gcTime would hide whether the mutation clears its plaintext.
     queryClient = new QueryClient({
       mutationCache: createMutationCache(),
       defaultOptions: { queries: { retry: false } },

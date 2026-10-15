@@ -1,5 +1,3 @@
-"""Window reads on the update-frequency rollup collections."""
-
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -111,9 +109,7 @@ class TestGroupWindowByBranch:
 
     @pytest.mark.asyncio
     async def test_no_stage_accumulates_the_window_server_side(self):
-        # Deltas carry the outdated names their scan added; accumulating those arrays in a
-        # $group cost more than ten times the documents and blew the blocking-stage ceiling
-        # on real data. Nothing may put them back into one.
+        # Accumulating the deltas' outdated-name arrays in a $group blew the blocking-stage ceiling on real data.
         db = FakeDatabase()
         for index in range(3):
             await db.scan_update_deltas.insert_one(_delta(f"s{index}", "p1", "main", index))
@@ -152,8 +148,7 @@ async def _seed_scan(db: FakeDatabase, scan_id: str, project_id: str, branch: st
 class TestWindowScansByBranch:
     @pytest.mark.asyncio
     async def test_same_commit_retries_count_once(self):
-        # Both read paths keep only the first scan of a same-commit run, so counting
-        # the retries would report a healthy branch as half measured.
+        # Both read paths keep only a same-commit run's first scan, so counting retries would halve the coverage.
         db = FakeDatabase()
         await _seed_scan(db, "s1", "p1", "main", 0, commit_hash="c1")
         for i in range(3):
@@ -268,8 +263,7 @@ class TestWindowScansByBranch:
         )
         await _seed_scan(db, "s1", "p1", "main", 10)
 
-        # The server omits a grouping key whose field the document does not carry, so
-        # the row has no branch entry to index -- only to ask for.
+        # The server omits a grouping key whose field the document lacks, so the row has no branch entry.
         rows = await db.scans.aggregate(
             [{"$group": {"_id": {"p": "$project_id", "b": "$branch"}, "n": {"$sum": 1}}}]
         ).to_list(None)
@@ -281,9 +275,7 @@ class TestWindowScansByBranch:
 
     @pytest.mark.asyncio
     async def test_a_scan_dated_in_text_falls_outside_every_calendar_window(self):
-        # Measured against the server: a range query is bracketed to its bound's BSON
-        # type, so a date cutoff never matches a document holding a string there, and
-        # neither read path may count such a scan.
+        # A range query is bracketed to its bound's BSON type, so a date cutoff never matches a string date.
         db = FakeDatabase()
         await _seed_scan(db, "restored", "p1", "main", 0, created_at="2026-06-01T12:00:00+00:00")
         await _seed_scan(db, "s1", "p1", "main", 10)
@@ -334,9 +326,7 @@ class TestWindowScansByBranch:
 
 class TestWindowHardLimit:
     def test_the_shared_document_cap_is_the_documented_one(self):
-        # Both read paths truncate one branch to this many documents and report the
-        # result as fully covered. Moving it silently redefines the window for every
-        # project busier than it, and no differential between the paths can see that.
+        # Both read paths truncate a branch here, so moving it silently redefines every busier project's window.
         assert WINDOW_HARD_LIMIT == 1000
 
 

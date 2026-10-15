@@ -1,5 +1,4 @@
-"""What the project write schemas let through to storage: the stored Project requires a value for
-some fields, and housekeeping must be able to compute a cutoff from the retention."""
+"""The stored Project requires values for some fields, and housekeeping must compute a cutoff from the retention."""
 
 import pytest
 from pydantic import ValidationError

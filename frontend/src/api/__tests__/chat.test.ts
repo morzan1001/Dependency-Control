@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChatSSEEvent } from '@/types/chat';
 
-// Mock the client module to assert chat.ts delegates to the shared refreshAccessToken.
 const clientMocks = vi.hoisted(() => ({
   getBaseUrl: vi.fn(() => '/api/v1'),
   refreshAccessToken: vi.fn<() => Promise<string | null>>(),

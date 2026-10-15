@@ -1,8 +1,4 @@
-"""HTTP behaviour of POST /api/v1/mcp.
-
-The route resolves its caller through the MCP key dependency, so only a request through the app
-proves the tool surface is behind a key at all.
-"""
+"""The route resolves its caller through the MCP key dependency, so only a request through the app proves the gate."""
 
 import pytest
 
@@ -45,7 +41,6 @@ _CHAT_DENIALS = "dc_chat_rate_limited_total"
 
 @pytest.fixture(autouse=True)
 def limiter_cache(fake_cache, monkeypatch):
-    """A fresh window store per test, running the limiter's real script."""
     monkeypatch.setattr(rate_limiter, "cache_service", fake_cache)
     return fake_cache
 
@@ -89,8 +84,7 @@ async def test_an_unauthenticated_request_gets_no_tools(client, db):
 
 @pytest.mark.asyncio
 async def test_a_key_whose_owner_lacks_mcp_access_gets_no_tools(client, db):
-    # ANALYZE_ADHOC is the sibling surface's permission: a gate widened to accept either would
-    # hand every ad-hoc key owner the MCP tool surface.
+    # A gate widened to accept the sibling surface's permission would hand every ad-hoc key owner MCP.
     _doc, token = await _issue_unified_key(db, permissions=(Permissions.ANALYZE_ADHOC,))
 
     resp = await client.post(_MCP, json=_TOOLS_LIST, headers=_bearer(token))
@@ -149,8 +143,7 @@ async def test_admitting_a_unified_key_stamps_its_last_use(client, db):
 
 @pytest.mark.asyncio
 async def test_the_catalogue_hides_a_tool_the_key_owner_may_not_call(client, db):
-    """tools/call refuses it anyway, so advertising it only tells an outside client about a
-    surface it cannot reach — and names the deployment's privileged tools while doing so."""
+    """tools/call refuses it anyway, so advertising it would only name the deployment's privileged tools."""
     _doc, token = await _issue_unified_key(db)
 
     resp = await client.post(_MCP, json=_TOOLS_LIST, headers=_bearer(token))
@@ -163,8 +156,7 @@ async def test_the_catalogue_hides_a_tool_the_key_owner_may_not_call(client, db)
 
 @pytest.mark.asyncio
 async def test_an_advertised_tool_carries_the_arguments_it_requires(client, db):
-    """An MCP client builds its call from inputSchema alone; an empty schema leaves every
-    argument unguessable."""
+    """An MCP client builds its call from inputSchema alone."""
     _doc, token = await _issue_unified_key(db)
 
     resp = await client.post(_MCP, json=_TOOLS_LIST, headers=_bearer(token))
@@ -176,8 +168,7 @@ async def test_an_advertised_tool_carries_the_arguments_it_requires(client, db):
 
 @pytest.mark.asyncio
 async def test_results_and_errors_of_one_batch_share_the_json_rpc_version(client, db):
-    """The two envelopes are built by separate helpers, each carrying its own literal version,
-    and a client conforming to JSON-RPC 2.0 discards whichever one drifts."""
+    """Separate helpers build the two envelopes, and a JSON-RPC 2.0 client discards whichever version drifts."""
     _doc, token = await _issue_unified_key(db)
 
     resp = await client.post(

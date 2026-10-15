@@ -143,7 +143,6 @@ async def test_components_version_and_license_change_is_one_entry(db):
         ]
     )
     resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
-    # One item, counted under version_changed (per spec)
     matched = [i for i in resp.items if i.name == "axios"]
     assert len(matched) == 1
     assert matched[0].change == "version_changed"

@@ -1,5 +1,3 @@
-"""One GitHub sync, end to end, through the real repositories."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,7 +14,6 @@ _ORG_TEAMS = [
     {"id": 9000, "slug": "platform", "name": "Platform", "parent": None},
 ]
 
-# The member subset the syncing instance owns, and one another instance owns.
 _OWN = team_source(TEAM_SOURCE_GITHUB, "gh-1")
 _THEIRS = team_source(TEAM_SOURCE_GITHUB, "gh-2")
 
@@ -28,7 +25,6 @@ def _service():
 
 
 def _stubbed_reads(service, holders=("payments",), repo_map=None, org_teams=None, members=None):
-    """Unless given, the map names the ``holders`` as the teams holding acme/widgets."""
     org_teams = org_teams or _ORG_TEAMS
     if repo_map is None:
         repo_map = {"acme/widgets": [team["id"] for team in org_teams if team["slug"] in holders]}
@@ -104,8 +100,7 @@ async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
 
 
 async def _assert_the_group_is_not_created_twice(db) -> None:
-    """Once created the team is bound, so the next scan resolves it through the direct check and
-    the map only confirms that nothing else has been granted access since."""
+    """Once created the team is bound, so the next scan resolves it through the direct check."""
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     service = _service()
@@ -122,9 +117,7 @@ async def _assert_the_group_is_not_created_twice(db) -> None:
 
 
 async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
-    """The escalation: a team named to match an unbound group collected project-admin over every
-    repository that group holds, for anyone who could create or rename a team. Only the
-    system:manage binding endpoint grants a team a group's projects."""
+    """Matching by name would hand project-admin over the group's repositories to anyone who can name a team."""
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     await repo.create(Team(id="t-llama", name="Shangri Llama", members=[TeamMember(user_id="u-squatter")]))
@@ -148,8 +141,7 @@ async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
 
 
 async def _assert_a_cleared_binding_stays_cleared(db) -> None:
-    """An unbound group is what the organisation walk goes looking for, so an ingest that bound the
-    team back left its members without access in between and handed the group to them again."""
+    """The organisation walk looks for unbound groups, so an ingest must not bind a cleared team back."""
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     await repo.create(Team(id="t-platform", name="Platform", bindings=[_github(external_id=9000, slug="platform")]))
@@ -181,8 +173,7 @@ async def _sync_against_the_existing_team(db, existing: Team) -> tuple[TeamSyncR
 
 
 async def _assert_a_team_bound_to_another_instance_keeps_only_that_binding(db) -> None:
-    """Two instances are two tenants; a team already bound on one is no answer for a group on the
-    other just because the names read alike."""
+    """Two instances are two tenants, so a binding on one never answers for a same-named group on the other."""
     result, repo = await _sync_against_the_existing_team(
         db,
         Team(id="t-elsewhere", name="Platform", bindings=[_github(instance_id="gh-2", external_id=1234, org="other")]),
@@ -209,8 +200,6 @@ async def _assert_a_team_this_instance_already_holds_is_not_stolen(db) -> None:
 
 
 async def _assert_the_group_gets_one_team_however_many_answer_to_its_name(db) -> None:
-    """Two teams read as "Platform" and neither is bound here. Both keep their own names and their
-    own projects: what decides is the rule, not how many teams answer to a group's name."""
     repo = TeamRepository(db)
     await repo.create(Team(id="t-held", name="Platform", bindings=[_github(external_id=1234, org="other")]))
     await repo.create(Team(id="t-free", name="Platform"))
@@ -228,8 +217,7 @@ async def _assert_the_group_gets_one_team_however_many_answer_to_its_name(db) ->
 
 
 async def _assert_a_team_synced_from_gitlab_gains_no_github_binding(db) -> None:
-    """One team answering for a group on both providers is a deliberate binding, not something an
-    ingest may arrange by reading names."""
+    """Binding one team on both providers is a deliberate choice an ingest must not make by reading names."""
     result, repo = await _sync_against_the_existing_team(
         db, Team(id="t-gitlab", name="Platform", bindings=[GitLabGroupBinding(instance_id="gl-1", external_id=77)])
     )
@@ -281,7 +269,6 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
 
 
 async def _assert_the_last_resolvable_member_leaving_loses_the_team(db) -> None:
-    """Alice left the GitHub team; the one login still listed shows an email no local account verified."""
     await db["users"].insert_one(
         {"_id": "u-alice", "username": "alice", "email": "alice@corp.com", "is_verified": True}
     )

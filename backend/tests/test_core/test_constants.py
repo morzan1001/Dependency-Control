@@ -1,5 +1,3 @@
-"""Tests for constants utility functions."""
-
 from app.core.constants import (
     EFFORT_BONUSES,
     RECOMMENDATION_TYPE_BONUSES,
@@ -59,7 +57,6 @@ class TestRecommendationTypeBonusesOrdering:
         return RECOMMENDATION_TYPE_BONUSES[key]
 
     def test_security_threats_outrank_impact_updates(self):
-        # The "critical security" tier must beat the "high impact updates" tier.
         critical_security_min = min(
             self._bonus(k)
             for k in (

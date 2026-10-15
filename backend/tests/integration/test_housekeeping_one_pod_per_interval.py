@@ -1,5 +1,4 @@
-"""Every pod runs the housekeeping loop. The daily sweep and the branch sync must still run on one pod per
-interval, or each rollout repeats them once per replica against Mongo, S3 and the GitLab/GitHub APIs."""
+"""Every pod runs the housekeeping loop, so the daily sweep and branch sync must claim one pod per interval."""
 
 from datetime import timedelta
 from types import SimpleNamespace

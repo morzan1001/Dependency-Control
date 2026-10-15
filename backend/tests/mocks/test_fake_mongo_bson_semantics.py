@@ -1,8 +1,4 @@
-"""Cross-type BSON behaviour of the Mongo attrappe, measured against the real server.
-
-A column that mixes datetimes with strings is what an archive restore leaves behind, and an
-attrappe that raises there reports a phantom regression instead of the production answer.
-"""
+"""An archive restore leaves columns mixing datetimes and strings, which the fake must order as the server does."""
 
 from datetime import datetime, timezone
 
@@ -237,8 +233,7 @@ async def test_in_with_null_matches_both_a_null_and_a_missing_field():
 
 @pytest.mark.asyncio
 async def test_ne_true_keeps_a_document_whose_flag_is_the_integer_one():
-    """Python calls 1 and True equal; BSON int32 and bool are different types, and the server
-    selects the integer-flagged document — which on the retention cursor means deleting it."""
+    """Python calls 1 and True equal; BSON does not, so the server selects the integer-flagged document."""
     db = FakeDatabase()
     await db.scans.insert_one({"_id": "int-flag", "is_release": _INTEGER_TRUE})
     await db.scans.insert_one({"_id": "bool-flag", "is_release": True})
@@ -273,8 +268,7 @@ async def test_equality_on_a_boolean_does_not_match_the_integer_one():
 
 @pytest.mark.asyncio
 async def test_a_stored_datetime_loses_its_sub_millisecond_digits():
-    """Dates go on the wire as int64 milliseconds, so a test seeding two instants from two clock
-    reads gets a total order here and a coin flip in production."""
+    """Dates travel as int64 milliseconds, so two clock reads may tie on the server."""
     db = FakeDatabase()
     await db.scans.insert_one({"_id": "s1", "created_at": _SUB_MILLISECOND})
     await db.scans.insert_one({"_id": "s2", "created_at": _SAME_MILLISECOND})

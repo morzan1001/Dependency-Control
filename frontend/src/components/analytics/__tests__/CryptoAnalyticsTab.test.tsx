@@ -7,7 +7,6 @@ import { createReport } from "@/api/compliance";
 
 import { CryptoAnalyticsTab } from "../CryptoAnalyticsTab";
 
-// Capture the range props the trends chart receives so we can assert they stay stable.
 const capturedRanges: Array<{ start: string; end: string }> = [];
 
 vi.mock("@/components/crypto/analytics/TrendsTimeSeriesChart", () => ({
@@ -89,7 +88,6 @@ describe("CryptoAnalyticsTab trends range", () => {
     expect(capturedRanges.length).toBeGreaterThan(0);
     const first = capturedRanges[capturedRanges.length - 1];
 
-    // Advance the clock within the same day, then return to the same preset; the range must stay identical.
     vi.setSystemTime(new Date("2026-07-07T12:05:00"));
     fireEvent.click(screen.getByRole("button", { name: "7d" }));
     fireEvent.click(screen.getByRole("button", { name: "30d" }));
@@ -97,7 +95,6 @@ describe("CryptoAnalyticsTab trends range", () => {
     const last = capturedRanges[capturedRanges.length - 1];
     expect(last.start).toBe(first.start);
     expect(last.end).toBe(first.end);
-    // Day-boundary normalized: no millisecond precision leaks into the query key.
     expect(last.end).toMatch(/:00:00\.000Z$/);
     expect(last.start).toMatch(/:00:00\.000Z$/);
   });

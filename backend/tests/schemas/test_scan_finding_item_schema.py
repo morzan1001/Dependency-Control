@@ -1,5 +1,3 @@
-"""Tests that ScanFindingItem serializes waiver_lapsed and lapsed_waiver_id fields."""
-
 from app.schemas.project import ScanFindingItem
 
 _MINIMAL = {

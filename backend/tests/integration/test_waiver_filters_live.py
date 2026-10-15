@@ -1,5 +1,4 @@
-"""The waiver query and the active-waiver filter on a real server: a rule_id reaching into the
-merged SAST entries' array and a null equality matching a missing field are server semantics."""
+"""Live: a rule_id reaching into the merged SAST array and null matching a missing field are server semantics."""
 
 from datetime import datetime, timedelta, timezone
 

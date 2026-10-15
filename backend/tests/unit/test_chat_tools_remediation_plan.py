@@ -1,5 +1,3 @@
-"""generate_remediation_plan must source targets from the stored finding shape (details.fixed_version / details.vulnerabilities[])."""
-
 from datetime import datetime, timezone
 
 import pytest

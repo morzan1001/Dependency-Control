@@ -1,5 +1,3 @@
-"""Tests for Webhook model."""
-
 import subprocess
 import sys
 from datetime import datetime, timezone

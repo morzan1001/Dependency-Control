@@ -1,5 +1,3 @@
-"""Tests for the CVE Remediation SLA framework: per-severity windows aged from first detection."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

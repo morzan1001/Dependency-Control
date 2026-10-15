@@ -1,44 +1,4 @@
-"""Drift guard: every ``Finding.details`` key the backend reads or writes must be
-declared on a model in ``app.schemas.finding_details``.
-
-The guard AST-walks ``app/`` and collects keys from:
-
-1. ``<details expr>.get(K)`` / ``.setdefault`` / ``.pop`` calls,
-2. ``<details expr>[K]`` subscripts (reads and writes),
-3. ``K in <details expr>`` membership tests,
-4. Mongo dotted-path string literals (``"details.key"`` / ``"$details.key"``),
-   including f-strings whose placeholders resolve to string constants.
-
-``K`` may be a string literal or a name that resolves to a module-level string
-constant, in the same file or imported from another ``app.*`` module (this is
-what keeps ``DETAILS_KEY_*`` reads honest against the writers' literals).
-
-A "details expression" is a name or attribute (path) ending in ``details``
-(``details``, ``finding.details``, ``merged_details``, …) or a chained
-``x.get("details")`` / ``x["details"]``.
-
-Scope rule: a key passes when it is declared on at least ONE details model
-(union check, not per-finding-type), so adding a legitimate analyzer field means
-touching only the schema. Dotted paths are additionally checked one level deep
-through the known entry-list/object fields in ``_NESTED_MODELS``.
-
-KNOWN BLIND SPOTS — do not over-trust a green guard:
-
-- Aliased variables: ``d = finding["details"]; d.get("x")`` or helpers taking a
-  details dict under another parameter name (live example:
-  ``findings_delta._first_id(details, *keys)`` — the call sites pass literal key
-  strings that are NOT collected). Keep details-holding variables named
-  ``details``/``*_details`` so the walker sees them.
-- Keys built at runtime (concatenation, ``%``/``.format``, comprehension over a
-  key list) and f-string placeholders that are not resolvable constants — the
-  unresolvable tail of a dotted path is not checked.
-- Wrong-LEVEL reads of a declared key: the union rule cannot flag reading e.g.
-  ``category`` at the merged-SAST top level just because the key legitimately
-  exists on the per-scanner shape.
-- Writer ``**spread`` kwargs (e.g. ``CryptoCertificateDetails(bom_ref=..., **details)``)
-  bypass the writer-side kwarg check; with ``extra="allow"`` an undeclared key in
-  the spread dict lands silently unless some reader consumes it.
-"""
+"""Blind spots: dicts not named details or *_details, runtime-built keys, wrong-level reads, writer ** spreads."""
 
 import ast
 from dataclasses import dataclass
@@ -51,9 +11,7 @@ from app.schemas import finding_details
 
 APP_ROOT = Path(finding_details.__file__).resolve().parents[1]
 
-# (key, file) pairs matched by the AST walk that are not Finding.details payloads.
-# Location-scoped on purpose: the same key appearing in any other file still fails.
-# Every entry needs a reason; do not park real drift here.
+# Location-scoped: the same key in any other file still fails, so do not park real drift here.
 ALLOWED_UNDECLARED: dict[tuple[str, str], str] = {
     ("writeErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("nUpserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
@@ -128,7 +86,6 @@ _MODULE_CONSTANTS_CACHE: dict[Path, dict[str, str]] = {}
 
 
 def _module_string_constants(path: Path) -> dict[str, str]:
-    """Module-level ``NAME = "literal"`` assignments of a source file."""
     cached = _MODULE_CONSTANTS_CACHE.get(path)
     if cached is not None:
         return cached
@@ -158,7 +115,6 @@ def _module_path(module: str) -> Path | None:
 
 
 def _constant_env(tree: ast.Module, path: Path) -> dict[str, str]:
-    """Names in this file that resolve to string constants (local or imported from app.*)."""
     env = dict(_module_string_constants(path))
     for node in ast.walk(tree):
         if not (isinstance(node, ast.ImportFrom) and node.module and node.level == 0):
@@ -182,7 +138,6 @@ def _resolve_key(node: ast.expr, env: dict[str, str]) -> str | None:
 
 
 def _resolve_fstring(node: ast.JoinedStr, env: dict[str, str]) -> tuple[str, bool]:
-    """Concatenate resolvable parts; returns (value, fully_resolved)."""
     parts: list[str] = []
     for value in node.values:
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
@@ -201,7 +156,6 @@ def _path_segments(value: str) -> list[str] | None:
     prefix = value.removeprefix("$")
     if not prefix.startswith("details."):
         return None
-    # Skip Mongo operators and positional segments ($, $[...], numeric indices).
     return [
         seg
         for seg in prefix.split(".")[1:]
@@ -310,8 +264,7 @@ def test_allowlist_entries_are_still_referenced():
 
 
 def test_details_key_constants_point_at_declared_fields():
-    """Backstop for constant-mediated reads: renaming a DETAILS_KEY_* value must fail here
-    even if every read site goes through the constant."""
+    """Renaming a DETAILS_KEY_* value must fail here even when every read site goes through the constant."""
     from app.core import constants
 
     declared = _declared_keys()
@@ -324,7 +277,6 @@ def test_details_key_constants_point_at_declared_fields():
 
 
 def test_aggregator_typed_dicts_match_details_models():
-    """The dict-merging TypedDicts in app.schemas.finding must not drift from the models."""
     pairs = {
         "VulnerabilityEntry": "VulnerabilityEntryDetails",
         "VulnerabilityAggregatedDetails": "VulnerabilityDetails",
@@ -338,18 +290,13 @@ def test_aggregator_typed_dicts_match_details_models():
 
 
 def test_writer_construction_kwargs_are_declared_fields():
-    """``extra="allow"`` accepts typo'd kwargs silently, so check construction sites by AST.
-
-    Only names imported from ``app.schemas.finding_details`` count, so unrelated
-    same-named classes elsewhere are not matched. ``**spread`` arguments cannot be
-    checked statically (see module docstring).
-    """
+    """extra="allow" accepts typo'd kwargs silently, so construction sites are checked by AST."""
     model_names = {model.__name__ for model in _details_models()}
     bad: list[str] = []
     for path in sorted(APP_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
         rel = path.relative_to(APP_ROOT.parent)
-        imported: dict[str, str] = {}  # local alias -> model name
+        imported: dict[str, str] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module == finding_details.__name__:
                 for alias in node.names:
@@ -373,8 +320,7 @@ def test_writer_construction_kwargs_are_declared_fields():
 
 
 def test_the_kev_consumers_per_entry_reads_are_walked():
-    """Their vulnerability-entry variables are named ``*_details``, so a key that drifts from the
-    enrichment writer fails the declared-key check instead of silently reading nothing."""
+    """Their entry variables are named *_details, so a key drifting from the enrichment writer fails the check."""
     stats, notifications = (
         {use.key for use in _collect_file_uses(APP_ROOT / "services" / "analysis" / name)}
         for name in ("stats.py", "notifications.py")

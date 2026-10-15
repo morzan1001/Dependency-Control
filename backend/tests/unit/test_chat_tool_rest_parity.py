@@ -1,6 +1,4 @@
-"""Chat and MCP tool results reach the browser, the chat history and an external LLM client, so a
-tool may expose only what the REST response schema for the same object does, and only to a caller
-REST would answer."""
+"""Tool results reach the browser, chat history and external LLMs, so they expose only what REST would answer."""
 
 import json
 from datetime import datetime, timezone

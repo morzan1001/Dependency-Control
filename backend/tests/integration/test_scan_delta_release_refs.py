@@ -1,5 +1,3 @@
-"""from=release&to=head resolves the pair server-side; explicit scan ids keep working."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -80,21 +78,18 @@ async def _seed_release(db, scan_id: str, *, released_at: datetime, environment:
     await ReleaseRepository(db).record(
         Release(project_id=_PROJECT, environment=environment, scan_id=scan_id, released_at=released_at)
     )
-    # is_release denormalises "this scan has a release record" for the partial index; the mark
-    # endpoint sets it, so a seeded release without it would be a state production cannot reach.
+    # The mark endpoint always sets is_release, so a seeded release without it is a state production cannot reach.
     await db.scans.update_one({"_id": scan_id}, {"$set": {"is_release": True}})
 
 
 async def _seed(db) -> None:
-    """A production release ten days back, plus a fresher branch tip."""
     await _seed_scan(db, _HEAD_SCAN, created_at=_NOW)
     await _seed_scan(db, _RELEASED_SCAN, created_at=_NOW - _TEN_DAYS)
     await _seed_release(db, _RELEASED_SCAN, released_at=_NOW - _TEN_DAYS)
 
 
 async def _seed_one_scan_that_is_head_and_release(db) -> None:
-    """The healthiest state: the only scan is both the branch tip and what production runs.
-    Seeded with one row per category so an empty delta is provably "all unchanged", not "both sides empty"."""
+    """One row per category, so an empty delta proves "all unchanged" rather than "both sides empty"."""
     await _seed_scan(db, _ONLY_SCAN, created_at=_NOW)
     await _seed_release(db, _ONLY_SCAN, released_at=_NOW)
     await db.findings.insert_one(
@@ -223,8 +218,7 @@ async def test_no_release_in_that_environment_is_a_404(client, db, member_auth_h
     assert resp.status_code == 404, resp.text
     detail = resp.json()["detail"]
     assert _EMPTY_ENVIRONMENT in detail
-    # Both release-side 404s name the environment; only the wording tells "never released here"
-    # apart from "released, but the chain resolves to nothing".
+    # Both release-side 404s name the environment; only the wording tells the two apart.
     assert _UNRESOLVED_RELEASE_DETAIL not in detail
 
 
@@ -358,8 +352,6 @@ async def test_an_invalid_environment_slug_is_rejected(client, db, member_auth_h
 
 
 async def _seed_a_feature_branch_pipeline_after_the_main_one(db) -> None:
-    """The ordinary shape: a feature pipeline finishes after the main-branch one and, before the
-    branch predicate, takes over latest_scan_id and with it the head side of every delta."""
     await _seed(db)
     await db.projects.update_one({"_id": _PROJECT}, {"$set": {"default_branch": _BRANCH}})
     await _seed_scan(db, _FEATURE_SCAN, created_at=_NOW + _ONE_DAY, branch=_FEATURE_BRANCH)

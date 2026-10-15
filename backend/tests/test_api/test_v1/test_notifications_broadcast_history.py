@@ -1,5 +1,3 @@
-"""The broadcast history badge follows the audience the message was actually sent to."""
-
 import asyncio
 from datetime import datetime, timezone
 from typing import Any

@@ -1,5 +1,3 @@
-"""Aggregator enrichment entries, and the three vulnerability-enrichment upstreams answered in-process."""
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -58,7 +56,6 @@ def epss_page(scores: dict[str, float]) -> dict[str, Any]:
 
 
 def kev_feed(*cves: str) -> dict[str, Any]:
-    """The CISA KEV JSON feed with one entry per CVE."""
     return {
         "title": "CISA Catalog of Known Exploited Vulnerabilities",
         "catalogVersion": "2026.09.29",
@@ -83,8 +80,6 @@ def kev_feed(*cves: str) -> dict[str, Any]:
 
 @dataclass
 class Upstreams:
-    """GitHub, FIRST.org and CISA answering in their real shapes; a host in ``down`` answers 503."""
-
     advisories: dict[str, str | None] = field(default_factory=dict)
     scores: dict[str, float] = field(default_factory=dict)
     kev: tuple[str, ...] = ()
@@ -110,8 +105,6 @@ class Upstreams:
 def serve_enrichment(
     monkeypatch: pytest.MonkeyPatch, cache: Any, handler: Callable[[httpx.Request], Any]
 ) -> list[httpx.Request]:
-    """Answer every EPSS, KEV and GHSA request with ``handler`` over ``cache``, on fresh providers with backoff
-    delays zeroed; returns the requests in arrival order."""
     seen: list[httpx.Request] = []
 
     def _record(request: httpx.Request) -> Any:

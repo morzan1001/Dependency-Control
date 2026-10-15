@@ -151,7 +151,6 @@ function scanIn(status: string): ScanWithReleases {
   return { id: SCAN_ID, project_id: PROJECT_ID, branch: BRANCH, created_at: CREATED_AT, status, releases: [] };
 }
 
-// The scan page: the scan itself, its category stats, and the findings table under its own key.
 function renderScanPage(client: QueryClient) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>

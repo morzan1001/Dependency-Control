@@ -1,5 +1,3 @@
-"""Tests for database projection schemas (app.schemas.projections)."""
-
 from datetime import datetime, timezone
 
 from app.schemas.projections import CallgraphMinimal

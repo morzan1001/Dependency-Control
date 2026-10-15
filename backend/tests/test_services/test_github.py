@@ -1,5 +1,3 @@
-"""Tests for GitHubService OIDC validation, API pagination and write verbs."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -57,7 +55,7 @@ class TestGitHubServiceInitialization:
         assert service.api_url == "https://github.corp.example.com/api/v3"
 
     def test_ghes_host_with_github_com_prefix_not_misrouted(self):
-        """A GHES host whose name merely contains 'github.com' as a substring must resolve to its own /api/v3, never the public api.github.com (which would leak the enterprise PAT)."""
+        """A GHES host merely containing 'github.com' must resolve to its own /api/v3, or the enterprise PAT leaks."""
         for ghes_url in (
             "https://github.company.com",
             "https://github.commerce.io",
@@ -111,7 +109,6 @@ class TestGitHubServiceOIDC:
                     assert call_kwargs["audience"] == "dependency-control"
 
     def test_rejected_when_no_audience_configured(self):
-        """An instance without a configured oidc_audience must reject any token (fail closed), never decode it."""
         instance = make_github_instance(oidc_audience=None)
         service = GitHubService(instance)
 
@@ -129,7 +126,6 @@ class TestGitHubServiceOIDC:
 
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
 
-                    # Token rejected, and decode is never attempted.
                     assert result is None
                     mock_decode.assert_not_called()
 
@@ -137,7 +133,7 @@ class TestGitHubServiceOIDC:
         instance = github_instance_a()
         service = GitHubService(instance)
         with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
-            mock_header.return_value = {}  # No kid
+            mock_header.return_value = {}
             result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
             assert result is None
 
@@ -176,7 +172,6 @@ class TestGitHubServiceOIDC:
                     assert result.actor == "developer"
 
     def test_issuer_uses_normalized_url(self):
-        """Issuer verification must use URL without trailing slash."""
         instance = make_github_instance(url="https://token.actions.githubusercontent.com/")
         service = GitHubService(instance)
 
@@ -198,7 +193,6 @@ class TestGitHubServiceOIDC:
                     assert call_kwargs["issuer"] == "https://token.actions.githubusercontent.com"
 
     def test_key_rotation_refreshes_jwks(self):
-        """A kid missing from the cached set is looked up in a refetched one."""
         service = GitHubService(github_instance_a())
         jwks_old = {"keys": [rsa_public_jwk("old-key")]}
         jwks_new = {"keys": [*jwks_old["keys"], rsa_public_jwk("new-key")]}
@@ -217,7 +211,6 @@ class TestGitHubServiceOIDC:
         refresh.assert_awaited_once()
 
     def test_uses_rs256_algorithm(self):
-        """GitHub OIDC tokens use RS256, verify the service enforces this."""
         instance = github_instance_a()
         service = GitHubService(instance)
 
@@ -239,7 +232,6 @@ class TestGitHubServiceOIDC:
                     assert call_kwargs["algorithms"] == ["RS256"]
 
     def test_extra_claims_ignored(self):
-        """GitHubOIDCPayload uses extra='ignore', non-standard claims should not cause errors."""
         instance = github_instance_a()
         service = GitHubService(instance)
 
@@ -264,7 +256,6 @@ class TestGitHubServiceOIDC:
                     assert result.repository_id == "1"
 
     def test_decode_exception_returns_none(self):
-        """A token the decoder rejects is a failed validation, not a crash."""
         instance = github_instance_a()
         service = GitHubService(instance)
 
@@ -440,8 +431,6 @@ _COMMENT_WRITES = [
 
 
 class TestGitHubApiWriteMethods:
-    """A write must fail closed without a token and must hit the right verb and URL."""
-
     @pytest.mark.parametrize(("method", "endpoint"), _COMMENT_WRITES)
     def test_a_write_without_a_token_opens_no_client(self, method, endpoint):
         """The guard must short-circuit before any client opens, not lean on _get_auth_headers raising."""

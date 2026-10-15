@@ -1,4 +1,4 @@
-"""Webhook selection and the circuit breaker on a real server, which decides null-versus-missing and $or nesting."""
+"""Live: null-versus-missing and $or nesting are decided by the server."""
 
 from datetime import datetime, timedelta, timezone
 

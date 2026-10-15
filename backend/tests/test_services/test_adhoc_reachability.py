@@ -1,5 +1,3 @@
-"""Reachability runs off the posted callgraph, never off the database."""
-
 import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest

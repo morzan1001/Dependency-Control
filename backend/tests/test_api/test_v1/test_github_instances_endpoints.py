@@ -1,5 +1,3 @@
-"""Tests for GitHub instance API endpoints."""
-
 import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -23,7 +21,6 @@ def _make_repo_mock(**method_returns):
 
 
 def _run_update(instance, current_user, **fields):
-    """Drive update_instance against a repository that answers with ``instance``."""
     from app.api.v1.endpoints.github_instances import update_instance
     from app.schemas.github_instance import GitHubInstanceUpdate
 
@@ -43,7 +40,6 @@ def _run_update(instance, current_user, **fields):
 
 class TestGitHubInstancePagination:
     def test_pagination_response_page_reflects_requested_page(self, admin_user):
-        """build_pagination_response must receive skip, not the 1-based page (else page=2/size=100 collapses to 1)."""
         from app.api.v1.endpoints.github_instances import list_instances
 
         mock_repo = _make_repo_mock(find_many=[], count=250)
@@ -188,7 +184,7 @@ _TOKEN_USER_ID = 4242
 def _run_test_connection(
     instance, current_user, jwks, orgs=None, team_counts=None, rate_limit=_HEALTHY_BUDGET, token_probe=None
 ):
-    """Drive test_connection with stubs; an intact budget and an accepted token keep any refusal the test's own."""
+    """An intact budget and an accepted token by default keep any refusal the test's own."""
     from app.api.v1.endpoints.github_instances import test_connection
 
     mock_repo = _make_repo_mock(get_by_id=instance)
@@ -366,7 +362,6 @@ _SECONDARY_LIMIT = {
 
 
 def _serve_github_api(monkeypatch, answers: dict[str, httpx.Response]) -> None:
-    """api.github.com answering each path from ``answers``, behind the real service and HTTP client."""
     transport = httpx.MockTransport(lambda request: answers[request.url.path])
     monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=transport))
 
@@ -427,7 +422,7 @@ class TestASecondaryRateLimitIsNotReadAsAScopeProblem:
 
 
 class TestConnectionProbesEveryOrganisation:
-    """The owner runs several organisations; a token green on one and blind on another is the §8 failure."""
+    """The owner runs several organisations, and a token can be green on one and blind on another."""
 
     def test_success_names_every_organisation_with_its_team_count(self, admin_user):
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
@@ -442,7 +437,6 @@ class TestConnectionProbesEveryOrganisation:
 
         assert result.success is True
         assert "2 signing key(s)" in result.message
-        # Each count must come from its own organisation's probe, not be reused across them.
         assert "acme (7 team(s))" in result.message
         assert "globex (3 team(s))" in result.message
         assert [call.args[0] for call in team_probe.await_args_list] == ["acme", "globex"]
@@ -480,11 +474,8 @@ class TestConnectionProbesEveryOrganisation:
 
 
 class TestBindingPickerListings:
-    """What the team-binding dialog offers; a picker that cannot list makes binding guesswork."""
-
     @staticmethod
     def _run(endpoint, instance, **service_returns):
-        """Drive a picker route; returns (result, the stubbed service) so its probes can be asserted on."""
         mock_repo = _make_repo_mock(get_by_id=instance)
         service = MagicMock(rate_limited_until=None)
         # An intact budget unless the test is about the budget: a refusal under it is a scope refusal.
@@ -576,8 +567,6 @@ class TestBindingPickerListings:
 
 
 class TestPickerListingsTellAThrottledTokenFromAScopeProblem:
-    """The picker inherited the connection test's guess: it named read:org for every refusal."""
-
     def test_a_throttled_organisation_listing_reports_the_wait(self, admin_user):
         from app.api.v1.endpoints.github_instances import list_instance_organisations
 

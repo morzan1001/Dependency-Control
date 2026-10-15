@@ -1,9 +1,4 @@
-"""The ownership write the whole phase rests on, through the repository, against a real server.
-
-The shared operator table pins the pipeline's semantics; this pins the path around it — that
-``update_raw`` hands a list to the server as a pipeline rather than a ``$set`` of a field named
-``$set``, and that what comes back loads into the model with every owner intact.
-"""
+"""Live: update_raw must hand a list to the server as a pipeline, not as a $set of a field named $set."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -50,8 +45,7 @@ async def _assert_a_sync_keeps_the_manual_co_owner(db) -> None:
     project = Project(**await db.projects.find_one({"_id": "p-live"}))
     assert sorted(project.team_ids) == ["gl-fresh", "kept-by-hand"]
     assert project.team_sources == {"kept-by-hand": "manual", "gl-fresh": _GITLAB_A}
-    # The project must stay findable: an ownership write that stored null would drop it out of
-    # the unassigned view and every ownership view at once.
+    # An ownership write that stored null would drop the project out of every ownership view at once.
     assert await db.projects.count_documents({"team_ids": {"$size": 0}}) == 0
     assert await db.projects.count_documents({"team_ids": "kept-by-hand"}) == 1
 
@@ -115,12 +109,7 @@ _TWO_INSTANCE_PROJECT = {
 
 
 async def _assert_two_gitlab_instances_do_not_retire_each_other_s_owner(db) -> None:
-    """The production shape: two GitLab instances, each holding a different team on one project.
-
-    Under a provider-wide source each ingest reads the other's owner as its own, so B's run deletes
-    A's team, A's next run deletes B's, and the project's owners alternate on every CI run. Both
-    directions are exercised, because a one-sided check passes on exactly that alternation.
-    """
+    """Both directions run: a one-sided check passes while two instances' ingests keep retiring each other's owner."""
     repo = ProjectRepository(db)
     await db.projects.insert_one(dict(_TWO_INSTANCE_PROJECT))
 
@@ -154,11 +143,7 @@ _LEGACY_PROJECT = {
 
 
 async def _assert_a_legacy_owner_outlives_a_sync_but_not_the_picker(db) -> None:
-    """An owner no provenance entry names belongs to no provider, so a sync must add beside it.
-
-    Nothing else can retire it either, which is why the picker — the one writer that states the
-    whole owner set — has to be able to leave it out.
-    """
+    """An owner no provenance entry names belongs to no provider, so only the picker can retire it."""
     repo = ProjectRepository(db)
     await db.projects.insert_one(dict(_LEGACY_PROJECT))
 
@@ -185,8 +170,7 @@ _RACE_PROJECT = {
 
 
 async def _assert_two_concurrent_saves_cannot_both_take_the_last_admin(db) -> None:
-    """Both callers read the project before either writes, so a check made in Python passes twice
-    and the project is left with no owner and nobody able to add one back."""
+    """Both callers read before either writes, so a check made in Python would pass twice."""
     await db.projects.insert_one(dict(_RACE_PROJECT))
     for team_id in ("t-a", "t-b"):
         await db.teams.insert_one({"_id": team_id, "name": team_id, "members": [{"user_id": "u", "role": "admin"}]})
@@ -223,8 +207,7 @@ _MIXED_PROJECT = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", [_GITLAB_A, _GITHUB_A])
 async def test_the_python_mirror_names_the_owners_the_pipeline_retires(source):
-    """Ingest sizes the outcome in Python before the server computes it, so the two spellings have
-    to select the same entries or one of them is deciding about a different set."""
+    """Ingest sizes the outcome in Python before the server computes it, so both must select the same entries."""
     db = FakeDatabase()
     await db.projects.insert_one(dict(_MIXED_PROJECT))
     project = Project(**_MIXED_PROJECT)

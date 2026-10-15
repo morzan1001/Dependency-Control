@@ -1,9 +1,4 @@
-"""A rescan must keep the crypto assets its lineage already established.
-
-Assets posted to /ingest/cbom are stored under the ingested scan id with no SBOM in GridFS, so a
-rescan cannot re-derive them; without the carry-over the rescan reports zero crypto assets and the
-crypto delta reads that as risk having disappeared.
-"""
+"""CBOM-ingested assets have no SBOM in GridFS, so a rescan cannot re-derive them and must carry them over."""
 
 import pytest
 
@@ -69,7 +64,6 @@ async def _ingest_assets(db, scan_id: str) -> None:
 
 
 async def _seed_lineage(db) -> tuple[str, str]:
-    """An ingested-CBOM scan and a pending rescan of it, both carrying the same SBOM ref."""
     await create_indexes(db)
     await store_sbom(db, _SBOM, _FILE_ID)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
@@ -109,7 +103,6 @@ async def test_rescan_keeps_the_ingested_crypto_assets(db):
 
 
 async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], list[str]]:
-    """The rescan's analysis_results rows and announced analyzers after the original ran its crypto analyzers."""
     announced: list[list[str]] = []
 
     async def _capture(ctx, verdict, findings):
@@ -174,7 +167,6 @@ async def test_a_carry_over_past_the_old_asset_cap_copies_every_asset_once(db):
 
 
 async def _carry_over_onto_a_partly_filled_rescan(db, count: int) -> None:
-    """A failed earlier run left the embedded persist's rows on the rescan, under fresh ids."""
     await create_indexes(db)
     components = filler_components(range(count))
     await store_cbom(db, _PROJECT_ID, "scan-original", cbom_of(components))

@@ -1,5 +1,3 @@
-"""``count`` and ``distinct`` answer for the filter they were handed, not for the collection."""
-
 import pytest
 
 from app.repositories.scans import ScanRepository

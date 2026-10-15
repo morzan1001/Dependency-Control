@@ -1,5 +1,3 @@
-"""/analytics/summary: the severity breakdown must reconcile with the headline total, so UNKNOWN/NEGLIGIBLE/INFO vulnerabilities cannot be counted in one and omitted from the other."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 

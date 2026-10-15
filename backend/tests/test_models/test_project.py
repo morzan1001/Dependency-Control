@@ -1,5 +1,3 @@
-"""Tests for Project, Scan, and AnalysisResult models."""
-
 from datetime import datetime, timezone
 
 from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER

@@ -1,5 +1,4 @@
-"""The users, teams, projects and waiver lists and the chat team list sort names whatever their case; the fake ignores
-collations."""
+"""Live-only: the fake ignores collations, so case-insensitive name order needs the real server."""
 
 import pytest
 

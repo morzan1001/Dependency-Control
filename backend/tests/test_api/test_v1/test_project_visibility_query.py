@@ -1,9 +1,4 @@
-"""Which projects a user may see, from the one query that answers it.
-
-The team half is an ownership test now: a project answers to every team that owns it, and to no
-other. Both halves are asserted against a database rather than against the query document, so a
-filter that reads correctly but selects the wrong documents still fails.
-"""
+"""Asserted against a database, not the query document, so a filter that reads right but selects wrong fails."""
 
 import pytest
 
@@ -94,8 +89,7 @@ async def test_a_project_write_superuser_is_unfiltered(permissions):
 
 @pytest.mark.asyncio
 async def test_a_member_holding_no_project_read_permission_sees_nothing():
-    """The second half of the rule ``check_project_access`` composes. This user is a direct member
-    of one project and in a team owning two more; membership is not what settles a read."""
+    """Membership does not settle a read: check_project_access also requires the project read permission."""
     db = await _seeded_db()
 
     assert await _visible(db, _user()) == set()

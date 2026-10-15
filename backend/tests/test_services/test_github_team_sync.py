@@ -1,5 +1,3 @@
-"""GitHub team sync: member resolution, merge semantics, and resolving a repository to the teams holding it."""
-
 import asyncio
 import time
 from contextlib import contextmanager
@@ -62,7 +60,6 @@ def _service(instance_id: str = _INSTANCE) -> GitHubService:
 
 
 def _user_repo(user=None) -> MagicMock:
-    """Every verified email the lookup asks about names ``user``."""
     repo = MagicMock()
     repo.verified_users_by_email = AsyncMock(
         side_effect=lambda emails: {email.lower(): {"email": email, **user} for email in emails} if user else {}
@@ -72,8 +69,6 @@ def _user_repo(user=None) -> MagicMock:
 
 
 def _public_email(service: GitHubService, email: str | dict[str, str] | None = "ada@corp.com"):
-    """Every login's profile shows ``email``, or the email ``email`` maps the login to."""
-
     async def _emails(logins):
         return {login: (email.get(login) if isinstance(email, dict) else email) or "" for login in logins}
 
@@ -134,7 +129,6 @@ def _sync_stubs(
     repo_map=_FROM_ACCESS,
     repository_status=200,
 ):
-    """Stub the sync's reads; unless given, the map names every team ``access`` answers for as holding acme/widgets."""
     answers = access or {}
     if repo_map is _FROM_ACCESS:
         repo_map = {"acme/widgets": [team["id"] for team in org_teams or [] if team["slug"] in answers]}
@@ -201,8 +195,7 @@ class TestMemberResolution:
 
     @pytest.mark.asyncio
     async def test_a_profile_read_github_refused_counts_as_undetermined_not_as_nobody(self):
-        """Counted as nobody the member is left out of the resolved set, and the write then retires
-        them from the team and from every project it owns — for a 403."""
+        """Counted as nobody, a member behind a 403 would be retired from the team and every project it owns."""
         service = _service()
         repo = _user_repo()
 
@@ -265,8 +258,7 @@ class TestMemberResolution:
 class TestTeamMemberWrite:
     @pytest.mark.asyncio
     async def test_the_write_hands_over_the_subset_rather_than_a_member_list_merged_here(self):
-        """The snapshot the merge would read is several round trips old, so a member added in
-        between is written back out of the team — after the add reported success to the admin."""
+        """A merge here would read a snapshot several round trips old and drop a member added in between."""
         service = _service()
         team = _bound(
             "t-1",
@@ -288,8 +280,7 @@ class TestTeamMemberWrite:
 
     @pytest.mark.asyncio
     async def test_the_subset_the_write_names_is_this_instances_and_no_other(self):
-        """What bounds the write is the source it names, so no stored entry of another instance,
-        another provider or none at all is within its reach."""
+        """The source the write names bounds it, so no entry of another instance, provider or none is in reach."""
         service = _service()
         foreign = [
             {"user_id": "u-gl", "role": "admin", "source": team_source(TEAM_SOURCE_GITLAB, "gl-1")},
@@ -395,8 +386,7 @@ class TestTeamMemberWrite:
 class TestSyncTeamFromGithub:
     @pytest.mark.asyncio
     async def test_a_group_granted_access_later_is_found_although_a_bound_team_already_holds_it(self):
-        """Stopping at the first answer froze the owners of a repository at whoever held it first;
-        a sync has to converge on who holds it now."""
+        """A sync has to converge on who holds the repository now, not on whoever held it first."""
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711))
 
@@ -424,8 +414,7 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_every_holder_owns_the_repository_rather_than_the_best_of_them(self):
-        """Ranking them handed the project to one team and hid it from the people in the others,
-        who work on the very same repository."""
+        """Ranking holders would hide the project from members of the other teams working on the same repository."""
         service = _service()
         team_repo = _team_repo(
             _bound("t-platform", 100, slug="platform", name="Platform"),
@@ -493,8 +482,7 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_a_repository_a_personal_account_owns_is_held_by_no_team(self):
-        """GitHub keeps the repository id across a transfer, so a repository moved out of its
-        organisation still finds its project, and the organisation's teams must leave it."""
+        """GitHub keeps a repository's id across a transfer, so the organisation's teams must leave a moved one."""
         service = _service()
         team_repo = _team_repo()
 
@@ -594,8 +582,7 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_a_bound_team_the_listing_hides_never_hands_the_repository_to_a_visible_one(self):
-        """A secret team is absent from the organisation listing. Skipping it elected whichever
-        team did answer and reported one candidate — a confident wrong answer."""
+        """A secret team is absent from the organisation listing; skipping it would confidently elect another team."""
         service = _service()
         team_repo = _team_repo(
             _bound("t-hidden", 900, slug="cards", name="Cards"),
@@ -612,9 +599,7 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_a_binding_of_another_instance_is_undetermined_rather_than_ignored(self):
-        """Resolution asks each bound team through the binding of THIS instance. A team the query
-        should never have returned has none, and skipping it would hand the repository to whoever
-        did answer and report that as determined."""
+        """A team without this instance's binding cannot be asked, so skipping it would report a false determination."""
         service = _service()
         team_repo = _team_repo(_bound("t-elsewhere", 4711, instance_id="gh-other"))
 
@@ -667,7 +652,6 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_the_last_resolvable_member_leaving_takes_their_membership_with_them(self):
-        """Alice left the GitHub team; the logins still listed are handles no local account matches."""
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-alice", "role": "admin", "source": _OWN}]))
 
@@ -679,9 +663,7 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_a_throttled_profile_read_leaves_the_stored_members_untouched(self, caplog):
-        """The member GitHub would not answer for is absent from the resolved set exactly as a
-        departed one is. Writing that costs them their role on every project the team owns, and it
-        happens precisely when the token is under pressure."""
+        """An unanswered member looks departed, and writing that costs their role on every project the team owns."""
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-1", "role": "admin", "source": _OWN}]))
         user_repo = _user_repo({"_id": "u-2"})
@@ -699,7 +681,6 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_a_member_that_does_not_resolve_never_blocks_the_ones_that_do(self):
-        """The routine case: a bot resolves to nobody while a real member does."""
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711))
         user_repo = _user_repo({"_id": "u-1"})
@@ -758,8 +739,6 @@ class TestSyncTeamFromGithub:
 
 
 class TestTeamCreation:
-    """A GitHub group nobody bound becomes a team, the way a GitLab group does."""
-
     @staticmethod
     def _created(team_repo) -> Team:
         return team_repo.create_bound.await_args.args[0]
@@ -794,8 +773,7 @@ class TestTeamCreation:
 
     @pytest.mark.asyncio
     async def test_a_team_with_no_resolvable_member_is_still_created(self):
-        """GitHub logins are personal handles and usernames are directory ids, so barely one resolves.
-        Requiring a member, as the GitLab sync does, would mean never creating anything here."""
+        """GitHub logins rarely match directory usernames, so requiring a resolvable member would create nothing."""
         service = _service()
         team_repo = _team_repo()
 
@@ -823,7 +801,6 @@ class TestTeamCreation:
 
     @pytest.mark.asyncio
     async def test_a_group_already_bound_to_a_team_is_adopted_rather_than_created_twice(self):
-        """The second repository of the same group, or one whose binding names another organisation."""
         service = _service()
         team_repo = _team_repo(already_bound=_bound("t-platform", 100, slug="platform", name="Platform"))
 
@@ -961,9 +938,7 @@ class TestTeamCreation:
 
 
 class TestAGroupNobodyBoundGetsATeamOfItsOwn:
-    """A binding is an access grant: every member of the owning team gets project-admin over every
-    repository the group holds. Taking a team by name handed that to whoever could name one, past
-    the system:manage the binding endpoint is gated on."""
+    """A binding grants project-admin over the group's repositories, so a name match must not take an existing team."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1155,9 +1130,7 @@ class TestResolutionCost:
 
     @pytest.mark.asyncio
     async def test_the_member_reads_share_the_budget_the_checks_drew_on(self, caplog):
-        """One budget for the whole resolution: the member listing and profile read per holding
-        team run inside the ingest request too, and an ingest was measured at 46s with only the
-        checks bounded."""
+        """One budget for the whole resolution: member reads run inside the ingest request as the checks do."""
         service = _service()
         org_teams, bound = self._many_bound_teams(2)
         team_repo = _team_repo(*bound)

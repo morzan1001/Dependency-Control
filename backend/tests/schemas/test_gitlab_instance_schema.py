@@ -1,5 +1,3 @@
-"""GitLab instance Create/Update/Response schemas carry team_sync_depth."""
-
 from datetime import datetime, timezone
 
 import pytest

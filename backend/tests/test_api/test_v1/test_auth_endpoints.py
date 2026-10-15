@@ -1,5 +1,3 @@
-"""Refresh must not bypass the enforced-2FA setup gate, and email endpoints gate on the stored system settings."""
-
 import asyncio
 import time
 from datetime import datetime, timedelta, timezone
@@ -285,7 +283,6 @@ class TestForgotPasswordSmtpGate:
             )
 
     def test_db_smtp_unset_returns_501(self):
-        """An empty stored smtp_host must surface 501 rather than claim success."""
         send_mock = MagicMock()
         with pytest.raises(HTTPException) as exc_info:
             self._run_forgot(_make_settings(smtp_host=None), send_mock)
@@ -294,7 +291,6 @@ class TestForgotPasswordSmtpGate:
         send_mock.assert_not_called()
 
     def test_db_smtp_set_sends_email_with_system_settings(self):
-        """Contract only (helper mocked): with DB smtp_host set, the endpoint forwards DB system settings to send_password_reset_email."""
         send_mock = MagicMock()
         system_config = _make_settings(smtp_host="smtp.db.example.com")
         user = {"email": "user@test.com", "username": "user", "is_active": True, "auth_provider": "local"}
@@ -306,7 +302,6 @@ class TestForgotPasswordSmtpGate:
         assert send_mock.call_args.args[-1] is system_config
 
     def test_db_smtp_set_actually_schedules_email_via_real_helper(self):
-        """With the stored smtp_host set, the real send_password_reset_email helper schedules the email."""
         from app.api.v1.endpoints.auth import forgot_password
 
         request = MagicMock()
@@ -369,8 +364,7 @@ def _run_forgot_password(user=None, cache=None, host="1.2.3.4", send_mock=None):
 
 
 class TestForgotPasswordRateLimit:
-    """The budget on this unauthenticated endpoint is the only thing standing between a caller and
-    unlimited password-reset mail to an address they do not own."""
+    """The budget is all that stands between a caller and unlimited reset mail to an address they do not own."""
 
     def test_a_client_gets_three_attempts_before_being_rejected(self, fake_cache):
         for _ in range(3):
@@ -539,7 +533,6 @@ class TestRequestVerificationSmtpGate:
         assert exc_info.value.status_code == 501
 
     def test_db_smtp_set_sends_verification(self, regular_user):
-        """Contract only (helper mocked): with DB smtp_host set, the endpoint forwards DB system settings to send_verification_email."""
         from app.api.v1.endpoints.auth import request_verification_email
 
         regular_user.is_verified = False
@@ -560,7 +553,6 @@ class TestRequestVerificationSmtpGate:
         assert send_mock.call_args.args[-1] is system_config
 
     def test_db_smtp_set_actually_schedules_verification_via_real_helper(self, regular_user):
-        """With the stored smtp_host set, the real send_verification_email helper schedules the email."""
         from app.api.v1.endpoints.auth import request_verification_email
 
         regular_user.is_verified = False

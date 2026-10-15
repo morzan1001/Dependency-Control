@@ -1,10 +1,4 @@
-"""A chat/MCP tool that answers "your worst findings" must rank before it cuts.
-
-Against a live MongoDB, a scan holding 4 900 LOW findings written before 100 CRITICAL ones
-answered with ten LOW findings and `count: 10`. The consumer is a language model relaying the
-answer as prose, with no chart beside it to contradict, so the sample has to be taken per severity
-tier rather than from the scan's natural order.
-"""
+"""Relayed findings have no chart beside them, so the sample is taken per severity tier, not in natural order."""
 
 from datetime import datetime, timezone
 
@@ -68,7 +62,6 @@ def flooded(db):
 
 @pytest.mark.asyncio
 async def test_criticals_survive_a_flood_of_low_findings(flooded, admin_user, monkeypatch):
-    """The measured defect: a natural-order sample smaller than the LOW population held no critical."""
     monkeypatch.setattr(registry_module, "_FINDING_RANK_FETCH_CAP", _CAP)
 
     result = await ChatToolRegistry().execute_tool(
@@ -131,7 +124,6 @@ async def test_a_severity_outside_the_ranked_set_is_still_reachable(flooded, adm
 
 @pytest.mark.asyncio
 async def test_severity_ordering_survives_across_tiers(flooded, admin_user):
-    """HIGH outranks LOW even though 'HIGH' sorts after 'LOW' would-be lexicographically only by luck."""
     high = _finding(0, _SEV_HIGH)
     flooded.findings._docs[high["_id"]] = high
 
@@ -195,7 +187,6 @@ async def test_a_search_cut_short_names_how_many_matched(flooded, admin_user):
 
 
 def _open_critical(index: int, finding_type: str) -> dict:
-    """A long-open CRITICAL finding: a vulnerability with a fixed KEV advisory, or a license finding."""
     doc = {
         **_finding(index, _SEV_CRITICAL),
         "_id": f"{_SCAN}:{finding_type}:{index}",

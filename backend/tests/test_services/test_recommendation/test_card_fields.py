@@ -1,7 +1,4 @@
-"""Every card each generator builds, field for field, against the recorded cards.jsonl.
-
-After an intended change to a card, record it again with DC_RECORD_CARDS=1 and review the diff.
-"""
+"""After an intended card change, re-record cards.jsonl with DC_RECORD_CARDS=1 and review the diff."""
 
 import json
 import os

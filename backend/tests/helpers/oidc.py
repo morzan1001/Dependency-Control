@@ -18,7 +18,6 @@ def ci_token(claims: dict) -> str:
 
 
 def serve_idp(monkeypatch, handler) -> list[str]:
-    """Answer every httpx request with ``handler``; returns the requested URLs in arrival order."""
     requested: list[str] = []
 
     async def recording(request):

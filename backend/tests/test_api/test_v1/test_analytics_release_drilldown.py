@@ -1,10 +1,3 @@
-"""A drill-down answers for the scan the table above it ranked.
-
-Hotspots and the impact list resolve the release of an environment; the component drill-downs they
-link to resolved the branch tip whatever was asked, so a component the release ranked as a critical
-came back with no findings and no metadata at all.
-"""
-
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -135,7 +128,6 @@ async def _seed(db: FakeDatabase) -> None:
 
 @pytest.mark.asyncio
 async def test_the_drill_down_finds_what_release_mode_hotspots_ranked():
-    """Both surfaces resolve the same scope, so a critical the ranking surfaces has a finding list."""
     db = FakeDatabase()
     await _seed(db)
 

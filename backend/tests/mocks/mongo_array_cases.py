@@ -1,9 +1,4 @@
-"""Array-operator behaviour measured against Percona Server for MongoDB 8.0.17-6.
-
-Every expectation here was recorded from that server, not derived from the documentation. The
-same table drives the in-process attrappe and, under ``live_mongo``, a real server, so a case the
-two answer differently fails on one side or the other instead of quietly diverging.
-"""
+"""Recorded from Percona Server for MongoDB 8.0.17-6, not the docs; drives the fake and the live server alike."""
 
 from __future__ import annotations
 
@@ -47,9 +42,7 @@ class AggCase:
 
 _NESTED = {"a": {"b": {"c": 1}}, "t": [1, 2], "ab": 0}
 
-# Two modifiers may not touch overlapping paths. This is the divergence that matters most for
-# array work: a sync that $pulls its own owners and $addToSets the new ones in one update is
-# rejected in production, so an attrappe that applies both green-lights an impossible write.
+# Two modifiers may not touch overlapping paths, so a $pull and an $addToSet on one array are refused.
 CONFLICT_CASES = [
     UpdateCase(
         "pull and addToSet on one array",
@@ -404,11 +397,6 @@ PIPELINE_UPDATE_CASES = [
     ),
 ]
 
-# The ownership writes phase 4 performs, and the exact hazard they are guarded against: without
-# $ifNull a document missing either field is written team_ids: null, which then matches neither
-# the unassigned filter nor an ownership one.
-# Two instances of one provider is the shape this installation already has, and a source naming the
-# provider alone has each instance retire the other's owners on its next ingest.
 _GITLAB_A = team_source(TEAM_SOURCE_GITLAB, "gl-inst-a")
 _GITLAB_B = team_source(TEAM_SOURCE_GITLAB, "gl-inst-b")
 _GITHUB_A = team_source(TEAM_SOURCE_GITHUB, "gh-inst-a")
@@ -438,6 +426,7 @@ TEAM_OWNERSHIP_CASES = [
         replace_team_subset_pipeline(_GITLAB_A, ["gl-c"]),
         expected={"team_ids": ["gl-c", "manual-b"], "team_sources": {"manual-b": "manual", "gl-c": _GITLAB_A}},
     ),
+    # Without $ifNull a document missing either field is written team_ids: null, matching no ownership filter.
     UpdateCase(
         "the guard turns absent fields into an empty list",
         {"name": "x"},
@@ -462,8 +451,7 @@ TEAM_OWNERSHIP_CASES = [
         [{"$set": {"team_ids": {"$setUnion": [{"$setDifference": ["$team_ids", []]}, ["gh-1"]]}}}],
         expected={"name": "x", "team_ids": None},
     ),
-    # The picker shows a sync's owners beside the hand-assigned ones, so a retained entry keeping
-    # its provenance is what stops any project admin from laundering one into an immortal owner.
+    # A retained entry keeps its provenance, or a project admin could launder a synced owner into an immortal one.
     UpdateCase(
         "the whole-set write keeps a retained owner's provenance and stamps the new one",
         {"team_ids": ["gl-a"], "team_sources": {"gl-a": _GITLAB_A}},
@@ -512,8 +500,7 @@ TEAM_OWNERSHIP_CASES = [
         remove_team_ops("m1"),
         expected={"team_ids": [], "team_sources": {}},
     ),
-    # The headline of the instance-scoped provenance: under a provider-wide source this write
-    # retires gl-b as well, and instance A's next ingest retires gl-a-moved in the same way.
+    # Under a provider-wide source this write would retire gl-b too, and instance A's next ingest gl-a-moved.
     UpdateCase(
         "one instance of a provider leaves another instance's owner alone",
         {
@@ -526,8 +513,7 @@ TEAM_OWNERSHIP_CASES = [
             "team_sources": {"gl-a": _GITLAB_A, "manual-c": "manual", "gl-b-moved": _GITLAB_B},
         },
     ),
-    # The picker is the only writer that may take a hand assignment away, so a provider resolving
-    # an owner the project already holds must not stamp it as its own and retire it later.
+    # Only the picker may take a hand assignment away, so a provider must not stamp an existing owner as its own.
     UpdateCase(
         "a sync resolving a hand-assigned owner leaves it hand-assigned",
         {"team_ids": ["platform"], "team_sources": {"platform": "manual"}},
@@ -636,16 +622,14 @@ ARRAY_EXPRESSION_CASES = [
         [{"$group": {"_id": None, "a": {"$addToSet": "$t"}}}],
         [{"_id": None, "a": [1]}],
     ),
-    # An array literal is an expression: every element is evaluated, and a missing field inside
-    # one becomes null rather than dropping out.
+    # Every element of an array literal is evaluated, and a missing field inside one becomes null.
     AggCase(
         "an array literal evaluates its elements",
         [{"team_id": "T1"}, {"x": 1}],
         [{"$project": {"a": ["$team_id", 1]}}],
         [{"a": ["T1", 1]}, {"a": [None, 1]}],
     ),
-    # Null in, null out for every array operator here — which is how an unguarded pipeline
-    # silently stores a null instead of failing.
+    # Null in, null out for every array operator here, so an unguarded pipeline silently stores a null.
     AggCase(
         "array operators propagate a missing input",
         [{"x": 1}],
@@ -663,8 +647,7 @@ ARRAY_EXPRESSION_CASES = [
         ],
         [{"d": None, "u": None, "m": None, "f": None, "o": None, "r": None}],
     ),
-    # A path crossing two array levels answers one array per outer element, unflattened — so the
-    # owning teams' member ids reach $in as an array of arrays it can never match against.
+    # A path crossing two array levels answers one unflattened array per outer element, which $in never matches.
     AggCase(
         "a field path across two arrays nests",
         _NESTED_ARRAY_DOCS,
@@ -685,7 +668,6 @@ def _without_id(doc: Any) -> Any:
 
 
 async def run_update_case(collection, case: UpdateCase) -> dict | None:
-    """Seed one document, apply the case's update, and hand back the result minus ``_id``."""
     await collection.delete_many({})
     await collection.insert_one({"_id": 1, **case.seed})
     kwargs = {"array_filters": case.array_filters} if case.array_filters else {}

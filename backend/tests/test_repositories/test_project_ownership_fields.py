@@ -1,8 +1,4 @@
-"""The stored ownership a project is inserted with.
-
-``ownership_fields`` is the insert-side counterpart of the ``$setUnion`` the update pipelines use,
-and the server returns that operator's result sorted (verified against Percona 8.0.17-6).
-"""
+"""Mirrors the update pipelines' $setUnion, whose result the server returns sorted (Percona 8.0.17-6)."""
 
 from app.core.constants import TEAM_SOURCE_MANUAL
 from app.repositories.projects import ownership_fields
@@ -28,6 +24,5 @@ def test_every_owner_is_stamped_with_the_source_that_established_it():
 
 
 def test_a_project_nobody_owns_stores_the_empty_shapes():
-    """``[]`` and ``{}`` rather than absent: that is the one spelling of unassigned everything
-    downstream filters on."""
+    """[] and {} rather than absent: the one spelling of unassigned every downstream filter uses."""
     assert ownership_fields([], TEAM_SOURCE_MANUAL) == {"team_ids": [], "team_sources": {}}

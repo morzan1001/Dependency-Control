@@ -1,16 +1,10 @@
-"""K3: the vulnerability search result must not advertise component fields no writer fills.
-
-``details.purl`` and ``details.type`` are written by the license normalizer only; production
-carries them on 0 of the vulnerability findings of every latest scan, so the search payload
-shipped two permanently-null keys.
-"""
+"""details.purl and details.type are written by the license normalizer only, never on vulnerability findings."""
 
 from app.api.v1.endpoints.analytics.search import _vuln_results_for_finding
 from app.models.finding_record import FindingRecord
 
 
 def _prod_shaped_vuln_finding():
-    """An aggregated vulnerability document as the engine persists it: no purl, no type."""
     return FindingRecord(
         id="spring-boot-starter-web:3.4.5",
         finding_id="spring-boot-starter-web:3.4.5",

@@ -1,7 +1,3 @@
-"""The live scanner uploads the same sbom and cbom bodies as the frozen 1.2.0 release, a release mark only for an
-environment the ingest accepts, and each callgraph to the project the ingest config names; the CI examples reach that
-callgraph upload."""
-
 import json
 import os
 import shutil
@@ -36,8 +32,7 @@ case "$url" in
 esac
 """
 
-# madge 8 walks only the path it is given, reads only the --extensions (['js'] by default) and lists node_modules
-# imports only under --include-npm.
+# madge 8 walks only the given path and --extensions (js by default), listing npm imports under --include-npm.
 _MADGE_STUB = r"""#!/usr/bin/env python3
 import json, os, sys
 
@@ -108,7 +103,6 @@ def _run(
     madge_graph: dict[str, Any] | None = None,
     **extra_env: str,
 ) -> Path:
-    """Run the scanner in a checkout holding ``files``; returns where the curl stub captured the upload."""
     stubs, workdir = tmp_path / "bin", tmp_path / "repo"
     stubs.mkdir(parents=True)
     workdir.mkdir()
@@ -240,7 +234,7 @@ def _callgraph_job_script(example: str) -> str:
 
 @pytest.mark.parametrize("example", ["github-workflow.example.yaml", "gitlab-ci.example.yaml"])
 def test_a_failed_dependency_install_still_runs_the_callgraph_upload(example, tmp_path):
-    """Both runners stop a job at its first failing command; without node_modules madge still uploads the import graph."""
+    """CI runners stop a job at its first failing command, yet madge still uploads without node_modules."""
     stubs = tmp_path / "bin"
     stubs.mkdir()
     _stub(stubs, "curl", _DOWNLOAD_STUB)

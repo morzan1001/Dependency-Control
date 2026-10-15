@@ -1,5 +1,4 @@
-"""The falsification gate: a callgraph may only mark a finding unreachable when the
-producer listed that package in ``analyzed_modules`` for a language covering its ecosystem."""
+"""A callgraph marks a finding unreachable only if analyzed_modules lists the package for a covering language."""
 
 import json
 from pathlib import Path
@@ -24,7 +23,6 @@ _BASE_RISK = 80.0
 
 
 def _prepared(language="python", module_usage=None, analyzed_modules=None):
-    """A prepared callgraph built through the same projection production reads."""
     return _prepare_callgraph(
         CallgraphMinimal(
             _id="cg-1",
@@ -65,8 +63,6 @@ _PY = component_language_map([{"name": "requests", "version": "1.0.0", "type": "
 
 
 class TestFalsificationMatrix:
-    """analyzed_modules x language coverage x usage -> the tri-state verdict."""
-
     def test_in_coverage_universe_and_unused_is_unreachable(self):
         finding = _finding()
         prepared = _prepared(module_usage=_usage("urllib3"), analyzed_modules=["requests", "urllib3"])
@@ -143,8 +139,6 @@ class TestNegativeSymbolMatch:
 
 
 class TestAliasResolution:
-    """A Maven coordinate and its bare artifact name are the same package on both sides."""
-
     _COORDINATE = "com.fasterxml.jackson.core:jackson-databind"
 
     def test_bare_component_resolves_against_a_coordinate_keyed_usage(self):
@@ -175,8 +169,6 @@ class TestAliasResolution:
 
 
 class TestWriteSideMeetsReadSide:
-    """Keys stored by ``canonical_module_key`` must resolve from the finding's own spelling."""
-
     @pytest.mark.parametrize("component", ["PyYAML", "typing-extensions"])
     def test_python_canonical_key_is_found_by_the_finding_component(self, component):
         stored_key = canonical_module_key(component, "python")
@@ -216,8 +208,6 @@ class TestSameNameInTwoEcosystems:
 
 
 class TestPositiveEvidenceStaysInItsEcosystem:
-    """An import in one ecosystem's graph is no evidence for a package of the same name in another."""
-
     _JS_IMPORTS_REDIS = _prepared(
         language="javascript", module_usage=_usage("redis", locations=("web/cache.js",)), analyzed_modules=["redis"]
     )
@@ -295,7 +285,6 @@ _SBOM_FIXTURES = Path(__file__).parent.parent / "fixtures" / "sbom"
 
 
 def _inventory(*fixtures):
-    """The language map of the dependencies the real SBOM parser extracts from these fixtures."""
     return component_language_map(
         dep.model_dump()
         for name in fixtures
@@ -304,7 +293,6 @@ def _inventory(*fixtures):
 
 
 def _stored(parsed: ParsedCallgraph, language):
-    """The projection production reads back for an upload the real parser produced."""
     return CallgraphMinimal(
         _id=f"cg-{language}",
         language=language,
@@ -356,8 +344,6 @@ class TestDependencyDepth:
 
 
 class TestEvidenceAcrossGraphs:
-    """Every graph that lists a package contributes its evidence, whatever order the graphs load in."""
-
     _LODASH = component_language_map([{"name": "lodash", "version": "1.0.0", "type": "npm"}])
 
     @pytest.mark.parametrize("ts_first", [False, True], ids=["js_first", "ts_first"])

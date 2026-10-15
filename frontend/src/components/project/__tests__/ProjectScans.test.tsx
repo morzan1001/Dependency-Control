@@ -142,8 +142,7 @@ describe('ProjectScans - a scan whose rescan is still queued', () => {
     return makeScan({
       id: 'main-1',
       stats: { critical: OWN_CRITICAL, high: 0, medium: 0, low: 0 },
-      // A queued rescan has analysed nothing yet, so its summary carries no stats, and the lineage
-      // pointer only moves once a rescan delivers.
+      // A queued rescan has no stats yet, and the lineage pointer moves only once a rescan delivers.
       latest_run: { scan_id: RESCAN_ID, status: 'pending' },
     })
   }

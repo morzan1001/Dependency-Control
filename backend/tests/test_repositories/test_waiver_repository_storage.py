@@ -1,5 +1,3 @@
-"""What WaiverRepository stores for a waiver."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

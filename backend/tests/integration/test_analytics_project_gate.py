@@ -1,5 +1,3 @@
-"""The project-scoped analytics routes admit and refuse exactly as check_project_access does."""
-
 from datetime import datetime, timezone
 
 import pytest

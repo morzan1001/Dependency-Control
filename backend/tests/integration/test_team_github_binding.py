@@ -1,5 +1,3 @@
-"""What a binding written by hand does to the team that already holds one on the instance."""
-
 import pytest
 
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team
@@ -33,8 +31,7 @@ async def _seeded(db) -> TeamRepository:
 
 
 async def _assert_a_team_bound_in_the_meantime_is_not_rebound(db) -> None:
-    """The condition sits in the filter, so a binding written between the endpoint's conflict check
-    and this write is replaced in place rather than doubled."""
+    """With the condition in the filter, a binding written after the conflict check is replaced, not doubled."""
     repo = await _seeded(db)
 
     assert await repo.add_binding_if_absent("t-this-instance", _BINDING) is None

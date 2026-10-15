@@ -1,5 +1,3 @@
-"""Release lookups must be served by an index or every read scans a whole collection."""
-
 import asyncio
 from unittest.mock import AsyncMock
 

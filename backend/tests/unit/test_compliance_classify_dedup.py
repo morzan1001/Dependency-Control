@@ -1,5 +1,3 @@
-"""The frameworks share base's `_classify` and `_waiver_reasons` instead of keeping copies."""
-
 from app.schemas.compliance import ControlStatus, EvaluationCoverage
 from app.services.compliance.frameworks import base, cve_remediation_sla, license_audit
 

@@ -32,7 +32,7 @@ const SCANNER_ROW_ID = 's1:trivy:SBOM #1'
 const TRIVY_RESULT = { Results: [{ Target: 'app.cdx.json', Vulnerabilities: [] }] }
 const SBOM = { bomFormat: 'CycloneDX', specVersion: '1.6', components: [] }
 
-// The rows GET /scans/{id}/results and /sboms answer: rows within and exactly at the preview limit, one byte over it, and lost files.
+// Rows within and at the preview limit, one byte over it, and lost files, as the results endpoints answer.
 const RESULT_ROWS: ScanAnalysisResult[] = [
   { id: SCANNER_ROW_ID, scan_id: 's1', analyzer_name: 'trivy', source: 'SBOM #1', created_at: '2026-09-01T00:05:00Z', size: 2 * 1024 * 1024 },
   { id: 's1:epss_kev', scan_id: 's1', analyzer_name: 'epss_kev', source: null, created_at: '2026-09-01T00:06:00Z', size: 2 * 1024 * 1024 + 1 },

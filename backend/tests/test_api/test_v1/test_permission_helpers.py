@@ -1,5 +1,3 @@
-"""Tests for permission helper functions."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -156,8 +154,6 @@ async def test_team_gate_raises_404_for_a_missing_team(gate, permissions):
 
 
 class TestCheckWebhookPermission:
-    """check_webhook_permission: the permission plus scope access, or the scope's admin role."""
-
     @pytest.fixture
     def webhook_user(self):
         return User(

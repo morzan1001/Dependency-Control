@@ -1,5 +1,4 @@
-"""The inputs fingerprint identifies which inputs a report was computed over, so two reports over
-the same scans must carry the same one however Mongo happened to order them."""
+"""Two reports over the same scans must carry the same fingerprint however Mongo ordered the inputs."""
 
 import re
 from unittest.mock import AsyncMock, MagicMock, patch

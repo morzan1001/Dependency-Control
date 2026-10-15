@@ -1,5 +1,3 @@
-"""Tests for GitLabService multi-instance support."""
-
 import asyncio
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
@@ -102,7 +100,6 @@ class TestGitLabServiceOIDC:
                     assert call_kwargs["audience"] == "https://app.example.com"
 
     def test_rejected_when_no_audience_configured(self):
-        """An instance without a configured oidc_audience must reject any token (fail closed), never decode it."""
         instance = GitLabInstance(
             name="No Audience",
             url="https://gitlab.com",
@@ -121,14 +118,13 @@ class TestGitLabServiceOIDC:
 
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
 
-                    # Token rejected, and decode is never attempted.
                     assert result is None
                     mock_decode.assert_not_called()
 
     def test_missing_kid_returns_none(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
         with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
-            mock_header.return_value = {}  # No kid
+            mock_header.return_value = {}
             result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
             assert result is None
 
@@ -159,12 +155,11 @@ class TestGitLabServiceOIDC:
                     assert result.project_path == "group/proj"
 
     def test_issuer_uses_normalized_url(self):
-        """Issuer verification must use URL without trailing slash, even if the stored instance URL has one."""
         instance = GitLabInstance(
             name="Trailing Slash",
             url="https://gitlab.com/",
             access_token="token",
-            # oidc_audience must be set, otherwise validation fails closed before decode; this test is about issuer normalization.
+            # Without oidc_audience validation fails closed before the decode this test inspects.
             oidc_audience="https://app.example.com",
             created_by="test",
         )
@@ -180,11 +175,9 @@ class TestGitLabServiceOIDC:
                     asyncio.run(service.validate_oidc_token("fake.jwt.token"))
 
                     call_kwargs = mock_decode.call_args.kwargs
-                    # Issuer must NOT have trailing slash
                     assert call_kwargs["issuer"] == "https://gitlab.com"
 
     def test_key_rotation_refreshes_jwks(self, gitlab_instance_a):
-        """A kid missing from the cached set is looked up in a refetched one."""
         service = GitLabService(gitlab_instance_a)
         jwks_old = {"keys": [rsa_public_jwk("old-key")]}
         jwks_new = {"keys": [*jwks_old["keys"], rsa_public_jwk("new-key")]}
@@ -386,8 +379,6 @@ class TestGetCurrentUserId:
 
 
 class TestVersion:
-    """The connection test and the create check both read GET /version, and both report a transport error."""
-
     def test_asks_the_version_endpoint_with_the_token(self, gitlab_instance_a, monkeypatch):
         def answer(request: httpx.Request) -> httpx.Response:
             authorised = request.headers.get("PRIVATE-TOKEN") == "glpat-token-a"

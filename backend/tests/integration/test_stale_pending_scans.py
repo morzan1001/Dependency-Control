@@ -1,5 +1,4 @@
-"""Which pending scans the stale loop queues. Every pod runs it every few seconds, so it is also what
-picks up a scan whose queue entry died with its pod; a scan it never picks up blocks its lineage."""
+"""The stale loop also recovers scans whose queue entry died with a pod; one it never picks up blocks its lineage."""
 
 from datetime import datetime, timedelta, timezone
 

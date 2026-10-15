@@ -1,5 +1,3 @@
-"""Deleting a project must take the update-frequency rollups of all its scans with it."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

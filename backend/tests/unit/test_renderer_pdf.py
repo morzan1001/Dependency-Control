@@ -17,8 +17,7 @@ def _partial_coverage():
 
 
 def test_pdf_renderer_produces_pdf_bytes():
-    """A partial coverage object must reach the template; test_compliance_coverage.py checks what
-    the template then prints, since it can run where WeasyPrint's native stack cannot."""
+    """A partial coverage object must reach the template; what the template prints is tested without WeasyPrint."""
     from app.schemas.compliance import ReportFormat
     from app.services.compliance.renderers.pdf_renderer import PdfRenderer
     from tests.unit.test_renderer_json import _evaluation, _report

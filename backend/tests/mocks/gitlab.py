@@ -1,5 +1,3 @@
-"""Reusable GitLab mock objects and factory functions."""
-
 from collections.abc import Iterator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,7 +24,6 @@ def make_gitlab_instance(
     created_by="admin",
     **kwargs,
 ):
-    """Create a GitLabInstance with sensible defaults for testing."""
     return GitLabInstance(
         id=id,
         name=name,
@@ -42,7 +39,6 @@ def make_gitlab_instance(
 
 
 def instance_a():
-    """Create standard test instance A (fresh copy each call)."""
     return make_gitlab_instance(
         id="instance-a-id",
         name="GitLab A",
@@ -52,7 +48,6 @@ def instance_a():
 
 
 def instance_b():
-    """Create standard test instance B (fresh copy each call)."""
     return make_gitlab_instance(
         id="instance-b-id",
         name="GitLab B",
@@ -64,7 +59,6 @@ def instance_b():
 
 
 def make_oidc_payload(**kwargs):
-    """Create an OIDCPayload with sensible defaults."""
     defaults = {"project_id": "42", "project_path": "group/project"}
     defaults.update(kwargs)
     return OIDCPayload(**defaults)
@@ -89,27 +83,19 @@ def make_note(author_id=BOT_USER_ID, **kwargs):
 
 
 def make_project_details(namespace_kind="group", namespace_id=42, namespace_path="group"):
-    """Create a GitLabProjectDetails with a namespace."""
     return GitLabProjectDetails(
         namespace=GitLabNamespace(kind=namespace_kind, id=namespace_id, full_path=namespace_path)
     )
 
 
 async def sync_team(service, project_details, **kwargs):
-    """A sync against a GitLab whose project read answers ``project_details``."""
     with patch.object(service, "get_project_details", new=AsyncMock(return_value=project_details)):
         return await service.sync_team_from_gitlab(**kwargs)
 
 
 @contextmanager
 def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[MagicMock, MagicMock]]:
-    """The two repositories a GitLab sync works through, recording what it hands them.
-
-    ``user_doc`` answers the verified-email lookup every member is resolved through.
-
-    ``add_binding_if_absent`` is left recording rather than working: it is the one door an existing
-    team can be bound through, and a sync must never reach it.
-    """
+    """add_binding_if_absent only records, as a sync must never bind an existing team through it."""
     team_repo = MagicMock()
     team_repo.get_raw_by_binding = AsyncMock(return_value=existing_team)
     team_repo.update_with_binding = AsyncMock()

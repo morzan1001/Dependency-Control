@@ -1,5 +1,3 @@
-"""Tests for the MR/PR scan comment body."""
-
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.models.stats import Stats
 from app.services.analysis.integrations import _build_scan_comment
@@ -22,7 +20,6 @@ class TestBuildScanCommentStatus:
         assert "[ALERT]" in _comment(Stats(high=3, risk_score=50.0))
 
     def test_alert_overrides_warning(self):
-        """Critical/high should produce ALERT, not WARNING, even with risk_score > 0."""
         comment = _comment(Stats(critical=1, risk_score=80.0))
         assert "[ALERT]" in comment
         assert "[WARNING]" not in comment

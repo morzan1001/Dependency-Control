@@ -1,5 +1,3 @@
-"""DependencyEnrichment.to_mongo_dict: which fields persist, under which keys, and in which order."""
-
 from app.schemas.enrichment import DependencyEnrichment
 
 

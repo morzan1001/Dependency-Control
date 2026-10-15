@@ -1,5 +1,3 @@
-"""A chat tool that cuts a list names the rows it kept and their population, and reads only what it answers with."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -200,7 +198,7 @@ async def test_ranked_tools_answer_from_the_slim_read_as_from_the_full_finding(d
     expected = _serialize_finding_for_llm(_RICH_FINDING)
     assert {"cve", "cvss_score", "references", "advisories", "epss_percentile"} <= expected.keys()
     assert [row.items() >= expected.items() for row in (*scan_rows, *stale_rows, *fixable_rows)] == [True] * 3
-    # Live Mongo hands datetimes back naive, the attrappe keeps the offset.
+    # Live Mongo hands datetimes back naive, the fake keeps the offset.
     assert stale_rows[0]["first_seen_at"].startswith(_RICH_FINDING["first_seen_at"].strftime("%Y-%m-%dT%H:%M:%S"))
     assert fixable_rows[0]["quick_fix_version"] == "2.9.10.8"
 

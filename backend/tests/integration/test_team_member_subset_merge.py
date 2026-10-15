@@ -1,10 +1,4 @@
-"""One sync's write over a team several syncs and several people contribute members to.
-
-The subset a sync may replace is named by the provenance tag it writes, and the server is what
-applies that rule: the write is a pipeline over the array as stored. Each case therefore runs
-against a real server as well as the double, because a double that reads ``$filter`` more
-generously than Percona does would green-light a write that strips a member in production.
-"""
+"""Each case also runs live: a double reading $filter more generously than Percona would hide a stripped member."""
 
 from datetime import datetime, timezone
 

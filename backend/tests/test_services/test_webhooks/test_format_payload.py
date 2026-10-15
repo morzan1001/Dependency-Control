@@ -1,5 +1,3 @@
-"""Unit tests for WebhookService._format_payload and test_webhook."""
-
 import hashlib
 import hmac
 import json
@@ -163,8 +161,6 @@ class TestFormatPayloadGenericWebhook:
 
 
 class TestFormatPayloadPolicyEvents:
-    """Flat policy payloads render a detailed Teams card, not the generic 'Unknown Project' fallback."""
-
     async def _card_text(self, entry: PolicyAuditEntry, event: str = WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED) -> str:
         result = WebhookService()._format_payload("teams", event, await _policy_payload(entry))
         card = result["attachments"][0]["content"]
@@ -247,8 +243,6 @@ class TestLogWebhookDeliveryProjectId:
 
 
 class TestNonBlockingSemantics:
-    """trigger_webhooks propagates errors; safe_trigger_webhooks and the typed triggers swallow them."""
-
     @pytest.mark.asyncio
     async def test_trigger_webhooks_propagates_internal_error(self):
         service = WebhookService()

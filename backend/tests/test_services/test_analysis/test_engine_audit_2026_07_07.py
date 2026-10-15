@@ -1,5 +1,3 @@
-"""Engine resilience: the unwaived-findings read-back and post-processor result exclusion."""
-
 import asyncio
 from types import SimpleNamespace
 

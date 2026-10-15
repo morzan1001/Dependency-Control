@@ -1,5 +1,3 @@
-"""SSO finishes only in its starting browser, hands over the session cookie once and fails with a fixed code."""
-
 import functools
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -28,7 +26,6 @@ _OIDC_SETTINGS = {
     "oidc_token_endpoint": _TOKEN_URL,
     "oidc_userinfo_endpoint": _USERINFO_URL,
 }
-# GitLab's answers to the token and userinfo requests.
 _GITLAB_TOKENS = {
     "access_token": "gl-access",
     "token_type": "Bearer",
@@ -51,8 +48,6 @@ _GITLAB_USERINFO = {
 
 
 class _GitLab:
-    """The IdP's token and userinfo endpoints, recording what DC sent them."""
-
     def __init__(self):
         self.tokens = httpx.Response(_OK, json=_GITLAB_TOKENS)
         self.token_forms: list[dict[str, list[str]]] = []

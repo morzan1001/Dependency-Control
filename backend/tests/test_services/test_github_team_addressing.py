@@ -1,5 +1,3 @@
-"""How a bound GitHub team is addressed, and what the binding UI is offered to choose from."""
-
 import pytest
 
 from app.schemas.github_instance import GitHubOrgTeam
@@ -27,8 +25,6 @@ class TestSlugMap:
 
 
 class TestOrgTeamOptions:
-    """What the binding UI is offered to choose from."""
-
     def test_the_parent_tells_two_teams_of_the_same_name_apart(self):
         org_teams = [
             {"id": 1, "slug": "cards", "name": "Cards", "parent": {"id": 9, "slug": "payments", "name": "Payments"}},

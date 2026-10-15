@@ -1,5 +1,3 @@
-"""Unified API keys: hashed at rest, stored with their surfaces and lifetime, revocable once and only by their owner."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
@@ -63,8 +61,7 @@ async def test_a_created_key_carries_a_null_last_used_stamp():
 
 
 def test_the_token_body_is_always_64_characters():
-    """A url-safe encoding stripped of its punctuation yields a shorter body on most draws, so
-    a single sample would agree with a generator whose length is in fact variable."""
+    """Stripped url-safe encodings vary in length, so one sample would pass a variable-length generator."""
     lengths = {len(generate_plaintext_token()) - len(_TOKEN_PREFIX) for _ in range(_SAMPLES)}
 
     assert lengths == {_TOKEN_BODY_CHARS}
@@ -78,8 +75,7 @@ def test_generated_tokens_are_unique():
 
 @pytest.mark.asyncio
 async def test_the_requested_lifetime_is_honoured():
-    """Both stamps come from one clock reading, so the span is exact: a wrong unit or a lifetime
-    that ignores the request survives a ceiling-only assertion."""
+    """Both stamps share one clock reading, so the span is exact; a ceiling-only check would miss a wrong unit."""
     db = FakeDatabase()
     doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
 
@@ -146,8 +142,7 @@ async def test_revoke_requires_ownership():
 
 @pytest.mark.asyncio
 async def test_revoke_is_idempotent():
-    """The stamp is rewound between the calls so the second one is provably a no-op: two revokes
-    landing in the same millisecond leave BSON's floored timestamp identical either way."""
+    """Rewound between calls: two revokes in one millisecond would leave the same floored timestamp anyway."""
     db = FakeDatabase()
     repo = ApiKeyRepository(db)
     doc, _ = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
@@ -189,8 +184,7 @@ async def test_list_for_user_reports_the_population_behind_a_saturated_page():
 
 @pytest.mark.asyncio
 async def test_a_complete_listing_costs_no_count_round_trip():
-    """A page that did not saturate already knows the total, so the count has to be skipped and
-    not merely agree — asserting on the number alone passes however many round trips it took."""
+    """An unsaturated page already knows the total, so the count must be skipped, not merely agree."""
     db = FakeDatabase()
     repo = ApiKeyRepository(db)
     await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
@@ -200,16 +194,14 @@ async def test_a_complete_listing_costs_no_count_round_trip():
     keys, total = await repo.list_for_user(_OWNER)
 
     assert total == len(keys)
-    # A non-async stand-in answers assert_not_awaited with unittest.mock's "not a valid assertion"
-    # AttributeError instead of a failure naming this invariant.
+    # A non-async stand-in would answer assert_not_awaited with an AttributeError instead of this failure.
     assert isinstance(counted, AsyncMock)
     counted.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_list_for_user_returns_the_newest_first():
-    """The page truncates at LIST_LIMIT, so the order decides which keys an owner ever sees;
-    the ages are seeded out of insertion order to keep the assertion about the sort."""
+    """The page truncates at LIST_LIMIT, so the order decides which keys an owner sees; ages are seeded shuffled."""
     db = FakeDatabase()
     repo = ApiKeyRepository(db)
     ages = {"oldest": _OLDEST_AGE_DAYS, "newest": _NEWEST_AGE_DAYS, "middle": _MIDDLE_AGE_DAYS}
@@ -225,8 +217,7 @@ async def test_list_for_user_returns_the_newest_first():
 
 @pytest.mark.asyncio
 async def test_touch_last_used_moves_the_stamp_forward():
-    """BSON floors dates to whole milliseconds, so a fresh key's two stamps would otherwise land
-    in the same one and the advance could not be strict."""
+    """BSON floors dates to whole milliseconds, so without a gap both stamps could land in the same one."""
     db = FakeDatabase()
     repo = ApiKeyRepository(db)
     doc, _ = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
@@ -241,10 +232,7 @@ async def test_touch_last_used_moves_the_stamp_forward():
 
 @pytest.mark.asyncio
 async def test_touch_last_used_is_scoped_to_the_key():
-    """Stamping a key that does not exist is the order-free half: an unfiltered write lands on
-    whichever document happens to come first, so with no key addressed none may carry a stamp,
-    whatever the insertion order. Asserting only that a sibling stayed null passes as soon as the
-    addressed key is the first one."""
+    """An unfiltered write lands on whichever document comes first, so stamping a missing key must stamp none."""
     db = FakeDatabase()
     repo = ApiKeyRepository(db)
     used, _ = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)

@@ -98,14 +98,12 @@ async def estate(db, owner_auth_headers_proj):
 
 
 async def _profiled(db, request):
-    """The response of ``request`` and every operation the server ran meanwhile."""
     resp, entries = await profiled(db, request)
     assert resp.status_code == 200, resp.text
     return resp, entries
 
 
 def _plans(entries, collection, command):
-    """(hinted index, whether the read stayed inside the head scan) of each hinted ``command`` on ``collection``."""
     return [
         (e["planSummary"], e["keysExamined"] < _DECOYS)
         for e in entries

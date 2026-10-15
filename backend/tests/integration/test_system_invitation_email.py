@@ -1,5 +1,3 @@
-"""A system invitation takes a validated address, stores it lowercased and says whether its mail was queued."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

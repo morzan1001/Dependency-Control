@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Finding } from "@/types/scan";
 
-// Mock before importing so the module's scanApi reference points at the mock.
 vi.mock("@/api/scans", () => ({
   scanApi: {
     getFindings: vi.fn(),

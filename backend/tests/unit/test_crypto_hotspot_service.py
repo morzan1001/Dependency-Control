@@ -199,7 +199,6 @@ async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
 
 @pytest.mark.asyncio
 async def test_group_by_name_enrichment_excludes_waived_findings(db):
-    """Waived crypto findings must not inflate finding_count or severity_mix."""
     await CryptoAssetRepository(db).bulk_upsert(
         "pw",
         "sw",
@@ -291,7 +290,6 @@ async def test_a_weakness_tag_row_spans_every_severity_it_was_seen_at(db):
 
 @pytest.mark.asyncio
 async def test_no_completed_scans_returns_empty_not_all_history(db):
-    """With no completed/partial scan the aggregation must match nothing, not fall back to every scan."""
     await CryptoAssetRepository(db).bulk_upsert(
         "pn",
         "srun",

@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.vulnerabilities."""
-
 import json
 from pathlib import Path
 
@@ -24,8 +22,7 @@ def _make_finding(
     finding_type="vulnerability",
     kev_ransomware=False,
 ):
-    """Aggregator shape: the document id is component:version and every advisory lives in
-    details.vulnerabilities, so ``finding_id`` names the advisory, not the document."""
+    """Aggregator shape: the id is component:version and every advisory lives in details.vulnerabilities."""
     return {
         "id": f"{component}:{version}",
         "type": finding_type,
@@ -205,7 +202,6 @@ class TestGroupedVulnerabilities:
 
 class TestBaseImageUpdate:
     def test_deb_packages_trigger_base_image_update(self):
-        """3+ OS vulns should trigger a base image update recommendation."""
         findings = [
             _make_finding(
                 finding_id=f"CVE-2024-000{i}",
@@ -284,7 +280,6 @@ class TestBaseImageUpdate:
         assert "commands" not in card.action
 
     def test_few_low_severity_os_vulns_no_recommendation(self):
-        """Fewer than 3 low-severity OS vulns should NOT trigger base image update."""
         findings = [
             _make_finding(finding_id="CVE-2024-0001", component="libfoo", severity="LOW"),
             _make_finding(finding_id="CVE-2024-0002", component="libbar", severity="LOW"),
@@ -406,7 +401,6 @@ class TestBaseImageUpdate:
         assert base_rec.action["current_image"] == "alpine:3.20"
 
     def test_effort_low_for_many_vulns(self):
-        """When more than 10 OS vulns, effort should be 'low' (batch fix via image update)."""
         findings = [
             _make_finding(
                 finding_id=f"CVE-2024-{i:04d}",
@@ -558,8 +552,7 @@ class TestNoFixAvailable:
         assert "vulnerable-lib" in no_fix_recs[0].affected_components
 
     def test_the_card_claims_only_what_the_advisory_records(self):
-        """A missing fixed_version is the absence of a recorded fix, and the card recommends
-        replacing a component, so it must not present that absence as proof none exists."""
+        """A missing fixed_version means no recorded fix, not proof that none exists; the card must not claim one."""
         finding = _make_finding(severity="CRITICAL", fixed_version=None)
         dep = _make_dependency()
 
@@ -571,8 +564,6 @@ class TestNoFixAvailable:
         assert any(_UPSTREAM_STEP in step for step in card.action["steps"])
 
 
-# The claim the data cannot support, the attribution that replaces it, and the step that
-# follows from the distinction.
 _UNSUPPORTED_NO_FIX_CLAIM = "have no fix available"
 _ADVISORY_ATTRIBUTION = "no fixed version in their advisories"
 _UPSTREAM_STEP = "Check the upstream project"
@@ -933,8 +924,7 @@ class TestUpdateCardsReadTheLiveAdvisories:
 
 
 class TestPartiallyFixableRecords:
-    """One record bundles every advisory of a component@version, and OS images routinely pair a
-    fixable CRITICAL with a LOW the distribution will not fix."""
+    """OS images routinely pair a fixable CRITICAL with a LOW the distribution will not fix in one record."""
 
     def _types(self, finding, dep):
         return [r.type for r in process_vulnerabilities([finding], [dep])]

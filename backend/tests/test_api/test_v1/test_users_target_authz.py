@@ -1,5 +1,3 @@
-"""Authorization tests for user management: a caller may only act on accounts whose permissions it holds itself, unless it holds system:manage."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -66,7 +64,6 @@ def _mock_repo(target):
 
 
 def _call(run, target, smtp_host="smtp.test"):
-    """Run an endpoint coroutine against a mocked target; return (error, result, repo, background_tasks)."""
     repo = _mock_repo(target)
     membership_repo = MagicMock(remove_user_from_all=AsyncMock())
     background_tasks = BackgroundTasks()

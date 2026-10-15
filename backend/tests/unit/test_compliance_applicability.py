@@ -1,4 +1,4 @@
-"""Compliance applicability is control-specific: a control only PASSES when a crypto asset falls within one of its mapped rules' subject scope."""
+"""A control passes only when a crypto asset falls within one of its mapped rules' subject scope."""
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
@@ -107,7 +107,6 @@ def test_one_sizeless_rsa_key_withholds_the_verdict_beside_a_compliant_one():
 
 
 def _weak_rsa_finding(*, waived):
-    """The weak-key analyzer's finding for a 1024-bit RSA key, as persisted under its scan."""
     weak = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r2", key_size_bits=1024)
     (finding,) = crypto_findings_for_assets([weak], [_RSA_RULE], scanner="crypto_weak_key")
     return finding | {"_id": f"s-{finding['id']}", "scan_id": weak.scan_id, "waived": waived}
@@ -143,8 +142,6 @@ def test_a_control_whose_rules_are_missing_from_the_policy_is_not_evaluated():
     assert "nist-131a-rsa-min-2048" in (result.status_reason or "")
 
 
-# Controls backed only by disabled policy rules must never PASS.
-
 _DISABLED_RSA_RULE = CryptoRule(
     rule_id="nist-131a-rsa-min-2048",
     name="RSA keys shorter than 2048 bits are disallowed",
@@ -174,13 +171,10 @@ def test_disabled_rule_control_reports_not_applicable_not_passed():
 
 
 def test_enabled_rule_still_applicable_alongside_disabled_duplicate():
-    """If at least one backing rule is enabled the control is still evaluable."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
     data = _input([rsa], [_RSA_RULE])
     assert _state(_RSA_CONTROL, data) is _Applicability.APPLICABLE
 
-
-# default_evaluator must honour details.matched_rules.
 
 _MD5_CONTROL = ControlDefinition(
     control_id="NIST-131A-md5",
@@ -193,7 +187,6 @@ _MD5_CONTROL = ControlDefinition(
 
 
 def test_evaluator_matches_finding_via_matched_rules():
-    """The NIST control must FAIL on a deduped finding that records its rule under details.matched_rules."""
     finding = {
         "id": "f1",
         "type": "crypto_weak_algorithm",

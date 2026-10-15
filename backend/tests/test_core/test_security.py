@@ -1,5 +1,3 @@
-"""Tests for JWT token creation/verification and password hashing."""
-
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -51,7 +49,7 @@ class TestPasswordHashing:
     def test_different_passwords_different_hashes(self):
         hash1 = get_password_hash("password123")
         hash2 = get_password_hash("password123")
-        assert hash1 != hash2  # Different salts
+        assert hash1 != hash2
 
 
 class TestAccessToken:

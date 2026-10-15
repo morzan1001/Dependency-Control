@@ -1,5 +1,3 @@
-"""The findings delta over what real analyzer output persists across two scans, drifting fields included."""
-
 import copy
 import json
 from datetime import datetime, timedelta, timezone

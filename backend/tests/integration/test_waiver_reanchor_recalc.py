@@ -1,5 +1,3 @@
-"""Recalc applies waivers via signature matching, follows line shifts, lapses on content change."""
-
 import logging
 
 import pytest
@@ -71,7 +69,6 @@ async def test_content_change_accepted_risk_lapses():
 
 
 def _finding_doc_no_match(scan_id, fid, finding_id, fingerprint, line, file="a.py"):
-    """A location finding doc with NO stored `match` but with the merged SAST details."""
     return {
         "_id": fid,
         "scan_id": scan_id,
@@ -97,7 +94,6 @@ def _finding_doc_no_match(scan_id, fid, finding_id, fingerprint, line, file="a.p
 @pytest.mark.asyncio
 async def test_self_heals_finding_without_persisted_match():
     scan = "s1"
-    # Re-scanned finding drifted to line 94 and has no stored match signature.
     docs = [_finding_doc_no_match(scan, "f94", "BEARER-r-a.py-94", "fpNEW_2", 94)]
     # Waiver anchored at the old line 100 with a (now stale) strong anchor.
     w = _Waiver(
@@ -156,7 +152,6 @@ async def test_dormant_waiver_is_logged(caplog):
 @pytest.mark.asyncio
 async def test_records_match_outcome_per_waiver():
     scan = "s1"
-    # f1 is waived by w_active (exact anchor); w_dormant matches nothing.
     docs = [
         _finding_doc(scan, "f1", "fpA", "c1", 10, rule="bearer:X", file="a.py"),
         _finding_doc(scan, "f2", "zz", "cX", 5, rule="opengrep:y", file="b.py"),
@@ -213,5 +208,4 @@ async def test_outcome_write_skipped_when_unchanged():
     w.last_match_count = 1
     db, wrepo = await restamp_docs(docs, [w], scan)
     assert "f1" in await waived(db, scan)
-    # No redundant outcome write: the unchanged-outcome guard skips it.
     assert "wa" not in wrepo.writes

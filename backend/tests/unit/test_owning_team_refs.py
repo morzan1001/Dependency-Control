@@ -1,10 +1,4 @@
-"""Turning a project's stored owner ids into the rows a reader sees.
-
-``team_refs`` is the last step before display for every list that names an owner, so the two rules
-it carries alone are pinned here: the order a row is shown in, and what happens to an id the name
-map does not answer. A dropped id renders as one fewer badge; a kept one would render blank, which
-reads as a team with no name rather than as a team that is gone.
-"""
+"""A dropped id shows one fewer badge; a kept one would render as a nameless team rather than a gone one."""
 
 import pytest
 
@@ -44,8 +38,7 @@ def test_an_id_the_map_cannot_name_is_dropped():
 
 
 def test_a_team_stored_without_a_name_is_still_shown():
-    """Only an absent entry means "gone" — an empty name is a team that exists and is unnamed, and
-    dropping it would understate how many teams own the project."""
+    """Only an absent entry means gone; an empty name is an unnamed team, and dropping it understates the owners."""
     refs = team_refs(["t-known", "t-unnamed"], {"t-known": "Known", "t-unnamed": ""})
 
     assert [(ref.id, ref.name) for ref in refs] == [("t-unnamed", ""), ("t-known", "Known")]

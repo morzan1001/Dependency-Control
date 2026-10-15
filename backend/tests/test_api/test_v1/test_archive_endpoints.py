@@ -1,5 +1,3 @@
-"""Tests for archive API endpoints (list, restore, download, pin/unpin, branches, admin list, permissions)."""
-
 import asyncio
 import hashlib
 import zlib
@@ -15,11 +13,6 @@ from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.archives"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_archive_metadata(**overrides):
@@ -68,11 +61,6 @@ def _assert_404_when_archive_missing(endpoint, *, metadata, **call_kwargs):
         asyncio.run(endpoint(**call_kwargs))
 
     assert exc_info.value.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# list_archives
-# ---------------------------------------------------------------------------
 
 
 class TestListArchives:
@@ -271,11 +259,6 @@ class TestListArchives:
         assert result.page == 2
 
 
-# ---------------------------------------------------------------------------
-# restore_archive
-# ---------------------------------------------------------------------------
-
-
 class TestRestoreArchive:
     def test_restores_archive_successfully(self, admin_user):
         from app.api.v1.endpoints.archives import restore_archive
@@ -374,11 +357,6 @@ class TestRestoreArchive:
         assert exc_info.value.status_code == 500
 
 
-# ---------------------------------------------------------------------------
-# download_archive
-# ---------------------------------------------------------------------------
-
-
 class TestDownloadArchive:
     def test_downloads_archive(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
@@ -440,11 +418,6 @@ class TestDownloadArchive:
         )
 
 
-# ---------------------------------------------------------------------------
-# list_archive_branches
-# ---------------------------------------------------------------------------
-
-
 class TestListArchiveBranches:
     def test_orders_the_branches_whatever_their_case(self, admin_user):
         from app.api.v1.endpoints.archives import list_archive_branches
@@ -476,11 +449,6 @@ class TestListArchiveBranches:
             current_user=admin_user,
             db=MagicMock(),
         )
-
-
-# ---------------------------------------------------------------------------
-# pin_scan / unpin_scan
-# ---------------------------------------------------------------------------
 
 
 class TestPinScan:
@@ -531,8 +499,7 @@ class TestPinScan:
 
     @pytest.mark.asyncio
     async def test_a_scan_of_another_project_is_not_pinnable(self, admin_user):
-        """FakeDatabase-backed: a mock that answers every find_one the same way cannot tell
-        whether the lookup is scoped to the project in the path."""
+        """A mock answering every find_one alike cannot tell whether the lookup is scoped to the project."""
         from app.api.v1.endpoints.archives import pin_scan
 
         db = FakeDatabase()
@@ -593,11 +560,6 @@ class TestUnpinScan:
             )
 
         assert exc_info.value.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# list_all_archives (admin endpoint)
-# ---------------------------------------------------------------------------
 
 
 class TestListAllArchives:
@@ -664,11 +626,6 @@ class TestListAllArchives:
         count_kwargs = mock_repo.count_all.call_args[1]
         assert count_kwargs.get("project_id") == "proj-1"
         assert count_kwargs.get("branch") == "main"
-
-
-# ---------------------------------------------------------------------------
-# Permission enforcement on restore
-# ---------------------------------------------------------------------------
 
 
 class TestRestoreArchivePermissions:

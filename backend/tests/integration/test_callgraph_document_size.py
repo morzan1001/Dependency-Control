@@ -1,5 +1,3 @@
-"""A callgraph's graph lives in one GridFS file: any size is stored and read, legacy inline graphs stay readable."""
-
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -26,7 +24,6 @@ _MONGO_DOCUMENT_LIMIT = 16 * 1024 * 1024
 
 
 def _madge(files: int, path_length: int, packages: int) -> dict[str, list[str]]:
-    """madge `--json --include-npm` output whose files import from a pool of `packages` npm packages."""
     return {
         f"src/features/f{i}/".ljust(path_length - 4, "x") + ".tsx": [
             f"../node_modules/pkg-{(i * _DEPENDENCIES_PER_FILE + j) % packages}/index.js"
@@ -82,7 +79,6 @@ async def _seed_scan_with_finding(db, component: str) -> None:
 
 
 def _legacy_inline(data: dict[str, list[str]]) -> dict:
-    """A callgraph document as the upload stored it inline, graph included."""
     parsed = parse_madge_format(data, "javascript")
     return Callgraph(
         project_id=_PROJECT_ID,

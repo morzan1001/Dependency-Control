@@ -1,5 +1,3 @@
-"""Chat/MCP tools answer per advisory, never pairing a CVE with a sibling advisory's KEV, EPSS or fix."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -67,7 +65,6 @@ async def _call(db, tool: str, **args) -> dict:
 
 
 def _log4j(**details) -> dict:
-    """Log4Shell (KEV, ransomware) beside a sibling that is neither in KEV nor fixed."""
     return _finding(
         "f-log4j",
         "CRITICAL",

@@ -132,8 +132,6 @@ async def test_the_system_audit_is_refused_to_a_non_admin(client, db, member_aut
     ],
 )
 async def test_revert_answers_422_not_500(client, db, admin_auth_headers, body):
-    """`int(target_raw)` and the audit entry's comment limit both raised below the route, where the
-    catch-all handler turned them into a 500."""
     await client.put(
         "/api/v1/crypto-policies/system",
         json={"rules": [rule_dict("alpha")]},
@@ -175,7 +173,6 @@ async def test_a_revert_names_the_admin_who_made_it(client, db, admin_auth_heade
 async def test_a_legacy_policy_last_changed_by_a_revert_keeps_its_rules_through_the_seed_bumps(
     client, db, admin_auth_headers
 ):
-    """Without updated_by and seed_version, the seeder reads the editor from the newest audit entry."""
     for rule_id in ("alpha", "beta"):
         await client.put(
             "/api/v1/crypto-policies/system", json={"rules": [rule_dict(rule_id)]}, headers=admin_auth_headers

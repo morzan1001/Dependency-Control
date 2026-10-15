@@ -1,5 +1,3 @@
-"""The guard around the teams unique index build, and that startup still builds it."""
-
 import asyncio
 
 import pytest
@@ -10,10 +8,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 
 class TestTeamsUniqueIndexGuard:
-    """The teams unique binding-key index build must degrade gracefully (log + skip) on a startup
-    duplicate. create_indexes runs at pod startup; an unhandled failure from that one build would
-    crash the pod into CrashLoopBackOff instead of continuing.
-    """
+    """create_indexes runs at pod startup, so a duplicate must not crash the pod into CrashLoopBackOff."""
 
     @staticmethod
     def _wrap_teams_index_to_raise(db, exc):
@@ -34,7 +29,6 @@ class TestTeamsUniqueIndexGuard:
         )
 
         with caplog.at_level("ERROR", logger="app.core.init_db"):
-            # Must complete without raising — graceful degradation, not CrashLoopBackOff.
             asyncio.run(create_indexes(db))
 
         assert any("teams" in r.message.lower() or "index" in r.message.lower() for r in caplog.records), (
@@ -45,11 +39,9 @@ class TestTeamsUniqueIndexGuard:
         db = FakeDatabase()
         self._wrap_teams_index_to_raise(db, OperationFailure("index build failed"))
 
-        # Must complete without raising.
         asyncio.run(create_indexes(db))
 
     def test_unrelated_index_failures_still_propagate(self):
-        """The guard must be narrow: a failure on a DIFFERENT index must NOT be swallowed."""
         db = FakeDatabase()
         users = db["users"]
 
@@ -63,8 +55,7 @@ class TestTeamsUniqueIndexGuard:
 
 
 class TestStartupBuildsTheBindingKey:
-    """create_team_indexes is what the live index tests build; startup has to still call it,
-    or the uniqueness those tests prove would never reach a deployed installation."""
+    """The live index tests build create_team_indexes, so startup must still call it for their proof to count."""
 
     def test_the_binding_key_gets_its_unique_index(self):
         db = FakeDatabase()

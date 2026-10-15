@@ -1,5 +1,3 @@
-"""Tests for GitLab multi-instance behavior."""
-
 import asyncio
 import logging
 from functools import partial
@@ -41,15 +39,12 @@ _USABLE_INSTANCE_DOC = {
 
 
 def _make_scan(**kwargs):
-    """Create a Scan with sensible defaults for testing."""
     defaults = {"project_id": "test-proj", "branch": "main"}
     defaults.update(kwargs)
     return Scan(**defaults)
 
 
 class TestApiMethodTokenGuards:
-    """API methods must check self.instance.access_token, not self.settings."""
-
     def test_api_get_returns_none_without_token(self):
         service = GitLabService(make_gitlab_instance(access_token=None))
         result = asyncio.run(service._api_get("/projects/1"))
@@ -73,8 +68,6 @@ class TestApiMethodTokenGuards:
 
 
 class TestTeamMemberSyncResolveOnly:
-    """Sync resolves members to EXISTING local users only; it never creates users."""
-
     def test_resolves_existing_user_by_email_no_create(self):
         service = GitLabService(make_gitlab_instance())
         existing = {"_id": "u-1", "email": "real@example.com", "username": "real"}
@@ -100,8 +93,7 @@ class TestTeamMemberSyncResolveOnly:
 
 
 class TestMrDecorationEarlyReturns:
-    """Each guard has to stop before GitLabService is constructed; the body sits inside a blanket
-    except Exception, so a test without that assertion passes whatever the guard does."""
+    """The body sits in a blanket except, so only asserting GitLabService was never built proves a guard fired."""
 
     @staticmethod
     def _db(instance_doc):
@@ -191,8 +183,6 @@ class TestMrDecorationEarlyReturns:
 
 
 class TestMrDecorationInstanceRouting:
-    """MR decoration must use the correct GitLab instance for each project."""
-
     def test_creates_service_with_correct_instance(self):
         from app.services.analysis.integrations import decorate_gitlab_mr
 
@@ -236,7 +226,6 @@ class TestMrDecorationInstanceRouting:
             assert created_instance.name == "GitLab A"
 
     def test_two_projects_use_different_instances(self):
-        """Two projects linked to different instances should use different services."""
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         projects = [
@@ -348,7 +337,6 @@ class TestMrDecorationInstanceRouting:
                 )
             )
 
-            # Only MR !1 should get a comment (open, non-draft, non-WIP)
             assert mock_svc.post_merge_request_comment.call_count == 1
             call_args = mock_svc.post_merge_request_comment.call_args[0]
             assert call_args[1] == 1  # mr_iid
@@ -405,7 +393,6 @@ class TestMrDecorationInstanceRouting:
             assert update_args[2] == 999  # note_id
 
     def test_skips_update_when_comment_unchanged(self):
-        """If existing comment body matches new content, skip the update."""
         from app.core.config import scan_link
         from app.services.analysis.integrations import (
             _build_scan_comment,
@@ -457,7 +444,6 @@ class TestMrDecorationInstanceRouting:
                 )
             )
 
-            # Neither update nor create should be called
             mock_svc.update_merge_request_comment.assert_not_called()
             mock_svc.post_merge_request_comment.assert_not_called()
 
@@ -466,8 +452,6 @@ _MARKER = "<!-- dependency-control:scan-comment -->"
 
 
 class TestMrCommentTarget:
-    """Only an MR whose head is the scanned commit, and only a note the token's own user wrote."""
-
     @staticmethod
     def _decorate(mrs, notes, bot_id=BOT_USER_ID):
         from app.services.analysis.integrations import decorate_gitlab_mr
@@ -529,11 +513,8 @@ class TestMrCommentTarget:
 
 
 class TestTeamSyncNamespaceCheck:
-    """Team sync should only run for group-namespace projects."""
-
     def test_reports_no_owner_for_a_user_namespace(self, gitlab_instance_a):
-        """Determined, not unknown: GitLab says a person owns this project, so the group owner it
-        carried from before the move is retired."""
+        """Determined, not unknown: GitLab says a person owns this project, so the old group owner is retired."""
         service = GitLabService(gitlab_instance_a)
 
         result = asyncio.run(
@@ -567,8 +548,6 @@ class TestTeamSyncNamespaceCheck:
 
 
 class TestTeamSyncGroupMembers:
-    """Team sync should fetch and map group members correctly."""
-
     def test_fetches_group_members_by_group_id(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
 
@@ -595,7 +574,7 @@ class TestTeamSyncGroupMembers:
             mock_members.assert_called_once_with(42)
 
     def test_maps_access_level_to_roles(self, gitlab_instance_a):
-        """access_level >= 40 (Maintainer) should map to 'admin', otherwise 'member'."""
+        """GitLab's access_level 40 is Maintainer, the floor for admin."""
         service = GitLabService(gitlab_instance_a)
 
         members = [
@@ -629,11 +608,9 @@ class TestTeamSyncGroupMembers:
                 )
             )
 
-            # A team should have been created
             assert result is not None
 
     def test_team_name_includes_group_path(self, gitlab_instance_a):
-        """Team created from sync should use team_sync_depth to truncate path."""
         service = GitLabService(gitlab_instance_a)
 
         members = [
@@ -666,13 +643,12 @@ class TestTeamSyncGroupMembers:
                 )
             )
 
-            # With team_sync_depth=1 (default), team name should be truncated to top-level
             teams_coll.insert_one.assert_called_once()
             team_data = teams_coll.insert_one.call_args[0][0]
+            # team_sync_depth defaults to 1, which keeps only the top-level group.
             assert team_data["name"] == "GitLab Group: org"
 
     def test_updates_existing_team_members(self, gitlab_instance_a):
-        """If team already exists, should update members instead of creating."""
         service = GitLabService(gitlab_instance_a)
 
         members = [
@@ -702,14 +678,12 @@ class TestTeamSyncGroupMembers:
                 )
             )
 
-            # Should return existing team ID
             assert result.team_ids == ["existing-team-id"]
-            # Should have called update_one to set members
             teams_coll.update_one.assert_called_once()
 
 
 class TestTeamSyncSilentReturnsAreLogged:
-    """Every silent return-None path in sync_team_from_gitlab must emit a log so operators can detect projects created without a team_id."""
+    """Every return-None path must log, or operators cannot find projects created without a team."""
 
     def test_logs_when_project_data_is_none(self, gitlab_instance_a, caplog):
         service = GitLabService(gitlab_instance_a)
@@ -754,8 +728,7 @@ class TestTeamSyncSilentReturnsAreLogged:
         )
 
     def test_logs_when_the_member_fetch_fails_and_no_existing_team(self, gitlab_instance_a, caplog):
-        """The fetch failing is what reaches this return; an empty group is an answer and takes the
-        determined path instead."""
+        """Only a failed fetch reaches this return; an empty group is an answer and takes the determined path."""
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
@@ -807,15 +780,13 @@ class TestTeamSyncSilentReturnsAreLogged:
                 )
 
         assert result.team_ids is None
-        # error log must include the project id so operators can find the orphan
         assert any("222" in r.message for r in caplog.records), (
             f"Expected error log to include project_id 222. Got: {[r.message for r in caplog.records]}"
         )
 
 
 class TestTeamSyncResolveGroupFallback:
-    """A parent path that will not resolve leaves the owner undetermined rather than binding a team
-    of different granularity than every other run of the instance."""
+    """An unresolvable parent path leaves the owner undetermined rather than binding a team of another granularity."""
 
     def _sync(self, gitlab_instance_a, lookup):
         service = GitLabService(gitlab_instance_a)
@@ -863,8 +834,6 @@ class TestTeamSyncResolveGroupFallback:
 
 
 class TestTeamSyncInstanceScoping:
-    """GitLab team matching must be scoped to the (instance, group) composite key; two instances owning a group with the SAME path must NOT collide."""
-
     @staticmethod
     def _db():
         db = FakeDatabase()
@@ -878,7 +847,6 @@ class TestTeamSyncInstanceScoping:
         return asyncio.run(db.teams.find({}).to_list(None))
 
     def _sync(self, instance, db, group_id, group_path):
-        """The one team the group resolves to, or None."""
         service = GitLabService(instance)
         members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
         with patch.object(service, "get_group_members", new=AsyncMock(return_value=members)):
@@ -898,7 +866,6 @@ class TestTeamSyncInstanceScoping:
         return result.team_ids[0] if result.team_ids else None
 
     def test_same_group_path_across_instances_does_not_collide(self):
-        """Instance A and B both own a group at path 'shared-grp' (same group id, different instances); syncing B must create a NEW team, not adopt/mutate A's."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
         instance_b = make_gitlab_instance(id="inst-b", name="B", url="https://b.com")
         db = self._db()
@@ -908,18 +875,15 @@ class TestTeamSyncInstanceScoping:
 
         assert team_a_id is not None
         assert team_b_id is not None
-        # The two instances must own DISTINCT teams.
         assert team_a_id != team_b_id, (
             "Instance B adopted instance A's team via the unscoped name fallback — "
             "this is the cross-tenant collision (Finding 8)."
         )
-        # Two separate team documents must exist, each tagged to its own instance.
         teams = self._teams(db)
         assert len(teams) == 2
         assert {d["bindings"][0]["instance_id"] for d in teams} == {"inst-a", "inst-b"}
 
     def test_instance_a_members_not_mutated_by_instance_b_sync(self):
-        """Instance A's team and its member list must be untouched after B syncs."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
         instance_b = make_gitlab_instance(id="inst-b", name="B", url="https://b.com")
         db = self._db()
@@ -935,7 +899,6 @@ class TestTeamSyncInstanceScoping:
         assert team_a_after["members"] == members_before
 
     def test_repeated_sync_same_instance_group_reuses_team(self):
-        """Re-syncing the SAME (instance, group) must re-use the same team, not create a duplicate."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
         db = self._db()
 
@@ -947,8 +910,6 @@ class TestTeamSyncInstanceScoping:
 
 
 class TestMemberResolution:
-    """A member is looked for by the email GitLab reports, among the accounts that verified it."""
-
     @staticmethod
     def _resolved(gitlab_instance_a, member, **user_lookups):
         service = GitLabService(gitlab_instance_a)
@@ -985,8 +946,7 @@ class TestMemberResolution:
 
 
 class TestTeamSyncMergeSemantics:
-    """A sync hands the server the subset it resolved, and the server replaces exactly that subset:
-    a hand-added member and every other instance's survive, this instance's stale ones do not."""
+    """The server replaces exactly the subset a sync resolved; hand-added and other instances' members survive."""
 
     @staticmethod
     def _sync(service, existing_team, members, user_doc, *, namespace_path="grp"):
@@ -1032,8 +992,7 @@ class TestTeamSyncMergeSemantics:
         )
 
     def test_the_write_carries_no_member_of_another_provenance(self, gitlab_instance_a):
-        """A team bound to several instances holds several subsets; a sync owns exactly one of them,
-        and the write never mentions the rest."""
+        """A team bound to several instances holds several subsets, and a sync's write mentions only its own."""
         service = GitLabService(gitlab_instance_a)
         foreign = [
             {"user_id": "manual-user", "role": "admin", "source": "manual"},
@@ -1079,9 +1038,7 @@ class TestTeamSyncMergeSemantics:
         )
 
     def test_a_moved_group_restamps_the_path_on_the_binding_it_resolved_through(self, gitlab_instance_a):
-        """The path is display-only, so nothing else notices it going stale: a group that moved
-        would go on naming the namespace it left, on the binding and in the picker, until somebody
-        rebound it by hand."""
+        """The path is display-only, so nothing else would notice a moved group still naming the namespace it left."""
         service = GitLabService(gitlab_instance_a)
         existing_team = self._team("team-moved", [], path="old/grp", name="GitLab Group: old/grp")
         members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
@@ -1094,17 +1051,16 @@ class TestTeamSyncMergeSemantics:
 
 
 class TestTeamSyncEmaillessMembers:
-    """Sync resolves members to EXISTING local users only and never creates users (which would pull in GitLab service accounts / bots)."""
+    """Sync never creates users, which would pull in GitLab service accounts and bots."""
 
     def test_emailless_member_without_local_account_is_skipped(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
 
-        # GitLab member with NO email and a username, and no existing local user.
         members = [GitLabMember(username="ghost", email=None, access_level=30)]
 
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
-            users_coll = create_mock_collection(find_one=None)  # no local user matches
+            users_coll = create_mock_collection(find_one=None)
             users_coll.insert_one = AsyncMock()
             teams_coll = create_mock_collection(find_one=None)
             teams_coll.insert_one = AsyncMock()
@@ -1120,16 +1076,13 @@ class TestTeamSyncEmaillessMembers:
                 )
             )
 
-        # Sync NEVER creates users (which would pull GitLab service accounts / bots in).
         users_coll.insert_one.assert_not_called()
-        # The only member was skipped -> empty member set -> no new team created.
         teams_coll.insert_one.assert_not_called()
         assert result.team_ids == []
 
     def test_member_without_email_or_username_is_skipped(self, gitlab_instance_a, caplog):
         service = GitLabService(gitlab_instance_a)
 
-        # Pathological member: neither email nor username.
         members = [GitLabMember(username=None, email=None, access_level=30)]
 
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
@@ -1153,7 +1106,6 @@ class TestTeamSyncEmaillessMembers:
                     )
                 )
 
-        # No user is created, and the skip is logged (not silent).
         users_coll.insert_one.assert_not_called()
         assert any("member" in r.message.lower() for r in caplog.records), (
             f"Expected a skip log. Got: {[r.message for r in caplog.records]}"
@@ -1161,8 +1113,7 @@ class TestTeamSyncEmaillessMembers:
 
 
 def _gitlab_offset_pages(total: int, *, with_totals: bool = True):
-    """GitLab's offset pagination as gitlab.com answers it: Link rel next/prev/first, plus rel last and the
-    x-total headers, which GitLab leaves out past 10,000 rows."""
+    """As gitlab.com answers: Link next/prev/first, plus last and x-total, which GitLab omits past 10,000 rows."""
     requested: list[int] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
@@ -1195,8 +1146,6 @@ def _serve(monkeypatch, answer) -> None:
 
 
 class TestGitLabPagination:
-    """Every paginated read follows GitLab's Link header to the last page; only the group picker is capped."""
-
     @pytest.mark.parametrize(
         "read",
         [

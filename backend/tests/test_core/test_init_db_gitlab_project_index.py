@@ -1,5 +1,3 @@
-"""A GitLab project links to one project per instance, whatever numeric type stored its id."""
-
 import asyncio
 import logging
 

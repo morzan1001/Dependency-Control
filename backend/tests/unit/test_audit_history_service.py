@@ -60,7 +60,6 @@ async def test_record_policy_change_persists_entry():
 
 @pytest.mark.asyncio
 async def test_record_policy_change_survives_webhook_failure():
-    """Webhook dispatch failure must not block the audit persist."""
     db = MagicMock()
     insert_mock = AsyncMock()
     delivery_mock = AsyncMock(side_effect=RuntimeError("webhook down"))

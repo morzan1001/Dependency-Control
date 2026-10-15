@@ -1,5 +1,3 @@
-"""Tests for quality normalizers (Scorecard, Typosquatting, Maintainer Risk)."""
-
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -38,7 +36,6 @@ class TestNormalizeScorecard:
         assert "deps_dev" in f.scanners
 
     def test_severity_high_for_low_score(self):
-        """Score < 3.0 should be HIGH severity."""
         result = {
             "scorecard_issues": [
                 {
@@ -55,7 +52,6 @@ class TestNormalizeScorecard:
         assert f.severity == "HIGH"
 
     def test_severity_high_for_maintained_critical(self):
-        """'Maintained' in critical_issues should be HIGH regardless of score."""
         result = {
             "scorecard_issues": [
                 {
@@ -72,7 +68,6 @@ class TestNormalizeScorecard:
         assert f.severity == "HIGH"
 
     def test_severity_medium_for_moderate_score(self):
-        """Score >= 3.0 but < 5.0 should be MEDIUM severity."""
         result = {
             "scorecard_issues": [
                 {
@@ -89,7 +84,6 @@ class TestNormalizeScorecard:
         assert f.severity == "MEDIUM"
 
     def test_severity_low_for_good_score(self):
-        """Score >= 5.0 with no critical issues should be LOW."""
         result = {
             "scorecard_issues": [
                 {

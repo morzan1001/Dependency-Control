@@ -1,11 +1,3 @@
-"""Analytics surfaces must agree with the scan stats on what is waived.
-
-``calculate_comprehensive_stats`` and the finding repository count only ``waived != True``.
-The impact/hotspot rankings, the dependency-tree severity overlay and the component-finding
-list ignored the flag, so a waived CVE kept driving a component's rank and fix_impact_score
-while it had already disappeared from the severity tiles of the same scan.
-"""
-
 from datetime import datetime, timezone
 
 import pytest

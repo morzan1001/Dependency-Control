@@ -40,7 +40,6 @@ _PDF_EVIDENCE_CELL = re.compile(r'<td class="severity">[^<]*</td>\s*<td>([^<]*)<
 
 
 def _weak_rsa_control() -> ControlResult:
-    """The control the default evaluator returns over one 1024-bit RSA key and its weak-key finding."""
     weak = CryptoAsset(
         project_id="p",
         scan_id="s",

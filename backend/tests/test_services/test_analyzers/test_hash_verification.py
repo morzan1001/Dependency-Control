@@ -1,5 +1,3 @@
-"""Hash verification compares the parser's component hashes with the registry's digests for that exact version."""
-
 import asyncio
 from typing import Any, Self
 
@@ -226,8 +224,6 @@ async def test_all_registry_hashes_are_read_from_the_cache_in_one_batch(monkeypa
 
 
 class _ConcurrencyProbe:
-    """Stands in for the registry client and records how many requests are in flight at once."""
-
     def __init__(self) -> None:
         self.live = 0
         self.peak = 0

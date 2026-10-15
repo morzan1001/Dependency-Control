@@ -1,5 +1,4 @@
-"""Every scheduled rescan stores a full copy of findings, dependencies and raw results, so age
-retention alone keeps retention_days * 24 / interval of them per build."""
+"""Each rescan stores a full copy, so age retention alone keeps retention_days * 24 / interval of them per build."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -26,7 +25,6 @@ def _build(project_id: str = "p1", **fields) -> dict:
 
 
 def _rescan(run: int, status: str = "completed", root: str = _ROOT, project_id: str = "p1", **fields) -> dict:
-    """Run 0 is the newest; each run is a day older than the one before."""
     return {
         "_id": f"{root}-run-{run}",
         "project_id": project_id,

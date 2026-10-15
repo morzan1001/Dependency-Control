@@ -1,5 +1,3 @@
-"""Tests for cache key builders and TTL constants."""
-
 import asyncio
 import contextlib
 import hashlib
@@ -14,8 +12,6 @@ from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, supp
 
 
 class TestCacheTTLValues:
-    """All TTL constants must be positive integers."""
-
     def test_popular_packages_is_positive_int(self):
         assert isinstance(CacheTTL.POPULAR_PACKAGES, int)
         assert CacheTTL.POPULAR_PACKAGES > 0
@@ -63,8 +59,6 @@ class TestCacheTTLExpectedValues:
 
 
 class TestScopeDigest:
-    """One digest bounds every analytics cache entry to the caller's id set."""
-
     def test_order_of_the_ids_does_not_matter(self):
         assert scope_digest(["b", "a", "c"]) == scope_digest(["c", "b", "a"])
 
@@ -76,8 +70,6 @@ class TestScopeDigest:
 
 
 class TestCacheKeysRecommendations:
-    """Recommendations key isolates by scan, analysis and caller scope."""
-
     def test_includes_all_components(self):
         key = CacheKeys.recommendations("proj1", "scanA", "2026-09-30T10:00:00", "deadbeef")
         assert "proj1" in key and "scanA" in key and "2026-09-30T10:00:00" in key and "deadbeef" in key
@@ -210,8 +202,6 @@ class TestCacheKeysMalware:
 
 
 class TestStampedeLockRelease:
-    """get_or_fetch_with_lock must only release a lock it still owns."""
-
     @pytest.mark.asyncio
     async def test_release_does_not_delete_another_pods_lock(self, fake_cache):
         key = "epss:CVE-2024-0001"
@@ -226,7 +216,6 @@ class TestStampedeLockRelease:
         result = await fake_cache.get_or_fetch_with_lock(key, slow_fetch, ttl_seconds=60)
 
         assert result == {"score": 0.5}
-        # Pod B's lock must survive: the slow holder only deletes locks it owns.
         assert await fake_cache._client.get(full_lock_key) == other_pod_token
 
     @pytest.mark.asyncio
@@ -244,8 +233,6 @@ class TestStampedeLockRelease:
 
 
 class TestStampedeHolderVanishes:
-    """A holder that drops the lock without publishing must not turn waiters into misses."""
-
     @pytest.mark.asyncio
     async def test_waiter_takes_over_after_the_holder_is_cancelled(self, fake_cache):
         key = "update_freq_cmp:scope-a:all"
@@ -277,8 +264,6 @@ class TestStampedeHolderVanishes:
 
 
 class TestStampedeNegativeCaching:
-    """A failed fetch is remembered only briefly; an empty-but-real answer is not a failure."""
-
     @pytest.mark.asyncio
     async def test_a_failed_fetch_expires_on_the_negative_ttl_not_the_callers(self, fake_cache):
         key = "ghsa:GHSA-xxxx-yyyy-zzzz"
@@ -306,16 +291,13 @@ class TestStampedeNegativeCaching:
 
         assert await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=callers_ttl) == []
 
-        # A package with no known vulnerabilities must read back as "no vulnerabilities",
-        # not as the {} marker that means "the fetch failed".
+        # An empty real answer must not read back as the {} marker that means the fetch failed.
         assert await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=callers_ttl) == []
         assert fetches == [key]
         assert await fake_cache._client.ttl(fake_cache._make_key(key)) > CacheTTL.NEGATIVE_RESULT
 
 
 class TestGetManyOrFetch:
-    """One batched read for every key; only a miss goes upstream, through the stampede lock."""
-
     @pytest.mark.asyncio
     async def test_hits_come_from_one_read_and_only_a_miss_is_fetched_and_cached(self, fake_cache, monkeypatch):
         await fake_cache.set("k:hit", {"v": 1})
@@ -373,8 +355,6 @@ _SEEDED_VALUE = ["express"]
 
 
 class TestSuppressCacheWrites:
-    """Callers that must not publish into the shared cache still read from it."""
-
     @pytest.mark.asyncio
     async def test_set_writes_nothing_and_reports_failure(self, fake_cache):
         with suppress_cache_writes():
@@ -403,8 +383,7 @@ class TestSuppressCacheWrites:
 
         async def fetch():
             fetched.append(_SUPPRESSED_KEY)
-            # The stampede lock is a key built from ours, so it must not be taken either --
-            # and it is released again, so only a look from inside the fetch can see it.
+            # The stampede lock must not be taken either, and only a look from inside the fetch could see it.
             assert await fake_cache._client.keys("*") == []
             return _SUPPRESSED_VALUE
 
@@ -478,8 +457,6 @@ class TestConnectionPoolBursts:
 
 
 class TestFetchFailuresReachTheCaller:
-    """With reraise_fetch_errors a failed fetch raises exactly once, whatever the cache does."""
-
     @pytest.mark.asyncio
     async def test_a_redis_failure_on_the_lock_still_raises_the_fetch_error(self, fake_cache, monkeypatch):
         async def lock_refused(*_a, **_kw):

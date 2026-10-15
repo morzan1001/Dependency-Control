@@ -1,5 +1,4 @@
-"""K22: /v1/querybatch answers with {id, modified} only, so the full OSV record must be
-fetched per id. Without that, every OSV finding carried a fabricated severity."""
+"""/v1/querybatch answers with {id, modified} only, so the full OSV record is fetched per id."""
 
 import asyncio
 from collections.abc import Callable
@@ -54,8 +53,6 @@ def _record(vuln_id: str) -> httpx.Response:
 
 
 def _osv(record_for: Callable[[str], httpx.Response] = _record, batch: list[dict[str, Any]] = _BATCH_RESULTS):
-    """querybatch answers ``batch``; /v1/vulns/{id} answers ``record_for(id)``."""
-
     def handle(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             return httpx.Response(200, json={"results": batch})
@@ -192,7 +189,6 @@ async def test_a_cached_record_costs_no_request(cache, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_hydrated_severity_survives_into_the_finding(cache, monkeypatch):
-    """End to end: the normalizer must persist the hydrated severity, not UNKNOWN."""
     serve_osv(monkeypatch, _osv())
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
@@ -204,8 +200,7 @@ async def test_hydrated_severity_survives_into_the_finding(cache, monkeypatch):
     assert severities["flask"] == "CRITICAL"
 
 
-# Real RHSA records: a vector string and nothing else. Production census over 242 records
-# fetched for real purls: 217 of 217 severity entries are vectors, 232 of them RHSA.
+# Real RHSA records carry a vector string and nothing else.
 _VECTOR_ONLY_RECORDS = {
     "RHSA-low": {
         "id": "RHSA-low",
@@ -296,8 +291,6 @@ async def test_a_clean_answer_is_cached_and_served_without_a_request(cache, monk
 
 @pytest.mark.asyncio
 async def test_budget_deadline_trips_without_any_failure():
-    """The wall-clock branch of _HydrationBudget: only the consecutive-failure branch was
-    covered, so a broken deadline check would not have shown up."""
     past = _HydrationBudget(deadline=asyncio.get_running_loop().time() - 1)
     assert past.exhausted()
     past.record(success=True)
@@ -312,8 +305,7 @@ async def test_budget_deadline_trips_without_any_failure():
 
 @pytest.mark.asyncio
 async def test_an_expired_deadline_reports_every_id_as_unhydrated(cache, monkeypatch):
-    """A healthy OSV that is merely slow must leave the ids visible as partial, not silently
-    unrated, and must not spend a single request once the budget is gone."""
+    """A slow OSV must leave the ids partial, not silently unrated, and spend no request once the budget is gone."""
     monkeypatch.setattr("app.services.analyzers.osv._HYDRATION_BUDGET_SECONDS", -1.0)
     seen = serve_osv(monkeypatch, _osv())
 
@@ -326,8 +318,7 @@ async def test_an_expired_deadline_reports_every_id_as_unhydrated(cache, monkeyp
 
 @pytest.mark.asyncio
 async def test_the_retry_ladder_stops_at_the_hydration_deadline(monkeypatch):
-    """The deadline cannot cancel a request in flight, so no retry may start past it: otherwise
-    the tail past the budget is 4 x 60s of timeouts plus 35s of backoff, not one request."""
+    """The deadline cannot cancel a request in flight, so no retry may start past it."""
     seen = serve_osv(monkeypatch, lambda request: httpx.Response(429))
     analyzer = OSVAnalyzer()
     now = asyncio.get_running_loop().time()

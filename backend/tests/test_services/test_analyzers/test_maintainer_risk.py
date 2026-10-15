@@ -1,5 +1,3 @@
-"""Maintainer risk: signal correlation, and analyze() on the npm, PyPI, deps.dev and GitHub answers it reads."""
-
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -44,49 +42,42 @@ def _types(risks: list[dict[str, Any]]) -> list[str]:
 
 class TestCorrelateMaintainerRisks:
     def test_stale_kept_when_repo_also_inactive(self):
-        # Both registry and GitHub agree: real abandonment.
         risks = [_stale(), _inactive()]
         result = correlate_maintainer_risks(risks, github_active=False)
         assert "stale_package" in _types(result)
         assert "inactive_repo" in _types(result)
 
     def test_stale_suppressed_when_repo_active(self):
-        # Registry says "no release in 2 years" but the repo is still getting
-        # commits — a mature/finished package, not abandoned. Drop the stale signal.
+        # No release in two years but commits still landing: mature, not abandoned.
         risks = [_stale()]
         result = correlate_maintainer_risks(risks, github_active=True)
         assert "stale_package" not in _types(result)
 
     def test_infrequent_updates_suppressed_when_repo_active(self):
-        # Same rule applies to the lower-severity sibling signal.
         risks = [_infrequent()]
         result = correlate_maintainer_risks(risks, github_active=True)
         assert "infrequent_updates" not in _types(result)
 
     def test_stale_kept_when_no_github_data(self):
-        # No corroborating evidence either way -> keep the registry signal.
         risks = [_stale()]
         result = correlate_maintainer_risks(risks, github_active=None)
         assert "stale_package" in _types(result)
 
     def test_archived_overrides_active_repo_check(self):
-        # Archived repos are unmaintained by definition; even if commits
-        # were "recent" before archiving, the package is dead.
+        # An archived repo is unmaintained whatever its last commit date.
         risks = [_stale(), _archived()]
         result = correlate_maintainer_risks(risks, github_active=False)
         assert "archived_repo" in _types(result)
         assert "stale_package" in _types(result)
 
     def test_free_email_kept_when_single_maintainer(self):
-        # Free email + single maintainer is a real bus-factor concern:
-        # if the maintainer disappears, there's no organizational fallback.
+        # Free email plus a single maintainer is a bus-factor risk with no organisational fallback.
         risks = [_free_email(), _single_maintainer()]
         result = correlate_maintainer_risks(risks, github_active=None)
         assert "free_email_maintainer" in _types(result)
         assert "single_maintainer" in _types(result)
 
     def test_unrelated_risks_pass_through(self):
-        # Correlation should never invent new risks or drop unrelated ones.
         custom = {"type": "unaddressed_issues", "severity_score": 2, "message": "x"}
         result = correlate_maintainer_risks([custom], github_active=True)
         assert result == [custom]
@@ -95,8 +86,6 @@ class TestCorrelateMaintainerRisks:
         assert correlate_maintainer_risks([], github_active=None) == []
 
     def test_active_repo_does_not_drop_unrelated_signals(self):
-        # github_active=True should only affect stale-related signals, not
-        # other registry findings.
         risks = [_single_maintainer(), _stale()]
         result = correlate_maintainer_risks(risks, github_active=True)
         types = _types(result)
@@ -119,7 +108,6 @@ def _days_ago(days: int) -> str:
 
 
 def _serve(monkeypatch: pytest.MonkeyPatch, cache: Any, routes: dict[str, Any]) -> list[httpx.Request]:
-    """Answer each URL from ``routes`` (a JSON body, a status code or a Response), anything else 404."""
     seen: list[httpx.Request] = []
 
     def _answer(request: httpx.Request) -> httpx.Response:

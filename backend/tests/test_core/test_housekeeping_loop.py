@@ -1,6 +1,3 @@
-"""A failing stuck-scan recovery, re-scan check, daily sweep or branch sync is logged under its label, and the
-housekeeping loop runs the others."""
-
 import logging
 from types import SimpleNamespace
 from typing import Any

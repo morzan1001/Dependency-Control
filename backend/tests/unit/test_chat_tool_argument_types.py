@@ -1,6 +1,4 @@
-"""Tool arguments come from an MCP client or a model that read attacker-written SBOM text, and an
-object where a string is declared is a Mongo operator: ``{"$ne": null}`` as a project_id passes the
-access check on the caller's own project, then selects every tenant's rows."""
+"""Arguments can come from attacker-written SBOM text, and an object like {"$ne": null} is a Mongo operator."""
 
 import pytest
 
@@ -73,8 +71,7 @@ def _seeded() -> FakeDatabase:
 
 
 class _Tripwire:
-    """A database that records every collection a call reaches for, so a refusal can be shown
-    to have come before the first query."""
+    """Records every collection a call reaches for, proving a refusal came before the first query."""
 
     def __init__(self) -> None:
         self.reached: list[str] = []
@@ -100,7 +97,6 @@ def _valid_value(schema: dict):
     return _STAND_IN
 
 
-# Every (tool, parameter, schema) the registry advertises.
 _DECLARED_PARAMETERS = [
     (definition["function"]["name"], name, schema)
     for definition in TOOL_DEFINITIONS

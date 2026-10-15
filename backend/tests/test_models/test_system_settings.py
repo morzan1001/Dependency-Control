@@ -1,5 +1,3 @@
-"""Tests for SystemSettings model."""
-
 from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
 from app.models.system import SystemSettings
 

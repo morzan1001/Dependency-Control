@@ -1,100 +1,4 @@
-"""In-process fake MongoDB for tests.
-
-Consolidates what used to be two parallel implementations (`tests/unit/conftest.py`
-and `tests/integration/conftest.py`) into a single source of truth. Supports the
-operators that the application code actually uses — extend here, not in conftest.
-
-Supported query operators
--------------------------
-- Equality and dotted paths (``members.user_id`` recurses into list elements)
-- ``$eq``, ``$in``, ``$nin``, ``$ne``, ``$exists``, ``$size``, ``$all``
-- ``$regex`` (with ``$options: "i"`` for case-insensitive)
-- Range: ``$gt``, ``$gte``, ``$lt``, ``$lte``
-- ``$elemMatch``: an operator-only condition applies to the element itself, so a scalar
-  array matches; anything else is a query document only a sub-document can satisfy.
-- Logical: top-level ``$or``, ``$and``, ``$nor``
-- Anything else raises ``OperationFailure``, as the server does; matching on an
-  operator the fake cannot evaluate would report a wider scope than the query asks for.
-
-Supported update operators
---------------------------
-- ``$set`` (including ``a.$[ident].b`` paths with ``array_filters``), ``$setOnInsert``,
-  ``$unset``, ``$inc``, ``$max``, ``$addToSet``, ``$push``, ``$pull``
-- The aggregation-pipeline form, ``update_one(filter, [{"$set": ...}, ...])``, with the
-  ``$set``/``$addFields``, ``$unset``, ``$project`` and ``$replaceRoot`` stages.
-- Two modifiers may not touch overlapping paths: the parse raises ``OperationFailure``
-  with code 40 before the filter runs, so ``$pull`` and ``$addToSet`` on one array is
-  refused here exactly as production refuses it.
-- Anything else raises ``OperationFailure``; silently ignoring a modifier turns a write
-  into a no-op the test then reports as success.
-
-``tests/mocks/mongo_array_cases.py`` holds the array-operator expectations measured against
-Percona Server for MongoDB 8.0.17-6, and drives both this fake and a real server.
-
-Server-side behaviour that tests rely on
-----------------------------------------
-- Projections in ``find``/``find_one``, inclusion and exclusion, dotted paths
-  included, so a too-narrow projection surfaces here instead of in production.
-- BSON datetimes: a written datetime is stored and read back as aware UTC truncated
-  to the millisecond, a naive one counting as UTC, and a query value is normalised the
-  same way before comparison, matching the tz_aware client in ``app.db.mongodb``.
-- BSON compares by type before value, so a bool never equals the number Python
-  would call it equal to: ``{"$ne": True}`` keeps a document holding ``1``.
-- Cross-type BSON ordering: sorts, ``$min`` and ``$max`` rank a mixed column
-  (missing < number < string < date) instead of raising, while a range query
-  brackets to its bound's type and skips the other types outright.
-- ``$group`` drops a grouping key the document does not carry rather than
-  binding it to null, and its ``$push``/``$addToSet`` collect nothing for a document
-  that lacks the field while still collecting an explicit null.
-- An array field answers ``$eq``/``$in``/``$nin``/``$ne`` and a bare equality both as a
-  whole and element by element, so ``$ne: []`` excludes the empty array and a literal
-  ``["A", "B"]`` finds the document holding exactly that.
-- Only false, null and zero are false to ``$cond``/``$switch``; ``""`` and
-  ``[]`` are true.
-- A cursor is consumed as it is read: ``to_list(length=n)`` hands back the next
-  n documents and finally an empty list, and iterating a drained cursor yields
-  nothing, so a paging loop terminates here as it does there.
-- ``insert_one``/``insert_many`` stamp a generated ``ObjectId`` onto the caller's
-  document, so code that reads the new id back without a round trip works, and a
-  later insert never reuses the key of a deleted one.
-- ``bulk_write`` reports matched, modified and upserted counts, and does not count
-  an update that changed nothing.
-
-Known divergences, none of which the application issues
--------------------------------------------------------
-- ``distinct`` resolves only top-level scalar fields: it does not follow a dotted
-  path and does not flatten an array-valued one.
-- ``$push`` takes a plain value; the ``$each``/``$slice``/``$sort`` modifiers are
-  appended verbatim instead of being applied. ``$addToSet`` does unwrap ``$each``.
-- ``count_documents`` ignores ``skip``.
-- A ``$group`` ``$addToSet`` reports its members in first-seen order. The server's
-  order is unspecified, so agreement on it is not something a test can pin.
-
-Supported aggregation stages
-----------------------------
-- ``$match``, ``$sort`` (direction must be 1 or -1), ``$group``, ``$project``, ``$limit``
-- ``$unwind``, both the string and the
-  ``{path, preserveNullAndEmptyArrays, includeArrayIndex}`` forms
-- ``$merge`` on ``_id`` with ``whenMatched`` ``keepExisting``, ``merge`` or ``replace``
-- ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$firstN``, ``$min``,
-  ``$max``, ``$addToSet``, ``$push``
-- ``$dateTrunc`` truncates to the start of the unit (day/week/month/year; week
-  starts Sunday, matching MongoDB's default), in both expressions and
-  ``$group._id``, so trend bucketing is exercised end-to-end.
-
-Supported aggregation expression operators (in ``$project`` / accumulator args)
-------------------------------------------------------------------------------
-- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``, ``$toString``
-- Strings: ``$concat``, ``$trim``, ``$replaceAll``, ``$regexFind``, ``$regexMatch``
-- Arrays and maps: ``$size``, ``$setUnion``, ``$setDifference``, ``$objectToArray``,
-  ``$arrayToObject``, ``$arrayElemAt``, ``$split``, ``$getField``
-- Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
-- Logical: ``$and``, ``$or``
-- ``$map``, ``$filter``, ``$let``, ``$mergeObjects``, ``$literal``. A bound ``$$var`` is
-  substituted; every other reference still resolves against the root document, as it does
-  on the server, so the team-enrichment ``$lookup`` runs here byte-for-byte as it does there.
-- ``$$REMOVE`` (field is omitted; mirrors Mongo's $push semantics)
-"""
+"""Unmodelled, as the app never issues them: dotted or array-valued distinct, $push modifiers, count_documents skip."""
 
 from __future__ import annotations
 
@@ -115,9 +19,7 @@ from app.core.init_db import RELEASES_UPSERT_KEY_FIELDS
 
 
 def _truncate_date(value: Any, unit: str) -> Any:
-    """Best-effort $dateTrunc: round a datetime down to the start of the unit
-    (day/week/month/year). Week starts on Sunday, matching MongoDB's default.
-    Non-datetime values pass through unchanged."""
+    """Week starts on Sunday, matching MongoDB's default."""
     if not isinstance(value, _datetime):
         return value
     midnight = value.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -127,7 +29,7 @@ def _truncate_date(value: Any, unit: str) -> Any:
         return midnight.replace(day=1)
     if unit == "week":
         return midnight - _timedelta(days=(value.weekday() + 1) % 7)
-    return midnight  # day (default)
+    return midnight
 
 
 _SET_ON_INSERT = "$setOnInsert"
@@ -135,14 +37,8 @@ _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
 _MICROSECONDS_PER_MILLISECOND = 1000
 
 
-# ---------------------------------------------------------------------------
-# BSON value semantics
-# ---------------------------------------------------------------------------
-
-
 def _utc(value: Any) -> Any:
-    """BSON dates are int64 milliseconds since the epoch: every datetime comes back aware UTC and
-    loses the sub-millisecond digits the wire cannot carry."""
+    """BSON dates are int64 epoch milliseconds: every datetime comes back aware UTC, truncated to the millisecond."""
     if not isinstance(value, _datetime):
         return value
     value = value.replace(tzinfo=_timezone.utc) if value.tzinfo is None else value.astimezone(_timezone.utc)
@@ -166,8 +62,7 @@ def _bson_identical(left: Any, right: Any) -> bool:
 
 
 def _bson_same_value(left: Any, right: Any) -> bool:
-    """Value equality the way $addToSet dedupes: BSON compares documents byte for byte, so the
-    same pairs in a different key order are two distinct values and both survive."""
+    """BSON compares documents byte for byte, so the same pairs in another key order are distinct values."""
     if isinstance(left, dict) or isinstance(right, dict):
         if not (isinstance(left, dict) and isinstance(right, dict)):
             return False
@@ -188,12 +83,7 @@ def _bsonify(value: Any) -> Any:
 
 
 def _bson_type_rank(value: Any) -> int:
-    """Position of a value's BSON type in the server's cross-type ordering.
-
-    A missing field reaches this as None and shares the null rank, so it sorts
-    first ascending. Ints and floats share one rank; bool is its own type and
-    therefore never compares against a number.
-    """
+    """A missing field arrives as None and shares the null rank; bool is its own type, never compared to a number."""
     if value is None:
         return 1
     if isinstance(value, bool):
@@ -212,7 +102,6 @@ def _bson_type_rank(value: Any) -> int:
 
 
 def _bson_type_name(value: Any) -> str:
-    """The type name the server puts in a wrong-type write error."""
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -231,12 +120,7 @@ def _bson_type_name(value: Any) -> str:
 
 
 def _bson_sort_key(value: Any) -> tuple[int, Any]:
-    """Mongo orders across BSON types instead of refusing to compare them.
-
-    Verified against the server: ascending puts a missing field before a string
-    before a date, so a scan whose date an archive restore left as text sorts
-    rather than raising.
-    """
+    """Mongo orders across BSON types instead of refusing to compare them: missing < string < date ascending."""
     rank = _bson_type_rank(value)
     if rank == 1:
         return (rank, 0)
@@ -245,8 +129,7 @@ def _bson_sort_key(value: Any) -> tuple[int, Any]:
     if rank == 6:
         return (rank, int(value))
     if rank == 7:
-        # Equal ranks are all a tuple comparison ever reaches, so the datetimes
-        # only ever meet each other, and normalising to UTC keeps that legal.
+        # A tuple comparison only reaches equal ranks, so datetimes meet only each other; UTC keeps that legal.
         return (rank, _utc(value))
     if rank == 3:
         return (rank, value)
@@ -258,11 +141,7 @@ _SORT_DIRECTIONS = frozenset({1, -1})
 
 
 def _sort_docs(docs: list, sort_spec) -> list:
-    """Sort in place by a ``[(field, direction)]`` spec, using BSON ordering.
-
-    A direction outside 1/-1 raises, as the server does; treating 2 as ascending would let a typo
-    in a sort spec pass here and fail the query in production.
-    """
+    """A direction outside 1/-1 raises, as the server does, so a typo cannot pass here and fail in production."""
     for key, direction in reversed(list(sort_spec)):
         if direction not in _SORT_DIRECTIONS:
             raise OperationFailure(f"$sort key ordering must be 1 (for ascending) or -1 (for descending), got {key}")
@@ -270,13 +149,7 @@ def _sort_docs(docs: list, sort_spec) -> list:
     return docs
 
 
-# ---------------------------------------------------------------------------
-# Query matching helpers
-# ---------------------------------------------------------------------------
-
-
 def _has_field(doc: dict, path: str) -> bool:
-    """Whether the document carries the path at all, as opposed to holding None there."""
     head, _, rest = path.partition(".")
     if not isinstance(doc, dict) or head not in doc:
         return False
@@ -284,7 +157,6 @@ def _has_field(doc: dict, path: str) -> bool:
 
 
 def _resolve_dotted(doc: dict, path: str):
-    """Resolve a dotted path against a doc; recurses into list elements."""
     if "." not in path:
         return doc.get(path)
     head, _, rest = path.partition(".")
@@ -307,8 +179,7 @@ def _resolve_dotted(doc: dict, path: str):
 
 
 def _descend_for_update(node: Any, part: str) -> Any:
-    """The container one update-path segment deeper, created as a dict when it is missing.
-    An index past the end of a list pads with nulls, as the server does."""
+    """An index past the end of a list pads with nulls, as the server does."""
     if isinstance(node, list):
         index = int(part)
         node.extend([None] * (index + 1 - len(node)))
@@ -323,17 +194,14 @@ def _descend_for_update(node: Any, part: str) -> Any:
 
 
 def _match_range_ops(value, ops_dict: dict) -> bool:
-    """Evaluate $gt/$gte/$lt/$lte; None values never satisfy a range op."""
+    """A None value never satisfies a range operator."""
     for op_key, cmp_fn in _CMP.items():
         if op_key in ops_dict:
             if value is None:
                 return False
-            # The driver encodes a naive query value as UTC, so it compares
-            # against the stored aware datetime instead of raising.
+            # The driver encodes a naive query value as UTC, so it compares with stored aware datetimes.
             left, right = _utc(value), _utc(ops_dict[op_key])
-            # A range query is bracketed to the bound's BSON type, so a date
-            # bound skips a document holding a string there rather than
-            # widening the match.
+            # A range query is bracketed to its bound's BSON type: a date bound skips a string value.
             if _bson_type_rank(left) != _bson_type_rank(right):
                 return False
             if not cmp_fn(_bson_sort_key(left), _bson_sort_key(right)):
@@ -342,7 +210,6 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
 
 
 def _array_filter_identifier(condition: dict) -> str | None:
-    """Identifier an array filter binds, e.g. ``{"vuln.id": x}`` -> ``vuln``."""
     for key, value in condition.items():
         if key.startswith("$") and isinstance(value, list):
             for sub in value:
@@ -367,7 +234,6 @@ def _strip_identifier(condition: dict, identifier: str) -> dict:
 
 
 def _array_filter_predicates(array_filters: list | None) -> dict:
-    """{identifier: predicate} for ``$[identifier]`` update paths."""
     predicates: dict = {}
     for condition in array_filters or []:
         identifier = _array_filter_identifier(condition)
@@ -395,8 +261,7 @@ _MATCH_FIELD_OPERATORS = frozenset(
 
 
 def _matches_value(value: Any, wanted: Any) -> bool:
-    """An array field answers an equality both as a whole and element by element, so
-    ``{"team_ids": ["A", "B"]}`` and ``{"team_ids": "A"}`` can select the same document."""
+    """An array field answers an equality both as a whole and element by element."""
     if _bson_equal(value, wanted):
         return True
     return isinstance(value, list) and any(_bson_equal(element, wanted) for element in value)
@@ -410,12 +275,7 @@ def _in_matches(value: Any, allowed: list) -> bool:
 
 
 def _is_operator_condition(condition: dict) -> bool:
-    """Whether a condition document is a set of field-level operators applied to the value itself,
-    as opposed to a query document that only a sub-document can satisfy.
-
-    Mongo dispatches on the top-level keys alone and refuses a mix of the two, so
-    ``{"$gt": 4, "u": 1}`` is an error rather than a conjunction.
-    """
+    """Mongo dispatches on the top-level keys alone and refuses a mix, so {"$gt": 4, "u": 1} is an error."""
     operators = [key for key in condition if key.startswith("$")]
     # A logical operator combines whole query documents, so it stays on the document branch.
     if not operators or any(op in _MATCH_TOP_LEVEL_OPERATORS for op in operators):
@@ -427,7 +287,6 @@ def _is_operator_condition(condition: dict) -> bool:
 
 
 def _elem_matches(element: Any, condition: Any) -> bool:
-    """One array element against an $elemMatch / $pull condition."""
     if not isinstance(condition, dict):
         return _bson_equal(element, condition)
     if _is_operator_condition(condition):
@@ -436,11 +295,7 @@ def _elem_matches(element: Any, condition: Any) -> bool:
 
 
 def _assert_known_operators(query: dict) -> None:
-    """Refuse an operator the fake does not implement.
-
-    Ignoring it would match every document, so a broken filter would return more rows than the
-    server does and the test would report a wider scope than the code actually selects.
-    """
+    """Ignoring an unknown operator would match every document and report a wider scope than the code selects."""
     for key, condition in query.items():
         if key.startswith("$"):
             if key not in _MATCH_TOP_LEVEL_OPERATORS:
@@ -459,7 +314,6 @@ def _pull_matches(item: Any, condition: Any) -> bool:
 
 
 def _match_doc(doc: dict, query: dict) -> bool:
-    """Return True if doc matches a MongoDB query."""
     _assert_known_operators(query)
     for key, condition in query.items():
         if key == "$or":
@@ -475,14 +329,12 @@ def _match_doc(doc: dict, query: dict) -> bool:
                 return False
             continue
         if key == "$expr":
-            # Unsupported before: an unrecognised operator fell through as "matches".
             if not _eval_bool(doc, condition):
                 return False
             continue
 
         value = _resolve_dotted(doc, key)
-        # Mongo dispatches on the top-level keys: a document without any is a literal to equal,
-        # so ``{"a": {"b": {"$gt": 0}}}`` asks for that exact sub-document, not a range.
+        # A condition without top-level operators is a literal sub-document to equal, not a nested query.
         if not (isinstance(condition, dict) and any(k.startswith("$") for k in condition)):
             if not _matches_value(value, condition):
                 return False
@@ -511,8 +363,7 @@ def _match_doc(doc: dict, query: dict) -> bool:
             field_present = _resolve_dotted(doc, key) is not None or key in doc
             if bool(condition["$exists"]) != field_present:
                 return False
-        # $eq/$in/$nin/$ne compare an array field as a whole and element by element, so
-        # ``$ne: []`` excludes the empty array and ``$in: [["A"]]`` finds the literal.
+        # $eq/$in/$nin/$ne compare an array field as a whole and element by element.
         if "$eq" in condition and not _matches_value(value, condition["$eq"]):
             return False
         if "$in" in condition and not _in_matches(value, condition["$in"]):
@@ -534,22 +385,12 @@ def _match_all(docs: list, query: dict) -> list:
     return [d for d in docs if _match_doc(d, query)]
 
 
-# ---------------------------------------------------------------------------
-# Aggregation pipeline executor
-# ---------------------------------------------------------------------------
-
-
-_REMOVE = object()  # sentinel: field omitted from the output document
-_ABSENT = object()  # sentinel: the path reached nothing, so the element contributes nothing
+_REMOVE = object()
+_ABSENT = object()
 
 
 def _traverse_expr_path(value, path: str):
-    """One field path as an aggregation expression reads it.
-
-    An array maps the rest of the path over its elements *without* flattening, so a path crossing
-    two array levels answers an array of arrays — which is what ``$in`` and ``$size`` then see.
-    Query matching flattens instead, which is why this cannot be ``_resolve_dotted``.
-    """
+    """Unlike query matching, expression paths map over arrays without flattening: two levels give nested arrays."""
     if isinstance(value, list):
         reached = [_traverse_expr_path(element, path) for element in value if isinstance(element, dict)]
         return [item for item in reached if item is not _ABSENT]
@@ -567,7 +408,6 @@ def _resolve_expr_path(doc: dict, path: str):
 
 
 def _to_number(value):
-    """Best-effort numeric coercion for $toDouble / arithmetic; None stays None."""
     if value is None or isinstance(value, bool):
         return None if value is None else value
     try:
@@ -577,17 +417,12 @@ def _to_number(value):
 
 
 def _substitute_var(expr, prefix: str, value):
-    """Replace ``$$var`` / ``$$var.path`` references with a literal.
-
-    Every other reference is left alone so it still resolves against the root document, which is
-    what ``$$CURRENT`` stays bound to inside ``$map``, ``$filter`` and ``$let``.
-    """
+    """Other references resolve against the root, which $$CURRENT stays bound to inside $map, $filter and $let."""
     if isinstance(expr, str) and (expr == prefix or expr.startswith(f"{prefix}.")):
         tail = expr[len(prefix) :].lstrip(".")
         if not tail:
             return {"$literal": value}
-        # A path into a non-document, or into a document that lacks it, is missing on the
-        # server: the enclosing document expression omits the field rather than nulling it.
+        # A path into a non-document or a missing field is missing on the server: the field is omitted, not nulled.
         if not isinstance(value, dict) or not _has_field(value, tail):
             return {"$literal": _REMOVE}
         return {"$literal": _resolve_dotted(value, tail)}
@@ -635,13 +470,6 @@ def _eval_let(doc: dict, spec: dict):
 
 
 def _eval_expr(doc: dict, expr):
-    """Evaluate a MongoDB aggregation expression against a single document.
-
-    Handles the operator subset used by the stats pipelines: $ifNull, $cond,
-    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or/$in/$not),
-    arithmetic ($add/$multiply/$divide/$round), $toDouble, and the $$REMOVE /
-    $field / dotted-path / literal cases.
-    """
     if isinstance(expr, str):
         if expr == "$$REMOVE":
             return _REMOVE
@@ -653,8 +481,7 @@ def _eval_expr(doc: dict, expr):
             return _resolve_expr_path(doc, expr[1:])
         return expr
     if isinstance(expr, list):
-        # An array is an expression too: the server evaluates every element, so a field path
-        # inside one resolves rather than reaching the document as the literal string "$field".
+        # The server evaluates every element of an array expression, so a field path inside one resolves.
         return [_eval_expr(doc, element) for element in expr]
     if not isinstance(expr, dict):
         return expr
@@ -724,14 +551,12 @@ def _eval_expr(doc: dict, expr):
     if "$size" in expr:
         val = _eval_expr(doc, expr["$size"])
         if not isinstance(val, list):
-            # The server fails the whole aggregation here, so a pipeline that
-            # forgot an $ifNull must not read as a zero-length array.
+            # The server fails the whole aggregation here, so a missing $ifNull must not read as an empty array.
             raise TypeError(f"$size requires an array, got {val!r}")
         return len(val)
     if "$setDifference" in expr:
         a, b = (_eval_expr(doc, e) for e in expr["$setDifference"])
-        # A null operand answers null rather than an empty array, which is how an unguarded
-        # pipeline ends up storing team_ids: null instead of failing.
+        # A null operand answers null, not an empty array: an unguarded pipeline stores team_ids: null.
         if a is None or b is None:
             return None
         if not isinstance(a, list) or not isinstance(b, list):
@@ -773,8 +598,7 @@ def _eval_expr(doc: dict, expr):
             for item in vals:
                 if item not in union:
                     union.append(item)
-        # Measured: the server returns the union in BSON order, unlike $setDifference, which
-        # keeps the order of its first operand.
+        # Measured: the server returns the union in BSON order; $setDifference keeps its first operand's order.
         return sorted(union, key=_bson_sort_key)
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
@@ -840,8 +664,7 @@ def _eval_expr(doc: dict, expr):
             return _eval_bool(doc, expr)
     for unknown in (k for k in expr if k.startswith("$")):
         raise OperationFailure(f"Unrecognized expression '{unknown}'")
-    # Operator-free dict: Mongo treats it as a document expression, so evaluate each value
-    # and omit the fields whose expression resolved to missing.
+    # An operator-free dict is a document expression: fields whose expression is missing are omitted.
     evaluated = ((k, _eval_expr(doc, v)) for k, v in expr.items())
     return {k: v for k, v in evaluated if v is not _REMOVE}
 
@@ -856,7 +679,6 @@ def _truthy(value) -> bool:
 
 
 def _eval_bool(doc: dict, expr) -> bool:
-    """Evaluate a boolean aggregation expression."""
     if isinstance(expr, bool):
         return expr
     if not isinstance(expr, dict):
@@ -871,9 +693,7 @@ def _eval_bool(doc: dict, expr) -> bool:
     if "$in" in expr:
         needle, haystack = expr["$in"]
         return _eval_expr(doc, needle) in (_eval_expr(doc, haystack) or [])
-    # Comparison expressions rank across BSON types rather than bracketing to one,
-    # so a null operand answers by its position in that order instead of failing,
-    # and a bool never equals the number it would coerce to in Python.
+    # Comparison expressions rank across BSON types rather than bracketing to one, unlike range queries.
     for op, cmp_fn in (("$eq", _op.eq), ("$ne", _op.ne), *_CMP.items()):
         if op in expr:
             a, b = (_eval_expr(doc, e) for e in expr[op])
@@ -882,7 +702,6 @@ def _eval_bool(doc: dict, expr) -> bool:
 
 
 def _run_project(docs: list, project_spec: dict) -> list:
-    """Apply a $project stage, evaluating each field expression per document."""
     # An exclusion-only projection keeps every other field, unlike an inclusion one.
     if project_spec and all(spec in (0, False) for spec in project_spec.values()):
         return [{k: v for k, v in doc.items() if k not in project_spec} for doc in docs]
@@ -906,16 +725,11 @@ def _run_project(docs: list, project_spec: dict) -> list:
 
 
 def _resolve_field(doc: dict, expr):
-    """Resolve a $field reference, dotted path, aggregation expression, or literal."""
     return _eval_expr(doc, expr)
 
 
 def _accumulator_value(doc: dict, expr):
-    """An accumulator input, with a missing field reported as ``_REMOVE``.
-
-    $push and $addToSet contribute nothing for a document that lacks the field, while an
-    explicit null is a value they do collect — a distinction ``None`` alone cannot carry.
-    """
+    """$push and $addToSet skip a missing field but collect an explicit null, so a miss is reported as _REMOVE."""
     value = _eval_expr(doc, expr)
     if value is None and isinstance(expr, str) and expr.startswith("$") and not _has_field(doc, expr.lstrip("$")):
         return _REMOVE
@@ -923,7 +737,6 @@ def _accumulator_value(doc: dict, expr):
 
 
 def _resolve_group_key(doc: dict, id_spec):
-    """Resolve the _id expression in a $group stage to a hashable key."""
     if id_spec is None:
         return None
     if isinstance(id_spec, str) and id_spec.startswith("$"):
@@ -937,8 +750,7 @@ def _resolve_group_key(doc: dict, id_spec):
                 resolved[k] = _eval_expr(doc, v)
                 continue
             value = _resolve_field(doc, v)
-            # Mongo omits a grouping key whose field the document does not carry,
-            # rather than setting it to None, so a reader indexing it raises.
+            # Mongo omits a grouping key whose field the document lacks rather than setting it to None.
             if value is None and isinstance(v, str) and v.startswith("$") and not _has_field(doc, v[1:]):
                 continue
             resolved[k] = value
@@ -981,21 +793,17 @@ def _run_group(docs: list, group_spec: dict) -> list:
                 if is_new:
                     grp[acc_name] = val
             elif op == "$firstN":
-                # Keeps the first n evaluations of `input`, so an array-valued input yields a
-                # list of arrays rather than n flattened elements.
+                # An array-valued input yields a list of arrays, not n flattened elements.
                 bucket = grp.setdefault(acc_name, [])
                 if len(bucket) < arg.get("n", 0):
                     bucket.append(_resolve_field(doc, arg.get("input")))
             elif op == "$addToSet":
-                # Dedupes by full value equality and accepts documents (unhashable in Python), so
-                # back it with a list rather than a set. The server's result order is unspecified;
-                # first-seen order keeps the fake deterministic for assertions.
+                # A list because documents are unhashable; first-seen order stands in for the server's unspecified one.
                 bucket = grp.setdefault(acc_name, [])
                 collected = _accumulator_value(doc, arg)
                 if collected is not _REMOVE and not any(_bson_same_value(collected, seen) for seen in bucket):
                     bucket.append(collected)
             elif op == "$avg":
-                # Track running (sum, count) over non-null numeric values; finalized below.
                 num = _to_number(val)
                 acc = grp.setdefault("__avg__", {})
                 total, count = acc.get(acc_name, (0.0, 0))
@@ -1008,9 +816,7 @@ def _run_group(docs: list, group_spec: dict) -> list:
                 if collected is not _REMOVE:
                     grp.setdefault(acc_name, []).append(collected)
             elif op in ("$min", "$max"):
-                # Null and missing values are skipped unless the whole group is
-                # null, and the survivors are ranked across BSON types, so a
-                # column holding both dates and strings answers with a date.
+                # Nulls are skipped unless the whole group is null; survivors rank across BSON types.
                 if is_new:
                     grp[acc_name] = None
                 cur = grp.get(acc_name)
@@ -1035,22 +841,20 @@ def _run_group(docs: list, group_spec: dict) -> list:
 
 
 def _run_lookup(docs: list, spec: dict, database: Any) -> list:
-    """$lookup, both the localField/foreignField and the let/pipeline forms."""
     if database is None:
         return docs
     foreign_docs = list(database[spec["from"]]._docs.values())
     as_field = spec["as"]
     for doc in docs:
         if "pipeline" in spec:
-            # let-vars are visible to the sub-pipeline as "$$name" -> stored under "$name".
+            # "$$name" resolves as the path "$name", so the let-vars ride on each candidate under that key.
             bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
             candidates = [{**bound, **fd} for fd in _copy.deepcopy(foreign_docs)]
             matched = _run_pipeline(candidates, spec["pipeline"], database)
             doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
         else:
             local = _resolve_dotted(doc, spec["localField"])
-            # MongoDB joins an array localField element-wise, and matches a scalar against an array
-            # foreignField the same way; a plain == joins nothing and lets the test pass anyway.
+            # MongoDB joins an array localField element-wise, and a scalar against an array foreignField too.
             wanted = local if isinstance(local, list) else [local]
             doc[as_field] = [
                 _copy.deepcopy(fd)
@@ -1066,11 +870,7 @@ def _matches_any(foreign: Any, wanted: list) -> bool:
 
 
 def _run_unwind(docs: list, field: str, preserve: bool, index_field: str | None) -> list:
-    """$unwind, including the ``{path, preserveNullAndEmptyArrays, includeArrayIndex}`` form.
-
-    A non-array value passes through as one document with a null index, and preserving an
-    empty array *drops* the field rather than keeping it empty.
-    """
+    """A non-array value passes as one document with a null index; preserving an empty array drops the field."""
     parts = field.split(".")
 
     def leaf_container(doc: dict) -> Any:
@@ -1188,14 +988,7 @@ def _run_merge(docs: list, spec: dict, database: Any) -> None:
             target._docs[existing_id] = {**target._docs[existing_id], **_bsonify(doc)}
 
 
-# ---------------------------------------------------------------------------
-# Cursor types
-# ---------------------------------------------------------------------------
-
-
 class _AsyncIter:
-    """Generic async iterator over an in-memory list."""
-
     def __init__(self, items: list):
         self._items = items
         self._idx = 0
@@ -1217,8 +1010,6 @@ class _AsyncIter:
 
 
 class _FakeCursor:
-    """Chainable cursor for ``find()``. Supports skip/limit/sort/projection and close()."""
-
     def __init__(self, docs: dict, query: dict, sort=None, limit: int = 0, skip: int = 0, projection=None):
         self._docs = docs
         self._query = query
@@ -1264,8 +1055,7 @@ class _FakeCursor:
         return self._remaining
 
     async def to_list(self, length=None) -> list:
-        # The server caps the batch at ``length`` and consumes it, so a paging loop terminates here
-        # too and a test of a saturated read cannot pass by re-reading the same first page.
+        # The server caps the batch at length and consumes it, so a paging loop terminates as it does there.
         remaining = self._unread()
         batch = list(remaining) if length is None else remaining[:length]
         del remaining[: len(batch)]
@@ -1284,11 +1074,6 @@ class _FakeCursor:
         self._remaining = []
 
 
-# ---------------------------------------------------------------------------
-# Collection
-# ---------------------------------------------------------------------------
-
-
 def _copy_projected_path(src: dict, parts: list[str], dst: dict) -> None:
     head = parts[0]
     if head not in src:
@@ -1298,8 +1083,7 @@ def _copy_projected_path(src: dict, parts: list[str], dst: dict) -> None:
         dst[head] = _copy.deepcopy(value)
         return
     if isinstance(value, list):
-        # Sibling paths sharing an array prefix project into the same elements,
-        # so the bucket is filled positionally instead of appended to.
+        # Sibling paths under one array prefix project into the same elements, so the bucket fills positionally.
         bucket = dst.setdefault(head, [])
         position = 0
         for element in value:
@@ -1351,12 +1135,7 @@ def _apply_projection(doc: dict | None, projection: dict | None) -> dict | None:
 
 
 def _conflicting_prefix(left: str, right: str) -> str | None:
-    """The path two update paths collide on, or None when they are disjoint.
-
-    Mongo compares segment by segment, so ``a`` contains ``a.b`` while ``ab`` and ``a.1`` and
-    ``a.10`` are all distinct. ``$[ident]`` is an ordinary segment, which is why two array
-    filters may update sibling elements of one array in a single write.
-    """
+    """Mongo compares segment by segment: a contains a.b, while ab, a.1 and a.10 are distinct; $[ident] is a segment."""
     left_parts, right_parts = left.split("."), right.split(".")
     shared = min(len(left_parts), len(right_parts))
     if left_parts[:shared] != right_parts[:shared]:
@@ -1365,15 +1144,7 @@ def _conflicting_prefix(left: str, right: str) -> str | None:
 
 
 def assert_no_path_conflict(update: dict | list) -> None:
-    """Refuse two modifiers whose paths overlap, as the server does with code 40.
-
-    This is the divergence that matters most for array work: a sync that both $pulls its own
-    owners and $addToSets the new ones in one update is rejected in production, so a fake that
-    applied both would green-light a write that can never land.
-
-    The server parses the update before it looks for a document, so this runs at the call and
-    not on the applied path: a filter that matched nothing still reports the conflict.
-    """
+    """Runs at the call, as the server parses the update before matching: an empty match still reports code 40."""
     if isinstance(update, list):
         return
     seen: list[str] = []
@@ -1389,11 +1160,7 @@ def assert_no_path_conflict(update: dict | list) -> None:
 
 
 def _add_to_set_values(value: Any) -> list:
-    """The elements one $addToSet contributes.
-
-    Only a document whose *first* key is ``$each`` is a batch; ``{"x": 1, "$each": [...]}`` is
-    stored as a literal, so the unwrapping cannot be a plain membership test.
-    """
+    """Only a document whose first key is $each is a batch; {"x": 1, "$each": [...]} is a literal."""
     if isinstance(value, dict) and next(iter(value), None) == "$each":
         if len(value) > 1:
             raise OperationFailure(f"Found unexpected fields after $each in $addToSet: {value}", 2)
@@ -1415,7 +1182,6 @@ def _duplicate_key_error(collision: str) -> Exception:
 
 
 def _matched_key(docs: dict, query: dict) -> Any:
-    """Return the key of the first doc matching ``query`` (full operator support)."""
     for key, doc in docs.items():
         if _match_doc(doc, query):
             return key
@@ -1423,29 +1189,15 @@ def _matched_key(docs: dict, query: dict) -> Any:
 
 
 class FakeCollection:
-    """In-process collection covering the Motor API surface that the app uses."""
-
     def __init__(self, db: Any = None, unique_keys: list[tuple[str, ...]] | None = None):
         self._docs: dict = {}
         self._db = db
         self._unique_keys: list[tuple[str, ...]] = list(unique_keys or [])
         self.created_indexes: list[str | tuple[str, ...]] = []
 
-    # -- writes -----------------------------------------------------------
-
     @staticmethod
     def _index_entries(doc: dict, fields: tuple[str, ...]) -> set[tuple]:
-        """The keys a document contributes to one unique index.
-
-        Sparse semantics: a document contributes nothing when every indexed field is ABSENT. An
-        explicit null is a value and still collides — which is why init_db scopes the compound
-        project indexes with a partialFilterExpression, Pydantic serialising None being exactly how
-        those nulls arrive.
-
-        A field inside an array contributes one key per element, as a multikey index does, and a
-        document's own duplicates collapse into one key — so the server accepts two equal entries
-        within one document and refuses the second document carrying either.
-        """
+        """Sparse and multikey: null still collides, and an array adds one key per element, deduped per document."""
         if all(not _has_field(doc, field) for field in fields):
             return set()
         resolved = [_resolve_dotted(doc, field) for field in fields]
@@ -1458,7 +1210,6 @@ class FakeCollection:
         }
 
     def _duplicate_key(self, doc: dict) -> str | None:
-        """The unique index a document collides on, or None."""
         if doc.get("_id") in self._docs:
             return "_id"
         for fields in self._unique_keys:
@@ -1476,8 +1227,7 @@ class FakeCollection:
         collision = self._duplicate_key(doc)
         if collision is not None:
             raise _duplicate_key_error(collision)
-        # The driver stamps the _id onto the caller's document, which is how code that needs the
-        # new id reads it back without a round trip.
+        # The driver stamps the _id onto the caller's document, where code reads the new id back.
         doc.setdefault("_id", ObjectId())
         self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
@@ -1492,7 +1242,6 @@ class FakeCollection:
         for index, doc in enumerate(docs):
             collision = self._duplicate_key(doc)
             if collision is not None:
-                # Mirror Mongo's duplicate-key semantics so idempotent-insert paths are testable.
                 write_errors.append(
                     {"index": index, "code": 11000, "errmsg": f"E11000 duplicate key error: {collision}"}
                 )
@@ -1509,14 +1258,7 @@ class FakeCollection:
         return result
 
     def _insert_upserted(self, query: dict, update: dict | list) -> dict:
-        """The document an upsert inserts once its filter matched nothing.
-
-        The server builds it from the filter's equality terms plus the update and then
-        *inserts* it, so a filter that missed on a non-_id condition collides on E11000
-        instead of overwriting the document that is already there. The distributed lock
-        depends on exactly that: a held lock fails the expiry condition, and the E11000
-        is what tells the second holder it lost the race.
-        """
+        """The server inserts an upsert's document, so a filter that missed on a non-_id term collides on E11000."""
         doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
         if isinstance(update, list):
             self._apply_update(doc, update)
@@ -1593,7 +1335,6 @@ class FakeCollection:
                 for k, v in payload.items():
                     FakeCollection._set_dotted(target, k, v, filters)
             elif op == "$setOnInsert":
-                # only applied when called outside upsert insert path
                 for k, v in payload.items() if not skip_set_on_insert else ():
                     target.setdefault(k, v)
             elif op == "$unset":
@@ -1625,7 +1366,6 @@ class FakeCollection:
 
     @staticmethod
     def _apply_update_pipeline(target: dict, pipeline: list) -> None:
-        """Aggregation-pipeline update form: each stage rewrites the document in place."""
         staged = _run_pipeline([_copy.deepcopy(target)], pipeline)
         # _id is immutable, so a $project or $replaceRoot that dropped it keeps the original.
         identifier = target.get("_id")
@@ -1637,8 +1377,7 @@ class FakeCollection:
 
     @staticmethod
     def _array_for_update(target: dict, dotted_key: str, op_name: str) -> list:
-        """The array an array modifier writes to, created empty when the path is absent.
-        A non-array value already sitting there fails the update, as the server does."""
+        """A non-array value already at the path fails the update, as the server does."""
         parent, leaf = FakeCollection._resolve_parent(target, dotted_key)
         present = leaf < len(parent) if isinstance(parent, list) else leaf in parent
         if not present:
@@ -1658,8 +1397,7 @@ class FakeCollection:
 
     @staticmethod
     def _pull_from(target: dict, dotted_key: str, condition: Any) -> None:
-        """$pull, which leaves a document that lacks the path completely alone rather than
-        creating an empty array there, and refuses a path holding a non-array."""
+        """$pull leaves a document lacking the path alone, creating no empty array, and refuses a non-array path."""
         parts = dotted_key.split(".")
         node: Any = target
         for part in parts[:-1]:
@@ -1683,11 +1421,7 @@ class FakeCollection:
 
     @staticmethod
     def _resolve_parent(target: dict, dotted_key: str) -> tuple[Any, Any]:
-        """Walk (creating) nested containers so dotted update paths behave like real Mongo.
-
-        A numeric segment indexes into a list, so ``members.1.role`` rewrites that element
-        instead of hanging a ``{"1": ...}`` dict off the document.
-        """
+        """A numeric segment indexes into a list, so members.1.role rewrites that element."""
         parts = dotted_key.split(".")
         node: Any = target
         for part in parts[:-1]:
@@ -1697,7 +1431,7 @@ class FakeCollection:
 
     @staticmethod
     def _unset_dotted(target: dict, dotted_key: str) -> None:
-        """Drop a (possibly nested) field. Unlike $set, a missing path creates nothing."""
+        """Unlike $set, a missing path creates nothing."""
         parts = dotted_key.split(".")
         node: Any = target
         for part in parts[:-1]:
@@ -1715,7 +1449,6 @@ class FakeCollection:
 
     @staticmethod
     def _set_through_arrays(node, parts: list[str], value, filters: dict) -> None:
-        """Apply a positional array update path (``a.$[ident].b`` / ``a.$[].b``)."""
         part = parts[0]
         if part.startswith("$["):
             if not isinstance(node, list):
@@ -1723,8 +1456,7 @@ class FakeCollection:
             predicate = filters.get(part[2:-1])
             for index, item in enumerate(node):
                 if predicate is None or _match_doc(item, predicate):
-                    # An identifier that ends the path addresses the element itself, which the
-                    # server then replaces whole rather than descending into it.
+                    # An identifier ending the path addresses the element itself, which the server replaces whole.
                     if len(parts) == 1:
                         node[index] = value
                     else:
@@ -1780,7 +1512,6 @@ class FakeCollection:
             assert_no_path_conflict(upd)
             matched_keys = [key for key, doc in self._docs.items() if _match_doc(doc, flt)]
             if matched_keys:
-                # UpdateMany touches every match; UpdateOne only the first (Mongo semantics).
                 if type(op).__name__ != "UpdateMany":
                     matched_keys = matched_keys[:1]
                 matched += len(matched_keys)
@@ -1811,14 +1542,10 @@ class FakeCollection:
         else:
             self.created_indexes.append(tuple(key for key, _direction in keys))
 
-    # -- reads ------------------------------------------------------------
-
     async def find_one(self, query, projection=None, sort=None):
-        # Fast path for _id-only queries (common in repository code)
         if set(query.keys()) == {"_id"} and not isinstance(query["_id"], dict):
             return _apply_projection(self._docs.get(query["_id"]), projection)
         if sort:
-            # Mirror real Mongo: apply the sort, then return the first match.
             matches = _sort_docs([doc for doc in self._docs.values() if _match_doc(doc, query)], sort)
             return _apply_projection(matches[0], projection) if matches else None
         for doc in self._docs.values():
@@ -1856,19 +1583,8 @@ class FakeCollection:
         return _AsyncIter(_run_pipeline(_copy.deepcopy(list(self._docs.values())), pipeline, self._db))
 
 
-# ---------------------------------------------------------------------------
-# Database
-# ---------------------------------------------------------------------------
-
-
 class FakeDatabase:
-    """In-process database. Collections are created on demand via attribute or
-    item access, so consumer code that does ``db.foo`` or ``db["bar"]`` always
-    gets a stable per-instance collection."""
-
     def __init__(self):
-        # Pre-create the common collections so they exist on the same instance
-        # even before any access — helps tests that seed via ``db.projects._docs``.
         for name in (
             "projects",
             "scans",
@@ -1881,13 +1597,10 @@ class FakeDatabase:
             "users",
         ):
             object.__setattr__(self, name, FakeCollection(self))
-        # Every release write runs against the constraint production runs against, so a test
-        # cannot prove idempotence on a filter the server would never have needed.
+        # Releases carry production's unique key, so idempotence cannot rest on a filter the server would not need.
         object.__setattr__(self, "releases", FakeCollection(self, unique_keys=[RELEASES_UPSERT_KEY_FIELDS]))
 
     def __getattr__(self, name: str) -> FakeCollection:
-        # Auto-vivify collections so repositories that touch unexpected ones
-        # don't AttributeError before the test even runs.
         col = FakeCollection(self)
         object.__setattr__(self, name, col)
         return col

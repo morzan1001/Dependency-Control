@@ -1,13 +1,4 @@
-"""Every project-scoped chat/MCP tool, swept from the registry rather than enumerated by hand.
-
-These run under the API key owner's authorization and answer a language model, which relays the
-answer with no project name beside it to contradict a leak. The rule swept here is that a refusal
-has to be indistinguishable from the project not existing: "you may not read it" and "there is no
-such project" must produce the same answer, or the counts in the difference are the leak.
-
-Sweeping the registry means a tool added with a project_id parameter joins the sweep instead of
-waiting for someone to list it here.
-"""
+"""A refusal must look exactly like a missing project, or the difference between the answers is the leak."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -69,8 +60,7 @@ _ALWAYS_PROJECT_SCOPED = frozenset(
 
 
 def _arguments(tool_name: str, project_id: str) -> dict:
-    """The tool's required parameters plus project_id, which is the parameter under sweep and is
-    optional on the tools that otherwise answer estate-wide."""
+    """project_id is optional on the tools that otherwise answer estate-wide, so it is added explicitly."""
     function = next(d["function"] for d in TOOL_DEFINITIONS if d["function"]["name"] == tool_name)
     parameters = function.get("parameters", {})
     properties = parameters.get("properties", {})

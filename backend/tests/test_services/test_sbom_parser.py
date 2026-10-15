@@ -1,5 +1,3 @@
-"""Tests for SBOM parser - format detection, CycloneDX/SPDX/Syft parsing."""
-
 import json
 import logging
 import re
@@ -396,7 +394,7 @@ class TestMalformedDependencyGraph:
 
 
 def _cyclonedx_image_partial_graph() -> dict:
-    """Syft-style image SBOM: the dependencies graph covers only the app ecosystem while the components list also holds OS packages the graph never mentions."""
+    """Syft image shape: the graph covers only the app ecosystem; the OS packages it lists stay off the graph."""
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
@@ -447,7 +445,7 @@ def _cyclonedx_image_partial_graph() -> dict:
 
 
 class TestCycloneDXDirectnessHonesty:
-    """(direct=True, direct_inferred=False) is reserved for refs explicitly listed under the main component; everything the graph never mentions stays direct but is flagged inferred."""
+    """Only refs listed under the main component are certainly direct; graph-silent ones are direct but inferred."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -473,8 +471,7 @@ class TestCycloneDXDirectnessHonesty:
 
     def test_roots_children_fallback_marks_the_whole_graph_inferred(self):
         sbom = _cyclonedx_image_partial_graph()
-        # Main bom-ref absent from the graph (13 of 43 re-parsed prod SBOMs): the
-        # component-less root passes directness to express, but only as a guess.
+        # Prod SBOMs can leave the main bom-ref off the graph, so the root passes directness only as a guess.
         sbom["dependencies"] = [
             {"ref": "app-node", "dependsOn": ["pkg:npm/express@4.19.2"]},
             {"ref": "pkg:npm/express@4.19.2", "dependsOn": ["pkg:npm/body-parser@1.20.2"]},
@@ -767,9 +764,7 @@ class TestSyftParsing:
 
 
 def _nested_npm_sbom():
-    """Mirrors prod cyclonedx-npm 6.0.1 output: sub-dependencies nested in
-    components[].components[], pipe-joined bom-refs, nested refs present in
-    the dependencies graph."""
+    """cyclonedx-npm 6.0.1 shape: nested components[].components[], pipe-joined bom-refs, nested refs on the graph."""
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
@@ -917,9 +912,7 @@ class TestCycloneDXNestedComponents:
 
 
 def _syft_image_sbom_with_duplicate_package():
-    """Mirrors a prod syft 1.42.3 image SBOM: the same npm package catalogued
-    in two node_modules trees, with distinct package-id bom-refs, layers, and
-    location properties."""
+    """syft 1.42.3 image shape: one npm package catalogued in two node_modules trees with distinct bom-refs."""
 
     def _copy(package_id: str, layer_id: str, path: str):
         return {
@@ -1186,7 +1179,6 @@ class TestSyftLegacyStringCpes:
         }
         result = parser.parse(sbom)
         deps = {d.name: d for d in result.dependencies}
-        # Both artifacts survive.
         assert set(deps) == {"pkg-a", "pkg-b"}
         assert deps["pkg-a"].cpes == ["cpe:2.3:a:pkg-a:pkg-a:1.0:*:*:*:*:*:*:*"]
 
@@ -1249,7 +1241,7 @@ class TestCycloneDXCpe:
 
 
 class TestSPDXDirectDependencyDetection:
-    """In the canonical GitHub SBOM layout the DESCRIBES target is the app root; its DEPENDS_ON children are the direct deps, and the root itself is not direct."""
+    """In GitHub's SBOM layout the DESCRIBES target is the app root and its DEPENDS_ON children the direct deps."""
 
     def test_github_layout_root_children_are_direct(self):
         parser = SBOMParser()
@@ -1367,9 +1359,7 @@ _SYFT_SOURCE_ID = "cdb4ee2aea69cc6a83331bbe96dc2caa9a299d21329efb0336fc02a82e183
 
 
 def _syft_json_project_sbom() -> dict:
-    """Mirrors the prod syft 1.42.3 directory scan: `dependency-of` edges point
-    library -> root project ('parent IS A DEPENDENCY OF child'), plus
-    contains/evident-by edges from the source for every artifact."""
+    """syft 1.42.3 directory scan: dependency-of edges point library -> root, contains/evident-by from the source."""
 
     def _artifact(aid: str, name: str, version: str, purl: str | None, atype: str = "java-archive") -> dict:
         art: dict = {"id": aid, "name": name, "version": version, "type": atype}
@@ -1406,7 +1396,7 @@ def _syft_json_project_sbom() -> dict:
 
 
 class TestSyftRelationshipDirection:
-    """Syft `dependency-of` means 'parent IS A DEPENDENCY OF child'; the old code read it backwards."""
+    """Syft dependency-of means the parent is a dependency of the child."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -1481,8 +1471,7 @@ class TestSyftRelationshipDirection:
         assert all(d.direct is True and d.direct_inferred is True for d in result.dependencies)
 
     def test_image_scan_with_contains_only_relationships_is_direct_inferred(self):
-        # K17: the old app-package-type fallback keyed on type names syft never
-        # emits; graph-silent artifacts are now uniformly direct-but-inferred.
+        # Graph-silent artifacts are direct but inferred, whatever package type syft gives them.
         sbom = {
             "descriptor": {"name": "syft", "version": "1.42.3"},
             "source": {"id": _SYFT_SOURCE_ID, "type": "image", "target": "registry.example.com/app:1"},
@@ -1526,8 +1515,6 @@ def _three_component_sbom(second_component: dict) -> dict:
 
 
 class TestMalformedComponentResilience:
-    """One bad component must not truncate the parse; the loss must be counted."""
-
     def setup_method(self):
         self.parser = SBOMParser()
 
@@ -1656,9 +1643,7 @@ class TestMalformedComponentResilience:
         assert result.skipped_reasons.get("parse-error") == 1
 
     def test_document_level_malformed_known_format_raises(self):
-        # metadata with the wrong JSON type breaks the handler before the
-        # component loop; success here would let persistence replace the scan's
-        # previous dependencies with an empty set.
+        # Success here would let persistence replace the scan's previous dependencies with an empty set.
         sbom = {
             "bomFormat": "CycloneDX",
             "specVersion": "1.5",
@@ -1686,9 +1671,7 @@ class TestMalformedComponentResilience:
         assert deps["second"].version == "unknown"
 
     def test_unknown_format_attempts_do_not_leak_state_between_handlers(self):
-        # CycloneDX-shaped components (undetectable: no purl on the first) yield zero
-        # dependencies; the SPDX attempt must win with a clean slate, not inherit the
-        # CycloneDX attempt's skip counters.
+        # The SPDX attempt must start clean, not inherit the failed CycloneDX attempt's skip counters.
         sbom = {
             "components": [{"type": "file", "name": "/etc/passwd"}],
             "packages": [{"SPDXID": "SPDXRef-1", "name": "real-pkg", "versionInfo": "1.0"}],
@@ -1701,8 +1684,7 @@ class TestMalformedComponentResilience:
 
 
 def _spdx_github_export() -> dict:
-    """Mirrors a GitHub dependency-graph SBOM export: DOCUMENT DESCRIBES the repo
-    package, which DEPENDS_ON the actual dependencies."""
+    """GitHub's dependency-graph export: DOCUMENT DESCRIBES the repo package, which DEPENDS_ON the dependencies."""
     return {
         "spdxVersion": "SPDX-2.3",
         "SPDXID": "SPDXRef-DOCUMENT",
@@ -1822,8 +1804,7 @@ class TestSPDXRootSkipAndFields:
         assert (left_pad.direct, left_pad.direct_inferred, left_pad.parent_components) == (True, False, [])
 
     def test_minimal_describes_only_document_keeps_package(self):
-        # A document that DESCRIBES a package with no DEPENDS_ON children is an
-        # SBOM *of* that package; it must stay ingested and direct.
+        # A described package without DEPENDS_ON children is the SBOM's subject, so it stays ingested and direct.
         sbom = {
             "spdxVersion": "SPDX-2.3",
             "SPDXID": "SPDXRef-DOCUMENT",
@@ -1864,7 +1845,7 @@ def _syft_cyclonedx_component_sbom(properties: list[dict], **extra) -> dict:
 
 
 class TestSyftCycloneDXLocationProperties:
-    """syft:location:N:layerID feeds layer_digest, syft:location:N:path feeds locations (prod shape: 97% of location-bearing docs held a sha256 pseudo-path and layer_digest stayed null)."""
+    """syft:location:N:layerID feeds layer_digest and syft:location:N:path feeds locations."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -1918,8 +1899,7 @@ class TestSyftCycloneDXLocationProperties:
         assert result.dependencies[0].locations == ["node_modules/parse5"]
 
     def test_location_annotation_properties_are_not_locations(self):
-        # Newer syft emits syft:location:N:annotations:evidence; the extra colon
-        # must not fall through to the substring heuristic.
+        # Newer syft emits syft:location:N:annotations:evidence, whose extra colon must not reach the heuristic.
         result = self.parser.parse(
             _syft_cyclonedx_component_sbom(
                 [
@@ -1963,7 +1943,7 @@ def _cyclonedx_with(components: list[dict], root: dict | None = None) -> dict:
 
 
 class TestFabricatedIdentifiers:
-    """OS descriptors and binary applications got fabricated pkg:generic purls no vulnerability or enrichment source can ever match (10.8k prod rows, 94 syntactically invalid)."""
+    """A fabricated pkg:generic purl for an OS descriptor or binary matches no vulnerability or enrichment source."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -2107,7 +2087,7 @@ class TestFabricatedIdentifiers:
 
 
 class TestTypeIsPurlEcosystem:
-    """`type` is surfaced as 'ecosystem' by Inventory; all three branches must emit the purl vocabulary, not the generator's."""
+    """Inventory shows type as the ecosystem, so every branch emits the purl vocabulary, not the generator's."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -2218,7 +2198,7 @@ class TestTypeIsPurlEcosystem:
 
 
 class TestVcsUrlNormalization:
-    """Maven SCM strings copied verbatim (4.3% of prod repository_url values) are unusable as links."""
+    """Maven SCM strings copied verbatim into repository_url are unusable as links."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -2356,8 +2336,6 @@ class TestComponentAccounting:
 
 
 class TestDetectFormatMalformed:
-    """detect_format must not raise on structurally odd (but valid JSON) SBOMs; it falls through to UNKNOWN."""
-
     def setup_method(self):
         self.parser = SBOMParser()
 

@@ -1,5 +1,3 @@
-"""Tests for FindingRepository analytics methods."""
-
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -10,15 +8,12 @@ from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
 def _capture_pipeline(collection) -> list[dict[str, Any]]:
-    """Return the pipeline passed to collection.aggregate()."""
     call_args = collection.aggregate.call_args
     assert call_args is not None, "collection.aggregate was never called"
     return call_args[0][0]
 
 
 class TestGetSeverityDistributionScanScope:
-    """get_severity_distribution scopes its $match by scan_id."""
-
     def _run(self, scan_ids, agg_results=None):
         collection = create_mock_collection()
         agg_cursor = MagicMock()
@@ -39,8 +34,7 @@ class TestGetSeverityDistributionScanScope:
 
 
 class TestGetSeverityDistributionSkipsWaived:
-    """A waived finding is accepted risk, so the severity breakdown the dashboards read must not
-    show it while the counts beside it, computed the same way, do not."""
+    """A waived finding is accepted risk, so the severity breakdown must leave it out like the counts beside it do."""
 
     @staticmethod
     def _finding(finding_id: str, severity: str, **overrides) -> dict[str, Any]:

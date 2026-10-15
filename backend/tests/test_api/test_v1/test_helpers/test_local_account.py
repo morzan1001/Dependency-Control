@@ -1,5 +1,3 @@
-"""One rule decides whether an account is local: no provider, or the local one."""
-
 import pytest
 from pydantic import ValidationError
 

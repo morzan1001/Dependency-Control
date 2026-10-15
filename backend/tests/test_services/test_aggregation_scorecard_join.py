@@ -1,8 +1,4 @@
-"""A package's OpenSSF Scorecard reaches its other findings through the cross-link package group.
-
-deps_dev keys its scorecard on the inventory name (Maven: the bare artifactId) while trivy
-reports the group-qualified coordinate, so the group has to bridge the two spellings.
-"""
+"""deps_dev keys its scorecard on the inventory name (bare Maven artifactId) while trivy reports the coordinate."""
 
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator

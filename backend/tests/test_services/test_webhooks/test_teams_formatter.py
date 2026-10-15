@@ -1,5 +1,3 @@
-"""The Teams Adaptive Cards, built from what the webhook producers deliver."""
-
 from unittest.mock import MagicMock
 
 import pytest

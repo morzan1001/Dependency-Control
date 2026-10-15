@@ -110,7 +110,6 @@ def test_status_buckets():
 
 
 def test_single_asset_still_contributes_to_count_score():
-    """A single asset must get a non-zero count baseline so its priority_score reflects it."""
     from app.services.pqc_migration.scoring import _score_count
 
     assert _score_count(1) > 0.0
@@ -157,7 +156,6 @@ def test_an_eddsa_key_is_weighed_against_the_elliptic_curve_minimum():
 
 
 def test_exposure_constants_are_module_level():
-    """The _score_exposure calibration values must be named module-level constants."""
     from app.services.pqc_migration import scoring
 
     assert hasattr(scoring, "EXPOSURE_CERTIFICATE")
@@ -165,7 +163,6 @@ def test_exposure_constants_are_module_level():
     assert hasattr(scoring, "EXPOSURE_BINARY")
     assert hasattr(scoring, "EXPOSURE_SOURCE")
     assert hasattr(scoring, "EXPOSURE_DEFAULT")
-    # Sanity: certificates must be the highest-exposure category.
     assert scoring.EXPOSURE_CERTIFICATE > scoring.EXPOSURE_RELATED_MATERIAL
     assert scoring.EXPOSURE_RELATED_MATERIAL > scoring.EXPOSURE_DEFAULT
     assert scoring.EXPOSURE_DEFAULT > scoring.EXPOSURE_BINARY

@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.dependencies."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -202,7 +200,6 @@ class TestAnalyzeEndOfLifeEmpty:
 
 
 def _graded_eol_findings(*days_past_eol):
-    """EOL findings as the analyzer grades them by days past the cycle's EOL date, and the aggregator stores them."""
     analyzer = EndOfLifeAnalyzer()
     issues = [
         analyzer._create_eol_issue(
@@ -298,7 +295,6 @@ class TestHygieneCardsMatchTheQualifiedName:
 
 
 def _outdated(*installs):
-    """(name, installed, registry default) as the analyzer classifies them and the aggregator stores them."""
     analyzer = OutdatedAnalyzer()
     outdated, ahead = [], []
     for name, version, default in installs:

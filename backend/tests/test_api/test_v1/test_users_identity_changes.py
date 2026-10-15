@@ -1,5 +1,3 @@
-"""Identity fields: a new username follows one rule whoever picks it, a new email is proven by its mailbox whenever mail can be sent, and emails compare case-insensitively."""
-
 import logging
 import re
 from unittest.mock import AsyncMock, MagicMock, patch

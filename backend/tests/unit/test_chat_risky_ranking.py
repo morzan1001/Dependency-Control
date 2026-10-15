@@ -1,5 +1,3 @@
-"""The summary, the team overview and the hotspots name the same riskiest projects, from their head builds."""
-
 from datetime import datetime, timezone
 
 import pytest

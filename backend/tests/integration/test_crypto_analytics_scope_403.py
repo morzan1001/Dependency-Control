@@ -1,5 +1,3 @@
-"""Crypto-analytics scope-authorization failures surface as HTTP 403 (with a detail body) via the app-level exception handler, not 500."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -7,7 +5,6 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_hotspots_returns_403_for_non_member(client, owner_auth_headers_proj_p2):
-    """A member of project p2 must NOT resolve the 'p' project scope."""
     resp = await client.get(
         "/api/v1/analytics/crypto/hotspots",
         params={"scope": "project", "scope_id": "p", "group_by": "name"},
@@ -19,7 +16,6 @@ async def test_hotspots_returns_403_for_non_member(client, owner_auth_headers_pr
 
 @pytest.mark.asyncio
 async def test_trends_returns_403_for_non_member(client, owner_auth_headers_proj_p2):
-    """Same scope guard on the trends endpoint, via the app-level handler."""
     now = datetime.now(timezone.utc)
     resp = await client.get(
         "/api/v1/analytics/crypto/trends",

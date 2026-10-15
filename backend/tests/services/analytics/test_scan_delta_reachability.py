@@ -1,5 +1,4 @@
-"""A release side without a callgraph is reachability-empty against an enriched HEAD. The response
-has to say so per side, or adjusted_risk_score reads as comparable."""
+"""A release side without a callgraph must say so, or its adjusted_risk_score reads as comparable to HEAD's."""
 
 from datetime import datetime, timezone
 
@@ -61,8 +60,7 @@ async def _dispatch(db, category: str = _FINDINGS):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("category", _EVERY_CATEGORY)
 async def test_every_category_labels_both_sides(db, category):
-    """A label present on one category and absent on the others cannot be read: the caller
-    could not tell "no coverage data" from "this category does not report it"."""
+    """A label on one category only would leave "no coverage data" indistinguishable from "not reported"."""
     await db.scans.insert_one(_scan(_RELEASE_SCAN, {"coverable_count": _COVERABLE, "analyzed_count": _NONE_ANALYSED}))
     await db.scans.insert_one(_scan(_HEAD_SCAN, {"coverable_count": _COVERABLE, "analyzed_count": _MOST_ANALYSED}))
 

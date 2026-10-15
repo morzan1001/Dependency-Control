@@ -1,5 +1,3 @@
-"""GitHub team-sync reads: the team/repository check, uncapped pagination, role-tagged members, cache."""
-
 import asyncio
 import time
 from contextlib import asynccontextmanager
@@ -71,8 +69,7 @@ _KEPT_TEAMS = [
 
 _SLUG_MAP = {4711: "payments", 8150: "sre"}
 
-# The repository object GET /orgs/{org}/teams/{slug}/repos/{owner}/{repo} answers with, trimmed to
-# the fields the sync reads. `permissions` is the team's access, not the caller's.
+# What GET /orgs/{org}/teams/{slug}/repos/{owner}/{repo} answers; permissions are the team's, not the caller's.
 _TEAM_REPOSITORY = {
     "id": 987654,
     "node_id": "R_kgDOBl2Rpw",
@@ -108,7 +105,6 @@ def _service(instance_id: str = "test-github-instance-id") -> GitHubService:
 
 @pytest.fixture
 def fake_cache(monkeypatch):
-    """A CacheService backed by an in-memory fakeredis async client."""
     svc = CacheService()
     svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     svc._pool = object()
@@ -131,8 +127,6 @@ def _page(items: list[dict], has_next: bool = False) -> MagicMock:
 
 
 class _GitHubApi:
-    """api.github.com behind ``_api_client``: answers each GET by path and records what it was asked."""
-
     def __init__(self, answer):
         self._answer = answer
         self.requests: list[tuple[str, dict]] = []
@@ -197,8 +191,7 @@ class TestTeamRepositoryCheck:
 
     @pytest.mark.asyncio
     async def test_read_only_access_is_not_holding_it(self, fake_cache):
-        """The endpoint answers 200 on pull as readily as on admin, so the status is a permission
-        check and not a write check. A group with read-everything would otherwise own the estate."""
+        """The endpoint answers 200 on pull as on admin, so a read-everything group would otherwise own the estate."""
         service = _service()
         reader = {**_TEAM_REPOSITORY, "role_name": "read", "permissions": {"pull": True, "triage": True}}
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, reader))):
@@ -381,9 +374,7 @@ class TestRepositoryVisibility:
 
 
 class TestOrgTeams:
-    """Every GitHub ingest resolves its owner through this listing, so all of it is load-bearing:
-    what it answers with, how far it reads, what it makes of a refusal, and who its entry answers
-    for."""
+    """Every GitHub ingest resolves its owner through this listing."""
 
     @pytest.mark.asyncio
     async def test_are_fetched_from_the_org_endpoint(self, fake_cache):
@@ -447,9 +438,7 @@ class TestOrgTeams:
 
     @pytest.mark.asyncio
     async def test_the_second_read_is_served_from_the_cache_whole(self, fake_cache):
-        """The jobs of one workflow run arrive together, and each would otherwise page the listing
-        again. What comes back out has to be the listing, parents and all: the parent is what tells
-        two same-named teams apart."""
+        """The parent survives the cache because it is what tells two same-named teams apart."""
         service = _service()
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
             await service.get_org_teams("acme")
@@ -473,8 +462,7 @@ class TestOrgTeams:
 
     @pytest.mark.asyncio
     async def test_one_instance_never_answers_for_another(self, fake_cache):
-        """Two instances can both be configured for the same organisation name, and each reads it
-        through its own token."""
+        """Two instances can both be configured for one organisation name, each reading it with its own token."""
         responses = [_ORG_TEAMS, []]
         with patch.object(GitHubService, "_api_get_paginated", new=AsyncMock(side_effect=responses)):
             assert await _service("gh-1").get_org_teams("acme") == _KEPT_TEAMS
@@ -485,8 +473,7 @@ _ACCESS_LEVELS = ("pull", "triage", "push", "maintain", "admin")
 
 
 def _held_repository(full_name: str, access: str = "push", **fields) -> dict:
-    """One entry of GET /orgs/{org}/teams/{slug}/repos. GitHub reports the team's permissions
-    cumulatively, so a team with maintain also reads as push."""
+    """GitHub reports a team's permissions cumulatively, so maintain also reads as push."""
     reached = _ACCESS_LEVELS.index(access)
     permissions = {level: index <= reached for index, level in enumerate(_ACCESS_LEVELS)}
     return {"full_name": full_name, "permissions": permissions, **fields}
@@ -593,8 +580,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_an_archived_fork_is_held_by_the_team_that_may_write_to_it(self, fake_cache):
-        """Neither flag says anything about who owns the repository, and a scan arriving for one is
-        a repository somebody works on."""
+        """Archived and fork say nothing about ownership, and a scan arriving for one means somebody works on it."""
         service = _service()
         api = self._listings({"payments": [("acme/widgets", "push", {"archived": True, "fork": True})], "sre": []})
 
@@ -639,8 +625,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_an_undetermined_walk_never_reads_back_as_an_organisation_holding_nothing(self, fake_cache):
-        """What the cache stores for a failed walk is a bare {}, and that is the shape of a map in
-        which no team holds anything — the answer that retires every owner."""
+        """A failed walk caches a bare {}, the shape of a map where no team holds anything: every owner retires."""
         service = _service()
 
         with patch.object(service, "_api_client", new=self._listings({"payments": ["acme/widgets"]}).client):
@@ -650,8 +635,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_a_walk_that_failed_is_not_walked_again_by_the_next_ingest(self, fake_cache):
-        """204 requests a walk: retrying it per ingest is what exhausts the hourly budget, and an
-        exhausted token answers 403, which leaves every project undetermined for the hour anyway."""
+        """A walk costs 204 requests, so retrying it per ingest exhausts the hourly budget."""
         service = _service()
         second = self._listings({"payments": [], "sre": []})
 
@@ -683,8 +667,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_two_ingests_arriving_together_walk_the_organisation_once(self, fake_cache):
-        """The jobs of one workflow run arrive together; eight walks of the largest organisation
-        here are 1632 requests of a 5000-per-hour budget."""
+        """The jobs of one workflow run arrive together, and eight walks would spend a third of the hourly budget."""
         service = _service()
         api = self._listings({"payments": ["acme/widgets"], "sre": []}, delay=0.02)
 
@@ -710,8 +693,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_the_listings_do_not_add_up(self, fake_cache):
-        """A cold map on the largest organisation here is 204 listings; in sequence they would
-        outlast the resolution budget the ingest is bounded by."""
+        """A cold map of the largest organisation is 204 listings, which in sequence outlast the resolution budget."""
         service = _service()
         api = self._listings({slug: [] for slug in self._teams(64).values()}, delay=0.02)
 
@@ -734,8 +716,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_the_limit_holds_across_the_walks_of_concurrent_ingests(self, fake_cache):
-        """A limit each walk holds on its own bounds no ingest against another: eight of them
-        measured 112 requests in flight against a limit of 16."""
+        """A per-walk limit bounds no ingest against another: eight measured 112 requests in flight against 16."""
         service = _service()
         api = self._listings({slug: [] for slug in self._teams(64).values()}, delay=0.01)
 
@@ -1011,8 +992,7 @@ class TestPublicProfileEmail:
         response = MagicMock(status_code=403)
         with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                # Undetermined, not "this profile hides its email": the caller retires a member on
-                # the second answer and must not on the first.
+                # Undetermined, not a hidden email: the caller retires a member on the latter, never the former.
                 assert await service._public_emails(["ada"]) is None
 
         warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
@@ -1101,8 +1081,6 @@ class TestMemberResolution:
 
     @staticmethod
     def _api(profiles: dict[str, tuple[int, dict]]) -> _GitHubApi:
-        """The team's members (all on role=member) and GET /users/{login} for each of them."""
-
         async def _answer(path, params):
             await asyncio.sleep(0)
             if path == "/orgs/acme/teams/payments/members":

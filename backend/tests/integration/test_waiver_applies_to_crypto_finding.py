@@ -1,5 +1,3 @@
-"""CRYPTO_* FindingType values work with the existing waiver machinery: waiver_query and the restamp."""
-
 import pytest
 
 from app.models.finding import FindingType
@@ -11,7 +9,6 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 
 def _crypto_waiver(finding_type: FindingType, **extra) -> Waiver:
-    """Build a type-scoped Waiver targeting the given FindingType."""
     return Waiver(
         finding_type=finding_type,
         reason="accepted for test",
@@ -22,7 +19,6 @@ def _crypto_waiver(finding_type: FindingType, **extra) -> Waiver:
 
 
 def test_waiver_query_crypto_weak_algorithm():
-    """waiver_query maps a type-scoped waiver's finding_type to the 'type' field."""
     waiver = _crypto_waiver(FindingType.CRYPTO_WEAK_ALGORITHM)
     query = waiver_query(waiver)
 
@@ -45,7 +41,6 @@ def test_waiver_query_crypto_quantum_vulnerable():
 
 
 def test_waiver_query_component_scoped():
-    """waiver_query includes 'component' when package_name is set."""
     waiver = Waiver(
         finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
         package_name="MD5 [bom-ref:a]",

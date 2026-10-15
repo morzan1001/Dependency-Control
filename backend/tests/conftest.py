@@ -1,10 +1,3 @@
-"""
-Shared test fixtures and configuration.
-
-Environment variables are set BEFORE any app imports to prevent
-accidental connections to real databases.
-"""
-
 import gc
 import importlib
 import os
@@ -12,7 +5,6 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-# Ensure the backend app is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Override settings before any app code imports the settings singleton
@@ -33,16 +25,12 @@ from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
 
+# CI sets this, so a missing native stack fails the run instead of skipping the PDF tests.
 _WEASYPRINT_REQUIRED = os.environ.get("DC_REQUIRE_WEASYPRINT") == "1"
 
 
 def _probe_weasyprint() -> bool:
-    """WeasyPrint dlopens Cairo/Pango on import. Retrying that dlopen later, inside a running
-    asyncio loop, segfaults the interpreter, so the whole suite gets exactly this one attempt.
-
-    CI sets ``DC_REQUIRE_WEASYPRINT`` so a missing native stack fails the run; without it the
-    PDF tests skip, and a report the renderer can no longer produce still reads as green.
-    """
+    """Retrying WeasyPrint's Cairo/Pango dlopen inside a running asyncio loop segfaults, so the suite tries once."""
     if importlib.util.find_spec("weasyprint") is None:
         if _WEASYPRINT_REQUIRED:
             raise RuntimeError("weasyprint is not installed")
@@ -58,13 +46,11 @@ def _probe_weasyprint() -> bool:
 
 WEASYPRINT_USABLE = _probe_weasyprint()
 
-# Test constants for commonly used PURLs
 TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
 
 
 @pytest.fixture(autouse=True)
 def _isolate_analytics_cache():
-    """Clear the process-level analytics TTL caches so one test's memoized aggregation can't leak into the next."""
     from app.services.analytics.cache import get_analytics_cache, get_delta_cache
 
     get_analytics_cache().clear()
@@ -91,7 +77,6 @@ def db():
 
 @pytest.fixture
 def gitlab_instance_a():
-    """Standard GitLab instance A for testing."""
     return make_gitlab_instance(
         id="instance-a-id",
         name="GitLab A",
@@ -102,7 +87,6 @@ def gitlab_instance_a():
 
 @pytest.fixture
 def gitlab_instance_b():
-    """Standard GitLab instance B for testing."""
     return make_gitlab_instance(
         id="instance-b-id",
         name="GitLab B",
@@ -115,7 +99,6 @@ def gitlab_instance_b():
 
 @pytest.fixture
 def github_instance_a():
-    """Standard GitHub instance A for testing."""
     return make_github_instance(
         id="gh-instance-a-id",
         name="GitHub.com",
@@ -125,7 +108,6 @@ def github_instance_a():
 
 @pytest.fixture
 def github_instance_b():
-    """Standard GitHub instance B - GHES for testing."""
     return make_github_instance(
         id="gh-instance-b-id",
         name="GitHub Enterprise",
@@ -137,7 +119,6 @@ def github_instance_b():
 
 @pytest.fixture
 def sample_purls():
-    """Common PURL strings for testing."""
     return {
         "pypi": TEST_PURL_REQUESTS,
         "npm": "pkg:npm/express@4.18.2",
@@ -179,7 +160,6 @@ def fake_gridfs(monkeypatch):
 
 @pytest.fixture
 def archive_env(monkeypatch):
-    """Archiving enabled against an in-memory S3, bundles unencrypted."""
     from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
 
     fake = FakeS3Client()
@@ -193,7 +173,6 @@ def archive_env(monkeypatch):
 
 @pytest.fixture
 def fake_cache():
-    """A CacheService backed by an in-memory fakeredis async client."""
     import fakeredis.aioredis
 
     from app.core.cache import CacheService
@@ -269,7 +248,6 @@ def viewer_permissions():
 
 @pytest.fixture
 def cyclonedx_minimal():
-    """Minimal valid CycloneDX SBOM."""
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
@@ -307,7 +285,6 @@ def cyclonedx_minimal():
 
 @pytest.fixture
 def spdx_minimal():
-    """Minimal valid SPDX SBOM."""
     return {
         "spdxVersion": "SPDX-2.3",
         "SPDXID": "SPDXRef-DOCUMENT",
@@ -340,7 +317,6 @@ def spdx_minimal():
 
 @pytest.fixture
 def syft_minimal():
-    """Minimal valid Syft SBOM."""
     return {
         "descriptor": {"name": "syft", "version": "0.100.0"},
         "source": {"type": "directory", "target": "/app"},

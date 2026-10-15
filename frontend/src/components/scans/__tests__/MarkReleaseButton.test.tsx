@@ -138,7 +138,6 @@ describe('MarkReleaseButton', () => {
   it('keeps the page quiet until the button is pressed', () => {
     renderButton(makeScan())
 
-    // The whole point of moving this out of the metadata card: nothing is on screen but the button.
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.queryByLabelText(ENVIRONMENT_FIELD)).not.toBeInTheDocument()
   })

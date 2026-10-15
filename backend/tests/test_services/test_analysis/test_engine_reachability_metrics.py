@@ -1,5 +1,3 @@
-"""The reachability metrics count what apply_reachability persisted, on the engine and the upload path alike."""
-
 import pytest
 from prometheus_client import REGISTRY
 

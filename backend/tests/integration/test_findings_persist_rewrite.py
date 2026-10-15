@@ -1,5 +1,3 @@
-"""Persisting a scan's findings writes them over the stored copies and only then deletes the ones the run no longer has."""
-
 import json
 import logging
 from datetime import datetime, timezone
@@ -129,7 +127,6 @@ def _padded_to(record: dict, size: int) -> dict:
 
 
 def _vulnerability_with_advisories(size_at_least: int) -> tuple[dict, dict, list[str]]:
-    """One trivy finding whose 6,000 advisories carry descriptions long enough to reach ``size_at_least`` BSON bytes."""
     [record] = _trivy_records(_trivy_vulnerability("CVE-2016-2779", "linux-libc-dev"))
     advisory = record["details"]["vulnerabilities"][0]
     cves = [f"CVE-2024-{n:05d}" for n in range(6000)]

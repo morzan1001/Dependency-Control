@@ -1,5 +1,3 @@
-"""GitHub pull-request decoration: guards, filtering and comment upsert."""
-
 import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -67,12 +65,7 @@ def _enabled_project(**overrides):
 
 
 class TestPrDecorationEarlyReturns:
-    """Each guard has to stop before GitHubService is constructed; the body sits inside a blanket
-    except Exception, so a test without that assertion passes whatever the guard does.
-
-    Asserting on logger.exception too is what makes the missing-instance guard testable: without it
-    the next line raises AttributeError on None and the blanket except swallows it, so the guard's
-    removal is invisible."""
+    """The body sits in a blanket except, so only asserting GitHubService was never built proves a guard fired."""
 
     @classmethod
     def _run_and_assert_no_service(cls, project, scan_doc, instance_doc=_USABLE_INSTANCE_DOC):
@@ -130,7 +123,6 @@ class TestPrDecorationEarlyReturns:
 
 
 def _run_with_service(project, scan_doc, mock_svc, instance_doc=_USABLE_INSTANCE_DOC, stats=None):
-    """Runs the decoration with GitHubService stubbed; returns the patched class mock."""
     from app.services.analysis.integrations import decorate_github_pr
 
     db = create_mock_db({"github_instances": create_mock_collection(find_one=instance_doc)})
@@ -210,7 +202,6 @@ class TestPullRequestWorkflowScans:
 
     @staticmethod
     def _decorate(pr_head, branch="42/merge", comments_page=()):
-        """The endpoints decorating the scan read through _api_get, and the ones it posted to."""
         from app.services.analysis.integrations import decorate_github_pr
         from app.services.github import GitHubService
 
@@ -267,8 +258,7 @@ class TestPullRequestWorkflowScans:
         assert posted == []
 
     def test_a_pushed_merge_of_a_branch_leaves_that_branchs_pull_request_alone(self):
-        """Merging feature into a branch without a PR and pushing gives a commit of the same shape,
-        whose second parent heads the feature's PR; that PR is not this build's to look up or comment on."""
+        """A pushed merge into a branch without a PR has the same shape; its second parent's PR is not this build's."""
         requested, posted = self._decorate(pr_head=_HEAD, branch="integration")
         assert requested == [f"/repos/acme/widget/commits/{_TEST_MERGE}/pulls"]
         assert posted == []
@@ -287,7 +277,6 @@ class TestCommentUpsert:
         assert _MARKER in svc.post_pull_request_comment.await_args.args[3]
 
     def test_updates_the_marked_comment_in_place(self):
-        """A duplicate marked comment must not shift the target: the oldest match wins."""
         svc = _service(
             [_pr(7)],
             comments=[
@@ -335,7 +324,6 @@ class TestCommentUpsert:
         svc.post_pull_request_comment.assert_not_awaited()
 
     def test_body_is_byte_identical_to_the_gitlab_comment(self):
-        """Spec §10: the GitHub comment must match the GitLab one for the same scan."""
         from app.services.analysis.integrations import _build_scan_comment
 
         stats = Stats()

@@ -1,5 +1,3 @@
-"""Every scoped analytics route and the chat tool accept the same four scopes and refuse anything else."""
-
 from typing import get_args
 
 import pytest

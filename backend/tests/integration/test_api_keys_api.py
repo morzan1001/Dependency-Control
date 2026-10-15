@@ -1,5 +1,3 @@
-"""CRUD for unified API keys."""
-
 from datetime import datetime, timedelta
 from typing import get_args
 
@@ -93,8 +91,7 @@ async def test_create_records_the_requested_surfaces_and_the_listing_reports_the
 
 
 def test_every_surface_a_key_can_name_has_a_permission():
-    """Minting indexes the dependency's table with whatever the schema admitted, so a surface
-    added to the literal without a permission beside it would 500 the mint rather than refuse it."""
+    """Minting looks up SURFACE_PERMISSIONS for each admitted surface; a missing entry would 500 the mint."""
     assert set(SURFACE_PERMISSIONS) == set(get_args(ApiKeySurface))
 
 
@@ -158,8 +155,7 @@ async def test_the_listing_is_scoped_to_the_owner(client, db):
 
 @pytest.mark.asyncio
 async def test_the_listing_works_for_a_caller_who_holds_neither_surface_permission(client, db):
-    # Divergence from the per-surface systems, and the point of the unified one: withdrawing the
-    # permission that minted a key must not hide it from its owner, or it could never be revoked.
+    # Withdrawing the permission that minted a key must not hide it from its owner, or it could never be revoked.
     await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
 
     listed = await client.get(f"{_BASE}/", headers=_headers([Permissions.PROJECT_READ]))
@@ -170,8 +166,7 @@ async def test_the_listing_works_for_a_caller_who_holds_neither_surface_permissi
 
 @pytest.mark.asyncio
 async def test_revoking_works_for_a_caller_who_holds_neither_surface_permission(client, db):
-    # The same divergence: revocation belongs to the owner, not to the permission, so a credential
-    # stays killable after the permission behind it is gone.
+    # Revocation belongs to the owner, not the permission, so a key stays revocable after its permission is gone.
     doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
 
     revoked = await client.delete(f"{_BASE}/{doc['_id']}", headers=_headers([Permissions.PROJECT_READ]))
@@ -242,8 +237,7 @@ async def test_a_complete_listing_declares_no_truncation(client, db):
 
 @pytest.mark.asyncio
 async def test_every_listed_timestamp_carries_a_utc_offset(client, db):
-    # Serialised without an offset, a client parses the value as local time, which moves the
-    # active/expired boundary by the server's offset.
+    # Without an offset a client parses the value as local time, shifting the expiry boundary.
     repo = ApiKeyRepository(db)
     doc, _ = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
     await repo.touch_last_used(doc["_id"])
@@ -259,8 +253,7 @@ async def test_every_listed_timestamp_carries_a_utc_offset(client, db):
 
 @pytest.mark.asyncio
 async def test_the_mint_and_the_listing_report_the_same_expiry(client, db):
-    # The mint answers from the in-memory document and the listing from Mongo; the two must not
-    # describe the same key's expiry differently.
+    # The mint answers from the in-memory document, the listing from Mongo; both must agree on the expiry.
     headers = _headers(_BOTH_PERMISSIONS)
     created = await client.post(
         f"{_BASE}/",

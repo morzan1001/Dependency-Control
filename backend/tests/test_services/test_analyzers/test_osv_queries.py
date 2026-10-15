@@ -1,5 +1,3 @@
-"""What OSV is asked for each component, and whose name a cached answer carries."""
-
 import json
 from typing import Any
 

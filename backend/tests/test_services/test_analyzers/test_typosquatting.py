@@ -1,5 +1,3 @@
-"""Tests for the TyposquattingAnalyzer - detects potential typosquatting attacks."""
-
 import asyncio
 import difflib
 import json
@@ -73,7 +71,6 @@ class TestIsSuspicious:
         assert self.analyzer._is_suspicious("lodashh", "lodash") is True
 
     def test_legitimate_subpackage_with_separator_still_safe(self):
-        # Real sub-packages with a separator must still be allowed.
         assert self.analyzer._is_suspicious("react-dom", "react") is False
         assert self.analyzer._is_suspicious("flask-cors", "flask") is False
         assert self.analyzer._is_suspicious("requests-oauthlib", "requests") is False
@@ -82,8 +79,6 @@ class TestIsSuspicious:
 
 
 class TestNormalizePkgName:
-    """Separators in package names are interchangeable per PEP 503; normalisation prevents false positives."""
-
     def test_collapses_separators(self):
         from app.services.analyzers.typosquatting import _normalize_pkg_name
 
@@ -118,8 +113,6 @@ def test_the_built_in_pypi_names_cover_the_most_imitated_packages(name):
 
 
 class TestSeverityThresholds:
-    """Severity calculation based on similarity ratio in analyze()."""
-
     def setup_method(self):
         self.analyzer = TyposquattingAnalyzer()
 
@@ -127,7 +120,6 @@ class TestSeverityThresholds:
     HIGH_AT = 0.90
 
     def _make_issue(self, ratio):
-        """Compute severity via the real production _severity_for_ratio function."""
         from app.services.analyzers.typosquatting import _severity_for_ratio
 
         return _severity_for_ratio(ratio, self.CRITICAL_AT, self.HIGH_AT)
@@ -188,8 +180,6 @@ def _serve_corpus(client_cls, status_code: int, payload) -> None:
 
 
 class TestCorpusDepthIsDeclaredAndReported:
-    """The fetch keeps the whole ranking, and the result reports the depth the comparison covered."""
-
     @pytest.mark.asyncio
     async def test_the_fetch_keeps_every_served_rank_in_rank_order(self):
         served = [f"pkg-{index}" for index in reversed(range(TYPOSQUATTING_POPULAR_PACKAGE_RANKS * 3))]
@@ -222,8 +212,6 @@ class TestCorpusDepthIsDeclaredAndReported:
 
 
 class _CorpusCache:
-    """Mirrors cache_service.get_or_fetch_with_lock and records every write with its TTL and lock timing."""
-
     def __init__(self, entries: dict[str, Any] | None = None):
         self.entries = dict(entries or {})
         self.writes: list[tuple[str, Any, int | None]] = []
@@ -329,8 +317,6 @@ async def _issues_against_the_real_corpus(monkeypatch, cache: _CorpusCache, comp
 
 
 class TestTheWholePypiRankingIsKnownAndOnlyItsTopIsImitated:
-    """Every served rank is a real package; only the top ranks are names worth imitating."""
-
     @pytest.mark.asyncio
     async def test_a_package_ranked_past_the_depth_is_known_and_a_typo_of_the_top_is_flagged(self, monkeypatch):
         top = ["elasticsearch"] + [f"pkg-{index}" for index in range(TYPOSQUATTING_POPULAR_PACKAGE_RANKS - 1)]
@@ -343,8 +329,6 @@ class TestTheWholePypiRankingIsKnownAndOnlyItsTopIsImitated:
 
 
 class TestTheShippedNpmRanking:
-    """npm components are compared against the shipped download ranking of npm packages."""
-
     @pytest.mark.asyncio
     @pytest.mark.parametrize("name", ["react", "lodash", "express", "typescript", "webpack", "vue"])
     async def test_the_most_imitated_packages_are_in_the_compared_top(self, monkeypatch, name):
@@ -356,7 +340,7 @@ class TestTheShippedNpmRanking:
 
     @pytest.mark.asyncio
     async def test_a_squat_of_a_popular_package_is_flagged_and_popular_lookalikes_are_not(self, monkeypatch):
-        """crossenv is the 2017 squat of cross-env; gaxios and @npmcli/redact are popular packages close to axios and react."""
+        """crossenv squatted cross-env in 2017; gaxios and @npmcli/redact are popular names close to axios and react."""
         components = [_npm("crossenv"), _npm("gaxios"), _npm("@npmcli/redact")]
 
         issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
@@ -376,7 +360,7 @@ class TestTheShippedNpmRanking:
 
     @pytest.mark.asyncio
     async def test_a_squat_of_a_rank_behind_scoped_names_is_flagged_and_ranked_lookalikes_are_not(self, monkeypatch):
-        """react-intl makes the top only once scoped names are skipped; coffee-script and rambda are ranked packages."""
+        """react-intl makes the top once scoped names are skipped; coffee-script and rambda are ranked packages."""
         components = [_npm("react-intll"), _npm("coffee-script"), _npm("rambda")]
 
         issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
@@ -423,8 +407,6 @@ class TestTheEcosystemComesFromThePurl:
 
 
 class TestSeveralPassingPopularNames:
-    """Several popular names can pass; the closest is reported, and a tie goes to the higher-ranked name."""
-
     _RANKING: ClassVar[list[str]] = [
         "tomlkit",
         "typing-extensions",
@@ -476,7 +458,6 @@ def _names(rng: random.Random, letters: str, count: int) -> list[str]:
 
 
 def _cyclonedx_of(names: list[str]) -> dict[str, Any]:
-    """The uv fixture with its first component's syft record repeated under each name."""
     sbom = json.loads(_UV_SBOM.read_text())
     template = json.dumps(sbom["components"][0])
     sbom["components"] = [json.loads(template.replace("anyio", name)) for name in names]
@@ -485,7 +466,6 @@ def _cyclonedx_of(names: list[str]) -> dict[str, Any]:
 
 
 async def _with_largest_loop_gap(awaitable):
-    """Await ``awaitable`` while a heartbeat measures the longest the event loop went unserved."""
     gaps: list[float] = []
     done = False
 
@@ -504,8 +484,6 @@ async def _with_largest_loop_gap(awaitable):
 
 
 class TestALargeSbomDoesNotStallTheLoop:
-    """The pairwise comparison runs in a thread, and only pairs that can pass get a full ratio."""
-
     @pytest.mark.asyncio
     async def test_1000_components_leave_the_loop_served_and_report_the_plain_ratios(self, monkeypatch):
         rng = random.Random(20260930)
@@ -532,7 +510,6 @@ class TestALargeSbomDoesNotStallTheLoop:
 
 
 def _ungated_verdict(analyzer: TyposquattingAnalyzer, name: str, ranking: list[str]) -> tuple[str, float, str]:
-    """The passing popular name with the highest plain ratio (the higher-ranked on a tie), ungated."""
     passing = [
         (ratio, candidate)
         for candidate in ranking

@@ -64,8 +64,6 @@ async def test_a_team_scope_past_the_ceiling_is_refused(db, small_ceiling):
 
 @pytest.mark.asyncio
 async def test_a_super_user_scope_past_the_ceiling_is_refused(db, small_ceiling):
-    """The super-user enumeration bounded the same concept at a different number and did not
-    even log; it is the same refusal now."""
     _seed_projects(db, _PAST_THE_CEILING)
 
     with pytest.raises(ScopeTooLargeError):

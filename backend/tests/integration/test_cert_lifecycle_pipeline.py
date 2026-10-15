@@ -1,5 +1,3 @@
-"""The registered certificate-lifecycle evaluator produces findings."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

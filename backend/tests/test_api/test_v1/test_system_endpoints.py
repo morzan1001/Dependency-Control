@@ -1,5 +1,3 @@
-"""Tests for system settings API endpoints (get/update settings, public config, app config, notification channels)."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -1,10 +1,4 @@
-"""Trivy aliases must come from structured data, never from free-text reference URLs.
-
-Advisory pages (Go vuln DB, RHSA, Debian DSA) list many unrelated CVEs; scraping them
-turned every co-mentioned CVE into an authoritative alias, which merged a different
-scanner's genuinely separate vulnerability into the polluted entry and dropped its fix
-version. Fixtures reproduce prod scan 9eee14fe (stdlib 1.23.12).
-"""
+"""Advisory pages list many unrelated CVEs, so aliases scraped from reference URLs would merge separate findings."""
 
 from app.services.aggregation import ResultAggregator
 

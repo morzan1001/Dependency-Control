@@ -1,5 +1,3 @@
-"""Tests for incident detection: malware, typosquatting, and known exploits."""
-
 import pytest
 
 from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
@@ -33,8 +31,7 @@ def _malware_finding(component):
 
 
 def _typosquat_finding(component, imitated_package=None):
-    """Real stored shape: the analyzer emits FindingType.MALWARE with details.imitated_package
-    (2,572 such production findings; zero carry a details.similar_to)."""
+    """Stored shape: FindingType.MALWARE with details.imitated_package, never details.similar_to."""
     details = {}
     if imitated_package is not None:
         details["imitated_package"] = imitated_package
@@ -50,8 +47,7 @@ _COMPONENT_VERSION = "1.0.0"
 
 
 def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, epss_score=0.0, cve_id="CVE-2024-001"):
-    """Aggregator shape: the document id is component:version and the CVE lives one level down,
-    where enrichment marks it and rolls the document up from it."""
+    """Aggregator shape: the id is component:version and the CVE lives one level down, where enrichment marks it."""
     flags = {"in_kev": is_kev, "kev_ransomware_use": kev_ransomware, "epss_score": epss_score}
     return {
         "type": "vulnerability",
@@ -468,8 +464,7 @@ class TestIncidentCardsNameOnlyTheFlaggedAdvisories:
 
 
 class TestIncidentCardsBucketPerAdvisory:
-    """Aggregation groups one record per (component, version), so one record can be about
-    several cards; a record bucketed whole leaves every other advisory in no card at all."""
+    """One record per (component, version) can feed several cards, so bucketing it whole loses advisories."""
 
     @staticmethod
     def _mixed():
@@ -625,7 +620,6 @@ _LOG4J_KEV_CVES = (("CVE-2021-44228", "CRITICAL"), ("CVE-2021-45046", "CRITICAL"
 
 
 def _log4j(**marks):
-    """One stored package version carrying three CVEs that share the given marks."""
     return stored_vulnerability(
         "log4j-core", "2.14.0", [{"id": cve, "severity": severity, **marks} for cve, severity in _LOG4J_KEV_CVES]
     )

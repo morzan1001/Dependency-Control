@@ -1,5 +1,3 @@
-"""normalize_crypto rehydrates the finding dicts our crypto rule analyzers build."""
-
 import pytest
 from pydantic import ValidationError
 

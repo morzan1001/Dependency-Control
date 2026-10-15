@@ -1,5 +1,4 @@
-"""What a crypto policy write accepts. Every refused rule would otherwise be stored under a 200 and
-then never run, fire on every asset, or mis-grade what it matches."""
+"""A refused rule would otherwise be stored under a 200 and then never run, fire on every asset, or mis-grade."""
 
 import pytest
 from pydantic import ValidationError
@@ -33,7 +32,7 @@ def test_every_seeded_rule_is_accepted():
 
 
 def test_a_misspelled_rule_key_is_refused():
-    """Dropped silently, the rule stored without its name filter flagged every hash asset."""
+    """Dropped silently, the rule would be stored without its name filter and flag every hash asset."""
     assert "match_name_pattern" in _refused(_rule(match_name_pattern=["md5"]))
 
 

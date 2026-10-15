@@ -1,5 +1,3 @@
-"""The indexes reads over every head scan hint, for live tests that do not build every index."""
-
 from app.core.constants import DEPENDENCIES_SCAN_PACKAGE_INDEX, FINDINGS_SCAN_COMPONENT_INDEX, FINDINGS_SCAN_TYPE_INDEX
 
 

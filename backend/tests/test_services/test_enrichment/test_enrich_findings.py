@@ -1,6 +1,3 @@
-"""enrich_findings marks each advisory with its own CVEs and rolls the finding up from them,
-whatever order the CVEs, findings or providers come in."""
-
 import itertools
 
 import pytest

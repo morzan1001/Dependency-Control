@@ -1,5 +1,3 @@
-"""Reusable GitHub mock objects and factory functions."""
-
 from app.models.github_api import GitHubOIDCPayload
 from app.models.github_instance import GitHubInstance
 
@@ -15,7 +13,6 @@ def make_github_instance(
     created_by="admin",
     **kwargs,
 ):
-    """Create a GitHubInstance with sensible defaults for testing."""
     return GitHubInstance(
         id=id,
         name=name,
@@ -30,7 +27,6 @@ def make_github_instance(
 
 
 def github_instance_a():
-    """Create standard test GitHub instance A (fresh copy each call)."""
     return make_github_instance(
         id="gh-instance-a-id",
         name="GitHub.com",
@@ -39,7 +35,6 @@ def github_instance_a():
 
 
 def github_instance_b():
-    """Create standard test GitHub instance B - GHES (fresh copy each call)."""
     return make_github_instance(
         id="gh-instance-b-id",
         name="GitHub Enterprise",
@@ -50,7 +45,6 @@ def github_instance_b():
 
 
 def make_github_oidc_payload(**kwargs):
-    """Create a GitHubOIDCPayload with sensible defaults."""
     defaults = {
         "repository_id": "123456",
         "repository": "owner/repo",

@@ -1,5 +1,3 @@
-"""A compliance report evaluates every finding its framework reads, however many the scope holds."""
-
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -22,7 +20,6 @@ from tests.helpers.findings import grype_findings, persist_findings
 
 _PROJECT = "sla-project"
 _SCAN = "sla-scan"
-# More overdue findings than 20,000.
 _OVERDUE = 20_001
 
 

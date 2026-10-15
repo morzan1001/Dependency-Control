@@ -1,6 +1,3 @@
-"""/branches names exactly one default branch, also for projects that never got a ``default_branch``
-(selecting every branch multiplies the counters), and that default is the branch head resolves to."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

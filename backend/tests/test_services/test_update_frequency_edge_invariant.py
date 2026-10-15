@@ -1,9 +1,4 @@
-"""Both read paths sum every consecutive pair of window scans, and bar them the same way.
-
-A same-commit run merges its scans into one timeline bar; it never removes a pair
-from a sum. These tests run one seeded history through the live walk and through
-the real writer plus fold, and require every field of both to agree.
-"""
+"""A same-commit run merges its scans into one bar but never removes a pair from a sum, on either read path."""
 
 import random
 from collections.abc import Sequence
@@ -40,8 +35,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 PROJECT = "proj-1"
 BRANCH = "main"
 WINDOW_DAYS = 90
-# BSON dates are int64 milliseconds, so an instant with microseconds reads back as a different
-# value than the one an assertion recomputes.
+# BSON dates are int64 milliseconds, so microseconds would read back different from what assertions recompute.
 NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
 
 
@@ -99,7 +93,6 @@ async def _seed_scan(
 
 
 async def _build_ledger(db: FakeDatabase) -> None:
-    """Run the ingest hook over every seeded scan, oldest first, as production does."""
     scans = await db.scans.find({}).to_list(None)
     for scan in sorted(scans, key=lambda s: (s["created_at"], s["_id"])):
         await record_scan_update_delta(db, scan["_id"])
@@ -147,7 +140,6 @@ async def _assert_identical(db: FakeDatabase) -> UpdateFrequencyMetrics:
 
 
 async def _comparisons(db: FakeDatabase) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The comparison payload of each read path over this project, ``data_status`` included."""
     await db.projects.insert_one(
         {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []}
     )
@@ -158,12 +150,7 @@ async def _comparisons(db: FakeDatabase) -> tuple[dict[str, Any], dict[str, Any]
 
 
 async def _assert_both_paths_agree(db: FakeDatabase) -> dict[str, Any]:
-    """Both paths agree on the metrics and the comparison payload; returns the agreed row.
-
-    ``UpdateFrequencyMetrics`` carries no ``data_status``, so the verdict is only
-    visible on the comparison row; the metrics check is what pins the numbers
-    behind it.
-    """
+    """UpdateFrequencyMetrics carries no data_status, so the verdict shows only on the comparison row."""
     await _assert_identical(db)
     live, rolled = await _comparisons(db)
     assert live == rolled
@@ -171,8 +158,6 @@ async def _assert_both_paths_agree(db: FakeDatabase) -> dict[str, Any]:
 
 
 class TestMovementInsideARun:
-    """The two histories that first showed the collapse and the delta chain disagreeing."""
-
     @pytest.mark.asyncio
     async def test_a_backlog_resolved_inside_a_retry_run_is_counted_on_both_paths(self):
         db = FakeDatabase()
@@ -255,8 +240,7 @@ class TestRunPlacement:
     @pytest.mark.asyncio
     async def test_a_history_that_is_one_single_run_supports_no_comparison(self):
         db = FakeDatabase()
-        # The SBOM moves inside the run, so a guard counting scans instead of bars would
-        # report five updates against one bar rather than declining the comparison.
+        # The SBOM moves inside the run, so counting scans instead of bars would report five updates on one bar.
         for index in range(5):
             await _seed_scan(db, f"r{index}", _days_ago(60 - index), {"p": f"1.{index}.0"}, commit_hash="cA")
         await _build_ledger(db)
@@ -403,10 +387,7 @@ class TestDataStatusIsUnmoved:
 
 
 class TestScansThatMeasuredNothing:
-    """Both paths drop a scan that produced no SBOM, so it is no gap between them.
-
-    The ledger records such a scan as a delta counting no dependencies.
-    """
+    """Both paths drop a scan without an SBOM; the ledger records it as a delta counting no dependencies."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("commits", [2, 3, 4])
@@ -725,11 +706,7 @@ async def _deltas(db: FakeDatabase) -> list[dict[str, Any]]:
 
 
 def _activity(deltas: Sequence[dict[str, Any]], undelivered: dict[str, int] | None = None) -> BranchWindowActivity:
-    """The scan side these deltas imply, as `window_scans_by_branch` would report it.
-
-    Every delta stands for one scan of its commit; ``undelivered`` adds scans the ledger
-    has not written a delta for, which is what makes a window read as only partly covered.
-    """
+    """undelivered adds scans the ledger owes a delta for, which makes a window read as partly covered."""
     scans_per_commit: dict[str, int] = {}
     for delta in deltas:
         token = delta.get("commit_hash") or delta["_id"]
@@ -738,10 +715,6 @@ def _activity(deltas: Sequence[dict[str, Any]], undelivered: dict[str, int] | No
         scans_per_commit[token] = scans_per_commit.get(token, 0) + count
     return BranchWindowActivity(scans_per_commit=scans_per_commit, last_scan_at=NOW)
 
-
-# ---------------------------------------------------------------------------
-# Generated histories
-# ---------------------------------------------------------------------------
 
 _PACKAGES = ("requests", "flask", "urllib3", "click")
 _GENERATED_SEEDS = tuple(range(40))
@@ -758,7 +731,6 @@ class _GeneratedScan:
 
 
 def _generate_history(seed: int) -> list[_GeneratedScan]:
-    """A branch history mixing run lengths, missing measurements, downgrades and removals."""
     rng = random.Random(seed)
     versions = {name: [1, 0, 0] for name in _PACKAGES}
     present = set(_PACKAGES)

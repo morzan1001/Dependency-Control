@@ -1,5 +1,3 @@
-"""A finished report job announces itself: the webhook carries the final status, members hear only of a ready report."""
-
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 

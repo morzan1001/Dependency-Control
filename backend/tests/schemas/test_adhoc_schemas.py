@@ -1,5 +1,3 @@
-"""Defaults and validation rules of the ad-hoc analyze request/response models."""
-
 import pytest
 from pydantic import ValidationError
 
@@ -116,8 +114,7 @@ def test_a_partial_license_policy_keeps_plain_string_values():
 
 
 def test_the_project_policy_schema_refuses_the_same_key():
-    """The persisted path carries the harsher version of this defect — a discarded key is stored on
-    the project and re-graded into every future scan — so both paths refuse it."""
+    """On the persisted path a discarded key would re-grade every future scan of the project, so it refuses too."""
     with pytest.raises(ValidationError):
         LicensePolicySchema(**{_MISSPELLED_POLICY_KEY: _INTERNAL_ONLY})
 

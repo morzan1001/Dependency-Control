@@ -88,8 +88,6 @@ describe("analyticsApi release environment", () => {
   const HEAD_MODE = undefined;
   const SEARCH_TERM = "log4j";
 
-  // Every analytics endpoint the backend accepts release_environment on, with the argument
-  // position each of its callers uses.
   const inReleaseMode: [string, () => Promise<unknown>][] = [
     ["/analytics/scope", () => analyticsApi.getScope(PRODUCTION)],
     ["/analytics/summary", () => analyticsApi.getSummary(PRODUCTION)],

@@ -1,5 +1,3 @@
-"""An advisory broadcast reaches every project admin, including those an owning team makes admin."""
-
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 

@@ -23,7 +23,6 @@ const PROJECTS_WITHOUT_RELEASE = 660
 const OLDEST_ANALYSIS_AT = '2026-08-06T00:00:00Z'
 const READ_EVERYTHING = 'analytics:read'
 
-// Reports the release environment the tab it stands in would query with.
 function ModeProbe() {
   return <span data-testid={MODE_PROBE}>{useAnalyticsMode() ?? HEAD_MODE_PROBE}</span>
 }

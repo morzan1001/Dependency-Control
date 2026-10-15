@@ -1,5 +1,3 @@
-"""Every scanner post is CI activity for its project, from any branch and before any analysis."""
-
 import json
 from pathlib import Path
 

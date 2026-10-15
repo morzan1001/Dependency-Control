@@ -1,8 +1,4 @@
-"""Everything a scan owns goes with it, and every caller removes the same set.
-
-Two hand-maintained lists of the same collections is how crypto_assets and finding_records came to
-outlive their project, so the divergence test below compares the paths rather than trusting either.
-"""
+"""Every delete path must remove the same scan-owned collections, so the paths are compared, not trusted."""
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -74,8 +70,6 @@ async def test_the_cascade_leaves_another_scans_rows_alone() -> None:
 
 
 class _RecordingDatabase:
-    """A FakeDatabase that names every collection a delete was issued against, and its query."""
-
     def __init__(self) -> None:
         self._db = FakeDatabase()
         self.deletes: list[tuple[str, dict[str, Any]]] = []
@@ -105,7 +99,6 @@ def _scan_scoped(deletes: list[tuple[str, dict[str, Any]]], scan_id: str) -> set
 async def test_project_deletion_and_retention_remove_the_same_scan_scoped_collections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One cascade, so a collection added to one path cannot be missing from the other."""
     from app.api.v1.endpoints.projects import delete_project
 
     monkeypatch.setattr(

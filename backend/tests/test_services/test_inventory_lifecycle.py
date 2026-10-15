@@ -1,5 +1,3 @@
-"""The components inventory derives outdated/latest_version from the scan's lifecycle findings."""
-
 from datetime import datetime, timezone
 
 import pytest

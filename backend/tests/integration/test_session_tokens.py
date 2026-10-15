@@ -1,5 +1,3 @@
-"""Exchanged, spent, superseded and logged-out tokens stop working whatever state the cache is in."""
-
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
@@ -33,8 +31,6 @@ _TOTP_SECRET = pyotp.random_base32()
 
 
 class _UnavailableCache:
-    """The cache as it answers while Redis is down: nothing stored, nothing kept."""
-
     async def get(self, key):
         return None
 

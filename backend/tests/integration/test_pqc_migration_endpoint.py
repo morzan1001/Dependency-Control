@@ -74,8 +74,7 @@ async def test_one_users_plan_is_not_served_to_the_next_caller(
     owner_auth_headers_proj,
     owner_auth_headers_proj_p2,
 ):
-    """scope=user carries no scope_id, so the caller is the only thing that tells the two
-    requests apart in the process-wide analytics cache."""
+    """scope=user carries no scope_id, so only the caller tells the two requests apart in the shared cache."""
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
         "s1",

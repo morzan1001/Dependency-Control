@@ -1,5 +1,3 @@
-"""Global waivers are read (never written) and applied to the in-memory records."""
-
 import pytest
 
 from app.models.match_signature import MatchSignature

@@ -1,5 +1,3 @@
-"""The findings CSV names every CVE of a vulnerability finding, read through the export's own projection."""
-
 import csv
 import io
 

@@ -1,5 +1,3 @@
-"""The in-memory $lookup has to match real MongoDB for array localFields."""
-
 import pytest
 
 from tests.mocks.fake_mongo import FakeDatabase

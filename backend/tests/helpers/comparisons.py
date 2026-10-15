@@ -2,12 +2,6 @@
 
 
 def counted_str_type() -> type[str]:
-    """A fresh str subclass counting the equality tests (``comparisons``) and hashes (``hashes``) made on it.
-
-    A list membership test compares the value with each element; a set or dict lookup hashes it
-    once and compares only on a hash match, so a linear dedupe of distinct values compares none.
-    """
-
     class CountedStr(str):
         comparisons = 0
         hashes = 0

@@ -217,7 +217,6 @@ async def test_weak_signature_resolved_via_ref(db):
 
 @pytest.mark.asyncio
 async def test_weak_key_uses_subject_public_key(db):
-    """The weak-key verdict must judge the certificate's OWN subject public key."""
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -237,7 +236,6 @@ async def test_weak_key_uses_subject_public_key(db):
 
 @pytest.mark.asyncio
 async def test_weak_signing_key_does_not_flag_strong_subject_key(db):
-    """A weak CA signing key with a strong subject key must not be flagged as a weak cert key."""
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -285,7 +283,6 @@ def _weak_hash_rule(names=("SHA-224",)):
 
 @pytest.mark.asyncio
 async def test_weak_key_honors_policy_min_size(db):
-    """A policy 3072-bit minimum must flag a 2048-bit subject key that the static default would pass."""
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -327,7 +324,6 @@ async def test_key_exactly_at_the_policy_minimum_is_compliant(db):
 
 @pytest.mark.asyncio
 async def test_weak_signature_honors_glob_and_rule_severity(db):
-    """A glob hash rule must match via fnmatch and the finding must use the rule's severity."""
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -358,7 +354,6 @@ async def test_weak_signature_honors_glob_and_rule_severity(db):
 
 @pytest.mark.asyncio
 async def test_weak_signature_honors_policy_hash_ban(db):
-    """A policy banning SHA-224 (outside the static MD5/SHA-1 set) must flag a SHA-224 signature."""
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -378,7 +373,6 @@ async def test_weak_signature_honors_policy_hash_ban(db):
 
 @pytest.mark.asyncio
 async def test_no_subject_key_ref_does_not_assert_weak_key(db):
-    """Without a subject-key reference the analyzer must not assert a weak cert key from the signing algorithm."""
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -466,8 +460,7 @@ async def test_validity_exactly_at_the_policy_limit_is_allowed(db):
 
 @pytest.mark.asyncio
 async def test_every_check_emits_only_declared_details_keys(db):
-    """_build spreads **details into CryptoCertificateDetails, and the drift guard cannot
-    see through a spread (blind spot 4 in its docstring), so assert it at runtime."""
+    """_build spreads **details into CryptoCertificateDetails, which the drift guard cannot see, so check at runtime."""
     from app.schemas.finding_details import CryptoCertificateDetails
 
     now = datetime.now(timezone.utc)

@@ -1,5 +1,3 @@
-"""extract_fix_versions names the versions that fix every advisory of a component version."""
-
 from app.api.v1.helpers.analytics import extract_fix_versions
 
 

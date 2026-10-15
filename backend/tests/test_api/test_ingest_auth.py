@@ -1,5 +1,3 @@
-"""Tests for the get_project_for_ingest authentication flow."""
-
 import asyncio
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,7 +18,6 @@ from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 @contextmanager
 def _service_stub(service_class):
-    """Patch the service class with one stub that, like the real service, holds the instance it was built for."""
     stub = MagicMock(provider=service_class.provider, team_provider=service_class.team_provider)
 
     def build(instance):
@@ -63,10 +60,7 @@ def _ingest_via_github(
     settings_doc=None,
     **payload_overrides,
 ):
-    """Run a GitHub OIDC ingest; returns the outcome (project or HTTPException), projects and service mocks.
-
-    ``any_user`` answers every users query, so a lookup by the actor's login would find it.
-    """
+    """any_user answers every users query, so a lookup by the actor's login would find it."""
     from app.api.deps import get_project_for_ingest
     from app.models.team import TeamSyncResult
 
@@ -121,7 +115,6 @@ _GITLAB_BOUND_PROJECT = {
 def _ingest_via_gitlab(
     instance_doc, project_doc=None, *, token_valid=True, settings_doc=None, github_instance=None, **payload_overrides
 ):
-    """Run a GitLab OIDC ingest; returns the outcome (project or HTTPException) and the projects mock."""
     from app.api.deps import get_project_for_ingest
 
     projects_coll = create_mock_collection(find_one=project_doc)
@@ -241,8 +234,6 @@ class TestIngestOidcBasicValidation:
 
 
 class TestIngestOidcInstanceRouting:
-    """OIDC flow must extract issuer and route to the correct instance (GitLab or GitHub)."""
-
     def test_raises_403_when_no_matching_instance(self):
         outcome, _, _ = _ingest_via_github(None, issuer="https://unknown-provider.com")
 
@@ -311,8 +302,6 @@ class TestIngestOidcInstanceRouting:
 
 
 class TestIngestOidcProjectLookup:
-    """After OIDC validation, should find project via composite key."""
-
     def test_returns_existing_project_via_composite_key(self):
         instance_doc = {
             "_id": "inst-a",
@@ -416,8 +405,6 @@ class TestIngestOidcProjectLookup:
 
 
 class TestIngestGitHubOidcInstanceRouting:
-    """OIDC flow must route to GitHub instance when issuer matches."""
-
     def test_raises_403_when_github_instance_inactive(self):
         github_instance_doc = {
             "_id": "gh-inst-1",
@@ -448,8 +435,6 @@ class TestIngestGitHubOidcInstanceRouting:
 
 
 class TestIngestGitHubOidcProjectLookup:
-    """After GitHub OIDC validation, should find project via composite key."""
-
     def test_returns_existing_project_via_composite_key(self):
         github_instance_doc = {
             "_id": "gh-inst-a",
@@ -558,8 +543,6 @@ _TEAM_SYNC_PROJECT = {
 
 
 class TestIngestGitHubTeamSync:
-    """GitHub OIDC ingest assigns the repository's team when the instance opts in."""
-
     def _run(self, instance_doc, sync_result, project_doc=None):
         from app.api.deps import get_project_for_ingest
         from app.models.team import TeamSyncResult
@@ -618,8 +601,7 @@ class TestIngestGitHubTeamSync:
         )
 
     def test_every_resolved_owner_is_written_to_the_project(self):
-        """The guarded pipeline reaches the server: that is what keeps a manual co-owner and the
-        other provider's entry out of this write."""
+        """The guarded pipeline must reach the server: it keeps manual and other-provider owners out of the write."""
         from app.repositories.projects import replace_team_subset_pipeline
 
         _, projects_coll, _ = self._run(
@@ -663,8 +645,6 @@ _GITLAB_TEAM_SYNC_INSTANCE = {
 
 
 class TestIngestGitLabTeamSync:
-    """GitLab OIDC ingest assigns the project's team when the instance opts in."""
-
     def _run(self, instance_doc, team_ids):
         from app.api.deps import get_project_for_ingest
         from app.models.team import TeamSyncResult
@@ -850,8 +830,6 @@ class TestIngestGitHubInitialAdmin:
 
 
 class TestAutoCreateUsesSystemAnalyzers:
-    """Auto-created projects inherit default_active_analyzers from the stored SystemSettings."""
-
     def test_gitlab_auto_create_uses_custom_analyzers(self):
         instance = {**_GITLAB_COM_INSTANCE, "url": "https://gitlab.example.com", "auto_create_projects": True}
 
@@ -948,7 +926,6 @@ _WRITE_GITLAB_INSTANCE = {
 
 
 def _authorize_write_via_gitlab(project_doc, target_project_id):
-    """Run authorize_project_write with a GitLab CI token; returns the outcome, projects and service mocks."""
     from app.api.deps import authorize_project_write
     from app.models.team import TeamSyncResult
 
@@ -983,8 +960,6 @@ def _authorize_write_via_gitlab(project_doc, target_project_id):
 
 
 class TestCiWriteAuthorizationProvisionsNothing:
-    """A CI write is authorized against a project that exists; it neither creates, renames nor syncs one."""
-
     def test_an_unknown_repository_is_refused_without_creating_a_project(self):
         outcome, projects_coll, mock_svc = _authorize_write_via_gitlab(None, "proj-any")
 

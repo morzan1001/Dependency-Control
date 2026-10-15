@@ -1,5 +1,3 @@
-"""Tests for the /api/v1/scripts endpoints (versioned scanner serving): whitelist + path-traversal rejection, ?v= regex, unknown-version 404s, hash/content endpoints, manifest enumeration, and the frozen-read lru_cache."""
-
 import asyncio
 import logging
 from pathlib import Path
@@ -19,7 +17,6 @@ V_1_1_0_CONTENT = '#!/usr/bin/env bash\nSCRIPT_VERSION="1.1.0"\n# frozen 1.1.0\n
 
 @pytest.fixture
 def scripts_layout(tmp_path: Path):
-    """Build a temp scripts/ + versions/ tree and patch the module constants to it."""
     scripts_dir = tmp_path / "scripts"
     versions_dir = scripts_dir / "versions"
     versions_dir.mkdir(parents=True)
@@ -43,7 +40,7 @@ class TestValidateScriptName:
         assert exc.value.status_code == 404
 
     def test_accepts_whitelisted(self, scripts_layout):
-        scripts_module.validate_script_name("scanner.sh")  # no raise
+        scripts_module.validate_script_name("scanner.sh")
 
 
 class TestVersionRegex:
@@ -57,9 +54,9 @@ class TestVersionRegex:
     @pytest.mark.parametrize(
         "bad",
         [
-            "1.0",  # too few segments
-            "1.0.0.0",  # too many segments
-            "1.0.0-rc1",  # suffixes not allowed
+            "1.0",
+            "1.0.0.0",
+            "1.0.0-rc1",
             "../../etc",
             "..",
             "",
@@ -105,7 +102,7 @@ class TestGetScriptContent:
 
 
 class TestPrefixCollisionImmunity:
-    """An attacker sibling dir like scripts/versions-evil/ is never served for a version missing from scripts/versions/."""
+    """A sibling dir like scripts/versions-evil/ is never served for a version missing from scripts/versions/."""
 
     def test_sibling_directory_not_served(self, tmp_path: Path):
         scripts_dir = tmp_path / "scripts"

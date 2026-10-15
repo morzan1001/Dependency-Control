@@ -1,5 +1,3 @@
-"""The engine frees each SBOM and the aggregator during the run, also after an analyzer raised."""
-
 import weakref
 
 import pytest

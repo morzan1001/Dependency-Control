@@ -12,7 +12,6 @@ from app.core.encryption import NONCE_SIZE, decrypt_stream, encrypt_stream
 
 @pytest.fixture
 def encryption_key():
-    """Set a deterministic 32-byte hex key for tests."""
     key = "0" * 64
     with patch("app.core.encryption.settings") as mock_settings:
         mock_settings.ARCHIVE_ENCRYPTION_KEY = key
@@ -20,7 +19,6 @@ def encryption_key():
 
 
 def _parse_chunks(blob: bytes) -> list[tuple[bytes, bytes]]:
-    """Walk the wire format and return (nonce, payload) per chunk."""
     pos = 9
     chunks: list[tuple[bytes, bytes]] = []
     while True:
@@ -104,8 +102,7 @@ async def test_decrypt_rejects_unknown_version(encryption_key):
 @pytest.mark.asyncio
 async def test_decrypt_rejects_tampered_chunk(encryption_key):
     blob = bytearray(await _encrypt(b"x" * 100))
-    # Wire format: header(9) + per-chunk { LEN(4) || NONCE(12) || PAYLOAD(LEN bytes = ciphertext+tag) }
-    # So ciphertext bytes start at offset 9 + 4 + 12 = 25
+    # Header(9) + LEN(4) + NONCE(12): ciphertext starts at offset 25.
     blob[30] ^= 0xFF
 
     with pytest.raises(InvalidTag):

@@ -61,7 +61,6 @@ const onRejected = api.interceptors.response.use.mock.calls[0][1] as (
   err: unknown,
 ) => Promise<unknown>;
 
-// A 401 on a normal (non-auth) request that should trigger a refresh attempt.
 const make401 = () => ({
   isAxiosError: true,
   response: { status: 401 },

@@ -1,6 +1,4 @@
-"""A scan's unique dependency index spans the whole scan, so duplicates across the payload's
-SBOMs must be merged before the first insert. 3,698 of 45,084 production scans (8.2%) carry
-two or more SBOMs; a 60-scan sample of them index-dropped 2,772 of 21,730 parsed dependencies."""
+"""The unique dependency index spans the whole scan, so duplicates across its SBOMs merge before the first insert."""
 
 import asyncio
 import json
@@ -101,7 +99,6 @@ async def test_duplicate_across_sboms_is_merged_not_index_dropped(db):
 
 @pytest.mark.asyncio
 async def test_the_same_sbom_uploaded_twice_stores_one_inventory(db):
-    """14 identical uploads on one production scan index-dropped 1,586 of 1,708 rows."""
     await create_indexes(db)
 
     inserted = await store_scan_dependencies(
@@ -114,8 +111,7 @@ async def test_the_same_sbom_uploaded_twice_stores_one_inventory(db):
 
 @pytest.mark.asyncio
 async def test_a_component_without_its_own_purl_is_still_merged(db):
-    """The parser fabricates a pkg:generic purl for an unidentified component, so these rows
-    reach the index too; the merge has to collapse them like any other duplicate."""
+    """The parser fabricates a pkg:generic purl for an unidentified component, so these rows reach the index too."""
     await create_indexes(db)
     no_purl = {
         "bomFormat": "CycloneDX",
@@ -133,9 +129,7 @@ async def test_a_component_without_its_own_purl_is_still_merged(db):
 
 @pytest.mark.asyncio
 async def test_the_fake_index_treats_a_null_purl_as_a_colliding_value(db):
-    """Guards the emulation, not the app. A sparse COMPOUND index only skips a document when
-    every indexed field is absent, and a missing field is indexed as null — so two purl-less
-    rows for one name@version collide in real Mongo exactly as an explicit-null pair does."""
+    """Guards the emulation: a sparse compound index indexes a missing field as null unless every field is absent."""
     from pymongo.errors import DuplicateKeyError
 
     await create_indexes(db)
@@ -144,7 +138,6 @@ async def test_the_fake_index_treats_a_null_purl_as_a_colliding_value(db):
     with pytest.raises(DuplicateKeyError):
         await db.dependencies.insert_one({"_id": "b", **explicit_null})
 
-    # An omitted purl produces the same index key as an explicit null.
     with pytest.raises(DuplicateKeyError):
         await db.dependencies.insert_one({"_id": "c", "scan_id": _SCAN_ID, "name": "vendored-blob", "version": "1.0"})
 
@@ -183,7 +176,6 @@ async def _inventory(db) -> dict[str, dict]:
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_store_that_fails_part_way_keeps_the_previous_inventory(db, monkeypatch):
-    """A re-ingest that dies between chunks must not leave the scan with a truncated inventory."""
     await create_indexes(db)
     repo = DependencyRepository(db)
     await store_scan_dependencies([_sbom(_dep("old-only"), _dep("shared"))], _PROJECT_ID, _SCAN_ID, repo)
@@ -286,8 +278,6 @@ async def test_a_first_store_that_fails_part_way_is_completed_by_its_retry(db, m
 
 
 class _CleanupAfterBothWrote(DependencyRepository):
-    """Holds each store's cleanup delete until both overlapping stores have written their rows."""
-
     def __init__(self, db, both_written: asyncio.Barrier):
         super().__init__(db)
         self._both_written = both_written

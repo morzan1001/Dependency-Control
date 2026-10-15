@@ -1,5 +1,3 @@
-"""parse_iso_utc reads an ISO 8601 timestamp as an aware datetime, and anything else as None."""
-
 from datetime import datetime, timezone
 
 import pytest

@@ -12,10 +12,7 @@ describe("expirationDateInputToIso", () => {
   });
 
   it("converts a date-input value to end-of-day UTC", () => {
-    // <input type="date"> emits 'YYYY-MM-DD'. Treating it as midnight UTC
-    // expires the waiver at the *start* of the day the user picked, which
-    // surprises users — they expect the waiver to remain active *through*
-    // that day. End-of-day UTC matches the user's mental model.
+    // A date input's day must stay active through its end, not expire at its midnight start.
     expect(expirationDateInputToIso("2026-05-08")).toBe("2026-05-08T23:59:59.999Z");
   });
 

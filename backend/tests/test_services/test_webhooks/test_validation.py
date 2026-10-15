@@ -1,5 +1,3 @@
-"""Tests for webhook URL and event validation."""
-
 import asyncio
 import socket
 from unittest.mock import patch

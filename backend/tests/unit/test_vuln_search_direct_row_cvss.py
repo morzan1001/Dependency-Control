@@ -1,5 +1,3 @@
-"""A finding's own vulnerability-search row reads CVSS where it is stored: per CVE in details.vulnerabilities[]."""
-
 from types import SimpleNamespace
 
 from app.api.v1.endpoints.analytics.search import _build_direct_vuln_result

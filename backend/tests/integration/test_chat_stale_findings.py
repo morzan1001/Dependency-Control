@@ -1,5 +1,3 @@
-"""get_stale_findings ages a head-build finding by its persisted first_seen_at, so scan retention keeps it old."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -62,7 +60,6 @@ async def _stale(db, **args) -> dict:
 
 @pytest_asyncio.fixture
 async def history(db):
-    """log4j and commons-text first built 200 days ago, jackson new in head, the first build retention-deleted."""
     await _project(db)
     await _build(db, "scan-first", _LONG_AGO, _LOG4J, _COMMONS_TEXT)
     await _build(db, _HEAD, _NOW, _LOG4J, _COMMONS_TEXT, _JACKSON)

@@ -1,5 +1,3 @@
-"""A project delete takes the project's archives with it: the orphan reaper then removes their S3 bundles."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

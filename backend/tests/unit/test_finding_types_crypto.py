@@ -1,15 +1,11 @@
-"""Tests for crypto-related FindingType enum members."""
-
 import pytest
 
 from app.models.finding import FindingType
 
 CRYPTO_FINDING_TYPES = [
-    # algorithms / keys / quantum
     (FindingType.CRYPTO_WEAK_ALGORITHM, "crypto_weak_algorithm"),
     (FindingType.CRYPTO_WEAK_KEY, "crypto_weak_key"),
     (FindingType.CRYPTO_QUANTUM_VULNERABLE, "crypto_quantum_vulnerable"),
-    # certificates + protocols
     (FindingType.CRYPTO_CERT_EXPIRED, "crypto_cert_expired"),
     (FindingType.CRYPTO_CERT_EXPIRING_SOON, "crypto_cert_expiring_soon"),
     (FindingType.CRYPTO_CERT_NOT_YET_VALID, "crypto_cert_not_yet_valid"),
@@ -18,7 +14,6 @@ CRYPTO_FINDING_TYPES = [
     (FindingType.CRYPTO_CERT_SELF_SIGNED, "crypto_cert_self_signed"),
     (FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG, "crypto_cert_validity_too_long"),
     (FindingType.CRYPTO_WEAK_PROTOCOL, "crypto_weak_protocol"),
-    # key management
     (FindingType.CRYPTO_KEY_MANAGEMENT, "crypto_key_management"),
 ]
 

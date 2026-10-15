@@ -11,7 +11,6 @@ def _doc_signature(doc: dict):
 
 
 def _sast_merged(component, line, scanner, rule_id, fingerprint, code):
-    """Build a Finding shaped like to_sast_aggregate output (nested per-scanner entry)."""
     return Finding(
         id=f"{scanner.upper()}-{rule_id}-{component}-{line}",
         type="sast",
@@ -72,7 +71,6 @@ class TestSastSignature:
 
     def test_deterministic_scanner_selection_prefers_opengrep(self):
         f = _sast_merged("a.py", 10, "opengrep", "r", "fp-og", "code")
-        # add a bearer entry in non-preferred order
         f.details["sast_findings"].insert(
             0,
             {
@@ -165,7 +163,6 @@ class TestNonLocationFindings:
 
 
 def test_compute_match_signature_from_doc_recovers_bearer_sast():
-    # persisted doc with no "match" field must recompute to the same signature shape
     doc = {
         "finding_id": "BEARER-java_lang_hardcoded_secret-a.py-94",
         "component": "a.py",

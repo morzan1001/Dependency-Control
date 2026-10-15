@@ -1,5 +1,3 @@
-"""OllamaClient turns Ollama's NDJSON chat stream into token / tool_call / done / error events."""
-
 import json
 
 import httpx
@@ -30,8 +28,6 @@ def _ndjson(*chunks: dict) -> bytes:
 
 
 class _DyingStream(httpx.AsyncByteStream):
-    """A response body that delivers some lines, then loses the connection the way a killed runner does."""
-
     def __init__(self, head: bytes, error: Exception):
         self.head = head
         self.error = error

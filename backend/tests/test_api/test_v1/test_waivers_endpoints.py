@@ -1,5 +1,3 @@
-"""Tests for waiver API endpoints."""
-
 import asyncio
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
@@ -58,7 +56,6 @@ def _call_list_waivers(current_user, db=None, **overrides):
 
 
 def _project_access(db):
-    """check_project_access answering with the project the fake database holds."""
     return AsyncMock(return_value=Project(**db.projects._docs[_PROJECT]))
 
 
@@ -87,7 +84,6 @@ def _run_create(user, db, fields) -> SimpleNamespace:
 
 
 def _create(user, db=None, **fields) -> SimpleNamespace:
-    """create_waiver with a recording repository, asserting it stored the waiver once."""
     run = _run_create(user, db, fields)
     assert not isinstance(run.outcome, HTTPException), run.outcome.detail
     run.repo.create.assert_called_once()
@@ -95,7 +91,6 @@ def _create(user, db=None, **fields) -> SimpleNamespace:
 
 
 def _refused(user, db=None, **fields) -> HTTPException:
-    """create_waiver's refusal, asserting nothing was stored."""
     run = _run_create(user, db, fields)
     assert isinstance(run.outcome, HTTPException), run.outcome
     run.repo.create.assert_not_called()
@@ -112,11 +107,10 @@ class TestCreateWaiver:
 
 
 class TestCreateWaiverValidatesFindingMatch:
-    """A finding-scope waiver must match at least one finding on the project's head build, else it is a zombie waiver that never applies."""
+    """A finding-scope waiver must match a finding on the head build, or it is a zombie that never applies."""
 
     @staticmethod
     def _db_with_head_scan(scan_id=_HEAD_SCAN, project_id=_PROJECT, findings=(), scans=True):
-        """A project whose head resolves to ``scan_id``, plus whatever findings that build holds."""
         db = FakeDatabase()
         db.projects._docs[project_id] = {
             "_id": project_id,
@@ -169,8 +163,7 @@ class TestCreateWaiverValidatesFindingMatch:
         )
 
     def test_validation_reads_the_head_build_not_the_queued_scan_the_pointer_names(self, admin_user):
-        """A queued scan holds no findings, so validating against the pointer would reject a waiver
-        for a finding the head build really reports."""
+        """A queued scan holds no findings, so validating against the pointer would reject a real finding's waiver."""
         db = self._db_with_head_scan(
             findings=[{"finding_id": "QUALITY:artemis-commons:2.43.0", "type": "quality", "component": None}]
         )
@@ -263,8 +256,7 @@ class TestCreateWaiverValidatesFindingMatch:
         db.findings.count_documents.assert_not_called()
 
     def test_unscoped_license_waiver_is_rejected(self, admin_user):
-        """finding_id is not unique per scan for license/eol; prod scan fe02e2bf has 115
-        documents under LIC-GPL-2.0-only, so an unscoped waiver would blanket all of them."""
+        """finding_id is not unique per scan for license/eol, so an unscoped waiver would blanket every such finding."""
         exc = _refused(
             admin_user,
             project_id=None,
@@ -336,7 +328,6 @@ class TestCreateWaiverValidatesFindingMatch:
         )
 
     def test_unscanned_project_skips_match_check(self, admin_user):
-        """If the project has no latest_scan_id yet, accept the waiver — no scan to validate against."""
         _create(
             admin_user,
             self._db_with_head_scan(scans=False),
@@ -348,7 +339,7 @@ class TestCreateWaiverValidatesFindingMatch:
         )
 
     def test_vulnerability_id_scoped_waiver_skips_finding_id_check(self, admin_user):
-        """CVE-targeted waivers match by vulnerability_id, not finding_id, so the finding_id format mismatch must not 422."""
+        """CVE-targeted waivers match by vulnerability_id, so a finding_id format mismatch must not 422."""
         _create(
             admin_user,
             self._db_with_head_scan(),
@@ -361,7 +352,6 @@ class TestCreateWaiverValidatesFindingMatch:
         )
 
     def test_create_waiver_copies_match_signature(self, admin_user):
-        """A finding-scope project waiver snapshots the matched finding's MatchSignature for later line-drift matching."""
         finding_doc = {
             "finding_id": "OPENGREP-r-a.py-10",
             "type": "sast",
@@ -535,7 +525,6 @@ class TestUpdateWaiverRecalc:
         return [waiver.id for waiver in queued], [t.func for t in bg_tasks.tasks]
 
     def test_expiration_date_change_triggers_recalc(self, admin_user):
-        """Expiring/extending a waiver changes the active set and must queue the recalculation."""
         new_expiry = datetime.now(timezone.utc) - timedelta(days=1)
 
         assert self._run_update(admin_user, {"expiration_date": new_expiry}) == (["waiver-1"], [run_waiver_recalc])
@@ -580,7 +569,6 @@ class TestListWaivers:
         assert exc_info.value.status_code == 403
 
     def test_includes_is_active_flag_per_waiver(self, admin_user):
-        """Listed waivers must expose is_active so callers can distinguish live from expired without re-deriving the rule."""
         now = datetime.now(timezone.utc)
         expired = _make_waiver(id="w-expired", expiration_date=now - timedelta(days=5))
         active = _make_waiver(id="w-active", expiration_date=now + timedelta(days=5))
@@ -599,8 +587,6 @@ class TestListWaivers:
 
 
 class TestWaiverResponseShape:
-    """Every waiver endpoint answers one shape: is_active computed on read, the match signature internal."""
-
     def test_a_waiver_stored_while_active_lists_as_expired_once_it_lapses(self, admin_user):
         db = FakeDatabase()
         lapsed = _make_waiver(id="w-lapsed", expiration_date=datetime.now(timezone.utc) - timedelta(days=1))
@@ -633,8 +619,7 @@ class TestWaiverResponseShape:
 
 
 class TestListFilters:
-    """FakeDatabase-backed: the filters are queries, so a mock that answers every query the same
-    way cannot tell whether they selected anything."""
+    """FakeDatabase-backed: the filters are queries, which a mock answering every query alike cannot check."""
 
     _NOW = datetime.now(timezone.utc)
     _WINDOW = timedelta(days=5)
@@ -770,8 +755,6 @@ class TestDeleteWaiver:
 
 
 class TestCreateWaiverPermissions:
-    """create_waiver checks editor access for project, waiver:manage for global."""
-
     def test_project_waiver_requires_editor_role(self, regular_user):
         db = MagicMock()
         db.projects.find_one = AsyncMock(return_value={"_id": "proj-1", "latest_scan_id": None})
@@ -790,8 +773,6 @@ class TestCreateWaiverPermissions:
 
 
 class TestDeleteWaiverPermissions:
-    """delete_waiver has dual-path logic for project vs global waivers."""
-
     def test_project_waiver_with_delete_perm_bypasses_project_check(self, admin_user):
         from app.api.v1.endpoints.waivers import delete_waiver
 
@@ -865,8 +846,6 @@ class TestDeleteWaiverPermissions:
 
 
 class TestListWaiversPermissions:
-    """list_waivers checks waiver:read_all vs waiver:read."""
-
     def test_read_all_skips_project_filter(self, admin_user):
         mock_repo = MagicMock()
         mock_repo.count = AsyncMock(return_value=0)

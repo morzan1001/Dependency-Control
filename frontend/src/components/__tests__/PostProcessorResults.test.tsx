@@ -44,9 +44,7 @@ describe("EPSSKEVResults exploit maturity bars", () => {
 
 describe("EPSSKEVResults risk-score tile label", () => {
   it("does not reuse the dashboard's 'Avg Risk Score' wording", () => {
-    // Both tiles read from a field literally named avg_risk_score, but this one averages
-    // per-CVE EPSS/KEV threat scores (prod: ~31) while the dashboard averages projects'
-    // saturating exposure scores (prod: 42.8). Identical labels invite a false comparison.
+    // This avg_risk_score averages per-CVE threat scores, the dashboard's project exposure: one label would mislead.
     render(<EPSSKEVResults data={{ ...baseData, avg_risk_score: 30.9, max_risk_score: 88.0 }} />);
 
     expect(screen.getByText("Avg Threat Score")).toBeInTheDocument();
@@ -138,8 +136,7 @@ function highRiskCve(index: number): EPSSKEVSummary["high_risk_cves"][number] {
 
 describe("EPSSKEVResults high-risk list", () => {
   it("names the population the card was cut from, not the rows it shows", () => {
-    // The server keeps the top 20 of 35 and the card renders 10 of those, so neither array
-    // length is the answer to "how many high-risk vulnerabilities are there".
+    // The server keeps 20 of 35 and the card renders 10, so neither array length is the high-risk total.
     render(
       <EPSSKEVResults
         data={{

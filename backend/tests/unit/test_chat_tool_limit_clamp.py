@@ -1,8 +1,4 @@
-"""A model that asked for more than a chat tool grants must be told it was given less.
-
-The clamp is silent otherwise: the tool answers with the ceiling's worth of rows and the model
-relays them as the whole of what it asked about.
-"""
+"""A silent clamp would let the model relay the ceiling's worth of rows as the whole of what it asked for."""
 
 from datetime import datetime, timezone
 

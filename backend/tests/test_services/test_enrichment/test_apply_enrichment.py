@@ -1,5 +1,3 @@
-"""The per-advisory enrichment fold and how it lands on a finding's advisories."""
-
 import itertools
 
 import pytest
@@ -81,8 +79,7 @@ def test_the_maturity_order_names_exactly_the_levels_scoring_produces():
 
 
 def test_enrichment_reaches_the_entry_the_cve_names_and_no_other():
-    """A scanner may have filed the CVE under a GHSA id; EPSS and KEV belong on whichever entry
-    carries the CVE, on that one alone."""
+    """A scanner may file the CVE under a GHSA id, so EPSS and KEV belong on whichever entry carries the CVE."""
     details: dict = {
         "vulnerabilities": [
             {"id": "CVE-1"},
@@ -113,7 +110,6 @@ def test_a_resolved_ghsa_scores_its_cve_on_the_advisorys_cvss():
 
 @pytest.mark.asyncio
 async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
-    """Entries stored separately per scanner must fold into one once GHSA->CVE links them (C10)."""
     service = VulnerabilityEnrichmentService()
     finding = {
         "_id": "f1",

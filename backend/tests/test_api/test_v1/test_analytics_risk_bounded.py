@@ -1,5 +1,3 @@
-"""Tests that /impact and /hotspots analytics aggregations stay bounded: details slimmed before $group, scalar severity counts, id/detail sets deduped via $addToSet (not $slice-capped), and allow_disk_use threaded through."""
-
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -34,11 +32,7 @@ _ARRAY_ACCUMULATORS = ("$push", "$addToSet")
 
 
 def _iter_array_accumulators(pipeline: list[dict[str, Any]]):
-    """Yield every array-collecting accumulator in any ``$group`` stage.
-
-    Both operators, because risk.py collects with $addToSet only: a $push-only check iterates
-    zero times and would pass a regression spelled {"severities": {"$addToSet": "$severity"}}.
-    """
+    """Both operators: risk.py collects with $addToSet only, so a $push-only check would iterate zero times."""
     for stage in pipeline:
         group = stage.get("$group")
         if not group:
@@ -59,13 +53,10 @@ def _group_stage(pipeline: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _assert_counts_come_from_advisories(pipeline: list[dict[str, Any]]) -> None:
-    """Severity/vuln counts must derive from details.vulnerabilities (the real CVEs) in Python, not
-    from Mongo severity accumulators keyed on finding_id (which is only component:version). So the
-    $group must not carry per-severity accumulators, and the slimmed details must keep id+severity."""
+    """finding_id is only component:version, so counts derive from details.vulnerabilities in Python, not $group."""
     group = _group_stage(pipeline)
     for sev in ("critical", "high", "medium", "low"):
         assert sev not in group and f"{sev}_ids" not in group, f"{sev} must not be counted in Mongo"
-    # the pre-$group slim keeps the advisory fields the Python counter needs
     slim = None
     for stage in pipeline:
         if "$group" in stage:
@@ -79,7 +70,6 @@ def _assert_counts_come_from_advisories(pipeline: list[dict[str, Any]]) -> None:
 
 
 def _sliced_fields_after_group(pipeline: list[dict[str, Any]]) -> list[str]:
-    """Names of fields $slice-capped in a $project after the $group."""
     seen_group = False
     sliced: list[str] = []
     for stage in pipeline:
@@ -98,7 +88,6 @@ def _sliced_fields_after_group(pipeline: list[dict[str, Any]]) -> list[str]:
 
 
 def _details_is_slimmed_before_group(pipeline: list[dict[str, Any]]) -> bool:
-    """True if a $project slims ``details`` to fix-version fields before the first $group."""
     for stage in pipeline:
         if "$group" in stage:
             return False
@@ -106,7 +95,6 @@ def _details_is_slimmed_before_group(pipeline: list[dict[str, Any]]) -> bool:
         if not project:
             continue
         details_spec = project.get("details")
-        # slimming projection maps details to a fix-version-keyed dict, not a passthrough
         if isinstance(details_spec, dict):
             keys = set(details_spec.keys())
             if keys and keys <= {"fixed_version", "vulnerabilities"}:
@@ -114,16 +102,10 @@ def _details_is_slimmed_before_group(pipeline: list[dict[str, Any]]) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Endpoint runners (patch helpers + repos, capture aggregate kwargs)
-# ---------------------------------------------------------------------------
-
-
 def _run_impact(
     agg_results: list[dict[str, Any]],
     limit: int = 20,
 ) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
-    """Run /impact with patched helpers. Returns (response, pipeline, agg_kwargs)."""
     from app.api.v1.endpoints.analytics.risk import get_impact_analysis
 
     user = _admin_user()
@@ -171,7 +153,6 @@ def _run_hotspots(
     skip: int = 0,
     enrich: Any = _no_enrichment,
 ) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
-    """Run /hotspots with patched helpers. Returns (response, finding_pipeline, agg_kwargs)."""
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
 
     user = _admin_user()
@@ -218,11 +199,6 @@ def _run_hotspots(
     return response, captured[0], captured_kwargs[0]
 
 
-# ---------------------------------------------------------------------------
-# Structural tests — /impact
-# ---------------------------------------------------------------------------
-
-
 class TestImpactPipelineBounded:
     def test_no_full_details_push(self):
         _, pipeline, _ = _run_impact(agg_results=[])
@@ -256,11 +232,6 @@ class TestImpactPipelineBounded:
     def test_allow_disk_use_threaded(self):
         _, _, kwargs = _run_impact(agg_results=[])
         assert kwargs.get("allow_disk_use") is True, "allow_disk_use=True must be passed for /impact aggregation"
-
-
-# ---------------------------------------------------------------------------
-# Structural tests — /hotspots
-# ---------------------------------------------------------------------------
 
 
 class TestHotspotsPipelineBounded:
@@ -298,11 +269,6 @@ class TestHotspotsPipelineBounded:
         assert kwargs.get("allow_disk_use") is True, "allow_disk_use=True must be passed for /hotspots aggregation"
 
 
-# ---------------------------------------------------------------------------
-# Response-shape equivalence — /impact (built from scalar group output)
-# ---------------------------------------------------------------------------
-
-
 _LODASH_DETAILS = {
     "fixed_version": "4.17.21",
     "vulnerabilities": [
@@ -333,7 +299,6 @@ _LODASH_DETAILS = {
 
 class TestImpactResponseShape:
     def _group_row(self) -> dict[str, Any]:
-        """A group row matching the bounded pipeline output shape."""
         return {
             "_id": {"component": "lodash", "version": "4.17.11"},
             "component": "lodash",
@@ -360,11 +325,6 @@ class TestImpactResponseShape:
         assert "4.17.21" in item.fix_versions
 
 
-# ---------------------------------------------------------------------------
-# Response-shape equivalence — /hotspots
-# ---------------------------------------------------------------------------
-
-
 class TestHotspotsResponseShape:
     def _group_row(self) -> dict[str, Any]:
         return {
@@ -388,8 +348,7 @@ class TestHotspotsResponseShape:
         assert "CVE-2021-1" in item.top_cves
 
 
-# Severity/vuln counts derive from details.vulnerabilities (the real CVEs), deduped to a canonical
-# CVE so a GHSA + its CVE alias count once, and placed in the worst severity so buckets sum to total.
+# A GHSA and its CVE alias count once, under the worst severity, so the buckets sum to the total.
 
 
 class TestDistinctSeverityCounts:
@@ -402,7 +361,7 @@ class TestDistinctSeverityCounts:
         assert _canonical_cve({"id": "GHSA-x", "resolved_cve": "CVE-1"}) == "CVE-1"
         assert _canonical_cve({"id": "GHSA-x", "aliases": ["CVE-2"]}) == "CVE-2"
         assert _canonical_cve({"id": "CVE-3"}) == "CVE-3"
-        assert _canonical_cve({"id": "GHSA-only"}) == "GHSA-only"  # GHSA with no CVE mapping
+        assert _canonical_cve({"id": "GHSA-only"}) == "GHSA-only"
 
     def test_ghsa_and_cve_alias_count_once(self):
         from app.api.v1.helpers.analytics import severity_counts_from_details
@@ -426,8 +385,7 @@ class TestDistinctSeverityCounts:
     def test_multi_severity_cve_counts_once_at_worst(self):
         from app.api.v1.helpers.analytics import severity_counts_from_details
 
-        # Both orderings must resolve to critical, so the test catches a last-wins bug regardless
-        # of iteration order: CVE-A is high-then-critical, CVE-B is critical-then-high.
+        # CVE-A is high-then-critical and CVE-B critical-then-high, so a last-wins bug fails either way.
         details = self._details(
             {"id": "CVE-A", "resolved_cve": "CVE-A", "severity": "HIGH"},
             {"id": "CVE-A", "resolved_cve": "CVE-A", "severity": "CRITICAL"},
@@ -513,11 +471,10 @@ class TestUnratedAdvisoriesWeigh:
         assert top.fix_impact_score > 0
 
 
-# epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.
+# epss/risk come from enrichment, so the endpoint re-sorts in Python and the fetch must not be capped.
 
 
 def _limit_values_after_group(pipeline: list[dict[str, Any]]) -> list[int]:
-    """Return every ``$limit`` value in a stage at/after the first ``$group``."""
     seen_group = False
     limits: list[int] = []
     for stage in pipeline:
@@ -530,8 +487,7 @@ def _limit_values_after_group(pipeline: list[dict[str, Any]]) -> list[int]:
 
 class TestHotspotsPostSortPagination:
     def test_epss_deep_page_is_not_capped_in_mongo(self):
-        # skip=60/limit=20 needs the 80 highest-epss groups and the rank is only known in Python,
-        # so any Mongo-side cap drops rows the page needs.
+        # skip=60/limit=20 needs the 80 highest-epss groups, ranked only in Python, so a Mongo cap drops rows.
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
         assert _limit_values_after_group(pipeline) == []
 
@@ -547,8 +503,7 @@ class TestHotspotsPostSortPagination:
         )
 
     def test_finding_count_sort_paginates_in_python(self):
-        # finding_count is a distinct-CVE count derived in Python from advisories, so it cannot be
-        # ordered in Mongo; the fetch must not $skip/$limit before the Python re-sort.
+        # finding_count is derived in Python from advisories, so Mongo cannot order or page by it.
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
         assert not any("$skip" in stage for stage in pipeline), "finding_count must not $skip in Mongo"
         assert not any("$limit" in stage for stage in pipeline), "finding_count must not $limit in Mongo"
@@ -561,8 +516,6 @@ class TestHotspotsPostSortPagination:
 
 
 class TestHotspotsBuildOnlyThePage:
-    """A page of twenty must not enrich and build a row for every vulnerable group in scope."""
-
     @staticmethod
     def _groups(count: int) -> list[dict[str, Any]]:
         return [
@@ -604,7 +557,7 @@ class TestHotspotsBuildOnlyThePage:
         assert len(enriched) == 300
 
 
-# Finding documents carry scan_created_at (engine._prepare_finding_records); created_at never exists on them.
+# Finding documents carry scan_created_at; created_at never exists on them.
 
 
 def _projected_fields_before_group(pipeline: list[dict[str, Any]]) -> set[str]:
@@ -682,13 +635,10 @@ class TestFirstSeenPrefersFirstSeenAt:
         assert item.days_known is not None and item.days_known >= 119
 
 
-# fix_impact_score, not blast radius, decides the /impact ranking and the top-`limit` cut.
-# The KEV/EPSS/maturity boosts come from enrichment, so scoring happens in Python; a Mongo
-# blast-radius $limit used to drop severe-but-narrow fixes before they were ever scored.
+# The KEV/EPSS/maturity boosts come from enrichment, so fix_impact_score ranks and cuts in Python.
 
 
 def _details_from_counts(component: str, critical: int, high: int, medium: int, low: int) -> dict[str, Any]:
-    """A slimmed details doc whose advisory list yields the given distinct-CVE severity counts."""
     vulns = []
     for sev, n in (("critical", critical), ("high", high), ("medium", medium), ("low", low)):
         for i in range(n):
@@ -765,8 +715,7 @@ class TestSelectImpactCandidates:
         assert any(r["component"] == "boundary" for r in cands)
 
     def test_the_cut_is_taken_from_the_limit_th_row(self):
-        # P_limit = 100 -> threshold 12.03. Read one row further down (pre 20) the threshold
-        # falls to 2.4 and every enrichment budget goes to groups that cannot place.
+        # P_limit = 100 gives threshold 12.03; reading one row further (pre 20) would lower it to 2.4.
         top = [_impact_row(f"t{i}", ap=10, critical=1) for i in range(5)]  # pre 100 each
         sixth = _impact_row("sixth", ap=2, critical=1)  # pre 20, the first row below the cut
         unreachable = _impact_row("unreachable", ap=1, medium=1)  # pre 4: under 12.03, over 2.4
@@ -776,8 +725,7 @@ class TestSelectImpactCandidates:
         assert "unreachable" not in names, "the cut must come from the limit-th pre-score"
 
     def test_a_field_that_scores_zero_throughout_keeps_every_group(self):
-        """INFO carries no severity weight, so a whole page can pre-score zero; an
-        exclusive cut then drops the entire field and the endpoint answers with nothing."""
+        """INFO carries no severity weight, so a page can pre-score zero and an exclusive cut would drop it all."""
         rows = [_impact_row(f"u{i}", ap=5) for i in range(8)]
 
         assert len(select_impact_candidates(_scored(rows), limit=5)) == len(rows)
@@ -824,8 +772,7 @@ class TestPriorityReasons:
 
 class TestImpactEndpointRanksByScoreNotBlastRadius:
     def test_narrow_critical_beats_broad_low_severity(self):
-        # Old code $sorted+$limited by blast radius in Mongo: with 24 broad groups the narrow
-        # critical never entered the top-5 and was never scored. It must now rank first.
+        # With 24 broad groups a blast-radius cut in Mongo would never score the narrow critical, which ranks first.
         broad = [_impact_row(f"broad{i}", ap=50, low=1) for i in range(24)]  # pre 10, blast radius 50
         narrow = _impact_row("narrow-critical", ap=2, critical=5)  # pre 50*2 = 100
         response, _, _ = _run_impact(agg_results=[*broad, narrow], limit=5)
@@ -847,7 +794,6 @@ class TestImpactEndpointRanksByScoreNotBlastRadius:
 
 
 def _impact_aggregate_calls(*limits: int) -> int:
-    """Run /impact once per given limit (sharing the cache) and count the findings aggregations."""
     from app.api.v1.endpoints.analytics.risk import get_impact_analysis
 
     user = _admin_user()
@@ -966,8 +912,7 @@ class TestAnalyticsResultCache:
         assert [r.model_dump() for r in fresh] == [r.model_dump() for r in cached]
 
 
-# The "Vulns" count is distinct vulnerabilities from details.vulnerabilities, deduped to canonical
-# CVEs — not finding documents (finding_id is only component:version) and not the raw advisory rows.
+# "Vulns" counts canonical CVEs from details.vulnerabilities, not finding documents or raw advisory rows.
 
 
 def _row_with_advisories(component: str, vulns: list[dict[str, Any]], ap: int = 1) -> dict[str, Any]:

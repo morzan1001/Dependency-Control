@@ -1,5 +1,3 @@
-"""The reconcile hints scans_released_list by name, and housekeeping swallows the error a rename would raise."""
-
 import pytest
 
 from app.core.init_db import create_indexes

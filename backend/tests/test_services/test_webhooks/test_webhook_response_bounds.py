@@ -1,4 +1,4 @@
-"""A webhook receiver controls the response, so delivery and the test button must bound both its size and its duration."""
+"""A webhook receiver controls the response, so delivery and the test button bound its size and duration."""
 
 from __future__ import annotations
 
@@ -24,8 +24,6 @@ _TEST_GUARD = 5.0
 
 
 class _Body:
-    """Response body that counts how many bytes the client actually pulled."""
-
     def __init__(self, total_bytes: int | None, chunk: bytes, pause: float = 0.0) -> None:
         self.pulled = 0
         self._total = total_bytes

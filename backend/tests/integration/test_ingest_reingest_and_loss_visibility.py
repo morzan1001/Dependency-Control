@@ -1,6 +1,3 @@
-"""Ingest stores each recognized SBOM in GridFS and nothing else; the analysis engine writes the
-dependency inventory, and a re-ingest replaces sbom_refs so superseded uploads can be reaped."""
-
 import asyncio
 import json
 import logging
@@ -54,7 +51,7 @@ _GOOD_SBOM = _cyclonedx(
 
 @pytest.fixture
 def worker_after_ingest(running_worker, monkeypatch):
-    """The running worker, while ingest queues its job where nothing takes it: the test decides when the engine runs."""
+    """Ingest queues its job where nothing takes it, so the test decides when the engine runs."""
     monkeypatch.setattr(scan_manager, "worker_manager", AnalysisWorkerManager(num_workers=1))
     return running_worker
 
@@ -141,7 +138,6 @@ async def test_a_recognized_sbom_that_does_not_parse_is_accepted_and_its_scan_co
 
 @pytest.mark.asyncio
 async def test_a_payload_with_an_unparsed_sbom_keeps_the_previous_inventory(db):
-    """A re-run cannot swap the stored complete inventory for the partial one of a payload with a failed SBOM."""
     repo = DependencyRepository(db)
     previous = parse_sbom(_fixture("sbom/mono.syft.json"))
     await store_scan_dependencies([previous], _PROJECT_ID, _SCAN_ID, repo)
@@ -255,8 +251,7 @@ async def test_scanner_and_cbom_uploads_leave_a_failed_scan_failed(client, db, a
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_payload_whose_sboms_did_not_all_fail_is_accepted(client, db, api_key_headers):
-    """Refusing the mixed payload would throw away the good SBOM and the scan row the pipeline's
-    other analyzers attach their results to."""
+    """Refusing it would discard the good SBOM and the scan row the pipeline's other analyzers attach to."""
     sboms = [_fixture("sbom/mono.syft.json"), _fixture("iac/kics_2.1.20_results.json")]
 
     resp = await client.post("/api/v1/ingest", json=_run(sboms), headers=api_key_headers)
@@ -286,8 +281,7 @@ async def test_a_payload_without_a_recognized_sbom_is_refused(client, db, api_ke
 
 @pytest.mark.asyncio
 async def test_a_freshly_ingested_scan_waits_in_the_status_the_worker_claims(client, db, api_key_headers, fake_gridfs):
-    """The worker's atomic claim matches on 'pending' alone, so any other word parks the scan
-    forever: it is queued, never analysed, and nothing reports it as stuck."""
+    """The worker's atomic claim matches on 'pending' alone, so any other status parks the scan forever."""
 
     resp = await client.post("/api/v1/ingest", json=_run([_GOOD_SBOM]), headers=api_key_headers)
     assert resp.status_code == 202, resp.text
@@ -298,8 +292,7 @@ async def test_a_freshly_ingested_scan_waits_in_the_status_the_worker_claims(cli
 
 @pytest.mark.asyncio
 async def test_an_ingest_without_a_branch_name_is_filed_under_unknown(client, db, api_key_headers, fake_gridfs):
-    """Every branch-scoped reader defaults the missing branch to 'unknown'; a scan stored under
-    any other sentinel is grouped with nothing."""
+    """Branch-scoped readers default a missing branch to 'unknown', so any other sentinel groups with nothing."""
 
     resp = await client.post("/api/v1/ingest", json=_run([_GOOD_SBOM], branch=""), headers=api_key_headers)
     assert resp.status_code == 202, resp.text

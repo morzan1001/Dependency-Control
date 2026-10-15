@@ -1,5 +1,3 @@
-"""The detector name TruffleHog sends survives ingest and names the finding."""
-
 import pytest
 
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository

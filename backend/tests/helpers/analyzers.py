@@ -1,5 +1,3 @@
-"""Registry access for tests: the registry stores factories, not instances."""
-
 from collections.abc import Iterable
 from typing import Any
 
@@ -19,12 +17,10 @@ from app.services.sbom_parser import parse_sbom
 
 
 def build_analyzer(name: str) -> Any:
-    """The instance a run would get for this name."""
     return registry.analyzer_factories[name]()
 
 
 def serve_analyzer(monkeypatch: pytest.MonkeyPatch, name: str, analyzer: Analyzer | Any) -> Any:
-    """Hand this one instance to every resolution of ``name``, so a test can inspect it afterwards."""
     monkeypatch.setitem(registry.analyzer_factories, name, lambda: analyzer)
     return analyzer
 
@@ -32,7 +28,6 @@ def serve_analyzer(monkeypatch: pytest.MonkeyPatch, name: str, analyzer: Analyze
 async def analyze_cyclonedx(
     analyzer: Analyzer, components: list[dict[str, Any]], settings: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Run the analyzer as the engine does: on the parser's reading of a CycloneDX document with these components."""
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
     return await analyzer.analyze(
         sbom, settings, [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
@@ -40,7 +35,6 @@ async def analyze_cyclonedx(
 
 
 def run_context(db: Any, scan: Scan | str, active_analyzers: Iterable[str] = (), **overrides: Any) -> Any:
-    """The context run_analysis builds for a claimed ``scan`` (or a bare one of that id), minus the settings reads."""
     if isinstance(scan, str):
         scan = Scan(id=scan, project_id="test-project-id", branch="main")
     fields = {
@@ -56,7 +50,6 @@ def run_context(db: Any, scan: Scan | str, active_analyzers: Iterable[str] = (),
 
 
 def verdict(status: ScanStatus = SCAN_STATUS_COMPLETED, stats: Stats | None = None, **fields: Any) -> Any:
-    """A run's verdict with no findings and no failed analyzers, unless ``fields`` say otherwise."""
     defaults = {
         "status": status,
         "error": None,
@@ -71,7 +64,6 @@ def verdict(status: ScanStatus = SCAN_STATUS_COMPLETED, stats: Stats | None = No
 
 
 async def process_sbom_document(ctx: Any, aggregator: Any, sbom: dict[str, Any], position: int = 1) -> list[Any]:
-    """Run ``engine._process_sbom`` on the document as run_analysis hands it a loaded SBOM, for the non-CLI analyzers."""
     return await engine._process_sbom(ctx, aggregator, *engine._parse_and_track_sbom(sbom, position))
 
 
@@ -80,7 +72,6 @@ def bundled_iana_catalog() -> dict[str, CipherSuiteEntry]:
 
 
 async def evaluate_crypto(name: str, db: Any, project_id: str = "p", scan_id: str = "s") -> dict[str, Any]:
-    """What the engine's crypto pass records for ``name`` over the stored assets and the resolved policy."""
     docs = await CryptoAssetRepository(db).find_all_raw(scan_query(project_id, scan_id))
     assets = [CryptoAsset.model_validate(doc) for doc in docs]
     policy = await CryptoPolicyResolver(db).resolve(project_id)

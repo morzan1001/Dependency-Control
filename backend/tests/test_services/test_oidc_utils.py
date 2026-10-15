@@ -1,5 +1,3 @@
-"""Tests for shared OIDC token validation, exercising the real RS256 decode/claim-verification path (no jwt.decode mocking)."""
-
 import asyncio
 import base64
 import hashlib
@@ -58,7 +56,6 @@ def jwks(signing_key):
 
 
 def _make_token(private_key, aud, headers=None, **claims) -> str:
-    """Sign a real RS256 OIDC token shaped like a GitLab CI id_token."""
     now = int(time.time())
     claims = {
         "iss": ISSUER,
@@ -98,7 +95,6 @@ def _retargeted(token: str) -> str:
 
 
 def _validate(token: str, audience, jwks, get_jwks=None):
-    """Run validate_oidc_token with the real decode path and a stubbed JWKS source."""
     return asyncio.run(
         validate_oidc_token(
             token=token,
@@ -113,13 +109,9 @@ def _validate(token: str, audience, jwks, get_jwks=None):
 
 
 class TestOIDCAudienceFailClosed:
-    """Audience is hard-required and verification fails closed."""
-
     def test_no_audience_configured_is_rejected(self, signing_key, jwks):
-        """A validly-signed token must be rejected when the instance has no configured audience (fail closed)."""
         token = _make_token(signing_key, aud="some-audience")
 
-        # No decode should even be attempted: the guard rejects up front.
         with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
             result = _validate(token, audience=None, jwks=jwks)
 
@@ -127,7 +119,6 @@ class TestOIDCAudienceFailClosed:
         mock_decode.assert_not_called()
 
     def test_empty_string_audience_is_rejected(self, signing_key, jwks):
-        """An empty-string audience is treated as 'not configured' -> rejected."""
         token = _make_token(signing_key, aud="some-audience")
 
         with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
@@ -137,7 +128,6 @@ class TestOIDCAudienceFailClosed:
         mock_decode.assert_not_called()
 
     def test_audience_mismatch_is_rejected(self, signing_key, jwks):
-        """A real token whose 'aud' does not match the configured audience must be rejected."""
         token = _make_token(signing_key, aud="attacker-audience")
 
         result = _validate(token, audience=AUDIENCE, jwks=jwks)
@@ -148,7 +138,6 @@ class TestOIDCAudienceFailClosed:
         "aud", [pytest.param(AUDIENCE, id="string"), pytest.param(["other-service", AUDIENCE], id="list")]
     )
     def test_matching_audience_is_accepted(self, signing_key, jwks, aud):
-        """A real token whose 'aud' names the configured audience is accepted."""
         token = _make_token(signing_key, aud=aud)
 
         result = _validate(token, audience=AUDIENCE, jwks=jwks)
@@ -158,7 +147,6 @@ class TestOIDCAudienceFailClosed:
         assert result.project_path == "group/project"
 
     def test_token_without_aud_claim_is_rejected_when_audience_required(self, signing_key, jwks):
-        """A token missing the 'aud' claim entirely is rejected when an audience is configured."""
         token = _make_token(signing_key, aud=None)
 
         result = _validate(token, audience=AUDIENCE, jwks=jwks)
@@ -293,7 +281,6 @@ async def _stored_keys(cache):
 
 
 def _serve(monkeypatch, handler):
-    """Route the module's HTTP client through ``handler`` and record every requested URL."""
     requested: list[str] = []
 
     async def recording(request: httpx.Request) -> httpx.Response:
@@ -404,8 +391,6 @@ class TestDiscoverJwksUri:
 
 @pytest.mark.asyncio
 class TestJwksForcedRefreshCooldown:
-    """After one forced refresh, further unknown-kid lookups on the same instance within the cooldown fail fast."""
-
     _KNOWN_KEY: ClassVar[dict[str, str]] = {"kid": "known", "kty": "RSA", "n": "n", "e": "AQAB"}
 
     async def test_unknown_kid_forces_refresh_only_once_within_cooldown(self, oidc_cache):
@@ -429,7 +414,6 @@ class TestJwksForcedRefreshCooldown:
         refresh.assert_awaited_once()
 
     async def test_cooldown_is_per_instance(self, oidc_cache):
-        """Two instances of one provider must not throttle each other's forced refresh."""
         get_jwks = AsyncMock(return_value={"keys": [self._KNOWN_KEY]})
         refresh = AsyncMock(return_value={"keys": [self._KNOWN_KEY]})
 
@@ -459,8 +443,6 @@ class TestJwksForcedRefreshCooldown:
 
 
 class TestGitLabInstanceSchemaRequiresAudience:
-    """Creating/updating a GitLab instance requires a non-empty oidc_audience."""
-
     def test_create_without_audience_rejected(self):
         with pytest.raises(ValidationError):
             GitLabInstanceCreate(
@@ -497,14 +479,11 @@ class TestGitLabInstanceSchemaRequiresAudience:
             GitLabInstanceUpdate(oidc_audience="")
 
     def test_update_omitting_audience_allowed(self):
-        # An update that doesn't touch oidc_audience must remain valid.
         update = GitLabInstanceUpdate(name="Renamed")
         assert update.oidc_audience is None
 
 
 class TestGitHubInstanceSchemaRequiresAudience:
-    """Creating/updating a GitHub instance requires a non-empty oidc_audience."""
-
     def test_create_without_audience_rejected(self):
         with pytest.raises(ValidationError):
             GitHubInstanceCreate(
@@ -538,7 +517,7 @@ class TestGitHubInstanceSchemaRequiresAudience:
 
 
 class TestInstanceResponseAllowsNullAudience:
-    """Response schemas must serialize instances whose oidc_audience is null so admins can see and fix them; the blank-check belongs only on Create/Update."""
+    """Legacy instances hold a null oidc_audience, and admins must still see them to fix it."""
 
     def test_gitlab_response_allows_explicit_null_audience(self):
         response = GitLabInstanceResponse(
@@ -565,7 +544,6 @@ class TestInstanceResponseAllowsNullAudience:
         assert response.oidc_audience is None
 
     def test_gitlab_to_response_helper_serializes_legacy_null_audience(self):
-        """The GET-endpoint helper for an instance with a null audience must build a Response, not raise (which would 500)."""
         from app.api.v1.endpoints.gitlab_instances import _to_response
         from app.models.gitlab_instance import GitLabInstance
 

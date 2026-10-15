@@ -1,5 +1,3 @@
-"""sort_order means one thing on every listing: "asc" or "desc", anything else is refused rather than guessed."""
-
 from unittest.mock import MagicMock
 
 import pytest

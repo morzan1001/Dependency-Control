@@ -1,6 +1,3 @@
-"""Retention on an estate whose rescan population no longer fits in a query, and on flags written
-outside the model."""
-
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -81,8 +78,7 @@ async def test_the_source_of_a_rescan_survives_retention(monkeypatch: pytest.Mon
 
 @pytest.mark.asyncio
 async def test_the_retention_cursor_carries_no_list_of_protected_ids(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The protection set is the whole rescan population; spliced into the cursor it outgrows the
-    16 MB document limit and the cursor stops opening at all."""
+    """The protection set is the whole rescan population, which spliced into the cursor outgrows the 16 MB limit."""
     db = FakeDatabase()
     await _seed(db)
     queries: list[dict[str, Any]] = []
@@ -121,8 +117,7 @@ async def test_the_rescan_lookup_asks_about_one_batch_at_a_time(monkeypatch: pyt
 
 @pytest.mark.asyncio
 async def test_a_scan_pinned_with_an_integer_is_not_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """BSON int32 is not bool: a pin a migration or a mongosh one-liner wrote as 1 passes
-    {"$ne": True}, and retention deletes a scan the operator asked it to keep."""
+    """BSON int32 is not bool: a pin written as 1 passes {"$ne": True}, and retention would delete the scan."""
     db = FakeDatabase()
     await _seed(db)
     await db.scans.insert_one(_scan_doc(_INT_PINNED, pinned=_INT_TRUE))
@@ -159,8 +154,7 @@ async def test_a_release_row_protects_a_scan_whatever_its_flag_spelling(monkeypa
 
 @pytest.mark.asyncio
 async def test_a_flag_no_release_row_names_does_not_exempt_the_scan(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A flag whose row was never written, or was withdrawn, is not a release: exempting on it is
-    an exemption nothing can ever lift."""
+    """A flag without a release row is not a release; exempting on it would be an exemption nothing can lift."""
     db = FakeDatabase()
     await _seed(db)
     await db.scans.insert_one(_scan_doc(_BOOL_FLAGGED_RELEASE, is_release=True))

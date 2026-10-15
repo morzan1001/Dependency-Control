@@ -1,7 +1,3 @@
-"""The Pipelines table filters on the release mark, the table and the detail page both read where a
-scan runs, and a rescan repeats the source's analyzer selection without inheriting its release
-identity."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -52,8 +48,7 @@ async def editor_headers(client, db):
     from app.core.permissions import Permissions
     from app.models.project import ProjectMember
 
-    # _fake_get_current_user derives current_user.id from the JWT "sub", so membership
-    # must key off the username.
+    # _fake_get_current_user sets current_user.id to the JWT sub, so membership keys off the username.
     member = ProjectMember(user_id=_EDITOR_USERNAME, role=_EDITOR_ROLE)
     await db.projects.update_one(
         {"_id": _PROJECT},
@@ -105,7 +100,6 @@ async def _seed(db) -> None:
 
 
 async def _seed_releases(db) -> None:
-    """The release scan runs in two environments at once, the older one without a recorded version."""
     await db.releases.insert_many(
         [
             {
@@ -175,8 +169,7 @@ async def test_the_scan_list_filters_on_the_release_mark(client, db, member_auth
 async def test_the_release_filter_reaches_a_release_whose_branch_is_gone(
     client, db, member_auth_headers, params, expected
 ):
-    """A branch deleted after its release is what the mark is for, so the Pipelines table drops the
-    deleted-branch exclusion while the filter is on — keeping both would hide the release again."""
+    """A branch deleted after its release is what the mark is for, so the filter lifts the deleted-branch exclusion."""
     await _seed(db)
     await db.projects.update_one({"_id": _PROJECT}, {"$set": {"deleted_branches": [_DELETED_BRANCH]}})
     await db.scans.insert_one(
@@ -227,7 +220,6 @@ async def test_the_scan_list_names_every_environment_a_scan_runs_in(client, db, 
 
 @pytest.mark.asyncio
 async def test_a_scan_document_holding_a_releases_key_still_lists(client, db, member_auth_headers):
-    """The environments come from the releases collection, whatever key the document happens to carry."""
     await _seed_stray_key_scan(db)
 
     resp = await client.get(f"/api/v1/projects/{_PROJECT}/scans", headers=member_auth_headers)
@@ -239,8 +231,7 @@ async def test_a_scan_document_holding_a_releases_key_still_lists(client, db, me
 
 @pytest.mark.asyncio
 async def test_one_scan_names_every_environment_it_runs_in(client, db, member_auth_headers):
-    """The detail page offers a per-environment withdrawal, which needs the scan's own release rows
-    rather than the project's paged release list."""
+    """The detail page's per-environment withdrawal needs the scan's own release rows, not the paged list."""
     await _seed(db)
     await _seed_releases(db)
 
@@ -352,7 +343,6 @@ def test_the_rescan_route_documents_its_conflicts():
 
 @pytest.mark.asyncio
 async def test_a_rescan_of_a_source_without_sboms_is_refused(client, db, editor_headers):
-    """The endpoint re-analyses the source's SBOMs, so a source with none has nothing to re-analyse."""
     await _seed(db)
 
     resp = await _rescan(client, editor_headers, scan_id=_PLAIN_SCAN)

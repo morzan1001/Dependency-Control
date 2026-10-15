@@ -1,5 +1,3 @@
-"""Tests for the permission system."""
-
 from app.core.permissions import (
     ALL_PERMISSIONS,
     Permissions,
@@ -72,12 +70,10 @@ class TestPresets:
         assert delete_perms == []
 
     def test_admin_preset_is_copy(self):
-        # Mutating PRESET_ADMIN should not affect ALL_PERMISSIONS
         admin_copy = PRESET_ADMIN.copy()
         admin_copy.append("test:permission")
         assert "test:permission" not in ALL_PERMISSIONS
 
-    # Archive permission tests
     def test_admin_has_all_archive_permissions(self):
         archive_perms = [
             Permissions.ARCHIVE_READ,
@@ -103,14 +99,12 @@ class TestPresets:
         assert Permissions.ARCHIVE_DOWNLOAD not in PRESET_VIEWER
         assert Permissions.ARCHIVE_READ_ALL not in PRESET_VIEWER
 
-    # Chat + MCP for regular users
     def test_user_has_chat_and_mcp(self):
         assert Permissions.CHAT_ACCESS in PRESET_USER
         assert Permissions.CHAT_HISTORY_READ in PRESET_USER
         assert Permissions.CHAT_HISTORY_DELETE in PRESET_USER
         assert Permissions.MCP_ACCESS in PRESET_USER
 
-    # Analytics stays own-projects-only: no global analytics / read-all projects
     def test_user_analytics_is_own_projects_only(self):
         assert Permissions.ANALYTICS_GLOBAL not in PRESET_USER
         assert Permissions.PROJECT_READ_ALL not in PRESET_USER

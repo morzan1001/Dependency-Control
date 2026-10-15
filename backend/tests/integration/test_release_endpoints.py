@@ -1,8 +1,4 @@
-"""Mark, unmark and list releases: commit resolution, per-environment records, idempotency and hybrid auth.
-
-The hybrid dependency calls get_project_for_ingest and get_current_user as plain functions, so the
-client fixture's overrides for them do not apply here and every request carries a real credential.
-"""
+"""The hybrid dependency calls its auth functions directly, so the client fixture's overrides do not apply."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
@@ -66,8 +62,6 @@ _MAX_PAGE_SIZE = 100
 
 @pytest_asyncio.fixture(autouse=True)
 async def _ci_key(client, db):
-    """The client fixture's get_project_for_ingest override does not reach this dependency, so the
-    seeded project needs a hash the real API-key check can verify."""
     await db.projects.update_one({"_id": _PROJECT}, {"$set": {"api_key_hash": _API_KEY_HASH}}, upsert=True)
 
 
@@ -84,8 +78,6 @@ async def other_project(db):
 
 
 async def _role_headers(db, role: str) -> dict[str, str]:
-    """A real user document plus project membership, because the hybrid dependency runs the real
-    get_current_user rather than the client fixture's stub."""
     username = f"release-{role}"
     user = User(
         id=username,
@@ -161,8 +153,7 @@ async def test_mark_resolves_the_commit_to_its_newest_build_scan(client, db, api
 
 @pytest.mark.asyncio
 async def test_mark_passes_over_a_failed_rerun_of_the_commit(client, db, api_key_headers):
-    """A failed newest build would leave the release without an analysis while an analysed build of
-    the same commit exists."""
+    """A failed newest build would leave the release without analysis while an analysed build of the commit exists."""
     await _seed_scan(db, "analysed", created_delta=-2)
     await _seed_scan(db, "failed-rerun", created_delta=0, status=SCAN_STATUS_FAILED)
 
@@ -244,8 +235,7 @@ async def test_mark_accepts_a_scan_that_has_not_finished_analysing(client, db, a
 
 @pytest.mark.asyncio
 async def test_re_marking_an_already_rescanned_commit_keeps_one_record(client, db, api_key_headers):
-    """A re-scan copies the commit with a fresh created_at, so without excluding re-scans a CD retry
-    would resolve to a different scan and open a second record for the same deployment."""
+    """A rescan copies the commit with a fresh created_at, so a CD retry must not open a second record on it."""
     await _seed_scan(db, "build-1")
     assert (await _mark(client, api_key_headers, commit_hash=_COMMIT)).status_code == 201
 
@@ -405,9 +395,7 @@ async def test_unmark_of_one_environment_keeps_the_flag_while_another_holds_it(c
 
 @pytest.mark.asyncio
 async def test_unmark_names_the_release_it_uncovers(client, db, api_key_headers):
-    """Marks are history, so withdrawing the newest makes the one below it live again. An operator
-    withdrawing the only thing they believe is deployed must not be told only that the scan is
-    no longer a release."""
+    """Marks are history, so withdrawing the newest makes the one below it live again."""
     await _seed_scan(db, "old", commit=_OTHER_COMMIT, created_delta=-2)
     await _seed_scan(db, "new", commit=_COMMIT, created_delta=0)
     await _mark(client, api_key_headers, commit_hash=_OTHER_COMMIT, version=_VERSION)
@@ -425,8 +413,6 @@ async def test_unmark_names_the_release_it_uncovers(client, db, api_key_headers)
 
 @pytest.mark.asyncio
 async def test_unmark_of_one_environment_reports_the_other_environment_as_untouched(client, db, api_key_headers):
-    """The uncovered record belongs to the environment withdrawn from, not to whichever environment
-    the scan still holds."""
     await _seed_scan(db, "rel")
     await _mark(client, api_key_headers, commit_hash=_COMMIT)
     await _mark(client, api_key_headers, commit_hash=_COMMIT, environment=_STAGING)
@@ -501,8 +487,7 @@ async def test_list_returns_every_environment_newest_first(client, db, member_au
 
 @pytest.mark.asyncio
 async def test_list_orders_releases_marked_at_the_same_instant_deterministically(client, db, member_auth_headers):
-    """A CD job that marks two environments with one explicit released_at ties the sort key, and
-    among equal keys Mongo's order is unspecified — so "the latest release" could flip per request."""
+    """One explicit released_at for two environments ties the sort key, and Mongo leaves equal keys unordered."""
     await _seed_scan(db, "rel")
     for row_id, environment in ((_TIED_HIGH_ROW_ID, _CANARY), (_TIED_LOW_ROW_ID, _STAGING)):
         await ReleaseRepository(db).record(

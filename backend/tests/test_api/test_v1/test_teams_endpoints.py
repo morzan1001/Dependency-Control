@@ -1,5 +1,3 @@
-"""Tests for team API endpoints."""
-
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -193,8 +191,7 @@ class TestUpdateTeam:
 
 class TestDeleteTeam:
     def test_the_deleted_team_stops_owning_every_project_and_its_co_owners_stay(self, admin_user):
-        """Deleting a team is the reaper for its id: nothing else removes an owner whose team is
-        gone, and a co-owner must not be reaped with it."""
+        """Deleting a team is the only reaper of its id as an owner, and a co-owner must not be reaped with it."""
         from app.api.v1.endpoints.teams import delete_team
 
         db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN)])
@@ -306,9 +303,7 @@ class TestAddTeamMember:
 
 
 class TestMemberRoleIsConstrained:
-    """`update_member_role` writes with a bare `$set`, so an illegal role that gets past the request
-    schema is stored unvalidated and then fails every later `Team(**data)` read — including the two
-    endpoints that would repair it."""
+    """update_member_role writes a bare $set, so an illegal role past the schema would break every later read."""
 
     @pytest.mark.parametrize("role", ["owner", "Admin", "ADMIN", "", "viewer"])
     def test_illegal_roles_rejected_at_the_boundary(self, role):
@@ -417,8 +412,6 @@ class TestRemoveTeamMember:
 
 
 class TestDeleteTeamPermissions:
-    """team:delete deletes any team; everyone else has to be an admin of it."""
-
     def test_user_with_team_delete_needs_no_membership(self, admin_user):
         from app.api.v1.endpoints.teams import delete_team
 
@@ -441,8 +434,7 @@ class TestDeleteTeamPermissions:
 
 
 class TestTeamScopingAndRolePersistence:
-    """FakeDatabase-backed: the query and the write are the behaviour, so a mock that answers
-    every query the same way cannot see either of them."""
+    """FakeDatabase-backed: the query and the write are the behaviour, which a uniform mock cannot see."""
 
     @staticmethod
     async def _seeded(teams, users=()):

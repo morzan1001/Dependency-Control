@@ -1,13 +1,4 @@
-"""A member added while a GitLab sync is in flight, against a real server.
-
-The sync reads the team, then resolves every GitLab member to a local user — one round trip each —
-before it writes its members back. An admin adding someone in that window has already been told the
-add succeeded, so the write that follows must be computed from the array as the server holds it and
-not from the snapshot the sync read before the resolution.
-
-A real server only: the fake hands out the stored document itself, so a merge in Python reads the
-add through its own snapshot and the race it loses the member to cannot happen there.
-"""
+"""Live only: the fake hands out the stored document itself, so the lost-update race cannot happen there."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -30,8 +21,7 @@ _OWN = team_source(TEAM_SOURCE_GITLAB, _INSTANCE)
 _TEAM_ID = "t-edge"
 _GROUP_ID = 42
 
-# Long enough that the add is a round trip of its own inside the window, short enough to keep the
-# suite quick; the measured window in production was 0.8s.
+# Long enough for the add to be its own round trip inside the window, short enough to keep the suite quick.
 _MID_SYNC = 0.05
 
 
@@ -53,11 +43,6 @@ async def _seed(db, *, members: list[TeamMember] | None = None) -> TeamRepositor
 
 
 async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
-    """One ingest whose member resolution is interrupted by an admin adding a member by hand.
-
-    The add lands after the sync has read the team and before it writes: the window the resolution
-    round trips open, and the one the production incident fell into.
-    """
     team_repo = TeamRepository(db)
     user_repo = UserRepository(db)
     service = GitLabService(make_gitlab_instance(id=_INSTANCE, access_token="glpat-secret"))
@@ -112,7 +97,6 @@ async def test_a_member_added_mid_sync_whom_the_group_also_holds_keeps_the_hand_
 
 
 async def test_the_departed_still_go_while_the_added_stay_on_real_mongo(db):
-    """The write is still a replacement of this instance's subset, not an append to it."""
     await _seed(db, members=[TeamMember(user_id="u-gone", role="member", source=_OWN)])
 
     await _sync_with_an_add_in_flight(db, TeamMember(user_id="u-added", role="member"))

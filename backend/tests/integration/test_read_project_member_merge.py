@@ -1,14 +1,4 @@
-"""The member list GET /projects/{id} returns, and the access decision it doubles as.
-
-The endpoint merges the owning teams' members into the project's own in one aggregation and then
-answers 403 from the merged list, so the merge *is* the read gate here. Under several owners the
-join is one-to-many, and the two ways that goes wrong pull in opposite directions: a merge that
-keeps one team denies a co-owner who should be let in, and a merge that reaches past ``team_ids``
-lets in someone no owner ever named.
-
-Every case runs twice — once against the attrappe and once, marked ``live_mongo``, against a real
-server, because the fan-out an unwound one-to-many join produces belongs to the real engine.
-"""
+"""The member merge is the read gate, and each case also runs live: only the real engine fans out the join."""
 
 import pytest
 from fastapi import HTTPException
@@ -31,7 +21,6 @@ _BRAVO = {
     "name": "Bravo",
     "members": [{"user_id": "u-both", "role": "admin"}, {"user_id": "u-bravo", "role": "member"}],
 }
-# Exists, has members, owns nothing.
 _ZULU = {"_id": "zulu", "name": "Zulu", "members": [{"user_id": "u-zulu", "role": "admin"}]}
 
 _USER_IDS = ["u-both", "u-alpha", "u-bravo", "u-direct", "u-zulu"]
@@ -39,8 +28,7 @@ _USER_IDS = ["u-both", "u-alpha", "u-bravo", "u-direct", "u-zulu"]
 _TEAM_ORDERS = [(_ALPHA, _BRAVO), (_BRAVO, _ALPHA)]
 _ORDER_IDS = ["alpha-first", "bravo-first"]
 
-# The live shape the report came from: two owners with the same two members, admin in both. The ids
-# run against the names so a walk in join or id order spells the owners in the other order.
+# The ids run against the names, so a walk in join or id order spells the owners in the other order.
 _PROD_PROJECT = "eef7095b-1d5c-47d9-ae68-77ad20734680"
 _PROD_MEMBERS = [{"user_id": "a119abd", "role": "admin"}, {"user_id": "a105022", "role": "admin"}]
 _TOURISTS = {"_id": "1f0a0000-0000-0000-0000-000000000001", "name": "The TOURists", "members": _PROD_MEMBERS}
@@ -96,9 +84,7 @@ def _roles(project) -> dict[str, str]:
 @pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _TEAM_ORDERS, ids=_ORDER_IDS)
 async def test_the_stronger_of_two_owning_teams_wins(db, database, team_order):
-    """A user one owner calls a plain member and another calls an admin is an admin here. Both
-    insertion orders run, because the join answers in the teams collection's own and a first-wins
-    merge passes under exactly one of them."""
+    """Both insertion orders run: the join answers in the teams collection's order, so first-wins passes only one."""
     await _seed(db, team_order=team_order)
 
     project = await read_project(_PROJECT, _user("u-both"), db)
@@ -124,8 +110,7 @@ async def test_every_owner_brings_its_members_and_no_one_else(db, database):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("database", DATABASES)
 async def test_the_project_is_answered_once(db, database):
-    """One project, however many owners: a join that fans out and is then read at index zero
-    answers from a single owner and drops the rest."""
+    """A join that fans out and is read at index zero answers from one owner and drops the rest."""
     await _seed(db)
 
     project = await read_project(_PROJECT, _user("u-direct"), db)
@@ -158,8 +143,6 @@ async def test_a_stranger_is_refused(db, database):
 @pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _TEAM_ORDERS, ids=_ORDER_IDS)
 async def test_an_inherited_member_names_every_owner_it_comes_from(db, database, team_order):
-    """Both insertion orders spell the same string, so the names are sorted and not appended in
-    whatever order the join answered."""
     await _seed(db, team_order=team_order)
 
     project = await read_project(_PROJECT, _user("u-direct"), db)
@@ -185,7 +168,6 @@ async def test_an_inherited_member_names_its_owners_by_name_whatever_their_case(
 @pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _PROD_TEAM_ORDERS, ids=_PROD_ORDER_IDS)
 async def test_both_owners_of_the_same_two_members_are_named(db, database, team_order):
-    """The reported project: co-owners with identical membership, and one of them went unnamed."""
     await _seed_prod_shape(db, team_order=team_order)
 
     project = await read_project(_PROD_PROJECT, _user("a119abd"), db)
@@ -199,7 +181,6 @@ async def test_both_owners_of_the_same_two_members_are_named(db, database, team_
 
 @pytest.mark.asyncio
 async def test_a_direct_membership_is_not_replaced_by_a_team_one(db):
-    """u-direct is an editor by name; no owning team may overwrite or duplicate that entry."""
     await _seed(db)
     await db.teams.update_one({"_id": "alpha"}, {"$push": {"members": {"user_id": "u-direct", "role": "admin"}}})
 
@@ -243,7 +224,6 @@ async def test_read_all_reads_a_project_it_owns_no_part_of(db):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("database", DATABASES)
 async def test_the_chat_member_list_matches_the_project_page(db, database):
-    """Chat and MCP answer "who has access" from the same merge, named, without per-user preferences."""
     await _seed(db)
     user = _user("u-direct")
 

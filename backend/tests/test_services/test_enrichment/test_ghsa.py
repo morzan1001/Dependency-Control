@@ -1,5 +1,3 @@
-"""GHSA-to-CVE resolution against GitHub's advisory API: credentials, rate limits and what gets cached."""
-
 import asyncio
 import time
 

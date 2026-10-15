@@ -1,5 +1,3 @@
-"""HTTP behaviour of the ad-hoc analysis job: POST /api/v1/analyze queues it, GET /api/v1/analyze/{job_id} answers it."""
-
 import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -300,7 +298,6 @@ async def test_a_job_queued_twice_runs_once(client, db, running_worker, monkeypa
 
 
 def _inflated_sbom(position: int) -> dict[str, Any]:
-    """The trivy rootfs SBOM with its libraries copied under unique names and a 25-wide dependency fan-out."""
     sbom = _fixture("sbom/rootfs.trivy.cdx.json")
     libraries = [c for c in sbom["components"] if c["type"] == "library"]
     copies = []
@@ -346,7 +343,6 @@ def _inflated_scanners() -> dict[str, Any]:
 
 
 def _madge_callgraph() -> dict[str, Any]:
-    """madge `--json --include-npm` output of source files importing ten of 2 000 npm packages each."""
     return {
         "format": "madge",
         **{

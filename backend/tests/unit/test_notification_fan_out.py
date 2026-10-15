@@ -1,8 +1,4 @@
-"""A permission fan-out reaches every holder of the permission.
-
-Nothing in a notification tells a recipient who else was told, so a ceiling on the read is a
-ceiling on who learns about the change — and the ones past it never find out they were skipped.
-"""
+"""Nothing tells a recipient who else was told, so a read ceiling would silently skip the holders past it."""
 
 import asyncio
 

@@ -1,5 +1,3 @@
-"""Tests for analysis stats helper functions."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -27,11 +25,6 @@ def _epss(cve, score):
     return EPSSData(cve=cve, epss_score=score, percentile=0.9, date="2024-01-01")
 
 
-# ---------------------------------------------------------------------------
-# build_epss_kev_summary - helpers
-# ---------------------------------------------------------------------------
-
-
 def _make_finding(
     finding_id="CVE-2024-0001",
     component="pkg",
@@ -43,7 +36,6 @@ def _make_finding(
     exploit_maturity="unknown",
     risk_score=None,
 ):
-    """A single-advisory finding as enrichment leaves it: the advisory and the roll-up carry the same values."""
     enrichment: dict = {}
     if epss_score is not None:
         enrichment["epss_score"] = epss_score
@@ -67,12 +59,7 @@ def _make_finding(
     }
 
 
-# ---------------------------------------------------------------------------
-# build_epss_kev_summary
-# ---------------------------------------------------------------------------
-
-# What a corrupt enrichment leaves in details.epss_score; True passes isinstance(int) and would
-# otherwise be reported as a certainty of 1.0.
+# Corrupt details.epss_score values; True passes isinstance(int) and would read as a certainty of 1.0.
 _NON_NUMERIC_EPSS_VALUES = (True, [0.5], "0.5")
 
 
@@ -121,14 +108,12 @@ class TestBuildEpssKevSummaryEpss:
         assert result["epss_scores"]["low"] == 1
 
     def test_epss_boundary_high(self):
-        # 0.1 is inclusive in the high bucket
         findings = [_make_finding(epss_score=0.1)]
         result = build_epss_kev_summary(findings)
         assert result["epss_scores"]["high"] == 1
         assert result["epss_scores"]["medium"] == 0
 
     def test_epss_boundary_medium(self):
-        # 0.01 is inclusive in the medium bucket
         findings = [_make_finding(epss_score=0.01)]
         result = build_epss_kev_summary(findings)
         assert result["epss_scores"]["medium"] == 1
@@ -223,7 +208,6 @@ class TestBuildEpssKevSummaryRisk:
         assert cve["version"] == "3.0.0"
 
     def test_high_risk_cve_at_threshold_excluded(self):
-        # threshold is strictly greater than 70.0
         findings = [_make_finding(risk_score=70.0)]
         result = build_epss_kev_summary(findings)
         assert len(result["high_risk_cves"]) == 0
@@ -279,8 +263,7 @@ class TestBuildEpssKevSummaryExploitMaturity:
 
 
 def _aggregated_vuln_finding(entries, *, in_kev=True, risk_score=None, aliases=None):
-    """Shape the engine actually persists: finding_id is ``component:version``, the CVE ids
-    live on the nested ``details.vulnerabilities`` entries."""
+    """As persisted: finding_id is component:version and the CVE ids live under details.vulnerabilities."""
     details = {
         "exploit_maturity": "unknown",
         "vulnerabilities": entries,
@@ -302,8 +285,6 @@ def _aggregated_vuln_finding(entries, *, in_kev=True, risk_score=None, aliases=N
 
 
 class TestKevRowsCarryRealCveIds:
-    """K23: KEV and high-risk rows must never show the component:version finding_id."""
-
     def test_kev_row_uses_the_nested_entry_cve(self):
         finding = _aggregated_vuln_finding(
             [
@@ -394,11 +375,6 @@ class TestHighRiskRowsNameTheirOwnCve:
         assert rows[0]["risk_score"] == 84.8
 
 
-# ---------------------------------------------------------------------------
-# build_reachability_summary - helpers
-# ---------------------------------------------------------------------------
-
-
 # Tests use display tiers (confirmed/likely/...); findings persist analysis_level (none/import/symbol), so translate.
 _DISPLAY_TIER_TO_ANALYSIS_LEVEL = {
     "confirmed": "symbol",
@@ -441,11 +417,6 @@ def _make_callgraph(language="python", modules=None, total_imports=0, analyzed_m
         total_imports=total_imports,
         created_at=created_at,
     )
-
-
-# ---------------------------------------------------------------------------
-# build_reachability_summary
-# ---------------------------------------------------------------------------
 
 
 class TestBuildReachabilitySummaryEmpty:
@@ -677,9 +648,7 @@ class TestBuildReachabilitySummaryLimits:
         assert result["reachability_levels"]["unknown"] == 1
 
 
-# calculate_comprehensive_stats: risk_score is a saturating severity-weighted exposure
-# score (0-100, monotone in the finding set); adjusted_risk_score shares the same scale
-# with per-finding reachability modifiers applied to the weights.
+# risk_score saturates a severity-weighted exposure on 0-100; adjusted_risk_score applies reachability weights.
 
 _W5_SCAN = "scan-w5"
 
@@ -771,7 +740,6 @@ class TestRiskScoreSaturatingExposure:
 
     @pytest.mark.asyncio
     async def test_monotonicity_property_over_random_finding_sets(self):
-        """Adding any single finding must never decrease risk_score."""
         import random
 
         rng = random.Random(20260813)
@@ -794,7 +762,6 @@ class TestRiskScoreSaturatingExposure:
 
     @pytest.mark.asyncio
     async def test_per_finding_enrichment_scores_do_not_change_the_base_score(self):
-        """The base score depends on severity counts only, not details.risk_score."""
         plain = [_w5_finding("c1", "CRITICAL"), _w5_finding("h1", "HIGH")]
         enriched = [
             _w5_finding("c1", "CRITICAL", risk_score=95.0),
@@ -803,15 +770,9 @@ class TestRiskScoreSaturatingExposure:
         assert await _risk_score(plain) == await _risk_score(enriched)
 
 
-# ---------------------------------------------------------------------------
-# _numeric
-# ---------------------------------------------------------------------------
-
-
 class TestNumeric:
     def test_bool_is_not_a_number(self):
-        # The reason the helper exists: Mongo sorts bool above every numeric type, so a
-        # persisted `epss_score: False` would otherwise outrank the highest threshold.
+        # Mongo sorts bool above every number, so a persisted epss_score: False would outrank the highest threshold.
         assert _numeric(True) is None
         assert _numeric(False) is None
 
@@ -823,11 +784,6 @@ class TestNumeric:
 
     def test_missing_value_is_none(self):
         assert _numeric(None) is None
-
-
-# ---------------------------------------------------------------------------
-# compute_stats - waiver and empty-scan branches
-# ---------------------------------------------------------------------------
 
 
 class TestComputeStatsWaiverAndEmptyScan:

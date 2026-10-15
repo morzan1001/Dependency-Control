@@ -1,5 +1,3 @@
-"""The one place that answers 'which scan counts for this project'."""
-
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -32,9 +30,7 @@ _ONE_PROJECT = 1
 _MANY_PROJECTS = 50
 _COUNTED_COLLECTIONS = ("projects", "scans", "releases")
 _COUNTED_OPERATIONS = ("find", "find_one", "aggregate", "distinct")
-# One read validates every pointer in the scope; a project the pointer cannot answer costs one index
-# seek of its own. The lineage step starts from tips already in hand, so a tip without a rescan
-# link costs no further read.
+# One read validates every pointer; a project the pointer cannot answer costs one index seek of its own.
 _POINTER_READS = 1
 _HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.find": _POINTER_READS}
 _HEAD_QUERIES_WITH_A_DANGLING_POINTER = {"projects.find": 1, "scans.find": _POINTER_READS, "scans.find_one": 1}
@@ -99,8 +95,7 @@ async def _seed_one_pointed_scan_each(db: FakeDatabase, project_count: int) -> l
 
 
 async def _seed_rescan_chain(db: FakeDatabase, project_id: str, released: str, statuses: list[str]) -> list[str]:
-    """released -> rescan-1 -> ... : housekeeping rescans the project's newest usable scan, so each
-    rescan carries the next pointer and the released scan's own pointer never advances past the first."""
+    """Housekeeping rescans the newest usable scan, so each rescan carries the next pointer, as here."""
     chain = [f"{released}-rescan-{depth}" for depth in range(1, len(statuses) + 1)]
     for depth, (scan_id, status) in enumerate(zip(chain, statuses, strict=True), start=1):
         await db.scans.insert_one(_scan(scan_id, project_id, created_delta=depth, status=status))
@@ -110,8 +105,7 @@ async def _seed_rescan_chain(db: FakeDatabase, project_id: str, released: str, s
 
 
 async def _seed_a_dangling_pointer(db: FakeDatabase) -> None:
-    """Retention deletes the scan document without clearing latest_scan_id, and exempts release
-    scans, so the pointer names nothing while an older usable scan is still there to be found."""
+    """Retention deletes a scan without clearing latest_scan_id, leaving a pointer to nothing beside older scans."""
     await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": _RETENTION_DELETED})
     await db.scans.insert_one(
         _scan(
@@ -125,7 +119,6 @@ async def _seed_a_dangling_pointer(db: FakeDatabase) -> None:
 
 
 async def _scope(db: FakeDatabase, project_ids: list[str]) -> list:
-    """What get_user_projects hands the analytics helpers for a caller who reads these projects."""
     return await ProjectRepository(db).find_many_with_scan_id({"_id": {"$in": project_ids}}, limit=len(project_ids))
 
 
@@ -143,7 +136,6 @@ async def _released(db: FakeDatabase, project_id: str, environment: str) -> str 
 
 
 def _count_queries(db: FakeDatabase) -> Counter:
-    """Wraps every read the resolver can reach so a per-project query shows up as a rising count."""
     counts: Counter = Counter()
     for collection_name in _COUNTED_COLLECTIONS:
         collection = db[collection_name]
@@ -215,8 +207,7 @@ async def test_release_mode_walks_the_whole_rescan_chain(db):
 
 @pytest.mark.asyncio
 async def test_release_mode_walks_through_a_failed_link_of_the_chain(db):
-    """Stopping at the first unusable hop would answer with the released scan and ignore a fresher
-    analysis of the same artefact that is sitting one link further along."""
+    """Stopping at the first unusable hop would ignore a fresher analysis one link further along."""
     await db.scans.insert_one(_scan("released", _PROJECT_A))
     chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_FAILED, _COMPLETED])
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
@@ -246,8 +237,7 @@ async def test_a_chain_longer_than_the_bound_stops_at_the_bound(db):
 
 @pytest.mark.asyncio
 async def test_a_chain_stopped_at_the_bound_says_the_answer_may_be_stale(db):
-    """The freshest scan within ten hops is not the freshest scan, and a caller reading only the
-    id cannot tell the two apart."""
+    """The freshest scan within ten hops is not the freshest scan, and the id alone cannot tell them apart."""
     await db.scans.insert_one(_scan("released", _PROJECT_A))
     await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED] * _CHAIN_BEYOND_THE_BOUND)
 
@@ -299,8 +289,7 @@ async def test_released_scan_ids_take_the_newest_release_of_an_environment(db):
 
 @pytest.mark.asyncio
 async def test_released_scan_ids_break_a_tie_the_way_every_other_release_read_does(db):
-    """The rescanner keeps this answer warm, so a tie it settles differently from the list endpoint
-    and the resolver leaves the scan every user-facing path calls deployed never rescanned."""
+    """Settling the tie unlike the list endpoint would leave the scan users see as deployed never rescanned."""
     await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A))
     await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
     # Inserted first, so insertion order alone would hand it the group.
@@ -322,8 +311,7 @@ async def test_released_scan_ids_of_a_project_without_releases_is_empty(db):
 
 @pytest.mark.asyncio
 async def test_released_scan_ids_list_an_environment_that_resolves_to_nothing(db):
-    """Intended asymmetry: the environment was released to, so it stays selectable even while its
-    release has no readable analysis. Hiding it would need a deliberate change here."""
+    """Intended: an environment released to stays selectable while its release has no readable analysis."""
     await db.scans.insert_one(_scan("unanalysed", _PROJECT_A, status=_PENDING))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "unanalysed"))
 
@@ -333,8 +321,7 @@ async def test_released_scan_ids_list_an_environment_that_resolves_to_nothing(db
 
 @pytest.mark.asyncio
 async def test_released_scan_ids_stay_on_the_marked_scan_rather_than_its_rescan(db):
-    """The marked scan is what a rescan must be created from: rescanning its rescan instead would
-    lengthen the chain by one link per interval until it outruns the bound the walk stops at."""
+    """Rescanning the rescan would grow the chain a link per interval until it outruns the walk's bound."""
     await db.scans.insert_one(_scan("released", _PROJECT_A, latest_rescan_id="rescan"))
     await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
@@ -363,8 +350,7 @@ async def test_resolve_scan_ids_head_without_a_project_filter(db):
 
 @pytest.mark.asyncio
 async def test_resolve_scan_ids_head_matches_the_repository(db):
-    """The head path must stay the repository's answer, or the dashboards move when callers switch.
-    A completed rescan becomes the project's own pointer, so the head path never hops to one itself."""
+    """The head path must stay the repository's answer, or the dashboards move when callers switch."""
     await db.projects.insert_one({"_id": "with-pointer", "name": "one", "latest_scan_id": "pointed-at"})
     await db.projects.insert_one({"_id": "no-pointer", "name": "two"})
     await db.projects.insert_one(
@@ -485,8 +471,7 @@ async def test_resolve_scan_ids_release_mode_without_a_project_filter(db):
 
 @pytest.mark.asyncio
 async def test_resolve_scan_ids_release_mode_breaks_a_released_at_tie_on_the_row_id(db):
-    """A rollback marked with an explicit released_at can equal the record it supersedes; without a
-    total order the environment's scan would differ between two identical requests."""
+    """A rollback's explicit released_at can equal the record it supersedes, so only a total order is stable."""
     await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A))
     await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
     # Inserted first, so insertion order alone would hand it the group.
@@ -500,8 +485,7 @@ async def test_resolve_scan_ids_release_mode_breaks_a_released_at_tie_on_the_row
 
 @pytest.mark.asyncio
 async def test_the_lineage_walk_breaks_a_created_at_tie_on_the_scan_id(db):
-    """A rescan stamped in the same millisecond as its source leaves the walk with two candidates
-    of equal date; whichever the server hands over first must not decide the answer."""
+    """A rescan can share its source's millisecond, and server order must not decide between the two."""
     await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A, latest_rescan_id=_TIED_SCAN_LOW_ROW_ID))
     await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
 
@@ -658,8 +642,7 @@ async def test_chat_registry_refuses_a_project_outside_the_user_scope(db):
 
 @pytest.mark.asyncio
 async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(db):
-    """A dangling pointer answers with a scan that holds no assets and no findings, so the framework
-    would read a project as clean; every consumer must land on the scan that outlived the head."""
+    """A dangling pointer's scan holds nothing, so a consumer that stops there reads the project as clean."""
     from app.api.v1.helpers.analytics import get_latest_scan_ids
     from app.services.analytics.crypto_hotspots import CryptoHotspotService
     from app.services.analytics.scopes import ResolvedScope
@@ -681,8 +664,7 @@ async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(d
 
 @pytest.mark.asyncio
 async def test_cross_project_data_falls_back_when_the_pointer_names_a_deleted_scan(db):
-    """gather_cross_project_data reads the repository rather than the resolver, so the fallback has
-    to live in the repository; the survivor's stats are what proves the scan it landed on."""
+    """gather_cross_project_data reads the repository, not the resolver, so the fallback must live there too."""
     from app.api.v1.helpers.analytics import gather_cross_project_data
 
     await _seed_a_dangling_pointer(db)
@@ -699,8 +681,7 @@ async def test_cross_project_data_falls_back_when_the_pointer_names_a_deleted_sc
 @pytest.mark.parametrize("pointer_status", _UNUSABLE_STATUSES)
 @pytest.mark.asyncio
 async def test_a_pointer_at_an_unreadable_scan_falls_back_to_the_last_usable_one(db, pointer_status):
-    """The pointer is only as good as the analysis behind it: a scan that carries no results is the
-    same dead end as one retention removed."""
+    """A scan that carries no results is the same dead end as one retention removed."""
     await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
     await db.scans.insert_one(_scan("head-a", _PROJECT_A, created_delta=5, status=pointer_status))
     await db.scans.insert_one(_scan("last-good", _PROJECT_A))
@@ -738,7 +719,6 @@ async def test_analytics_get_latest_scan_ids_uses_the_resolver(db):
 
 @pytest.mark.asyncio
 async def test_analytics_get_projects_with_scans_names_every_project_in_scope(db):
-    """The name map covers the scope; the scan list only the projects that resolved to one."""
     from app.api.v1.helpers.analytics import get_projects_with_scans
 
     await db.projects.insert_one({"_id": _PROJECT_A, "name": "alpha", "latest_scan_id": "head-a"})
@@ -769,7 +749,6 @@ async def test_analytics_helpers_select_the_release_when_asked(db):
 @pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
 @pytest.mark.asyncio
 async def test_get_projects_with_scans_reads_the_projects_once(db, project_count):
-    """The caller's scope, the name map and the resolver's input are the same read, not one each."""
     from app.api.v1.helpers.analytics import get_projects_with_scans
 
     await _seed_one_pointed_scan_each(db, project_count)

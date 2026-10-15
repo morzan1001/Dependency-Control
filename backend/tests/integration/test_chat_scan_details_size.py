@@ -1,5 +1,3 @@
-"""get_scan_details answers with the scan's summary, which fits the tool result cap whatever the scan stores."""
-
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -92,6 +90,6 @@ async def test_scan_details_fit_the_result_cap_and_carry_the_scan_summary(db, da
     assert (scan["status"], scan["error"], scan["is_head"]) == (SCAN_STATUS_COMPLETED, _ERROR, True)
     assert (scan["findings_count"], scan["stats"]) == (_FINDINGS_COUNT, _STATS)
     assert (scan["failed_analyzers"], scan["enrichment_failures"]) == (_FAILED_ANALYZERS, _ENRICHMENT_FAILURES)
-    # Live Mongo hands datetimes back naive, the attrappe keeps the offset.
+    # Live Mongo hands datetimes back naive, the fake keeps the offset.
     assert scan["created_at"].startswith(_CREATED.strftime("%Y-%m-%dT%H:%M:%S"))
     assert scan["completed_at"].startswith(_COMPLETED.strftime("%Y-%m-%dT%H:%M:%S"))

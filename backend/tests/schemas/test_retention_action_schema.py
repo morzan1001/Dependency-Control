@@ -1,5 +1,4 @@
-"""`retention_action` reaching housekeeping as an unrecognised string expires nothing at all, and
-the only symptom is disk growth — so the value is constrained where it enters."""
+"""An unrecognised retention_action expires nothing at all, and the only symptom is disk growth."""
 
 import pytest
 from pydantic import ValidationError
@@ -35,7 +34,6 @@ def test_system_settings_update_accepts_every_documented_action(action):
 
 
 def test_the_constant_and_the_type_cannot_drift():
-    """RETENTION_ACTIONS is derived from the Literal, so a value added to one reaches the other."""
     from typing import get_args
 
     from app.core.constants import RetentionAction

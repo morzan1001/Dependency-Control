@@ -1,9 +1,4 @@
-"""_enrich_dependencies: purl-keyed cross-scan upserts plus a slim per-scan dependency copy.
-
-Prod shapes: multi-SBOM scans store qualifier-variant twins of the same artifact
-(`...opencsv@5.12.0?type=jar` next to `...opencsv@5.12.0`), and the aggregator
-emits one entry per canonical purl.
-"""
+"""Multi-SBOM scans store qualifier-variant twins of one artifact; the aggregator emits one entry per canonical purl."""
 
 import asyncio
 
@@ -63,8 +58,7 @@ def test_entry_without_purl_still_updates_dependency_doc():
 
 
 def test_all_qualifier_variant_twins_receive_enrichment():
-    # W13: image SBOM + application SBOM of the same build store two docs whose
-    # purls differ only by qualifiers; both must be enriched.
+    # Image and application SBOMs of one build store two docs whose purls differ only by qualifiers.
     db = FakeDatabase()
     _insert_dep(db, name="opencsv", version="5.12.0", purl="pkg:maven/com.opencsv/opencsv@5.12.0?type=jar")
     _insert_dep(db, name="opencsv", version="5.12.0", purl="pkg:maven/com.opencsv/opencsv@5.12.0")
@@ -77,9 +71,7 @@ def test_all_qualifier_variant_twins_receive_enrichment():
 
 
 def test_purl_less_entry_does_not_stamp_a_purl_bearing_twin():
-    """A purl-less enrichment describes an unidentified package, so its bare
-    {scan_id, name, version} filter also matched an identified same-named package of
-    another ecosystem. Latent today (0 of 200 sampled prod deps lack a purl)."""
+    """A purl-less entry's bare {scan_id, name, version} filter would also match a same-named package elsewhere."""
     db = FakeDatabase()
     _insert_dep(db, name="crypto", version="1.0.0")
     _insert_dep(db, name="crypto", version="1.0.0", purl="pkg:golang/crypto@1.0.0")
@@ -91,7 +83,6 @@ def test_purl_less_entry_does_not_stamp_a_purl_bearing_twin():
 
 
 def test_cross_ecosystem_twin_is_not_touched():
-    # Same name@version from different ecosystems must not share enrichment.
     db = FakeDatabase()
     _insert_dep(db, name="foo", version="1.0.0", purl="pkg:npm/foo@1.0.0")
     _insert_dep(db, name="foo", version="1.0.0", purl="pkg:deb/debian/foo@1.0.0")
@@ -170,8 +161,7 @@ def test_persists_license_expression_on_dependency_and_enrichment_docs():
 
 
 def test_bulky_payload_stays_off_the_dependency_doc():
-    # K15: deps_dev/description/links/licenses_detailed live once per purl in
-    # dependency_enrichments, not on every per-scan dependency doc.
+    # deps_dev, description, links and licenses_detailed live once per purl, not on every per-scan doc.
     db = FakeDatabase()
     _insert_dep(db, name="lodash", version="4.17.21", purl="pkg:npm/lodash@4.17.21")
     payload = {

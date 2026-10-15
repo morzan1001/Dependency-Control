@@ -1,5 +1,3 @@
-"""Vulnerability search reads the KEV roll-up enrichment persists (in_kev / kev_ransomware_use / kev_due_date)."""
-
 from app.api.v1.endpoints.analytics.search import _vuln_results_for_finding
 from app.models.finding_record import FindingRecord
 

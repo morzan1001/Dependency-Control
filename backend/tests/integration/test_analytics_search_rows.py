@@ -1,5 +1,3 @@
-"""Each vulnerability search row describes and is filtered by its own advisory, not the document it sits in."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -52,7 +50,6 @@ async def search(client, db, owner_auth_headers_proj):
 
 
 def _kev_and_plain():
-    """A KEV, ransomware, high-EPSS CVE and a plain sibling, enriched the way ingest stores them."""
     details = {
         "vulnerabilities": [
             {"id": "CVE-2021-0001", "severity": "CRITICAL", "fixed_version": "3.0.11"},

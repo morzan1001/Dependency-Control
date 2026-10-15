@@ -1,5 +1,3 @@
-"""Tests for ChatService orchestration (mocks Ollama + DB)."""
-
 import asyncio
 import json
 from collections.abc import AsyncIterator
@@ -304,7 +302,6 @@ async def test_a_turn_for_a_deleted_conversation_ends_before_the_model_runs():
 
 @pytest.mark.asyncio
 async def test_current_user_message_not_duplicated_in_prompt():
-    """The just-saved user turn must appear exactly once in the Ollama prompt."""
     service = _make_service()
     user = _make_user()
 
@@ -334,7 +331,6 @@ async def test_current_user_message_not_duplicated_in_prompt():
 
 @pytest.mark.asyncio
 async def test_warmup_task_cancelled_on_client_disconnect(monkeypatch):
-    """A client disconnect during warm-up must cancel the shielded first-chunk task."""
     # Shorten the keepalive slice so the warm-up loop emits a heartbeat fast.
     monkeypatch.setattr(service_mod, "_WARMUP_SLICE_SECONDS", 0.02)
 

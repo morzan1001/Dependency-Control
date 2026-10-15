@@ -215,8 +215,7 @@ describe('ProjectSettings team ownership', () => {
     expect(screen.getByRole('combobox', { name: 'Teams' })).toHaveTextContent('No Team')
   })
 
-  // The teams list answers only the caller's own teams, so an owner outside them has no option
-  // of its own — and a save stating the whole set would drop it without anyone choosing to.
+  // The teams list holds only the caller's teams, so a save must keep an owner it cannot show.
   it('keeps an owner the caller cannot see selected and saves it back', async () => {
     renderSettings(githubProject({ team_ids: ['t1', 't9'], team_sources: { t9: 'github:gh-1' } }))
 

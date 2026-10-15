@@ -21,7 +21,6 @@ function authFor(perms: string[]): AuthContextType {
   }
 }
 
-// Renders the /analytics route gate from App.tsx for a user holding only `perms`.
 function renderAnalyticsGate(perms: string[]) {
   const authValue = authFor(perms)
 

@@ -1,5 +1,4 @@
-"""Release scope must never read as a small healthy fleet: the counters say how many projects
-contributed and how many were silently omitted."""
+"""Release scope must never read as a small healthy fleet, so counters name contributing and omitted projects."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
@@ -89,9 +88,7 @@ async def _seed_release(
 
 
 async def _seed_mixed_release_scope(db: FakeDatabase) -> None:
-    """Every project has a usable scan; only _RELEASED_PROJECTS run one in the requested environment.
-    One of them was rolled back onto its current scan, so it owns two records for that environment and
-    a resolver that stopped collapsing per project would over-count the contributing projects."""
+    """One released project was rolled back, so it owns two records and a non-collapsing resolver would over-count."""
     for project_id in _THREE_PROJECTS:
         await db.projects.insert_one({"_id": project_id, "name": project_id})
         await _seed_scan(db, f"scan-{project_id}", project_id)
@@ -104,8 +101,6 @@ async def _seed_mixed_release_scope(db: FakeDatabase) -> None:
 
 @pytest.mark.asyncio
 async def test_summary_counts_a_mixed_scope_through_the_real_resolver():
-    """The patched counter tests state their expectation in the implementation's own terms and hold
-    for a resolver returning any number of scans per project. This one walks a seeded scope."""
     db = FakeDatabase()
     await _seed_mixed_release_scope(db)
 
@@ -146,8 +141,7 @@ async def test_summary_with_no_accessible_projects_reports_zeroes():
 
 @pytest.mark.asyncio
 async def test_summary_with_no_resolvable_scan_still_names_the_scope():
-    """The empty-scan short circuit returns before the counters are read anywhere else, so it has
-    to carry them itself or a fully uncovered environment reports an empty, uncounted fleet."""
+    """The empty-scan short circuit returns before the counters are read, so it must carry them itself."""
     db = FakeDatabase()
     with (
         patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))),
@@ -266,8 +260,7 @@ async def test_both_searches_default_to_the_branch_tip():
 
 
 async def _seed_environments(db: FakeDatabase) -> None:
-    """Two in-scope projects between them covering three environments, plus one the caller cannot
-    reach: a scope endpoint that queried the whole collection would offer its environment too."""
+    """Includes a project the caller cannot reach, whose environment a whole-collection query would offer."""
     await _seed_release(db, "p1", "scan-p1", _RELEASED_AT, DEFAULT_RELEASE_ENVIRONMENT)
     await _seed_release(db, "p1", "scan-p1", _RELEASED_AT, _STAGING)
     await _seed_release(db, "p2", "scan-p2", _RELEASED_AT, _CANARY)
@@ -326,7 +319,6 @@ async def test_scope_with_no_accessible_projects_offers_nothing():
 
 
 async def _seed_release_scope_with_one_stale_analysis(db: FakeDatabase) -> None:
-    """Two released projects; one of them ships a build analysed three months before the other."""
     for project_id in _RELEASED_PROJECTS:
         await db.projects.insert_one({"_id": project_id, "name": project_id})
         await _seed_release(db, project_id, f"scan-{project_id}", _RELEASED_AT)
@@ -336,8 +328,7 @@ async def _seed_release_scope_with_one_stale_analysis(db: FakeDatabase) -> None:
 
 @pytest.mark.asyncio
 async def test_scope_dates_the_oldest_analysis_the_numbers_rest_on():
-    """A release resolves to a build nobody rebuilt, so its findings are the landscape of the day it
-    was analysed; the count on its own reads as today's answer."""
+    """A release's findings date from the day its build was analysed; the count alone would read as today's."""
     db = FakeDatabase()
     await _seed_release_scope_with_one_stale_analysis(db)
 
@@ -363,8 +354,7 @@ async def test_scope_dates_the_branch_tip_too():
 
 @pytest.mark.asyncio
 async def test_scope_answers_a_role_that_holds_no_summary_permission():
-    """The counters caption the bare-list tabs too, so a role that only sees one of them still needs
-    them — the summary endpoint they used to come from is behind analytics:read or analytics:summary."""
+    """The counters caption the bare-list tabs too, so a role that sees only one of them still needs them."""
     db = FakeDatabase()
     await _seed_environments(db)
 

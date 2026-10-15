@@ -1,5 +1,3 @@
-"""Which analyzers the ad-hoc endpoint runs, and why the others do not."""
-
 from app.schemas.adhoc import AnalyzerReport
 from app.services.analysis.adhoc import (
     ADHOC_DEFAULT_ANALYZERS,
@@ -22,8 +20,7 @@ _UNCACHED_FANOUT_MARKER = "publishes nothing to the shared cache"
 _TYPOSQUATTING_MARKER = "top-packages list"
 _CRYPTO_STAGE = "crypto_rules"
 _CRYPTO_STORED_ASSETS = "stored crypto assets"
-# The two crypto analyzers that grade against the wall clock and the IANA catalog rather than
-# against a policy rule, so the stage covers neither of them.
+# These two grade against the wall clock and the IANA catalog, not a policy rule, so the stage covers neither.
 _CERT_LIFECYCLE = "crypto_certificate_lifecycle"
 _PROTOCOL_CIPHER = "crypto_protocol_cipher"
 _NO_EQUIVALENT = "no ad-hoc equivalent"
@@ -93,8 +90,7 @@ def test_crypto_analyzers_cannot_be_requested_and_name_their_replacement():
 
     assert selected == []
     reason = report.skipped[_CRYPTO]
-    # The registered analyzer returns an empty result without a scan to read assets from, so
-    # the reason has to point at the stage that evaluates the same rules on the posted CBOM.
+    # Without a scan the registered analyzer finds nothing, so the reason points at the stage that evaluates the CBOM.
     assert _CRYPTO_STORED_ASSETS in reason
     assert _CRYPTO_STAGE in reason
 

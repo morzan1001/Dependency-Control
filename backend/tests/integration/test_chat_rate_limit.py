@@ -1,5 +1,3 @@
-"""POST /chat/conversations/{id}/messages is rate limited per user before any conversation work."""
-
 from typing import Any
 
 import pytest
@@ -17,8 +15,6 @@ _CHAT_DENIALS = "dc_chat_rate_limited_total"
 
 
 class _DenyingRedis:
-    """Answers the sliding-window script with a refusal, recording the keys it is given."""
-
     def __init__(self, keys: list[str]) -> None:
         self._keys = keys
 

@@ -1,6 +1,3 @@
-"""An analytics request resolves the caller's projects with one read of the projects collection:
-the scope read already carries what the scan resolution and the name map need."""
-
 import pytest
 
 from app.api.v1.helpers import analytics

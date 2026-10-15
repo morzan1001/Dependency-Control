@@ -1,5 +1,3 @@
-"""Stats, dependency enrichments and recommendations come out of the same fold the scan pipeline uses."""
-
 import pytest
 
 from app.models.waiver import Waiver
@@ -55,8 +53,7 @@ _SBOM = {
     ],
 }
 
-# A container SBOM: the parser reads ``alpine:3.18`` out of the metadata component as the
-# source target, and the OS purl routes the advisory to the base-image recommendation.
+# The parser reads alpine:3.18 from the metadata component; the OS purl routes to the base-image card.
 _IMAGE_SBOM = {
     "bomFormat": "CycloneDX",
     "specVersion": "1.5",
@@ -139,8 +136,7 @@ async def test_recommendations_are_serialised_dicts(_osv):
 
 @pytest.mark.asyncio
 async def test_the_image_the_sbom_names_reaches_the_recommendation(_osv):
-    """Pins both the source target and the dependency rows: without the rows the advisory is
-    classified as an application dependency and no base-image recommendation exists at all."""
+    """Without the dependency rows the advisory would read as an application dependency with no base-image card."""
     response = await run_adhoc_analysis(_request(sboms=[_IMAGE_SBOM]), FakeDatabase())
 
     base_image = _recommendations_of_type(response, _BASE_IMAGE_UPDATE)

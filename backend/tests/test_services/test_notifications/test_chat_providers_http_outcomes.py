@@ -1,5 +1,3 @@
-"""Tests for how the Mattermost and Slack providers read the chat servers' HTTP answers."""
-
 from typing import Any
 
 import pytest
@@ -23,8 +21,6 @@ class _Response:
 
 
 class _Client:
-    """Answers each request from a path-to-response table and records what was posted."""
-
     def __init__(self, routes: dict[str, _Response]) -> None:
         self._routes = routes
         self.posted: list[tuple[str, Any]] = []

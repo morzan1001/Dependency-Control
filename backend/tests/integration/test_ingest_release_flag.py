@@ -1,5 +1,3 @@
-"""Release marks survive the other jobs of the same CI pipeline (promote-only) and are kept per environment."""
-
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -50,11 +48,7 @@ def _findings_payload(**extra):
 
 
 class _AdvancingClock:
-    """Stands in for the ingest wall clock, one step per call.
-
-    BSON stores milliseconds, so two posts of the same payload inside one millisecond stamp the
-    same released_at and a refresh cannot be told from no write at all.
-    """
+    """BSON stores milliseconds, so two posts within one would stamp the same released_at."""
 
     def __init__(self, start: datetime):
         self._next = start
@@ -67,8 +61,6 @@ class _AdvancingClock:
 
 @pytest.fixture
 def latest_release(db, _project):
-    """The lookup the collection exists to serve: one indexed find_one, newest first."""
-
     async def _lookup(environment: str):
         return await db.releases.find_one(
             {"project_id": str(_project.id), "environment": environment},

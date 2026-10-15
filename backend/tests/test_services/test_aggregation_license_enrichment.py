@@ -1,10 +1,3 @@
-"""Primary-license selection and enrichment hygiene in the aggregator.
-
-Entry dicts mirror the analyzer's `component_licenses` shape (prod example: glibc
-carries LGPL-2.1-or-later and GPL-3.0-or-later, whose stored primary used to flip
-with iteration order).
-"""
-
 import typing
 
 from app.services.aggregation import ResultAggregator
@@ -62,8 +55,7 @@ class TestDeterministicPrimaryLicense:
         payload = self._payload()
         assert payload["license_risks"] == ["Modifications must be shared", "Viral copyleft"]
 
-    # deps.dev metadata always carries the component purl, so both producers land
-    # on the same canonical-purl-keyed enrichment.
+    # deps.dev metadata always carries the component purl, so both producers land on one enrichment.
     DEPS_DEV_META: typing.ClassVar[dict] = {"purl": "pkg:deb/debian/glibc@2.41-12", "licenses": ["MIT"]}
 
     def test_scanner_classification_replaces_deps_dev_guess(self):
@@ -81,8 +73,7 @@ class TestDeterministicPrimaryLicense:
         assert len(self.agg.get_dependency_enrichments()) == 1
 
     def test_qualifier_variants_merge_into_one_entry(self):
-        # Image SBOM (?arch=...&distro=...) and application SBOM of the same
-        # artifact must not fragment the cross-scan enrichment.
+        # Image and application SBOMs of one artifact must not fragment the cross-scan enrichment.
         variant = dict(LGPL, purl="pkg:deb/debian/glibc@2.41-12?arch=amd64&distro=debian-13")
         self.agg.aggregate("license_compliance", {"component_licenses": [variant, LGPL]})
         entries = self.agg.get_dependency_enrichments()

@@ -1,5 +1,3 @@
-"""The CISA KEV catalog: how it is read, when it counts as unavailable, and how long a pod keeps it."""
-
 import pytest
 
 from app.core.cache import CacheKeys

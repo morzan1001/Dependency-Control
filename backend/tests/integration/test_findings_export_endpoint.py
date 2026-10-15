@@ -1,5 +1,3 @@
-"""End-to-end tests for the rebuilt multi-branch findings CSV export."""
-
 import csv
 import io
 from datetime import datetime, timedelta, timezone
@@ -107,13 +105,12 @@ async def test_license_and_waived_columns(client, db, member_auth_headers):
     assert row["license_category"] == "strong_copyleft"
     assert row["waived"] == "true"
     assert row["waiver_reason"] == "approved by legal"
-    assert row["kev"] == ""  # enrichment columns stay empty for non-vulnerability rows
+    assert row["kev"] == ""
 
 
 @pytest.mark.asyncio
 async def test_a_finding_document_without_the_waived_field_exports_as_not_waived(client, db, member_auth_headers):
-    """Findings written outside the model carry no `waived` key; the column must not fail open
-    and report an unreviewed finding as an accepted risk."""
+    """Findings written outside the model carry no waived key, which must not read as an accepted risk."""
     await _seed_scan(db, "s1", "main")
     await _seed_finding(db, "s1", finding_id="CVE-1")
     await db.findings.update_one({"finding_id": "CVE-1"}, {"$unset": {"waived": ""}})
@@ -132,7 +129,6 @@ async def test_404_when_no_branch_has_a_completed_scan(client, db, member_auth_h
 
 @pytest.mark.asyncio
 async def test_export_includes_every_finding_type(client, db, member_auth_headers):
-    """No type filter: a non-vulnerability finding must still appear in the export."""
     await _seed_scan(db, "s1", "main")
     await _seed_finding(db, "s1", finding_id="CVE-1")
     await _seed_finding(

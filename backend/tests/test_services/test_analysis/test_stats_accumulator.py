@@ -1,5 +1,3 @@
-"""Permanent pins for StatsAccumulator rules a differential corpus cannot express."""
-
 import copy
 from typing import Any, ClassVar
 
@@ -38,12 +36,10 @@ def _finding(ftype="vulnerability", severity="HIGH", **details):
 
 
 def _scored(ftype="vulnerability", severity="HIGH", **marks):
-    """A finding whose one advisory carries the given EPSS/KEV marks."""
     return _finding(ftype, severity, vulnerabilities=[{"id": "CVE-2024-0001", **marks}])
 
 
 def _enriched(cve, *, kev=False, ransomware=False, epss=None):
-    """A vulnerability finding as the enrichment writer leaves it."""
     kev_entry = (
         KEVEntry(
             cve=cve,
@@ -156,9 +152,7 @@ class TestSecretGate:
 
 
 class TestEpssTyping:
-    """Every persisted shape of epss_score: missing, null, 0.0, int, float, bool, string, list, dict.
-    A non-numeric one is treated as absent — decided, not inherited: the pipeline ranks
-    bool and string above every number and then dies at sum(epss_scores)."""
+    """A non-numeric epss_score counts as absent: the pipeline would rank it above every number, then fail to sum."""
 
     @pytest.mark.parametrize("junk", ["0.9", True, False, [], {}, "n/a"])
     def test_non_numeric_epss_is_treated_as_missing(self, junk):
@@ -216,7 +210,6 @@ class TestThreatIntelBoundaries:
         assert t.active_exploitation_count == 0
 
     def test_medium_epss_threshold_is_inclusive_at_the_boundary(self):
-        """Boundary: EPSS_MEDIUM_THRESHOLD is inclusive on the lower bound."""
         t = compute_stats([_scored(epss_score=EPSS_MEDIUM_THRESHOLD)], {}).threat_intel
         assert t.medium_epss_count == 1
         assert t.high_epss_count == 0
@@ -398,8 +391,7 @@ class TestComponentLanguageMap:
 class TestDriverReadsOneCursor:
     @pytest.mark.asyncio
     async def test_driver_hints_the_scan_id_type_index_and_does_not_prefilter_waived(self):
-        """The waived rule lives in add(); severity and waived are mutated after insert, so the
-        hint must sit on (scan_id, type), the only pair that is immutable post-insert."""
+        """severity and waived change after insert, so the hint sits on (scan_id, type), immutable after insert."""
         db = FakeDatabase()
         captured: list[tuple] = []
         original = db.findings.find
@@ -606,8 +598,7 @@ def _drop(node: Any, keys: list[str]) -> None:
 
 
 def _without_path(doc: dict[str, Any], path: str) -> dict[str, Any]:
-    """``doc`` with one dotted path removed (from every array element on the way, as a projection
-    reads it), standing in for a projection that forgot it."""
+    """Stands in for a projection that forgot one dotted path, dropping it from every array element on the way."""
     stripped = copy.deepcopy(doc)
     _drop(stripped, path.split("."))
     return stripped
@@ -624,11 +615,7 @@ async def _seeded_oracle_db() -> tuple[FakeDatabase, list[dict[str, Any]]]:
 
 
 class TestProjectionOracle:
-    """The projected read and the unprojected fold must agree.
-
-    The derived-projection assertions all compare REQUIRED_PATHS against a dict built from
-    REQUIRED_PATHS; none of them can see a path the accumulator reads but the set omits.
-    """
+    """The other projection checks compare REQUIRED_PATHS with itself and cannot see a path the set omits."""
 
     @pytest.mark.asyncio
     async def test_the_projected_driver_matches_the_unprojected_fold(self):
@@ -639,8 +626,7 @@ class TestProjectionOracle:
 
     @pytest.mark.asyncio
     async def test_the_corpus_reaches_the_two_level_confidence_path_through_the_projection(self):
-        """Nothing else in the suite folds details.reachability.confidence_score through a projection,
-        so a zero here would leave the comparison above blind to the only nested path."""
+        """Nothing else folds details.reachability.confidence_score through a projection, the only nested path."""
         db, _ = await _seeded_oracle_db()
         reachability = (await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)).stats.reachability
         assert reachability.reachable_count_high_confidence == _EXPECTED_HIGH_CONFIDENCE
@@ -649,8 +635,7 @@ class TestProjectionOracle:
 
     @pytest.mark.parametrize("path", sorted(StatsAccumulator.REQUIRED_PATHS))
     def test_every_required_path_moves_a_counter_in_this_corpus(self, path):
-        """Coverage guard for the comparison above: a path the corpus never exercises could be
-        dropped from the projection without the oracle noticing."""
+        """A path the corpus never exercises could be dropped from the projection without the oracle noticing."""
         documents = _oracle_documents()
         languages = component_language_map(_ORACLE_DEPENDENCIES)
         stripped = [_without_path(document, path) for document in documents]
@@ -658,8 +643,7 @@ class TestProjectionOracle:
 
 
 class TestAdjustedRiskScoreMagnitude:
-    """The reachability modifiers are the only thing separating adjusted_risk_score from the base
-    score, so a comparison between the two cannot pin how far apart they are."""
+    """A comparison with the base score cannot pin how far the reachability modifiers move adjusted_risk_score."""
 
     @pytest.mark.parametrize(
         "reachable,level,expected_adjusted",

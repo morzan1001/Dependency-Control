@@ -103,8 +103,7 @@ def test_reachability_carries_only_the_two_counts_the_delta_reports():
 
 
 def test_reachability_rejects_the_rest_of_the_stats_document():
-    """Feeding it a whole ReachabilityStats document must fail rather than keep two keys quietly,
-    so the label can never claim to summarise fields it dropped."""
+    """A whole ReachabilityStats document must fail, so the label never claims to summarise fields it dropped."""
     with pytest.raises(ValidationError):
         ScanDeltaReachability.model_validate(ReachabilityStats().model_dump())
 

@@ -1,5 +1,3 @@
-"""Small authentication gaps: who may read an account, which passwords are accepted, which sessions survive."""
-
 import threading
 from datetime import datetime, timedelta, timezone
 

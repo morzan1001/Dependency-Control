@@ -1,5 +1,3 @@
-"""Tests for email notification templates."""
-
 import pytest
 from jinja2 import UndefinedError
 

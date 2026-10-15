@@ -1,9 +1,4 @@
-"""A waived finding is not a delivered risk: the delta must agree with every other metric.
-
-Waivers are re-evaluated only for the latest scan, so the older side's flags are frozen while the
-newer side is live. The bucket a finding lands in therefore depends on both sides' waiver state,
-and the response has to report how many findings each side lost to the filter.
-"""
+"""Waivers are re-evaluated for the latest scan only, so the older side's flags are frozen and the newer live."""
 
 from datetime import datetime, timezone
 
@@ -37,7 +32,6 @@ _THREE = 3
 _LIVE_CVE = "CVE-3001"
 _WAIVED_CVE = "CVE-3002"
 
-# Waiver state of one side: the tri-state flag, plus the side carrying no document at all.
 _WAIVED = "waived"
 _NOT_WAIVED = "not-waived"
 _NO_FLAG = "no-waived-key"
@@ -131,8 +125,7 @@ async def test_a_waived_finding_is_left_out_of_the_item_list(db):
 
 @pytest.mark.asyncio
 async def test_a_lapsed_waiver_reads_as_added_and_the_response_says_how_many_were_waived_out(db):
-    """The count is what lets a screen say the finding became visible because a waiver lapsed
-    rather than because the code changed."""
+    """The count lets a screen say a waiver lapsed rather than the code changed."""
     await db.findings.insert_one(_finding(_SHARED_FINDING, _FROM_SCAN, component=_WAIVED_COMPONENT, waived=True))
     await db.findings.insert_one(_finding(_SHARED_FINDING, _TO_SCAN, component=_WAIVED_COMPONENT, waived=False))
 
@@ -206,8 +199,7 @@ def _aggregated(fid: str, scan_id: str, entries: list[dict], *, waived: bool = F
 
 @pytest.mark.asyncio
 async def test_a_per_cve_waiver_does_not_split_one_record_into_an_added_and_removed_pair(db):
-    """The head side gained a critical and waived it; the delivered set is unchanged, and the count
-    is what tells the caller a waiver is holding something back."""
+    """The delivered set is unchanged, and the count tells the caller a waiver is holding something back."""
     await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}]))
     await db.findings.insert_one(
         _aggregated(
@@ -343,7 +335,6 @@ async def test_a_lapsed_waiver_is_reported_even_when_both_sides_hide_the_same_nu
 
 @pytest.mark.asyncio
 async def test_a_change_no_waiver_explains_is_not_counted_as_one(db):
-    """Waivers on both sides, and a finding that genuinely appeared: the warning must stay silent."""
     await db.findings.insert_one(_finding(_WAIVED_FINDING, _FROM_SCAN, component=_WAIVED_COMPONENT, waived=True))
     await db.findings.insert_one(_finding(_WAIVED_FINDING, _TO_SCAN, component=_WAIVED_COMPONENT, waived=True))
     await db.findings.insert_one(_finding(_LIVE_FINDING, _TO_SCAN, component=_LIVE_COMPONENT, waived=False))

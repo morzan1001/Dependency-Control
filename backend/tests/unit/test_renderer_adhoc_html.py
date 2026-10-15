@@ -1,5 +1,3 @@
-"""The ad-hoc HTML report escapes untrusted SBOM content and hides no input from the reader."""
-
 import pytest
 from jinja2 import UndefinedError
 from markupsafe import escape
@@ -123,8 +121,7 @@ def test_a_findings_table_cut_to_the_row_cap_says_so():
 
 
 def test_a_findings_table_cut_to_the_row_cap_renders_only_that_many_rows():
-    """The heading names a subset; a table rendering every row makes the heading a lie and the
-    document unbounded."""
+    """The heading names a subset, so rendering every row would make it a lie and the document unbounded."""
     result = _result(findings=[_finding(id=str(index)) for index in range(_OVER_THE_CAP)])
 
     html = render_adhoc_html(result)
@@ -173,8 +170,7 @@ def test_findings_are_ordered_most_severe_first():
 
 
 def test_a_waived_finding_is_marked_as_waived_in_its_row():
-    """The stylesheet strikes ``tr.waived`` through; without the class a suppressed finding reads
-    exactly like a live one."""
+    """The stylesheet strikes tr.waived through; without the class a waived finding reads like a live one."""
     result = _result(findings=[_finding(waived=True), _finding(id="live", component="live-component")])
 
     html = render_adhoc_html(result)
@@ -233,8 +229,7 @@ def test_empty_result_renders():
 
 
 def test_every_response_field_reaches_the_template():
-    """Hand-listing the render arguments let a schema field be added without the report showing
-    it, and renamed without the report noticing."""
+    """Hand-listed render arguments would let a schema field be added or renamed without the report noticing."""
     context = report_context(AdhocAnalyzeResponse())
 
     unreached = {

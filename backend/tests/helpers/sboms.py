@@ -1,5 +1,3 @@
-"""SBOMs stored the way ingest stores them: a GridFS file behind each scan ref."""
-
 import json
 from typing import Any
 
@@ -17,7 +15,6 @@ def sbom_ref(file_id: str) -> dict[str, Any]:
 
 
 async def store_sbom(db: Any, sbom: dict[str, Any] | bytes, file_id: str | None = None) -> dict[str, Any]:
-    """Upload the SBOM to the database's GridFS, under ``file_id`` when given, and return its scan ref."""
     data = sbom if isinstance(sbom, bytes) else json.dumps(sbom).encode()
     fs = AsyncIOMotorGridFSBucket(db)
     if file_id is None:

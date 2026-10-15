@@ -1,5 +1,3 @@
-"""The chat conversation endpoints answer with the caller's stored conversations and their messages."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

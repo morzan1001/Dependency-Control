@@ -1,5 +1,4 @@
-"""Symbol-level reachability end to end: OSV ecosystem_specific must survive
-normalization and aggregation so the reachability engine can reach the symbol tier."""
+"""OSV ecosystem_specific must survive normalization and aggregation, or the symbol tier is unreachable."""
 
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO, REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
@@ -56,7 +55,6 @@ def test_osv_ecosystem_specific_survives_into_stored_entry():
         "Server.ServeConn",
         "ConfigureServer",
     ]
-    # Surfaced at the entry level only, not duplicated into the nested details copy.
     assert "ecosystem_specific" not in entry["details"]
 
 
@@ -108,7 +106,6 @@ def _finding_with_symbols(count: int) -> dict:
 
 
 def test_the_import_count_is_the_number_of_import_sites_not_the_sample_size():
-    """The count was len(locations[:10]), so a package imported in 40 files reported 10."""
     module_usage = {
         "golang.org/x/net": {
             "import_locations": [f"cmd/mod{index}.go" for index in range(_IMPORT_SITES)],

@@ -1,9 +1,4 @@
-"""A service reachable through both its REST endpoint and a chat tool is bounded at one number.
-
-Two independently declared ceilings for one read is how a caller ends up believing the smaller
-one was the whole of what exists, so each pair is compared against the other here rather than
-against the constant both now import.
-"""
+"""Two ceilings for one read make the smaller look like everything, so each pair is compared with the other."""
 
 import inspect
 from datetime import datetime, timezone
@@ -28,7 +23,6 @@ _OVER_ANY_CEILING = 1_000_000
 
 
 def _endpoint_ceiling(endpoint: Any) -> int:
-    """The `le=` FastAPI validates the endpoint's `limit` against."""
     metadata = inspect.signature(endpoint).parameters["limit"].default.metadata
     ceilings = [c.le for c in metadata if isinstance(getattr(c, "le", None), int)]
     assert len(ceilings) == 1
@@ -55,7 +49,6 @@ def seeded(db):
 
 
 async def _limit_reached_by(tool: str, args: dict[str, Any], target: str, db: Any, user: User) -> int:
-    """The `limit` the chat tool hands the service when the caller asks for more than it grants."""
     spy = AsyncMock(return_value={})
     with patch(f"app.services.chat.tools.registry.{target}", new=spy):
         await ChatToolRegistry().execute_tool(tool, {**args, "limit": _OVER_ANY_CEILING}, user, db)

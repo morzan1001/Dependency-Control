@@ -104,8 +104,7 @@ async def _seeded_system_policy(db) -> CryptoPolicyRepository:
     ],
 )
 async def test_put_system_policy_rejects_bodies_that_carry_no_rules(client, db, admin_auth_headers, body):
-    """A body whose rules never arrive used to return 200 and leave the policy empty, which
-    disarms every crypto analyzer. It must not be possible to wipe the policy by accident."""
+    """An empty stored policy disarms every crypto analyzer, so a body without rules must not wipe it."""
     repo = await _seeded_system_policy(db)
 
     resp = await client.put("/api/v1/crypto-policies/system", json=body, headers=admin_auth_headers)
@@ -126,7 +125,6 @@ async def test_put_system_policy_rejects_bodies_that_carry_no_rules(client, db, 
     ],
 )
 async def test_put_system_policy_answers_422_not_500(client, db, admin_auth_headers, body):
-    """These raised ValidationError below the route, which the catch-all handler turned into a 500."""
     await _seeded_system_policy(db)
 
     resp = await client.put("/api/v1/crypto-policies/system", json=body, headers=admin_auth_headers)
@@ -136,7 +134,6 @@ async def test_put_system_policy_answers_422_not_500(client, db, admin_auth_head
 
 @pytest.mark.asyncio
 async def test_put_system_policy_still_allows_an_explicit_empty_rule_set(client, db, admin_auth_headers):
-    """Clearing the policy on purpose stays possible — only the accidental wipe is closed."""
     repo = await _seeded_system_policy(db)
 
     resp = await client.put("/api/v1/crypto-policies/system", json={"rules": []}, headers=admin_auth_headers)
@@ -189,8 +186,7 @@ async def test_put_project_policy_is_locked_out_while_the_system_enforces_a_glob
     db,
     owner_auth_headers_proj,
 ):
-    """The resolver discards project overrides in this mode, so accepting the write would store a
-    policy that never takes effect."""
+    """The resolver discards project overrides in this mode, so the write would never take effect."""
     await SystemSettingsRepository(db).update({"crypto_policy_mode": "global"})
 
     resp = await client.put(
@@ -205,8 +201,7 @@ async def test_put_project_policy_is_locked_out_while_the_system_enforces_a_glob
 
 @pytest.mark.asyncio
 async def test_put_project_policy_bumps_the_stored_version(client, db, owner_auth_headers_proj):
-    """Policy audit entries and reverts address a revision by version, so two writes must not
-    collapse onto one number."""
+    """Audit entries and reverts address a revision by version, so two writes must not share one."""
     first = await client.put(
         "/api/v1/projects/p/crypto-policy",
         json={"rules": [rule_dict("r1")]},

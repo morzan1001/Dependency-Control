@@ -1,5 +1,3 @@
-"""A team license audit honours each project's own policy through the severity its scan recorded."""
-
 from datetime import datetime, timezone
 
 import pytest

@@ -1,5 +1,3 @@
-"""create_indexes must build indexes on the collections the app uses (crypto_policy_history)."""
-
 import asyncio
 from unittest.mock import AsyncMock
 

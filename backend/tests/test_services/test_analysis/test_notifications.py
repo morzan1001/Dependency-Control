@@ -1,5 +1,3 @@
-"""Scan-completion notification building/sending: top-priority sort ordering and report-URL rendering."""
-
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -39,12 +37,10 @@ class TestBuildVulnerabilityMessageReportLink:
             link=scan_link,
         )
         assert f"View full report: {scan_link}" in message
-        # a bare UUID with no scheme/path must not be emitted
         assert "View full report: 3f2a-uuid" not in message
 
 
 def _finding(fid, severity, epss=None, in_kev=False, aliases=None):
-    """An enriched vulnerability record as the engine persists and announces it."""
     details = {"id": fid, "severity": severity, "aliases": aliases or []}
     if epss is not None:
         details["epss_score"] = epss
@@ -62,7 +58,6 @@ def _finding(fid, severity, epss=None, in_kev=False, aliases=None):
 
 
 def _outcome(**overrides):
-    """The run outcome the engine hands the notifier; defaults describe a clean one-analyzer scan."""
     outcome = {
         "stats": Stats(),
         "status": SCAN_STATUS_COMPLETED,
@@ -86,7 +81,6 @@ async def _db_with_scan(scan_id: str = "scan-abc-123") -> FakeDatabase:
 
 
 async def _capture_vuln_message(findings):
-    """Drive send_scan_notifications and return the vulnerability_found message and webhook call."""
     project = Project(id="proj-1", name="MyProject")
     captured = {}
 
@@ -128,7 +122,6 @@ class TestSendScanNotificationsMessage:
 
     @pytest.mark.asyncio
     async def test_top_vulns_sorted_most_severe_first(self):
-        """With equal KEV/EPSS, severity orders most-severe-first."""
         findings = [
             _finding("CVE-LOW", "LOW"),
             _finding("CVE-CRIT", "CRITICAL"),
@@ -153,8 +146,7 @@ class TestSendScanNotificationsMessage:
 
     @pytest.mark.asyncio
     async def test_a_vulnerability_at_the_epss_threshold_counts_as_high_risk(self):
-        """EPSS_HIGH_THRESHOLD is defined as "exploitation probability at or above 10%", so a score
-        sitting exactly on it is the alert's whole reason to exist here: nothing else is severe."""
+        """EPSS_HIGH_THRESHOLD means at or above 10%, so a score exactly on it is the alert's only reason here."""
         findings = [_finding("CVE-EPSS", "MEDIUM", epss=EPSS_HIGH_THRESHOLD)]
 
         captured = await _capture_vuln_message(findings)
@@ -210,8 +202,7 @@ class TestVersionlessVulnerability:
 class TestVulnerabilityWebhookCounters:
     @pytest.mark.asyncio
     async def test_the_webhook_counts_criticals_and_highs_separately(self):
-        """Downstream consumers page on critical_count; a scan of two CRITICALs must not report
-        them as anything else."""
+        """Downstream consumers page on critical_count."""
         findings = [
             _finding("CVE-CRIT-1", "CRITICAL"),
             _finding("CVE-CRIT-2", "CRITICAL"),
@@ -323,8 +314,7 @@ class TestScanCompletedWebhook:
 class TestAnalysisCompletedReachesSubscribers:
     @pytest.mark.asyncio
     async def test_a_member_subscribed_to_analysis_completed_is_emailed(self):
-        """The event name is the key a member's preferences are looked up under, so one the
-        preference sanitizer does not know silently reaches nobody."""
+        """Preferences are keyed by event name, so a name the sanitizer does not know silently reaches nobody."""
         db = await _db_with_scan()
         await db.users.insert_one(
             {

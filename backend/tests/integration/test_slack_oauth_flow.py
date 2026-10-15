@@ -1,5 +1,3 @@
-"""The Slack install: only a state the settings page minted may replace the system-wide bot token."""
-
 import asyncio
 import time
 from datetime import datetime, timedelta, timezone
@@ -41,7 +39,6 @@ _FORBIDDEN = 403
 
 @pytest.fixture
 def slack(monkeypatch) -> list[dict[str, str]]:
-    """Every request that reached Slack: its URL, Authorization header and form fields."""
     received: list[dict[str, str]] = []
 
     def answer(request: httpx.Request) -> httpx.Response:

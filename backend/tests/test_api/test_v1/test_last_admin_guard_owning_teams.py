@@ -1,10 +1,4 @@
-"""Taking the project's last directly-named admin, when an owning team can supply another.
-
-The guard exists so a project cannot be left with nobody able to administer it. An owning team's
-admins are project admins, so the question it really asks is whether *any* owner supplies one —
-and answering it from one owner refuses a removal the co-owner makes perfectly safe,
-while answering it too loosely leaves a project stranded.
-"""
+"""An owning team's admins are project admins, so the guard asks whether any owner still supplies one."""
 
 import pytest
 from fastapi import HTTPException
@@ -62,7 +56,6 @@ async def test_a_co_owner_supplying_an_admin_releases_the_demotion_guard():
 
 @pytest.mark.asyncio
 async def test_no_owner_supplying_an_admin_keeps_the_guard():
-    """The half that must not loosen: neither owner has an admin, so the project would be stranded."""
     db = await _seed(FakeDatabase(), owners=["alpha", "bravo"], alpha_members=_NO_ADMINS, bravo_members=_NO_ADMINS)
 
     with pytest.raises(HTTPException) as raised:

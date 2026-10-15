@@ -1,5 +1,3 @@
-"""One waiver read rule for the list, the filtered list and a single waiver."""
-
 from datetime import datetime, timezone
 
 import pytest

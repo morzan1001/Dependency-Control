@@ -1,5 +1,4 @@
-"""Handlers query by the ids of the documents the access check loaded, never the caller's arguments.
-Driven through ``_dispatch``, past the argument check, so an operator id reaches the handler."""
+"""Driven through _dispatch past the argument check, so an operator id reaches the handler under test."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -39,8 +38,7 @@ def _caller() -> User:
 
 
 def _seed_project(db: FakeDatabase, project_id: str, marker: str, member: str) -> None:
-    """One project with a document in every collection a project-scoped tool reads, each carrying
-    ``marker`` so an answer shows whose data it was built from."""
+    """Every document carries the marker, so an answer shows whose data it was built from."""
     head, prior = f"{project_id}-scan", f"{project_id}-prior"
     db.projects._docs[project_id] = {
         "_id": project_id,
@@ -173,7 +171,6 @@ def _stand_in(name: str, schema: dict):
 
 
 def _project_scoped_cases() -> list[tuple[str, dict]]:
-    """Each project_id tool with every id argument set to an operator and bounded arguments at their defaults."""
     cases: list[tuple[str, dict]] = []
     for definition in TOOL_DEFINITIONS:
         function = definition["function"]

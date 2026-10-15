@@ -1,5 +1,3 @@
-"""Tests for GitLab instance API endpoints."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -121,7 +119,6 @@ class TestListInstances:
         assert result["total"] == 50
 
     def test_pagination_response_page_reflects_requested_page(self, admin_user):
-        """build_pagination_response must receive skip, not the 1-based page (else page=2/size=100 collapses to 1)."""
         from app.api.v1.endpoints.gitlab_instances import list_instances
 
         mock_repo = _make_repo_mock(find_many=[], count=250)
@@ -226,7 +223,6 @@ class TestCreateInstance:
             "name": "New GL",
             "url": "https://new-gitlab.com",
             "access_token": "glpat-new-token",
-            # oidc_audience is required
             "oidc_audience": "https://app.example.com",
         }
         defaults.update(overrides)
@@ -352,8 +348,7 @@ class TestCreateInstance:
         mock_repo.create.assert_called_once()
 
     def test_a_trailing_slash_never_reaches_the_stored_url(self, admin_user):
-        """Every URL comparison (dedupe, OIDC issuer matching) is literal, so the slash would
-        make the same GitLab two different instances."""
+        """URL comparisons (dedupe, issuer matching) are literal, so a slash would make one GitLab two instances."""
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
         mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
@@ -581,8 +576,7 @@ class TestTestConnection:
         return result, service
 
     def test_a_token_that_cannot_list_groups_fails_a_team_syncing_instance(self, admin_user):
-        """The listing is how team sync resolves a project's group; a green test here sends the
-        operator looking elsewhere while nothing ever syncs."""
+        """Team sync resolves a project's group through this listing, so a green test would hide that nothing syncs."""
         result, _ = self._probe(admin_user, groups=None)
 
         assert result.success is False
@@ -648,8 +642,6 @@ class TestTestConnection:
 
 
 class TestBindingPickerListing:
-    """What the team-binding dialog offers; a picker that cannot list makes binding guesswork."""
-
     @staticmethod
     def _run(admin_user, instance, groups, search=None):
         from app.api.v1.endpoints.gitlab_instances import list_instance_groups

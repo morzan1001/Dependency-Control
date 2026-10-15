@@ -1,5 +1,3 @@
-"""A missing scan must terminate cleanly."""
-
 import asyncio
 
 from app.services.analysis.engine import run_analysis

@@ -1,5 +1,3 @@
-"""Unit tests for the crypto-policy seeder."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,7 +14,6 @@ from app.services.crypto_policy.seeder import (
 
 @pytest.fixture(autouse=True)
 def _silence_audit_history():
-    """Patch out record_policy_change so seeding doesn't emit webhooks or notifications."""
     with patch(
         "app.services.crypto_policy.seeder.record_policy_change",
         new=AsyncMock(),

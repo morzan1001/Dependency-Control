@@ -1,5 +1,3 @@
-"""Tests for update frequency analysis (version classification, trend, aggregates, streaming orchestrator)."""
-
 import asyncio
 from collections import Counter
 from collections.abc import Sequence
@@ -73,14 +71,12 @@ class TestClassifyVersionChange:
     def test_one_unparseable_returns_unknown(self):
         assert classify_version_change("1.0.0", "abc") == "unknown"
 
-    # identical versions must NOT be classified as "patch"
     def test_identical_versions_returns_none(self):
         assert classify_version_change("1.0.0", "1.0.0") == "none"
 
     def test_identical_with_v_prefix_returns_none(self):
         assert classify_version_change("v1.0.0", "1.0.0") == "none"
 
-    # pre-release identifiers must be respected
     def test_stable_to_prerelease_is_downgrade(self):
         assert classify_version_change("1.0.0", "1.0.0-beta1") == "downgrade"
 
@@ -111,24 +107,20 @@ class TestClassifyVersionChange:
         assert result in ("patch", "prerelease")
 
     def test_prerelease_to_different_prerelease(self):
-        # 1.0.0-beta1 -> 1.0.0-beta2: same release tuple, different prerelease
         result = classify_version_change("1.0.0-beta1", "1.0.0-beta2")
         assert result != "none"
         assert result in ("patch", "prerelease")
 
     def test_prerelease_to_higher_patch(self):
-        # 1.0.0-beta1 -> 1.0.1 spans both prerelease and patch — should be patch
         assert classify_version_change("1.0.0-beta1", "1.0.1") == "patch"
 
     def test_prerelease_to_higher_major(self):
         assert classify_version_change("1.0.0-beta1", "2.0.0") == "major"
 
     def test_short_version_strings(self):
-        # Versions like "1.0" should still parse and classify
         assert classify_version_change("1.0", "1.1") == "minor"
 
     def test_single_component_version(self):
-        # A bare "1" -> "2" is a major change
         assert classify_version_change("1", "2") == "major"
 
     def test_hash_based_versions_unknown(self):
@@ -136,14 +128,13 @@ class TestClassifyVersionChange:
         assert classify_version_change("abc1234", "def5678") == "unknown"
 
     def test_calver_classified_by_release_tuple(self):
-        # CalVer maps onto the release tuple via packaging.Version; behavior pinned so regex tweaks can't silently change it.
+        # CalVer maps onto the release tuple via packaging.Version; pinned so regex tweaks cannot change it.
         assert classify_version_change("2024.01.15", "2024.02.01") == "minor"
         assert classify_version_change("2024.01.15", "2025.01.15") == "major"
         assert classify_version_change("2024.01.15", "2024.01.16") == "patch"
 
     def test_post_release_kept_as_change(self):
-        # PEP 440 post-releases are "after the release" — different identity,
-        # so 1.0.0 -> 1.0.0.post1 must register as some kind of change, not "none".
+        # A PEP 440 post-release comes after the release, so it is a change, not "none".
         result = classify_version_change("1.0.0", "1.0.0.post1")
         assert result != "none"
 
@@ -159,7 +150,6 @@ def _baseline_entry() -> ScanTimelineEntry:
 
 
 class TestComputeTrend:
-    # trend is "unknown" when there isn't enough data, not "stable"
     def test_empty_timeline_returns_unknown(self):
         direction, _ = compute_trend([])
         assert direction == "unknown"
@@ -206,7 +196,6 @@ class TestComputeTrend:
 
 
 class TestSummariseWindowCoverage:
-    # coverage is None when nothing has ever been outdated
     def test_coverage_none_when_no_outdated(self):
         m = summarise_window([_make_timeline_entry(0), _make_timeline_entry(30)], Counter(), set(), set(), None, None)
         assert m.update_coverage_pct is None
@@ -311,7 +300,6 @@ def _scan_days_ago(scan_id: str, days: float, **overrides: Any) -> dict[str, Any
 
 
 def _recent_scans(count: int, spacing_days: int = 1) -> list[dict[str, Any]]:
-    """Scans ending at now, so a ``window_days`` cutoff can select a known suffix."""
     now = datetime.now(tz=timezone.utc)
     scans = [_make_scan(f"s{i}", i) for i in range(count)]
     for i, scan in enumerate(scans):
@@ -338,7 +326,6 @@ def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> dict[str, A
 
 
 def _one_scan_each(commit_count: int) -> dict[str, int]:
-    """A window whose commits were each scanned once, the shape most cases only need."""
     return {f"commit-{index}": 1 for index in range(commit_count)}
 
 
@@ -413,8 +400,6 @@ class TestWindowCoverageStatus:
 
 
 class TestBranchScopedScanSelection:
-    """The timeline must cover exactly one branch and exclude rescans/storms."""
-
     @staticmethod
     async def _compute_elected(scans, deps, *, default_branch=None, deleted_branches=None, **kwargs):
         scan_repo = FakeScanRepo(scans)
@@ -425,8 +410,7 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_mixed_branch_history_analyzes_only_primary_branch(self):
-        # Feature-branch scans interleave with main; the feature branch bumps
-        # pkg-a, main never does. Without branch scoping this counts 4 updates.
+        # Feature-branch scans interleave with main and only they bump pkg-a; unscoped, this counts 4 updates.
         scans = [
             _make_scan("m1", 0, branch="main"),
             _make_scan("f1", 1, branch="feature"),
@@ -448,8 +432,7 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_default_branch_preferred_over_newest_scan_branch(self):
-        # main has ample history; a single newer scan on a feature branch must
-        # not hijack the analysis when default_branch is configured.
+        # A single newer feature-branch scan must not hijack a configured default_branch with ample history.
         scans = [
             _make_scan("m1", 0, branch="main"),
             _make_scan("m2", 1, branch="main"),
@@ -486,7 +469,6 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_default_branch_ignored_when_too_sparse(self):
-        # default_branch has a single scan -> fall back to the active branch.
         scans = [
             _make_scan("d1", 0, branch="release"),
             _make_scan("m1", 1, branch="main"),
@@ -502,7 +484,6 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_rescans_excluded_from_the_analyzed_branch_timeline(self):
-        # A rescan ON the analyzed branch must not enter the timeline.
         scans = [
             _make_scan("m1", 0, branch="main"),
             _make_scan("m2", 1, branch="main"),
@@ -519,8 +500,7 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_head_commit_storm_does_not_starve_window(self):
-        # The newest max_scans raw scans are all the same head commit; distinct
-        # older commits must still fill the window.
+        # The newest max_scans scans all share the head commit; distinct older commits must still fill the window.
         scans = [_make_scan(f"h{i}", 100 + i, commit_hash="head") for i in range(5)]
         scans += [_make_scan(f"c{i}", i, commit_hash=f"c{i}") for i in range(5)]
         deps: dict[str, list[dict[str, Any]]] = {}
@@ -552,8 +532,7 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_rescans_are_excluded(self):
-        # The newest scan is a rescan carrying a stale snapshot; it must drive
-        # neither branch resolution nor the timeline.
+        # The newest scan is a rescan with a stale snapshot, so it drives neither branch nor timeline.
         scans = [
             _make_scan("m1", 0, branch="main"),
             _make_scan("m2", 1, branch="main"),
@@ -584,8 +563,7 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_the_default_branch_needs_its_two_scans_inside_the_window(self):
-        # release was busy before the window and scanned once inside it; counting
-        # its whole history would hand it a window it cannot describe.
+        # release was busy only before the window, so its whole history must not count inside it.
         scans = [_scan_days_ago(f"r{i}", 200 + i, branch="release") for i in range(10)]
         scans.append(_scan_days_ago("r-recent", 30, branch="release"))
         scans += [_scan_days_ago(f"m{i}", 60 - i * 10, branch="main") for i in range(3)]
@@ -613,10 +591,7 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_a_textual_created_at_drops_the_scan(self):
-        # Archive restore inserts bundle JSON verbatim and JSON has no date type, so a
-        # restored scan can carry created_at as text. A range query brackets to its
-        # bound's BSON type, so the window aggregation skips such a scan; parsing it
-        # here would put it on a timeline nothing else accounts for.
+        # A restored scan can carry created_at as text, which the window aggregation skips, so parsing must too.
         scans = [
             {**_make_scan("s1", 0), "created_at": "2026-01-01T00:00:00Z"},
             {**_make_scan("s2", 30), "created_at": "whenever"},
@@ -655,8 +630,6 @@ class TestBranchScopedScanSelection:
 
 
 class TestIdentityKeying:
-    """Version diffing must key on purl identity, not the bare dependency name."""
-
     @staticmethod
     def _raw_dep(scan_id: str, name: str, version: str, purl: str, ptype: str = "library") -> dict[str, Any]:
         return {"scan_id": scan_id, "name": name, "version": version, "type": ptype, "purl": purl}
@@ -721,7 +694,6 @@ class TestIdentityKeying:
 
     @pytest.mark.asyncio
     async def test_deps_without_purl_key_by_name_and_type(self):
-        # The non-purl fallback identity path must still diff correctly.
         deps = {
             "s1": [{"scan_id": "s1", "name": "internal-lib", "version": "1.0.0", "type": "internal", "purl": ""}],
             "s2": [{"scan_id": "s2", "name": "internal-lib", "version": "1.0.1", "type": "internal", "purl": ""}],
@@ -753,8 +725,6 @@ class TestIdentityKeying:
 
 
 class TestOutdatedTracking:
-    """Outdated results union across SBOMs; resolution means leaving the outdated set."""
-
     @pytest.mark.asyncio
     async def test_multi_sbom_outdated_results_are_unioned(self):
         # The engine writes one outdated_packages row per SBOM of a scan.
@@ -828,16 +798,11 @@ def _backlog_outdated(scan_id: str, names: Sequence[str] = _BACKLOG) -> dict[str
 
 
 class TestUnmeasuredScans:
-    """A scan carrying no outdated analysis is not a scan with an empty backlog.
-
-    Roughly one scan in thirty ships without an SBOM and therefore without the
-    analysis, so every metric derived from the backlog has to survive the gap.
-    """
+    """A scan without the outdated analysis has an unknown backlog, not an empty one."""
 
     @pytest.mark.asyncio
     async def test_missing_final_analysis_is_not_a_cleared_backlog(self):
-        # Identical dependency sets: nothing was updated, so nothing can have
-        # been resolved either.
+        # Identical dependency sets: nothing updated, so nothing can have been resolved.
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
         m = await _compute(scans, deps, [_backlog_outdated("s1")])
@@ -858,8 +823,7 @@ class TestUnmeasuredScans:
 
     @pytest.mark.asyncio
     async def test_resolution_across_a_measurement_gap_is_not_credited(self):
-        # pkg-b and pkg-c leave the backlog, but the only scan in between
-        # carries no analysis, so the transition was never observed.
+        # pkg-b and pkg-c leave the backlog across a scan without analysis, so the transition was never observed.
         scans = [_make_scan("s1", 0), _make_scan("s2", 30), _make_scan("s3", 60)]
         deps = {
             "s1": [*_backlog_deps("s1"), _make_dep("s1", "churn", "1.0.0")],
@@ -907,7 +871,6 @@ class TestFailedLookups:
     async def _walk_and_ledger(
         flagged: dict[str, list[str]], failed: dict[str, list[str]]
     ) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics]:
-        """Both read paths over scans 30 days apart that each hold the backlog and ``flaky``."""
         db = FakeDatabase()
         for index, (scan_id, names) in enumerate(flagged.items()):
             await db.scans.insert_one(_scan_days_ago(scan_id, 30 * (len(flagged) - 1 - index)))
@@ -1004,15 +967,13 @@ class TestAggregationAccuracy:
     async def test_the_monthly_rate_measures_the_window_not_the_scan_cadence(self):
         fast = await self._one_update_over(36, window_days=None)
         slow = await self._one_update_over(24 * 60, window_days=None)
-        # No window: extrapolating one update to a monthly rate would say 20/month
-        # for the fast project and 0.5/month for the slow one on identical activity.
+        # No window: extrapolating one update would give the fast project 20/month, the slow one 0.5/month.
         assert fast.updates_per_month is None
         assert slow.updates_per_month is None
 
     @pytest.mark.asyncio
     async def test_the_monthly_rate_is_the_same_for_both_cadences_in_one_window(self):
-        # window_days here is only the rate denominator; both scan pairs fall
-        # inside the cutoff, so the selection itself is unaffected.
+        # window_days is only the rate denominator here; both scan pairs fall inside the cutoff.
         expected = round(1 / (90 / 30.44), 2)
         assert (await self._one_update_over(36, window_days=90)).updates_per_month == expected
         assert (await self._one_update_over(24 * 60, window_days=90)).updates_per_month == expected
@@ -1057,8 +1018,7 @@ class TestAggregationAccuracy:
 
     @pytest.mark.asyncio
     async def test_slowest_current_version_not_borrowed_from_same_name_sibling(self):
-        # Two npm packages stored under the bare name "core"; one is outdated,
-        # the other up-to-date. The backlog row must not show the sibling's version.
+        # Two npm packages stored as bare "core", one outdated; the backlog row must not show the sibling's version.
         def _npm(scan_id: str, scope: str, version: str) -> dict[str, Any]:
             return {
                 "scan_id": scan_id,
@@ -1144,8 +1104,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_recent_updates_capped_at_30(self):
-        # Build 50 scans where every dep changes each scan -> 50 update events.
-        # The streaming buffer must keep only the last 30 in `recent_updates`.
+        # Every dep changes in each of 50 scans; recent_updates keeps only the last 30 events.
         scans = [_make_scan(f"s{i}", i) for i in range(50)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(50)}
         m = await _compute(scans, deps, max_scans=100)
@@ -1158,7 +1117,6 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_default_takes_newest_scans_not_oldest(self):
-        # 30 scans, max_scans=5 — analysis must use the newest 5, not the oldest 5.
         scans = [_make_scan(f"s{i}", i) for i in range(30)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
         m = await _compute(scans, deps, max_scans=5)
@@ -1182,14 +1140,12 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_observations_bounded_for_high_churn_history(self):
-        # 200 scans x 5 packages = 1000 (pkg, version) pairs; the orchestrator must stay bounded and still produce metrics.
+        # 200 scans x 5 packages = 1000 (pkg, version) pairs, which the orchestrator must handle bounded.
         scans = [_make_scan(f"s{i}", i) for i in range(200)]
         deps: dict[str, list[dict[str, Any]]] = {}
         for i in range(200):
             deps[f"s{i}"] = [_make_dep(f"s{i}", f"pkg-{p}", f"1.{i}.{p}") for p in range(5)]
         m = await _compute(scans, deps, max_scans=200)
-        # Headline: it returns at all and reports 200 scans plus the
-        # right number of update events (199 transitions x 5 packages).
         assert m.scan_count == 200
         assert m.total_updates == 199 * 5
 
@@ -1249,8 +1205,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_release_fetcher_populates_upstream_metrics(self):
-        # Two scans, one update event (pkg-a 1.0.0 -> 1.0.1).
-        # Upstream history: 1.0.0 published 100d before scan 0, 1.0.1 20d before scan 1.
+        # One update, pkg-a 1.0.0 -> 1.0.1; upstream 1.0.0 is 100d older than scan 0, 1.0.1 20d older than scan 1.
         scans = [_scan_days_ago("s1", 30), _scan_days_ago("s2", 0)]
         deps = {
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
@@ -1277,16 +1232,14 @@ class TestStreamingOrchestrator:
         fetcher = FakeFetcher(history)
         m = await _compute(scans, deps, release_fetcher=fetcher)
 
-        # Adoption latency: 1.0.1 published 20d before scan 1 -> latency 20.
-        # Older 1.0.0 was already in scan 0 (we don't observe its first appearance).
+        # 1.0.1 came out 20d before scan 1; 1.0.0's first appearance predates the window, so it is not counted.
         assert m.adoption_latency_days_median == 20.0
 
-        # The window is measured against the real clock, so the scans end at now: both releases (130d, 20d old) count.
+        # The window uses the real clock, so the scans end at now and both releases (130d, 20d old) count.
         assert m.upstream_releases_last_12m_median == 2.0
 
         assert m.upstream_days_since_latest_release_median == 20.0
 
-        # Fetcher must have been called once with the unique packages from the scans.
         assert len(fetcher.calls) == 1
         assert ("pypi", "pkg-a") in fetcher.calls[0]
 
@@ -1301,13 +1254,11 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_hard_limit_caps_runaway_queries(self):
-        # 2500 scans inside the window -> the hard_limit safety cap must keep
-        # us from loading the whole collection.
+        # 2500 scans inside the window, so only the hard_limit cap stops a whole-collection load.
         scans = _recent_scans(2500)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(2500)}
 
         m = await _compute(scans, deps, max_scans=5, window_days=3000, hard_limit=100)
-        # Only the newest 100 scans should be analysed under the safety cap.
         assert m.scan_count == 100
         # And the response says so: every number above covers 100 of the branch's 2500 scans.
         assert m.window_scan_cap == 100
@@ -1323,7 +1274,7 @@ class TestStreamingOrchestrator:
 
     @staticmethod
     def _two_scan_project(pid: str, pkg: str, versions: tuple[str, str]) -> tuple[list, dict]:
-        # Inside the comparison's calendar window, which is what it now ranks over.
+        # Inside the comparison's calendar window, which it ranks over.
         now = datetime.now(tz=timezone.utc)
         scans = [_make_scan(f"{pid}-s1", 0, project_id=pid), _make_scan(f"{pid}-s2", 30, project_id=pid)]
         scans[0]["created_at"] = now - timedelta(days=30)
@@ -1336,9 +1287,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_unmeasured_coverage_ranks_after_measured(self):
-        # proj-a: pkg outdated then resolved -> measured 100% coverage.
-        # proj-b: nothing ever outdated -> coverage None; must NOT outrank a
-        # measured project or be crowned best_project.
+        # proj-a measures 100% coverage; proj-b, never outdated, has None and must not outrank or beat it.
         scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "3.0.0"))
         scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("1.0.0", "1.0.1"))
         results = [
@@ -1391,9 +1340,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_a_project_whose_summary_cannot_be_built_is_counted_rather_than_lost(self):
-        # Building the summary happens outside the per-project guard, so a schema
-        # violation there reaches asyncio.gather(return_exceptions=True) as the
-        # exception itself. Such a project must not vanish from every counter.
+        # The summary is built outside the per-project guard, so its failure must not drop the project.
         scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
         scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("2.0.0", "2.1.0"))
         projects = [{"_id": "proj-a", "name": "A"}, {"_id": "proj-b", "name": "B"}]
@@ -1403,8 +1350,7 @@ class TestStreamingOrchestrator:
         async def _bad_ratio_for_b(**kwargs):
             metrics = await real_compute(**kwargs)
             if kwargs["project_id"] == "proj-b":
-                # Survives here and fails when the summary is built, which is
-                # outside the guard.
+                # Survives here and fails only when the summary is built, outside the guard.
                 metrics.granularity_ratio = {"patch": "not a number"}
             return metrics
 
@@ -1416,7 +1362,6 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
-        # Must NOT issue a single bulk read across all scan_ids.
         scans = [_make_scan(f"s{i}", i) for i in range(5)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", "1.0.0")] for i in range(5)}
         results = [_outdated_result(f"s{i}", []) for i in range(5)]
@@ -1429,7 +1374,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_completed_filter_applied_before_limit(self):
-        # The newest max_scans scans are all failed with a long completed history underneath; status must be filtered in the query so older completed scans surface.
+        # The newest scans all failed, so status must be filtered in the query for completed ones to surface.
         completed = [_make_scan(f"c{i}", i) for i in range(6)]  # days 0..5, completed
         failed = [
             {**_make_scan(f"f{i}", 10 + i), "status": "failed"} for i in range(20)
@@ -1443,7 +1388,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_maven_upstream_uses_deps_dev_name(self):
-        # Maven components store only the artifact as the DB name, but deps.dev needs "group:artifact"; the spec must use that name and re-key observations so adoption-latency resolves.
+        # Maven rows store only the artifact, but deps.dev needs group:artifact, so observations are re-keyed.
         def _maven_dep(scan_id: str, version: str) -> dict[str, Any]:
             return {
                 "scan_id": scan_id,
@@ -1476,7 +1421,6 @@ class TestStreamingOrchestrator:
         fetcher = FakeFetcher(history)
         m = await _compute(scans, deps, release_fetcher=fetcher)
 
-        # The fetcher must be asked for the group:artifact name, not the bare artifact.
         assert ("maven", registry_name) in fetcher.calls[0]
         assert ("maven", "log4j-core") not in fetcher.calls[0]
         # Observations re-keyed to the deps.dev name -> adoption latency resolves (15d).
@@ -1509,11 +1453,7 @@ class TestStreamingOrchestrator:
         assert fetcher.calls == []
 
     def test_comparison_semaphore_reusable_across_event_loops(self):
-        # The concurrency semaphore must be created per call so it binds to the
-        # loop running the gather; a module-global one binds to the first loop and
-        # then raises "bound to a different event loop". Reproducing needs genuine
-        # contention: more projects than _COMPARISON_CONCURRENCY AND work that
-        # suspends (asyncio.sleep(0)) while holding the semaphore.
+        # A module-global semaphore binds to the first loop; reproducing needs more projects than the limit.
         n_projects = _COMPARISON_CONCURRENCY + 2  # 5 > concurrency limit of 3
 
         class _SuspendingScanRepo(FakeScanRepo):
@@ -1547,10 +1487,7 @@ class TestStreamingOrchestrator:
             )
 
         first = asyncio.run(_run())
-        # Fresh loop. With a module-global semaphore bound to the first loop, the
-        # projects that must wait on it raise RuntimeError here; gather swallows
-        # them (return_exceptions=True), so the summaries silently drop below
-        # n_projects. The per-call semaphore keeps all projects intact.
+        # A fresh loop: a semaphore bound to the first one would raise in waiters, which gather swallows silently.
         second = asyncio.run(_run())
         assert len(first.projects) == n_projects
         assert len(second.projects) == n_projects
@@ -1575,8 +1512,6 @@ _DIFFERENTIAL_FIELDS = (
 
 
 class TestBranchRuleDifferential:
-    """One history read twice. Both paths must settle on the same branch, hence the same numbers."""
-
     _PROJECT = "proj-diff"
     _WINDOW = 90
 
@@ -1599,7 +1534,6 @@ class TestBranchRuleDifferential:
         )
 
     async def _live(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
-        """The walk over the branch the per-project endpoint elects."""
         branch = await elect_primary_branch(ScanRepository(db), self._PROJECT, window_cutoff(self._WINDOW), None, [])
         return await compute_update_frequency(
             project_id=self._PROJECT,
@@ -1612,7 +1546,6 @@ class TestBranchRuleDifferential:
         )
 
     async def _rollup(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
-        """The ledger read the way the comparison endpoint assembles it."""
         project = {"_id": self._PROJECT, "name": "Diff", "default_branch": None, "deleted_branches": []}
         rolled = await rollup_metrics(db, project, self._WINDOW)
         assert rolled is not None
@@ -1620,9 +1553,7 @@ class TestBranchRuleDifferential:
 
     @pytest.mark.asyncio
     async def test_a_busy_branch_beats_a_fresher_one_on_both_paths(self):
-        # Measured in production: the branch of the newest scan is not the branch
-        # the project lives on. Whichever branch each path picks decides every
-        # field it reports, down to first_scan_date.
+        # In production the newest scan's branch is not always the project's branch, which decides every field.
         db = FakeDatabase()
         for i, version in enumerate(("1.0.0", "1.1.0", "2.0.0")):
             await self._seed(db, f"o{i}", 80 - i * 10, "old", version)
@@ -1675,7 +1606,6 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
 
     @staticmethod
     def _retry_storm_project(pid: str) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-        """Ten in-window scans of which eight are CI retries of one commit."""
         scans = [_scan_days_ago(f"{pid}-s0", 60, project_id=pid, commit_hash="c0")]
         scans += [_scan_days_ago(f"{pid}-r{i}", 59 - i, project_id=pid, commit_hash="c1") for i in range(8)]
         scans.append(_scan_days_ago(f"{pid}-s9", 50, project_id=pid, commit_hash="c2"))
@@ -1694,9 +1624,7 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
 
     @pytest.mark.asyncio
     async def test_a_retry_storm_leaves_a_project_fully_covered(self):
-        # Eight of ten scans are CI retries of one commit. Both read paths give a run
-        # one bar, so counting the retries as missing coverage would take a healthy
-        # project out of the ranking for scanning too often.
+        # Both paths give a retry run one bar, so counting retries as missing coverage would drop a healthy project.
         scans, deps = self._retry_storm_project("proj-retry")
 
         result = await _compare([{"_id": "proj-retry", "name": "Retry"}], scans, deps)
@@ -1708,8 +1636,7 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
 
     @pytest.mark.asyncio
     async def test_scans_older_than_the_window_do_not_make_a_project_look_partial(self):
-        # Coverage is measured against the window the numbers describe, not the
-        # project's whole history, which no window could ever cover.
+        # Coverage is measured against the window the numbers describe, not the project's whole history.
         scans, deps = self._steady_project("proj-ready")
         scans += [_scan_days_ago(f"ancient-{i}", 200 + i, project_id="proj-ready") for i in range(100)]
 
@@ -1719,9 +1646,7 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
 
     @pytest.mark.asyncio
     async def test_scans_the_walk_cannot_date_leave_coverage_alone(self):
-        # An archive restore can insert a scan date as text. A range match on a date
-        # does not select those, so they leave the window on both sides at once --
-        # the walk cannot place them on a timeline and coverage does not expect them.
+        # A restore can store a scan date as text, which a date range skips on both sides alike.
         scans, deps = self._steady_project("proj-thin")
         scans += [
             _scan_days_ago(f"undated-{i}", 20 + i, project_id="proj-thin") | {"created_at": "not a date"}
@@ -1768,8 +1693,7 @@ class TestRecentUpdatesSelection:
         scans = [_make_scan("s0", 0), _make_scan("s1", 1)]
         deps = {
             "s0": [_make_dep("s0", f"pkg{i:03d}", "1.0.0") for i in range(changed)],
-            # The last package by name takes a major bump; ranking has to pull it to the
-            # front, past the limit that document order alone would have dropped it behind.
+            # The last package by name takes a major bump, which ranking must pull past the document-order limit.
             "s1": [_make_dep("s1", f"pkg{i:03d}", "2.0.0" if i == changed - 1 else "1.0.1") for i in range(changed)],
         }
 
@@ -1797,8 +1721,6 @@ class TestRecentUpdatesSelection:
 
 
 class TestSlowestPackagesCut:
-    """The table is the head of a backlog, ranked with a tie-break both read paths share."""
-
     @staticmethod
     def _rows(package_outdated_counts, latest_outdated):
         return _build_slowest_packages(package_outdated_counts, {}, {}, latest_outdated, {})

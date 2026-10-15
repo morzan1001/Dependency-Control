@@ -1,5 +1,3 @@
-"""When the housekeeping loop lets the update-frequency reconcile run at all."""
-
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -75,7 +73,6 @@ class TestNightlySchedule:
 class TestLoopWiring:
     @pytest.fixture
     def loop_at(self, monkeypatch: pytest.MonkeyPatch):
-        """Run two iterations of the loop at a frozen clock, doing nothing but the reconcile."""
         calls: list[str] = []
 
         async def _noop(*_args: Any, **_kwargs: Any) -> None:

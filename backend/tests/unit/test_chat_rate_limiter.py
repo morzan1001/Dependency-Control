@@ -1,5 +1,3 @@
-"""The chat and MCP rate limiter, exercising the real Lua script via fakeredis."""
-
 import asyncio
 import logging
 from unittest.mock import AsyncMock
@@ -17,8 +15,6 @@ _START = 1_000_000.0
 
 
 class _FrozenClock:
-    """Stands in for the `time` module inside the limiter so a window can be aged deliberately."""
-
     def __init__(self, now: float) -> None:
         self._now = now
 

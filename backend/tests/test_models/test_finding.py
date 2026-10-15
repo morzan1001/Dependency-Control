@@ -1,5 +1,3 @@
-"""Tests for Finding model and enums."""
-
 import pytest
 from pydantic import ValidationError
 

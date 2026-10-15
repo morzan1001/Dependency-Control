@@ -1,5 +1,3 @@
-"""A broadcast names one of the known audiences; anything else is refused where it enters."""
-
 import pytest
 from pydantic import ValidationError
 
