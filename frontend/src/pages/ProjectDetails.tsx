@@ -52,8 +52,7 @@ export default function ProjectDetails() {
   const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
   const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize once; the flag (not length===0) preserves an intentionally empty selection and
-  // short-circuits next render, so this render-phase set doesn't loop.
+  // A flag, not length === 0, so an emptied selection stays empty and this render-phase set cannot loop.
   if (branchesSuccess && !hasInitializedBranches) {
     setHasInitializedBranches(true)
     setSelectedBranches(initialBranchSelection(branches ?? []))

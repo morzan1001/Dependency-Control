@@ -45,8 +45,7 @@ export function AnalyticsScopeControl({ releaseEnvironment, onChange, headOnlyTa
           )}
         </div>
       )}
-      {/* Coverage carries the whole page: the bare-list tabs beside it return no counters, so a
-          partly resolved fleet would otherwise read as a small healthy one. */}
+      {/* The bare-list tabs show no counters, so without coverage a partly resolved fleet reads as a small healthy one. */}
       {scope !== undefined && scope.projects_without_release > 0 && (
         <div className="flex items-start gap-2 rounded-md border border-info/30 bg-info/10 px-3 py-2 text-sm">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
@@ -55,8 +54,7 @@ export function AnalyticsScopeControl({ releaseEnvironment, onChange, headOnlyTa
           </p>
         </div>
       )}
-      {/* A release is a build nobody rebuilt, so its findings are the landscape of its analysis
-          date. Head is the freshest analysis there is and can still be months old. */}
+      {/* Findings are as old as their analysis: a release is never rebuilt, and even head can be months old. */}
       {scope?.oldest_analysis_at && (
         <p className="text-xs text-muted-foreground">{asOfNote(formatDate(scope.oldest_analysis_at))}</p>
       )}

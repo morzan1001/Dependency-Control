@@ -148,11 +148,8 @@ interface FindingsTableProps {
     readonly scanContext?: ScanContext;
     /** Top offset (px) for the sticky table header, e.g. when a sticky TabsList sits above. */
     readonly stickyHeaderTop?: number;
-    /** Filter by license category (e.g. weak_copyleft, strong_copyleft) */
     readonly licenseCategory?: string;
-    /** Hide INFO-level findings */
     readonly hideInfo?: boolean;
-    /** Active/waived split: "active" (default) un-waived only, "waived" waived only, "all" both. */
     readonly waivedFilter?: "active" | "waived" | "all";
     /** Hide findings on transitive dependencies (direct and non-dependency findings stay). */
     readonly directOnly?: boolean;
@@ -177,8 +174,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     const sort = useSortState('severity')
     const [searchParams, setSearchParams] = useSearchParams()
     const deepLinkFindingId = searchParams.get('finding')
-    // Guard so we only auto-open once per deep-link value — otherwise the
-    // effect would re-trigger every time selectedFinding changes.
     const openedDeepLinkRef = useRef<string | null>(null)
 
     useEffect(() => {
@@ -209,8 +204,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         return () => { cancelled = true }
     }, [deepLinkFindingId, scanId, waivedFilter])
 
-    // Strip the ?finding=… param once the user closes the drawer so the
-    // deep-link doesn't immediately reopen it.
     const closeSelectedFinding = () => {
         setSelectedFinding(null)
         if (searchParams.has('finding')) {
@@ -389,14 +382,12 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     scanContext={scanContext}
                     onClose={closeSelectedFinding}
                     onSelectFinding={async (id) => {
-                        // Prefer a match among the already-loaded rows.
                         const inRows = resolveRelatedFindingInRows(allRows, id, selectedFinding)
                         if (inRows) {
                             setSelectedFinding(inRows)
                             return
                         }
-                        // If not present locally (e.g. switching between
-                        // quality/security tabs), fall back to the API.
+                        // A related finding can sit on another tab (quality vs security), outside the loaded rows.
                         try {
                             const outcome = await fetchRelatedFinding(scanId, id, selectedFinding)
                             if (outcome.status === 'found') setSelectedFinding(outcome.finding)

@@ -15,8 +15,7 @@ interface ScanReleaseControlProps {
 export function ScanReleaseControl({ projectId, scan, canWrite }: Readonly<ScanReleaseControlProps>) {
   const { withdraw, withdrawPending } = useReleaseActions(projectId, scan)
 
-  // A re-scan's releases are held by the original scan, so this panel would be empty or wrong;
-  // MarkReleaseButton explains that and links there.
+  // A re-scan's releases live on the original scan; MarkReleaseButton explains that and links there.
   if (scan.is_rescan || scan.releases.length === 0) return null
 
   return (

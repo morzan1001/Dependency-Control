@@ -93,7 +93,6 @@ export default function DashboardLayout() {
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Backdrop for the mobile drawer. */}
       {sidebarOpen && (
         <button
           type="button"
@@ -103,7 +102,6 @@ export default function DashboardLayout() {
         />
       )}
 
-      {/* Off-canvas below lg, static from lg up. */}
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r bg-card transition-transform duration-200",
@@ -171,7 +169,6 @@ export default function DashboardLayout() {
 
       {/* min-w-0 lets the content column shrink so inner tables scroll instead of forcing overflow. */}
       <div className="flex flex-1 flex-col min-w-0">
-        {/* Mobile top bar with the menu toggle; the sidebar is always visible from lg up. */}
         <header className="flex items-center gap-3 border-b bg-card p-4 lg:hidden">
           <Button
             variant="ghost"

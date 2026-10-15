@@ -7,7 +7,6 @@ export interface DeltaTabProps {
   readonly projectId: string;
   readonly fromScanId: string;
   readonly toScanId: string;
-  /** The whole response: the tab badge counts it, the header explains the two sides from it. */
   readonly onLoaded: (delta: ScanDeltaResponse) => void;
 }
 

@@ -62,7 +62,6 @@ import { SeverityBadge } from '@/components/findings/SeverityBadge'
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
-// Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
   const idx = SEVERITY_ORDER.indexOf((severity?.toUpperCase() ?? 'UNKNOWN') as Severity)
   return idx === -1 ? 0 : SEVERITY_ORDER.length - idx
@@ -405,8 +404,7 @@ export function AnalyticsDependencyModal({
   const [selectedFinding, setSelectedFinding] = useState<ComponentFinding | null>(null)
 
   const enabledComponent = open ? component : ''
-  // The mode the table that opened this modal rendered from, so the drill-down cannot report a
-  // different scope than the row the user clicked.
+  // The opening table's mode, so the drill-down reports the same scope as the clicked row.
   const releaseEnvironment = useAnalyticsMode()
   const { data: metadata, isLoading: isLoadingMetadata } = useDependencyMetadata(
     enabledComponent, version, type, releaseEnvironment,

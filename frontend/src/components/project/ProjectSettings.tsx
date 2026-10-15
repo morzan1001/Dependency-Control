@@ -242,7 +242,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const { data: gitlabInstances } = useGitLabInstances({ active_only: true }, isSystemManager);
   const { data: githubInstances } = useGitHubInstances({ active_only: true }, isSystemManager);
 
-  // Show only the config for the platform the project was sourced from (by *_instance_id).
   const gitlabSource: "gitlab" | "none" = project.gitlab_instance_id ? "gitlab" : "none";
   const gitlabBindingEditable = (gitlabInstances?.items?.length ?? 0) > 0;
   const projectSource: "gitlab" | "github" | "none" = project.github_instance_id
@@ -288,8 +287,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const updateWebhookMutation = useUpdateWebhook()
   const deleteWebhookMutation = useDeleteWebhook()
 
-  // An owning team the caller cannot see is still an owner, and leaving it out of the options
-  // would have the whole-set save drop it without anyone choosing to.
+  // Owning teams the caller cannot see stay in the options, or the whole-set save would drop them.
   const teamOptions: TeamRef[] = useMemo(() => {
     const visible = (teams ?? []).map((team) => ({ id: team.id, name: team.name }))
     const unseen = (project.team_ids ?? [])

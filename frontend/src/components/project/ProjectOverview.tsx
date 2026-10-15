@@ -36,8 +36,7 @@ function releaseHeadline(environment: string | null, branch: string): string {
 
 export function ProjectOverview({ projectId, selectedBranches }: Readonly<ProjectOverviewProps>) {
   const navigate = useNavigate()
-  // The trend line is the only consumer of this page: every branch-level number below comes
-  // from branch-tips, which reads the whole project rather than a page of it.
+  // Only the trend line reads this page; branch numbers come from branch-tips over the whole project.
   const { data: scans, isLoading: scansLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
   const { data: branchTips, isLoading: tipsLoading } = useProjectBranchTips(projectId)
 
@@ -80,8 +79,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
   const branchNames = Object.keys(latestScansByBranch);
   const [pickedBranch, setPickedBranch] = useState<string | null>(null);
   const [showRelease, setShowRelease] = useState(false);
-  // Every headline number below comes from this one scan. Summing across branches would
-  // count the same CVE once per branch; the per-branch breakdown covers the rest.
+  // Headline numbers come from this one scan: summing branches would count a CVE once per branch.
   const activeBranch = pickedBranch && branchNames.includes(pickedBranch)
     ? pickedBranch
     : highestRiskBranch(latestScansByBranch);

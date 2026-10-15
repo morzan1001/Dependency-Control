@@ -273,8 +273,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindin
 
   const instancesLoading = githubLoading || gitlabLoading;
   const instancesError = githubError ?? gitlabError;
-  // A listing that failed is not a listing of nothing: until both answer, an instance missing from
-  // them is unknown rather than gone, and a live binding must not be reported as orphaned.
+  // Until both listings answer, a missing instance is unknown, not gone, so no live binding reads as orphaned.
   const instancesKnown = !instancesLoading && !instancesError;
   const instances = providerInstances(githubInstances?.items ?? [], gitlabInstances?.items ?? []);
   const instanceById = new Map(instances.map((instance) => [instance.id, instance]));

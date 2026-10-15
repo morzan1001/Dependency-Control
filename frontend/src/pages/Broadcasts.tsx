@@ -94,7 +94,7 @@ export default function Broadcasts() {
             target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
             subject: "Dry Run",
             message: "Dry Run",
-            channels: [], // Doesn't matter for dry run
+            channels: [],
             dry_run: true
          })
          setImpactCount(result.recipient_count)

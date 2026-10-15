@@ -160,7 +160,6 @@ export function StreamingMessage({
   toolCalls,
   activeToolCall,
 }: StreamingMessageProps) {
-  // Show typing dots when nothing is visible yet (cold start or between tool rounds).
   const isThinking = !content && !activeToolCall;
   return (
     <div className="flex gap-3">

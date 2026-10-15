@@ -31,8 +31,7 @@ const DEP_TREE_SKELETON_IDS = ['dt1', 'dt2', 'dt3', 'dt4', 'dt5', 'dt6', 'dt7', 
 
 function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChildren, isCycleRef }: Readonly<DependencyNodeProps>) {
   const [isExpanded, setIsExpanded] = useState(false)
-  // Children are resolved from the flat node map only when this node is expanded (lazy render);
-  // a cycle-ref node is a leaf — its subtree is reachable higher up on the same path.
+  // A cycle-ref node is a leaf: its subtree is already reachable higher up on the same path.
   const hasChildren = !hideChildren && !isCycleRef && node.child_ids.length > 0
   const sourceInfo = getSourceInfo(node.source_type)
 

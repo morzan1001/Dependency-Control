@@ -28,8 +28,7 @@ export default function ScanDelta() {
   const [counts, setCounts] = useState<Record<TabId, number | null>>({
     findings: null, components: null, crypto: null,
   })
-  // The reachability and waived-count labels describe the pair, but only the mounted tab holds a
-  // response to read them off, so the header takes whichever tab last answered.
+  // Only the mounted tab holds a response, so the pair's header labels read whichever tab answered last.
   const [delta, setDelta] = useState<ScanDeltaResponse | null>(null)
 
   const onLoaded = useCallback((tabId: TabId, loaded: ScanDeltaResponse) => {

@@ -13,7 +13,6 @@ import {
 } from "./shared"
 import { SeverityBadge } from '../SeverityBadge'
 
-// Defined outside the component to avoid re-creation on each render.
 const markdownComponents: Partial<Components> = {
     code: ({ className, children, ...props }) => {
         const isInline = !className

@@ -1,7 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import type { ReachabilityInfo } from '@/types/scan'
 
-/** The sentence the reachability enrichment wrote, and the import sites it was drawn from. */
 export function ReachabilityEvidence({ reachability }: Readonly<{ reachability: ReachabilityInfo }>) {
     const shownLocations = reachability.import_locations ?? []
     const locationTotal = reachability.import_location_count ?? shownLocations.length

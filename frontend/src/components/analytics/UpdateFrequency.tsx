@@ -88,8 +88,7 @@ function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetr
         <CardContent>
           <div className="text-2xl font-bold">{formatUpdatesPerMonth(data.updates_per_month)}</div>
           <p className="text-xs text-muted-foreground">
-            {/* The rate divides by the window, so naming the observed span here would
-                put two different denominators on one card. */}
+            {/* The rate divides by the window, so naming the observed span would put two denominators on one card. */}
             {windowDays
               ? `${data.total_updates} updates in the last ${windowDays}d`
               : `${data.total_updates} updates over ${formatDays(data.time_range_days)} · pick a time window for a rate`}
@@ -181,8 +180,7 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
                 stroke="#94a3b8"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                // Scans without an outdated analysis are null, and recharts draws no
-                // segment next to a null: without dots an isolated measurement vanishes.
+                // Scans without an outdated analysis are null and recharts draws no segment beside one; dots keep a lone point visible.
                 dot={{ r: 2 }}
                 name={OUTDATED_SERIES}
               />

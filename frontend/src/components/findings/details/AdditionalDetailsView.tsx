@@ -6,7 +6,6 @@ import { formatDate } from '@/lib/utils'
 // Fields rendered elsewhere; skip in this generic detail view.
 const skipFields = new Set(['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version'])
 
-// Fields displayed side-by-side (e.g. cycle + lts for EOL).
 const rowGroupFields = new Set(['cycle', 'lts'])
 
 function isUrl(value: unknown): value is string {

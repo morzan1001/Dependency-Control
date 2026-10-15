@@ -43,8 +43,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
   const reachability = stats.reachability
   const prioritized = stats.prioritized
 
-  // prioritized.total counts vulnerabilities only — the population the actionable/deprioritized
-  // tiles are computed over; the stats.* severity buckets span every finding type.
+  // prioritized.total counts vulnerabilities only, the tiles' population; the stats.* buckets span every finding type.
   const totalVulns =
     prioritized?.total ?? ((stats.critical ?? 0) + (stats.high ?? 0) + (stats.medium ?? 0) + (stats.low ?? 0))
   const actionableCount = prioritized?.actionable_total || 0

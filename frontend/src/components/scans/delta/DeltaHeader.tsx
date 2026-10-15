@@ -54,11 +54,9 @@ function ScanSide({ label, scanId, options, onSelect, side }: {
   readonly side: ScanDeltaSide | null | undefined
 }) {
   const { data: scan } = useScan(scanId)
-  // The compared scan can be a rescan or a release older than the option window; without this
-  // fallback the trigger renders blank.
+  // A rescan or a release older than the option window is missing from the options, which would leave the trigger blank.
   const currentInOptions = options.some((option) => option.id === scanId)
-  // The response names the build this side resolved to, which is the one the totals describe; the
-  // fetched scan only answers for the id that was asked for, and a symbolic side has none.
+  // Prefer the resolved side: it is the build the totals describe, and a symbolic side has no scan of its own.
   const branch = side?.branch ?? scan?.branch
   const commitHash = side?.commit_hash ?? scan?.commit_hash
   const createdAt = side?.created_at ?? scan?.created_at
@@ -101,12 +99,9 @@ export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }
   // Pages are offsets read click by click, so a scan created in between repeats one already shown.
   const scanById = new Map((data?.pages.flat() ?? []).map((s) => [s.id, s]))
   const options = [...scanById.values()].filter((s) => isScanUsable(s.status))
-  // Unqualified by environment so a project that only deploys to staging still gets a quick pick;
-  // the button names whichever environment won, since "the release" elsewhere means production.
+  // Any environment, so a staging-only project gets a quick pick; the button names the environment that won.
   const { latestRelease } = useLatestProjectRelease(projectId)
-  // A rescan moves a release's analysis onto a newer scan and the backend's own `from=release`
-  // follows that chain, so `scan_id` would diff against findings the release no longer reports.
-  // Null means nothing in the chain is readable — retention took it, or none of it has finished.
+  // Not scan_id: a rescan moves the release's analysis on, and from=release follows it; null if none of the chain is readable.
   const releaseScanId = latestRelease?.analysis_scan_id ?? null
   const alreadyCompared = releaseScanId !== null
     && (releaseScanId === fromScanId || releaseScanId === toScanId)

@@ -1,7 +1,6 @@
 import type { ToolCall } from '@/types/chat';
 import { advisoryUrl } from '@/lib/finding-utils';
 
-// Text mapping to a concrete app entity, used to linkify plain mentions in answers.
 export interface LinkableEntity {
   readonly text: string;
   readonly markdown: string;
@@ -61,7 +60,6 @@ function collectFromToolResult(result: unknown, add: AddEntity): void {
   }
 }
 
-/** Extract linkable entities from a set of tool calls (both stored + streaming), one per text. */
 export function collectEntitiesFromToolCalls(
   toolCalls: ReadonlyArray<ToolCall>,
 ): LinkableEntity[] {
@@ -80,16 +78,13 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
-// Linkify known-entity mentions (whole-word, case-insensitive) plus any CVE ID,
-// skipping text already inside a Markdown link or code span.
 export function linkifyAssistantMarkdown(
   content: string,
   entities: ReadonlyArray<LinkableEntity>,
 ): string {
   if (!content) return content;
 
-  // Split on code spans/fences/existing links (captured) so only plain-text
-  // segments at even indices get rewritten.
+  // Capturing split: even indices are plain text, odd ones are links or code left untouched.
   const skipPattern = /(\[[^\]]*\]\([^)]*\)|```[\s\S]*?```|`[^`]*`)/g;
   const segments = content.split(skipPattern);
 

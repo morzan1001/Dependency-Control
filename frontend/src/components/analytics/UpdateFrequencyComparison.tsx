@@ -60,8 +60,7 @@ const DEFAULT_WINDOW_DAYS = 90
 
 const NO_VALUE = '—'
 
-// A column header whose figure has non-obvious window semantics carries an info
-// affordance; the copy is the only place a reader learns what the number counts.
+// The hint is the only place a reader learns what the column's figure counts.
 function HintHeader({
   children,
   hint,
@@ -80,8 +79,7 @@ function HintHeader({
   )
 }
 
-// A partial row carries numbers, so it is not one of these: it renders its metrics
-// with a caveat instead of a placeholder.
+// partial is absent: its row carries numbers and renders them with a caveat instead of a placeholder.
 const STATUS_CONFIG: Record<
   Exclude<UpdateDataStatus, 'ready' | 'partial'>,
   { label: string; hint: string; icon: typeof Clock; className: string }
