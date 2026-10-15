@@ -1,5 +1,4 @@
-"""Only an access token authenticates a bearer request: every other token the server signs names a
-user too, but none carries the enforced-2FA scope an access token is minted with."""
+"""Every token the server signs names a user, but only an access token carries the enforced-2FA scope."""
 
 import asyncio
 import base64

@@ -1,5 +1,3 @@
-"""A release row outlives the scan it points at unless the project delete takes it too."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

@@ -1,5 +1,3 @@
-"""Endpoint-level authz tests for the project write paths: every write path routes through check_project_access(required_role="admin"); project:update passes the edits, project:delete only the deletion, and a plain reader is denied 403."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,17 +30,14 @@ def _project(members=None, team_ids=None):
 
 
 def _update_user():
-    """Non-member who holds the write superuser permission."""
     return _user("pu-1", [Permissions.PROJECT_READ, Permissions.PROJECT_UPDATE])
 
 
 def _delete_only_user():
-    """Non-member who holds ONLY project:delete."""
     return _user("pd-1", [Permissions.PROJECT_DELETE])
 
 
 def _plain_member():
-    """Non-member with only project:read (no write superuser)."""
     return _user("nm-1", [Permissions.PROJECT_READ])
 
 
@@ -60,7 +55,6 @@ class TestRotateApiKeyRoutesThroughGate:
             with patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project) as mock_gate:
                 result = asyncio.run(rotate_api_key("proj-1", user, MagicMock()))
 
-        # The gate must be invoked at admin level even for a project:update holder.
         mock_gate.assert_awaited_once()
         assert mock_gate.call_args.kwargs.get("required_role") == "admin"
         assert result.project_id == "proj-1"
@@ -115,7 +109,6 @@ class TestGrantTeamSuperuser:
         self._grant(_update_user())
 
     def test_delete_only_holder_cannot_grant_without_target_membership(self):
-        """project:delete deletes projects and nothing else."""
         with pytest.raises(HTTPException) as exc_info:
             self._grant(_delete_only_user())
         assert exc_info.value.status_code == 403
@@ -193,11 +186,9 @@ class TestDeleteProjectRoutesThroughGate:
 
 
 class TestUpdateProjectTeamAssignment:
-    """team_ids on the update body is the whole owner set the picker showed, so it reaches the
-    server as one pipeline that keeps each retained owner's provenance."""
+    """team_ids is the whole owner set the picker showed, so one pipeline keeps each retained owner's provenance."""
 
     def _build_update_project_mocks(self, project: "Project"):
-        """Return the mocked collaborators for update_project."""
         project_repo = MagicMock()
         project_repo.update_fields_and_owners = AsyncMock(return_value=True)
         project_repo.get_by_id = AsyncMock(return_value=project)
@@ -211,7 +202,6 @@ class TestUpdateProjectTeamAssignment:
         return project_repo, team_repo, system_settings
 
     def _run_update(self, project, project_in, user):
-        """Drive update_project with all external collaborators mocked out."""
         from app.api.v1.endpoints.projects import update_project
 
         project_repo, team_repo, system_settings = self._build_update_project_mocks(project)

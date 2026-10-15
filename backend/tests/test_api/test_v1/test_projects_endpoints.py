@@ -1,5 +1,3 @@
-"""Tests for project API endpoints."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,8 +29,6 @@ def _make_project(admin_id="admin-member-1"):
 
 
 class TestUpdateNotificationSettingsAdmin:
-    """A project admin's own notification_preferences must be persisted."""
-
     def _run(self, current_user, project, settings, project_repo):
         from app.api.v1.endpoints.projects import update_notification_settings
 
@@ -67,12 +63,10 @@ class TestUpdateNotificationSettingsAdmin:
         assert args[2] == {"notification_preferences": {"analysis_completed": ["email", "slack"]}}
 
     def test_admin_preferences_only_no_enforcement_is_not_a_noop(self):
-        """With no enforcement change, update_data is empty; prefs must still persist."""
         user = _make_admin_user()
         project = _make_project(admin_id=user.id)
         settings = ProjectNotificationSettings(
             notification_preferences={"vulnerability_found": ["slack"]},
-            # enforce_notification_settings omitted, so update_data is empty
         )
         project_repo = MagicMock()
         project_repo.update_raw = AsyncMock()
@@ -487,8 +481,6 @@ class TestHideHistoricalSecretsNarrowsTheResult:
 
 
 class TestDashboardStats:
-    """The estate tile: a persisted risk score wins, an absent one is derived from severity counts."""
-
     _PERSISTED_RISK = 42.0
     _CRITICALS = 3
     _HIGHS = 2
@@ -575,8 +567,6 @@ class TestDashboardStats:
 
 
 class TestWritesReadTheProjectBackOnce:
-    """A write answers with one read of the stored project, not a read per write."""
-
     @staticmethod
     async def _seeded_db(project):
         from tests.mocks.fake_mongo import FakeDatabase
@@ -699,7 +689,6 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
 
 
 def test_the_scan_findings_table_ranks_severity_like_every_other_surface():
-    """A hand-written copy ranked INFO above NEGLIGIBLE, the reverse of SEVERITY_ORDER."""
     from app.api.v1.endpoints.projects import _scan_findings_add_fields_stage
     from app.core.constants import SEVERITY_ORDER
 

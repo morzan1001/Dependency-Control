@@ -1,5 +1,3 @@
-"""The slash redirect must not hand out the address the app is reached on internally."""
-
 from urllib.parse import urlsplit
 
 import pytest
@@ -16,16 +14,12 @@ INTERNAL_HOST = "dependency-control-backend.dependency-control.svc.cluster.local
 def _schema_paths() -> set[str]:
     from app.main import app
 
-    # From the schema, not app.routes: include_router nests the routes under an opaque
-    # _IncludedRouter, so walking app.routes finds none of them.
+    # include_router nests routes under an opaque _IncludedRouter, so app.routes would find none of them.
     return set(app.openapi()["paths"])
 
 
 def _is_shadowed(bare: str, schema_paths: set[str]) -> bool:
-    """True when a path-parameter route already answers the slash-less form, so nothing redirects.
-
-    ``/webhooks/global`` is one: it is swallowed by ``/webhooks/{webhook_id}``.
-    """
+    """A path-parameter route answers the slash-less form, as /webhooks/{webhook_id} swallows /webhooks/global."""
     wanted = bare.strip("/").split("/")
     for candidate in schema_paths:
         if "{" not in candidate:
@@ -39,7 +33,6 @@ def _is_shadowed(bare: str, schema_paths: set[str]) -> bool:
 
 
 def _collection_paths() -> list[str]:
-    """Every parameter-free API path that exists only with its trailing slash."""
     paths = _schema_paths()
     return sorted(
         path.rstrip("/")

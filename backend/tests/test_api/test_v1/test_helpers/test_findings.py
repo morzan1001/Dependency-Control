@@ -1,5 +1,3 @@
-"""Tests for findings helper functions."""
-
 from app.api.v1.helpers.findings import (
     TYPE_CATEGORY_MAP,
     aggregate_stats_by_category,

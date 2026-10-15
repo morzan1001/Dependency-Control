@@ -1,5 +1,4 @@
-"""An instance write stores what it validates: a null in a field the stored instance requires fails
-every later read of it, and a null or padded audience makes every CI token fail the audience check."""
+"""A null in a required field fails every later read, and a null or padded audience fails every CI token."""
 
 import pytest
 from pydantic import ValidationError

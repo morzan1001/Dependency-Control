@@ -1,5 +1,3 @@
-"""SystemSettingsResponse hides stored secrets and exposes ``*_configured`` booleans instead."""
-
 from fastapi.encoders import jsonable_encoder
 
 from app.models.system import SystemSettings

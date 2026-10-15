@@ -1,5 +1,3 @@
-"""WaiverCreate.finding_type validates against the FindingType enum."""
-
 from typing import get_args
 
 import pytest
@@ -26,7 +24,7 @@ def test_finding_type_optional_defaults_to_none():
 
 
 def test_unknown_status_rejected_at_schema_level():
-    # An unlisted status survives to matching.py and is silently treated as accepted_risk.
+    # An unlisted status would be silently treated as accepted_risk.
     with pytest.raises(ValidationError, match="accepted_risk"):
         WaiverCreate(reason="ok", status="wont_fix")
 

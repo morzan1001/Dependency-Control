@@ -1,13 +1,4 @@
-"""Changing a project's owners by hand: who may, and what ends up stored.
-
-The project-admin gate itself is ``check_project_access`` and is tested with the rest of it; these
-drive the picker past it to pin the rules that are its own — the target-team rule, the owner cap,
-provenance, and the refusal to leave a project nobody can administer.
-
-The picker sends the whole owner set, a sync's entries included, so the write has to keep what it
-was handed without claiming it: the provenance a retained owner arrives with is the provenance it
-keeps, or a project admin could pin a team no sync is ever allowed to retire again.
-"""
+"""The picker sends the whole owner set, so a retained owner keeps the provenance it arrives with."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -84,8 +75,7 @@ async def test_every_team_the_user_picked_is_stored():
 
 @pytest.mark.asyncio
 async def test_a_retained_provider_owner_keeps_its_provenance():
-    """Restamping it as a hand assignment would exempt it from the retirement its own provider's
-    next sync applies, so any project admin could pin a team the provider no longer resolves."""
+    """Restamped as a hand assignment, it would escape its provider's retirement and stay pinned forever."""
     project = _project(team_ids=["gh-a"], team_sources={"gh-a": "github"})
     db = await _db_with(project, _team("gh-a", "someone-else"), _team("t-new", _ACTOR))
 

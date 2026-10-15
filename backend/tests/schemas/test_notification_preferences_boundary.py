@@ -1,5 +1,3 @@
-"""A request naming what the system never sends is refused rather than saved unread; stored documents read leniently."""
-
 import pytest
 from pydantic import ValidationError
 
@@ -42,8 +40,7 @@ def test_a_request_muting_every_event_keeps_each_event(build):
 
 @pytest.mark.parametrize("schema", [UserUpdate, UserUpdateMe])
 def test_a_field_the_client_never_sent_stays_absent(schema):
-    """`model_dump(exclude_unset=True)` drives these updates, so an unsent field must not arrive as
-    an empty dict and wipe the stored preferences."""
+    """model_dump(exclude_unset=True) drives these updates, so an unsent field must not wipe the stored preferences."""
     assert "notification_preferences" not in schema().model_dump(exclude_unset=True)
 
 

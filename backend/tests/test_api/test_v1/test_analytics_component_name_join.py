@@ -1,10 +1,4 @@
-"""Analytics joins dependency names against finding components.
-
-Prod stores the dependency name bare with the Maven group in a separate field
-(``jackson-databind`` + ``group: com.fasterxml.jackson.core``) while the aggregated
-vulnerability finding carries the qualified coordinate, so the join has to resolve a
-bare dependency name onto a qualified finding component.
-"""
+"""Prod stores Maven dependency names bare (group in its own field) while findings carry the qualified coordinate."""
 
 import asyncio
 
@@ -24,7 +18,6 @@ def _finding(component, severity="HIGH"):
 
 
 def build_findings_map(findings, version="2.20.2"):
-    """The tree overlay's map: one CVE per finding, counted under its component at ``version``."""
     by_package = {}
     for index, finding in enumerate(findings):
         advisory = {"id": f"CVE-2026-{index:04d}", "severity": finding["severity"]}
@@ -76,7 +69,6 @@ class TestBareDependencyNameResolvesQualifiedFinding:
         assert node.findings_severity.high == 1
 
     def test_ambiguous_bare_name_gets_no_overlay(self):
-        """Three packages end in 'core'; a bare 'core' dependency must not inherit one of them."""
         findings_map = build_findings_map(
             [_finding("@angular/core"), _finding("@messageformat/core")], version="21.1.5"
         )
@@ -115,11 +107,7 @@ class TestComponentFindingsLookup:
 
 
 class TestAliasLookupIsCaseInsensitive:
-    """The bare-artifact alias is lowercased; dependency names preserve their case.
-
-    Prod has 3 demoted documents for `xercesImpl` today, and `HikariCP`-style artifact
-    names generalise the problem.
-    """
+    """The bare-artifact alias is lowercased; dependency names preserve their case."""
 
     def test_mixed_case_maven_artifact_resolves_its_qualified_finding(self):
         findings_map = build_findings_map([_finding("xerces:xercesImpl", "HIGH")], version="2.12.2")

@@ -1,5 +1,3 @@
-"""Golden-fixture tests for the callgraph parsers, fed by captured real producer output."""
-
 import json
 
 import pytest
@@ -20,8 +18,7 @@ from app.services.reachability_enrichment import (
 )
 from tests.helpers.comparisons import counted_str_type
 
-# madge 8.0.0: `npx madge@latest --json --include-npm src` over a fixture tree with a real
-# node_modules (lodash, @babel/core), then the template's jq merge of package.json deps.
+# madge 8.0.0 --json --include-npm over a fixture tree, plus the template's jq merge of package.json deps.
 MADGE_OUTPUT = """
 {
   "index.js": [
@@ -37,9 +34,7 @@ MADGE_OUTPUT = """
 }
 """
 
-# madge 8.0.0: `madge --json --include-npm --extensions js,jsx,ts,tsx --ts-config tsconfig.json .` over a TypeScript
-# fixture importing express and @babel/core, typed through @types/express and @types/babel__core, and axios, which
-# ships its own types.
+# madge 8.0.0 --json --include-npm --ts-config over a TypeScript fixture with @types packages and typed axios.
 MADGE_TS_OUTPUT = """
 {
   "src/index.ts": [
@@ -52,10 +47,7 @@ MADGE_TS_OUTPUT = """
 }
 """
 
-# The `.callgraph-python` ast scanner from callgraph.yaml, run over a fixture package with
-# requests/urllib3/PyYAML installed. The scanner resolves each import back to its distribution
-# name (yaml -> PyYAML), which is the spelling findings carry; analyzed_modules is trimmed to
-# the three distributions of that package.
+# The .callgraph-python scanner from callgraph.yaml; it maps imports to distribution names (yaml -> PyYAML).
 PYTHON_AST_OUTPUT = """
 {
   "imports": [
@@ -69,8 +61,7 @@ PYTHON_AST_OUTPUT = """
 }
 """
 
-# The `.callgraph-go` producer from callgraph.yaml over `go list -deps -json ./...` and
-# `go list -m all` (go1.27.0) in a two-dependency fixture module.
+# The .callgraph-go producer from callgraph.yaml over go list -deps -json and go list -m all (go1.27.0).
 GO_LIST_OUTPUT = """
 {
   "imports": [
@@ -82,8 +73,7 @@ GO_LIST_OUTPUT = """
 }
 """
 
-# The `.callgraph-java` producer from callgraph.yaml over real `jdeps -verbose:class -R`
-# output (temurin 21) against two fixture jars carrying META-INF/maven pom.properties.
+# The .callgraph-java producer from callgraph.yaml over jdeps -verbose:class -R output (temurin 21).
 JDEPS_OUTPUT = """
 {
   "imports": [
@@ -112,7 +102,6 @@ PATH_ARTEFACTS = {"src", "lib", "utils", "utils.js", "index.js", "node_modules",
 
 
 def _parse(payload: str, language: str):
-    """Detect the format of a captured payload and run the parser the endpoint would pick."""
     data = json.loads(payload)
     _, canonical, parser = resolve_callgraph_payload("auto", language, data)
     return parser(data, canonical)
@@ -218,11 +207,7 @@ class TestJdepsGoldenFixture:
 
 
 class TestUniverseMeetsUsage:
-    """A package the producer both published as covered and recorded as imported must resolve.
-
-    When the two disagree the gate reads "analyzed but unused" and falsifies a package the code
-    demonstrably imports, which is the one verdict that must never be wrong.
-    """
+    """If coverage and usage disagree, the gate reads "analyzed but unused" for a package the code does import."""
 
     @pytest.mark.parametrize(
         ("payload", "language", "imported"),

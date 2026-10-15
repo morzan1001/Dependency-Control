@@ -1,8 +1,4 @@
-"""A token minted for 2FA enrolment must stay confined to that one scope.
-
-The account behind it keeps its full permissions in the database, so whether the caller can act as
-an admin depends entirely on get_current_user preferring the token's scope over the stored one.
-"""
+"""The account keeps its full permissions stored, so only get_current_user preferring the token's scope confines it."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,7 +50,6 @@ def test_a_setup_2fa_only_token_is_refused_by_a_permission_guarded_route():
 
 
 def test_a_token_carrying_setup_2fa_alongside_other_scopes_keeps_the_stored_permissions():
-    """Only the single-scope enrolment token narrows; a wider token must not silently gain the narrowing."""
     token = security.create_access_token("u-1", permissions=[_SETUP_SCOPE, Permissions.PROJECT_CREATE])
 
     user = _resolve(token)

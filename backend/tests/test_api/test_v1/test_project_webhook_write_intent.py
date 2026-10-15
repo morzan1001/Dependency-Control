@@ -1,6 +1,3 @@
-"""Project-webhook writes need project membership or the global project write grant on top of the
-webhook permission; project:read_all opens a project's webhooks for reading only."""
-
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 

@@ -1,5 +1,3 @@
-"""Binding a team to a group on one instance: the only writer of what resolution reads."""
-
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -225,8 +223,7 @@ class TestOneBindingPerInstance:
         assert sorted(binding["key"] for binding in _bindings(db)) == ["github:gh-1:4711", "gitlab:gl-1:77"]
 
     def test_rebinding_the_same_instance_replaces_the_entry_rather_than_adding_one(self):
-        """Two entries for one instance would have that instance's sync resolve two groups onto
-        one member list, and the multikey index cannot refuse a duplicate inside one document."""
+        """The multikey index cannot refuse a duplicate inside one document, so the write must replace the entry."""
         db = _db(_team("team-1", "Payments Guild", _github_binding(external_id=900, slug="cards")))
 
         _run_bind(db)
@@ -278,8 +275,7 @@ class TestBindingUniqueness:
         assert _bindings(db) == [_gitlab_binding()]
 
     def test_a_binding_taken_between_the_check_and_the_write_is_a_conflict_not_a_crash(self):
-        """The unique index is the only thing that can see a concurrent write; a 500 would tell
-        the operator the binding failed for an unknown reason."""
+        """Only the unique index sees a concurrent write, and a 500 would hide why the binding failed."""
         from app.api.v1.endpoints.teams import set_team_binding
 
         team_repo = MagicMock()
@@ -372,8 +368,7 @@ class TestClearBinding:
 
 
 class TestBindingIsGatedOnSystemManage:
-    """A binding decides which projects of the estate land in the team, and team membership
-    grants access to them, so team administration alone must not be enough."""
+    """A binding decides which projects land in the team, so team administration alone must not be enough."""
 
     @staticmethod
     def _required_permissions(path: str, method: str) -> list[list[str]]:

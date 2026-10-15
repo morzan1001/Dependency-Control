@@ -1,5 +1,3 @@
-"""Tests that skip/limit on the core listing endpoints are bounded and rejected with 422 when out of range."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,12 +5,10 @@ import pytest
 ENDPOINTS = "app.api.v1.endpoints.projects"
 
 
-# FastAPI Query validators run at framework level, so we inspect the Annotated
-# metadata on each parameter rather than calling the coroutine directly.
+# Query validators run in the framework, so the Annotated metadata is inspected instead of calling the coroutine.
 
 
 def _get_query_object(func, param_name: str):
-    """Return the FastAPI Query object attached to *param_name* via Annotated."""
     import inspect
     from typing import Annotated, get_args, get_origin
 
@@ -31,7 +27,6 @@ def _get_query_object(func, param_name: str):
 
 
 def _bound(func, param_name: str, bound: str):
-    """Return the ge/le/gt/lt value for *param_name* on *func*, or None."""
     query_obj = _get_query_object(func, param_name)
     if query_obj is None:
         return None
@@ -56,7 +51,6 @@ def test_the_default_page_lies_within_its_bounds(name):
 
 
 def _make_test_app():
-    """Build a minimal FastAPI app with the projects router + stub auth so Query validation runs."""
     from fastapi import FastAPI
 
     from app.api.deps import get_current_active_user
@@ -138,7 +132,6 @@ class TestHTTP422OnOutOfBoundsParams:
         assert r.status_code != 422, f"Valid params should not return 422, got {r.status_code}"
 
     def _patched_findings_call(self, test_client, limit):
-        """Fire a findings request with handler internals stubbed so only Query validation decides 422."""
         with (
             patch(f"{ENDPOINTS}._require_scan_access", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}.FindingRepository") as mock_repo_cls,

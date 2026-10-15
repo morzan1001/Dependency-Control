@@ -1,5 +1,3 @@
-"""The project rules check_project_access owns, applied the same way on every path."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

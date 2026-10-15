@@ -1,11 +1,3 @@
-"""Filtering projects by team, wherever that question is asked.
-
-"Which projects does this team own" is the ownership relation itself, so a project two teams own
-answers to both. Each of these filters is either combined with the visibility query or reached
-behind a team-membership check, so the risk here is the opposite one: a co-owned project must
-appear under every owner, and a project the team does not own under none.
-"""
-
 import pytest
 
 from app.api.v1.endpoints.projects import read_projects

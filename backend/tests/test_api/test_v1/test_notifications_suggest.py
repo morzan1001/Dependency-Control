@@ -1,5 +1,3 @@
-"""The advisory package typeahead keeps its cap, reads head scans only and says when the query has to narrow."""
-
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -49,7 +47,6 @@ def test_a_query_the_cap_answers_whole_claims_nothing_more():
 
 
 def test_the_cap_keeps_the_alphabetically_first_matches_in_order():
-    """An over-full query is cut from the front, so the tail of the alphabet is what the user narrows away."""
     # Inserted back to front so the ordering cannot come from insertion order.
     names = [f"lib{index:03d}" for index in reversed(range(_PACKAGE_SUGGESTION_LIMIT + 2))]
 

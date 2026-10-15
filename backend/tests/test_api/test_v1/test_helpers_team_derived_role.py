@@ -1,5 +1,3 @@
-"""One resolver derives a project role from every team that owns the project."""
-
 import pytest
 
 from app.api.v1.helpers.projects import team_derived_role

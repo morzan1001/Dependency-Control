@@ -1,9 +1,4 @@
-"""The rollup read path, checked against the live path it replaces.
-
-The differential tests run one scan history twice: once through
-``compute_update_frequency``, which walks every scan, and once through the
-delta ledger plus fold. Where the two disagree by design, the test says so.
-"""
+"""Differential: each history runs through the live walk and the ledger fold; designed disagreements are named."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -35,13 +30,10 @@ WINDOW_DAYS = 90
 
 
 def _one_scan_each(commit_count: int) -> dict[str, int]:
-    """A window whose commits were each scanned once, the shape most cases only need."""
     return {f"commit-{index}": 1 for index in range(commit_count)}
 
 
-# Anchored inside the window so both paths see the same scans.
-# BSON dates are int64 milliseconds, so an instant with microseconds reads back as a different
-# value than the one an assertion recomputes.
+# BSON dates are int64 milliseconds, so microseconds would read back different from what assertions recompute.
 NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
 
 
@@ -102,7 +94,6 @@ async def _seed_scan(
 
 
 async def _build_ledger(db: FakeDatabase) -> None:
-    """Run the ingest hook over every seeded scan, oldest first, as production does."""
     scans = await db.scans.find({}).to_list(None)
     for scan in sorted(scans, key=lambda s: (s["created_at"], s["_id"])):
         await record_scan_update_delta(db, scan["_id"])
@@ -260,9 +251,7 @@ class TestDifferentialNormalHistory:
 
     @pytest.mark.asyncio
     async def test_a_restored_scan_dated_in_text_is_invisible_to_both_paths(self):
-        # An archive restore inserts bundle JSON verbatim and JSON has no date type.
-        # No ingest hook ever runs for such a scan, and a range query is bracketed to
-        # its bound's BSON type.
+        # A restore inserts bundle JSON verbatim, dates as strings, which a date-bounded range query skips.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
         await _seed_scan(db, "s3", _days_ago(40), {"requests": "2.1.0"}, ())
@@ -315,7 +304,7 @@ class TestDifferentialSbomLessScans:
         rolled = await _rollup(db)
 
         _assert_same_metrics(live, rolled)
-        # Keeping s2 framed the bump across it as two quiet intervals.
+        # Counting s2 would frame the bump across it as two quiet intervals.
         assert live.scan_count == 2
         assert (live.total_updates, live.minor_updates) == (1, 1)
         assert [e.scan_id for e in live.scan_timeline] == ["s1", "s3"]
@@ -349,8 +338,7 @@ class TestDifferentialSbomLessScans:
 
     @pytest.mark.asyncio
     async def test_a_project_with_nothing_to_say_stays_out_of_the_team_average(self):
-        # A "ready" row at 0.0 updates/month dragged the team average down and could
-        # be named worst_project, for a project no comparison was possible on.
+        # A "ready" row at 0.0 updates/month would drag the team average and could be named worst_project.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {}, ())
         await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.0.0"}, ())
@@ -477,8 +465,7 @@ class TestDataStatus:
 
     @pytest.mark.asyncio
     async def test_a_broken_chain_never_reaches_the_fold_out_of_order(self):
-        # The read path re-sorts every bucket, so the fold's ordering contract
-        # holds however the documents came back from Mongo.
+        # The read path re-sorts every bucket, so the fold's order holds however Mongo returned the documents.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
         await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, ())
@@ -487,8 +474,7 @@ class TestDataStatus:
 
         comparison = await _comparison(db, [PROJECT])
 
-        # s1 now follows s2 and its prev_scan_id no longer links them, so only
-        # the newest scan survives the chain cut.
+        # s1 now follows s2 without a prev_scan_id link, so only the newest scan survives the chain cut.
         assert comparison.skipped_insufficient_data == 1
 
 
@@ -518,9 +504,7 @@ class TestPendingRowsDoNotSkewTheRanking:
 
     @pytest.mark.asyncio
     async def test_a_ready_project_that_never_flagged_a_package_ranks_behind_a_measured_one(self):
-        # Coverage of None is "nothing was ever outdated", not "everything is late",
-        # so it must not outrank a project whose backlog was actually measured --
-        # not even when it moves more packages.
+        # Coverage None means "nothing was ever outdated", so it must not outrank a measured backlog.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ("requests",))
         await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.0.1"}, ())
@@ -573,10 +557,7 @@ class TestPendingRowsDoNotSkewTheRanking:
 
 
 def _fake_deltas(branch: str, count: int, newest_days_ago: float, retries: int = 1) -> list[dict[str, Any]]:
-    """A linked chain of usable deltas, oldest first, as the repository hands it over.
-
-    ``retries`` is how many times CI scanned each commit.
-    """
+    """retries is how many times CI scanned each commit."""
     ids = [f"{branch}-{i}" for i in range(count)]
     return [
         {
@@ -607,8 +588,7 @@ class TestBranchChoice:
         assert (resolved.branch, resolved.status) == (None, "insufficient_data")
 
     def test_the_branch_comes_from_the_scans_not_from_the_ledger(self):
-        # A ledger that only reached the quieter branch must not move the project
-        # onto it; the live path would still report the branch the scans elect.
+        # A ledger that reached only the quieter branch must not move the project; the scans still elect the branch.
         resolved = _resolve_window(
             {
                 "old": BranchWindowActivity(_one_scan_each(3), _days_ago(60)),
@@ -673,7 +653,6 @@ async def _seed_series(
     *,
     outdated_at: int | None = None,
 ) -> None:
-    """``count`` scans of one branch, one patch bump apart, newest 5 days back."""
     for i in range(count):
         outdated: tuple[str, ...] = (package,) if i == outdated_at else ()
         await _seed_scan(
@@ -689,8 +668,7 @@ async def _seed_series(
 class TestPartialCoverage:
     @pytest.mark.asyncio
     async def test_a_window_the_ledger_only_partly_covers_is_partial_not_ready(self):
-        # The measured state right after a deploy without a backfill: ten scans in
-        # the window, deltas for the two newest.
+        # Right after a deploy without a backfill: ten scans in the window, deltas for the two newest.
         db = FakeDatabase()
         await _seed_series(db, PROJECT, "requests", 10)
         await _build_ledger(db)
@@ -706,8 +684,7 @@ class TestPartialCoverage:
 
     @pytest.mark.asyncio
     async def test_the_ready_threshold_is_four_fifths_of_the_window(self):
-        # The fold drops same-commit retries and SBOM-less scans on purpose, so a
-        # small shortfall must not demote a healthy project while a large one must.
+        # The fold drops same-commit retries and SBOM-less scans, so only a large shortfall may demote a project.
         for folded, expected in ((8, "ready"), (7, "partial")):
             db = FakeDatabase()
             await _seed_series(db, PROJECT, "requests", 10)
@@ -720,9 +697,7 @@ class TestPartialCoverage:
 
     @pytest.mark.asyncio
     async def test_a_retry_heavy_project_is_fully_covered_on_both_paths(self):
-        # Both paths give a same-commit run one bar, so coverage counts commits too.
-        # Counting raw scans instead read a CI retry storm as missing data and dropped
-        # a healthy project out of the ranking.
+        # Both paths give a same-commit run one bar, so coverage counts commits too, not raw scans.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, (), commit_hash="c1")
         for i, day in enumerate((50, 49, 48)):
@@ -762,7 +737,6 @@ class TestPartialCoverage:
 
 
 async def _seed_storm(db: FakeDatabase, commits: int, retries: int) -> None:
-    """``commits`` commits of one branch, each scanned ``retries`` times, one patch bump apart."""
     for i in range(commits * retries):
         await _seed_scan(
             db,
@@ -775,8 +749,6 @@ async def _seed_storm(db: FakeDatabase, commits: int, retries: int) -> None:
 
 
 class TestWindowCap:
-    """A branch busier than the document cap is truncated, not demoted."""
-
     @staticmethod
     async def _both(db: FakeDatabase, cap: int) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics | None]:
         live = await _live(db, hard_limit=cap)
@@ -796,9 +768,7 @@ class TestWindowCap:
 
     @pytest.mark.asyncio
     async def test_a_capped_branch_full_of_retries_is_not_demoted_out_of_the_ranking(self):
-        # The cap counts documents on both paths, coverage counts commits: measuring the
-        # truncated stretch against the whole window's commits made the rollup call this
-        # partial while the live walk called it ready, over the very same scans.
+        # The cap counts documents, coverage counts commits, so the truncated stretch is measured on its own commits.
         db = FakeDatabase()
         await _seed_storm(db, commits=10, retries=2)
         await _build_ledger(db)
@@ -815,8 +785,7 @@ class TestWindowCap:
     def test_the_largest_production_branches_stay_ready(
         self, documents: int, retries: int, window_commits: int, bars: int
     ) -> None:
-        # 1881 scans is the largest project in production. Both paths read only the
-        # newest WINDOW_HARD_LIMIT documents, which hold fewer commits than the window.
+        # 1881 scans is production's largest project; both paths read only the newest WINDOW_HARD_LIMIT documents.
         deltas = _fake_deltas("main", documents, 1, retries=retries)
         assert len({d["commit_hash"] for d in deltas}) == window_commits
 
@@ -828,8 +797,7 @@ class TestWindowCap:
         assert len(window_bars(resolved.window)) == bars
 
     def test_a_branch_under_the_cap_is_still_measured_against_its_own_commits(self) -> None:
-        # The cap must not become a blanket amnesty: a ledger that reached three of ten
-        # commits is partial however small the window is.
+        # No blanket amnesty: a ledger that reached three of ten commits is partial however small the window.
         deltas = _fake_deltas("main", 3, 1)
 
         resolved = _fold_branch("main", deltas, BranchWindowActivity(_one_scan_each(10), _days_ago(1)))
@@ -852,8 +820,7 @@ class TestComparisonRowDifferential:
         )
 
         assert live.projects[0].model_dump() == rolled.projects[0].model_dump()
-        # Three of four forward updates are patches; no other field of this row
-        # carries 0.75, so a row reporting another tier's share is visible here.
+        # Three of four forward updates are patches; no other field carries 0.75, so a swapped tier shows.
         assert (live.projects[0].patch_ratio, rolled.projects[0].patch_ratio) == (0.75, 0.75)
         assert (live.projects[0].total_updates, live.projects[0].update_coverage_pct) == (4, 100.0)
 
@@ -938,7 +905,6 @@ async def _seed_co_owned(db: FakeDatabase, owners: list[str]) -> None:
 
 
 async def _rollup_comparison(db: FakeDatabase, project_ids: list[str], team_id: str) -> UpdateFrequencyComparison:
-    """The comparison over projects already seeded, narrowed to one owning team."""
     payload = await _compute_comparison_from_rollup(db, project_ids, team_id, window_days=WINDOW_DAYS)
     return UpdateFrequencyComparison(**payload)
 
@@ -957,6 +923,5 @@ async def _comparison(
 
 
 async def _live_comparison(db: FakeDatabase, project_ids: list[str]) -> UpdateFrequencyComparison:
-    """The same endpoint with the flag off: the live walk over every scan."""
     payload = await _compute_comparison(db, project_ids, None, window_days=WINDOW_DAYS)
     return UpdateFrequencyComparison(**payload)

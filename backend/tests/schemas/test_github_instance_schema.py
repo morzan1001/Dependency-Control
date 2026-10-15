@@ -1,5 +1,3 @@
-"""GitHub instance Create/Update/Response schemas carry sync_teams."""
-
 from datetime import datetime, timezone
 
 import pytest

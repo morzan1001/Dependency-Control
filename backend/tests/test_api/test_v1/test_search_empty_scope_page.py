@@ -1,5 +1,3 @@
-"""An empty search answers page 1 like every other list, not page 0."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

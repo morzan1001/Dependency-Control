@@ -1,5 +1,3 @@
-"""Email counts as configured by the mail sender's own precondition, on every path that asks."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

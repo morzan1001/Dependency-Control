@@ -1,5 +1,4 @@
-"""The minimum length is the only password rule a short-but-otherwise-complex secret can violate,
-so every field that accepts a password must reject it on length alone."""
+"""A short but otherwise complex secret breaks only the length rule, so every password field must check length."""
 
 import pytest
 from pydantic import ValidationError

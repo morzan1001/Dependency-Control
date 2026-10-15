@@ -1,5 +1,4 @@
-"""Changing a project's default branch moves the cached head with it, so the project list and the
-dashboard report the same branch the project page does."""
+"""The default branch moves the cached head with it, so the list and dashboard agree with the project page."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch

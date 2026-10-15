@@ -1,9 +1,4 @@
-"""What an ingest's team sync writes: its own owners, and nobody else's.
-
-Every case applies the stages the writer produced to a seeded document and asserts on what is
-stored afterwards, because the whole point of the phase is the end state of one atomic write —
-a test that only inspected the returned stages would pass on a pipeline that stores the wrong thing.
-"""
+"""Each case applies the produced stages and asserts the stored result, since inspecting stages alone proves nothing."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -85,8 +80,7 @@ async def _github_sync(db, project: Project, resolved: list[str] | None) -> tupl
 
 @pytest.mark.asyncio
 async def test_a_sync_does_not_evict_a_manual_co_owner():
-    """The one that matters: a CI ingest runs on every pipeline, so a blind replace would delete
-    an operator's assignment within minutes of them making it."""
+    """A CI ingest runs on every pipeline, so a blind replace would delete an operator's assignment within minutes."""
     db = FakeDatabase()
     project = await _seed(
         db,
@@ -102,8 +96,7 @@ async def test_a_sync_does_not_evict_a_manual_co_owner():
 
 @pytest.mark.asyncio
 async def test_a_project_that_moved_group_loses_the_owner_it_left():
-    """The mirror image: a union would keep the old group forever, so every transfer would widen
-    access instead of moving it."""
+    """A union would keep the old group forever, so every transfer would widen access instead of moving it."""
     db = FakeDatabase()
     project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB})
 
@@ -156,9 +149,7 @@ async def test_one_provider_never_touches_the_other_provider_s_owner():
 
 @pytest.mark.asyncio
 async def test_one_gitlab_instance_never_touches_another_gitlab_instance_s_owner():
-    """Two instances of one provider, the shape this installation already has. A source naming the
-    provider alone makes each ingest read the other's owner as its own, so the two retire each
-    other's team in turn and the project's owners alternate on every CI run."""
+    """A provider-wide source would make two instances retire each other's team in turn on every CI run."""
     db = FakeDatabase()
     project = await _seed(
         db,
@@ -185,8 +176,7 @@ async def test_github_attaches_every_team_that_holds_the_repository():
 
 @pytest.mark.asyncio
 async def test_an_unchanged_subset_is_not_rewritten():
-    """Every CI job of every pipeline runs this; re-writing an unchanged owner set is a write
-    per ingest for nothing."""
+    """Every CI job runs this, so rewriting an unchanged owner set would be a write per ingest for nothing."""
     db = FakeDatabase()
     project = await _seed(
         db,
@@ -201,8 +191,7 @@ async def test_an_unchanged_subset_is_not_rewritten():
 
 @pytest.mark.asyncio
 async def test_a_subset_recorded_but_never_stored_is_written_out():
-    """team_sources naming an owner team_ids does not hold is a document an older writer left
-    behind; treating it as unchanged would keep it broken forever."""
+    """Older writers left team_sources naming an owner team_ids lacks; skipping those keeps them broken."""
     db = FakeDatabase()
     project = await _seed(db, team_ids=[], team_sources={"gl-a": _GITLAB})
 
@@ -214,12 +203,7 @@ async def test_a_subset_recorded_but_never_stored_is_written_out():
 
 @pytest.mark.asyncio
 async def test_a_legacy_owner_with_no_provenance_is_not_retired_by_a_sync():
-    """The branch the per-project provenance gate used to own: an owner predating team_sources.
-
-    It is read as a hand assignment, so a provider adds beside it rather than over it. Naming a
-    provider instead would have that provider's next ingest retire an owner on no evidence — and
-    218 production projects were in exactly this shape on 2026-09-11.
-    """
+    """An owner predating team_sources reads as a hand assignment, so a provider adds beside it rather than over it."""
     db = FakeDatabase()
     project = await _seed(db, team_ids=["legacy"], team_sources={})
 
@@ -244,8 +228,7 @@ async def test_a_resolution_past_the_cap_leaves_the_owners_alone(caplog):
 
 @pytest.mark.asyncio
 async def test_the_cap_counts_every_owner_and_not_one_provider_s_answer(caplog):
-    """A cap that bounds only the resolution lets a full manual roster plus a two-team sync store
-    18 owners on a project the routes would have refused a seventeenth."""
+    """A cap on the resolution alone would let a full manual roster plus a two-team sync exceed the routes' limit."""
     owners = [f"m-{n}" for n in range(MAX_PROJECT_TEAMS)]
     db = FakeDatabase()
     project = await _seed(db, team_ids=owners, team_sources=dict.fromkeys(owners, "manual"))
@@ -286,8 +269,7 @@ async def test_the_service_is_asked_about_the_repository_the_token_names():
 
 @pytest.mark.asyncio
 async def test_the_provider_is_told_which_owners_it_replaces_and_how_much_room_is_left():
-    """Told rather than only checked afterwards: GitHub creates the teams it names, and a resolution
-    refused after the fact would leave those teams owning nothing."""
+    """GitHub creates the teams it names, so a resolution refused afterwards would leave those teams owning nothing."""
     db = FakeDatabase()
     others = [f"m-{n}" for n in range(4)]
     project = await _seed(

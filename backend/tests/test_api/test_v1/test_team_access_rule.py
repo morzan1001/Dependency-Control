@@ -1,5 +1,3 @@
-"""One team read rule for REST, chat and analytics, and the team write invariants every path holds."""
-
 from datetime import datetime, timezone
 
 import pytest

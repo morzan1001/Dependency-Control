@@ -1,5 +1,3 @@
-"""Account security mails go out whenever the stored system settings can deliver mail."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 

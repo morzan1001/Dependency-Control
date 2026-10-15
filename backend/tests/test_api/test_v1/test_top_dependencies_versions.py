@@ -1,6 +1,4 @@
-"""The top-dependencies row lists a sample of versions beside a truthful total_occurrences, so it
-has to carry the distinct-version total too: the table's "+N" badge is computed from it, and
-$addToSet has no order to sample along."""
+"""The table's "+N" badge needs the distinct-version total, and $addToSet has no order to sample along."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,7 +21,6 @@ def _user():
 
 
 def _aggregated_row() -> dict:
-    """What Mongo returns for one component: the whole distinct-version set plus its size."""
     versions = [f"1.{minor}.0" for minor in range(_DISTINCT_VERSIONS)]
     return {
         "_id": "leftpad",

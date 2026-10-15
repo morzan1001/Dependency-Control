@@ -1,5 +1,3 @@
-"""The user-administration endpoints: who reaches them, what they accept, and what a deletion takes along."""
-
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError

@@ -1,5 +1,3 @@
-"""Authorization tests for create_user: a caller may not mint an account with permissions it does not hold, and setting any permissions requires user:manage_permissions."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,7 +14,6 @@ VALID_PASSWORD = "Str0ng!Passw0rd"
 
 
 def _helpdesk_user():
-    """Caller that can create users but cannot manage permissions."""
     return User(
         id="helpdesk-1",
         username="helpdesk",
@@ -26,7 +23,6 @@ def _helpdesk_user():
 
 
 def _perm_manager_user(extra=None):
-    """Caller that can create users AND manage permissions (but limited scope)."""
     perms = [Permissions.USER_CREATE, Permissions.USER_MANAGE_PERMISSIONS]
     if extra:
         perms.extend(extra)

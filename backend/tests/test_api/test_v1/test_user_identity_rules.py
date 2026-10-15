@@ -1,5 +1,3 @@
-"""One rule each for 'this identity is taken' and 'this is a local account', on every path that asks."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 

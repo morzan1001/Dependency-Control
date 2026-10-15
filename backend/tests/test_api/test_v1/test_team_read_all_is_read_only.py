@@ -1,6 +1,3 @@
-"""team:read_all opens every team for reading and none for writing; the global write grants
-(team:update, team:delete) keep working without membership."""
-
 from datetime import datetime, timezone
 
 import pytest

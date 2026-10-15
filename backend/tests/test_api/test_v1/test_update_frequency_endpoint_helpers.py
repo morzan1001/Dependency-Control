@@ -1,5 +1,3 @@
-"""Unit tests for the update-frequency endpoints: cache keying, single-flight and the abandoned-request abort."""
-
 import asyncio
 import contextlib
 import time
@@ -102,8 +100,6 @@ _FAKE_LOCK_POLL_SECONDS = 0.01
 
 
 class FakeCache:
-    """In-process ``cache_service`` reproducing the single-flight contract without Redis."""
-
     def __init__(self) -> None:
         self.store: dict[str, Any] = {}
         self.lock_calls: list[dict[str, Any]] = []
@@ -289,8 +285,7 @@ class TestComparisonEndpointCaching:
         assert call["lock_ttl_seconds"] > call["max_wait_seconds"]
 
     def test_a_caller_without_a_window_gets_the_documented_ninety_days(self):
-        # The ranking only stays comparable while every project is measured over
-        # the same span, so the default is part of the endpoint's contract.
+        # The ranking stays comparable only while every project is measured over the same span.
         cache = FakeCache()
         compute = AsyncMock(return_value=_comparison())
         db = _fake_db()
@@ -299,8 +294,7 @@ class TestComparisonEndpointCaching:
             asyncio.run(get_update_frequency_comparison(current_user=_user("u1"), db=db))
 
         assert compute.await_args.kwargs["window_days"] == 90
-        # A scan-count cap selects nothing once a calendar window does; carrying
-        # one would only fragment the cache across values that answer alike.
+        # A scan-count cap selects nothing under a calendar window and would only fragment the cache.
         assert "max_scans" not in compute.await_args.kwargs
 
     def test_concurrent_callers_wait_instead_of_recomputing(self):
@@ -658,7 +652,6 @@ class TestComparisonTeamView:
 
 
 async def _get_then_disconnect(app: FastAPI, path: str) -> list[dict[str, Any]]:
-    """Drive the ASGI app for a client that goes away right after sending its request."""
     messages = iter([{"type": "http.request", "body": b"", "more_body": False}])
 
     async def receive() -> dict[str, Any]:

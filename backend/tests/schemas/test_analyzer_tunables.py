@@ -1,5 +1,4 @@
-"""A numeric analyzer setting the analyzer cannot use is refused on write: stored, it fails or silently
-disables that analyzer on every later scan of the project."""
+"""An unusable analyzer setting is refused on write: stored, it would fail or disable the analyzer on every scan."""
 
 import re
 from pathlib import Path

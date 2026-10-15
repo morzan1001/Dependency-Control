@@ -1,5 +1,3 @@
-"""Tests for pagination helper."""
-
 from app.api.v1.helpers.pagination import build_pagination_response
 
 

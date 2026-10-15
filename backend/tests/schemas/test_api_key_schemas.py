@@ -1,5 +1,3 @@
-"""Tests for unified API key schemas."""
-
 from datetime import datetime, timezone
 from typing import get_args
 
@@ -76,24 +74,20 @@ class TestApiKeyCreate:
         assert model.expires_in_days == 90
 
     def test_malformed_surfaces_int_returns_422(self):
-        """Malformed surfaces: int instead of list → 422."""
         with pytest.raises(ValidationError):
             ApiKeyCreate(name="test", surfaces=123, expires_in_days=90)
 
     def test_malformed_surfaces_nested_list_returns_422(self):
-        """Malformed surfaces: nested list → 422."""
         with pytest.raises(ValidationError):
             ApiKeyCreate(name="test", surfaces=[["mcp"]], expires_in_days=90)
 
     def test_malformed_surfaces_dict_returns_422(self):
-        """Malformed surfaces: dict instead of list → 422."""
         with pytest.raises(ValidationError):
             ApiKeyCreate(name="test", surfaces={"mcp": 1, "adhoc": 2}, expires_in_days=90)
 
 
 class TestApiKeyResponse:
     def test_response_field_names(self):
-        """ApiKeyResponse has exactly the expected fields."""
         assert set(ApiKeyResponse.model_fields) == {
             "id",
             "name",
