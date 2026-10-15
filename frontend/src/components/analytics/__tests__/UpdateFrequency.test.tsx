@@ -182,4 +182,13 @@ describe("UpdateFrequency on a phone", () => {
     const card = (await screen.findByText("Slowest to Update")).closest(".grid");
     expect(card).toHaveClass("grid-cols-1", "md:grid-cols-2");
   });
+
+  it("lays the four summary cards out two by two until xl, so a trend such as \"Deteriorating\" keeps inside its card", async () => {
+    mockedFrequency.mockResolvedValue({ ...metrics, trend_direction: "deteriorating" });
+    renderFrequency();
+
+    const grid = (await screen.findByText("Scan Cadence")).closest(".grid");
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
+  });
 });

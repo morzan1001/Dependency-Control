@@ -68,7 +68,7 @@ function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetr
   const coverageKnown = data.update_coverage_pct !== null
 
   return (
-    <div className="grid gap-4 md:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Updates / Month</CardTitle>
