@@ -639,7 +639,7 @@ describe('ProjectSettings on a phone', () => {
     mockGitLabList.mockResolvedValue(gitlabInstances())
     renderSettings(gitlabProject())
 
-    expect(await screen.findByLabelText('GitLab Instance')).toHaveClass('min-w-0', 'text-left')
+    expect(await screen.findByLabelText('GitLab Instance')).toHaveClass('min-w-0')
   })
 
   it('stacks a danger action\'s button under its description on a phone, like the waiver list\'s header', () => {

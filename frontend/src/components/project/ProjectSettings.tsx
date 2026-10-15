@@ -480,7 +480,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                     value={form.gitlab_instance_id || "none"}
                                     onValueChange={(value) => (value === "none" ? clearGitlabBinding() : set({ gitlab_instance_id: value }))}
                                 >
-                                    <SelectTrigger id="gitlab-instance" className="min-w-0 text-left">
+                                    <SelectTrigger id="gitlab-instance" className="min-w-0">
                                         <SelectValue placeholder="Select GitLab instance" />
                                     </SelectTrigger>
                                     <SelectContent>
