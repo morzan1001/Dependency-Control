@@ -1,5 +1,3 @@
-"""Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
-
 import json
 from contextvars import ContextVar
 from operator import itemgetter
@@ -14,15 +12,12 @@ from app.repositories.base import find_window
 from app.services.recommendation.common import live_cves, vuln_info
 
 
-MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
+MAX_TOOL_RESULT_BYTES = 8_000
 
 # How a bounded answer names the population its list was cut from: "<list key><suffix>".
 _TOTAL_SUFFIX = "_total"
 
-# Ceilings on an LLM-supplied limit, one per row shape; each tool's schema declares the one it uses.
-# MAX_TOOL_RESULT_BYTES is what finally cuts a list — a serialized finding runs to ~850 bytes, so
-# roughly nine fill the budget — and _truncate_if_too_large says so when it does. These bound
-# what a call may cost before reaching that point.
+# These bound a call's cost; MAX_TOOL_RESULT_BYTES is what finally cuts a list (~850 bytes per finding).
 MAX_FINDING_ROWS = 25
 MAX_SUMMARY_ROWS = 50
 MAX_PLAN_STEPS = 25
@@ -51,7 +46,6 @@ _FINDING_DETAILS_FIELDS = (
     DETAILS_KEY_IN_KEV,
 )
 
-# A row's compact view of each advisory, and how many it lists, its primary first.
 _ROW_ADVISORY_FIELDS = ("id", "severity", DETAILS_KEY_IN_KEV, "epss_score", "fixed_version", "waived")
 _ROW_ADVISORIES = 3
 
@@ -82,13 +76,11 @@ RANKED_FINDING_PROJECTION = dict.fromkeys(
 # Clamps applied while one tool call runs, so the answer can say it was not the one asked for.
 _CLAMPED_LIMITS: ContextVar[list[tuple[int, int]] | None] = ContextVar("chat_tool_clamped_limits", default=None)
 
-# Reads that hit their ceiling while one tool call runs. An LLM relaying a list has no chart
-# beside it against which a reader could notice that the list stops short.
+# An LLM relaying a list has no chart beside it from which a reader could tell the list stops short.
 _BOUNDED_READS: ContextVar[list[tuple[str, int, int]] | None] = ContextVar("chat_tool_bounded_reads", default=None)
 
 
 def begin_limit_ledger() -> None:
-    """Start recording clamps and saturated reads for one tool call."""
     _CLAMPED_LIMITS.set([])
     _BOUNDED_READS.set([])
 
@@ -101,10 +93,7 @@ async def bounded_read(
     limit: int,
     **find_kwargs: Any,
 ) -> tuple[list[dict[str, Any]], int]:
-    """The first `limit` rows matching `query`, and how many rows match in total.
-
-    A truncated read is recorded so the answer says so even where the caller never named a limit.
-    """
+    """A truncated read is recorded so the answer says so even where the caller never named a limit."""
     rows, total = await find_window(collection, query, limit, **find_kwargs)
     ledger = _BOUNDED_READS.get()
     if ledger is not None and total > len(rows):
@@ -113,7 +102,6 @@ async def bounded_read(
 
 
 def bounded_read_note() -> str | None:
-    """What this call read against what it was answering about, or None when the two agree."""
     reads = _BOUNDED_READS.get()
     if not reads:
         return None
@@ -125,7 +113,6 @@ def bounded_read_note() -> str | None:
 
 
 def clamped_limit_note() -> str | None:
-    """What this call asked for against what it was given, or None when the two agree."""
     clamps = _CLAMPED_LIMITS.get()
     if not clamps:
         return None
@@ -137,11 +124,7 @@ def clamped_limit_note() -> str | None:
 
 
 def _clamp_limit(raw: Any, default: int, maximum: int) -> int:
-    """Coerce LLM-supplied `limit` to a safe integer, clamped to [1, maximum].
-
-    A clamp is recorded, because a caller that asked for 500 and received 200 otherwise
-    reads the answer as the whole of what it asked about.
-    """
+    """A clamp is recorded: a caller that asked for 500 and got 200 would read the answer as complete."""
     try:
         requested = int(raw) if raw is not None else None
     except (TypeError, ValueError):
@@ -155,7 +138,6 @@ def _clamp_limit(raw: Any, default: int, maximum: int) -> int:
 
 
 def _ensure_list(value: Any) -> list[Any] | None:
-    """Coerce an LLM-supplied scalar to a single-element list for Mongo ``$in`` queries."""
     if value is None:
         return None
     if isinstance(value, list):
@@ -164,7 +146,6 @@ def _ensure_list(value: Any) -> list[Any] | None:
 
 
 def _clip_value(value: Any) -> Any:
-    """Trim long strings/lists that blow up the LLM context."""
     if hasattr(value, "isoformat"):
         return value.isoformat()
     if isinstance(value, str) and len(value) > 400:
@@ -175,12 +156,10 @@ def _clip_value(value: Any) -> Any:
 
 
 def _number(value: Any) -> float:
-    """A sort key for a stored number; missing or non-numeric sorts last."""
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
 
 
 def ranked_advisories(details: Any, first: str | None = None) -> list[dict[str, Any]]:
-    """Advisories, the row's namesake first: known as `first`, live, KEV (ransomware first), severity, EPSS, CVSS."""
     entries = (details.get("vulnerabilities") or []) if isinstance(details, dict) else []
     return sorted(
         entries,
@@ -198,7 +177,7 @@ def ranked_advisories(details: Any, first: str | None = None) -> list[dict[str, 
 
 
 def advisory_view(entry: dict[str, Any], *, references: int) -> dict[str, Any]:
-    """One advisory's own values; a finding's details hold maxima over all its advisories and never stand in."""
+    """A finding's details hold maxima over all its advisories, so they never stand in for one."""
     return {
         "id": canonical_cve(entry),
         "severity": entry.get("severity"),
@@ -216,7 +195,7 @@ def advisory_view(entry: dict[str, Any], *, references: int) -> dict[str, Any]:
 
 
 def _live_threat(doc: dict[str, Any]) -> dict[str, Any]:
-    """A vulnerability row's details fields over its unwaived advisories; the stored roll-up counts waived ones."""
+    """Recomputed over unwaived advisories because the stored roll-up counts waived ones."""
     vuln = vuln_info(doc)
     top_epss = max(
         (a for a in vuln.advisories if a.get("epss_score") is not None), key=itemgetter("epss_score"), default={}
@@ -233,7 +212,6 @@ def _live_threat(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def _serialize_finding_for_llm(doc: dict[str, Any], *, cve: str | None = None) -> dict[str, Any]:
-    """Compact LLM projection: `details` flattened, the row named after its primary advisory (see ranked_advisories)."""
     if not doc:
         return {}
     out: dict[str, Any] = {}
@@ -291,7 +269,6 @@ def _breaking_risk(current: str | None, target: str | None) -> str:
 
 
 def _inject_urls(node: Any) -> None:
-    """Set a 'url' deep-link on any dict in the result tree, most-specific id path wins."""
     base = settings.FRONTEND_BASE_URL
     if isinstance(node, list):
         for item in node:
@@ -317,7 +294,6 @@ def _json_size(value: Any) -> int:
 
 
 def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
-    """Truncate the largest list in `result` so its JSON stays under MAX_TOOL_RESULT_BYTES."""
     try:
         if _json_size(result) <= MAX_TOOL_RESULT_BYTES:
             return result
@@ -335,8 +311,7 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
         return result
 
     original = result[biggest_key]
-    # The list may already be a page of a larger set; naming its length would report the page
-    # as the population the byte cap cut from.
+    # The list may be a page of a larger set, whose total, not the page length, names the population.
     population = result.get(f"{biggest_key}{_TOTAL_SUFFIX}")
     total = population if isinstance(population, int) else biggest_len
 
@@ -347,7 +322,6 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
             f"Call this tool with a smaller limit or a narrower filter for more data."
         )
 
-    # Binary-search for the largest prefix that fits beside the note naming it.
     result["_truncated"] = True
     lo, hi = 0, len(original)
     while lo < hi:
@@ -362,7 +336,6 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _trim_inner_lists(result: dict[str, Any], rows_key: str, items_key: str) -> None:
-    """Drop items from the longest `items_key` list under `result[rows_key]` until `result` fits; every row stays."""
     rows = result[rows_key]
     while _json_size(result) > MAX_TOOL_RESULT_BYTES:
         # Of equally long lists the last row's gives way, so the leading rows keep theirs.
@@ -373,7 +346,6 @@ def _trim_inner_lists(result: dict[str, Any], rows_key: str, items_key: str) -> 
 
 
 def _serialize_doc(doc: dict[str, Any] | None, fields: list[str] | None = None) -> dict[str, Any]:
-    """Serialize a MongoDB doc for LLM consumption (renames _id and isoformats datetimes)."""
     if doc is None:
         return {}
     if fields:

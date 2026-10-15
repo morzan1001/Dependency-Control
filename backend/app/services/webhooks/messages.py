@@ -1,5 +1,3 @@
-"""Message text the Teams and Slack formatters share."""
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -14,7 +12,7 @@ def policy_change_text(payload: Mapping[str, Any]) -> str:
 
 
 def event_summary(event_type: str, payload: Mapping[str, Any]) -> tuple[str, str]:
-    """(subject, details) of an event without its own layout; SBOM, CBOM and compliance payloads are flat."""
+    """SBOM, CBOM and compliance payloads are flat."""
     project = payload.get("project")
     name = project.get("name") if isinstance(project, Mapping) else None
     where = name or (f"project {payload['project_id']}" if payload.get("project_id") else None)

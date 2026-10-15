@@ -1,5 +1,3 @@
-"""Static tool metadata: TOOL_DEFINITIONS and TOOL_PERMISSIONS."""
-
 from collections.abc import Sequence
 from typing import Any, get_args
 
@@ -52,7 +50,6 @@ def _string(description: str | None = None) -> dict[str, Any]:
 
 
 def _bounded(default: int, maximum: int, noun: str) -> dict[str, Any]:
-    """An integer argument that checked_arguments defaults and holds to [1, maximum]."""
     return {
         "type": "integer",
         "default": default,

@@ -30,7 +30,6 @@ class EmailProvider:
         message: str,
         html_message: str | None,
     ) -> MIMEMultipart:
-        """Build the MIME message; HTML that shows the logo nests the body in a related part for the inline image."""
         with_logo = bool(html_message and "cid:logo" in html_message)
         msg = MIMEMultipart("related" if with_logo else "alternative")
         sender_name = " ".join((settings.emails_from_name or "").splitlines())

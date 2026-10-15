@@ -1,5 +1,3 @@
-"""Holds every tool argument to the type, vocabulary and range its schema declares before a handler reads it."""
-
 from typing import Any
 
 from ._helpers import _clamp_limit
@@ -44,7 +42,7 @@ def _checked(name: str, schema: dict[str, Any], value: Any) -> Any:
 
 
 def checked_arguments(tool_name: str, arguments: Any) -> dict[str, Any]:
-    """Declared arguments typed, defaulted, clamped and present; extra keys are dropped so the model still gets an answer."""
+    """Extra keys are dropped so the model still gets an answer."""
     if not isinstance(arguments, dict):
         raise ToolArgumentError("Tool arguments must be a JSON object")
     parameters = _DECLARED_PARAMETERS.get(tool_name, {})

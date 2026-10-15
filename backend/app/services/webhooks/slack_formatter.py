@@ -1,5 +1,3 @@
-"""Slack incoming-webhook messages for the webhook events."""
-
 from collections.abc import Mapping
 from typing import Any
 

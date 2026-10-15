@@ -1,5 +1,3 @@
-"""JWKS fetch and key lookup, and OIDC JWT validation."""
-
 import asyncio
 import logging
 import time
@@ -26,7 +24,6 @@ _JWKS_FETCH_FAILURE_TTL = 30
 
 
 async def discover_jwks_uri(base_url: str, cache_key: str) -> str | None:
-    """The ``jwks_uri`` of the issuer's discovery document; only a discovered URI is cached."""
     cached: str | None = await cache_service.get(cache_key)
     if cached:
         return cached
@@ -57,7 +54,6 @@ async def _jwks_from(client: InstrumentedAsyncClient, uri: str) -> dict[str, Any
 async def fetch_jwks(
     cache_key: str, candidate_uris: Callable[[], Awaitable[list[str]]], label: str
 ) -> dict[str, Any] | None:
-    """Fetch the first key set a candidate serves and cache it; a failure is remembered briefly instead."""
     failure_key = f"{cache_key}:fetch_failed"
     if await cache_service.get(failure_key):
         return None
@@ -90,7 +86,6 @@ async def find_jwks_key(
     provider_name: str,
     issuer: str,
 ) -> dict[str, Any] | None:
-    """Find a signing key by key ID, refetching the key set once per cooldown on a miss."""
     jwks = await get_jwks()
     if jwks is None:
         return None
@@ -120,7 +115,7 @@ async def validate_oidc_token(
     payload_model: type[T],
     provider_name: str,
 ) -> T | None:
-    """Validate an OIDC JWT via JWKS into ``payload_model``; fails closed when no audience is configured."""
+    """Fails closed when no audience is configured."""
     if not audience:
         logger.error(
             "%s OIDC token rejected: no expected audience configured. Set 'oidc_audience' on the instance "

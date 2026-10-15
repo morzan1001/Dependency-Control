@@ -1,5 +1,3 @@
-"""TypedDict definitions for webhook payloads."""
-
 from typing import Any, TypedDict
 
 

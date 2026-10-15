@@ -26,7 +26,6 @@ class SlackOAuthError(Exception):
 
 
 async def request_slack_tokens(client_id: str, client_secret: str, **grant: str) -> dict[str, Any]:
-    """The system-settings fields of a token that oauth.v2.access grants for ``grant``."""
     try:
         async with InstrumentedAsyncClient("Slack OAuth", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS) as client:
             response = await client.post(
@@ -59,7 +58,6 @@ class SlackProvider:
         self._refresh_lock = asyncio.Lock()
 
     async def _refresh_token(self, system_settings: SystemSettings) -> str | None:
-        """Refresh the Slack access token and persist the new token and expiry."""
         if (
             not system_settings.slack_client_id
             or not system_settings.slack_client_secret
@@ -85,7 +83,6 @@ class SlackProvider:
         return access_token
 
     async def _current_token(self, system_settings: SystemSettings) -> str | None:
-        """The bot token, refreshed first while it expires within the buffer; the stored one if that fails."""
         if not _expiring(system_settings):
             return system_settings.slack_bot_token
         db = await get_database()
