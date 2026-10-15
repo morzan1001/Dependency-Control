@@ -10,8 +10,7 @@ export type ReportFramework =
   | "license-audit"
   | "cve-remediation-sla";
 
-// Mirrors backend ControlStatus. "not_evaluated" is returned in place of a verdict that would
-// have rested on the absence of a match in an input that did not cover the scope.
+// Mirrors backend ControlStatus; not_evaluated stands in for a no-match verdict from an input that missed the scope.
 export type ControlStatus =
   | "passed"
   | "failed"

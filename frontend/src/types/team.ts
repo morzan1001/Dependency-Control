@@ -6,20 +6,16 @@ export interface TeamMember {
   source?: string;
 }
 
-// Whoever established a team's ownership of a project. A provider's entry is restored by its next
-// sync, so the UI has to say which kind an owner is before offering to remove it. A provider entry
-// names the instance too — two instances of one provider each replace only their own owners.
+// A provider's next sync restores its entries, so the UI names an owner's source; each instance replaces only its own.
 type TeamSourceProvider = 'gitlab' | 'github';
 export type TeamSource = 'manual' | `${TeamSourceProvider}:${string}`;
 
-// One owning team as the project list, the comparison rows and the chat tools name it.
 export interface TeamRef {
   id: string;
   name: string;
 }
 
-// The numeric id identifies the group or team; the slug and the path move when one is renamed,
-// so the server reads them back on every write and they are display only.
+// The numeric id identifies the group or team; slug and path move on rename, so they are display-only.
 export interface TeamGitHubBinding {
   provider: 'github';
   instance_id: string;

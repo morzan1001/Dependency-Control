@@ -45,6 +45,5 @@ export interface EffectivePolicy {
   override_locked: boolean;
   /** Merged system + override rules, with override taking precedence per rule_id. */
   rules: CryptoRule[];
-  /** Raw system baseline without overrides applied. */
   system_rules: CryptoRule[];
 }

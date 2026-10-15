@@ -4,8 +4,7 @@ import { BindingProvider, TeamBinding } from '@/types/team';
 
 export const PROVIDER_LABEL: Record<BindingProvider, string> = { github: 'GitHub', gitlab: 'GitLab' };
 
-// What the binding dialog needs of an instance of either provider: only an active one can take a
-// new binding, and only one that syncs teams will ever act on it.
+// Only an active instance takes a new binding, and only one that syncs teams acts on it.
 interface InstanceFields {
   id: string;
   name: string;
@@ -26,8 +25,7 @@ export function gitlabGroupOptionLabel(group: GitLabGroupOption): string {
   return `${group.name} (${group.full_path})`;
 }
 
-// The stored binding, not the team's own name: correcting a mis-binding needs the organisation
-// or path and the number it points at.
+// The stored binding rather than the team name: fixing a mis-binding needs the org or path and its number.
 export function bindingSummary(binding: TeamBinding): string {
   if (binding.provider === 'github') {
     return `${binding.org}/${binding.slug ?? '?'} (#${binding.external_id})`;
@@ -52,8 +50,7 @@ export function providerInstances(
   return [...tagged(github, 'github'), ...tagged(gitlab, 'gitlab')];
 }
 
-// An instance missing from the offer without explanation reads as a misconfiguration, so the
-// instances held back are named alongside the toggle that brings them back.
+// An instance silently missing from the offer reads as a misconfiguration, so the note names it and the toggle.
 export function withheldInstancesNote(instances: ProviderInstance[]): string {
   const names = instances.map((instance) => instance.name);
   const listed =

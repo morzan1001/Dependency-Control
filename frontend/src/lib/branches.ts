@@ -1,10 +1,7 @@
 import { BranchInfo } from '@/types/project'
 import { Scan } from '@/types/scan'
 
-/**
- * Exactly one branch, resolved by the backend. Selecting every active branch instead
- * sums the same finding once per branch, inflating every headline counter.
- */
+/** Exactly one branch: selecting every active one would count each finding once per branch. */
 export function initialBranchSelection(branches: BranchInfo[]): string[] {
   const preferred = branches.find(b => b.is_default && b.is_active)
   return preferred ? [preferred.name] : []
@@ -21,10 +18,7 @@ function isHigher(candidate: number[], current: number[]): boolean {
   return false
 }
 
-/**
- * The branch whose numbers represent a multi-branch selection: the worst one, so a
- * headline block never under-reports. Never a sum — the same CVE lives on every branch.
- */
+/** The worst branch stands in for a multi-branch selection; never a sum, the same CVE lives on every branch. */
 export function highestRiskBranch(scansByBranch: Record<string, Scan>): string | null {
   let best: string | null = null
   let bestRank: number[] = []

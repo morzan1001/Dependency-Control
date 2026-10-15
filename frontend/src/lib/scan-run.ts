@@ -8,9 +8,7 @@ export interface ResolvedRun {
   date: string
 }
 
-// A rescan announces itself on latest_run the moment it is queued, and a failed one still summarises
-// whatever it managed to persist. Identity, numbers, status and date come off one side together, so
-// nothing can attribute a run's stats to another scan or let a partial count replace a complete one.
+// latest_run appears when a rescan is queued and keeps partial stats on failure, so every field comes off one side.
 export function resolveRun(scan: Scan): ResolvedRun {
   const run = scan.latest_run
   if (run?.stats && isScanUsable(run.status)) {

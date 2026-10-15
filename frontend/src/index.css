@@ -30,7 +30,6 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    /* Status colors */
     --success: 142 71% 45%;
     --success-foreground: 0 0% 100%;
     --warning: 45 93% 47%;
@@ -38,7 +37,6 @@
     --info: 217 91% 60%;
     --info-foreground: 0 0% 100%;
 
-    /* Severity colors (vulnerability display) */
     --severity-critical: 0 72% 51%;
     --severity-critical-foreground: 0 0% 100%;
     --severity-high: 17.5 88.3% 40.4%;
@@ -84,7 +82,6 @@
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
 
-    /* Status colors - dark mode */
     --success: 142 69% 58%;
     --success-foreground: 0 0% 0%;
     --warning: 45 93% 58%;
@@ -92,7 +89,6 @@
     --info: 213 94% 68%;
     --info-foreground: 0 0% 0%;
 
-    /* Severity colors - dark mode */
     --severity-critical: 0 91% 71%;
     --severity-critical-foreground: 0 0% 0%;
     --severity-high: 27 96% 61%;

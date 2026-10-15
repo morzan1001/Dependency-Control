@@ -62,14 +62,10 @@ export const DEBOUNCE_DELAY_MS = 300;
 export const COPY_FEEDBACK_DELAY_MS = 2000;
 export const API_TIMEOUT_MS = 30000;
 export const API_REFRESH_TIMEOUT_MS = 10000;
-// An update-frequency request can sit behind another caller's recompute before its own work
-// starts, so the client stays patient for minutes: giving up early only abandons a result that
-// finishes anyway and lands in the cache.
+// A request can queue behind another caller's recompute; giving up early abandons a result that lands in the cache anyway.
 export const UPDATE_FREQUENCY_TIMEOUT_MS = 300000;
 
-// Permissions that gate the /analytics route and its nav item: any one grants a usable tab.
-// Must stay in sync with the per-tab checks in pages/Analytics.tsx (includes
-// analytics:recommendations, excludes analytics:dependencies which no tab checks).
+// Any one grants a usable tab; keep in sync with the per-tab checks in pages/Analytics.tsx.
 export const ANALYTICS_ROUTE_PERMISSIONS = [
   'analytics:read',
   'analytics:summary',
@@ -82,9 +78,7 @@ export const ANALYTICS_ROUTE_PERMISSIONS = [
 
 export const POST_PROCESSOR_ANALYZERS = ['epss_kev', 'reachability'] as const;
 
-// Environment slugs key the releases collection, so the backend rejects anything off-shape with a
-// 422. Must match `RELEASE_ENVIRONMENT_PATTERN` and `DEFAULT_RELEASE_ENVIRONMENT` in
-// backend/app/core/constants.py.
+// Must match `RELEASE_ENVIRONMENT_PATTERN` and `DEFAULT_RELEASE_ENVIRONMENT` in backend/app/core/constants.py.
 export const RELEASE_ENVIRONMENT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 export const DEFAULT_RELEASE_ENVIRONMENT = 'production';
 // Must match `RELEASE_VERSION_MAX_LENGTH` in backend/app/core/constants.py.
@@ -134,8 +128,7 @@ export const WEBHOOK_EVENTS = [
   },
 ] as const;
 
-// Per-user notification events. Must match `NOTIFICATION_EVENTS` in
-// backend/app/core/constants.py.
+// Must match `NOTIFICATION_EVENTS` in backend/app/core/constants.py.
 export const NOTIFICATION_EVENTS = [
   {
     id: 'analysis_completed',
