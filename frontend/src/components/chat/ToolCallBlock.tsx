@@ -23,7 +23,7 @@ export function ToolCallBlock({ toolCall }: Readonly<{ toolCall: ToolCall }>) {
         )}
       >
         <Wrench className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-medium text-foreground">{toolCall.tool_name}</span>
+        <span className="min-w-0 truncate font-medium text-foreground" title={toolCall.tool_name}>{toolCall.tool_name}</span>
         <Badge variant="secondary" className="ml-auto font-normal">
           tool call
         </Badge>

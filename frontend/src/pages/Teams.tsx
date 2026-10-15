@@ -99,7 +99,7 @@ export default function TeamsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Teams</h1>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <form onSubmit={(e) => e.preventDefault()} className="contents">
             <Input
               placeholder="Search teams..."

@@ -36,7 +36,6 @@ interface WaiverListProps {
 
 export function WaiverList({ projectId, canEdit = true, canDelete = true }: Readonly<WaiverListProps>) {
     const isGlobal = !projectId
-    const columns = isGlobal ? 7 : 6
     const [searchInput, setSearchInput] = useState('')
     const [orphanedOnly, setOrphanedOnly] = useState(false)
     const sort = useSortState('created_at')
@@ -200,25 +199,17 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                                     </TableCell>
                                 </TableRow>
                             ))}
-                            {hasMore && (
-                                <TableRow ref={observeEnd}>
-                                    <TableCell colSpan={columns} className="text-center py-4">
-                                        <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                                            {isFetchingNextPage && <Loader2 className="h-4 w-4 animate-spin" />}
-                                            {isFetchingNextPage ? 'Loading more...' : 'Scroll to load more'}
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                            {allWaivers.length === 0 && !isError && (
-                                <TableRow>
-                                    <TableCell colSpan={columns} className="text-center text-muted-foreground py-8">
-                                        {emptyText}
-                                    </TableCell>
-                                </TableRow>
-                            )}
                         </TableBody>
                     </Table>
+                    {hasMore && (
+                        <div ref={observeEnd} className="flex items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+                            {isFetchingNextPage && <Loader2 className="h-4 w-4 animate-spin" />}
+                            {isFetchingNextPage ? 'Loading more...' : 'Scroll to load more'}
+                        </div>
+                    )}
+                    {allWaivers.length === 0 && !isError && (
+                        <p className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyText}</p>
+                    )}
                 </div>
                 {isError && !isFetchingNextPage && (
                     <AnalyticsErrorCard

@@ -69,7 +69,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
 
   return (
     <div className="rounded-md border">
-      <div className="flex items-center justify-between border-b bg-muted/30 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 p-2">
         <span className="text-sm font-medium">Policy audit history</span>
         {canRevert && (
           <Button
@@ -96,7 +96,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
               isLast && !previous && entries.length >= PAGE_SIZE && entry.version > 1;
             return (
               <li key={entry._id} className="p-3 text-sm">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -105,7 +105,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
                       else next.add(entry._id);
                       setExpanded(next);
                     }}
-                    className="flex items-center gap-1 text-left"
+                    className="flex flex-wrap items-center gap-1 text-left"
                   >
                     {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                     <span className="font-mono text-xs text-muted-foreground">v{entry.version}</span>

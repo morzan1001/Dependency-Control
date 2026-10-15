@@ -1,11 +1,12 @@
 import { memo, useMemo, type ComponentProps } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { Bot, User } from 'lucide-react';
 import { Link as RouterLink } from 'react-router-dom';
 
 import { Card } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import type { Message, ToolCall } from '@/types/chat';
 
@@ -54,6 +55,20 @@ function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
   );
 }
 
+// Module-level, so a streaming answer's table is not remounted, losing its sideways scroll, on every chunk.
+const MARKDOWN_COMPONENTS: Components = {
+  a: AssistantLink,
+  // A rendered <img> would fetch a model-chosen URL without a click.
+  img: ({ src, alt }) => <AssistantLink href={src}>{alt || src}</AssistantLink>,
+  pre: ({ children }) => <pre className="overflow-x-auto">{children}</pre>,
+  table: ({ children }) => <Table>{children}</Table>,
+  thead: ({ children }) => <TableHeader>{children}</TableHeader>,
+  tbody: ({ children }) => <TableBody>{children}</TableBody>,
+  tr: ({ children }) => <TableRow>{children}</TableRow>,
+  th: ({ children, style }) => <TableHead style={style}>{children}</TableHead>,
+  td: ({ children, style }) => <TableCell style={style}>{children}</TableCell>,
+};
+
 function MessageBody({
   content,
   className,
@@ -73,27 +88,15 @@ function MessageBody({
   return (
     <div
       className={cn(
-        'prose prose-sm max-w-none dark:prose-invert',
+        'prose prose-sm max-w-none break-words dark:prose-invert',
         'prose-pre:my-2 prose-pre:rounded-md prose-pre:bg-muted prose-pre:text-foreground',
         'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-xs prose-code:before:content-none prose-code:after:content-none',
         'prose-p:my-1 prose-ul:my-1 prose-ol:my-1',
         'prose-a:text-primary prose-a:no-underline hover:prose-a:underline',
-        'prose-table:my-3 prose-table:w-full prose-table:border-collapse prose-table:overflow-hidden prose-table:rounded-md prose-table:border',
-        'prose-thead:bg-muted/60',
-        'prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:border-b',
-        'prose-td:px-3 prose-td:py-1.5 prose-td:align-top prose-td:border-b prose-td:last:border-b-0',
-        'prose-tr:border-0',
         className,
       )}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={{
-          a: AssistantLink,
-          // A rendered <img> would fetch a model-chosen URL without a click.
-          img: ({ src, alt }) => <AssistantLink href={src}>{alt || src}</AssistantLink>,
-        }}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={MARKDOWN_COMPONENTS}>
         {linkified}
       </ReactMarkdown>
     </div>
@@ -120,7 +123,7 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
   if (isUser) {
     return (
       <div className="flex justify-end gap-3">
-        <div className="max-w-[78%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-primary-foreground">
+        <div className="min-w-0 max-w-[78%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-primary-foreground">
           <MessageBody content={message.content} className="prose-invert" />
         </div>
         <AvatarChip role="user" />
@@ -131,7 +134,7 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
   return (
     <div className="flex gap-3">
       <AvatarChip role="assistant" />
-      <Card className="max-w-[85%] flex-1 border-muted/60 bg-card px-4 py-3 shadow-none">
+      <Card className="min-w-0 max-w-[85%] flex-1 border-muted/60 bg-card px-4 py-3 shadow-none">
         {message.tool_calls?.map((tc, i) => (
           <ToolCallBlock key={`${message.id}-tc-${i}-${tc.tool_name}`} toolCall={tc} />
         ))}
@@ -162,7 +165,7 @@ export function StreamingMessage({
   return (
     <div className="flex gap-3">
       <AvatarChip role="assistant" />
-      <Card className="max-w-[85%] flex-1 border-muted/60 bg-card px-4 py-3 shadow-none">
+      <Card className="min-w-0 max-w-[85%] flex-1 border-muted/60 bg-card px-4 py-3 shadow-none">
         {toolCalls.map((tc, i) => (
           <ToolCallBlock key={`stream-tc-${i}-${tc.tool_name}`} toolCall={tc} />
         ))}

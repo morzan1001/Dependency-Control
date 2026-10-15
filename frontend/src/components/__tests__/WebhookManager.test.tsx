@@ -206,6 +206,12 @@ describe("WebhookManager", () => {
     expect(screen.getByRole("columnheader", { name: "URL" })).toHaveClass("w-auto");
   });
 
+  it("names an empty list under the table, where a phone shows it, instead of in a row centred on the table's 880px", () => {
+    renderWith([]);
+
+    expect(screen.getByText("No webhooks configured").closest("table")).toBeNull();
+  });
+
   it("shows why a test delivery failed", async () => {
     vi.mocked(webhookApi.test).mockResolvedValue({ success: false, status_code: 400, error: "HTTP 400: no_text" });
     renderWith([slackHook]);

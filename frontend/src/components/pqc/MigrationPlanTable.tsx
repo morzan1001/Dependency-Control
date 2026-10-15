@@ -25,8 +25,8 @@ export function MigrationPlanTable({ items, onSelect }: Readonly<Props>) {
     return <div className="p-4 text-sm text-muted-foreground">No quantum-vulnerable crypto assets detected.</div>;
   }
   return (
-    <div className="rounded-md border">
-      <table className="w-full text-sm">
+    <div className="rounded-md border overflow-x-auto">
+      <table className="w-full min-w-[920px] text-sm">
         <thead className="bg-muted/50 text-left">
           <tr>
             <th className="p-2">Status</th>

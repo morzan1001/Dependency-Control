@@ -63,7 +63,7 @@ function ScanSide({ label, scanId, options, onSelect, side }: {
   const commitHash = side?.commit_hash ?? scan?.commit_hash
   const createdAt = side?.created_at ?? scan?.created_at
   return (
-    <div className="flex-1 space-y-2">
+    <div className="min-w-0 flex-1 space-y-2">
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
       <Select value={scanId} onValueChange={onSelect}>
         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -133,10 +133,10 @@ export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }
             </span>
           </div>
         )}
-        <div className="flex items-end gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
           <ScanSide label="From" scanId={fromScanId} options={options} side={delta?.from_side}
             onSelect={(id) => id !== toScanId && onChange(id, toScanId)} />
-          <Button variant="outline" size="icon" className="shrink-0"
+          <Button variant="outline" size="icon" className="shrink-0 self-center sm:self-auto"
             onClick={() => onChange(toScanId, fromScanId)} aria-label="Swap scans">
             <ArrowLeftRight className="h-4 w-4" />
           </Button>

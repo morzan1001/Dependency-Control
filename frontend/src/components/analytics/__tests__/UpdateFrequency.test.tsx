@@ -169,3 +169,39 @@ describe("UpdateFrequency", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("UpdateFrequency on a phone", () => {
+  it("gives the granularity and slowest-package cards one shrinkable column below md, so the table cannot widen them past the screen", async () => {
+    mockedFrequency.mockResolvedValue({
+      ...metrics,
+      outdated_backlog: 1,
+      slowest_packages: [{ name: "libfoo", type: "pypi", current_version: "1.0.0", latest_version: "2.0.0", scans_outdated: 4 }],
+    });
+    renderFrequency();
+
+    const card = (await screen.findByText("Slowest to Update")).closest(".grid");
+    expect(card).toHaveClass("grid-cols-1", "md:grid-cols-2");
+  });
+
+  it("lays the four loading tiles out like the summary cards they stand for, two by two until xl", async () => {
+    mockedFrequency.mockReturnValue(new Promise(() => {}));
+    renderFrequency();
+
+    const grid = (await waitFor(() => {
+      const tile = document.querySelector(".animate-pulse.h-28");
+      expect(tile).not.toBeNull();
+      return tile;
+    }))?.parentElement;
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
+  });
+
+  it("lays the four summary cards out two by two until xl, so a trend such as \"Deteriorating\" keeps inside its card", async () => {
+    mockedFrequency.mockResolvedValue({ ...metrics, trend_direction: "deteriorating" });
+    renderFrequency();
+
+    const grid = (await screen.findByText("Scan Cadence")).closest(".grid");
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
+  });
+});

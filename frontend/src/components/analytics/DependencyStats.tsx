@@ -40,36 +40,34 @@ export function DependencyStats({ onSelectDependency }: Readonly<DependencyStats
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Top Dependencies</CardTitle>
-            <CardDescription>Most frequently used packages across your projects</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Select value={selectedType || "all"} onValueChange={(v) => setSelectedType(v === "all" ? undefined : v)}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="All types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All types</SelectItem>
-                {types?.map((t) => (
-                  <SelectItem key={t} value={t}>{t}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={limit.toString()} onValueChange={(v) => setLimit(Number.parseInt(v))}>
-              <SelectTrigger className="w-[100px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="10">Top 10</SelectItem>
-                <SelectItem value="20">Top 20</SelectItem>
-                <SelectItem value="50">Top 50</SelectItem>
-                <SelectItem value="100">Top 100</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0">
+        <div>
+          <CardTitle>Top Dependencies</CardTitle>
+          <CardDescription>Most frequently used packages across your projects</CardDescription>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={selectedType || "all"} onValueChange={(v) => setSelectedType(v === "all" ? undefined : v)}>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              {types?.map((t) => (
+                <SelectItem key={t} value={t}>{t}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={limit.toString()} onValueChange={(v) => setLimit(Number.parseInt(v))}>
+            <SelectTrigger className="w-[100px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="10">Top 10</SelectItem>
+              <SelectItem value="20">Top 20</SelectItem>
+              <SelectItem value="50">Top 50</SelectItem>
+              <SelectItem value="100">Top 100</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </CardHeader>
       <CardContent>

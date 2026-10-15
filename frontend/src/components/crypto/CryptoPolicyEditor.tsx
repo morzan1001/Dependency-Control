@@ -84,7 +84,7 @@ function StatusBadge({ status }: Readonly<{ status: RuleStatus }>) {
     custom: "Custom",
   };
   return (
-    <span className={`inline-block text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
+    <span className={`inline-block whitespace-nowrap text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
       {labels[status]}
     </span>
   );
@@ -197,18 +197,22 @@ export function CryptoPolicyEditor({
         )}
       </div>
 
-      <div className="rounded-md border">
-        <table className="w-full text-sm">
+      <div className="rounded-md border overflow-x-auto">
+        {/* Rule takes what the fixed columns leave, never less than 200px; Status and the actions count only when shown. */}
+        <table
+          className="w-full table-fixed text-sm"
+          style={{ minWidth: 952 + (mergedMode ? 120 : 0) + (readOnly ? 0 : 96) }}
+        >
           <thead className="bg-muted/50 text-left">
             <tr>
-              <th className="p-2 w-16">Enabled</th>
-              <th className="p-2">Rule</th>
-              <th className="p-2">Finding type</th>
-              <th className="p-2 w-28">Severity</th>
-              <th className="p-2 w-32">Min key size</th>
-              <th className="p-2">Name patterns</th>
-              <th className="p-2 w-32">Source</th>
-              {mergedMode && <th className="p-2 w-32">Status</th>}
+              <th className="p-2 w-18">Enabled</th>
+              <th className="p-2 w-auto">Rule</th>
+              <th className="p-2 w-48">Finding type</th>
+              <th className="p-2 w-30">Severity</th>
+              <th className="p-2 w-24">Min key size</th>
+              <th className="p-2 w-40">Name patterns</th>
+              <th className="p-2 w-28">Source</th>
+              {mergedMode && <th className="p-2 w-30">Status</th>}
               {!readOnly && <th className="p-2 w-24" />}
             </tr>
           </thead>
@@ -229,6 +233,7 @@ export function CryptoPolicyEditor({
                     <Input
                       disabled={readOnly}
                       value={r.name}
+                      title={r.name}
                       onChange={(e) => updateRule(idx, { name: e.target.value })}
                       className="mt-1"
                     />
@@ -268,7 +273,7 @@ export function CryptoPolicyEditor({
                         match_min_key_size_bits: e.target.value === "" ? null : Number(e.target.value),
                       })}
                       placeholder="—"
-                      className="w-24"
+                      className="w-20"
                     />
                   </td>
                   <td className="p-2">

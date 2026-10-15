@@ -135,3 +135,11 @@ describe('TeamsPage sort order', () => {
     await waitFor(() => expect(teamApi.getAll).toHaveBeenLastCalledWith('', 'name', 'desc'))
   })
 })
+
+describe('TeamsPage header on a tablet', () => {
+  it('wraps its search, sort and Create Team onto further lines from sm on instead of running past the screen', async () => {
+    await renderPage()
+
+    expect(screen.getByRole('button', { name: /Sort (ascending|descending)/ }).parentElement).toHaveClass('flex-col', 'sm:flex-row', 'sm:flex-wrap')
+  })
+})

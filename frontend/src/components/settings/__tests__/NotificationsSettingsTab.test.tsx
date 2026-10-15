@@ -83,3 +83,14 @@ describe('NotificationsSettingsTab - Slack install', () => {
     expect(screen.getByText('Please save your changes before connecting to Slack.')).toBeInTheDocument()
   })
 })
+
+describe('NotificationsSettingsTab - Slack auth modes on a phone', () => {
+  it('wraps the OAuth and manual tab labels inside their halves instead of cutting them off', () => {
+    renderTab()
+
+    const oauth = screen.getByRole('tab', { name: 'OAuth (Recommended)' })
+    expect(oauth).toHaveClass('whitespace-normal')
+    expect(screen.getByRole('tab', { name: 'Manual Bot Token' })).toHaveClass('whitespace-normal')
+    expect(oauth.parentElement).toHaveClass('h-auto')
+  })
+})

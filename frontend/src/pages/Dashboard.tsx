@@ -134,7 +134,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="col-span-4">
+        <Card className="lg:col-span-4">
             <CardHeader>
             <CardTitle>Top 5 Riskiest Projects</CardTitle>
             </CardHeader>
@@ -190,7 +190,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
-        <Card className="col-span-3">
+        <Card className="lg:col-span-3">
             <CardHeader>
                 <CardTitle>Recent Activity</CardTitle>
             </CardHeader>
@@ -237,8 +237,9 @@ export default function Dashboard() {
           <CardTitle>Projects</CardTitle>
         </CardHeader>
         <CardContent>
-            <div className="relative w-full">
-                <table className="w-full caption-bottom text-sm table-fixed">
+            {/* Scrolls until xl, where it fits: a scroll container would keep the sticky header from sticking. */}
+            <div className="relative w-full overflow-x-auto xl:overflow-visible">
+                <table className="w-full caption-bottom text-sm table-fixed min-w-[820px]">
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                             <SortableHead column="name" sort={pagination} firstOrder="asc" className="w-auto">Name</SortableHead>

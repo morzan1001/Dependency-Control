@@ -156,3 +156,26 @@ describe('Dashboard project table sorting', () => {
     expect(lastSort()).toEqual(['critical', 'desc'])
   })
 })
+
+describe('Dashboard project table on a narrow screen', () => {
+  it('keeps the Name column 200px wide and scrolls the table sideways until it fits, from xl on', () => {
+    renderDashboard([project('p1', [])])
+
+    const table = screen.getByRole('table')
+    expect(table).toHaveClass('table-fixed', 'min-w-[820px]')
+    expect(table.parentElement).toHaveClass('overflow-x-auto', 'xl:overflow-visible')
+  })
+})
+
+describe('Dashboard riskiest projects and recent activity on a phone or tablet', () => {
+  it('splits the row 4 to 3 only from lg on, so below it neither card spans columns the grid lacks', () => {
+    renderDashboard([project('p1', [])])
+
+    const riskiest = screen.getByText('Top 5 Riskiest Projects').closest('.bg-card')
+    const activity = screen.getByText('Recent Activity').closest('.bg-card')
+    expect(riskiest).toHaveClass('lg:col-span-4')
+    expect(riskiest).not.toHaveClass('col-span-4')
+    expect(activity).toHaveClass('lg:col-span-3')
+    expect(activity).not.toHaveClass('col-span-3')
+  })
+})

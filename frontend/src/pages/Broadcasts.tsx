@@ -513,15 +513,11 @@ export default function Broadcasts() {
                          <TableCell className="text-muted-foreground text-xs">{item.created_by || '—'}</TableCell>
                       </TableRow>
                    ))}
-                   {!isLoadingHistory && (!history || history.length === 0) && (
-                      <TableRow>
-                         <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                            No broadcast history found.
-                         </TableCell>
-                      </TableRow>
-                   )}
                 </TableBody>
               </Table>
+              {!isLoadingHistory && (!history || history.length === 0) && (
+                 <p className="px-4 py-8 text-center text-sm text-muted-foreground">No broadcast history found.</p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

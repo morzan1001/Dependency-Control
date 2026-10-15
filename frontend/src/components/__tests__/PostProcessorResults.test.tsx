@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { EPSSKEVResults, ReachabilityResults } from "../PostProcessorResults";
 import type { EPSSKEVSummary } from "../PostProcessorResults";
@@ -168,5 +168,101 @@ describe("EPSSKEVResults high-risk list", () => {
     );
 
     expect(screen.queryByText(/Showing \d+ of/)).toBeNull();
+  });
+});
+
+describe("EPSSKEVResults on a phone", () => {
+  it("wraps a KEV row's ransomware and due-date pills under the CVE instead of cutting them off", () => {
+    render(
+      <EPSSKEVResults
+        data={{
+          ...baseData,
+          kev_matches: 1,
+          kev_details: [{ cve: "CVE-2021-44228", component: "org.apache.logging.log4j:log4j-core", due_date: "2021-12-24", ransomware: true }],
+        }}
+      />,
+    );
+
+    const row = screen.getByText("Ransomware").parentElement?.parentElement;
+    expect(row).toHaveClass("flex-wrap", "justify-between", "gap-2");
+    expect(screen.getByText("org.apache.logging.log4j:log4j-core")).toHaveClass("wrap-anywhere");
+    expect(screen.getByText("Ransomware").parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("wraps a high-risk row's score under the CVE instead of breaking the CVE over three lines", () => {
+    render(<EPSSKEVResults data={{ ...baseData, high_risk_cves: [highRiskCve(0)], high_risk_total: 1 }} />);
+
+    expect(screen.getByText("Risk: 99").parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("breaks a high-risk CVE's long component@version anywhere, as the KEV rows do", () => {
+    const cve = { ...highRiskCve(0), component: "org.apache.logging.log4j:log4j-core", version: "2.14.1" };
+    render(<EPSSKEVResults data={{ ...baseData, high_risk_cves: [cve], high_risk_total: 1 }} />);
+
+    fireEvent.click(screen.getByText(cve.cve));
+
+    expect(screen.getByText("org.apache.logging.log4j:log4j-core@2.14.1")).toHaveClass("wrap-anywhere");
+  });
+
+  it("puts a maturity label above its bar on a phone, so the bar keeps a width, and beside it from sm on", () => {
+    render(<EPSSKEVResults data={baseData} />);
+
+    const label = screen.getByText("Weaponized (Ransomware)");
+    expect(label).toHaveClass("w-full", "sm:w-32");
+    expect(label.parentElement).toHaveClass("flex-wrap");
+  });
+});
+
+describe("ReachabilityResults on a phone", () => {
+  it("puts a level label above its bar on a phone and beside it from sm on", () => {
+    render(<ReachabilityResults data={reachabilityData} />);
+
+    const label = screen.getByText("Confirmed").closest("div");
+    expect(label).toHaveClass("w-full", "sm:w-32");
+    expect(label?.parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("breaks a long component@version anywhere in the reachable and the unreachable list", () => {
+    render(
+      <ReachabilityResults
+        data={{
+          ...reachabilityData,
+          reachable_vulnerabilities: [{ ...reachabilityData.reachable_vulnerabilities[0], cve: "CVE-2021-44228", component: "org.apache.logging.log4j:log4j-core", version: "2.14.1" }],
+          unreachable_vulnerabilities: [{ ...reachabilityData.unreachable_vulnerabilities[0], cve: "CVE-2022-42889", component: "org.apache.commons:commons-text", version: "1.9" }],
+          reachable_total: 1,
+          unreachable_total: 1,
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("CVE-2021-44228"));
+
+    expect(screen.getByText("org.apache.logging.log4j:log4j-core@2.14.1")).toHaveClass("wrap-anywhere");
+    expect(screen.getByText("org.apache.commons:commons-text@1.9")).toHaveClass("wrap-anywhere");
+  });
+
+  it("wraps a vulnerability row's badges under the CVE", () => {
+    render(<ReachabilityResults data={reachabilityData} />);
+
+    expect(screen.getByText("CVE-2026-0").parentElement).toHaveClass("flex-wrap");
+    expect(screen.getByText("CVE-2025-0").parentElement?.parentElement).toHaveClass("flex-wrap", "gap-2");
+  });
+});
+
+describe("post-processor stat tiles on a tablet", () => {
+  it("lays the EPSS/KEV tiles out two by two until xl, where four fit beside their icons", () => {
+    render(<EPSSKEVResults data={baseData} />);
+
+    const grid = screen.getByText("EPSS Enriched").closest(".grid");
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
+  });
+
+  it("lays the reachability tiles out the same way", () => {
+    render(<ReachabilityResults data={reachabilityData} />);
+
+    const grid = screen.getByText("Analyzed").closest(".grid");
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
   });
 });

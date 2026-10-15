@@ -127,7 +127,8 @@ describe("FindingsTable later page error", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByText("Loading more...")).toBeInTheDocument();
+    // Under the table, where a phone shows it rather than centred on the scrolling table.
+    expect((await screen.findByText("Loading more...")).closest("table")).toBeNull();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load more findings");
     expect(getFindingsMock.mock.calls.map(([, params]) => (params as { skip: number }).skip)).toEqual([0, 1, 1]);
@@ -214,5 +215,34 @@ describe("FindingsTable Scanner column", () => {
 
     expect(await screen.findByText("crypto_cert_validity_too_long")).toHaveClass("wrap-anywhere");
     expect(screen.getByRole("columnheader", { name: "Scanner" })).toHaveClass("w-[170px]");
+  });
+});
+
+describe("FindingsTable on a narrow screen", () => {
+  beforeEach(() => {
+    getFindingsMock.mockReset();
+  });
+
+  it("keeps the Component column 200px wide while loading and loaded, scrolling the table sideways", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    getFindingsMock.mockReturnValue(new Promise((r) => { resolve = r; }));
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+
+    const skeleton = await screen.findByRole("table");
+    expect(skeleton).toHaveClass("table-fixed", "min-w-[930px]");
+
+    resolve({ ...emptyEnvelope, items: [{ id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: ["trivy"], details: {} }], total: 1 });
+    const table = (await screen.findByText("lodash")).closest("table");
+    expect(table).toHaveClass("table-fixed", "min-w-[930px]");
+    expect(table?.parentElement).toHaveClass("overflow-x-auto");
+  });
+
+  it("drops its scroll container from xl on, where the table fits, so the header sticks while the page scrolls", async () => {
+    getFindingsMock.mockResolvedValue({ ...emptyEnvelope, items: [{ id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: ["trivy"], details: {} }], total: 1 });
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" stickyHeaderTop={0} />);
+
+    const table = (await screen.findByText("lodash")).closest("table");
+    expect(table?.parentElement).toHaveClass("overflow-x-auto", "xl:overflow-visible");
+    expect(table?.querySelector("thead")).toHaveClass("sticky");
   });
 });

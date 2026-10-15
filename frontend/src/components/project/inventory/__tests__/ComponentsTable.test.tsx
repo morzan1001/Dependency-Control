@@ -111,4 +111,33 @@ describe('ComponentsTable', () => {
 
     await waitFor(() => expect(screen.getByText('lodash')).toBeInTheDocument())
   })
+
+  it("stacks its search and Download CSV under the title on a phone, like the waiver list's header", async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockResolvedValue(page)
+    renderTable()
+    await waitFor(() => expect(screen.getByText('lodash')).toBeInTheDocument())
+
+    const header = screen.getByRole('heading', { name: 'Components' }).parentElement?.parentElement
+    expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+    const controls = screen.getByRole('button', { name: /download csv/i }).parentElement
+    expect(controls).toHaveClass('flex-col', 'sm:flex-row')
+    expect(screen.getByPlaceholderText('Search components…')).toHaveClass('w-full', 'sm:w-[220px]')
+  })
+
+  it("names an empty table under it, where a phone shows the message, instead of in a row centred on the scrolling table", async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockResolvedValue({ ...page, items: [], total: 0 })
+    renderTable()
+
+    expect((await screen.findByText('No components found.')).closest('table')).toBeNull()
+  })
+
+  it('shows a failure and its retry under the table the same way', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockRejectedValue(
+      Object.assign(new Error('not found'), { response: { status: 404 } }),
+    )
+    renderTable()
+
+    expect((await screen.findByText('Failed to load components.')).closest('table')).toBeNull()
+    expect(screen.getByRole('button', { name: /retry/i }).closest('table')).toBeNull()
+  })
 })

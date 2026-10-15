@@ -42,18 +42,16 @@ export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
 
   return (
     <Card className="flex h-full flex-col">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Cryptography</CardTitle>
-            {/* min-h keeps both grid cards' headers equal when one description wraps. */}
-            <CardDescription className="min-h-10">Cryptographic assets detected on this branch.</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" onClick={handleDownload}>
-            <Download className="mr-2 h-4 w-4" />
-            Download CSV
-          </Button>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0">
+        <div>
+          <CardTitle>Cryptography</CardTitle>
+          {/* min-h keeps both grid cards' headers equal when one description wraps. */}
+          <CardDescription className="min-h-10">Cryptographic assets detected on this branch.</CardDescription>
         </div>
+        <Button variant="outline" size="sm" onClick={handleDownload}>
+          <Download className="mr-2 h-4 w-4" />
+          Download CSV
+        </Button>
       </CardHeader>
       <CardContent className="flex-1">
         <div className="rounded-md border">
@@ -76,16 +74,6 @@ export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
                   ))}
                 </TableRow>
               ))}
-              {!isPending && isError && (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-2">
-                      <span>Failed to load crypto assets.</span>
-                      <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
               {!isPending && !isError && data?.items.map((item, index) => (
                 <TableRow key={`${item.name}-${item.asset_type}-${index}`}>
                   <TableCell className="font-medium">{item.name}</TableCell>
@@ -96,15 +84,17 @@ export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
                   <TableCell title={item.locations.join('\n')}>{item.location_count}</TableCell>
                 </TableRow>
               ))}
-              {!isPending && !isError && data?.items.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    No cryptographic assets found.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
+          {!isPending && isError && (
+            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
+              <span>Failed to load crypto assets.</span>
+              <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+            </div>
+          )}
+          {!isPending && !isError && data?.items.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No cryptographic assets found.</p>
+          )}
         </div>
         <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />
       </CardContent>

@@ -10,8 +10,8 @@ vi.mock("@/api/analytics", () => ({
 
 // The tree only renders once a project is picked; stub the combobox to select one immediately.
 vi.mock("@/components/ui/project-combobox", () => ({
-  ProjectCombobox: ({ onValueChange }: { onValueChange: (v: string) => void }) => (
-    <button type="button" onClick={() => onValueChange("p1")}>select-project</button>
+  ProjectCombobox: ({ onValueChange, className }: { onValueChange: (v: string) => void; className?: string }) => (
+    <button type="button" className={className} onClick={() => onValueChange("p1")}>select-project</button>
   ),
 }));
 
@@ -135,5 +135,33 @@ describe("DependencyTree severity borders", () => {
 
     expect((await screen.findByText("high-dep")).closest('[role="treeitem"]')).toHaveClass("border-l-severity-high");
     expect(screen.getByText("low-dep").closest('[role="treeitem"]')).toHaveClass("border-l-severity-low");
+  });
+});
+
+describe("DependencyTree on a narrow screen", () => {
+  it("stacks the project picker and Direct only under the title on a phone, the picker full width", () => {
+    renderTree(graph([node("a")], ["a"]));
+
+    const header = screen.getByRole("heading", { name: "Dependency Tree" }).parentElement?.parentElement;
+    expect(header).toHaveClass("flex-col", "sm:flex-row", "sm:items-center", "sm:justify-between");
+    const picker = screen.getByText("select-project");
+    expect(picker).toHaveClass("w-full", "sm:w-[300px]");
+    expect(picker.parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("wraps a row's version and badges under a long package name instead of running past the card", async () => {
+    const name = "@company-internal/extremely-long-scoped-package-name-for-layout-testing-purposes";
+    renderTree(graph([node("a", { name, direct: true })], ["a"]));
+
+    const label = await screen.findByText(name);
+    expect(label).toHaveClass("wrap-anywhere");
+    expect(label.parentElement).toHaveClass("min-w-0", "flex-wrap");
+  });
+
+  it("wraps the direct, transitive and vulnerable counts onto further lines on a phone", async () => {
+    renderTree(graph([node("a", { direct: true, child_ids: ["b"] }), node("b")], ["a"]));
+
+    const count = await screen.findByText("1 direct dependencies");
+    expect(count.parentElement?.parentElement).toHaveClass("flex-wrap");
   });
 });

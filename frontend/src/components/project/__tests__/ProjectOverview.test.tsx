@@ -703,3 +703,16 @@ describe('ProjectOverview - release tile', () => {
     expect(within(tile(CRITICAL_TILE)).getByText(String(OFF_PAGE_CRITICAL))).toBeInTheDocument()
   })
 })
+
+describe('ProjectOverview - the trend and severity cards on a phone or tablet', () => {
+  it('splits the row 4 to 3 only from lg on, so below it neither card spans columns the grid lacks', () => {
+    renderOverview([makeScan({ id: 's-1', created_at: '2026-07-01T00:00:00Z' }, { critical: 1 })])
+
+    const trends = screen.getByText('Vulnerability Trends').closest('.bg-card')
+    const severity = screen.getByText('Severity Distribution').closest('.bg-card')
+    expect(trends).toHaveClass('lg:col-span-4')
+    expect(trends).not.toHaveClass('col-span-4')
+    expect(severity).toHaveClass('lg:col-span-3')
+    expect(severity).not.toHaveClass('col-span-3')
+  })
+})

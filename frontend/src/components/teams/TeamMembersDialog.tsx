@@ -155,15 +155,11 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                     </TableRow>
                   );
                 })}
-                {team?.members.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={canManage ? 3 : 2} className="text-center text-muted-foreground">
-                      No members in this team.
-                    </TableCell>
-                  </TableRow>
-                )}
               </TableBody>
             </Table>
+            {team?.members.length === 0 && (
+              <p className="p-4 text-center text-sm text-muted-foreground">No members in this team.</p>
+            )}
           </div>
           <DialogFooter>
               <Button onClick={onClose}>Close</Button>

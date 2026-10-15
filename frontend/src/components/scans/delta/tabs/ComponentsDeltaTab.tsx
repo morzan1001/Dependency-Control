@@ -12,7 +12,7 @@ import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
 import { Pagination } from "@/components/ui/pagination";
 import { DeltaSummaryCards } from "../shared/DeltaSummaryCards";
-import { DeltaFilterBar, DeltaFilterGroup, DeltaStatusRows } from "../shared/DeltaTableParts";
+import { DeltaEmptyText, DeltaFilterBar, DeltaFilterGroup, DeltaLoadingRows } from "../shared/DeltaTableParts";
 import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 const CHANGES = ["all", "added", "removed", "changed"] as const;
@@ -64,9 +64,10 @@ export function ComponentsDeltaTab(props: DeltaTabProps) {
                 </TableCell>
               </TableRow>
             ))}
-            <DeltaStatusRows isLoading={isLoading} rows={data?.items.length ?? 0} columns={4} emptyText="No component changes" />
+            <DeltaLoadingRows isLoading={isLoading} columns={4} />
           </TableBody>
         </Table>
+        <DeltaEmptyText isLoading={isLoading} rows={data?.items.length ?? 0} text="No component changes" />
       </div>
       <Pagination
         page={data?.page ?? 1}

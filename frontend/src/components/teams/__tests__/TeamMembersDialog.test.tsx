@@ -54,6 +54,14 @@ beforeEach(() => {
   vi.mocked(githubInstancesApi.list).mockResolvedValue(page([]) as never);
 });
 
+describe("TeamMembersDialog empty team", () => {
+  it("names an empty team under the table, as the other tables do", () => {
+    renderDialog({ ...TEAM, members: [] });
+
+    expect(screen.getByText("No members in this team.").closest("table")).toBeNull();
+  });
+});
+
 describe("TeamMembersDialog sync source", () => {
   it("names a synced member's provider and instance the way the binding dialog names a binding", async () => {
     auth.permissions = ["system:manage"];

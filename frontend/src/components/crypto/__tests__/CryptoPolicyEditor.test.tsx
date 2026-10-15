@@ -174,3 +174,48 @@ describe("CryptoPolicyEditor name patterns", () => {
     expect(onSave.mock.calls[0][0][0].match_name_patterns).toEqual(["RC4", "DES"]);
   });
 });
+
+describe("CryptoPolicyEditor rules table width", () => {
+  it("gives the Rule column what the fixed columns leave, at least 200px, and scrolls sideways below that", () => {
+    const sys = systemRule();
+    render(<CryptoPolicyEditor initialRules={[sys]} systemRules={[sys]} onSave={vi.fn()} />);
+
+    const table = screen.getByRole("table");
+    expect(table).toHaveClass("table-fixed");
+    expect(table).toHaveStyle({ minWidth: "1168px" });
+    expect(table.parentElement).toHaveClass("overflow-x-auto");
+    expect(screen.getByRole("columnheader", { name: "Rule" })).toHaveClass("w-auto");
+    expect(screen.getByRole("columnheader", { name: "Status" })).toHaveClass("w-30");
+  });
+
+  it("fits the system policy's columns and a 200px Rule column on a 1440px screen", () => {
+    render(<CryptoPolicyEditor initialRules={[systemRule()]} onSave={vi.fn()} />);
+
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "1048px" });
+    expect(screen.queryByRole("columnheader", { name: "Status" })).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Min key size" })).toHaveClass("w-24");
+    expect(screen.getByRole("columnheader", { name: "Source" })).toHaveClass("w-28");
+  });
+
+  it("keeps no room for the Revert and Remove column a read-only viewer does not get", () => {
+    const sys = systemRule();
+    render(<CryptoPolicyEditor initialRules={[sys]} systemRules={[sys]} readOnly onSave={vi.fn()} />);
+
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "1072px" });
+    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
+  });
+
+  it("keeps the System default pill on one line in its column", () => {
+    const sys = systemRule();
+    render(<CryptoPolicyEditor initialRules={[sys]} systemRules={[sys]} onSave={vi.fn()} />);
+
+    expect(screen.getByText("System default")).toHaveClass("whitespace-nowrap");
+  });
+
+  it("names a rule in full as its input's title, for a name longer than the column", () => {
+    const long = { ...systemRule(), name: "BSI requires RSA keys of at least 3000 bits from 2024 onwards" };
+    render(<CryptoPolicyEditor initialRules={[long]} onSave={vi.fn()} />);
+
+    expect(screen.getByDisplayValue(long.name)).toHaveAttribute("title", long.name);
+  });
+});

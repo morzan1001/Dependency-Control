@@ -252,11 +252,13 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     const { isFetchingNextPage, isLoading, isError, error } = findings
     const { rows: allRows, nextPageFailed, retry, observeEnd } = useInfiniteRows(findings, (page) => page.items)
 
+    // Scrolls until xl, where the table fits: a scroll container would keep the sticky header from sticking.
     return (
-        <div className="relative w-full overflow-x-auto">
+        <div className="relative w-full overflow-x-auto xl:overflow-visible">
+            {/* Narrower than its fixed columns, the table would leave the Component column no width at all. */}
             {isLoading && (
                 <div className="relative">
-                    <table className="w-full text-sm table-fixed">
+                    <table className="w-full text-sm table-fixed min-w-[930px]">
                         <TableHeader className="sticky bg-background z-50 shadow-sm" style={{ top: stickyHeaderTop }}>
                             <TableRow className="w-full">
                                 <TableHead className="w-[120px] bg-background">Severity</TableHead>
@@ -287,7 +289,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
             )}
             {!isLoading && allRows.length > 0 && (
                 <TooltipProvider>
-                <table className="w-full caption-bottom text-sm table-fixed">
+                <table className="w-full caption-bottom text-sm table-fixed min-w-[930px]">
                     <TableHeader className="sticky bg-background z-50 shadow-sm" style={{ top: stickyHeaderTop }}>
                         <TableRow className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                             <SortableHead column="severity" sort={sort} className="w-[120px] bg-background">Severity</SortableHead>
@@ -359,19 +361,15 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                 </TableRow>
                             )
                         })}
-                        {isFetchingNextPage && (
-                            <TableRow>
-                                <TableCell colSpan={6} className="text-center py-4">
-                                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        Loading more...
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        )}
                     </TableBody>
                 </table>
                 </TooltipProvider>
+            )}
+            {isFetchingNextPage && (
+                <div className="flex items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading more...
+                </div>
             )}
 
             {isError && !isFetchingNextPage && (

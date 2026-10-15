@@ -495,7 +495,8 @@ export function AnalyticsDependencyModal({
               <AnalyticsErrorCard title="Failed to load findings" error={findingsError} onRetry={() => refetchFindings()} />
             )}
             {!isLoadingFindings && sortedFindings.length > 0 && (
-              <Table className="table-fixed">
+              // Narrower than its fixed columns, the table would leave the Project column no width at all.
+              <Table className="table-fixed min-w-[660px]">
                 <TableHeader>
                   <TableRow>
                     <SortableHead column="id" sort={sort} firstOrder="asc" className="w-[180px]">Finding</SortableHead>

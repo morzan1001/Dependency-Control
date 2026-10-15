@@ -64,7 +64,7 @@ describe("ComponentsDeltaTab", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(1 + 3); // header + 3 skeleton rows
   });
 
-  it("says so when nothing changed", async () => {
+  it("says so under the table when nothing changed, where a phone shows it", async () => {
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       category: "components", from_scan_id: "a", to_scan_id: "b", project_id: "p1",
       totals: { added: 0, removed: 0, unchanged: 4, changed: 0, by_severity: {}, by_type: {} },
@@ -72,6 +72,22 @@ describe("ComponentsDeltaTab", () => {
     });
     renderTab();
 
-    expect(await screen.findByText("No component changes")).toBeInTheDocument();
+    expect((await screen.findByText("No component changes")).closest("table")).toBeNull();
+  });
+
+  it("keeps a change badge on one line, as the findings table keeps its badges, so a narrow column cannot break it", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      category: "components", from_scan_id: "a", to_scan_id: "b", project_id: "p1",
+      totals: { added: 0, removed: 1, unchanged: 0, changed: 0, by_severity: {}, by_type: {} },
+      page: 1, page_size: 50, total_pages: 1,
+      items: [{
+        change: "removed", name: "moment", purl: "pkg:npm/moment",
+        version: "2.29.1", from_version: null, to_version: null,
+        license: null, from_license: null, to_license: null,
+      }],
+    });
+    renderTab();
+
+    expect(await screen.findByText("− removed")).toHaveClass("whitespace-nowrap");
   });
 });

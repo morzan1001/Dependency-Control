@@ -114,3 +114,20 @@ describe("DependencyStats load error", () => {
     expect(screen.queryByText("No dependencies found")).not.toBeInTheDocument();
   });
 });
+
+describe("DependencyStats on a narrow screen", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (analyticsApi.getDependencyTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (analyticsApi.getTopDependencies as ReturnType<typeof vi.fn>).mockResolvedValue([makeDep("left-pad")]);
+  });
+
+  it("stacks its type and limit selects under the title on a phone, like the waiver list's header, and wraps them", async () => {
+    renderStats();
+    await screen.findByText("left-pad");
+
+    const header = screen.getByRole("heading", { name: "Top Dependencies" }).parentElement?.parentElement;
+    expect(header).toHaveClass("flex-col", "sm:flex-row", "sm:items-center", "sm:justify-between");
+    expect(screen.getAllByRole("combobox")[0].parentElement).toHaveClass("flex-wrap");
+  });
+});

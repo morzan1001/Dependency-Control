@@ -160,9 +160,9 @@ export function NotificationsSettingsTab({
             )}
           </div>
           <Tabs value={slackAuthMode} onValueChange={setSlackAuthMode} className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="oauth">OAuth (Recommended)</TabsTrigger>
-              <TabsTrigger value="manual">Manual Bot Token</TabsTrigger>
+            <TabsList className="grid h-auto w-full grid-cols-2 mb-4">
+              <TabsTrigger value="oauth" className="whitespace-normal">OAuth (Recommended)</TabsTrigger>
+              <TabsTrigger value="manual" className="whitespace-normal">Manual Bot Token</TabsTrigger>
             </TabsList>
             
             <TabsContent value="oauth" className="space-y-4">

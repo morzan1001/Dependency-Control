@@ -279,7 +279,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
       {stats.secret_priority && <SecretPriorityCard counts={stats.secret_priority} />}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="col-span-4">
+        <Card className="lg:col-span-4">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
                 <CardTitle>Vulnerability Trends</CardTitle>
@@ -318,7 +318,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
             </div>
           </CardContent>
         </Card>
-        <Card className="col-span-3">
+        <Card className="lg:col-span-3">
           <CardHeader>
             <CardTitle>Severity Distribution</CardTitle>
             <CardDescription>Based on unique findings</CardDescription>

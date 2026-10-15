@@ -54,4 +54,11 @@ describe("MigrationPlanTable", () => {
     expect(screen.getByText("88")).toBeInTheDocument();
     expect(screen.getByText("55")).toBeInTheDocument();
   });
+
+  it("keeps its columns at their widths and scrolls sideways on a narrow screen", () => {
+    render(<MigrationPlanTable items={items} onSelect={() => {}} />);
+    const table = screen.getByRole("table");
+    expect(table).toHaveClass("min-w-[920px]");
+    expect(table.parentElement).toHaveClass("overflow-x-auto");
+  });
 });

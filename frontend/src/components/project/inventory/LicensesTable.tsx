@@ -43,18 +43,16 @@ export function LicensesTable({ projectId, branch }: Readonly<LicensesTableProps
 
   return (
     <Card className="flex h-full flex-col">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Licenses</CardTitle>
-            {/* min-h keeps both grid cards' headers equal when one description wraps. */}
-            <CardDescription className="min-h-10">License categories and risk notes across components on this branch.</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" onClick={handleDownload}>
-            <Download className="mr-2 h-4 w-4" />
-            Download CSV
-          </Button>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0">
+        <div>
+          <CardTitle>Licenses</CardTitle>
+          {/* min-h keeps both grid cards' headers equal when one description wraps. */}
+          <CardDescription className="min-h-10">License categories and risk notes across components on this branch.</CardDescription>
         </div>
+        <Button variant="outline" size="sm" onClick={handleDownload}>
+          <Download className="mr-2 h-4 w-4" />
+          Download CSV
+        </Button>
       </CardHeader>
       <CardContent className="flex-1">
         <div className="rounded-md border">
@@ -75,16 +73,6 @@ export function LicensesTable({ projectId, branch }: Readonly<LicensesTableProps
                   ))}
                 </TableRow>
               ))}
-              {!isPending && isError && (
-                <TableRow>
-                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-2">
-                      <span>Failed to load licenses.</span>
-                      <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
               {!isPending && !isError && data?.items.map((item) => (
                 <TableRow key={item.license}>
                   <TableCell className="font-medium">{item.license}</TableCell>
@@ -95,15 +83,17 @@ export function LicensesTable({ projectId, branch }: Readonly<LicensesTableProps
                   <TableCell className="text-right">{item.component_count}</TableCell>
                 </TableRow>
               ))}
-              {!isPending && !isError && data?.items.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                    No licenses found.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
+          {!isPending && isError && (
+            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
+              <span>Failed to load licenses.</span>
+              <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+            </div>
+          )}
+          {!isPending && !isError && data?.items.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No licenses found.</p>
+          )}
         </div>
       </CardContent>
     </Card>

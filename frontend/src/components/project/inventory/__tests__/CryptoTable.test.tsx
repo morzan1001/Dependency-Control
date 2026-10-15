@@ -72,4 +72,31 @@ describe('CryptoTable', () => {
 
     await waitFor(() => expect(screen.getByText('TLS handshake')).toBeInTheDocument())
   })
+
+  it("stacks Download CSV under the title on a phone, like the waiver list's header", async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue(page)
+    renderTable()
+    await waitFor(() => expect(screen.getByText('TLS handshake')).toBeInTheDocument())
+
+    const header = screen.getByRole('heading', { name: 'Cryptography' }).parentElement?.parentElement
+    expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+    expect(header).toContainElement(screen.getByRole('button', { name: /download csv/i }))
+  })
+
+  it("names an empty table under it, where a phone shows the message, instead of in a row centred on the scrolling table", async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue({ ...page, items: [], total: 0 })
+    renderTable()
+
+    expect((await screen.findByText('No cryptographic assets found.')).closest('table')).toBeNull()
+  })
+
+  it('shows a failure and its retry under the table the same way', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockRejectedValue(
+      Object.assign(new Error('not found'), { response: { status: 404 } }),
+    )
+    renderTable()
+
+    expect((await screen.findByText('Failed to load crypto assets.')).closest('table')).toBeNull()
+    expect(screen.getByRole('button', { name: /retry/i }).closest('table')).toBeNull()
+  })
 })

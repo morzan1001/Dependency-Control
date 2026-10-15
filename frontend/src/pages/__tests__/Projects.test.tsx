@@ -76,3 +76,12 @@ describe('ProjectsPage sorting', () => {
     expect(screen.getByRole('button', { name: 'Sort descending' })).toBeInTheDocument()
   })
 })
+
+describe('ProjectsPage header on a tablet', () => {
+  it('wraps its search, filters and New Project onto further lines from sm on instead of running past the screen', () => {
+    renderProjects()
+
+    const controls = screen.getByRole('button', { name: /New Project/i }).parentElement
+    expect(controls).toHaveClass('flex-col', 'sm:flex-row', 'sm:flex-wrap')
+  })
+})
