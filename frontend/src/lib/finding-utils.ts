@@ -1,7 +1,6 @@
 import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-react'
+import type { Severity } from '@/types/common'
 import type { ReachabilityInfo } from '@/types/scan'
-
-export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NEGLIGIBLE' | 'INFO' | 'UNKNOWN'
 
 // Maps a CVE/GHSA id to its public advisory URL, or null if unknown.
 export function advisoryUrl(id: string): string | null {
@@ -10,15 +9,14 @@ export function advisoryUrl(id: string): string | null {
   return null
 }
 
-// Severity hex colours for charts (Recharts can't use Tailwind token classes);
-// values mirror the light-mode severity tokens in index.css.
+// Recharts can't take Tailwind token classes, so the charts of both themes share these fixed colours.
 export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
-  CRITICAL: '#dc2626', // red-600 / --severity-critical
-  HIGH: '#f97316', // orange-500 / --severity-high
-  MEDIUM: '#eab308', // yellow-500 / --severity-medium
-  LOW: '#3b82f6', // blue-500 / --severity-low
+  CRITICAL: '#dc2626', // red-600
+  HIGH: '#f97316', // orange-500
+  MEDIUM: '#eab308', // yellow-500
+  LOW: '#3b82f6', // blue-500
   NEGLIGIBLE: '#d1d5db', // gray-300
-  INFO: '#6b7280', // gray-500 / --severity-info
+  INFO: '#6b7280', // gray-500
   UNKNOWN: '#9ca3af', // gray-400
 }
 
@@ -26,6 +24,7 @@ export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
 export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NEGLIGIBLE', 'INFO', 'UNKNOWN']
 
 // A Recharts legend sorts its entries alphabetically unless given a sorter.
+export const bySeriesOrder = (series: readonly string[]) => (entry: { value?: string }) => series.indexOf(entry.value ?? '')
 export const bySeverityOrder = (entry: { value?: string }) => SEVERITY_ORDER.indexOf(entry.value?.toUpperCase() as Severity)
 
 export function getSeverityBgColor(severity: string): string {
@@ -41,7 +40,7 @@ export function getSeverityBgColor(severity: string): string {
     case 'INFO':
       return 'bg-severity-info hover:bg-severity-info text-severity-info-foreground'
     default:
-      return 'bg-muted hover:bg-muted text-muted-foreground'
+      return 'bg-severity-unknown hover:bg-severity-unknown text-severity-unknown-foreground'
   }
 }
 

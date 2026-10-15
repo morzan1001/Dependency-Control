@@ -354,8 +354,21 @@ describe("AnalyticsDependencyModal findings list", () => {
     renderFindings();
 
     expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium", "text-severity-medium-foreground");
-    expect(screen.getByText("UNKNOWN")).toHaveClass("bg-muted", "text-muted-foreground");
+    expect(screen.getByText("UNKNOWN")).toHaveClass("bg-severity-unknown", "text-severity-unknown-foreground");
     expect(screen.getByText("MEDIUM").querySelector("svg")).not.toBeNull();
+  });
+
+  it("names each row's type with the findings table's badge, in a column as wide as the table's", () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ ...finding("CERT-1", "HIGH"), type: "crypto_cert_expired" }], total: 1 },
+      isLoading: false,
+    });
+
+    renderFindings();
+
+    expect(screen.getByText("Certificate expired")).toHaveClass("truncate");
+    expect(screen.queryByText("crypto_cert_expired")).not.toBeInTheDocument();
+    expect(screen.getByText("Type", { selector: "th" })).toHaveClass("w-[160px]");
   });
 
   it("marks the column the findings are sorted by and the direction", () => {

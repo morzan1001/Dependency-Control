@@ -10,7 +10,8 @@ import { useDebounce } from '@/hooks/use-debounce'
 import { useClickOutside } from '@/hooks/use-click-outside'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
-interface ProjectComboboxProps {
+interface ProjectComboboxProps
+  extends Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'id' | 'aria-invalid' | 'aria-describedby'> {
   value: string
   onValueChange: (value: string) => void
   placeholder?: string
@@ -22,6 +23,7 @@ export function ProjectCombobox({
   onValueChange,
   placeholder = "Search projects...",
   className,
+  ...triggerProps
 }: Readonly<ProjectComboboxProps>) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -29,7 +31,7 @@ export function ProjectCombobox({
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const { data: projectsData, isLoading } = useProjects(debouncedSearch || undefined, 1, 50)
+  const { data: projectsData, isLoading } = useProjects(debouncedSearch || undefined, 1, 50, 'name', 'asc')
 
   const projects = projectsData?.items || []
   // Resolve the selection separately so the trigger shows its name even when it is off the current page.
@@ -89,6 +91,7 @@ export function ProjectCombobox({
           </div>
         ) : (
           <Button
+            {...triggerProps}
             variant="outline"
             role="combobox"
             aria-expanded={open}

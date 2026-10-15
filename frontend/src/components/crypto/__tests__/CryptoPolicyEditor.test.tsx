@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { CryptoPolicyEditor } from "../CryptoPolicyEditor";
 import type { CryptoRule } from "@/types/cryptoPolicy";
+import { expectFieldLabel } from "@/test/form-field";
 
 function systemRule(): CryptoRule {
   return {
@@ -79,6 +80,38 @@ describe("CryptoPolicyEditor add rule", () => {
   });
 });
 
+describe("CryptoPolicyEditor add rule dialog", () => {
+  it("labels its fields like the other form dialogs", () => {
+    render(<CryptoPolicyEditor initialRules={[]} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add custom rule" }));
+
+    for (const name of ["Rule ID", "Name", "Description", "Name patterns (comma-separated)"]) expectFieldLabel(name);
+  });
+
+  it("opens at the default dialog width, like the other form dialogs", () => {
+    render(<CryptoPolicyEditor initialRules={[]} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add custom rule" }));
+
+    expect(screen.getByRole("dialog", { name: "Add custom crypto rule" })).toHaveClass("max-w-lg");
+  });
+
+  it.each([
+    ["no rule ID", "", "Block RC4", "Rule ID", "Enter a rule ID"],
+    ["a rule ID already taken", "sys-rc4", "Block RC4", "Rule ID", "A rule with this ID already exists"],
+    ["no name", "custom-rc4", "", "Name", "Enter a name"],
+  ])("marks the field and says why under it for %s, like the other field errors", (_, ruleId, name, field, reason) => {
+    render(<CryptoPolicyEditor initialRules={[systemRule()]} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add custom rule" }));
+    fireEvent.change(screen.getByLabelText("Rule ID"), { target: { value: ruleId } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: name } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(reason);
+    expect(screen.getByLabelText(field)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText(field)).toHaveAccessibleDescription(reason);
+  });
+});
+
 describe("CryptoPolicyEditor override detection", () => {
   it("keeps an override that differs from the system rule only in a certificate threshold", async () => {
     const sys = {
@@ -131,7 +164,7 @@ describe("CryptoPolicyEditor name patterns", () => {
     const [ruleId, name] = screen.getAllByRole("textbox");
     fireEvent.change(ruleId, { target: { value: "custom-rc4" } });
     fireEvent.change(name, { target: { value: "Block RC4" } });
-    const patterns = screen.getByLabelText(/match name patterns/);
+    const patterns = screen.getByLabelText("Name patterns (comma-separated)");
     typeInto(patterns, "RC4, DES");
     expect(patterns).toHaveValue("RC4, DES");
     fireEvent.click(screen.getByRole("button", { name: "Add" }));

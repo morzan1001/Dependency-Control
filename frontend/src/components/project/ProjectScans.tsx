@@ -276,7 +276,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                                     </Badge>
                                 )}
                                 {(stats.high || 0) > 0 && (
-                                    <Badge variant="secondary" className="gap-1 text-orange-500 border-orange-500/20 bg-orange-500/10">
+                                    <Badge variant="outline" className="gap-1 text-severity-high">
                                     <Activity className="h-3 w-3" />
                                     {stats.high}
                                     </Badge>

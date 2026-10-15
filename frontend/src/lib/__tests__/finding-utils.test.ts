@@ -70,7 +70,7 @@ describe('severity chart tokens', () => {
     }
   })
 
-  it('keeps critical/high/medium/low aligned with the tailwind severity palette', () => {
+  it('keeps critical/high/medium/low on the Tailwind palette colours the charts of both themes share', () => {
     expect(SEVERITY_CHART_COLORS.CRITICAL).toBe('#dc2626')
     expect(SEVERITY_CHART_COLORS.HIGH).toBe('#f97316')
     expect(SEVERITY_CHART_COLORS.MEDIUM).toBe('#eab308')
@@ -192,7 +192,8 @@ describe('getSeverityBgColor', () => {
     ['medium', 'bg-severity-medium', 'text-severity-medium-foreground'],
     ['LOW', 'bg-severity-low', 'text-severity-low-foreground'],
     ['INFO', 'bg-severity-info', 'text-severity-info-foreground'],
-    ['UNKNOWN', 'bg-muted', 'text-muted-foreground'],
+    ['NEGLIGIBLE', 'bg-severity-unknown', 'text-severity-unknown-foreground'],
+    ['UNKNOWN', 'bg-severity-unknown', 'text-severity-unknown-foreground'],
   ])('pairs the %s background with the text colour designed for it', (severity, background, foreground) => {
     expect(getSeverityBgColor(severity).split(' ')).toEqual(expect.arrayContaining([background, foreground]))
   })

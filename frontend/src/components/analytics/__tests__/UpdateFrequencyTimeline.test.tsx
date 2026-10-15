@@ -105,3 +105,22 @@ describe("UpdateFrequency timeline with an unmeasured scan", () => {
     await waitFor(() => expect(container.querySelectorAll(".recharts-line-dot").length).toBeGreaterThan(0));
   });
 });
+
+describe("UpdateFrequency timeline legend", () => {
+  it("lists the series in the order they stack, not alphabetically", async () => {
+    mockedFrequency.mockResolvedValue(metrics);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <UpdateFrequency />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByText("select-project"));
+
+    const card = (await screen.findByText("Update Timeline")).closest(".bg-card") as HTMLElement;
+    await waitFor(() => expect(card.querySelectorAll(".recharts-legend-item-text").length).toBeGreaterThan(0));
+    expect([...card.querySelectorAll(".recharts-legend-item-text")].map((item) => item.textContent)).toEqual([
+      "Patch", "Minor", "Major", "Unknown", "Downgrade", "Outdated",
+    ]);
+  });
+});

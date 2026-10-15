@@ -23,6 +23,11 @@ export function isNameTaken(items: readonly Named[] | undefined, name: string, c
   )
 }
 
+// A chart axis drops a label that would overlap its neighbour, so long ones keep only their tail, where names sharing a prefix differ.
+export function truncateLabel(label: string, max = 20): string {
+  return label.length > max ? `…${label.slice(-max)}` : label
+}
+
 interface ValidationError {
   msg?: string;
   type?: string;

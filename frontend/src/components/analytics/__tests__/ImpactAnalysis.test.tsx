@@ -57,6 +57,16 @@ describe("ImpactAnalysis fix versions", () => {
     expect(screen.getByText("M:3")).toHaveClass("text-xs", "bg-severity-medium", "text-severity-medium-foreground");
     expect(screen.queryByText(/^L:/)).not.toBeInTheDocument();
   });
+
+  it("counts a top component's critical and high findings on its card in the severity pill colours", async () => {
+    vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([
+      { ...result, findings_by_severity: { critical: 1, high: 2, medium: 3, low: 0 } },
+    ]);
+    renderImpact();
+
+    expect(await screen.findByText("1 Critical")).toHaveClass("text-xs", "bg-severity-critical", "text-severity-critical-foreground");
+    expect(screen.getByText("2 High")).toHaveClass("text-xs", "bg-severity-high", "text-severity-high-foreground");
+  });
 });
 
 describe("ImpactAnalysis load error", () => {

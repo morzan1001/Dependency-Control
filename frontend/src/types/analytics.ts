@@ -2,7 +2,7 @@ import { Finding } from './scan';
 import type { PaginatedResponse, Severity, SeverityBreakdown } from './common';
 import type { TeamRef } from './team';
 
-export type { Severity, SeverityBreakdown } from './common';
+export type { SeverityBreakdown } from './common';
 
 export interface DashboardStats {
     total_projects: number;

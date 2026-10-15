@@ -256,6 +256,16 @@ describe('ProjectOverview - multi-branch headline counts (W8)', () => {
   })
 })
 
+describe('ProjectOverview - the High Issues tile', () => {
+  it('writes its count and icon in the severity colour, like the dashboard tile', () => {
+    renderOverview([makeScan({}, { critical: 2, high: 11 })])
+
+    const tile = screen.getByText('High Issues').closest('.rounded-lg') as HTMLElement
+    expect(within(tile).getByText('11')).toHaveClass('text-severity-high')
+    expect(tile.querySelector('svg')).toHaveClass('text-severity-high')
+  })
+})
+
 describe('ProjectOverview - headline numbers after a failed rescan', () => {
   const HEAD_SCAN_ID = 's-main'
   const RESCAN_ID = 's-main-rescan'

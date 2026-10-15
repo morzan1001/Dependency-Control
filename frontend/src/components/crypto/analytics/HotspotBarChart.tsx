@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
 import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
+import { truncateLabel } from "@/lib/utils";
 
 const TOP_N = 20;
 
@@ -34,7 +35,7 @@ export function HotspotBarChart({ scope, scopeId, groupBy }: Readonly<Props>) {
       <ResponsiveContainer>
         <BarChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 60 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" angle={-30} textAnchor="end" height={80} interval={0} />
+          <XAxis dataKey="name" angle={-30} textAnchor="end" height={80} interval={0} tickFormatter={(name: string) => truncateLabel(name)} />
           <YAxis />
           <Tooltip />
           <Bar dataKey="assets" fill="#6366f1" name="Assets" />

@@ -40,7 +40,7 @@ import {
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth, truncateLabel } from '@/lib/utils'
 import type {
   ProjectUpdateSummary,
   UpdateDataStatus,
@@ -298,8 +298,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
         .slice(0, CHART_TOP_N)
         .map((p) => ({
-          name: p.project_name.length > 20 ? p.project_name.substring(0, 20) + '...' : p.project_name,
-          fullName: p.project_name,
+          name: p.project_name,
           // An unmeasured value leaves a gap rather than a zero bar.
           value: (metric === 'coverage' ? p.update_coverage_pct : p.updates_per_month) ?? undefined,
         })),
@@ -335,7 +334,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
             <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis type="number" className="text-xs" />
-              <YAxis dataKey="name" type="category" width={150} className="text-xs" />
+              <YAxis dataKey="name" type="category" width={150} className="text-xs" tickFormatter={(name: string) => truncateLabel(name)} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: 'hsl(var(--background))',
@@ -345,7 +344,6 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
                 formatter={(value) =>
                   metric === 'coverage' ? `${value}%` : value
                 }
-                labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
               />
               <Bar
                 dataKey="value"

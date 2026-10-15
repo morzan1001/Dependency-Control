@@ -61,6 +61,16 @@ describe("FindingsDeltaTab", () => {
     expect(within(table).getByText("CRITICAL")).toBeInTheDocument();
   });
 
+  it("names each row's type with the findings table's badge, in a column as wide as the table's", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
+    renderTab();
+
+    const table = await screen.findByRole("table");
+    expect(await within(table).findByText("Vulnerability")).toHaveClass("truncate");
+    expect(within(table).queryByText("vulnerability")).not.toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Type" })).toHaveClass("w-[160px]");
+  });
+
   it("renders summary totals from the response", async () => {
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
     renderTab();

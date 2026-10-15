@@ -1,19 +1,8 @@
+import type { Severity } from "./common";
 import type { CryptoPrimitive } from "./crypto";
+import type { CRYPTO_FINDING_TYPES } from "@/lib/constants";
 
-export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NEGLIGIBLE" | "INFO" | "UNKNOWN";
-export type CryptoFindingType =
-  | "crypto_weak_algorithm"
-  | "crypto_weak_key"
-  | "crypto_quantum_vulnerable"
-  | "crypto_cert_expired"
-  | "crypto_cert_expiring_soon"
-  | "crypto_cert_not_yet_valid"
-  | "crypto_cert_weak_signature"
-  | "crypto_cert_weak_key"
-  | "crypto_cert_self_signed"
-  | "crypto_cert_validity_too_long"
-  | "crypto_weak_protocol"
-  | "crypto_key_management";
+export type CryptoFindingType = (typeof CRYPTO_FINDING_TYPES)[number]["value"];
 
 export type CryptoPolicySource =
   | "nist-sp-800-131a"

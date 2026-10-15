@@ -119,3 +119,21 @@ describe("DependencyTree load error", () => {
     expect(screen.queryByText("No dependencies found for this project")).not.toBeInTheDocument();
   });
 });
+
+describe("DependencyTree severity borders", () => {
+  beforeEach(() => getTree.mockReset());
+
+  it("marks a node's worst finding severity on its left border in the severity colours", async () => {
+    const withFindings = (severity: "high" | "low") =>
+      node(`${severity}-dep`, {
+        direct: true,
+        has_findings: true,
+        findings_count: 1,
+        findings_severity: { critical: 0, high: 0, medium: 0, low: 0, [severity]: 1 },
+      });
+    renderTree(graph([withFindings("high"), withFindings("low")], ["high-dep", "low-dep"]));
+
+    expect((await screen.findByText("high-dep")).closest('[role="treeitem"]')).toHaveClass("border-l-severity-high");
+    expect(screen.getByText("low-dep").closest('[role="treeitem"]')).toHaveClass("border-l-severity-low");
+  });
+});

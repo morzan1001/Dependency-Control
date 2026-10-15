@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
@@ -8,8 +9,9 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
+import type { Severity } from "@/types/common";
 import type {
-  CryptoRule, Severity, CryptoFindingType, CryptoPolicySource,
+  CryptoRule, CryptoFindingType, CryptoPolicySource,
 } from "@/types/cryptoPolicy";
 import { CRYPTO_FINDING_TYPES } from "@/lib/constants";
 
@@ -326,41 +328,61 @@ function AddRuleDialog({
 }>) {
   const [rule, setRule] = useState<CryptoRule>(emptyRule());
   const [patternsText, setPatternsText] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ field: "rule_id" | "name"; message: string } | null>(null);
+
+  const edit = (patch: Partial<CryptoRule>) => {
+    setRule((r) => ({ ...r, ...patch }));
+    setError(null);
+  };
 
   const submit = () => {
-    if (!rule.rule_id) { setError("rule_id is required"); return; }
-    if (existingIds.has(rule.rule_id)) { setError("rule_id already exists"); return; }
-    if (!rule.name) { setError("name is required"); return; }
+    if (!rule.rule_id) { setError({ field: "rule_id", message: "Enter a rule ID" }); return; }
+    if (existingIds.has(rule.rule_id)) { setError({ field: "rule_id", message: "A rule with this ID already exists" }); return; }
+    if (!rule.name) { setError({ field: "name", message: "Enter a name" }); return; }
     onAdd({ ...rule, match_name_patterns: splitPatterns(patternsText) });
   };
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-xl">
+      <DialogContent>
         <DialogHeader><DialogTitle>Add custom crypto rule</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <label className="block text-sm">
-            <span className="text-muted-foreground">rule_id</span>
-            <Input value={rule.rule_id}
-              onChange={(e) => setRule({ ...rule, rule_id: e.target.value })}
-              placeholder="e.g. custom-block-rc4" />
-          </label>
-          <label className="block text-sm">
-            <span className="text-muted-foreground">name</span>
-            <Input value={rule.name}
-              onChange={(e) => setRule({ ...rule, name: e.target.value })} />
-          </label>
-          <label className="block text-sm">
-            <span className="text-muted-foreground">description</span>
-            <Input value={rule.description}
-              onChange={(e) => setRule({ ...rule, description: e.target.value })} />
-          </label>
-          <label className="block text-sm">
-            <span className="text-muted-foreground">match name patterns (comma-separated)</span>
-            <Input value={patternsText} onChange={(e) => setPatternsText(e.target.value)} />
-          </label>
-          {error && <div className="text-sm text-destructive">{error}</div>}
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="rule-id">Rule ID</Label>
+            <Input
+              id="rule-id"
+              value={rule.rule_id}
+              onChange={(e) => edit({ rule_id: e.target.value })}
+              placeholder="e.g. custom-block-rc4"
+              aria-invalid={error?.field === "rule_id"}
+              aria-describedby={error?.field === "rule_id" ? "rule-id-error" : undefined}
+            />
+            {error?.field === "rule_id" && (
+              <p id="rule-id-error" role="alert" className="text-xs text-destructive">{error.message}</p>
+            )}
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="rule-name">Name</Label>
+            <Input
+              id="rule-name"
+              value={rule.name}
+              onChange={(e) => edit({ name: e.target.value })}
+              aria-invalid={error?.field === "name"}
+              aria-describedby={error?.field === "name" ? "rule-name-error" : undefined}
+            />
+            {error?.field === "name" && (
+              <p id="rule-name-error" role="alert" className="text-xs text-destructive">{error.message}</p>
+            )}
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="rule-description">Description</Label>
+            <Input id="rule-description" value={rule.description}
+              onChange={(e) => edit({ description: e.target.value })} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="rule-patterns">Name patterns (comma-separated)</Label>
+            <Input id="rule-patterns" value={patternsText} onChange={(e) => setPatternsText(e.target.value)} />
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>

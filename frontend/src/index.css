@@ -41,14 +41,16 @@
     /* Severity colors (vulnerability display) */
     --severity-critical: 0 72% 51%;
     --severity-critical-foreground: 0 0% 100%;
-    --severity-high: 25 95% 53%;
+    --severity-high: 17.5 88.3% 40.4%;
     --severity-high-foreground: 0 0% 100%;
     --severity-medium: 48 96% 47%;
     --severity-medium-foreground: 0 0% 0%;
-    --severity-low: 217 91% 60%;
+    --severity-low: 221.2 83.2% 53.3%;
     --severity-low-foreground: 0 0% 100%;
     --severity-info: 220 9% 46%;
     --severity-info-foreground: 0 0% 100%;
+    --severity-unknown: 215.3 19.3% 34.5%;
+    --severity-unknown-foreground: 0 0% 100%;
 
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
@@ -101,6 +103,8 @@
     --severity-low-foreground: 0 0% 0%;
     --severity-info: 218 11% 65%;
     --severity-info-foreground: 0 0% 0%;
+    --severity-unknown: 217.2 32.6% 17.5%;
+    --severity-unknown-foreground: 215 20.2% 65.1%;
 
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;

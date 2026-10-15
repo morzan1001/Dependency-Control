@@ -119,6 +119,13 @@ describe("ReportDetailDrawer", () => {
     expect(await screen.findByText(/Delete this report\?/i)).toBeInTheDocument();
   });
 
+  it("asks for the deletion in a dialog of the default width, like the other confirmations", async () => {
+    withClient(<ReportDetailDrawer report={sampleReport} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Delete report/i }));
+
+    expect(await screen.findByRole("dialog", { name: "Delete this report?" })).toHaveClass("max-w-lg");
+  });
+
   it("names the requester by their username and still offers the delete to them", () => {
     withClient(<ReportDetailDrawer report={{ ...sampleReport, requested_by_name: "lena" }} onClose={() => {}} />);
 

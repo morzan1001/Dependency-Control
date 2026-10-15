@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { toast } from 'sonner'
 import { downloadServerFile, filenameFromContentDisposition } from '../download'
+
+vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
 
 describe('filenameFromContentDisposition', () => {
   it('parses a quoted filename', () => {
@@ -56,5 +59,19 @@ describe('downloadServerFile', () => {
       'err',
     )
     expect(anchorDownload).toBe('project-x-sbom.json')
+  })
+
+  it('names the failed download and gives the reason the server sent', async () => {
+    await downloadServerFile(
+      async () => {
+        throw Object.assign(new Error('Request failed with status code 404'), {
+          response: { status: 404, data: { detail: 'Archive not found' } },
+        })
+      },
+      'fallback.json',
+      'Failed to download archive',
+    )
+
+    expect(toast.error).toHaveBeenCalledWith('Failed to download archive', { description: 'Archive not found' })
   })
 })

@@ -18,8 +18,8 @@ import { SecretPriorityCard } from '@/components/findings/SecretPriorityCard'
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
-import { formatDate } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS, bySeverityOrder } from '@/lib/finding-utils'
+import { formatDate, truncateLabel } from '@/lib/utils'
+import { SEVERITY_CHART_COLORS, bySeriesOrder, bySeverityOrder } from '@/lib/finding-utils'
 
 interface ProjectOverviewProps {
   projectId: string
@@ -254,10 +254,10 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">High Issues</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-orange-500" />
+            <AlertTriangle className="h-4 w-4 text-severity-high" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-500">{stats.high ?? 0}</div>
+            <div className="text-2xl font-bold text-severity-high">{stats.high ?? 0}</div>
             <p className="text-xs text-muted-foreground">
               {headlineSource ? `${headlineSource} — click to view findings` : 'Click to view findings'}
             </p>
@@ -300,7 +300,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                   />
-                  <Legend />
+                  <Legend itemSorter={bySeriesOrder(selectedBranches)} />
                   {selectedBranches.map((branch, index) => (
                       <Line 
                           key={branch}
@@ -380,7 +380,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                               }}
                             >
                                 <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="name" />
+                                <XAxis dataKey="name" tickFormatter={(name: string) => truncateLabel(name)} />
                                 <YAxis />
                                 <Tooltip
                                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}

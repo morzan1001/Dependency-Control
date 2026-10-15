@@ -41,7 +41,7 @@ function DeliveryState({ webhook }: { readonly webhook: Webhook }) {
       </Badge>
     )
   }
-  return <span className="text-xs text-muted-foreground">No deliveries yet</span>
+  return <Badge variant="outline" className="whitespace-nowrap text-muted-foreground">No deliveries yet</Badge>
 }
 
 interface WebhookManagerProps {
@@ -145,14 +145,14 @@ export function WebhookManager({
       </CardHeader>
       <CardContent>
         {/* Narrower than its fixed columns, the table would leave the URL column no width at all. */}
-        <Table className="table-fixed min-w-[880px]">
+        <Table className="table-fixed min-w-[920px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-auto">URL</TableHead>
               <TableHead className="w-[90px]">Type</TableHead>
-              <TableHead className="w-[100px]">Status</TableHead>
+              <TableHead className="w-[160px]">Status</TableHead>
               <TableHead className="w-[200px]">Events</TableHead>
-              <TableHead className="w-[150px]">Created At</TableHead>
+              <TableHead className="w-[130px]">Created At</TableHead>
               <TableHead className="w-[140px]"></TableHead>
             </TableRow>
           </TableHeader>
