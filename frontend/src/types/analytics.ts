@@ -293,6 +293,8 @@ export interface RecommendationAction {
     suggestion?: string;
     version_count?: number;
     project_count?: number;
+    current_version?: string;
+    latest_version?: string;
   }>;
   new_critical_cves?: string[];
   deepest_chains?: Array<{
@@ -342,6 +344,7 @@ export interface RecommendationsSummary {
   iac_issues: number;
   license_issues: number;
   quality_issues: number;
+  outdated_deps?: number;
   fragmentation_issues?: number;
   trend_alerts?: number;
   cross_project_issues?: number;

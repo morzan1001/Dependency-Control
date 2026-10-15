@@ -1,5 +1,13 @@
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components, severity_impact
+from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
+    ModelOrDict,
+    get_attr,
+    name_some,
+    recommend,
+    sampled,
+    severity_impact,
+)
 
 _SECRET_TYPES_NAMED = 5
 
@@ -48,11 +56,10 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
             }
         )
         files = sorted({component for f in group if (component := get_attr(f, "component", ""))})
-        files_shown, files_total = sample_components(files)
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.ROTATE_SECRETS,
+            recommend(
+                rec_type=RecommendationType.ROTATE_SECRETS,
                 priority=priority,
                 title=title,
                 description=(
@@ -60,13 +67,11 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"These include: {name_some(secret_types, _SECRET_TYPES_NAMED)}. {advice}"
                 ),
                 impact=severity_impact(get_attr(f, "severity", "UNKNOWN") for f in group),
-                affected_components=files_shown,
-                affected_components_total=files_total,
+                components=files,
                 action={
                     "type": "rotate_secrets",
                     "secret_types": secret_types,
-                    "files": files_shown,
-                    "files_total": files_total,
+                    **sampled("files", files, AFFECTED_COMPONENTS_SHOWN),
                     "steps": list(steps),
                 },
                 effort=Effort.HIGH,

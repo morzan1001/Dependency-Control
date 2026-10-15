@@ -3,7 +3,9 @@ import { projectApi } from '@/api/projects';
 import { ProjectCreate, ProjectNotificationSettings } from '@/types/project';
 import type { ArchiveFilters } from '@/types/archive';
 import type { ApiError } from '@/api/client';
+import { useDebounce } from '@/hooks/use-debounce';
 import { DROPDOWN_PAGE_SIZE } from '@/lib/constants';
+import { isNameTaken, type Named } from '@/lib/utils';
 
 interface ProjectListFilters {
   search: string;
@@ -33,13 +35,22 @@ export const useProjects = (
   sortBy: string = 'created_at',
   sortOrder: 'asc' | 'desc' = 'desc',
   teamId?: string,
+  { enabled = true }: { enabled?: boolean } = {},
 ) => {
   return useQuery<Awaited<ReturnType<typeof projectApi.getAll>>, ApiError>({
     queryKey: projectKeys.list({ search, page, limit, sortBy, sortOrder, teamId }),
     queryFn: () => projectApi.getAll(search, (page - 1) * limit, limit, sortBy, sortOrder, teamId),
     placeholderData: keepPreviousData,
     retry: 2,
+    enabled,
   });
+};
+
+export const useProjectNameTaken = (name: string, current?: Named) => {
+  const search = useDebounce(name.trim());
+  const enabled = search !== '' && search !== current?.name;
+  const { data } = useProjects(search, 1, DROPDOWN_PAGE_SIZE, 'name', 'asc', undefined, { enabled });
+  return isNameTaken(data?.items, name, current);
 };
 
 export const useProject = (id: string) => {

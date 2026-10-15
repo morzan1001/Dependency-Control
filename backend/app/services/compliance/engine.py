@@ -153,7 +153,7 @@ class ComplianceReportEngine:
             inventory = "SBOM"
             inventoried = set(await db.scans.distinct("_id", {"_id": {"$in": scan_ids}, **HAS_SBOM_MATCH}))
         else:
-            inventory = "crypto assets"
+            inventory = "CBOM"
             asset_query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": scan_ids}}
             if framework.key == ReportFramework.PQC_MIGRATION_PLAN:
                 # The plan generator reads its own assets; the gap needs only the scans holding one.
@@ -161,6 +161,8 @@ class ComplianceReportEngine:
             else:
                 assets = await self._collect_crypto_assets(db, asset_query)
                 inventoried = {asset.scan_id for asset in assets}
+            # A posted CBOM that listed no asset found the project free of cryptography.
+            inventoried |= set(await db.scans.distinct("_id", {"_id": {"$in": scan_ids}, "scan_type": "cbom"}))
         gaps += [
             f"project '{project.name}' has no {inventory} in scan {scan_id}"
             for project in projects

@@ -11,7 +11,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     name_some,
-    sample_components,
+    recommend,
     sampled,
     severity_impact,
 )
@@ -52,11 +52,10 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
         priority = Priority.LOW
 
     problematic_licenses = sorted(licenses)
-    components_shown, components_total = sample_components(sorted(components))
 
     return [
-        Recommendation(
-            type=RecommendationType.LICENSE_COMPLIANCE,
+        recommend(
+            rec_type=RecommendationType.LICENSE_COMPLIANCE,
             priority=priority,
             title="Resolve License Compliance Issues",
             description=(
@@ -64,8 +63,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
                 f"Problematic licenses: {name_some(problematic_licenses, _LICENSES_NAMED)}."
             ),
             impact=impact,
-            affected_components=components_shown,
-            affected_components_total=components_total,
+            components=sorted(components),
             action={
                 "type": "license_compliance",
                 "problematic_licenses": problematic_licenses,
@@ -122,13 +120,9 @@ def detect_license_drift(
     restrictive = [
         d for d in drifted if CATEGORY_RESTRICTIVENESS[d["current_category"]] >= _HIGH_PRIORITY_DRIFT_MIN_RANK
     ]
-    drift_shown, drift_total = sample_components(
-        f"{d['component']}: {d['previous_license']} → {d['current_license']}" for d in drifted
-    )
-
     return [
-        Recommendation(
-            type=RecommendationType.LICENSE_DRIFT,
+        recommend(
+            rec_type=RecommendationType.LICENSE_DRIFT,
             priority=Priority.HIGH if restrictive else Priority.MEDIUM,
             title=f"License drift detected: {len(drifted)} component(s) changed to more restrictive licenses",
             description=(
@@ -140,8 +134,7 @@ def detect_license_drift(
                 "total": len(drifted),
                 "restrictive_drift": len(restrictive),
             },
-            affected_components=drift_shown,
-            affected_components_total=drift_total,
+            components=(f"{d['component']}: {d['previous_license']} → {d['current_license']}" for d in drifted),
             action={
                 "type": "review_license_drift",
                 **sampled("drifted_components", drifted, AFFECTED_COMPONENTS_SHOWN),

@@ -19,16 +19,15 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.aggregation.versions import normalize_version
-from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
     VulnerabilityInfo,
     get_attr,
+    installed_copy_lookup,
     names_fix,
     priority_for,
-    sample_components,
+    recommend,
     sampled,
     severity_impact,
     summarize_vulns,
@@ -96,16 +95,11 @@ def _categorize_by_source(
     join_dependencies: list[ModelOrDict],
 ) -> dict[str, list[VulnerabilityInfo]]:
     """Categorize vulnerabilities by their source type."""
-    deps_by_version: dict[str, dict[str, ModelOrDict]] = defaultdict(dict)
-    for row in join_dependencies:
-        deps_by_version[normalize_version(get_attr(row, "version"))][get_attr(row, "name")] = row
-    index_by_version = {version: build_component_index(deps) for version, deps in deps_by_version.items()}
-
+    row_of = installed_copy_lookup(join_dependencies, "name")
     categories = defaultdict(list)
 
     for f in findings:
-        index = index_by_version.get(normalize_version(get_attr(f, "version")), {})
-        dep = lookup_component(index, get_attr(f, "component") or "")
+        dep = row_of(f)
         vuln = vuln_info(f)
         vuln.direct_inferred = bool(dep and get_attr(dep, "direct_inferred", False))
         categories[_classify_category(vuln, dep)].append(vuln)
@@ -148,9 +142,8 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], image: str | None)
             ],
         }
 
-    packages_shown, packages_total = sample_components(sorted(affected_packages))
-    return Recommendation(
-        type=RecommendationType.BASE_IMAGE_UPDATE,
+    return recommend(
+        rec_type=RecommendationType.BASE_IMAGE_UPDATE,
         priority=priority_for(impact),
         title="Update Base Image",
         description=(
@@ -159,8 +152,7 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], image: str | None)
             f"This includes {impact['critical']} critical and {impact['high']} high severity issues."
         ),
         impact=impact,
-        affected_components=packages_shown,
-        affected_components_total=packages_total,
+        components=sorted(affected_packages),
         action={
             "type": "update_base_image",
             "suggestion": f"Check for newer tags of {image_name} or consider switching to a minimal/distroless image",
@@ -213,15 +205,15 @@ def _build_update_recommendation(
     direct_inferred = not transitive and component_vulns[0].direct_inferred
     label = f"{component}@{current_version}"
 
-    return Recommendation(
-        type=RecommendationType.TRANSITIVE_FIX_VIA_PARENT
+    return recommend(
+        rec_type=RecommendationType.TRANSITIVE_FIX_VIA_PARENT
         if transitive
         else RecommendationType.DIRECT_DEPENDENCY_UPDATE,
         priority=vuln_priority(stats),
         title=f"Update transitive dependency {label}" if transitive else f"Update {label}",
         description=_build_update_description(component, current_version, stats, transitive, direct_inferred),
         impact=stats.impact(),
-        affected_components=[label],
+        components=[label],
         action={
             "type": "update_transitive" if transitive else "update_dependency",
             "package": component,
@@ -262,11 +254,10 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
         return []
 
     packages = {v.package_name for v in vulns if any(map(_critical_or_high, v.advisories))}
-    unfixable_shown, unfixable_total = sample_components(sorted(packages))
 
     return [
-        Recommendation(
-            type=RecommendationType.NO_FIX_AVAILABLE,
+        recommend(
+            rec_type=RecommendationType.NO_FIX_AVAILABLE,
             priority=Priority.HIGH,
             title="Vulnerability with No Known Fix",
             description=(
@@ -276,8 +267,7 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
                 "proof that none exists, so confirm upstream before replacing a component."
             ),
             impact=impact,
-            affected_components=unfixable_shown,
-            affected_components_total=unfixable_total,
+            components=sorted(packages),
             action={
                 "type": "consider_alternative",
                 "steps": [

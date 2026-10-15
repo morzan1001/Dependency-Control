@@ -22,6 +22,7 @@ const mockUseNotificationChannels = vi.fn()
 const mockUseProjectBranches = vi.fn()
 const mockUpdateNotifications = vi.fn()
 const mockUseUpdateProjectNotifications = vi.fn()
+const mockUseProjectNameTaken = vi.fn()
 
 vi.mock('@/api/projects', () => ({
   projectApi: {
@@ -42,6 +43,7 @@ vi.mock('@/hooks/queries/use-projects', () => ({
     mockUseUpdateProjectNotifications(meta)
     return { mutate: mockUpdateNotifications, isPending: false }
   },
+  useProjectNameTaken: (...args: unknown[]) => mockUseProjectNameTaken(...args),
 }))
 vi.mock('@/hooks/queries/use-webhooks', () => ({
   useProjectWebhooks: () => ({ data: [], isLoading: false }),
@@ -79,6 +81,7 @@ beforeEach(() => {
   mockUseAppConfig.mockReturnValue({ data: undefined })
   mockUseNotificationChannels.mockReturnValue(undefined)
   mockUseProjectBranches.mockReturnValue({ data: [] })
+  mockUseProjectNameTaken.mockReset().mockReturnValue(false)
 })
 
 function githubProject(overrides: Partial<Project> = {}): Project {
@@ -595,5 +598,27 @@ describe('ProjectSettings notifications', () => {
       vulnerability_found: ['email'],
       analysis_completed: [],
     })
+  })
+})
+
+describe('ProjectSettings name check', () => {
+  const TAKEN = 'A project with this name already exists'
+
+  beforeEach(() => {
+    mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+  })
+
+  it('hints under the name at a name another project uses and still saves it', async () => {
+    mockUseProjectNameTaken.mockImplementation((name: string, current: Project) => name === 'shared' && current.id === 'p1')
+    renderSettings(githubProject())
+    expect(screen.queryByText(TAKEN)).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Project Name'), { target: { value: 'shared' } })
+
+    expect(screen.getByLabelText('Project Name').parentElement).toContainElement(screen.getByText(TAKEN))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ name: 'shared' })
   })
 })

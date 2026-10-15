@@ -113,7 +113,7 @@ class Scan(MongoDocument, CreatedAtModel):
     # Bumped with every SBOM replacement and CBOM post, so a run can tell its inputs were superseded.
     sbom_generation: int | None = None
 
-    # A scan whose only source is a CBOM; the engine forces the crypto analyzers for it.
+    # "cbom" once a CBOM was posted to the scan, alone or beside its SBOM; the engine then runs the crypto analyzers.
     scan_type: str | None = None
 
     status: str = SCAN_STATUS_PENDING

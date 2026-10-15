@@ -5,7 +5,7 @@ from app.schemas.recommendation import Effort, Priority, Recommendation, Recomme
 from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
-    sample_components,
+    recommend,
     sampled,
     scorecard_details,
     scorecard_score,
@@ -67,20 +67,18 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             code_review_components.add(component)
 
     unmaintained_packages = list(unmaintained_by_component.values())
-    unmaintained_shown, unmaintained_total = sample_components(unmaintained_by_component)
     if unmaintained_packages:
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.SUPPLY_CHAIN_RISK,
+            recommend(
+                rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
                 priority=Priority.HIGH,
                 title="Replace Unmaintained Dependencies",
                 description=(
-                    f"Found {unmaintained_total} potentially unmaintained packages. "
+                    f"Found {len(unmaintained_packages)} potentially unmaintained packages. "
                     "These packages may not receive security updates, putting your application at risk."
                 ),
                 impact={"total": 0},
-                affected_components=unmaintained_shown,
-                affected_components_total=unmaintained_total,
+                components=unmaintained_by_component,
                 action={
                     "type": "replace_unmaintained",
                     "steps": [
@@ -103,20 +101,18 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             )
         )
 
-    vuln_shown, vuln_total = sample_components(sorted(scorecard_vuln_components))
     if scorecard_vuln_components:
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.SUPPLY_CHAIN_RISK,
+            recommend(
+                rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
                 priority=Priority.HIGH,
                 title="Address Packages with Known Vulnerability Issues",
                 description=(
-                    f"{vuln_total} packages have unaddressed security vulnerabilities "
+                    f"{len(scorecard_vuln_components)} packages have unaddressed security vulnerabilities "
                     "according to OpenSSF Scorecard. These need immediate attention."
                 ),
                 impact={"total": 0},
-                affected_components=vuln_shown,
-                affected_components_total=vuln_total,
+                components=sorted(scorecard_vuln_components),
                 action={
                     "type": "fix_scorecard_vulnerabilities",
                     "steps": [
@@ -131,21 +127,19 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         )
 
     low_score_packages = [p for c, p in low_score_by_component.items() if c not in unmaintained_by_component]
-    low_score_shown, low_score_total = sample_components(p["component"] for p in low_score_packages)
     if low_score_packages:
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.SUPPLY_CHAIN_RISK,
+            recommend(
+                rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
                 priority=Priority.MEDIUM,
                 title="Review Low-Quality Dependencies",
                 description=(
-                    f"Found {low_score_total} packages with OpenSSF Scorecard "
+                    f"Found {len(low_score_packages)} packages with OpenSSF Scorecard "
                     f"scores below {SCORECARD_POOR_QUALITY_THRESHOLD}/10. "
                     "These packages may have quality, security, or maintenance concerns."
                 ),
                 impact={"total": 0},
-                affected_components=low_score_shown,
-                affected_components_total=low_score_total,
+                components=(p["component"] for p in low_score_packages),
                 action={
                     "type": "review_quality",
                     "steps": [
@@ -167,20 +161,18 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             )
         )
 
-    review_shown, review_total = sample_components(sorted(code_review_components))
     if code_review_components:
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.SUPPLY_CHAIN_RISK,
+            recommend(
+                rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
                 priority=Priority.LOW,
                 title="Dependencies with Limited Code Review",
                 description=(
-                    f"{review_total} packages have limited or no code review processes. "
+                    f"{len(code_review_components)} packages have limited or no code review processes. "
                     "This increases the risk of unreviewed malicious or buggy changes."
                 ),
                 impact={"total": 0},
-                affected_components=review_shown,
-                affected_components_total=review_total,
+                components=sorted(code_review_components),
                 action={
                     "type": "code_review_concern",
                     "steps": [

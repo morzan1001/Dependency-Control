@@ -188,7 +188,7 @@ curl -X POST "https://api.dependencycontrol.local/api/v1/ingest" \
   -H "Content-Type: application/json" \
   --data-binary @sbom-payload.json
 
-# CBOM ingest (CycloneDX 1.6 with cryptographic-asset components)
+# CBOM ingest (CycloneDX 1.6; a CBOM without cryptographic-asset components records a project free of cryptography)
 curl -X POST "https://api.dependencycontrol.local/api/v1/ingest/cbom" \
   -H "x-api-key: $DEP_CONTROL_API_KEY" \
   -H "Content-Type: application/json" \

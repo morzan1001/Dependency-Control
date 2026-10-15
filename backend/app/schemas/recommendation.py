@@ -26,6 +26,7 @@ class RecommendationType(str, Enum):
     SUPPLY_CHAIN_RISK = "supply_chain_risk"
     CRITICAL_RISK = "critical_risk"  # Combined vuln + scorecard risk
     # Dependency Health & Hygiene
+    OUTDATED_DEPENDENCY = "outdated_dependency"
     VERSION_FRAGMENTATION = "version_fragmentation"
     DEV_IN_PRODUCTION = "dev_in_production"
     # Trend-based
@@ -100,11 +101,6 @@ class Recommendation:
     # unless that list was cut, in which case they are what says the rest exist.
     rank: int = 0
     ranked_out_of: int = 0
-
-    def __post_init__(self) -> None:
-        # A generator that lists everything it covers need not repeat the number; one that cut
-        # its list must pass the population, and can never claim fewer than it listed.
-        self.affected_components_total = max(self.affected_components_total, len(self.affected_components))
 
     def to_dict(self) -> dict[str, Any]:
         return {

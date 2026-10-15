@@ -13,21 +13,95 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.cross_link import is_ahead_of_default
 from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
-    sample_components,
+    installed_copy_lookup,
+    recommend,
     sampled,
     severity_impact,
 )
 
 # A package held at this many versions is fragmented.
 _FRAGMENTATION_MIN_VERSIONS = 3
-# Fragmented packages that must be exceeded for a MEDIUM card.
+# Counts that must be exceeded: fragmented packages for a MEDIUM card, outdated transitives for a card at all.
 _FRAGMENTED_PACKAGES_FOR_MEDIUM = 3
+_OUTDATED_TRANSITIVE_CARD_MIN = 3
+
+
+def analyze_outdated_dependencies(
+    outdated_findings: list[ModelOrDict],
+    upgrading_findings: list[ModelOrDict],
+    join_dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
+    """Installs behind their registry's default release that no vulnerability or end-of-life card upgrades."""
+    upgraded = installed_copy_lookup(upgrading_findings, "component")
+    row_of = installed_copy_lookup(join_dependencies, "name")
+    direct: list[ModelOrDict] = []
+    transitive: list[ModelOrDict] = []
+    for finding in sorted(outdated_findings, key=lambda f: (get_attr(f, "component").lower(), get_attr(f, "version"))):
+        if is_ahead_of_default(get_attr(finding, "type"), get_attr(finding, "details")) or upgraded(finding):
+            continue
+        row = row_of(finding)
+        (direct if row and get_attr(row, "direct", False) else transitive).append(finding)
+
+    recommendations = []
+    if direct:
+        recommendations.append(
+            _outdated_card(
+                direct,
+                Priority.MEDIUM,
+                f"Upgrade {len(direct)} outdated direct dependencies",
+                "These direct dependencies are older than the latest release in their registry. "
+                "Upgrading can improve security, performance, and maintainability.",
+                Effort.MEDIUM,
+            )
+        )
+    if len(transitive) > _OUTDATED_TRANSITIVE_CARD_MIN:
+        recommendations.append(
+            _outdated_card(
+                transitive,
+                Priority.LOW,
+                f"{len(transitive)} transitive dependencies are outdated",
+                "These transitive dependencies are older than the latest release in their registry. "
+                "Updating parent packages may resolve these.",
+                Effort.LOW,
+            )
+        )
+    return recommendations
+
+
+def _outdated_card(
+    findings: list[ModelOrDict], priority: Priority, title: str, description: str, effort: Effort
+) -> Recommendation:
+    return recommend(
+        rec_type=RecommendationType.OUTDATED_DEPENDENCY,
+        priority=priority,
+        title=title,
+        description=description,
+        impact=severity_impact(get_attr(f, "severity") for f in findings),
+        components=(f"{get_attr(f, 'component')}@{get_attr(f, 'version')}" for f in findings),
+        action={
+            "type": "upgrade_outdated",
+            **sampled(
+                "packages",
+                [
+                    {
+                        "name": get_attr(f, "component"),
+                        "current_version": get_attr(f, "version"),
+                        "latest_version": get_attr(f, "details", {}).get("fixed_version"),
+                    }
+                    for f in findings
+                ],
+                AFFECTED_COMPONENTS_SHOWN,
+            ),
+        },
+        effort=effort,
+    )
 
 
 def analyze_version_fragmentation(
@@ -56,11 +130,9 @@ def analyze_version_fragmentation(
     if significant_fragmented:
         priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
 
-        fragmented_shown, fragmented_total = sample_components(f["name"] for f in significant_fragmented)
-
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.VERSION_FRAGMENTATION,
+            recommend(
+                rec_type=RecommendationType.VERSION_FRAGMENTATION,
                 priority=priority,
                 title=(
                     f"Version fragmentation in {len(significant_fragmented)} packages "
@@ -73,8 +145,7 @@ def analyze_version_fragmentation(
                     "single version."
                 ),
                 impact={"total": 0},
-                affected_components=fragmented_shown,
-                affected_components_total=fragmented_total,
+                components=(f["name"] for f in significant_fragmented),
                 action={
                     "type": "deduplicate_versions",
                     **sampled(
@@ -129,11 +200,10 @@ def analyze_dev_in_production(
         if name.lower() not in DEV_DEPENDENCY_RUNTIME_PACKAGES and DEV_DEPENDENCY_PATTERN.match(name.lower()):
             potential_dev_deps.append({"name": name, "version": get_attr(dep, "version")})
 
-    dev_deps_shown, dev_deps_total = sample_components(f"{d['name']}@{d['version']}" for d in potential_dev_deps)
     if potential_dev_deps:
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.DEV_IN_PRODUCTION,
+            recommend(
+                rec_type=RecommendationType.DEV_IN_PRODUCTION,
                 priority=Priority.LOW,
                 title=f"{len(potential_dev_deps)} potential dev dependencies in production",
                 description=(
@@ -142,8 +212,7 @@ def analyze_dev_in_production(
                     "moving them to devDependencies."
                 ),
                 impact={"total": 0},
-                affected_components=dev_deps_shown,
-                affected_components_total=dev_deps_total,
+                components=(f"{d['name']}@{d['version']}" for d in potential_dev_deps),
                 action={
                     "type": "review_dev_deps",
                     **sampled(
@@ -176,12 +245,11 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
         else:
             affected_packages.append(f"{pkg}@{version}")
 
-    eol_shown, eol_total = sample_components(affected_packages)
     impact = severity_impact(get_attr(f, "severity") for f in eol_findings)
 
     return [
-        Recommendation(
-            type=RecommendationType.EOL_DEPENDENCY,
+        recommend(
+            rec_type=RecommendationType.EOL_DEPENDENCY,
             priority=Priority.HIGH if impact["high"] else Priority.MEDIUM,
             title="End-of-Life Dependencies",
             description=(
@@ -190,8 +258,7 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
                 f"to future CVEs that will never be patched."
             ),
             impact=impact,
-            affected_components=eol_shown,
-            affected_components_total=eol_total,
+            components=affected_packages,
             action={
                 "type": "upgrade_eol",
                 **sampled("packages", affected_packages, AFFECTED_COMPONENTS_SHOWN),

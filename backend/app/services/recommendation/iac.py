@@ -2,11 +2,13 @@ from collections import Counter, defaultdict
 
 from app.schemas.recommendation import Effort, Recommendation, RecommendationType
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
     label_by_keywords,
     priority_for,
-    sample_components,
+    recommend,
+    sampled,
     severity_impact,
     worth_a_card,
 )
@@ -34,13 +36,11 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
         if not worth_a_card(impact):
             continue
 
-        files_shown, files_total = sample_components(
-            sorted({get_attr(f, "component", "unknown") for f in plat_findings})
-        )
+        files = sorted({get_attr(f, "component", "unknown") for f in plat_findings})
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.FIX_INFRASTRUCTURE,
+            recommend(
+                rec_type=RecommendationType.FIX_INFRASTRUCTURE,
                 priority=priority_for(impact),
                 title=f"Fix {platform} Misconfigurations",
                 description=(
@@ -48,13 +48,11 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"Includes {impact['critical']} critical and {impact['high']} high severity misconfigurations."
                 ),
                 impact=impact,
-                affected_components=files_shown,
-                affected_components_total=files_total,
+                components=files,
                 action={
                     "type": "fix_infrastructure",
                     "platform": platform,
-                    "files": files_shown,
-                    "files_total": files_total,
+                    **sampled("files", files, AFFECTED_COMPONENTS_SHOWN),
                     "common_issues": _get_common_iac_issues(plat_findings),
                 },
                 effort=Effort.MEDIUM,

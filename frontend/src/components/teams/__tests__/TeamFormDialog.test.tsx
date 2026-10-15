@@ -6,7 +6,7 @@ import type { Team } from "@/types/team";
 
 import { TeamFormDialog } from "../TeamFormDialog";
 
-const { teamApi } = vi.hoisted(() => ({ teamApi: { create: vi.fn(), update: vi.fn() } }));
+const { teamApi } = vi.hoisted(() => ({ teamApi: { create: vi.fn(), update: vi.fn(), getAll: vi.fn() } }));
 vi.mock("@/api/teams", () => ({ teamApi }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   teamApi.create.mockResolvedValue({ id: "t-new" });
   teamApi.update.mockResolvedValue(TEAM);
+  teamApi.getAll.mockResolvedValue([TEAM, { ...TEAM, id: "t-2", name: "Team Gamma" }, { ...TEAM, id: "t-3", name: "TEAM BETA" }]);
 });
 
 function editTeam() {
@@ -106,5 +107,40 @@ describe("creating a team", () => {
 
     expect(screen.getByLabelText("Name")).toHaveValue("Team Gamma");
     expect(teamApi.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("the team name check", () => {
+  const TAKEN = "A team with this name already exists";
+
+  it("hints at a name another team holds, says nothing while the name is unchanged, and still saves", async () => {
+    const { onClose, dialog } = editTeam();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "team gamma " } });
+    const hint = await screen.findByText(TAKEN);
+    expect(screen.getByLabelText("Name").parentElement).toContainElement(hint);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team Beta" } });
+    expect(screen.queryByText(TAKEN)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team Gamma" } });
+    await screen.findByText(TAKEN);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(teamApi.update).toHaveBeenCalledWith("t-1", { name: "Team Gamma", description: "Platform squad" });
+  });
+
+  it("hints at a taken name while creating a team, and loads the teams only once the dialog opens", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TeamFormDialog />
+      </QueryClientProvider>,
+    );
+    expect(teamApi.getAll).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Create Team/ }));
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "TEAM BETA" } });
+
+    expect(await screen.findByText(TAKEN)).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Create Team" })).toBeEnabled();
   });
 });

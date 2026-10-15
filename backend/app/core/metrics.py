@@ -434,7 +434,7 @@ webhooks_failed_total = Counter(
 
 cbom_ingests_total = Counter(
     "cbom_ingests_total",
-    "Total CBOM ingests by status",
+    "Total CBOM ingests by status: success, empty (no cryptographic asset) or error",
     ["status"],
 )
 

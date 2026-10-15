@@ -228,7 +228,7 @@ async def test_engine_counts_a_crashed_report_under_the_error_status():
     assert _reports_counted("error") == before + 1
 
 
-async def _store_project(db, pid, *, scanned=True, sbom=True, failed_analyzers=None, **fields):
+async def _store_project(db, pid, *, scanned=True, sbom=True, failed_analyzers=None, scan_type=None, **fields):
     """The project and its head scan as ingest and the analysis engine leave them."""
     scan_id = f"scan-{pid}" if scanned else None
     project = Project(id=pid, name=f"name-{pid}", latest_scan_id=scan_id, members=[{"user_id": "u1"}], **fields)
@@ -242,6 +242,7 @@ async def _store_project(db, pid, *, scanned=True, sbom=True, failed_analyzers=N
             status=status,
             failed_analyzers=failed_analyzers,
             sbom_refs=[make_gridfs_ref(f"sbom-{pid}", "sbom.json")] if sbom else [],
+            scan_type=scan_type,
         )
         await db.scans.insert_one(scan.model_dump(by_alias=True))
     return scan_id
@@ -433,7 +434,7 @@ _AES = CryptoAsset(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("assets", "gaps"),
-    [([], ["project 'name-p1' has no crypto assets in scan scan-p1"]), ([_AES], [])],
+    [([], ["project 'name-p1' has no CBOM in scan scan-p1"]), ([_AES], [])],
     ids=["no-inventory", "nothing-quantum-vulnerable"],
 )
 async def test_the_pqc_plan_names_a_scan_without_crypto_inventory_as_a_gap(db, assets, gaps):
@@ -522,13 +523,26 @@ async def test_a_scan_without_crypto_inventory_withholds_all_but_the_policy_disa
     policy_off = {
         c.control_id for c in framework.controls if c.maps_to_rule_ids and set(c.maps_to_rule_ids) <= disabled
     }
-    assert inputs.coverage.gaps == ["project 'name-p1' has no crypto assets in scan scan-p1"]
+    assert inputs.coverage.gaps == ["project 'name-p1' has no CBOM in scan scan-p1"]
     assert {c.control_id: c.status for c in evaluation.controls} == {
         c.control_id: ControlStatus.NOT_APPLICABLE.value
         if c.control_id in policy_off
         else ControlStatus.NOT_EVALUATED.value
         for c in evaluation.controls
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [k for k in ReportFramework if k not in engine_module._NON_CRYPTO_FRAMEWORKS])
+async def test_a_scan_whose_cbom_listed_no_asset_is_evaluated_as_free_of_cryptography(db, key):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1", scan_type="cbom")
+
+    inputs, evaluation = await ComplianceReportEngine().evaluate(db, _project_scope(), FRAMEWORK_REGISTRY[key])
+
+    assert inputs.coverage.gaps == []
+    assert evaluation.coverage.complete
+    assert {c.status for c in evaluation.controls} <= {ControlStatus.PASSED.value, ControlStatus.NOT_APPLICABLE.value}
 
 
 @pytest.mark.asyncio

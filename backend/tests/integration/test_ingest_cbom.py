@@ -17,6 +17,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.scans import ScanRepository
 from app.services.analysis import engine
+from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, content_ref, filler_components, fixture_component
 
@@ -48,12 +49,76 @@ async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
 
 
 @pytest.mark.asyncio
-async def test_ingest_cbom_rejects_empty_cbom(client, db, api_key_headers):
-    payload = {
-        "cbom": {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []},
-    }
-    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
+async def test_a_cbom_without_crypto_assets_is_accepted_as_a_cbom_scan(client, db, api_key_headers):
+    """A repository without cryptography yields an empty CBOM, and that upload is its crypto evaluation."""
+    empty, success = _ingests("empty"), _ingests("success")
+
+    resp = await client.post(
+        "/api/v1/ingest/cbom",
+        json={"pipeline_id": 13, "commit_hash": "abc123", "branch": "main", "cbom": cbom_of([])},
+        headers=api_key_headers,
+    )
+
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert (body["status"], body["assets_received"], body["assets_stored"]) == ("accepted", 0, 0)
+    scan = await db.scans.find_one({"_id": body["scan_id"]})
+    assert (scan["scan_type"], scan["received_results"]) == ("cbom", ["cbom"])
+    assert await db.crypto_assets.count_documents({"scan_id": body["scan_id"]}) == 0
+    assert (_ingests("empty"), _ingests("success")) == (empty + 1, success)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "document",
+    [
+        {},
+        {"error": "cbomkit-theia: no such directory"},
+        {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [{"name": "flask"}]},
+    ],
+    ids=["empty-object", "error-object", "spdx"],
+)
+async def test_a_payload_that_is_not_a_cyclonedx_document_is_rejected(client, db, api_key_headers, document):
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": document}, headers=api_key_headers)
+
     assert resp.status_code == 400, resp.text
+    assert await db.scans.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_empty_cbom_retry_replaces_the_earlier_uploads_assets(client, db, api_key_headers):
+    pipeline = {"pipeline_id": 14, "commit_hash": "abc123", "branch": "main"}
+    first = await client.post(
+        "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("legacy_crypto_mixed.json")}, headers=api_key_headers
+    )
+
+    retry = await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": cbom_of([])}, headers=api_key_headers)
+
+    assert (retry.status_code, retry.json()["scan_id"]) == (202, first.json()["scan_id"])
+    assert await db.crypto_assets.count_documents({"scan_id": first.json()["scan_id"]}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_crypto_analyzers_run_over_an_empty_cbom(client, db, api_key_headers):
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
+    )
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom_of([])}, headers=api_key_headers)
+    scan_id = resp.json()["scan_id"]
+    scan = await db.scans.find_one_and_update(
+        {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
+    )
+
+    status = await engine.run_analysis(
+        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
+    )
+
+    assert status == SCAN_STATUS_COMPLETED
+    ran = {row["analyzer_name"] for row in await db.analysis_results.find({"scan_id": scan_id}).to_list(None)}
+    assert ran == CRYPTO_ANALYZERS
+    assert await db.findings.count_documents({"scan_id": scan_id}) == 0
 
 
 @pytest.mark.asyncio

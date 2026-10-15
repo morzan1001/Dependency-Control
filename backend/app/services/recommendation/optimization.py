@@ -14,7 +14,7 @@ from app.services.recommendation.common import (
     VulnerabilityInfo,
     get_attr,
     names_fix,
-    sample_components,
+    recommend,
     severity_impact,
     summarize_vulns,
     take_top,
@@ -81,9 +81,8 @@ def _quick_win_recommendation(
 ) -> Recommendation:
     impact = severity_impact(stats.severity.elements())
     versions = stats.versions or ["unknown"]
-    components_shown, components_total = sample_components(f"{pkg}@{version}" for version in versions)
-    return Recommendation(
-        type=(RecommendationType.SINGLE_UPDATE_MULTI_FIX if stats.total >= 3 else RecommendationType.QUICK_WIN),
+    return recommend(
+        rec_type=(RecommendationType.SINGLE_UPDATE_MULTI_FIX if stats.total >= 3 else RecommendationType.QUICK_WIN),
         priority=(Priority.HIGH if stats.kev > 0 or impact["critical"] > 0 else Priority.MEDIUM),
         title=f"Quick Win: Update {pkg}",
         description=(
@@ -92,8 +91,7 @@ def _quick_win_recommendation(
             f"({impact['critical']} critical, {impact['high']} high)"
         ),
         impact={**impact, "kev_count": stats.kev},
-        affected_components=components_shown,
-        affected_components_total=components_total,
+        components=(f"{pkg}@{version}" for version in versions),
         action={
             "type": "quick_win_update",
             "package": pkg,

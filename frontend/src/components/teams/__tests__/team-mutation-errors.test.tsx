@@ -20,6 +20,7 @@ const { teamApi, toastError } = vi.hoisted(() => ({
     addMember: vi.fn(),
     updateMember: vi.fn(),
     removeMember: vi.fn(),
+    getAll: vi.fn().mockResolvedValue([]),
   },
   toastError: vi.fn(),
 }));

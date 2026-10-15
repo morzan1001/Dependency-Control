@@ -3,6 +3,7 @@
 import pytest
 import pytest_asyncio
 
+from app.models.project import Scan
 from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema
 from app.services.audit.history import record_license_policy_change
@@ -56,6 +57,22 @@ async def test_every_report_framework_is_evaluated(audited, framework):
 
     assert result["framework"] == framework
     assert result["summary"]["total"] > 0
+
+
+@pytest.mark.asyncio
+async def test_a_project_whose_cbom_listed_no_asset_is_evaluated(audited):
+    cbom_scan = Scan(id="s-cbom", project_id=_PROJECT, branch="main", status="completed", scan_type="cbom")
+    await audited.scans.insert_one(cbom_scan.model_dump(by_alias=True))
+
+    result = await ChatToolRegistry().execute_tool(
+        "get_framework_evaluation_summary",
+        {"scope": "project", "scope_id": _PROJECT, "framework": "nist-sp-800-131a"},
+        make_admin(),
+        audited,
+    )
+
+    assert result["summary"]["not_evaluated"] == 0
+    assert result["coverage"] == "The verdicts cover the whole scope."
 
 
 @pytest.mark.asyncio

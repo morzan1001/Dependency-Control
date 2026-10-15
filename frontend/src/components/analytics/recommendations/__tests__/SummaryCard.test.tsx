@@ -149,6 +149,15 @@ describe("SummaryCard tiles", () => {
     expect(screen.queryByText("Health & Insights")).not.toBeInTheDocument();
   });
 
+  it("leads the health tiles with the outdated packages and counts them as insights", () => {
+    render(<SummaryCard data={makeResponse({ summary: { ...EMPTY_SUMMARY, outdated_deps: 7, trend_alerts: 1 } })} />);
+
+    expect(tile("Outdated")).toEqual({ value: "7", className: "text-2xl font-bold text-amber-600" });
+    const health = screen.getByText("Outdated").parentElement!.parentElement!;
+    expect(Array.from(health.children, (card) => card.lastElementChild!.textContent)).toEqual(["Outdated", "Trend Alerts"]);
+    expect(screen.getByText("8 dependency insights found")).toBeInTheDocument();
+  });
+
   it("lays out every tile the same way", () => {
     render(<SummaryCard data={makeResponse({ summary: { ...EMPTY_SUMMARY, secrets_to_rotate: 2 } })} />);
 

@@ -17,7 +17,7 @@ from app.services.recommendation.common import (
     get_attr,
     live_advisories,
     name_some,
-    sample_components,
+    recommend,
     sampled,
     severity_impact,
 )
@@ -58,21 +58,19 @@ def _exploited_cves(
     return ransomware, kev, epss
 
 
-def _package_evidence(findings: list[ModelOrDict]) -> tuple[list[str], list[str], int]:
-    """(every affected package, the sample a card lists, the population)."""
-    packages = sorted({get_attr(f, "component", "") for f in findings})
-    return packages, *sample_components(packages)
+def _packages(findings: list[ModelOrDict]) -> list[str]:
+    return sorted({get_attr(f, "component", "") for f in findings})
 
 
 def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]:
     if not malware_findings:
         return []
 
-    packages, packages_shown, packages_total = _package_evidence(malware_findings)
+    packages = _packages(malware_findings)
 
     return [
-        Recommendation(
-            type=RecommendationType.MALWARE_DETECTED,
+        recommend(
+            rec_type=RecommendationType.MALWARE_DETECTED,
             priority=Priority.CRITICAL,
             title="CRITICAL: Malware Detected in Dependencies",
             description=(
@@ -81,8 +79,7 @@ def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]
                 f"Remove immediately!"
             ),
             impact=severity_impact("CRITICAL" for _ in packages),
-            affected_components=packages_shown,
-            affected_components_total=packages_total,
+            components=packages,
             action={
                 "type": "remove_malware",
                 **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
@@ -99,11 +96,11 @@ def process_hash_mismatch(findings: list[ModelOrDict]) -> list[Recommendation]:
     if not findings:
         return []
 
-    packages, packages_shown, packages_total = _package_evidence(findings)
+    packages = _packages(findings)
 
     return [
-        Recommendation(
-            type=RecommendationType.HASH_MISMATCH,
+        recommend(
+            rec_type=RecommendationType.HASH_MISMATCH,
             priority=Priority.HIGH,
             title="Package Integrity Check Failed",
             description=(
@@ -111,8 +108,7 @@ def process_hash_mismatch(findings: list[ModelOrDict]) -> list[Recommendation]:
                 "The artifact may have been tampered with, or it came from a mirror, tarball or git source."
             ),
             impact=severity_impact("HIGH" for _ in packages),
-            affected_components=packages_shown,
-            affected_components_total=packages_total,
+            components=packages,
             action={
                 "type": "verify_integrity",
                 **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
@@ -138,11 +134,9 @@ def process_typosquatting(typosquat_findings: list[ModelOrDict]) -> list[Recomme
             for f in typosquat_findings
         }
     )
-    packages_shown, packages_total = sample_components(affected_packages)
-
     return [
-        Recommendation(
-            type=RecommendationType.TYPOSQUAT_DETECTED,
+        recommend(
+            rec_type=RecommendationType.TYPOSQUAT_DETECTED,
             priority=Priority.HIGH,
             title="Potential Typosquatting Packages Detected",
             description=(
@@ -151,8 +145,7 @@ def process_typosquatting(typosquat_findings: list[ModelOrDict]) -> list[Recomme
                 f"Verify these are the intended packages."
             ),
             impact=severity_impact("HIGH" for _ in affected_packages),
-            affected_components=packages_shown,
-            affected_components_total=packages_total,
+            components=affected_packages,
             action={
                 "type": "verify_packages",
                 **sampled("packages", affected_packages, AFFECTED_COMPONENTS_SHOWN),
@@ -198,12 +191,12 @@ def detect_known_exploits(
     severity = cve_severities(a for f in vuln_findings for a in live_advisories(get_attr(f, "details", {})))
 
     if ransomware_vulns:
-        packages, packages_shown, packages_total = _package_evidence(ransomware_vulns)
+        packages = _packages(ransomware_vulns)
         cves = sorted(ransomware_cves)
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.RANSOMWARE_RISK,
+            recommend(
+                rec_type=RecommendationType.RANSOMWARE_RISK,
                 priority=Priority.CRITICAL,
                 title="URGENT: Ransomware Campaign Vulnerabilities",
                 description=(
@@ -215,8 +208,7 @@ def detect_known_exploits(
                     **severity_impact(severity[cve] for cve in ransomware_cves),
                     "kev_ransomware_count": len(ransomware_cves),
                 },
-                affected_components=packages_shown,
-                affected_components_total=packages_total,
+                components=packages,
                 action={
                     "type": "fix_ransomware_vulns",
                     **sampled("cves", cves, AFFECTED_COMPONENTS_SHOWN),
@@ -236,11 +228,11 @@ def detect_known_exploits(
         )
 
     if kev_vulns:
-        packages, packages_shown, packages_total = _package_evidence(kev_vulns)
+        packages = _packages(kev_vulns)
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.KNOWN_EXPLOIT,
+            recommend(
+                rec_type=RecommendationType.KNOWN_EXPLOIT,
                 priority=Priority.CRITICAL,
                 title="CISA KEV: Actively Exploited Vulnerabilities",
                 description=(
@@ -249,8 +241,7 @@ def detect_known_exploits(
                     f"Federal agencies are required to patch these within specific timeframes."
                 ),
                 impact={**severity_impact(severity[cve] for cve in kev_cves), "kev_count": len(kev_cves)},
-                affected_components=packages_shown,
-                affected_components_total=packages_total,
+                components=packages,
                 action={
                     "type": "fix_kev_vulns",
                     **sampled("cves", sorted(kev_cves), AFFECTED_COMPONENTS_SHOWN),
@@ -268,11 +259,11 @@ def detect_known_exploits(
         )
 
     if high_epss_vulns:
-        packages, packages_shown, packages_total = _package_evidence(high_epss_vulns)
+        packages = _packages(high_epss_vulns)
 
         recommendations.append(
-            Recommendation(
-                type=RecommendationType.ACTIVELY_EXPLOITED,
+            recommend(
+                rec_type=RecommendationType.ACTIVELY_EXPLOITED,
                 priority=Priority.CRITICAL,
                 title="Very High Exploitation Probability",
                 description=(
@@ -285,8 +276,7 @@ def detect_known_exploits(
                     "high_epss_count": len(high_epss_cves),
                     "max_epss": max_epss,
                 },
-                affected_components=packages_shown,
-                affected_components_total=packages_total,
+                components=packages,
                 action={
                     "type": "fix_high_epss_vulns",
                     **sampled("cves", sorted(high_epss_cves), AFFECTED_COMPONENTS_SHOWN),

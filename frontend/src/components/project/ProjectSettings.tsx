@@ -5,7 +5,7 @@ import { useAppConfig, useNotificationChannels } from '@/hooks/queries/use-syste
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useClickOutside } from '@/hooks/use-click-outside'
 import { useDialogState, type DialogState } from '@/hooks/use-dialog-state'
-import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
+import { projectKeys, useProjectBranches, useProjectNameTaken, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useUpdateWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
 import { Project, ProjectUpdate } from '@/types/project'
@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input'
 import { CopyField } from '@/components/ui/copy-field'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { WarningHint } from '@/components/ui/warning-hint'
 import { WebhookManager } from '@/components/WebhookManager'
 import { NotificationMatrix } from '@/components/profile/NotificationMatrix'
 import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
@@ -196,6 +197,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   
   const [form, setForm] = useState(() => settingsForm(project))
   const set = (patch: Partial<SettingsForm>) => setForm((current) => ({ ...current, ...patch }))
+  const nameTaken = useProjectNameTaken(form.name, project)
 
   const [openSettingsAnalyzer, setOpenSettingsAnalyzer] = useState<string | null>(null)
   const [analyzerSettingsState, setAnalyzerSettingsState] = useState<Record<string, Record<string, unknown>>>(
@@ -336,6 +338,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 <div className="grid gap-2">
                     <Label htmlFor="name">Project Name</Label>
                     <Input id="name" value={form.name} onChange={(e) => set({ name: e.target.value })} />
+                    {nameTaken && <WarningHint>A project with this name already exists</WarningHint>}
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="teams">Teams</Label>

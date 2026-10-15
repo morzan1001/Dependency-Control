@@ -6,6 +6,7 @@ import { CreateProjectDialog } from '../CreateProjectDialog'
 
 const mockMutate = vi.fn()
 const mockUseCreateProject = vi.fn()
+const mockUseProjectNameTaken = vi.fn()
 let appConfig: { retention_mode: string; default_project_analyzers: string[]; global_retention_days?: number } | undefined
 
 vi.mock('@/hooks/queries/use-system', () => ({
@@ -17,11 +18,13 @@ vi.mock('@/hooks/queries/use-projects', () => ({
     mockUseCreateProject(meta)
     return { mutate: mockMutate, isPending: false }
   },
+  useProjectNameTaken: (...args: unknown[]) => mockUseProjectNameTaken(...args),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 beforeEach(() => {
   mockMutate.mockReset()
+  mockUseProjectNameTaken.mockReset().mockReturnValue(false)
   appConfig = { retention_mode: 'project', default_project_analyzers: ['trivy', 'epss_kev'] }
 })
 
@@ -194,5 +197,20 @@ describe('CreateProjectDialog failure', () => {
     render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
 
     expect(mockUseCreateProject).toHaveBeenCalledWith({ errorTitle: 'Failed to create project' })
+  })
+})
+
+describe('CreateProjectDialog name check', () => {
+  const TAKEN = 'A project with this name already exists'
+
+  it('hints under the name at a name another project already uses and still creates the project', () => {
+    mockUseProjectNameTaken.mockImplementation((name: string) => name === 'svc')
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+    expect(screen.queryByText(TAKEN)).not.toBeInTheDocument()
+
+    expect(submit().name).toBe('svc')
+
+    expect(screen.getByLabelText('Project Name').parentElement).toContainElement(screen.getByText(TAKEN))
+    expect(mockUseProjectNameTaken).toHaveBeenLastCalledWith('svc')
   })
 })

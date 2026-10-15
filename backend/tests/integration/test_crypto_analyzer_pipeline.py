@@ -204,11 +204,7 @@ async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_end_to_end_cbom_ingest_creates_findings(client, db, running_worker, api_key_headers):
-    """CBOM ingest + analyzer dispatch produce findings in the findings collection.
-
-    The scan legitimately ends ``failed`` — it carries no SBOM — while the crypto findings are
-    still written, so the assertion is about the findings and not about the scan status.
-    """
+    """CBOM ingest + analyzer dispatch produce findings in the findings collection."""
     import json
     from pathlib import Path
 

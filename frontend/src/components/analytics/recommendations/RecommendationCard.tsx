@@ -16,6 +16,7 @@ import {
   ArrowUpCircle,
   ChevronDown,
   ChevronRight,
+  Clock,
   Code,
   Container,
   Copy,
@@ -275,6 +276,17 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                         → {pkg.suggestion}
                       </div>
                     )}
+                  </div>
+                ))}
+              </ActionSection>
+            )}
+            {recommendation.action.type === 'upgrade_outdated' && recommendation.action.packages && (
+              <ActionSection icon={Clock} title="Outdated Packages" bodyClassName="space-y-2 max-h-[300px] overflow-y-auto">
+                {recommendation.action.packages.map((pkg) => (
+                  <div key={`${pkg.name}@${pkg.current_version}`} className="border-b last:border-0 pb-2 last:pb-0">
+                    <span className="font-medium">{pkg.name}</span>
+                    <span className="text-muted-foreground"> {pkg.current_version}</span>
+                    <span className="text-success"> → {pkg.latest_version}</span>
                   </div>
                 ))}
               </ActionSection>

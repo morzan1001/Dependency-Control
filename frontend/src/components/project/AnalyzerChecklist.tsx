@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import { WarningHint } from '@/components/ui/warning-hint'
 import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 
@@ -49,10 +49,7 @@ export function AnalyzerChecklist({ idPrefix, selected, onToggle, className, ren
                     </div>
                     <p className="text-xs text-muted-foreground">{analyzer.description}</p>
                     {analyzer.isPostProcessor && checked && !hasRequiredDeps && (
-                      <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" />
-                        Requires at least one vulnerability scanner to be enabled
-                      </p>
+                      <WarningHint>Requires at least one vulnerability scanner to be enabled</WarningHint>
                     )}
                   </div>
                 </div>
