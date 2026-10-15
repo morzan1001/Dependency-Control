@@ -129,12 +129,13 @@ describe("the team name check", () => {
     expect(teamApi.update).toHaveBeenCalledWith("t-1", { name: "Team Gamma", description: "Platform squad" });
   });
 
-  it("hints at a taken name while creating a team", async () => {
+  it("hints at a taken name while creating a team, and loads the teams only once the dialog opens", async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <TeamFormDialog />
       </QueryClientProvider>,
     );
+    expect(teamApi.getAll).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Create Team/ }));
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "TEAM BETA" } });

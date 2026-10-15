@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useCreateTeam, useTeamNameTaken, useUpdateTeam } from '@/hooks/queries/use-teams';
+import { useCreateTeam, useTeams, useUpdateTeam } from '@/hooks/queries/use-teams';
+import { isNameTaken } from '@/lib/utils';
 import { Team } from '@/types/team';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +29,8 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
   const [description, setDescription] = useState(team?.description || '');
   const createTeamMutation = useCreateTeam({ errorTitle: "Failed to create team" });
   const updateTeamMutation = useUpdateTeam({ errorTitle: "Failed to update team" });
-  const nameTaken = useTeamNameTaken(name, team);
+  const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: !!team || isOpen });
+  const nameTaken = isNameTaken(teams, name, team);
   const mode = team ? EDIT : CREATE;
   const isPending = createTeamMutation.isPending || updateTeamMutation.isPending;
 
