@@ -1,5 +1,3 @@
-"""An announcement reaches its whole audience, formatted, on the channels the broadcaster chose."""
-
 from unittest.mock import AsyncMock
 
 import pytest

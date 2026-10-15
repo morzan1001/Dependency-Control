@@ -1,5 +1,3 @@
-"""The one waiver restamp, through the ingest persist, the recalculation and the ad-hoc gate."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -405,7 +403,6 @@ def _signed_secret_doc(scan_id: str, file_key: str) -> dict:
 
 
 async def test_each_scan_binds_an_unsigned_waiver_to_its_own_finding():
-    """The tip holds the secret the waiver names in another file than head does, as its own analysis sees it."""
     db = FakeDatabase()
     await _seed_project(db)
     await _seed_feature_tip(db)

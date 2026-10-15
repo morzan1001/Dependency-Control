@@ -1,5 +1,3 @@
-"""Retention, archive and restore running at the same time on several pods never lose a scan."""
-
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
@@ -79,14 +77,12 @@ async def _ingest(client, headers, scanner: str, findings: list) -> str:
 
 
 async def _analysed_run(client, db, headers) -> str:
-    """A CI run whose secret scan came in and was analysed."""
     scan_id = await _ingest(client, headers, "trufflehog", [_SECRET])
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "completed"}})
     return scan_id
 
 
 async def _retried_job(client, db, headers) -> None:
-    """A retried CI job of the run posts again, and the analysis it triggers finishes."""
     scan_id = await _ingest(client, headers, "opengrep", [])
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "completed"}})
 
@@ -105,7 +101,6 @@ async def _callgraph_upload(client, headers, project) -> None:
 
 
 def _interleave(monkeypatch, owner, name: str, write: Callable[[], Awaitable[object]], *, after: bool = False) -> None:
-    """Run write once, right before (or after) the next call of owner.name."""
     real = getattr(owner, name)
 
     async def call(*args, **kwargs):
@@ -121,7 +116,6 @@ def _interleave(monkeypatch, owner, name: str, write: Callable[[], Awaitable[obj
 
 
 async def _paused_before(monkeypatch, owner, name: str, post: Awaitable[None]) -> Callable[[], Awaitable[None]]:
-    """Start post, pause it right before its call of owner.name, and return what lets it finish."""
     paused, resume = asyncio.Event(), asyncio.Event()
 
     async def pause() -> None:
@@ -142,7 +136,6 @@ async def _paused_before(monkeypatch, owner, name: str, post: Awaitable[None]) -
 
 
 def _delete_during(monkeypatch, post: Callable[[], Awaitable[None]], owner, name: str, *, after: bool = False) -> None:
-    """The batch delete runs inside post, right before (or after) its call of owner.name."""
     real_delete = housekeeping._delete_expirable
 
     async def post_around_the_delete(*args):

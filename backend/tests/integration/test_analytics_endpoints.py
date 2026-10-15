@@ -107,7 +107,6 @@ async def _seed_crypto_asset(db, scan_id: str, name: str) -> None:
 
 @pytest.mark.asyncio
 async def test_hotspots_pins_the_aggregation_to_an_explicit_scan_id(client, db, owner_auth_headers_proj):
-    """?scan_id names the scan to report on; without it the branch head would answer instead."""
     now = datetime.now(timezone.utc)
     for scan_id, name, age_hours in (("s-old", "MD5", 2), ("s-head", "AES", 0)):
         await _seed_crypto_asset(db, scan_id, name)
@@ -159,7 +158,6 @@ async def test_hotspots_returns_at_most_the_requested_limit(client, db, owner_au
 
 @pytest.mark.asyncio
 async def test_hotspots_user_scope_accepted(client, db, owner_auth_headers_proj):
-    """scope=user must pass the Query regex."""
     resp = await client.get(
         "/api/v1/analytics/crypto/hotspots",
         params={"scope": "user", "group_by": "name"},
@@ -221,11 +219,9 @@ async def test_a_second_call_is_served_from_the_cache(client, db, owner_auth_hea
 
 @pytest.mark.asyncio
 async def test_recommendations_excludes_deleted_branch_scan(client, db, owner_auth_headers_proj):
-    """With no explicit scan_id, recommendations use the latest scan on a non-deleted branch, not a newer scan on a deleted branch."""
     await db.projects.update_one({"_id": "p"}, {"$set": {"deleted_branches": ["dead"]}})
 
     now = datetime.now(timezone.utc)
-    # Older scan on an active branch — the one that must be selected.
     await db.scans.insert_one(
         {
             "_id": "scan-active",
@@ -235,7 +231,6 @@ async def test_recommendations_excludes_deleted_branch_scan(client, db, owner_au
             "created_at": now - timedelta(hours=1),
         }
     )
-    # Newer scan on a deleted branch — must be ignored.
     await db.scans.insert_one(
         {
             "_id": "scan-dead",
@@ -322,8 +317,6 @@ def _no_enrichment(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_no_enrichment")
 async def test_recommendations_recurrence_window_holds_the_newest_scans(client, db, owner_auth_headers_proj):
-    """A CVE present only in the three most recent of fourteen builds is still recurring; the
-    window is the newest scans, so it sees them."""
     now = datetime.now(timezone.utc)
     scan_count = 14
     scan_ids = [f"win-{i:02d}" for i in range(scan_count)]
@@ -376,7 +369,6 @@ async def _seed_build(db, scan_id: str, hours_ago: int, cve: str | None, **field
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_no_enrichment")
 async def test_recommendations_recurrence_window_stays_on_the_viewed_scans_branch(client, db, owner_auth_headers_proj):
-    """Two feature-branch builds carrying a CVE make it recur there, not in the one main build that has it."""
     await _seed_build(db, "main-old", 5, None)
     await _seed_build(db, "main-head", 3, "CVE-2026-1111")
     await _seed_build(db, "feat-1", 2, "CVE-2026-1111", branch="feature/x")

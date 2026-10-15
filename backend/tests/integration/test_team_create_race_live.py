@@ -1,5 +1,3 @@
-"""Two ingests racing to create a group's team: one wins on the unique index, the other owns through it."""
-
 import asyncio
 import logging
 from unittest.mock import AsyncMock, patch

@@ -1,4 +1,4 @@
-"""The findings-ingest response body is machine-facing; pin it across the stats swap."""
+"""The findings-ingest response body is machine-facing, so its shape is pinned."""
 
 import pytest
 
@@ -49,7 +49,6 @@ async def test_opengrep_ingest_stats_block_shape(client, db, api_key_headers):
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_ingest_writes_no_findings_to_mongo_from_this_path(client, db, api_key_headers):
-    """process_findings_ingest computes stats in memory; it must not persist findings."""
     resp = await client.post("/api/v1/ingest/opengrep", json=_payload(), headers=api_key_headers)
     assert resp.status_code == 200
     assert await db.findings.count_documents({}) == 0

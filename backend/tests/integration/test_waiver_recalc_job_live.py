@@ -1,5 +1,4 @@
-"""The waiver recalculation queue and its expiry sweep on a real server: the sweep window compares the stored
-watermark (read back naive) with aware datetimes, and the queue filter tells requests from the watermark."""
+"""Live: the sweep compares the stored watermark, read back naive, with aware datetimes."""
 
 from datetime import datetime, timezone
 

@@ -1,10 +1,4 @@
-"""One team, three bound instances, and the member subsets each sync may touch.
-
-A team can hold a binding per instance, of either provider, in any number, and every one of them
-refreshes the same ``members`` array. Each sync therefore has to replace exactly the subset its own
-instance established — whichever order the three CI runs happen in — or one provider's ingest
-quietly launders another's members and nothing refreshes them again.
-"""
+"""Every bound instance refreshes the same members array, so each sync replaces only its own instance's subset."""
 
 from itertools import permutations
 from unittest.mock import AsyncMock, patch
@@ -69,7 +63,6 @@ async def _public_emails(logins: list[str]) -> dict[str, str]:
 
 
 async def _github_sync(db, instance_id: str, org_teams: list[dict], logins: list[dict] | None) -> None:
-    """One CI run of one GitHub instance against a repository the bound team holds."""
     service = GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=True))
     with (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams)),
@@ -86,7 +79,6 @@ async def _github_sync(db, instance_id: str, org_teams: list[dict], logins: list
 
 
 async def _gitlab_sync(db, instance_id: str, members: list[GitLabMember] | None) -> None:
-    """One CI run of one GitLab instance against a project of the bound group."""
     service = GitLabService(make_gitlab_instance(id=instance_id, sync_teams=True))
     with patch.object(service, "get_group_members", new=AsyncMock(return_value=members)):
         await sync_team(
@@ -113,7 +105,6 @@ async def _members(db) -> dict[str, dict]:
 
 
 async def _assert_every_subset_survives_every_order(db) -> None:
-    """The headline: three bound instances, three CI runs, and no order in which one loses a subset."""
     for order in permutations((_GH_A, _GH_B, _GL_C)):
         await _seed(db)
 

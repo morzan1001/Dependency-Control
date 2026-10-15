@@ -1,5 +1,3 @@
-"""Scheduled rescans must repopulate the dependencies collection for the new scan_id."""
-
 import pytest
 import pytest_asyncio
 
@@ -76,7 +74,6 @@ async def _dependency_docs(db, scan_id: str) -> list[dict]:
 
 
 async def _seed_stored_dependency(db, scan_id: str, name: str, version: str, purl: str) -> None:
-    # Same doc shape the ingest path writes: a full Dependency model dump.
     dep = Dependency(project_id=_PROJECT_ID, scan_id=scan_id, name=name, version=version, purl=purl, type="library")
     await db.dependencies.insert_one(dep.model_dump(by_alias=True))
 
@@ -146,7 +143,6 @@ async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, 
 
 @pytest.mark.asyncio
 async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _stored_sboms, _second_file_unreadable):
-    """If any SBOM of the run fails to load, the scan's stored deps must survive untouched."""
     refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
@@ -213,7 +209,6 @@ async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_
 
 @pytest.mark.asyncio
 async def test_ingest_prestored_dependencies_are_not_double_stored(db, _stored_sboms):
-    """On the normal ingest path the deps already exist for the scan_id; the run must stay at N docs."""
     scan = Scan(
         project_id=_PROJECT_ID,
         branch="main",
@@ -235,8 +230,7 @@ async def test_ingest_prestored_dependencies_are_not_double_stored(db, _stored_s
     assert len(docs) == 3, f"ingest-stored deps must not be stored a second time, got {len(docs)}"
 
 
-# Same package described by two SBOMs of one payload (app image + base image), each carrying
-# evidence the other lacks — the shape 3,698 of 45,084 production scans (8.2%) upload.
+# One package in two SBOMs of a payload (app and base image), each carrying evidence the other lacks.
 _SHARED_PURL = "pkg:deb/debian/libssl3@3.0.11-1~deb12u2?arch=amd64"
 
 

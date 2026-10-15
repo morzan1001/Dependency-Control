@@ -1,5 +1,3 @@
-"""Every analytics surface counts a component's distinct live CVEs, not its per-version finding documents."""
-
 from datetime import datetime, timezone
 
 import pytest

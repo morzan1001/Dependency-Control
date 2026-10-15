@@ -141,11 +141,7 @@ async def test_analyzer_respects_disabled_rule(db):
 
 @pytest.mark.asyncio
 async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
-    """``crypto_findings_for_assets`` is shared with the ad-hoc path, which owns no scan.
-
-    The evaluator's whole contribution over it is the stored assets, the resolved policy and the
-    finding-type filter, so a change made for the other caller cannot pass unseen here.
-    """
+    """crypto_findings_for_assets is shared with the ad-hoc path, so a change made for that caller must show here."""
     stored = [
         CryptoAsset(
             project_id=_SHARED_PROJECT,
@@ -204,7 +200,6 @@ async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_end_to_end_cbom_ingest_creates_findings(client, db, running_worker, api_key_headers):
-    """CBOM ingest + analyzer dispatch produce findings in the findings collection."""
     import json
     from pathlib import Path
 

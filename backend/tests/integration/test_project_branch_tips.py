@@ -1,5 +1,3 @@
-"""The overview reads branch tips from the whole project, so a page of scans cannot hide a branch."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

@@ -1,9 +1,4 @@
-"""The CVE SLA ages each advisory from its first detection on the component in the project, whatever the
-version, carried forward at persist time.
-
-Retention deletes old scans, so the date has to travel with every scan's copy of the finding: an age
-read back from the surviving history could never outgrow the retention window.
-"""
+"""Retention deletes old scans, so the first-detection date travels with every scan's copy of the finding."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -86,7 +81,6 @@ async def _store_copy(db, scan_id: str, scan_created_at: datetime, finding: Find
 
 
 async def _sla_controls(db, scan_id: str) -> dict[str, ControlResult]:
-    """The CVE-SLA verdicts by control id over the findings the engine reads for ``scan_id``."""
     engine = ComplianceReportEngine()
     framework = CveRemediationSlaFramework()
     resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
@@ -419,7 +413,6 @@ def _outdated(component: str, version: str) -> Finding:
 
 
 async def _profiled(db, awaitable) -> list[dict]:
-    """What the awaited call ran against findings, as the server's profiler recorded it."""
     await db.command("profile", 2)
     try:
         await awaitable

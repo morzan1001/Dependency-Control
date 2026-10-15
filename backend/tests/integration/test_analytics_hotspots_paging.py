@@ -1,5 +1,3 @@
-"""Hotspots page through one total order, and only by the fields they can order by."""
-
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -20,7 +18,6 @@ def _no_live_enrichment(monkeypatch):
 
 
 async def _seed_groups(db, count: int) -> None:
-    """``count`` component@version groups, two versions per component, tied on every other sort key."""
     now = datetime.now(timezone.utc)
     await db.scans.insert_one(
         {"_id": _HEAD, "project_id": _PROJECT, "branch": "main", "status": "completed", "created_at": now}

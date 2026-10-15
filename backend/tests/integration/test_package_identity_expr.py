@@ -1,5 +1,4 @@
-"""The aggregation twin of package_identity has to agree with the Python function on the server
-itself: FakeDatabase evaluates $regexFind with Python's engine, the server with PCRE."""
+"""Live: the fake evaluates package_identity's $regexFind twin with Python's re, the server with PCRE."""
 
 import pytest
 

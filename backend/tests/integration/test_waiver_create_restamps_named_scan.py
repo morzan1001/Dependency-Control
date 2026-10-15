@@ -1,5 +1,3 @@
-"""A waiver written from a scan answers once that scan's findings carry it, so the page's refetch shows it waived."""
-
 import time
 from datetime import datetime, timezone
 

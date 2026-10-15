@@ -1,5 +1,3 @@
-"""The per-project view's upstream release cadence: how it is read, and that every read path keeps it."""
-
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -16,8 +14,6 @@ _PACKAGES = ("alpha", "beta", "gone")
 
 
 class _MemoryCache:
-    """The cache calls the view makes, over a dict, with every Redis round trip recorded."""
-
     def __init__(self) -> None:
         self.stored: dict[str, Any] = {}
         self.round_trips: list[str] = []
@@ -54,7 +50,6 @@ def cache(monkeypatch) -> _MemoryCache:
 
 @pytest.fixture
 def deps_dev(monkeypatch) -> tuple[list[int], list[str]]:
-    """Every client opened and every path requested while the view reads release histories."""
     opened: list[int] = []
     requested: list[str] = []
     real_client = httpx.AsyncClient

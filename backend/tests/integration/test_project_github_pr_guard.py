@@ -1,8 +1,5 @@
-"""PR decoration may only be enabled on a GitHub instance that can actually post."""
-
 import pytest
 
-# Shape of a github_instances document as written by VcsInstanceRepository.create.
 _INSTANCE_BASE = {
     "_id": "gh-1",
     "name": "GitHub.com",

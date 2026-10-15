@@ -1,5 +1,3 @@
-"""Integration tests for compliance-report endpoint authorization."""
-
 from datetime import datetime, timezone
 from unittest.mock import patch
 

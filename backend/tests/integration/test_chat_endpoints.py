@@ -1,5 +1,3 @@
-"""Integration tests for chat API endpoints."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +10,7 @@ from app.main import app
 
 @pytest_asyncio.fixture
 async def client():
-    # Override startup side-effects and get_database so no real Mongo/Redis is needed; auth still 401s before any DB access.
+    # Auth answers 401 before any database access, so a mock stands in for Mongo and Redis.
     mock_db = MagicMock()
 
     def override_get_database():

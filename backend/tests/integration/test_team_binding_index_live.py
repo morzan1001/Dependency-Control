@@ -1,9 +1,4 @@
-"""The binding-key index must keep a group to one team without making an unbound team unwritable.
-
-Against a real server: the uniqueness is a multikey partial index, and the two properties that
-matter — a document holding no binding is outside the unique scope, and a document's own duplicate
-keys collapse — are server behaviour a fake cannot establish.
-"""
+"""Live: a multikey partial index's scope and its per-document key dedupe are server behaviour a fake cannot show."""
 
 import pytest
 from pymongo.errors import DuplicateKeyError
@@ -21,8 +16,7 @@ def _github(instance_id="gh-1", external_id=4711, org="acme", slug="payments") -
 
 
 async def test_two_teams_holding_no_binding_coexist(db):
-    """Every team document carries the field as an empty array, and a unique index over a path
-    inside it would otherwise index both under the key null."""
+    """Every team holds an empty bindings array, which a unique index on a path inside it would key as null."""
     await create_indexes(db)
     repo = TeamRepository(db)
 
@@ -63,8 +57,7 @@ async def test_the_same_gitlab_group_cannot_be_bound_twice(db):
 
 
 async def test_an_external_id_beyond_int32_is_still_unique(db):
-    """The key is a string, so a BSON long id is inside the unique scope where a $type: "int"
-    filter over the numeric field would have exempted it."""
+    """The key is a string, so a BSON long id stays inside the unique scope a $type: "int" filter would exempt."""
     await create_team_indexes(db)
     repo = TeamRepository(db)
     binding = _github(external_id=2**31 + 7, slug="wide")
@@ -112,8 +105,7 @@ async def test_one_team_holds_the_same_group_number_on_two_instances_of_one_prov
 
 
 async def test_a_second_binding_on_one_instance_is_refused_by_the_write_and_not_by_the_index(db):
-    """A multikey index deduplicates the keys of a single document, so it cannot see a second
-    binding on the same instance; the filter on the write is the only thing that can."""
+    """A multikey index dedupes one document's keys, so only the write's filter can refuse a second binding."""
     await create_team_indexes(db)
     repo = TeamRepository(db)
     await repo.create(Team(id="t-1", name="Payments", bindings=[_github()]))

@@ -1,5 +1,3 @@
-"""A scan delta compares both scans whole, however many rows a side holds."""
-
 import json
 from datetime import datetime, timezone
 from pathlib import Path

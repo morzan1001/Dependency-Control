@@ -1,5 +1,3 @@
-"""The registered protocol cipher-suite evaluator produces findings."""
-
 import pytest
 
 from app.models.crypto_asset import CryptoAsset

@@ -1,5 +1,3 @@
-"""The scan detail page reads its counters straight from GET /projects/scans/{scan_id}."""
-
 from datetime import datetime, timezone
 
 import pytest

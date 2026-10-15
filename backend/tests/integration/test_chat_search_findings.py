@@ -1,5 +1,3 @@
-"""search_findings finds a term in any case anywhere in a finding's id, component, description or advisory ids."""
-
 from datetime import datetime, timezone
 
 import pytest

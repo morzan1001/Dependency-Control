@@ -1,6 +1,3 @@
-"""Ad-hoc analysis leaves no MongoDB document, no GridFS blob, no file and no caller-derived cache entry; its
-endpoint keeps only the job it queued."""
-
 from __future__ import annotations
 
 import asyncio
@@ -29,8 +26,7 @@ from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
 from tests.helpers.analyzers import build_analyzer, serve_analyzer
 from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
-# The scan-backed pipeline's collections plus the GridFS indexes. A floor, not a closed set:
-# the runtime sweep below also covers whatever the run vivified that nobody listed here.
+# A floor, not a closed set: the runtime sweep below also covers collections the run vivified.
 _PERSISTENCE_COLLECTIONS: tuple[str, ...] = (
     "scans",
     "findings",
@@ -42,8 +38,7 @@ _PERSISTENCE_COLLECTIONS: tuple[str, ...] = (
     "fs.chunks",
 )
 
-# Fail closed: a collection method outside this set counts as a write, so a driver call
-# nobody anticipated is a violation until someone classifies it deliberately.
+# Fail closed: a collection method outside this set counts as a write.
 _COLLECTION_READS = frozenset(
     {
         "count_documents",
@@ -61,8 +56,6 @@ _AGGREGATE = "aggregate"
 # The one method whose read-ness depends on its argument: these stages write server-side.
 _WRITING_AGGREGATION_STAGES = frozenset({"$out", "$merge"})
 
-# Reaching a datastore other than through the injected handle: the module-level accessors,
-# or a driver client/bucket built from scratch, which never touches those modules at all.
 _BYPASS_ENTRY_POINTS = ("get_database", "connect_to_mongo")
 
 _MOTOR_CLIENT_LABEL = "motor.motor_asyncio.AsyncIOMotorClient"
@@ -85,8 +78,7 @@ _DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
 # Upstream reference lists shared by every caller: the key names the source, never the payload.
 _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset({CacheKeys.popular_packages("pypi"), CacheKeys.kev_catalog()})
 
-# The run reads the shared cache and publishes nothing back. An equality assertion on the
-# reads, so an analyzer that stops running cannot quietly shrink the cache nets to nothing.
+# Asserted by equality, so an analyzer that stops running cannot quietly shrink the cache nets.
 _EXPECTED_CACHE_READS = frozenset({CacheKeys.popular_packages("pypi")})
 
 _UPSTREAM_PYPI_KEY = f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('pypi')}"
@@ -112,8 +104,7 @@ _REACHABILITY = "reachability"
 # The SBOM below carries a cryptographic-asset component, so the crypto stage evaluates it.
 _CRYPTO_RULES = "crypto_rules"
 
-# A deliberately misspelled dependency. No upstream reference list can legitimately contain it,
-# so finding it inside a shared cache value means caller data leaked in under a permitted key.
+# Misspelled on purpose: no upstream list can contain it, so finding it in a shared cache value is a leak.
 _CALLER_ONLY_COMPONENT = "expresss"
 
 _SBOM = {
@@ -200,8 +191,7 @@ _KICS = {
     ]
 }
 
-# A callgraph the parsers actually read, so the reachability stage runs inside every net
-# below; the scan-backed path bulk-writes its verdicts, and this one must not.
+# Parseable, so the reachability stage, which bulk-writes verdicts on the scan path, runs in every net.
 _CALLGRAPH = {
     "language": "python",
     "format": "generic",
@@ -211,32 +201,22 @@ _CALLGRAPH = {
 
 _SCANNER_PAYLOADS = {"trufflehog": _TRUFFLEHOG, "opengrep": _OPENGREP, "bearer": _BEARER, "kics": _KICS}
 
-# The two registered analyzers this path can carry to a verdict without a scan behind it:
-# one pure, one cache-backed. The crypto analyzers read assets from a completed scan and the
-# rest fan out to package registries, so both are resolved away before they can run.
+# One pure, one cache-backed: the other analyzers need a completed scan or package registries.
 _ANALYZERS = ["license_compliance", "typosquatting"]
 
-# The set above pins the CLI analyzers as skipped, so the one ad-hoc path that writes a file and
-# forks a process is the one the nets never reach. It gets its own case below.
+# The nets run with CLI analyzers skipped, so the one path that writes a file and forks gets its own case.
 _CLI_ANALYZER = "grype"
-# The real binary is absent here and the image's is not reproducible; what the case proves is that
-# the request ends whatever it forked, which any long-running executable stands in for.
+# Stands in for the absent scanner binary: the case proves the request ends whatever it forked.
 _HANGING_SCANNER = ["sleep", "400"]
 _CANCEL_AFTER_SECONDS = 0.5
 _ONE_SCANNER = 1
 
-# Every net below is only as wide as the run that exercises it, so the run's own reach is
-# asserted by equality rather than by truthiness.
+# Each net is only as wide as the run, so the run's reach is asserted by equality, not truthiness.
 _EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_REACHABILITY, _CRYPTO_RULES}
 _EXPECTED_SKIPPED = (frozenset(analyzer_factories) | CRYPTO_ANALYZERS | {_ENRICHMENT}) - frozenset(_ANALYZERS)
 
 
-# ── Net 1: every call the run makes on a collection
-
-
 class _WatchedCollection:
-    """Delegates to a real FakeCollection, recording every call that is not a known read."""
-
     def __init__(self, name: str, inner: FakeCollection, writes: list[str]) -> None:
         self._name = name
         self._inner = inner
@@ -246,8 +226,7 @@ class _WatchedCollection:
         try:
             target = getattr(self._inner, attribute)
         except AttributeError:
-            # A driver API the fake never modelled is exactly the unanticipated write this
-            # net promises to catch. Dunders are Python's own probing, not a driver call.
+            # Any other attribute the fake lacks is an unanticipated write; dunders are Python's own probing.
             if not (attribute.startswith("__") and attribute.endswith("__")):
                 self._writes.append(f"{self._name}.{attribute}")
             raise
@@ -287,8 +266,6 @@ class _WatchedCollection:
 
 
 class _WriteRecordingDatabase(FakeDatabase):
-    """A FakeDatabase whose collections are all watched, pre-created and vivified alike."""
-
     def __init__(self) -> None:
         super().__init__()
         object.__setattr__(self, "writes", [])
@@ -316,9 +293,6 @@ async def assert_nothing_persisted(db: Any) -> None:
 
 def assert_no_write_calls(db: _WriteRecordingDatabase) -> None:
     assert db.writes == [], f"ad-hoc analysis made write calls: {db.writes}"
-
-
-# ── Net 2: a datastore reached without the injected handle
 
 
 class _BypassTripwire:
@@ -366,12 +340,7 @@ def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return touched
 
 
-# ── Nets 3 and 4: Redis key and value policy
-
-
 class _RecordingRedis:
-    """Minimal Redis stand-in that serves what it holds and records every key it touches."""
-
     def __init__(self, store: dict[str, str], writes: list[tuple[str, str]], reads: list[str]) -> None:
         self._store = store
         self._writes = writes
@@ -445,7 +414,6 @@ class _RecordedCache:
 
 
 def assert_no_caller_derived_cache_writes(writes: list[tuple[str, str]]) -> None:
-    """Upstream reference data may be cached; anything keyed off the posted payload may not."""
     leaked = [key for key, _ in writes if _unprefixed(key) not in _UPSTREAM_REFERENCE_CACHE_KEYS]
     assert leaked == [], f"ad-hoc analysis cached caller-derived keys: {leaked}"
 
@@ -473,9 +441,6 @@ def recording_cache(monkeypatch: pytest.MonkeyPatch) -> _RecordedCache:
     return recorded
 
 
-# ── Net 5: the filesystem
-
-
 def assert_no_files_left_behind(scratch: Path) -> None:
     leaked = sorted(str(path) for path in scratch.rglob("*") if path.is_file())
     assert leaked == [], f"ad-hoc analysis left files on disk: {leaked}"
@@ -487,9 +452,6 @@ def filesystem_watch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     return tmp_path
-
-
-# ── The proof
 
 
 def _full_request() -> AdhocAnalyzeRequest:
@@ -641,8 +603,6 @@ def _without_last_use(keys: list[dict[str, Any]]) -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_the_endpoint_writes_only_its_job(client, db, running_worker, recording_cache, filesystem_watch):
-    """Same guarantee one layer up, over both exits: the job, its input and result files and the key's
-    last use are the only writes, and rendering a report reads a template rather than writing one."""
     token = await _seed_adhoc_key(db)
     headers = {"Authorization": f"Bearer {token}"}
     before = await _snapshot(db)
@@ -678,8 +638,7 @@ async def test_the_endpoint_writes_only_its_job(client, db, running_worker, reco
 async def test_a_cancelled_cli_analyzer_leaves_no_scanner_running_and_no_file(
     monkeypatch, bypass_attempts, recording_cache, filesystem_watch
 ):
-    """Cancelling an ad-hoc run cancels the scanner's own ``cli_timeout`` with it, so nothing
-    downstream is left to bound the process."""
+    """Cancelling the run cancels the scanner's own cli_timeout too, so nothing else bounds the process."""
     analyzer = build_analyzer(_CLI_ANALYZER)
     monkeypatch.setattr(analyzer, "is_tool_available", lambda: True)
     monkeypatch.setattr(analyzer, "_build_command_args", lambda _path: list(_HANGING_SCANNER))
@@ -716,9 +675,6 @@ async def test_cache_suppression_does_not_outlive_the_run(recording_cache):
 
     assert await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_LEAK_ID]) is True
     assert recording_cache.written_keys() == {_CALLER_DERIVED_CACHE_KEY}
-
-
-# ── The proof's own detectors
 
 
 @pytest.mark.asyncio

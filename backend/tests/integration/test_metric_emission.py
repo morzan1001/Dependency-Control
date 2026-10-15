@@ -1,5 +1,3 @@
-"""Every instrumented path of the cache, worker, Mongo client and analysis engine moves its Prometheus series."""
-
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock

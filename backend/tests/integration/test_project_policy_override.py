@@ -1,5 +1,3 @@
-"""Project-level CryptoPolicy overrides tested directly against the weak-algorithm rule evaluator with the fake DB."""
-
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
@@ -27,7 +25,6 @@ def _rule(rule_id, enabled=True, **extra):
 
 @pytest.mark.asyncio
 async def test_override_disables_rule_and_suppresses_findings(db):
-    """A project override with enabled=False suppresses findings from the matching system rule."""
     policy_repo = CryptoPolicyRepository(db)
     asset_repo = CryptoAssetRepository(db)
 
@@ -76,7 +73,6 @@ async def test_override_disables_rule_and_suppresses_findings(db):
 
 @pytest.mark.asyncio
 async def test_override_adds_custom_rule(db):
-    """A project override can add a custom rule absent from the system policy."""
     policy_repo = CryptoPolicyRepository(db)
     asset_repo = CryptoAssetRepository(db)
 

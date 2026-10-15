@@ -1,5 +1,3 @@
-"""What each analyzer outcome does to the scan, its findings, the metrics and the completion notice."""
-
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -36,8 +34,6 @@ _SBOM_ANALYZERS = ["end_of_life", "grype", "license_compliance", "osv", "trivy"]
 
 
 class _Scripted:
-    """Answers one SBOM per call, in order: a result, or an exception it raises."""
-
     def __init__(self, *answers):
         self._answers = list(answers)
 
@@ -77,7 +73,6 @@ def _sample(name: str, analyzer: str) -> float:
 async def _run(
     db, analyzers: list[str], *, sboms: int = 2, scan_type: str | None = None, external: dict | None = None
 ) -> str:
-    """Analyse a stored scan of ``sboms`` SBOMs whose external scanners already posted ``external``."""
     await create_indexes(db)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="outcomes").model_dump(by_alias=True))
     refs = [await store_sbom(db, _SBOM) for _ in range(sboms)]
@@ -97,7 +92,6 @@ async def _run(
 
 
 async def _mixed_run(db, monkeypatch) -> str:
-    """Two SBOMs: every kind of analyzer outcome, two external results and a partial enrichment."""
     serve_analyzer(monkeypatch, "end_of_life", _Scripted({}, {}))
     serve_analyzer(monkeypatch, "grype", _Scripted(_GRYPE_MATCH, {"matches": []}))
     serve_analyzer(monkeypatch, "license_compliance", _Scripted({}, RuntimeError("license feed down")))

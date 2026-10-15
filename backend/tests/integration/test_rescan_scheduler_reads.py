@@ -1,5 +1,4 @@
-"""Every pass re-reads the targets of every rescan-enabled project, so each read has to stay one index
-seek however many rescans the scheduler itself has piled up, and return no more than a rescan needs."""
+"""Every pass re-reads all rescan targets, so each read must stay one index seek however many rescans pile up."""
 
 from datetime import datetime, timedelta, timezone
 

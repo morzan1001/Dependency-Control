@@ -1,5 +1,3 @@
-"""An advisory reaches the projects whose head scan carries a covered version of the package."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 

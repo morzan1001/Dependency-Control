@@ -1,5 +1,3 @@
-"""Hotspots and impact score each advisory's risk on its own CVSS, as scan-time enrichment does."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -121,7 +119,6 @@ async def test_the_kev_count_counts_each_live_kev_advisory(client, db, seeded, m
         {"aliases": [], "id": "CVE-2026-0021", "severity": "HIGH", "cvss_score": 7.5},
         {"aliases": [], "id": "CVE-2026-0022", "severity": "HIGH", "cvss_score": 7.5, "waived": True},
     ]
-    # Live in another component, the waived CVE is enriched like the others.
     elsewhere = _finding("elsewhere", {"id": "CVE-2026-0022", "severity": "HIGH", "cvss_score": 7.5})
     await db.findings.insert_many([exploited, elsewhere])
 

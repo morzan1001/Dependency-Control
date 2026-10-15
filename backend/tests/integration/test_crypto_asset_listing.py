@@ -1,5 +1,3 @@
-"""Crypto asset filtering, pagination and summary aggregation in CryptoAssetRepository."""
-
 import pytest
 
 from app.models.crypto_asset import CryptoAsset

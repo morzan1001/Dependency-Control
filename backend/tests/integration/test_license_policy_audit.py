@@ -1,5 +1,3 @@
-"""PUT /api/v1/projects/{id} records a license-policy audit entry when the effective license policy changes."""
-
 import pytest
 
 from app.repositories.policy_audit_entry import PolicyAuditRepository

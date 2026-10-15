@@ -1,5 +1,3 @@
-"""The live update-frequency walk names a scan cap only when it left part of the requested window unread."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

@@ -1,4 +1,4 @@
-"""The stats projection on a real server: advisory fields read out of an array of subdocuments."""
+"""Live: projecting advisory fields out of an array of subdocuments is server semantics."""
 
 import copy
 

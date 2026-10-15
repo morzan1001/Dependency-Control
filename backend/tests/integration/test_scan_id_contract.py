@@ -1,5 +1,3 @@
-"""The SBOM, the scanner results and the callgraph of one CI run land on one scan, by one id rule."""
-
 import json
 import uuid
 from pathlib import Path

@@ -1,5 +1,3 @@
-"""A second project for one GitLab project is refused, whatever numeric type a writer stored its id in."""
-
 import pytest
 from bson.int64 import Int64
 from pymongo.errors import DuplicateKeyError

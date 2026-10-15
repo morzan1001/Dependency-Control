@@ -1,5 +1,3 @@
-"""Partially-failed scans must surface the loss: status completed_with_errors, error text, failed_analyzers."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -87,22 +85,18 @@ class _FailingAnalyzer:
 
 
 class _ErrorResultAnalyzer:
-    """Returns an error-shaped result that aggregates into one SYSTEM_WARNING finding."""
-
     async def analyze(self, sbom, settings=None, parsed_components=None):
         return {"error": "controlled scanner error"}
 
 
 class _CliTimeoutAnalyzer:
-    """Real CLI failure shape: cli_base returns error dicts instead of raising (dominant prod case)."""
+    """Real CLI failure shape: cli_base returns error dicts instead of raising."""
 
     async def analyze(self, sbom, settings=None, parsed_components=None):
         return {"error": "grype analysis failed", "details": "grype timed out after 300 seconds"}
 
 
 class _GrypeVulnAnalyzer:
-    """Grype's native result shape, so the run produces a vulnerability finding to enrich."""
-
     async def analyze(self, sbom, settings=None, parsed_components=None):
         return {
             "matches": [
@@ -124,8 +118,6 @@ class _GrypeVulnAnalyzer:
 
 
 class _PartialResultAnalyzer:
-    """Mimics W15: reports success but flags skipped coverage."""
-
     async def analyze(self, sbom, settings=None, parsed_components=None):
         return {"osv_vulnerabilities": [], "partial_components_skipped": 7}
 
@@ -147,7 +139,6 @@ async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _stored_
     assert "boom" in scan["error"]
     assert scan["failed_analyzers"] == ["boom"]
     assert scan["latest_run"]["status"] == "completed_with_errors"
-    # The failure is also visible as a persisted finding.
     error_findings = [d async for d in db.findings.find({"scan_id": scan_id, "finding_id": "SCAN-ERROR-boom"})]
     assert len(error_findings) == 1
 
@@ -155,7 +146,6 @@ async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _stored_
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
-    """CLI analyzers (grype/trivy) report timeouts as error dicts, not exceptions — 95% of prod failures."""
     serve_analyzer(monkeypatch, "grype", _CliTimeoutAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
@@ -239,8 +229,7 @@ async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcom
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_enrichment_failure_is_recorded_on_the_scan(db, _stored_sboms, monkeypatch):
-    """An EPSS/KEV outage writes no analysis_results document (the write sits inside the
-    try) and must not change the status, so the scan field is its only queryable trace."""
+    """An EPSS/KEV outage leaves no analysis_results row and no status change; the scan field is its only trace."""
 
     async def _enrichment_outage(*_args, **_kwargs):
         raise RuntimeError("EPSS feed unreachable")

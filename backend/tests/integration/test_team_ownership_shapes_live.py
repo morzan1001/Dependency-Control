@@ -1,9 +1,4 @@
-"""What a co-owned project does to a count.
-
-The storage engine answers it, not our code: whether a document counts once or once per owner
-depends on whether a pipeline unwound the array. Each assertion therefore runs against a real
-server as well as the double.
-"""
+"""Whether a co-owned project counts once or per owner is the engine's answer, so each case also runs live."""
 
 import pytest
 
@@ -62,10 +57,7 @@ async def _assert_a_project_counts_in_full_under_every_team_that_owns_it(db) -> 
         _ALPHA: {"solo", "co"},
         _BRAVO: {"co", "other"},
     }
-    # D2: the co-owned project is a whole project to each of its owners, so the per-team totals
-    # overlap and deliberately outrun the number of projects that have an owner at all. A rollup
-    # that made them add up would credit each owner with a fraction of a project nobody owns a
-    # fraction of.
+    # A co-owned project is whole to each owner, so per-team totals deliberately outrun the owned count.
     assert sum(page["total"] for page in per_team.values()) == owned + 1
 
 

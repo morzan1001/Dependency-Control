@@ -1,5 +1,3 @@
-"""The retention sweep deletes expired compliance reports, fails reports a dead pod left unfinished, and keeps the rest."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

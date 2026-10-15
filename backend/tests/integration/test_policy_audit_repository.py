@@ -92,8 +92,7 @@ async def test_delete_older_than(db):
 
 @pytest.mark.asyncio
 async def test_delete_older_than_spares_an_entry_stamped_at_the_cutoff(db):
-    """A retention cutoff derived from a timestamp the caller already holds would otherwise take
-    the very entry it names with it."""
+    """A cutoff derived from a timestamp the caller holds must not take the entry it names."""
     cutoff = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     repo = PolicyAuditRepository(db)
     await repo.create(_entry(version=1, ts=cutoff - timedelta(milliseconds=1)))

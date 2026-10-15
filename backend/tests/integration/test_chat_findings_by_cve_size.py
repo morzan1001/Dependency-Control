@@ -1,5 +1,3 @@
-"""get_findings_by_cve names every project a CVE occurs in, with its count, however often it occurs."""
-
 import json
 from datetime import datetime, timezone
 

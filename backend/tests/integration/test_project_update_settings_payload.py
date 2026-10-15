@@ -1,10 +1,3 @@
-"""The settings form's payload must arrive intact.
-
-`ProjectUpdate` declared none of the re-scan or GitLab-link fields the form sends, so those five
-keys were dropped by the schema: toggling per-project re-scanning returned 200 and changed nothing,
-and two consumers read keys that could never be present.
-"""
-
 import pytest
 
 # Exactly what ProjectSettings.tsx handleUpdate() sends.

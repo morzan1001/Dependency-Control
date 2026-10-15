@@ -1,10 +1,3 @@
-"""One team bound to two instances of one provider, through the real repositories and a real server.
-
-This is what the per-instance binding is for. Each instance's ingest must resolve the team through
-its own binding, own its own projects, and leave the other instance's binding and owners alone —
-including on the second CI run, which is where a provider-wide binding first destroys something.
-"""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -36,7 +29,6 @@ def _service(instance_id: str) -> GitHubService:
 
 
 def _reads(service: GitHubService, org_teams: list[dict], repo_map: dict[str, list[int]]):
-    """Every read the resolution makes, answered as GitHub would for a group that holds the repository."""
     return (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams)),
         patch.object(service, "team_writes_to_repository", new=AsyncMock(return_value=True)),
@@ -48,7 +40,6 @@ def _reads(service: GitHubService, org_teams: list[dict], repo_map: dict[str, li
 async def _ingest(
     db, instance_id: str, org_teams: list[dict], project_id: str, path: str, held: list[int] | None = None
 ) -> Project:
-    """One CI run of one instance against one of its projects, which ``held`` or else every team holds."""
     project_repo = ProjectRepository(db)
     project = await project_repo.get_by_id(project_id)
     service = _service(instance_id)
@@ -118,8 +109,7 @@ async def _assert_a_second_run_disturbs_neither_the_other_binding_nor_its_owners
         f"github:{_A}:4711",
         f"github:{_B}:8150",
     ]
-    # Each instance resolved the same person; the entry stays with the instance that added it first,
-    # and one entry is what matters — two would break add_member's $ne guard.
+    # One entry, kept by the instance that added it first: two would break add_member's $ne guard.
     assert team["members"] == [{"user_id": "u-ada", "role": "admin", "source": _SOURCE_A}]
 
 
@@ -137,8 +127,6 @@ async def _assert_a_rename_on_one_instance_leaves_the_other_binding_alone(db) ->
 
 
 async def _assert_one_instance_resolves_only_through_its_own_binding(db) -> None:
-    """The team is bound on B only. A's ingest must find nothing rather than read B's binding as
-    its own and hand A's repository to a team no group of A's holds."""
     await create_team_indexes(db)
     await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     await TeamRepository(db).create(
@@ -211,7 +199,6 @@ async def test_one_instance_resolves_only_through_its_own_binding_on_real_mongo(
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_a_generated_name_does_not_flip_between_the_instances_on_real_mongo(db):
-    """The team keeps A's generated name through B's runs instead of the last pipeline's."""
     await _seed(db, name="GitHub Team: acme/payments")
 
     await _ingest(db, _B, _TEAMS_B, "p-b", "acme/p-b")

@@ -1,5 +1,3 @@
-"""The head writer's derivation and pointer guard, on a real server."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

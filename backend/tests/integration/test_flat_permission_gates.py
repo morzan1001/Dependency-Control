@@ -1,5 +1,3 @@
-"""Archive and chat routes gate on PermissionChecker, so a refusal names the permission it wanted."""
-
 import pytest
 
 from app.core.config import settings

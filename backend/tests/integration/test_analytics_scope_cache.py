@@ -1,5 +1,3 @@
-"""Scope-wide analytics views are cached per caller scope, not per head scan, and concurrent misses share one run."""
-
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch

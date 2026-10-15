@@ -1,6 +1,3 @@
-"""Identity writes over HTTP: a malformed identity is a 422 at the boundary, and an email or username
-another account holds is the same 400 on every path, also when only the unique index sees it."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 

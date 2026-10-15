@@ -1,5 +1,3 @@
-"""run_analysis on a FakeDatabase: analyzer set, GitHub token, final status and what reaches notifications."""
-
 import asyncio
 import inspect
 from datetime import datetime, timedelta, timezone
@@ -50,7 +48,6 @@ def _no_gridfs(monkeypatch):
 
 @pytest_asyncio.fixture
 async def stored_sbom(db, monkeypatch) -> dict:
-    """A stored SBOM without components, for a run that has to reach its analyzers."""
     monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", AsyncIOMotorGridFSBucket)
     await create_indexes(db)
     return await store_sbom(db, _EMPTY_SBOM)
@@ -69,7 +66,6 @@ def notified(monkeypatch) -> list[Stats]:
 
 @pytest.mark.asyncio
 async def test_an_analysis_stamps_only_its_own_scan_and_notifies_its_own_stats(db, notified, monkeypatch):
-    """Its one waiver pass is the analysed scan's: no project recalculation follows it."""
     await db.waivers.insert_one(
         {"_id": "w-1", "project_id": _PROJECT_ID, "finding_id": "x", "reason": "r", "created_by": "u"}
     )
@@ -127,8 +123,6 @@ async def test_a_scan_that_is_not_finalized_is_not_notified(db, notified, monkey
 
 
 def _gridfs_outage(monkeypatch, while_listing=lambda: asyncio.sleep(0)) -> dict:
-    """GridFS holds none of the scan's SBOM files."""
-
     async def _no_stored_files(_filter):
         await while_listing()
         for stored in ():
@@ -384,7 +378,6 @@ async def test_a_run_whose_old_sbom_failed_to_load_after_a_replace_is_reschedule
 
 
 async def _finished_scan_with_an_analysis(db, ref: dict, retry_count: int) -> str:
-    """A late result reopened a finished scan whose findings, results and inventory are stored."""
     scan = Scan(
         project_id=_PROJECT_ID,
         branch="main",
@@ -498,7 +491,6 @@ async def test_a_re_analysis_whose_sbom_was_replaced_meanwhile_is_rescheduled(db
 
 @pytest.mark.asyncio
 async def test_a_re_analysis_that_keeps_the_earlier_analysis_heads_the_project_again(db, notified, monkeypatch):
-    """While it was processing, an older build took the head; usable again, it takes the head back."""
     ref = _gridfs_outage(monkeypatch)
     await db.scans.insert_one(
         {"_id": "older", "project_id": _PROJECT_ID, "branch": "main", "status": "completed", "created_at": _T0}
@@ -530,7 +522,6 @@ def handed_over(monkeypatch) -> AsyncMock:
 
 
 async def _callgraph_upload(db, scan_id: str) -> None:
-    """What the upload endpoint leaves behind for a scan that is still being analysed."""
     await db.callgraphs.insert_one({"_id": "cg-1", "project_id": _PROJECT_ID, "scan_id": scan_id, "language": "python"})
     await db.scans.update_one({"_id": scan_id}, {"$set": {"reachability_pending": True}})
 

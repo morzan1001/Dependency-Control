@@ -1,5 +1,3 @@
-"""A profile email change answers over HTTP whether it waits for the mailed link or applied at once."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest

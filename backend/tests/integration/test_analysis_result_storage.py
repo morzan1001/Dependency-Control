@@ -1,5 +1,3 @@
-"""Raw results: one GridFS file per scan, analyzer and source, replaced on resubmission, read through one loader."""
-
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -95,8 +93,6 @@ _BEARER_FINDINGS = {
 
 
 class _DepsDevAnswers(OutdatedAnalyzer):
-    """The outdated analyzer with deps.dev answering 5.0.0 as every package's default version."""
-
     async def _resolve_package_infos(self, components: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
         return [{"default": "5.0.0", "withdrawn": []} for _ in components]
 
@@ -123,7 +119,6 @@ async def _file_length(db, file_id: str) -> int:
 
 
 def _kics_report_of_a_monorepo(services: int) -> dict[str, Any]:
-    """The real kics report as if every one of ``services`` services held the scanned files."""
     return {
         **_KICS_REPORT,
         "queries": [
@@ -141,7 +136,6 @@ def _kics_report_of_a_monorepo(services: int) -> dict[str, Any]:
 
 
 async def _analyze_sbom_of_a_new_scan(db, components: list[dict[str, Any]]) -> str:
-    """One scan whose SBOM is stored the way ingest stores it, analysed by the outdated analyzer."""
     ref = await store_sbom(db, {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components})
     scan = Scan(project_id="p", branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))

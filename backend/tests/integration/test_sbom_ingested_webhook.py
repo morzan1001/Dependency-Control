@@ -1,5 +1,3 @@
-"""SBOM ingest fires an sbom.ingested webhook; trigger_webhooks is spied to assert event name and payload shape."""
-
 import json
 from pathlib import Path
 from unittest.mock import patch

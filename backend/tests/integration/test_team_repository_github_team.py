@@ -1,5 +1,3 @@
-"""A bound team is looked up by (provider, instance, id) or (instance, organisation), never by id alone."""
-
 import pytest
 
 from app.core.constants import TEAM_SOURCE_GITHUB
@@ -61,8 +59,7 @@ async def _assert_a_gitlab_binding_of_the_same_instance_id_is_left_out(db) -> No
     repo = await _seed(db)
     await repo.create(Team(id="t-gl", name="Edge", bindings=[GitLabGroupBinding(instance_id="gh-1", external_id=1)]))
 
-    # Instance ids are unique across providers, but a filter that dropped the provider would read
-    # a GitLab group as a GitHub team and ask the organisation about a number it never issued.
+    # A filter without the provider would read a GitLab group as a GitHub team of the same number.
     assert [team["_id"] for team in await repo.find_raw_by_github_org("gh-1", "acme")] == ["t-a"]
 
 

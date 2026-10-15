@@ -1,5 +1,3 @@
-"""An archive bundle carries every GridFS file of a scan as chunk frames, restored byte-identical under the same ids."""
-
 import asyncio
 import contextlib
 import json
@@ -51,7 +49,6 @@ def _sbom_fixture() -> dict[str, Any]:
 
 
 def _sbom_of(size: int) -> dict[str, Any]:
-    """The real uv syft SBOM, its components repeated under distinct names until it serializes past ``size`` bytes."""
     sbom = _sbom_fixture()
     components = sbom["components"]
     copies = size // len(json.dumps(components)) + 1
@@ -64,7 +61,6 @@ def _sbom_of(size: int) -> dict[str, Any]:
 
 
 async def _seed_scan(db, sbom: dict[str, Any]) -> Scan:
-    """A CI run's scan whose SBOM is stored the way ingest stores it."""
     [ref] = await _upload_recognized_sboms([sbom], db, _SCAN_ID)
     scan = Scan(
         id=_SCAN_ID,
@@ -80,7 +76,6 @@ async def _seed_scan(db, sbom: dict[str, Any]) -> Scan:
 
 
 async def _seed_finished_rescan(db, scan: Scan) -> Scan:
-    """A rescan whose analysis finished, so retention may archive it."""
     rescan = build_rescan(scan.model_dump(by_alias=True))
     rescan.status = "completed"
     await db.scans.insert_one(rescan.model_dump(by_alias=True))
@@ -117,7 +112,6 @@ async def _delete_and_age(db, scan_ids: tuple[str, ...]) -> None:
 
 
 async def _expire(db, scan_ids: tuple[str, ...] = (_SCAN_ID,)) -> None:
-    """Retention deletes the archived scans; a day later the reaper deletes every file nothing references."""
     await _delete_and_age(db, scan_ids)
     await reap_orphan_gridfs_files(db)
 
@@ -129,7 +123,6 @@ async def _archive(db) -> ArchiveMetadata:
 
 
 async def _archive_without_chunk_frames(db, archive_env, sbom: dict[str, Any]) -> None:
-    """Store the bundle an archive from before chunk frames wrote: each SBOM as one parsed gridfs_sboms entry."""
     scan = await db.scans.find_one({"_id": _SCAN_ID})
     entries = [{"gridfs_id": ref["gridfs_id"], "filename": ref["filename"], "data": sbom} for ref in scan["sbom_refs"]]
     bundle = b"".join(
@@ -163,7 +156,6 @@ async def _aiter(items: list[Any]) -> AsyncIterator[Any]:
 
 
 def _replay_with(monkeypatch, before_event) -> None:
-    """Run ``before_event`` on every bundle event a restore reads, before the restore processes it."""
     read_bundle_frames = archive.read_bundle_frames
 
     async def intercepted(source: AsyncIterator[bytes]) -> AsyncIterator[dict[str, Any]]:
@@ -377,7 +369,6 @@ async def test_a_reaper_run_whenever_a_restore_reaches_a_file_frees_none_of_the_
     await _seed_scan_with_result_and_callgraph(client, db, _sbom_fixture())
     before = await _stored_files(db)
     await _archive(db)
-    # Retention deleted the scan, but the reaper has not yet freed the files nothing references now.
     await _delete_and_age(db, (_SCAN_ID,))
     reaped: list[int] = []
     write = archive._GridFSRestore.write

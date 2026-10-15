@@ -1,5 +1,3 @@
-"""The scan findings table joins each finding to its dependency; the join must cost a page, not the scan."""
-
 import pytest
 import pytest_asyncio
 

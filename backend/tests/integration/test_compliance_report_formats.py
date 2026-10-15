@@ -1,5 +1,3 @@
-"""Format-coverage tests for the compliance report pipeline across text formats."""
-
 import asyncio
 
 import pytest
@@ -23,7 +21,6 @@ async def _poll_until_terminal(client, report_id, headers, attempts=_POLL_ATTEMP
 
 
 def _install_fake_pipeline(monkeypatch):
-    """Common monkeypatch setup: fake gather_inputs + fake GridFS store."""
     from unittest.mock import AsyncMock
 
     from app.api.v1.endpoints import compliance_reports as ep_mod

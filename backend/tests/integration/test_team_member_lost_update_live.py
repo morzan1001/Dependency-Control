@@ -1,12 +1,4 @@
-"""A member added while a sync is in flight, against a real server.
-
-The sync reads the team several HTTP round trips before it writes its members back. An admin adding
-someone in that window has already been told the add succeeded, so the write that follows must be
-computed from the array as the server holds it and not from the snapshot the sync started with.
-
-A real server only: the fake hands out the stored document itself, so a merge in Python reads the
-add through its own snapshot and the race it loses the member to cannot happen there.
-"""
+"""Live only: the fake hands out the stored document itself, so the lost-update race cannot happen there."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -27,8 +19,7 @@ _OWN = team_source(TEAM_SOURCE_GITHUB, _INSTANCE)
 _TEAM_ID = "t-pay"
 _ORG_TEAMS = [{"id": 4711, "slug": "payments", "name": "Payments", "parent": None}]
 
-# Long enough that the add is a round trip of its own inside the window, short enough to keep the
-# suite quick; the measured window in production was 0.8s.
+# Long enough for the add to be its own round trip inside the window, short enough to keep the suite quick.
 _MID_SYNC = 0.05
 
 
@@ -50,7 +41,6 @@ async def _seed(db, *, members: list[TeamMember] | None = None) -> TeamRepositor
 
 
 async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
-    """One ingest whose member fetch is interrupted by an admin adding a member by hand."""
     repo = TeamRepository(db)
     service = GitHubService(make_github_instance(id=_INSTANCE, access_token="ghp-secret"))
 
@@ -95,7 +85,6 @@ async def _assert_a_member_added_mid_sync_whom_the_group_also_holds_keeps_the_ha
 
 
 async def _assert_the_departed_still_go_while_the_added_stay(db) -> None:
-    """The write is still a replacement of this instance's subset, not an append to it."""
     await _seed(db, members=[TeamMember(user_id="u-gone", role="member", source=_OWN)])
 
     await _sync_with_an_add_in_flight(db, TeamMember(user_id="u-added", role="member"))

@@ -1,5 +1,3 @@
-"""SBOM and CBOM ingest answer the CI client before their webhook and notification are delivered."""
-
 import asyncio
 import contextlib
 import json

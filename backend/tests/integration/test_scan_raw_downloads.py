@@ -1,5 +1,3 @@
-"""Raw downloads stream the stored bytes of an SBOM, the SBOM export and an analyzer result; the lists carry metadata."""
-
 import functools
 import hashlib
 import io
@@ -41,13 +39,11 @@ _SECRET_FINDING = {"DetectorType": 2, "RawHash": "317e5726", "Verified": True}
 
 
 def _fixture(name: str) -> bytes:
-    """A real SBOM as ingest stores it: the compact dump."""
     return json.dumps(json.loads((_SBOM_FIXTURES / name).read_text())).encode()
 
 
 @functools.cache
 def _large_sbom() -> bytes:
-    """The real uv syft SBOM, its components repeated under distinct names past three times the document limit."""
     sbom = json.loads((_SBOM_FIXTURES / "uvdev.syft.cdx.json").read_text())
     components = sbom["components"]
     copies = _LARGE_SBOM_BYTES // len(json.dumps(components)) + 1
@@ -83,7 +79,6 @@ async def _delete_file(db, ref: dict[str, Any]) -> None:
 
 
 async def _drain_measured(endpoint_call) -> tuple[Any, bytes, int]:
-    """The response, its body, and the peak traced memory while it is built and streamed to disk."""
     with tempfile.TemporaryFile() as body:
         tracemalloc.start()
         try:

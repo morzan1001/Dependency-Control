@@ -1,5 +1,3 @@
-"""Endpoint tests for the inventory stats route."""
-
 import csv
 import io
 from datetime import datetime, timezone

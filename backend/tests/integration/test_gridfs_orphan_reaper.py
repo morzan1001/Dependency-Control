@@ -1,5 +1,3 @@
-"""The orphan reaper deletes GridFS files and chunks nothing references once they outlive the safety window."""
-
 import asyncio
 import json
 import os
@@ -169,7 +167,6 @@ async def test_the_reaper_walks_more_than_one_batch(db, monkeypatch):
 
 
 def _minted(at: datetime) -> ObjectId:
-    """An id the driver mints when an upload opens at ``at``."""
     return ObjectId(int(at.timestamp()).to_bytes(4, "big") + os.urandom(8))
 
 
@@ -209,7 +206,6 @@ async def test_one_run_reaps_exactly_the_old_unreferenced_files_and_leftover_chu
 
 
 async def _distinct_round_trips(db) -> int:
-    """How many distinct commands one reaper run sends."""
     _, entries = await profiled(db, reap_orphan_gridfs_files(db))
     return sum(1 for entry in entries if "distinct" in entry.get("command", {}))
 

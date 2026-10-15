@@ -1,5 +1,3 @@
-"""Embedded CBOM in a CycloneDX SBOM: _process_sbom persists the CryptoAsset records and the scan evaluates them once."""
-
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -28,8 +26,6 @@ def _load(name):
 
 
 class _MinimalAggregator:
-    """Stub aggregator that discards results — the test only checks DB side-effects."""
-
     def aggregate(self, *args, **kwargs):
         pass
 
@@ -42,7 +38,6 @@ class _MinimalAggregator:
 
 @pytest.mark.asyncio
 async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
-    """_process_sbom on a CycloneDX 1.6 SBOM containing a cryptographic-asset component stores a CryptoAsset."""
     sbom = _load("cyclonedx_1_6_with_crypto_assets.json")
     project_id = "test-project-id"
     scan_id = "scan-embedded-cbom-001"

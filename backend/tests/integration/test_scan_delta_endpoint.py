@@ -1,5 +1,3 @@
-"""Endpoint tests for GET /api/v1/analytics/scan-delta: authorization, cross-project scan guards, and 400 mapping for invalid queries."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -73,7 +71,6 @@ async def test_returns_400_for_identical_scan_ids(client, db, owner_auth_headers
 
 @pytest.mark.asyncio
 async def test_returns_400_for_unknown_category(client, db, owner_auth_headers_proj):
-    """An unknown category surfaces as 400, not 422."""
     await db["scans"].insert_one(_scan_doc("u1", "p"))
     await db["scans"].insert_one(_scan_doc("u2", "p"))
 
@@ -92,7 +89,6 @@ async def test_returns_400_for_unknown_category(client, db, owner_auth_headers_p
 
 @pytest.mark.asyncio
 async def test_returns_400_for_severity_with_components(client, db, owner_auth_headers_proj):
-    """severity filter is only valid with category=findings."""
     await db["scans"].insert_one(_scan_doc("c1", "p"))
     await db["scans"].insert_one(_scan_doc("c2", "p"))
 
@@ -280,7 +276,6 @@ async def test_returns_200_crypto(client, db, owner_auth_headers_proj):
 
 @pytest.mark.asyncio
 async def test_returns_400_for_unknown_severity(client, db, owner_auth_headers_proj):
-    """Typo in severity filter must surface as 400, not silently empty results."""
     await db["scans"].insert_many([_scan_doc("ts1", "p"), _scan_doc("ts2", "p")])
     resp = await client.get(
         BASE,
@@ -299,7 +294,6 @@ async def test_returns_400_for_unknown_severity(client, db, owner_auth_headers_p
 
 @pytest.mark.asyncio
 async def test_returns_400_for_page_size_above_max(client, db, owner_auth_headers_proj):
-    """page_size > 200 returns 400, not FastAPI's auto-422."""
     await db["scans"].insert_many([_scan_doc("ps1", "p"), _scan_doc("ps2", "p")])
     resp = await client.get(
         BASE,

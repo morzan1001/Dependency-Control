@@ -1,5 +1,3 @@
-"""Every upload route reads its body one way: no size cap, auth before the first byte, one 422 shape."""
-
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -130,7 +128,6 @@ def _madge_imports(file_index: int) -> list[str]:
 
 
 def _madge() -> dict[str, Any]:
-    """madge `--json --include-npm` output of a monorepo whose source files import ten of 2 000 npm packages."""
     files = _copies_past_the_old_cap({"src/features/f000000/components/Widget.tsx": _madge_imports(0)})
     data = {f"src/features/f{i:06d}/components/Widget.tsx": _madge_imports(i) for i in range(files)}
     return {**_RUN, "format": "madge", "data": data}

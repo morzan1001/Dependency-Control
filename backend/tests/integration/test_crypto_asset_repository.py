@@ -1,5 +1,3 @@
-"""Tests for CryptoAssetRepository."""
-
 import asyncio
 from datetime import datetime, timezone
 
@@ -62,8 +60,7 @@ _SHARED_SCAN = "shared-scan-id"
 
 @pytest.mark.asyncio
 async def test_a_read_is_confined_to_the_project_that_was_authorised(db):
-    """The endpoint checks access on project_id only; scan_id arrives as a caller-supplied query
-    parameter, so a scan id guessed from another tenant must return nothing."""
+    """The endpoint checks access on project_id only, so a scan_id guessed from another tenant must return nothing."""
     repo = CryptoAssetRepository(db)
     await repo.bulk_upsert("p-own", _SHARED_SCAN, [_asset("p-own", _SHARED_SCAN, "ref-own", "AES-128")])
     await repo.bulk_upsert("p-other", _SHARED_SCAN, [_asset("p-other", _SHARED_SCAN, "ref-other", "AES-256")])

@@ -1,5 +1,3 @@
-"""CBOM ingest fires a crypto_asset.ingested webhook; trigger_webhooks is spied to assert event name and payload."""
-
 import asyncio
 import json
 from pathlib import Path

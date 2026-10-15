@@ -1,5 +1,3 @@
-"""search_findings and get_cve_details read the head builds, as get_findings_by_cve and the other estate tools do."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -45,7 +43,6 @@ def _finding(scan_id: str, component: str, cve: str, project_id: str = _PROJECT)
 
 
 async def _seed(db) -> None:
-    """log4j-core was fixed after the superseded build; a deleted project left its findings behind."""
     await db.projects.insert_one(
         {
             "_id": _PROJECT,
@@ -78,7 +75,6 @@ async def _seed(db) -> None:
 
 
 async def _seed_foreign_project(db) -> None:
-    """A head build the member is not admitted to, carrying a log4j finding and a CVE only it has."""
     await db.projects.insert_one(
         {
             "_id": _FOREIGN_PROJECT,

@@ -1,5 +1,3 @@
-"""Over HTTP, a stored person reference is the account id and the response names the account as it is named now."""
-
 import pytest
 
 # The client fixture authenticates "admin-user" under that id; the account has since been renamed.

@@ -1,5 +1,3 @@
-"""A (str, Enum) member reaches the server as its value, in a filter and in a $set alike."""
-
 import pytest
 
 from app.repositories.crypto_asset import scan_query

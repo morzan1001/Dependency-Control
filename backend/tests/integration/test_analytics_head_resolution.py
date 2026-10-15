@@ -1,10 +1,3 @@
-"""Every head-resolving analytics surface must name the same build.
-
-The project here is the unambiguous case: default branch scanned, nothing deleted, a long-lived
-release, a rescan the rescanner just produced of it, and the branch tip carrying a CRITICAL that
-exists nowhere else.
-"""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -114,8 +107,6 @@ async def test_recommendations_see_a_critical_that_only_the_tip_reports(client, 
 
 @pytest.mark.asyncio
 async def test_the_dependency_tree_shows_the_tips_graph_when_a_branch_was_deleted(client, db, seeded):
-    """Any deleted branch used to send the Tree tab down its own resolver, which ranked the
-    rescan of the release above the tip while every other tab stayed on the tip."""
     await db.projects.update_one({"_id": _PROJECT}, {"$set": {"deleted_branches": ["feature/old"]}})
 
     resp = await client.get(f"/api/v1/analytics/projects/{_PROJECT}/dependency-tree", headers=seeded)
@@ -137,8 +128,6 @@ def _licence(licence: str, category: str) -> dict:
 
 @pytest_asyncio.fixture
 async def licence_drifted_under_a_queued_run(db, seeded):
-    """The component's licence turned copyleft between the release and the tip, and CI has since
-    enqueued a run that has analysed nothing."""
     await db.scans.insert_one(_scan(_QUEUED_SCAN, 0, status="pending"))
     await db.dependencies.update_one(
         {"_id": f"{_RELEASE_SCAN}:{_DRIFTING_COMPONENT}"}, {"$set": _licence(_PERMISSIVE_LICENSE, "permissive")}

@@ -1,5 +1,4 @@
-"""The per-scan enrichment copy runs one update per enriched purl, so each has to stay inside the
-(scan_id, purl) index range of its own purl; walking the whole scan makes the copy quadratic."""
+"""One update per enriched purl must stay in its own (scan_id, purl) index range, or the copy turns quadratic."""
 
 import pytest
 

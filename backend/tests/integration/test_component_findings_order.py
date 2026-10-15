@@ -1,6 +1,3 @@
-"""The dependency modal shows a bounded list of a component's findings, so the list must hold the
-most severe ones and the response must count all of them."""
-
 from datetime import datetime, timezone
 
 import pytest

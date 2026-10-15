@@ -1,5 +1,4 @@
-"""Every pod seeds the crypto policy at startup. Pods starting together must still write one SEED revision,
-or a rollout that bumps the seed version leaves one identical history row per replica."""
+"""Every pod seeds at startup, so pods starting together must still write a single SEED revision."""
 
 import asyncio
 

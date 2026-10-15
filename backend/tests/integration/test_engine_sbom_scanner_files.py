@@ -1,6 +1,3 @@
-"""The engine loads one stored SBOM at a time and hands trivy and grype one temp file of the stored bytes; a timed-out
-scanner runs once and fails the scan's coverage."""
-
 import asyncio
 import hashlib
 import os
@@ -22,14 +19,12 @@ _PROJECT_ID = "scanner-files-project"
 _WORKER = "pod-a/worker-0"
 _SCANNERS = ["grype", "trivy"]
 
-# Logs "<scanner> <sha256> <path>" for the SBOM file among its arguments, then reports no findings.
 _FAKE_SCANNER = """#!/bin/sh
 for arg in "$@"; do candidate="${arg#sbom:}"; [ -f "$candidate" ] && path="$candidate"; done
 if command -v sha256sum >/dev/null; then digest=$(sha256sum "$path"); else digest=$(shasum -a 256 "$path"); fi
 echo "$(basename "$0") ${digest%% *} $path" >> "$SCANNER_LOG"
 echo '{}'
 """
-# Writes syft's own CycloneDX rendering of the same project to the -o target.
 _FAKE_SYFT = """#!/bin/sh
 case "$4" in cyclonedx-json=*) cp "$CONVERTED_FIXTURE" "${4#cyclonedx-json=}";; *) exit 1;; esac
 """
@@ -126,8 +121,7 @@ async def test_a_syft_json_sbom_reaches_trivy_converted_and_grype_as_stored(db, 
     assert list(scanners.tmp_dir.iterdir()) == []
 
 
-# Trivy's own 5m deadline matches the default cli_timeout and ends it with a retryable error; this stand-in's
-# deadline fires first unless --timeout moves it past cli_timeout.
+# Mimics trivy's own 5m deadline, which fires first unless --timeout moves it past cli_timeout.
 _HANGING_TRIVY = """#!/bin/sh
 echo trivy >> "$SCANNER_LOG"
 case " $* " in *" --timeout "*) exec sleep 400;; esac

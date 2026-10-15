@@ -1,4 +1,4 @@
-"""A PQC migration-plan report completes over the HTTP + BackgroundTask path without failing on an asyncio.run-in-running-loop error."""
+"""Runs on the BackgroundTask path, where an asyncio.run inside the running loop would fail the report."""
 
 import asyncio
 
