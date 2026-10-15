@@ -220,3 +220,21 @@ describe("ReachabilityResults on a phone", () => {
     expect(screen.getByText("CVE-2025-0").parentElement?.parentElement).toHaveClass("flex-wrap", "gap-2");
   });
 });
+
+describe("post-processor stat tiles on a tablet", () => {
+  it("lays the EPSS/KEV tiles out two by two until xl, where four fit beside their icons", () => {
+    render(<EPSSKEVResults data={baseData} />);
+
+    const grid = screen.getByText("EPSS Enriched").closest(".grid");
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
+  });
+
+  it("lays the reachability tiles out the same way", () => {
+    render(<ReachabilityResults data={reachabilityData} />);
+
+    const grid = screen.getByText("Analyzed").closest(".grid");
+    expect(grid).toHaveClass("md:grid-cols-2", "xl:grid-cols-4");
+    expect(grid).not.toHaveClass("md:grid-cols-4");
+  });
+});

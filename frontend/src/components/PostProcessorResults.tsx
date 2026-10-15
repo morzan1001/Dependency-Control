@@ -135,7 +135,7 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatTile
           icon={Activity} tone="bg-blue-100 dark:bg-blue-900" iconClass="text-blue-600 dark:text-blue-400"
           label="EPSS Enriched" value={<>{data.epss_enriched} / {data.total_vulnerabilities}</>}
@@ -377,7 +377,7 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatTile
           icon={Target} tone="bg-blue-100 dark:bg-blue-900" iconClass="text-blue-600 dark:text-blue-400"
           label="Analyzed" value={<>{data.analyzed} / {data.total_vulnerabilities}</>}
