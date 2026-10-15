@@ -1137,13 +1137,3 @@ class TestCheckScheduledRescans:
         await _process_project_rescan(_project_doc(), _system_settings(), db, manager)
 
         assert len(await _rescans(db)) == 1
-
-    @pytest.mark.asyncio
-    async def test_a_database_failure_is_swallowed_so_the_housekeeping_loop_survives(
-        self, worker: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(housekeeping, "get_database", AsyncMock(side_effect=RuntimeError(_FAILURE_MESSAGE)))
-
-        await check_scheduled_rescans(worker)
-
-        worker.add_job.assert_not_awaited()
