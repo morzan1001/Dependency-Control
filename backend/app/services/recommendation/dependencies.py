@@ -13,6 +13,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.cross_link import is_ahead_of_default
 from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
@@ -43,7 +44,7 @@ def analyze_outdated_dependencies(
     direct: list[ModelOrDict] = []
     transitive: list[ModelOrDict] = []
     for finding in sorted(outdated_findings, key=lambda f: (get_attr(f, "component").lower(), get_attr(f, "version"))):
-        if get_attr(finding, "details", {}).get("ahead_of_default") or upgraded(finding):
+        if is_ahead_of_default(get_attr(finding, "type"), get_attr(finding, "details")) or upgraded(finding):
             continue
         row = row_of(finding)
         (direct if row and get_attr(row, "direct", False) else transitive).append(finding)
