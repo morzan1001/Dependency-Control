@@ -161,11 +161,7 @@ def _test_result(
 async def _probe_group_access(
     gitlab_service: GitLabService, instance: GitLabInstance, version: str | None
 ) -> GitLabInstanceTestConnectionResponse | str:
-    """A failure response, or the sentence saying how many groups the token reads.
-
-    The groups it can see are exactly the groups team sync can resolve, so a token that reads none
-    syncs nothing — and a green test that hides that sends the operator looking elsewhere for weeks.
-    """
+    """The token's visible groups are all team sync can resolve, so one that reads none must fail the test."""
     groups = await gitlab_service.get_groups()
     if groups is None:
         return _test_result(
@@ -214,8 +210,7 @@ async def test_connection(
 
         version = response.json().get("version")
         message = "Connection successful"
-        # Only an instance that syncs teams needs group access; demanding it of a pure-ingest
-        # instance would fail a perfectly good setup.
+        # Only a team-syncing instance needs group access; a pure-ingest one would fail a good setup.
         if instance.sync_teams:
             probe = await _probe_group_access(gitlab_service, instance, version)
             if isinstance(probe, GitLabInstanceTestConnectionResponse):

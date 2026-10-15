@@ -10,8 +10,6 @@ _DESC_SCAN_ID = "Unique identifier of the scan"
 
 
 class BaseIngest(BaseModel):
-    """Base schema for all ingest payloads."""
-
     pipeline_id: int = Field(..., description="Unique ID of the pipeline run")
     commit_hash: str = Field(..., description="Git commit hash")
     branch: str = Field(..., description="Git branch name")
@@ -38,8 +36,7 @@ class BaseIngest(BaseModel):
         return validate_release_environment(v)
 
     def release_fields(self, released_at: datetime) -> dict[str, Any]:
-        """Release-document fields, or empty for a payload that marks nothing: every job of one CI
-        pipeline writes the same scan, so only an empty result keeps the mark promote-only."""
+        """Empty for a payload that marks nothing, so the other jobs writing the same scan never demote its mark."""
         if not self.is_release:
             return {}
         environment, version = release_identity(self.release_environment, self.release_version, self.commit_tag)
@@ -51,8 +48,6 @@ class SBOMIngest(BaseIngest):
 
 
 class ScanStatsResponse(BaseModel):
-    """Statistics from scan analysis."""
-
     critical: int = 0
     high: int = 0
     medium: int = 0
@@ -68,8 +63,6 @@ class ScanStatsResponse(BaseModel):
 
 
 class FindingsIngestResponse(BaseModel):
-    """Response for findings-based ingest endpoints (TruffleHog, OpenGrep, KICS, Bearer)."""
-
     scan_id: str = Field(..., description=_DESC_SCAN_ID)
     findings_count: int = Field(..., description="Number of findings processed")
     waived_count: int = Field(0, description="Number of findings waived")
@@ -77,8 +70,6 @@ class FindingsIngestResponse(BaseModel):
 
 
 class SecretScanResponse(BaseModel):
-    """Response for secret scanning (TruffleHog) - includes failure status."""
-
     status: str = Field(..., description="'failed' if secrets found, 'success' otherwise")
     scan_id: str = Field(..., description=_DESC_SCAN_ID)
     findings_count: int = Field(..., description="Number of secrets found")
@@ -87,8 +78,6 @@ class SecretScanResponse(BaseModel):
 
 
 class SBOMIngestResponse(BaseModel):
-    """Response for SBOM ingest endpoint."""
-
     status: str = Field(..., description="'queued' when successfully submitted")
     scan_id: str = Field(..., description=_DESC_SCAN_ID)
     message: str = Field(..., description="Human-readable status message")
@@ -97,8 +86,6 @@ class SBOMIngestResponse(BaseModel):
 
 
 class ProjectConfigResponse(BaseModel):
-    """Response for project configuration endpoint."""
-
     project_id: str = Field(..., description="Identifier of the authenticated project")
     active_analyzers: list[str] = Field(default_factory=list, description="List of active analyzer names")
     retention_days: int = Field(..., description="Scan retention period in days")

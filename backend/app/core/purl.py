@@ -9,24 +9,21 @@ from app.core.constants import OS_PACKAGE_TYPES
 _PYPI_NORMALIZE_RE = re.compile(r"[-_.]+")
 
 # Maximum lengths for PURL components to prevent DoS via unbounded strings
-MAX_PURL_LENGTH = 2048  # Total PURL length
-MAX_NAME_LENGTH = 256  # Package name
-MAX_VERSION_LENGTH = 128  # Version string
-MAX_NAMESPACE_LENGTH = 256  # Namespace/scope
+MAX_PURL_LENGTH = 2048
+MAX_NAME_LENGTH = 256
+MAX_VERSION_LENGTH = 128
+MAX_NAMESPACE_LENGTH = 256
 
 
 class ParsedPURL(NamedTuple):
-    """Parsed PURL components."""
-
-    type: str  # pypi, npm, maven, go, cargo, nuget, etc.
-    namespace: str | None  # org name for maven, scope for npm, etc.
-    name: str  # package name
-    version: str | None  # version
-    qualifiers: dict[str, str]  # optional qualifiers
+    type: str
+    namespace: str | None
+    name: str
+    version: str | None
+    qualifiers: dict[str, str]
 
     @property
     def full_name(self) -> str:
-        """Get the full package name including namespace."""
         if self.namespace:
             return f"{self.namespace}/{self.name}"
         return self.name
@@ -38,13 +35,11 @@ class ParsedPURL(NamedTuple):
 
     @property
     def deps_dev_system(self) -> str | None:
-        """The deps.dev system serving this package, or None where deps.dev has no data."""
         system = PURL_TYPE_TO_SYSTEM.get(self.type)
         return system if system in _DEPS_DEV_SYSTEMS else None
 
     @property
     def deps_dev_name(self) -> str:
-        """Get the package name formatted for deps.dev API."""
         if self.type == "maven" and self.namespace:
             return f"{self.namespace}:{self.name}"
         if self.type == "pypi":
@@ -56,7 +51,6 @@ class ParsedPURL(NamedTuple):
 
 
 def pep503_normalize(name: str) -> str:
-    """PyPI project name in PEP 503 normal form: separator runs become '-', lowercased."""
     return _PYPI_NORMALIZE_RE.sub("-", name).lower()
 
 
@@ -72,15 +66,14 @@ PURL_TYPE_TO_SYSTEM = {
     "composer": "packagist",
     "cocoapods": "cocoapods",
     "swift": "swift",
-    "pub": "pub",  # Dart
-    "hex": "hex",  # Erlang/Elixir
-    "cran": "cran",  # R
+    "pub": "pub",
+    "hex": "hex",
+    "cran": "cran",
 }
 _DEPS_DEV_SYSTEMS = frozenset({"npm", "pypi", "maven", "go", "cargo", "nuget", "rubygems"})
 
 
 def parse_purl(purl: str) -> ParsedPURL | None:
-    """Parse a PURL string into its components, or None if it is not one."""
     if not purl or not purl.startswith("pkg:") or len(purl) > MAX_PURL_LENGTH:
         return None
 
@@ -128,7 +121,6 @@ _IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:(?<!/)@[^@?#]*)?(?:[?#].*)?$"
 
 
 def package_identity(purl: str | None, name: str, component_type: str | None, group: str | None) -> tuple[str, str]:
-    """Version-free ``(type, namespace/name)`` per the purl spec, else component type and lowercased group/name."""
     parsed = parse_purl(purl) if purl else None
     if parsed is None:
         namespace = (group or "").strip()
@@ -213,12 +205,10 @@ def canonical_purl(purl: str) -> str:
 
 
 def get_purl_type(purl: str | None) -> str | None:
-    """Extract just the type from a PURL string."""
     if not purl or not purl.startswith("pkg:"):
         return None
     return purl[4:].split("/")[0].lower()
 
 
 def is_os_package_type(purl: str | None, pkg_type: str | None) -> bool:
-    """A distro package (deb, rpm, apk, ...), judged by the purl type before the declared type."""
     return (get_purl_type(purl) or pkg_type or "").lower() in OS_PACKAGE_TYPES

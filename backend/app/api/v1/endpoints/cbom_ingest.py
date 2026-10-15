@@ -1,5 +1,3 @@
-"""Ingest CycloneDX 1.6 CBOM payloads; creates a scan and persists CryptoAssets."""
-
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -33,8 +31,6 @@ router = CustomAPIRouter()
 
 
 class CBOMIngest(BaseIngest):
-    """CBOM ingest payload, flat like SBOMIngest."""
-
     cbom: dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")
 
     # Optional so a manual upload without pipeline data can still ingest.
@@ -61,8 +57,7 @@ async def ingest_cbom(
     db: DatabaseDep,
     project: ProjectIngestDep,
 ) -> CBOMIngestResponse:
-    """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response.
-    A CBOM listing no cryptographic asset is accepted too and records the project as free of cryptography."""
+    """Upload a CBOM, persisted before the response; one with no crypto asset records the project as free of crypto."""
     payload = await read_json_body(request, CBOMIngest)
     manager = ScanManager(db, project)
     scan_id = manager.run_scan_id(payload)
@@ -116,7 +111,6 @@ async def ingest_cbom(
 async def _store_crypto_assets(
     db: AsyncIOMotorDatabase, project_id: str, scan_id: str, assets: list[ParsedCryptoAsset]
 ) -> dict[str, Any]:
-    """Bulk-upsert the scan's CryptoAssets and return the summary of what is stored."""
     written_at = datetime.now(timezone.utc)
     repo = CryptoAssetRepository(db)
     await repo.bulk_upsert(
@@ -131,8 +125,7 @@ async def _store_crypto_assets(
     )
     # Deleted after the upsert so a failed write keeps the previous upload's assets.
     await repo.delete_older_writes({"project_id": project_id, "scan_id": scan_id, "cbom_upload": True}, written_at)
-    # Counts persisted docs, so duplicate bom_refs in one payload are reported honestly
-    # (bulk_upsert returns submitted ops, which always equals the input length).
+    # Counts persisted docs: bulk_upsert reports submitted ops, which would hide duplicate bom_refs in one payload.
     summary: dict[str, Any] = await repo.summary_for_scan(project_id, scan_id)
     logger.info("cbom_ingest: persisted %d assets for scan %s", summary["total"], scan_id)
     return summary

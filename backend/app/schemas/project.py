@@ -30,12 +30,7 @@ from app.schemas.team import TeamRef
 
 
 class LicensePolicySchema(BaseModel):
-    """License compliance policy controlling how copyleft findings are evaluated.
-
-    Field types reuse the ``str``-enums from :mod:`app.models.license` so the API
-    contract and the license analyzer share one source of truth;
-    ``use_enum_values``/``validate_default`` serialize values as plain strings.
-    """
+    """How copyleft findings are evaluated, in the str-enums the license analyzer itself uses."""
 
     # extra="forbid": a discarded misspelt key would silently restore a default on every future scan.
     model_config = ConfigDict(use_enum_values=True, validate_default=True, extra="forbid")
@@ -62,7 +57,6 @@ class LicensePolicySchema(BaseModel):
 
 
 def license_policy_from_settings(entry: dict[str, Any] | None) -> LicensePolicySchema:
-    """The effective policy of a stored license_compliance entry; the scan passes it merged with system settings."""
     policy_fields = LicensePolicySchema.model_fields
     return LicensePolicySchema.model_validate({k: v for k, v in (entry or {}).items() if k in policy_fields})
 
@@ -74,8 +68,7 @@ def _validate_license_settings(value: dict[str, dict[str, Any]]) -> dict[str, di
     return value
 
 
-# analyzer -> key -> (type, min, max, default), with the ranges of frontend/src/lib/analyzer-settings-schemas.ts.
-# Each analyzer lists its keys from the largest to the smallest, and the values must keep that order.
+# Ranges mirror frontend/src/lib/analyzer-settings-schemas.ts; keys run largest to smallest and values keep that order.
 ANALYZER_TUNABLES: dict[str, dict[str, tuple[type[int] | type[float], float, float, float]]] = {
     "deps_dev": {"scorecard_threshold": (float, 0, 10, SCORECARD_FLAG_THRESHOLD)},
     "end_of_life": {
@@ -126,8 +119,6 @@ class BranchInfo(BaseModel):
 
 
 class ProjectWithTeam(Project):
-    """Project with owning-team name enrichment for list views."""
-
     teams: list[TeamRef] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
@@ -231,30 +222,23 @@ class ProjectApiKeyResponse(BaseModel):
 
 
 class RiskyProject(BaseModel):
-    """A project entry in the top risky projects list."""
-
     id: str = Field(..., description="Project ID")
     name: str = Field(..., description="Project name")
     risk: float = Field(..., description="Calculated risk score")
 
 
 class RecentScan(Scan):
-    """Scan with additional project name for cross-project views."""
-
     project_name: str = Field(..., description="Name of the project this scan belongs to")
 
 
 class ScanReleaseRef(BaseModel):
-    """One environment a scan is the running artefact in."""
-
     environment: str = Field(..., description="Environment slug the scan was released to")
     version: str | None = Field(None, description="Release name recorded when the scan was marked")
     released_at: datetime = Field(..., description="When the scan started running in that environment")
 
 
 class ScanWithReleases(Scan):
-    """Scan carrying where it runs. Response-only: the environments live in the releases collection,
-    while the scan document holds nothing beyond the ``is_release`` flag."""
+    """Response-only: the environments live in the releases collection, the scan holds only the is_release flag."""
 
     releases: list[ScanReleaseRef] = Field(
         default_factory=list,
@@ -264,8 +248,6 @@ class ScanWithReleases(Scan):
 
 
 class ScanHistoryResponse(BaseModel):
-    """A scan's lineage: the original run plus its re-scans, newest first."""
-
     runs: list[Scan] = Field(..., description="Newest first, at most ``page_size`` of them")
     total: int = Field(
         ...,
@@ -275,8 +257,6 @@ class ScanHistoryResponse(BaseModel):
 
 
 class BranchTip(BaseModel):
-    """One branch of a project, with the scan whose numbers stand for it."""
-
     branch: str = Field(..., description="Branch name")
     scan_count: int = Field(
         ...,
@@ -296,8 +276,6 @@ class ProjectBranchTips(BaseModel):
 
 
 class DashboardStats(BaseModel):
-    """Dashboard statistics for project overview."""
-
     total_projects: int = Field(..., description="Total number of accessible projects")
     total_critical: int = Field(..., description="Total critical findings across projects")
     total_high: int = Field(..., description="Total high findings across projects")
@@ -306,9 +284,6 @@ class DashboardStats(BaseModel):
 
 
 class ScanFindingItem(BaseModel):
-    """A single finding item in the scan findings response."""
-
-    # Core finding fields
     id: str = Field(..., description="Logical finding ID (e.g. CVE-2021-44228)")
     finding_id: str = Field(..., description="Finding identifier")
     type: FindingType = Field(..., description="Type of finding")
@@ -319,17 +294,14 @@ class ScanFindingItem(BaseModel):
     scanners: list[str] = Field(default_factory=list, description="Scanners that detected this")
     details: dict[str, Any] = Field(default_factory=dict, description="Additional details")
 
-    # Reference fields
     project_id: str = Field(..., description="Project ID")
     scan_id: str = Field(..., description="Scan ID")
 
-    # Status fields
     waived: bool = Field(default=False, description="Whether this finding is waived")
     waiver_reason: str | None = Field(None, description="Reason for waiver")
     waiver_lapsed: bool = Field(default=False, description="Whether the matched waiver has lapsed")
     lapsed_waiver_id: str | None = Field(None, description="ID of the lapsed waiver, if any")
 
-    # Metadata
     found_in: list[str] = Field(default_factory=list, description="Files where found")
     aliases: list[str] = Field(default_factory=list, description="Alternative IDs")
     related_findings: list[str] = Field(default_factory=list, description="Related finding IDs")
@@ -340,7 +312,6 @@ class ScanFindingItem(BaseModel):
     )
     created_at: datetime | None = Field(None, description="When the finding was created")
 
-    # Enriched fields from dependency lookup
     source_type: str | None = Field(None, description="Source type (e.g. image, filesystem)")
     source_target: str | None = Field(None, description="Source target path")
     layer_digest: str | None = Field(None, description="Docker layer digest")
@@ -350,7 +321,6 @@ class ScanFindingItem(BaseModel):
     direct: bool | None = Field(None, description="Whether this is a direct dependency")
     direct_inferred: bool | None = Field(None, description="Whether the direct flag was inferred")
 
-    # Computed fields
     severity_rank: int = Field(default=0, description="Numeric severity rank for sorting")
 
     model_config = ConfigDict(use_enum_values=True)

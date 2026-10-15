@@ -10,7 +10,6 @@ from app.schemas._not_null import reject_null
 
 
 def validate_password_strength(password: str) -> str:
-    """Validate password meets security requirements."""
     if len(password) < 8:
         raise ValueError("Password must be at least 8 characters long")
     if not re.search(r"[A-Z]", password):

@@ -1,5 +1,3 @@
-"""Per-scan update-frequency rollup documents."""
-
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
@@ -37,12 +35,10 @@ class ScanUpdateDelta(MongoDocument):
     updates: UpdateCounts = Field(default_factory=UpdateCounts)
     # None marks a scan without outdated analysis; 0 means the analysis found nothing.
     outdated_count: int | None = None
-    # Packages outdated here that the predecessor did not report as outdated,
-    # or the whole set when the predecessor carried no outdated analysis.
+    # Outdated here but not in the predecessor, or the whole set when the predecessor had no outdated analysis.
     outdated_added: list[str] = Field(default_factory=list)
     outdated_resolved: list[str] = Field(default_factory=list)
-    # Set when the computation failed; the document still exists so that
-    # count(deltas) == count(usable scans) stays a reconcile invariant.
+    # Set on a failed computation; the document still exists, as count(deltas) == count(usable scans) is invariant.
     error: str | None = None
     schema_version: int = UPDATE_DELTA_SCHEMA_VERSION
     computed_at: datetime = Field(default_factory=_now)

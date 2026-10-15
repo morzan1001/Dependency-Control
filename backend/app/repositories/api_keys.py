@@ -1,5 +1,3 @@
-"""MongoDB persistence for API keys, each naming the surfaces it may enter."""
-
 import hashlib
 import logging
 import secrets
@@ -27,8 +25,7 @@ LIST_LIMIT = 100
 
 
 def generate_plaintext_token() -> str:
-    """Fixed length: a punctuation-free alphabet needs no stripping, which is what varies the
-    body elsewhere."""
+    """Fixed length, as a punctuation-free alphabet needs none of the stripping that varies token bodies elsewhere."""
     return _TOKEN_PREFIX + "".join(secrets.choice(_TOKEN_ALPHABET) for _ in range(_TOKEN_BODY_CHARS))
 
 
@@ -48,7 +45,7 @@ class ApiKeyRepository:
         surfaces: Sequence[str],
         expires_in_days: int,
     ) -> tuple[dict[str, Any], str]:
-        """Returns (stored_document, plaintext_token); the plaintext is shown once and never persisted."""
+        """The plaintext is returned once and never persisted."""
         token = generate_plaintext_token()
         now = datetime.now(timezone.utc)
         doc: dict[str, Any] = {
@@ -67,7 +64,6 @@ class ApiKeyRepository:
         return doc, token
 
     async def list_for_user(self, user_id: str) -> tuple[list[dict[str, Any]], int]:
-        """The newest page of the user's keys and how many they hold."""
         return await find_window(self.collection, {"user_id": user_id}, LIST_LIMIT, sort=[("created_at", -1)])
 
     async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None:
@@ -84,7 +80,6 @@ class ApiKeyRepository:
         return doc
 
     async def revoke(self, key_id: str, user_id: str) -> bool:
-        """Idempotent revoke of a key the user owns."""
         result = await self.collection.update_one(
             {"_id": key_id, "user_id": user_id, "revoked_at": None},
             {"$set": {"revoked_at": datetime.now(timezone.utc)}},

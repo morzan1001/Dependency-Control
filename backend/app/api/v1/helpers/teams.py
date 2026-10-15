@@ -1,5 +1,3 @@
-"""Shared helper functions for team-related operations."""
-
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -31,18 +29,12 @@ async def resolve_team_names(db: AsyncIOMotorDatabase, team_ids: Iterable[str]) 
 
 
 def team_refs(team_ids: Iterable[str], names: Mapping[str, str]) -> list[TeamRef]:
-    """The owning teams a project row displays.
-
-    Ordered by name, because the stored order is whatever the last writer's ``$setUnion`` left and a
-    project would otherwise reorder its own teams when an unrelated co-owner is added. An id the map
-    cannot name lost its team between the two reads and is dropped rather than shown blank.
-    """
+    """Name order, since the stored order shifts with every $setUnion; an unnamed id lost its team and is dropped."""
     refs = [TeamRef(id=team_id, name=name) for team_id in team_ids if (name := names.get(team_id)) is not None]
     return sorted(refs, key=lambda ref: (case_insensitive_key(ref.name), ref.id))
 
 
 def visible_teams_filter(user: User) -> dict[str, Any] | None:
-    """The team filter a listing applies for ``user``: every team, their own, or None when they read none."""
     if has_permission(user.permissions, Permissions.TEAM_READ_ALL):
         return {}
     if has_permission(user.permissions, Permissions.TEAM_READ):
@@ -56,7 +48,6 @@ async def check_team_access(
     db: AsyncIOMotorDatabase,
     required_role: str | None = None,
 ) -> Team:
-    """Return the team or raise 404/403; team:read_all opens reads only, a ``required_role`` needs membership."""
     team_repo = TeamRepository(db)
     team = await team_repo.get_by_id(team_id)
     if not team:
@@ -79,7 +70,6 @@ async def check_team_access(
 
 
 async def enrich_teams_with_usernames(teams: list[dict[str, Any]], db: AsyncIOMotorDatabase) -> None:
-    """Name every member of the raw teams in place, in one read; a deleted account's username is None."""
     usernames = await UserRepository(db).usernames_by_id(
         m["user_id"] for team in teams for m in team.get("members", [])
     )
@@ -89,7 +79,6 @@ async def enrich_teams_with_usernames(teams: list[dict[str, Any]], db: AsyncIOMo
 
 
 async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamResponse:
-    """Fetch a team by ID, enrich with usernames, and return it, raising 404 if missing."""
     team_repo = TeamRepository(db)
     team_data = await team_repo.get_raw_by_id(team_id)
 
@@ -101,7 +90,6 @@ async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamR
 
 
 def get_member_role(team: Team, user_id: str) -> str | None:
-    """Return a member's role in the team, or None if not a member."""
     for member in team.members:
         if member.user_id == user_id:
             return member.role
@@ -116,7 +104,6 @@ async def get_team_with_access(
     *,
     global_permission: str = Permissions.TEAM_UPDATE,
 ) -> Team:
-    """Get a team via ``global_permission`` or, failing that, role-based access; 404 either way when missing."""
     team_repo = TeamRepository(db)
 
     if has_permission(user.permissions, global_permission):

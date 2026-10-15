@@ -1,5 +1,3 @@
-"""S3-compatible storage client with streaming upload/download support."""
-
 import functools
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -32,8 +30,7 @@ async def get_s3_client() -> AsyncGenerator[Any, None]:
         "aws_access_key_id": settings.S3_ACCESS_KEY,
         "aws_secret_access_key": settings.S3_SECRET_KEY,
         "use_ssl": settings.S3_USE_SSL,
-        # botocore >= 1.36 injects x-amz-checksum-* headers by default; S3-compatible
-        # providers (GCS interop) reject them with SignatureDoesNotMatch.
+        # botocore >= 1.36 sends x-amz-checksum-* headers, which GCS interop rejects with SignatureDoesNotMatch.
         "config": BotoConfig(
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
@@ -69,11 +66,6 @@ async def upload_stream(
     bucket: str | None = None,
     part_size: int = S3_MULTIPART_PART_SIZE,
 ) -> int:
-    """Multipart-upload a stream to S3, returning the total bytes uploaded.
-
-    An empty stream is uploaded as a zero-byte object via ``PutObject``; multipart
-    requires at least one part.
-    """
     b = _bucket(bucket)
     async with get_s3_client() as s3:
         init = await s3.create_multipart_upload(Bucket=b, Key=key, ContentType=content_type)
@@ -98,7 +90,6 @@ async def upload_stream(
                     total += len(part)
                     part_number += 1
 
-            # Final partial part (if any)
             if buffer:
                 resp = await s3.upload_part(
                     Bucket=b, Key=key, UploadId=upload_id, PartNumber=part_number, Body=bytes(buffer)
@@ -108,7 +99,7 @@ async def upload_stream(
                 buffer.clear()
 
             if not parts:
-                # Empty stream: abort multipart and write a zero-byte object via PutObject.
+                # Multipart needs at least one part, so an empty stream becomes a zero-byte PutObject.
                 await s3.abort_multipart_upload(Bucket=b, Key=key, UploadId=upload_id)
                 await s3.put_object(Bucket=b, Key=key, Body=b"", ContentType=content_type)
                 return 0
@@ -124,7 +115,6 @@ async def upload_stream(
 
 
 async def download_stream(key: str, *, bucket: str | None = None, chunk_size: int = 65536) -> AsyncIterator[bytes]:
-    """Stream an S3 object as an async iterator of chunks (default 64 KiB each)."""
     async with get_s3_client() as s3:
         response = await s3.get_object(Bucket=_bucket(bucket), Key=key)
         async with response["Body"] as stream:
@@ -138,11 +128,6 @@ async def delete_object(key: str, *, bucket: str | None = None) -> None:
 
 
 async def list_objects(prefix: str = "", *, bucket: str | None = None) -> list[dict[str, Any]]:
-    """List all S3 objects under a prefix as raw Contents entries (Key, Size, LastModified, ...).
-
-    ``list_objects_v2`` returns at most 1000 keys per call, so this loops on
-    ``NextContinuationToken`` until ``IsTruncated`` is false.
-    """
     b = _bucket(bucket)
     objects: list[dict[str, Any]] = []
     token: str | None = None

@@ -9,7 +9,7 @@ from app.models.types import MongoDocument
 
 
 def is_waiver_active(expiration_date: datetime | None, now: datetime | None = None) -> bool:
-    """Return True if the waiver is still active. Mirrors non_expired_waiver_filter."""
+    """Mirrors non_expired_waiver_filter."""
     if expiration_date is None:
         return True
     return ensure_utc(expiration_date) > (now or datetime.now(timezone.utc))
@@ -18,14 +18,13 @@ def is_waiver_active(expiration_date: datetime | None, now: datetime | None = No
 class Waiver(MongoDocument, CreatedAtModel):
     project_id: str | None = None  # If None, applies globally (admin only)
 
-    # Matching Criteria
     finding_id: str | None = None  # e.g. "CVE-2023-1234", "LIC-GPL-3.0", "EOL-python"
-    package_name: str | None = None  # e.g. "requests"
-    package_version: str | None = None  # e.g. "2.26.0"
-    finding_type: FindingType | None = None  # e.g. "vulnerability", "license", "malware", "eol"
-    vulnerability_id: str | None = None  # e.g. "CVE-2021-23337"
+    package_name: str | None = None
+    package_version: str | None = None
+    finding_type: FindingType | None = None
+    vulnerability_id: str | None = None
     scope: str = WAIVER_SCOPE_FINDING
-    rule_id: str | None = None  # e.g. "javascript_lang_insufficiently_random_values"
+    rule_id: str | None = None
     match: MatchSignature | None = None  # snapshot of the matched finding's signature
     last_eval_scan_id: str | None = None  # scan the signature path last evaluated this waiver against
     last_match_count: int | None = None  # #findings this waiver currently suppresses; None = not yet evaluated

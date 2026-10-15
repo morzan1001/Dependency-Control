@@ -12,16 +12,14 @@ from app.schemas._not_null import reject_null
 class TeamMemberSchema(BaseModel):
     user_id: str
     username: str | None = None
-    # Deliberately not TeamRole: the team reads serve the stored document without the storage
-    # model, so this is the last view that can still render a team holding a pre-existing bad role.
+    # Deliberately not TeamRole, so a team stored with a bad role still renders; reads bypass the storage model.
     role: str
     # "manual", or the "<provider>:<instance id>" of the sync that owns the entry.
     source: str | None = None
 
 
 class TeamRef(BaseModel):
-    """One owning team on a project row. The id travels with the name because a project can be
-    listed under several teams and the reader has to be able to tell two same-named ones apart."""
+    """The id travels with the name, so a reader can tell two same-named owning teams apart."""
 
     id: str
     name: str

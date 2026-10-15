@@ -13,7 +13,6 @@ _VALID_CHANNELS = set(NOTIFICATION_CHANNELS)
 
 
 def sanitize_notification_preferences(value: dict[str, list[str]] | None) -> dict[str, list[str]]:
-    """Drop unknown events and channels; an event stored with no channels stays, as a mute."""
     cleaned: dict[str, list[str]] = {}
     for event, channels in (value or {}).items():
         kept = [c for c in channels if c in _VALID_CHANNELS]

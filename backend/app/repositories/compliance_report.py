@@ -1,5 +1,3 @@
-"""Report job metadata; artifact bytes live in GridFS, this repo stores the job document only."""
-
 from datetime import datetime
 from typing import Any
 
@@ -25,7 +23,7 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
         skip: int = 0,
         limit: int = 50,
     ) -> list[ComplianceReport]:
-        """Reports matching the filters among those ``visibility`` admits; every caller must say who sees what."""
+        """``visibility`` is required, so every caller has to say who sees what."""
         query: dict[str, Any] = {}
         if scope:
             query["scope"] = scope

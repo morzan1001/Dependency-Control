@@ -1,5 +1,3 @@
-"""Admin + project-scoped crypto policy endpoints."""
-
 from typing import Any
 
 from fastapi import HTTPException, status

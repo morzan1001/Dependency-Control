@@ -8,8 +8,6 @@ from app.models.types import PyObjectId
 
 
 class FindingRecord(Finding):
-    """A finding stored in the database, linked to a specific scan."""
-
     mongo_id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",

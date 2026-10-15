@@ -1,5 +1,3 @@
-"""Reads over the per-scan update-frequency rollups and over the scan window they summarise."""
-
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,9 +27,7 @@ _WINDOW_PROJECTION = {
     "error": 1,
 }
 
-# Bounds the $in list per read. A scan whose predecessor carried no outdated analysis
-# reports its whole outdated set in outdated_added, so a delta can reach ~11 KB instead
-# of ~500 B; the read streams either way, this only keeps one query's filter sane.
+# Bounds one read's $in list; a delta can reach ~11 KB when its predecessor had no outdated analysis.
 _WINDOW_PROJECT_BATCH = 100
 
 
@@ -42,8 +38,6 @@ def _chain_order(doc: dict[str, Any]) -> tuple[datetime, str]:
 
 @dataclass(frozen=True)
 class LedgerEntry:
-    """What the reconcile knows about one delta without reading the delta itself."""
-
     schema_version: int | None
     prev_scan_id: str | None
     prev_created_at: datetime | None
@@ -65,12 +59,7 @@ def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
 
 @dataclass(frozen=True)
 class BranchWindowActivity:
-    """What one branch of one project really holds in the window, before any fold drops a scan.
-
-    ``scans_per_commit`` carries the count and not just the token, because a commit is only
-    beyond measuring when every one of its scans said so; one scan of it without a delta is a
-    hole in the ledger, not a commit nobody could measure.
-    """
+    """Scans per commit, since a commit is unmeasurable only if all its scans say so; one without a delta is a hole."""
 
     scans_per_commit: dict[str, int]
     last_scan_at: datetime
@@ -80,24 +69,13 @@ class BranchWindowActivity:
         return len(self.scans_per_commit)
 
 
-# The index on (project_id, branch, created_at) bounds the scan to the batch's projects;
-# status and is_rescan are not in it, so their documents are fetched. A whole-scope
-# comparison touches at most the 50k documents of the collection once and groups them
-# into one row per branch holding that branch's commit hashes, which keeps every batch
-# far under the 100 MB limit.
+# One row per branch holds its commit hashes, so even a 50k-scan scope keeps each batch far under the 100 MB limit.
 _SCAN_WINDOW_PROJECT_BATCH = 200
 
-# Neither read path analyses more than this many documents of one branch: the live walk
-# fetches at most this many scans, and the rollup folds at most this many deltas. A
-# branch busier than that is truncated to the same newest stretch on both paths, so
-# what the cap left out is what neither path was going to read.
+# Both read paths stop at this many documents of one branch, so they truncate a busier one to the same stretch.
 WINDOW_HARD_LIMIT = 1000
 
-# Counting documents would read a CI retry storm as missing data, so coverage counts the
-# commits the window names. Only the token rule is shared with the timeline bars — a scan
-# naming no commit stands for itself; this is a set cardinality over the whole window,
-# while a bar is a maximal *consecutive* run, so a commit reused later is one token but
-# two bars.
+# Coverage counts commits, as counting documents reads a CI retry storm as missing data; a commitless scan counts alone.
 _COMMIT_TOKEN = {"$cond": [{"$eq": [{"$ifNull": ["$commit_hash", ""]}, ""]}, "$_id", "$commit_hash"]}
 
 
@@ -110,11 +88,7 @@ def usable_scan_match(since: datetime | None) -> dict[str, Any]:
 
 
 def _named_branch(row_id: Any) -> tuple[str, str] | None:
-    """The (project, branch) a ``$group`` row names, or None when it is missing either.
-
-    A grouping key drops the field entirely when a document lacks it, and a scan that
-    names no branch cannot be diffed against another, so both read paths skip it.
-    """
+    """$group drops a missing key field, and a scan naming no branch cannot be diffed, so both read paths skip it."""
     project_id, branch = row_id.get("p"), row_id.get("b")
     if not isinstance(project_id, str) or not isinstance(branch, str) or not branch:
         return None
@@ -126,12 +100,7 @@ async def window_scans_by_branch(
     project_ids: Sequence[str],
     since: datetime | None,
 ) -> dict[str, dict[str, BranchWindowActivity]]:
-    """Comparable commits per project and branch, over the window itself when one is given.
-
-    Both read paths choose their branch from these counts, so neither can settle on a
-    branch the other would not, and both can tell how much of the window their numbers
-    actually cover.
-    """
+    """Both read paths pick their branch from these counts, so neither settles on a branch the other would not."""
     # A findings-only scan holds no dependencies to compare; $ne keeps scans older than sbom_refs.
     scoped = {**usable_scan_match(since), "sbom_refs": {"$ne": []}}
 
@@ -173,16 +142,7 @@ async def window_scan_ids_by_branch(
     project_ids: Sequence[str],
     since: datetime,
 ) -> dict[tuple[str, str], list[tuple[str, datetime]]]:
-    """Every in-window scan the writer owes a delta, per (project, branch), unordered.
-
-    Deliberately not ``window_scans_by_branch``: that one collapses a commit's scans
-    into one entry, while the writer records one delta per scan, so a CI retry storm
-    would read as a hole in the ledger.
-
-    A date floor brackets by BSON type, so a scan whose ``created_at`` is missing or a
-    string drops out here exactly as it does in the writer, which cannot place it on a
-    timeline either.
-    """
+    """Per scan, as the writer owes each scan a delta; a non-date created_at drops out here as in the writer."""
     scans: dict[tuple[str, str], list[tuple[str, datetime]]] = {}
     for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
@@ -203,12 +163,7 @@ async def window_scan_ids_by_branch(
 
 
 def _outside(at: datetime, at_id: str, operator: str) -> list[dict[str, Any]]:
-    """Scans ordered by ``(scan_created_at, _id)``, the tie-break for one BSON millisecond.
-
-    Ordering equal timestamps by ``_id`` keeps the chain a strict total order, so
-    two scans of the same millisecond neither both become a baseline nor point at
-    each other.
-    """
+    """_id breaks same-millisecond ties, so two such scans neither both become a baseline nor point at each other."""
     return [{"scan_created_at": {operator: at}}, {"scan_created_at": at, "_id": {operator: at_id}}]
 
 
@@ -224,7 +179,6 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     async def find_predecessor(
         self, project_id: str, branch: str, before: datetime, before_id: str
     ) -> dict[str, Any] | None:
-        """Newest delta of the branch that carries dependencies and precedes the given scan."""
         return await self._neighbour(
             {
                 "project_id": project_id,
@@ -238,7 +192,6 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     async def find_successor(
         self, project_id: str, branch: str, after: datetime, after_id: str
     ) -> dict[str, Any] | None:
-        """Oldest delta of the branch following the given scan, whatever its dependency count."""
         return await self._neighbour(
             {
                 "project_id": project_id,
@@ -251,14 +204,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     async def group_window_by_branch(
         self, project_ids: Sequence[str], since: datetime
     ) -> dict[str, dict[str, list[dict[str, Any]]]]:
-        """In-window deltas of every project, bucketed by project and branch, oldest first.
-
-        Bucketing happens here rather than in a ``$group``: a delta carries the outdated
-        names its scan added and resolved, and accumulating those arrays server-side costs
-        an order of magnitude more memory than the documents themselves -- 8.7 MB of them
-        exceeded the 100 MB a blocking stage may hold. Reading them plainly has no such
-        ceiling, transfers the same bytes, and leaves every metric in the pure fold.
-        """
+        """Bucketed in Python: a $group over 8.7 MB of deltas' outdated arrays exceeded a blocking stage's 100 MB."""
         buckets: dict[str, dict[str, list[dict[str, Any]]]] = {}
         for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             query = {
@@ -266,8 +212,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 "scan_created_at": {"$gte": since},
                 "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
             }
-            # Unsorted: an in-memory sort carries the same ceiling as the group did,
-            # and each chain is ordered below anyway.
+            # Unsorted: an in-memory sort has the group's ceiling, and each chain is ordered below anyway.
             docs = await self.collection.find(query, _WINDOW_PROJECTION).to_list(None)
             for doc in docs:
                 chain = _named_branch({"p": doc.get("project_id"), "b": doc.get("branch")})
@@ -283,12 +228,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     async def window_ledger_by_branch(
         self, project_ids: Sequence[str], since: datetime
     ) -> dict[tuple[str, str], dict[str, LedgerEntry]]:
-        """Version, place and predecessor link of every in-window delta, keyed by scan id, per chain.
-
-        Only those fields travel, not the document: the reconcile compares ledger
-        membership and the chain links, and pushing whole deltas would make the nightly
-        census as heavy as the comparison endpoint's fold.
-        """
+        """Only chain fields travel; whole deltas would make the nightly census as heavy as the comparison's fold."""
         chains: dict[tuple[str, str], dict[str, LedgerEntry]] = {}
         for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             pipeline = [
@@ -319,7 +259,6 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         return chains
 
     async def find_dependents(self, project_id: str, branch: str, prev_scan_ids: Sequence[str]) -> list[dict[str, Any]]:
-        """Deltas of the branch that were diffed against one of the given scans."""
         if not prev_scan_ids:
             return []
         return await self.collection.find(
@@ -346,7 +285,6 @@ class ScanOutdatedSetRepository(BaseRepository[ScanOutdatedSet]):
         await self.upsert({"_id": doc.pop("_id")}, doc)
 
     async def names_by_scan(self, scan_ids: Sequence[str]) -> dict[str, set[str]]:
-        """Outdated package names per scan; scans without a stored set are absent."""
         if not scan_ids:
             return {}
         docs = await self.collection.find({"_id": {"$in": list(scan_ids)}}, {"names": 1}).to_list(len(scan_ids))

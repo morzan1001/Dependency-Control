@@ -32,8 +32,6 @@ class GitHubInstanceBase(VcsInstanceBase):
 
 
 class GitHubInstanceCreate(GitHubInstanceBase, VcsInstanceCreate):
-    """Schema for creating a new GitHub instance."""
-
     _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
 
     @model_validator(mode="after")
@@ -44,8 +42,6 @@ class GitHubInstanceCreate(GitHubInstanceBase, VcsInstanceCreate):
 
 
 class GitHubInstanceUpdate(VcsInstanceUpdate):
-    """Schema for updating a GitHub instance. All fields optional."""
-
     github_url: str | None = Field(None, description="GitHub web URL")
     allowed_owner_ids: list[str] | None = Field(
         None, description="Numeric repository_owner_id claims whose tokens are accepted; [] accepts every owner"
@@ -59,8 +55,6 @@ class GitHubInstanceResponse(GitHubInstanceBase, VcsInstanceResponse):
 
 
 class GitHubOrgTeam(BaseModel):
-    """One team of an organisation, as offered for binding."""
-
     id: int = Field(..., description="Numeric team id; the binding is stored on this, not on the slug")
     slug: str = Field(..., description="URL slug the team API is addressed by")
     name: str = Field(..., description="Display name")
@@ -68,8 +62,6 @@ class GitHubOrgTeam(BaseModel):
 
 
 class GitHubInstanceTestConnectionResponse(BaseModel):
-    """Response for OIDC endpoint connectivity test."""
-
     success: bool = Field(..., description="Whether the connectivity test succeeded")
     message: str = Field(..., description="Status message")
     instance_name: str = Field(..., description="Name of the tested instance")

@@ -1,5 +1,3 @@
-"""Serve CI/CD scripts with SHA256 integrity verification; ?v=X.Y.Z serves a frozen versioned file, no ?v serves the mutable latest pointer."""
-
 import hashlib
 import logging
 import re
@@ -26,8 +24,7 @@ SCRIPT_CONFIG = {
 }
 ALLOWED_SCRIPTS = set(SCRIPT_CONFIG.keys())
 
-# Strict semver shape so ?v= is safe to concatenate into a filename. The ASCII
-# flag matters: bare \d matches Unicode digit categories, widening the input.
+# Strict ASCII semver so ?v= is safe in a filename; without re.ASCII, \d also matches other Unicode digits.
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$", re.ASCII)
 
 
@@ -52,7 +49,6 @@ def compute_sha256(content: str) -> str:
 
 
 def _resolve_script_path(script_name: str, version: str | None) -> Path:
-    """Resolve the file path for script_name: the latest pointer if no version, else the validated frozen file under versions/."""
     if version is None:
         return (SCRIPTS_DIR / script_name).resolve()
 
@@ -67,19 +63,17 @@ def _resolve_script_path(script_name: str, version: str | None) -> Path:
 
 
 def _read_and_describe(script_path: Path) -> tuple[str, str, str]:
-    """Read a script file and compute (content, embedded_version, sha256)."""
     content = script_path.read_text()
     return content, get_script_version(content), compute_sha256(content)
 
 
 @lru_cache(maxsize=256)
 def _read_and_describe_frozen(script_path_str: str) -> tuple[str, str, str]:
-    """Cached read+hash for frozen versions, whose bytes never change; the latest pointer is not cached."""
+    """Frozen versions never change, so they are cached; the mutable latest pointer is not."""
     return _read_and_describe(Path(script_path_str))
 
 
 def get_script_content(script_name: str, version: str | None = None) -> tuple[str, str, str]:
-    """Return (content, version, sha256) for the latest pointer (version=None) or a specific frozen release."""
     script_path = _resolve_script_path(script_name, version)
     if version is not None:
         return _read_and_describe_frozen(str(script_path))
@@ -87,7 +81,6 @@ def get_script_content(script_name: str, version: str | None = None) -> tuple[st
 
 
 def list_available_versions(script_name: str) -> list[str]:
-    """Return the sorted versions present under versions/ for script_name."""
     if not VERSIONS_DIR.is_dir():
         return []
     stem, _, ext = script_name.partition(".")
@@ -104,7 +97,6 @@ def list_available_versions(script_name: str) -> list[str]:
 
 
 def build_script_info(script_name: str, version: str | None = None) -> ScriptInfo:
-    """Build a ScriptInfo for a script at the given version (or the latest pointer)."""
     _, detected_version, sha256_hash = get_script_content(script_name, version)
     base_url = f"/api/v1/scripts/{script_name}"
     url = f"{base_url}?v={version}" if version else base_url
@@ -167,7 +159,7 @@ async def get_script(
         Query(description="Pin a specific frozen release (e.g. '1.1.0'); omit for the latest pointer"),
     ] = None,
 ) -> PlainTextResponse:
-    """Download a CI/CD script for pipeline integration; pass ?v=X.Y.Z for a frozen release, omit for the latest pointer."""
+    """Download a CI/CD script; pass ?v=X.Y.Z for a frozen release, omit it for the latest pointer."""
     validate_script_name(script_name)
 
     try:

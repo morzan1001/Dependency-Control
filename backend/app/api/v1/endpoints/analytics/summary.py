@@ -1,5 +1,3 @@
-"""Analytics summary endpoints: /scope, /summary, /dependencies/top, /dependency-types."""
-
 from typing import Annotated, Any
 
 from fastapi import Query
@@ -45,7 +43,6 @@ from app.services.recommendation.common import live_cves
 
 router = CustomAPIRouter()
 
-# Versions listed per component; version_count beside them carries the distinct total.
 _VERSION_SAMPLE = 10
 
 
@@ -55,12 +52,7 @@ async def get_analytics_scope(
     db: DatabaseDep,
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> AnalyticsScope:
-    """The release environments the caller's projects deploy to, and how much of the scope the
-    requested mode resolved.
-
-    Gated on any analytics feature permission rather than one of them: the coverage counters caption
-    every analytics tab, and the environments drive the mode switch that every tab obeys.
-    """
+    """The release environments and scope coverage every analytics tab reads, so any analytics permission opens it."""
     require_any_analytics_permission(current_user)
 
     projects = await get_user_projects(current_user, db)
@@ -83,8 +75,6 @@ async def get_analytics_scope(
 async def _heads_and_types(
     db: AsyncIOMotorDatabase, projects: list[ProjectWithScanId], release_environment: str | None
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    """The scope's resolved scans and their dependency type distribution."""
-
     async def compute() -> tuple[list[str], list[dict[str, Any]]]:
         scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
         return scan_ids, await DependencyRepository(db).get_type_distribution(scan_ids) if scan_ids else []

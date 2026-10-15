@@ -1,5 +1,3 @@
-"""Helper functions for callgraph endpoints."""
-
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -20,7 +18,6 @@ class ParsedCallgraph(NamedTuple):
 
 
 def _canonical_module_list(names: Any, language: str) -> list[str]:
-    """Canonicalise and de-duplicate an uploaded analyzed_modules list, order-stable."""
     if not isinstance(names, list):
         return []
 
@@ -30,21 +27,18 @@ def _canonical_module_list(names: Any, language: str) -> list[str]:
 
 
 def _dedupe_module_usage(module_usage: dict[str, ModuleUsage]) -> None:
-    """Collapse the lists the record helpers append to, keeping first-seen order."""
     for usage in module_usage.values():
         usage.import_locations = list(dict.fromkeys(usage.import_locations))
         usage.used_symbols = list(dict.fromkeys(usage.used_symbols))
 
 
 def _get_or_create_module_usage(module_usage: dict[str, ModuleUsage], base_module: str) -> ModuleUsage:
-    """Get existing or create new ModuleUsage entry."""
     if base_module not in module_usage:
         module_usage[base_module] = ModuleUsage(module=base_module)
     return module_usage[base_module]
 
 
 def _madge_package(dep: str) -> str | None:
-    """Package name of a madge dependency, or None when it is a first-party source file."""
     if _NODE_MODULES in dep:
         package = npm_package_key(dep.rsplit(_NODE_MODULES, 1)[1])
         # TypeScript resolves an import of an untyped package to its stub, @types/<name> or @types/<scope>__<name>.
@@ -60,7 +54,6 @@ def _madge_package(dep: str) -> str | None:
 
 
 def _record_madge_dep(dep: str, file_path: str, language: str, module_usage: dict[str, ModuleUsage]) -> None:
-    """Record one madge dependency; only external packages get a ModuleUsage."""
     package = _madge_package(dep)
     if package is None:
         return
@@ -71,7 +64,6 @@ def _record_madge_dep(dep: str, file_path: str, language: str, module_usage: dic
 
 
 def parse_madge_format(data: dict[str, Any], language: str) -> ParsedCallgraph:
-    """Parse madge JSON output ({file: [dependencies]}); returns no call edges."""
     module_usage: dict[str, ModuleUsage] = {}
     analyzed_modules = _canonical_module_list(data.get(_ANALYZED_MODULES_KEY), language)
     total_imports = source_files = 0
@@ -90,7 +82,6 @@ def parse_madge_format(data: dict[str, Any], language: str) -> ParsedCallgraph:
 
 
 def _record_generic_import(imp: dict[str, Any], language: str, module_usage: dict[str, ModuleUsage]) -> None:
-    """Record one generic-format import entry in its module's usage."""
     module = imp.get("module", "")
     file_path = imp.get("file", "")
     symbols = imp.get("symbols", [])
@@ -109,7 +100,6 @@ def _record_generic_import(imp: dict[str, Any], language: str, module_usage: dic
 
 
 def _record_generic_call(call: dict[str, Any], language: str, module_usage: dict[str, ModuleUsage]) -> None:
-    """Record one generic-format call edge in its callee module's usage."""
     module = call.get("callee_module", "")
     func = call.get("callee_function", "")
     caller_file = call.get("caller_file", "")
@@ -129,7 +119,6 @@ def _record_generic_call(call: dict[str, Any], language: str, module_usage: dict
 
 
 def parse_generic_format(data: dict[str, Any], language: str) -> ParsedCallgraph:
-    """Parse the generic callgraph format."""
     imports = data.get("imports", [])
     calls = data.get("calls", [])
     module_usage: dict[str, ModuleUsage] = {}
@@ -151,7 +140,6 @@ def parse_generic_format(data: dict[str, Any], language: str) -> ParsedCallgraph
 
 
 def detect_format(data: dict[str, Any]) -> str:
-    """Auto-detect the callgraph wire format: madge, generic or unknown."""
     if "imports" in data or "calls" in data or "analyzed_modules" in data:
         return "generic"
 
@@ -161,8 +149,7 @@ def detect_format(data: dict[str, Any]) -> str:
     ):
         return "unknown"
 
-    # An all-empty graph is only meaningful alongside a coverage universe; without one it is
-    # indistinguishable from an unrelated payload whose values happen to be empty lists.
+    # Without a coverage universe an all-empty graph is indistinguishable from an unrelated payload of empty lists.
     if any(file_entries.values()) or _ANALYZED_MODULES_KEY in data:
         return "madge"
 
@@ -179,7 +166,6 @@ _FORMAT_LANGUAGES = {"madge": "javascript"}
 def resolve_callgraph_payload(
     request_format: str, language: str | None, data: dict[str, Any]
 ) -> tuple[str, str, Parser]:
-    """(format, canonical language, parser) of a posted callgraph; ValueError for what it lacks or nothing supports."""
     format_type = detect_format(data) if request_format == "auto" else request_format
     if format_type == "unknown":
         raise ValueError("Could not auto-detect callgraph format. Please specify 'format' explicitly.")

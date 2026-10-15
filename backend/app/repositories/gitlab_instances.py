@@ -1,5 +1,3 @@
-"""Repository for GitLab instances."""
-
 from app.models.gitlab_instance import GitLabInstance
 from app.repositories.vcs_instances import VcsInstanceRepository
 

@@ -68,7 +68,6 @@ class TokenRejected(Exception):
 
 
 async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase) -> tuple[TokenPayload, dict | None]:
-    """A valid ``expected_type`` JWT's claims and the raw user they name (None if absent); raises TokenRejected."""
     claims = security.decode_session_token(token, expected_type)
     if claims is None:
         raise TokenRejected("invalid")
@@ -198,16 +197,12 @@ async def _apply_ingest_project_update(
 
 
 class _CiClaim[IdT](NamedTuple):
-    """The repository a validated CI token ran in, and the account the provider says started the job."""
-
     external_id: IdT
     path: str
     actor: str | None
 
 
 class _CiProvider[IdT: (int, str)](ABC):
-    """One provider's part in resolving the project a CI token belongs to."""
-
     instance_field: ClassVar[str]
     id_field: ClassVar[str]
     path_field: ClassVar[str]
@@ -217,7 +212,6 @@ class _CiProvider[IdT: (int, str)](ABC):
     service: GitLabService | GitHubService
 
     def key(self, external_id: IdT) -> dict[str, Any]:
-        """The project's composite key on this instance."""
         return {self.instance_field: self.service.instance_id, self.id_field: external_id}
 
     @abstractmethod
@@ -335,7 +329,7 @@ async def _resolve_ci_project[IdT: (int, str)](
     *,
     create_missing: bool,
 ) -> Project:
-    """Resolve the project a CI token belongs to; ``create_missing`` also creates, renames and syncs it."""
+    """``create_missing`` also renames and syncs a found project, not only creates a missing one."""
     instance = ci.service.instance
     if not instance.is_active:
         raise HTTPException(status_code=403, detail=f"{ci.service.provider} instance '{instance.name}' is not active")
@@ -437,7 +431,6 @@ async def _authenticate_via_oidc(
 async def _authenticate_ci(
     x_api_key: str | None, oidc_token: str | None, db: AsyncIOMotorDatabase, *, create_missing: bool
 ) -> Project | None:
-    """The project the CI credentials belong to; None when the request carries none."""
     project_repo = ProjectRepository(db)
     if x_api_key:
         return await _authenticate_via_api_key(x_api_key, project_repo)
@@ -463,7 +456,6 @@ async def authorize_project_write(
     token: str | None = Depends(optional_oauth2_scheme),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> str:
-    """Authorize a project write for the project's CI credentials or a logged-in editor; returns the project id."""
     from app.api.v1.helpers.projects import check_project_access
 
     if project := await _authenticate_ci(x_api_key, oidc_token, db, create_missing=False):
@@ -490,7 +482,7 @@ SURFACE_PERMISSIONS: dict[str, str] = {
 
 # One message for unknown, revoked and expired, so a rejected token does not learn it once existed.
 _MSG_UNRESOLVED_KEY = "Invalid, revoked, or expired API key"
-# The formats the dck_ key replaced; naming one tells the holder only what the token itself shows.
+# Naming a retired format tells the holder only what the token itself shows.
 _RETIRED_KEY_PREFIXES = ("mcp_", "dca_")
 _MSG_RETIRED_KEY = "This API key format is retired. Create a dck_ key under Profile > API Keys and use it instead."
 
@@ -526,7 +518,6 @@ async def _admit_unified_key(
     surface: str,
     permission: str,
 ) -> tuple[User, dict[str, Any]]:
-    """The (owner, key document) pair behind a unified token."""
     key_repo = ApiKeyRepository(db)
     key_doc = await key_repo.get_by_plaintext(token)
     if not key_doc:
@@ -552,7 +543,6 @@ async def _admit_unified_key(
 
 
 def require_api_key(surface: str) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
-    """The dependency admitting a Bearer key that names ``surface`` and whose owner still holds its permission."""
     permission = SURFACE_PERMISSIONS[surface]
 
     async def dependency(

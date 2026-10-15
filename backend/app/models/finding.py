@@ -22,15 +22,14 @@ class FindingType(str, Enum):
     SECRET = "secret"
     MALWARE = "malware"
     EOL = "eol"
-    IAC = "iac"  # Infrastructure as Code
-    SAST = "sast"  # Static Application Security Testing
+    IAC = "iac"
+    SAST = "sast"
     SYSTEM_WARNING = "system_warning"
     OUTDATED = "outdated"
     QUALITY = "quality"  # Supply chain quality issues (maintainer risk, etc.)
     CRYPTO_WEAK_ALGORITHM = "crypto_weak_algorithm"
     CRYPTO_WEAK_KEY = "crypto_weak_key"
     CRYPTO_QUANTUM_VULNERABLE = "crypto_quantum_vulnerable"
-    # Certificate lifecycle findings
     CRYPTO_CERT_EXPIRED = "crypto_cert_expired"
     CRYPTO_CERT_EXPIRING_SOON = "crypto_cert_expiring_soon"
     CRYPTO_CERT_NOT_YET_VALID = "crypto_cert_not_yet_valid"
@@ -38,9 +37,8 @@ class FindingType(str, Enum):
     CRYPTO_CERT_WEAK_KEY = "crypto_cert_weak_key"
     CRYPTO_CERT_SELF_SIGNED = "crypto_cert_self_signed"
     CRYPTO_CERT_VALIDITY_TOO_LONG = "crypto_cert_validity_too_long"
-    # Protocol weakness
     CRYPTO_WEAK_PROTOCOL = "crypto_weak_protocol"
-    # Key management hygiene (crypto-misuse SAST rules)
+    # Raised by crypto-misuse SAST rules.
     CRYPTO_KEY_MANAGEMENT = "crypto_key_management"
     OTHER = "other"
 
@@ -74,7 +72,6 @@ class Finding(BaseModel):
     scanners: list[str] = Field(..., description="List of scanners that detected this")
     details: dict[str, Any] = Field(default_factory=dict, description="Analyzer-specific details")
 
-    # Additional metadata
     found_in: list[str] = Field(default_factory=list, description="Source files where this was found")
     aliases: list[str] = Field(default_factory=list, description="Alternative IDs (e.g. GHSA vs CVE)")
     related_findings: list[str] = Field(
@@ -87,11 +84,10 @@ class Finding(BaseModel):
         "or every sibling past the cross-linking ceiling; None when the list above is complete",
     )
 
-    # Status fields
     waived: bool = False
     waiver_reason: str | None = None
 
-    # Waiver matching signature (location-based findings only; None otherwise)
+    # Location-based findings only.
     match: MatchSignature | None = None
     waiver_lapsed: bool = False
     lapsed_waiver_id: str | None = None

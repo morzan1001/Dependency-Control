@@ -1,5 +1,3 @@
-"""Analytics recommendations endpoint: /projects/{project_id}/recommendations."""
-
 import asyncio
 import logging
 from typing import Any
@@ -47,8 +45,7 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
-# The viewed scan and the builds it succeeded, which the recurrence count is taken over; the
-# recommendation text names the window.
+# The viewed scan and its predecessors the recurrence count spans; the recommendation text names this window.
 _RECURRENCE_WINDOW_SCANS = 10
 
 # What the generators read of a dependency row, the license-drift comparison of the previous scan included.
@@ -60,7 +57,6 @@ _JOIN_PROJECTION = dict.fromkeys(
     ("name", "version", "purl", "type", "direct", "direct_inferred", "source_type", "source_target"), 1
 )
 
-# Recommendation type -> (summary key counted once per recommendation, summary key its impact total adds to).
 _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.BASE_IMAGE_UPDATE: ("base_image_updates", "total_fixable_vulns"),
     RecommendationType.DIRECT_DEPENDENCY_UPDATE: ("direct_updates", "total_fixable_vulns"),
@@ -86,7 +82,7 @@ _SAST_FINDING_TYPES = {"sast"} | (CRYPTO_FINDING_TYPES - CRYPTO_ISSUE_FINDING_TY
 
 
 async def _apply_live_threat_intel(findings: list[FindingRecord]) -> dict[str, VulnerabilityEnrichment]:
-    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan; returns the per-CVE enrichment."""
+    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan."""
     vuln_findings = [f for f in findings if f.type == "vulnerability"]
     all_cves = list({c for f in vuln_findings for c in live_cves([f.details])})
     if not all_cves:

@@ -1,5 +1,3 @@
-"""MCP JSON-RPC 2.0 endpoint (protocol 2025-03-26); external LLM clients authenticate with an API key naming the MCP surface and call the chat tool registry under the key owner's permissions."""
-
 from __future__ import annotations
 
 import json
@@ -47,8 +45,6 @@ def _rpc_result(result: Any, request_id: Any) -> dict[str, Any]:
 
 
 class _RpcError(Exception):
-    """Raised inside dispatch to signal a JSON-RPC error response."""
-
     def __init__(self, code: int, message: str):
         super().__init__(message)
         self.code = code
@@ -61,7 +57,7 @@ async def _handle_tool_call(
     user: User,
     db: AsyncIOMotorDatabase[Any],
 ) -> dict[str, Any]:
-    """Execute a tool call for MCP; protocol errors raise _RpcError, execution errors return isError=true."""
+    """Per MCP, protocol errors raise _RpcError while tool execution errors return isError=true."""
     name = params.get("name")
     if not isinstance(name, str) or not name:
         raise _RpcError(_INVALID_PARAMS, "Missing 'name' in tools/call params")
@@ -94,7 +90,6 @@ async def _handle_tool_call(
 
 async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIOMotorDatabase[Any]) -> Any:
     if method == "initialize":
-        # Echo our protocol version and advertise only 'tools'.
         return {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
@@ -128,7 +123,7 @@ async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIO
 
 
 async def _handle_request(item: Any, user: User, db: AsyncIOMotorDatabase[Any]) -> dict[str, Any] | None:
-    """Answer one JSON-RPC request; a notification (no id) gets no answer once it names a method."""
+    """A notification (no id) gets no answer once it names a method."""
     if not isinstance(item, dict):
         return _rpc_error(_INVALID_REQUEST, "Request must be an object")
     request_id = item.get("id")

@@ -1,5 +1,3 @@
-"""CRUD and test endpoints for project, team, and global webhook configurations."""
-
 from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
@@ -155,7 +153,6 @@ async def update_webhook(
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    # Re-detect type when URL changes without an explicit webhook_type override.
     if "url" in update_data and "webhook_type" not in update_data:
         update_data["webhook_type"] = detect_webhook_type(update_data["url"])
 

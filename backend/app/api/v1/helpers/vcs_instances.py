@@ -1,5 +1,3 @@
-"""The provider-neutral half of the GitLab and GitHub instance endpoints."""
-
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -33,7 +31,6 @@ async def get_or_404[T: VcsInstanceModel](repo: VcsInstanceRepository[T], instan
 async def list_page[T: VcsInstanceModel](
     repo: VcsInstanceRepository[T], page: int, size: int, active_only: bool, to_response: Callable[[T], BaseModel]
 ) -> dict[str, Any]:
-    """One page of instances as the paginated response."""
     skip = (page - 1) * size
     query: dict[str, Any] = {"is_active": True} if active_only else {}
     instances = await repo.find_many(query, skip=skip, limit=size)
@@ -69,7 +66,6 @@ async def apply_update[T: GitLabInstance | GitHubInstance](
     username: str,
     allowlist_refusal: str,
 ) -> T:
-    """Write the provided fields, refusing a taken URL or name, team sync without a token and an open shared issuer."""
     instance = await get_or_404(repo, instance_id, label)
     update_dict = update_data.model_dump(exclude_unset=True)
 

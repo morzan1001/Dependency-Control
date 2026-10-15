@@ -1,5 +1,3 @@
-"""REST endpoints for crypto analytics (hotspots, trends)."""
-
 from fastapi import HTTPException, Query
 from pydantic import AwareDatetime
 

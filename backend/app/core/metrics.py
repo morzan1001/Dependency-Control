@@ -1,5 +1,3 @@
-"""Prometheus metrics for monitoring the backend across a multi-pod Kubernetes deployment."""
-
 import logging
 import time
 from collections.abc import Iterable
@@ -41,7 +39,6 @@ class ArchiveFailureReason:
     UNKNOWN = "unknown"
 
 
-# Get version from package metadata (pyproject.toml)
 try:
     APP_VERSION = get_version("dependency-checks")
 except Exception:
@@ -112,7 +109,6 @@ db_errors_total = Counter(
     ["error_type"],
 )
 
-# Collection-specific metrics
 db_projects_total = Gauge(
     "db_projects_total",
     "Total number of projects in database",
@@ -291,8 +287,7 @@ update_frequency_delta_writes_total = Counter(
     ["result"],  # result in: ok|error
 )
 
-# A write path that inserts, changes or deletes scans without calling the rollup writer
-# shows up here and nowhere else: the ledger keeps serving numbers either way.
+# The only signal of a scan write path that skips the rollup writer, as the ledger keeps serving numbers anyway.
 update_frequency_reconcile_drift_total = Counter(
     "update_frequency_reconcile_drift_total",
     "Ledger entries the update-frequency reconcile found out of step with the scans, by kind and outcome.",
@@ -517,30 +512,21 @@ uptime_seconds = Gauge(
     "Application uptime in seconds",
 )
 
-# Track startup time
 startup_time = time.time()
 
 
 def update_uptime() -> None:
-    """Update the uptime metric."""
     uptime_seconds.set(time.time() - startup_time)
 
 
 async def metrics_endpoint(_request: Request) -> Response:
-    """Prometheus metrics endpoint; expose internally to the cluster only, never via Ingress."""
     update_uptime()
     metrics_output = await run_in_threadpool(generate_latest, REGISTRY)
     return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
 class PrometheusMiddleware:
-    """Pure-ASGI middleware collecting HTTP request metrics.
-
-    Raw ASGI (not BaseHTTPMiddleware) because the latter buffers the response body in an
-    anyio task group, breaking long-lived StreamingResponse generators (e.g. chat SSE) with
-    `RuntimeError("No response returned.")`. We tap the send channel to read status without
-    touching the body, keeping streaming intact.
-    """
+    """Raw ASGI, as BaseHTTPMiddleware breaks long-lived StreamingResponses like chat SSE ("No response returned.")."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -552,7 +538,6 @@ class PrometheusMiddleware:
 
         path: str = scope.get("path", "")
 
-        # Skip metrics for the /metrics endpoint itself to avoid recursion
         if path == "/metrics":
             await self.app(scope, receive, send)
             return
@@ -569,7 +554,7 @@ class PrometheusMiddleware:
             nonlocal status_code, response_size
             if message["type"] == "http.response.start":
                 status_code = message.get("status", 500)
-                # Record response size if Content-Length is present (skipped on streaming responses)
+                # Streaming responses carry no Content-Length, so they record no size.
                 response_size = _content_length(message.get("headers", []))
             await send(message)
 
@@ -618,8 +603,6 @@ _DB_COMMANDS = frozenset(
 
 
 class DbCommandMetrics(monitoring.CommandListener):
-    """Counts and times every read and write the driver sends, labelled by collection and command."""
-
     def __init__(self) -> None:
         self._pending: dict[tuple[Any, int], tuple[str, str]] = {}
 
@@ -656,7 +639,6 @@ class DbHeartbeatFailures(monitoring.ServerHeartbeatListener):
 
 
 async def update_db_stats(database: Any) -> None:
-    """Update collection-count gauges using estimated_document_count() (O(1), reads metadata)."""
     try:
         users_count = await database["users"].estimated_document_count()
         projects_count = await database["projects"].estimated_document_count()
@@ -677,7 +659,6 @@ async def update_db_stats(database: Any) -> None:
 
 
 async def update_archive_stats(database: Any) -> None:
-    """Update archive statistics gauge metrics via aggregation pipeline."""
     try:
         pipeline = [
             {

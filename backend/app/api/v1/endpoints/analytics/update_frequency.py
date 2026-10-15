@@ -1,5 +1,3 @@
-"""Analytics update-frequency endpoints."""
-
 import asyncio
 import contextlib
 from collections.abc import Coroutine, Mapping
@@ -61,29 +59,21 @@ router = CustomAPIRouter()
 
 _DISCONNECT_POLL_SECONDS = 1.0
 
-# Ranking projects without a shared window compares different time spans, so the
-# comparison always fixes one; a quarter covers the slowest realistic scan cadence.
+# A ranking needs one shared window to compare like spans; a quarter covers the slowest realistic scan cadence.
 _DEFAULT_COMPARISON_WINDOW_DAYS = 90
 
-# Worst-case wall time of one comparison recompute over the largest tenant. The live
-# path walks every scan of every visible project; the rollup path reads a handful of
-# bounded queries and folds them in memory, so it needs a fraction of the room.
+# Worst-case recompute times over the largest tenant: the live path walks every scan, the rollup a few queries.
 _LIVE_COMPARISON_BUDGET_SECONDS = 240.0
 _ROLLUP_COMPARISON_BUDGET_SECONDS = 30.0
 
 
 def _lock_timings(use_rollup: bool) -> tuple[float, int]:
-    """Waiter and lock lifetimes for the path that is about to run.
-
-    A waiter must outlast the recompute or it starts a duplicate one; the lock
-    must outlast the waiter, or a second caller recomputes under the holder.
-    """
+    """The waiter outlasts the recompute and the lock the waiter, or a second caller starts a duplicate recompute."""
     budget = _ROLLUP_COMPARISON_BUDGET_SECONDS if use_rollup else _LIVE_COMPARISON_BUDGET_SECONDS
     return budget, int(budget) + 60
 
 
 async def _await_or_abort[T](request: Request, coro: Coroutine[Any, Any, T]) -> T:
-    """Drop the computation once the caller is gone instead of running it to completion."""
     task = asyncio.ensure_future(coro)
     try:
         while True:
@@ -93,8 +83,7 @@ async def _await_or_abort[T](request: Request, coro: Coroutine[Any, Any, T]) -> 
             if await request.is_disconnected():
                 raise HTTPException(status_code=499, detail="Client disconnected")
     finally:
-        # asyncio.wait() leaves its futures running, so the task outlives us on any
-        # exit path -- including an outer cancellation at shutdown -- unless killed here.
+        # asyncio.wait() leaves its futures running, so the task outlives any exit, shutdown included, unless killed.
         if not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -121,12 +110,7 @@ def _comparison_cache_key(
     window_days: int,
     use_rollup: bool,
 ) -> str:
-    """Cache key shared by every caller with the same visible-project scope.
-
-    The read path is part of the key: only the rollup can tell that the ledger
-    is behind, so the two disagree on ``data_status`` while it is, and flipping
-    the flag must not serve the other path's entry for the rest of its TTL.
-    """
+    """The read path is in the key: only the rollup sees a lagging ledger, so the paths disagree on data_status."""
     base = CacheKeys.update_frequency_comparison(scope_hash, team_id)
     return f"{base}:w{window_days}:r{int(use_rollup)}"
 
@@ -150,11 +134,7 @@ async def get_project_update_frequency(
     window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
     branch: Annotated[str | None, Query(min_length=1, max_length=512)] = None,
 ) -> UpdateFrequencyMetrics:
-    """Update-frequency metrics from version diffs; window_days scopes by time, else max_scans.
-
-    The timeline covers one branch (``branch`` if given, else the newest
-    scanned live branch) so cross-branch differences are not counted as updates.
-    """
+    """One branch's version-diff metrics, the newest live one by default; window_days scopes by time, else max_scans."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
     project = await check_project_access(project_id, current_user, db)
 
@@ -204,12 +184,7 @@ async def _scoped_projects(
     user_project_ids: list[str],
     team_id: str | None,
 ) -> list[dict[str, Any]]:
-    """The caller's visible projects, each carrying every team that owns it.
-
-    ``team_id`` narrows to one team's holding, co-owned projects included, so a project appears in
-    each of its owners' comparisons in full. The per-team rankings therefore overlap, and the rows
-    across all of them outnumber the estate's projects.
-    """
+    """``team_id`` keeps co-owned projects, so per-team rankings overlap and together outnumber the estate."""
     query: dict[str, Any] = {"_id": {"$in": user_project_ids}}
     if team_id:
         query["team_ids"] = team_id
@@ -236,8 +211,7 @@ async def _compute_comparison(
 ) -> dict[str, Any]:
     projects_raw = await _scoped_projects(db, user_project_ids, team_id)
 
-    # No release-history fetcher: comparison only needs team-velocity fields, and
-    # per-package deps.dev round-trips per project would dominate latency.
+    # No release-history fetcher: the comparison needs only velocity fields, and deps.dev round-trips would dominate.
     comparison = await compute_update_frequency_comparison(
         projects=projects_raw,
         scan_repo=ScanRepository(db),
@@ -250,15 +224,11 @@ async def _compute_comparison(
 
 @dataclass(frozen=True)
 class _ResolvedWindow:
-    """Which branch of a project the delta ledger could fold, and how far it got."""
-
     branch: str | None
     window: list[dict[str, Any]]
     status: UpdateDataStatus
-    # Set only when the cap truncated the branch: the rate then has to divide by the
-    # stretch actually read, not by a window whose older part was never looked at.
+    # Set only when the cap truncated the branch, so the rate divides by the stretch actually read.
     measured_days: int | None = None
-    # Scans the fold covered when the branch holds more than the cap follows.
     window_scan_cap: int | None = None
 
 
@@ -267,11 +237,7 @@ def _resolve_window(
     deltas_by_branch: Mapping[str, list[dict[str, Any]]],
     project: dict[str, Any],
 ) -> _ResolvedWindow:
-    """The branch the scans elect, and how much of that branch's window the ledger can fold.
-
-    The branch is chosen from the scans rather than from the deltas, so a ledger
-    with holes cannot make this path report a different branch than the live one.
-    """
+    """The branch comes from the scans, not the deltas, so a ledger with holes cannot pick another branch than live."""
     branch = select_primary_branch(activity, project.get("default_branch"), project.get("deleted_branches"))
     if branch is None:
         return _ResolvedWindow(None, [], "insufficient_data")
@@ -279,9 +245,7 @@ def _resolve_window(
 
 
 def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWindowActivity) -> _ResolvedWindow:
-    """How much of one branch's window the ledger can fold, and what that leaves out."""
-    # The live walk stops at the same count of documents, so a branch busier than the
-    # cap is truncated to the same newest stretch on both paths.
+    # The live walk stops at the same count, so both paths truncate a branch busier than the cap to the same stretch.
     capped = len(deltas) >= WINDOW_HARD_LIMIT
     deltas = deltas[-WINDOW_HARD_LIMIT:]
     if not deltas:
@@ -292,8 +256,7 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
     if len(bars) < 2:
         # A writer failure is the reason there is nothing to fold, not a scan cadence.
         return _ResolvedWindow(branch, [], "error" if any(d.get("error") for d in deltas) else "insufficient_data")
-    # Past the cap the branch's own commit count describes a longer stretch than either
-    # path reads, so comparing against it would demote exactly the busiest projects.
+    # Past the cap the commit count spans more than either path reads, so comparing to it demotes the busiest projects.
     status: UpdateDataStatus = "ready" if capped else commit_coverage(deltas, window, activity.scans_per_commit).status
     # Measured representative to representative, the two scans the bars are dated by.
     measured_days = spanned_days(bars[0][-1]["scan_created_at"], bars[-1][-1]["scan_created_at"]) if capped else None
@@ -329,7 +292,6 @@ async def _compute_comparison_from_rollup(
     *,
     window_days: int,
 ) -> dict[str, Any]:
-    """Comparison folded from the delta ledger: a handful of bounded queries, no per-scan walk."""
     projects_raw = await _scoped_projects(db, user_project_ids, team_id)
     if not projects_raw:
         return UpdateFrequencyComparison(projects=[]).model_dump()
@@ -359,11 +321,7 @@ async def get_update_frequency_comparison(
     team_id: str | None = None,
     window_days: Annotated[int, Query(ge=1, le=3650)] = _DEFAULT_COMPARISON_WINDOW_DAYS,
 ) -> UpdateFrequencyComparison:
-    """Cross-project ranking over one calendar window, so scan cadences stay comparable.
-
-    There is no scan-count mode here: a shared calendar window is what makes the
-    projects comparable, and it selects the scans on both read paths.
-    """
+    """Cross-project ranking over one calendar window, never a scan count, so scan cadences stay comparable."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     user_project_ids = await get_user_project_ids(current_user, db)

@@ -1,5 +1,3 @@
-"""Analytics risk endpoints: /impact and /hotspots."""
-
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
@@ -54,8 +52,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-# Samples named on a card; each is returned beside the population it was drawn from, so a reader
-# acting on the list knows whether it is the whole of what the row found.
+# Each sample ships beside the population it was drawn from, so a reader knows whether a list is all of it.
 _AFFECTED_PROJECTS_SHOWN = 5
 _HOTSPOT_PROJECTS_SHOWN = 10
 _FIX_VERSIONS_SHOWN = 3
@@ -75,7 +72,6 @@ _PYTHON_RANKS: dict[str, Callable[[dict[str, Any], Mapping[str, VulnerabilityEnr
 
 
 def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
-    """The live vulnerability findings of the scans, one row per component@version."""
     return [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
         {
@@ -88,13 +84,13 @@ def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
                 "details": SLIM_DETAILS_EXPR,
             }
         },
+        # No $slice after this $group: it cannot shrink the accumulator, and a cap in match order drops KEV/EPSS CVEs.
         {
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
                 "first_seen": _FIRST_SEEN,
-                # $addToSet collapses the (usually identical) per-project advisory lists to the
-                # distinct variants; distinct-CVE counts, severity and enrichment derive from these.
+                # $addToSet collapses the usually identical per-project advisory lists to their distinct variants.
                 "details_list": {"$addToSet": "$details"},
             }
         },
@@ -102,7 +98,7 @@ def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
 
 
 async def _enrich(groups: Iterable[dict[str, Any]]) -> dict[str, VulnerabilityEnrichment]:
-    """EPSS and KEV of every live CVE the groups name; supplementary, so a failure leaves them unenriched."""
+    """Enrichment is supplementary, so a failure leaves the groups unenriched."""
     cves = list({cve for group in groups for cve in live_cves(group["details_list"])})
     if not cves:
         return {}
@@ -311,8 +307,7 @@ async def _hotspots(
         pipeline += [{"$sort": {_MONGO_SORTS[sort_by]: sort_direction, "_id": 1}}, {"$skip": skip}, {"$limit": limit}]
     groups = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
 
-    # A component can be group-qualified while the inventory keeps the bare artifact name,
-    # so both spellings go into the filter and the index resolves either way.
+    # A component may be group-qualified while the inventory keeps the bare artifact name, so both spellings match.
     candidates = list({name for r in groups for name in component_name_candidates(r["_id"]["component"])})
     type_pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "name": {"$in": candidates}}},

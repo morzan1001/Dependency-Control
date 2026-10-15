@@ -1,5 +1,3 @@
-"""Pydantic models and TypedDicts for analytics API endpoints."""
-
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
@@ -12,8 +10,6 @@ from app.schemas.team import TeamRef
 
 
 class CVEEnrichmentResult(BaseModel):
-    """Result of CVE enrichment data processing from process_cve_enrichments()."""
-
     max_epss: float | None = None
     max_percentile: float | None = None
     max_risk: float | None = None
@@ -26,8 +22,6 @@ class CVEEnrichmentResult(BaseModel):
 
 
 class SeverityBreakdown(BaseModel):
-    """Breakdown of findings by severity level."""
-
     critical: int = 0
     high: int = 0
     medium: int = 0
@@ -47,8 +41,6 @@ class SeverityBreakdown(BaseModel):
 
 
 class DependencyUsage(BaseModel):
-    """Usage statistics for a dependency across projects."""
-
     name: str
     type: str
     group: str | None = None
@@ -62,8 +54,6 @@ class DependencyUsage(BaseModel):
 
 
 class DependencyTreeNode(BaseModel):
-    """A dependency and the ids of its direct children; the client expands children lazily."""
-
     id: str
     name: str
     version: str
@@ -84,8 +74,7 @@ class DependencyTreeNode(BaseModel):
 class DependencyGraph(BaseModel):
     """Flat unique dependency nodes + the ids to render at top level; the client nests lazily."""
 
-    # Every node is reachable from roots (direct deps, unresolved-parent deps, one entry per
-    # otherwise-disconnected component), so the graph is rendered whole without server nesting.
+    # Every node is reachable from roots, disconnected cycles included, so the client renders the whole graph.
     nodes: list[DependencyTreeNode] = []
     roots: list[str] = []
     # Rows the graph was built from against what the scan holds; equal unless the read saturated.
@@ -94,8 +83,6 @@ class DependencyGraph(BaseModel):
 
 
 class ImpactAnalysisResult(BaseModel):
-    """Result of impact analysis for a component."""
-
     component: str
     version: str
     affected_projects: int
@@ -120,8 +107,6 @@ class ImpactAnalysisResult(BaseModel):
 
 
 class VulnerabilityHotspot(BaseModel):
-    """A vulnerability hotspot - component with many findings."""
-
     component: str
     version: str
     type: str
@@ -149,16 +134,12 @@ class VulnerabilityHotspot(BaseModel):
 
 
 class DependencyTypeStats(BaseModel):
-    """Statistics for a dependency type."""
-
     type: str
     count: int
     percentage: float
 
 
 class AnalyticsSummary(BaseModel):
-    """Summary of analytics across all accessible projects."""
-
     total_dependencies: int
     total_vulnerabilities: int
     unique_packages: int
@@ -169,21 +150,14 @@ class AnalyticsSummary(BaseModel):
 
 
 class AnalyticsScope(BaseModel):
-    """What the caller's analytics scope offers: the release environments it can be narrowed to,
-    how much of it the current mode resolved, and how far back the analyses behind it reach."""
-
     release_environments: list[str]
     resolved_projects: int
     projects_without_release: int
-    # Release mode resolves to a build nobody rebuilt, so its findings are the vulnerability
-    # landscape of its analysis date; without that date beside them the answer reads as present
-    # tense. Null when the scope resolved to no scan at all.
+    # Release mode answers as of an old analysis, which reads as current without its date; null when no scan resolved.
     oldest_analysis_at: datetime | None = None
 
 
 class DependencyMetadata(BaseModel):
-    """Aggregated metadata for a dependency across all projects."""
-
     name: str
     version: str = Field(..., description="The version the metadata describes")
     versions: list[str] = Field([], description="Every version of the package in scope, newest first")
@@ -214,9 +188,7 @@ class DependencyMetadata(BaseModel):
 
 
 class VulnerabilitySearchResult(BaseModel):
-    """Result of a vulnerability/CVE search."""
-
-    vulnerability_id: str  # e.g. CVE-2021-44228, GHSA-xxx
+    vulnerability_id: str
     aliases: list[str] = []
 
     severity: str
@@ -245,15 +217,11 @@ class VulnerabilitySearchResult(BaseModel):
 
 
 class VulnerabilitySearchResponse(Page[VulnerabilitySearchResult]):
-    """Paginated response for vulnerability search."""
-
     resolved_projects: int
     projects_without_release: int
 
 
 class DependencySearchResult(BaseModel):
-    """Result of a dependency search."""
-
     project_id: str
     project_name: str
     package: str
@@ -281,15 +249,11 @@ class DependencySearchResult(BaseModel):
 
 
 class DependencySearchResponse(Page[DependencySearchResult]):
-    """Paginated response for dependency search."""
-
     resolved_projects: int
     projects_without_release: int
 
 
 class RecommendationResponse(BaseModel):
-    """Response model for a single recommendation."""
-
     type: str
     priority: str
     title: str
@@ -307,8 +271,6 @@ class RecommendationResponse(BaseModel):
 
 
 class RecommendationsResponse(BaseModel):
-    """Response model for recommendations endpoint."""
-
     project_id: str
     project_name: str
     scan_id: str
@@ -316,19 +278,13 @@ class RecommendationsResponse(BaseModel):
     total_vulnerabilities: int
     recommendations: list[RecommendationResponse]
     summary: dict[str, Any]
-    # Rows the engine reasoned over (total_findings, dependencies_read) against what the scan holds;
-    # each pair is equal unless its read saturated, and then the advice is scoped to the rows read.
+    # Each read/total pair differs only when the read saturated, and the advice then covers only the rows read.
     findings_total: int = 0
     dependencies_read: int = 0
     dependencies_total: int = 0
 
 
-# --- Update Frequency Analysis ---
-
-
 class DependencyUpdateEvent(BaseModel):
-    """A single dependency version change between two consecutive scans."""
-
     package_name: str
     package_type: str
     purl: str | None = None
@@ -342,8 +298,6 @@ class DependencyUpdateEvent(BaseModel):
 
 
 class ScanTimelineEntry(BaseModel):
-    """Per-scan summary for timeline chart data."""
-
     scan_id: str
     date: str
     updates_count: int  # excludes downgrades
@@ -356,18 +310,14 @@ class ScanTimelineEntry(BaseModel):
 
 
 class SlowPackage(BaseModel):
-    """A package that remains outdated across multiple scans."""
-
     name: str
     type: str
     current_version: str | None = None
     latest_version: str | None = None
-    scans_outdated: int  # number of scans where this package was flagged as outdated
+    scans_outdated: int
 
 
 class UpdateFrequencyMetrics(BaseModel):
-    """Aggregated update frequency metrics for a single project."""
-
     project_id: str
     project_name: str
     # Branch the timeline covers; None only when the project has no completed scans.
@@ -392,8 +342,7 @@ class UpdateFrequencyMetrics(BaseModel):
 
     avg_days_between_scans: float
 
-    # Coverage — share of ever-outdated packages that were resolved.
-    # None means nothing was ever outdated (N/A, distinct from 0%).
+    # Coverage of ever-outdated packages since resolved; None means nothing was ever outdated, unlike 0%.
     total_outdated_detected: int
     outdated_resolved: int
     update_coverage_pct: float | None = None
@@ -401,8 +350,7 @@ class UpdateFrequencyMetrics(BaseModel):
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     trend_detail: str
 
-    # Upstream release cadence (independent of scan frequency).
-    # All four are None when no release-history data is available.
+    # Upstream release cadence, independent of scan frequency; all four are None without release-history data.
     upstream_releases_last_12m_median: float | None = None
     upstream_days_between_releases_median: float | None = None
     upstream_days_since_latest_release_median: float | None = None
@@ -411,11 +359,9 @@ class UpdateFrequencyMetrics(BaseModel):
     # Dominant dep ecosystem ("pypi"/"npm"/...); "mixed" if none >=70%; None if empty.
     dominant_ecosystem: str | None = None
 
-    # Scans the numbers cover when the branch holds more than either read path follows;
-    # None when the whole window was read. scan_count counts timeline bars, not scans.
+    # Set when the branch exceeds what either read path follows, None for a whole window; scan_count counts bars.
     window_scan_cap: int | None = None
-    # Packages still outdated in the newest measured scan: the backlog slowest_packages ranks,
-    # counted before the table was cut.
+    # Packages still outdated in the newest measured scan, counted before slowest_packages was cut.
     outdated_backlog: int = 0
 
     scan_timeline: list[ScanTimelineEntry]
@@ -424,28 +370,17 @@ class UpdateFrequencyMetrics(BaseModel):
 
 
 UpdateDataStatus = Literal["ready", "partial", "pending", "insufficient_data", "error"]
-"""Why a project row carries metrics, or why it does not.
-
-``partial`` means the numbers are exact but cover noticeably fewer scans than
-the window really holds, so they may not be compared with fully measured
-projects; ``pending`` means no rollup delta exists yet, so the project is listed
-but unmeasured; ``insufficient_data`` means the window holds fewer than two
-comparable scans; ``error`` means the deltas carry a writer failure.
-"""
+"""partial: fewer scans than the window holds; pending: no delta yet; insufficient_data: under two comparable scans."""
 
 
 class ProjectUpdateSummary(BaseModel):
-    """Lightweight update metrics for cross-project comparison.
-
-    Every metric field is None unless ``data_status`` is ``"ready"`` or ``"partial"``.
-    """
+    """Every metric field is None unless ``data_status`` is "ready" or "partial"."""
 
     project_id: str
     project_name: str
     teams: list[TeamRef] = Field(default_factory=list)
     data_status: UpdateDataStatus
-    # Branch the metrics describe; projects rarely carry a default_branch, so the
-    # row has to say which one was picked.
+    # Projects rarely carry a default_branch, so the row says which branch it describes.
     branch: str | None = None
     window_days: int
     scan_count: int | None = None
@@ -456,20 +391,12 @@ class ProjectUpdateSummary(BaseModel):
     total_updates: int | None = None
     total_outdated: int | None = None
     last_scan_date: str | None = None
-    # Scans the row's numbers cover when the branch holds more than either read path
-    # follows; None when the whole window was read. The rate is still comparable, because
-    # it divides by the stretch that was read rather than by the window.
+    # Set when the branch exceeds what either read path follows; the rate stays comparable, divided by the stretch read.
     window_scan_cap: int | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):
-    """Cross-project comparison of update frequency metrics.
-
-    Ranking: measured coverage first (descending), then projects where
-    nothing was ever outdated (no measurable coverage). best/worst and the
-    team averages are drawn from ``ready`` projects only, so neither an
-    unmeasured nor a partially covered project dilutes them.
-    """
+    """Ranked by coverage, then never-outdated projects; best, worst and team averages use "ready" projects only."""
 
     projects: list[ProjectUpdateSummary]
     team_avg_updates_per_month: float | None = None  # None when no window fixed a denominator
@@ -481,8 +408,6 @@ class UpdateFrequencyComparison(BaseModel):
     skipped_insufficient_data: int = 0
     skipped_error: int = 0
 
-
-# Crypto analytics schemas
 
 GroupBy = Literal["name", "primitive", "asset_type", "weakness_tag", "severity"]
 Metric = Literal[
@@ -499,8 +424,6 @@ Bucket = Literal["day", "week", "month"]
 
 
 class HotspotEntry(BaseModel):
-    """A single entry in a crypto hotspot report."""
-
     key: str = Field(..., description="Grouping key (e.g., 'RSA-1024')")
     grouping_dimension: str = Field(..., description="Dimension this entry groups by")
     asset_count: int = Field(..., ge=0)
@@ -518,8 +441,6 @@ class HotspotEntry(BaseModel):
 
 
 class HotspotResponse(BaseModel):
-    """Paginated hotspot response for a given scope."""
-
     scope: ScopeName
     scope_id: str | None = None
     grouping_dimension: str
@@ -529,16 +450,12 @@ class HotspotResponse(BaseModel):
 
 
 class TrendPoint(BaseModel):
-    """A single data point in a trend time-series."""
-
     timestamp: datetime
     metric: str
     value: float
 
 
 class TrendSeries(BaseModel):
-    """A full trend time-series for a metric within a scope."""
-
     scope: str
     scope_id: str | None = None
     metric: str

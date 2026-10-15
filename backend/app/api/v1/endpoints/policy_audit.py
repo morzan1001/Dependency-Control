@@ -1,5 +1,3 @@
-"""Policy audit endpoints (list/detail/revert/prune); system scope is admin-only, project scope is member-read/admin-write."""
-
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
@@ -230,7 +228,7 @@ async def get_project_license_audit_entry(
     return (await _with_actor_names(db, [entry]))[0]
 
 
-# revert/prune for license-policy audit omitted: overwriting license settings would need a non-trivial merge with peer analyzer settings.
+# No license-policy revert/prune: overwriting license settings needs a merge with peer analyzer settings.
 
 
 def _enforce_min_prune_cutoff(cutoff: datetime) -> None:

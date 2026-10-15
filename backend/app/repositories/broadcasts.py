@@ -1,5 +1,3 @@
-"""Repository for broadcasts."""
-
 from app.models.broadcast import Broadcast
 from app.repositories.base import BaseRepository
 

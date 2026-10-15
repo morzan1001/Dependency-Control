@@ -1,5 +1,4 @@
-"""Scans, and the one head rule: the freshest analysis of the tip build on the project's live default branch, else
-on any branch it has not deleted; ``latest_scan_id`` caches it, and only ``sync_project_head`` writes it."""
+"""Head rule: the freshest analysis of the live default branch's tip build, else of any live branch's."""
 
 import asyncio
 import logging
@@ -27,8 +26,7 @@ from app.schemas.projections import ScanMinimal, ScanWithStats
 
 logger = logging.getLogger(__name__)
 
-# None too: scans predating the flag carry none and are builds. $in rather than $ne, so an index
-# holding is_rescan ahead of the sort keys skips the rescans instead of fetching each one.
+# None counts too, as older scans lack the flag; $in, unlike $ne, lets the index skip rescans instead of fetching them.
 USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$in": [False, None]}}
 # A tag pipeline writes its tag into branch, so such a scan names no branch.
 BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"]}}
@@ -36,8 +34,7 @@ BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"
 HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs": {"$exists": True, "$ne": []}}
 # Builds with a non-empty tag; the scans_tag_builds index filters on this exact predicate, which a query must repeat.
 TAG_BUILD_MATCH: dict[str, Any] = {"commit_tag": {"$gt": ""}}
-# Best first: a rescan is dated today over an older commit, so it ranks last, yet a project of only tag builds or
-# rescans still has a tip.
+# Best first: a rescan, dated today over an older commit, ranks last, yet still heads a project with nothing else.
 _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
     {**sbom, **tier}
     for sbom in (HAS_SBOM_MATCH, {})
@@ -60,8 +57,6 @@ def is_usable_build(doc: dict[str, Any]) -> bool:
 
 @dataclass(frozen=True)
 class LineageAnalysis:
-    """The analysis a scan's rescan lineage resolves to, and whether the walk that found it ran out."""
-
     scan_id: str
     # True when the chain still had links at MAX_RESCAN_HOPS, so a fresher analysis may exist.
     chain_bounded: bool
@@ -102,7 +97,6 @@ _MINIMAL_PROJECTION = {
 
 
 def _project_id_and_deleted(project: Any) -> tuple[str | None, list[str]]:
-    """Extract ``(project_id, deleted_branches)`` from a Project model or raw dict."""
     if isinstance(project, dict):
         pid = project.get("_id") or project.get("id")
         deleted = project.get("deleted_branches") or []
@@ -119,8 +113,6 @@ def _project_field(project: Any, name: str) -> Any:
 
 
 class _HeadScope(NamedTuple):
-    """Everything head resolution reads off one project."""
-
     default_branch: str | None
     deleted: list[str]
     pointer: str | None
@@ -140,7 +132,6 @@ def _live_default(scope: _HeadScope) -> str | None:
 
 
 def _may_head(doc: dict[str, Any], scope: _HeadScope) -> bool:
-    """Whether this scan may stand in for the tip build: one on the live default branch, else a live branch build."""
     default = _live_default(scope)
     if default:
         return doc.get("branch") == default
@@ -171,12 +162,11 @@ class ScanRepository:
         await self.collection.update_one({"_id": scan_id}, {"$set": {"updated_at": datetime.now(timezone.utc)}})
 
     async def update_raw(self, scan_id: str, update_ops: dict[str, Any], guard: dict[str, Any] | None = None) -> bool:
-        """False when ``guard`` no longer held, so nothing was written."""
         result = await self.collection.update_one({"_id": scan_id, **(guard or {})}, update_ops)
         return bool(result.matched_count)
 
     async def set_stats(self, scan_id: str, stats: Stats, extra: dict[str, Any] | None = None) -> None:
-        """Rewrite a scan's stats, and the copy in every ``latest_run`` reporting it: its own and its root's."""
+        """Also rewrites the copy in each latest_run reporting it: its own and its root's."""
         dumped = stats.model_dump()
         scan = await self.collection.find_one_and_update(
             {"_id": scan_id}, {"$set": {"stats": dumped, **(extra or {})}}, projection={"original_scan_id": 1}
@@ -187,7 +177,6 @@ class ScanRepository:
         )
 
     async def claim_pending(self, scan_id: str, worker_id: str) -> dict[str, Any] | None:
-        """Hand a pending scan to one worker; None when another worker took it first."""
         claimed: dict[str, Any] | None = await self.collection.find_one_and_update(
             {"_id": scan_id, "status": SCAN_STATUS_PENDING},
             {
@@ -204,8 +193,7 @@ class ScanRepository:
     async def mark_failed(
         self, scan_id: str, error: str, *, status: ScanStatus = SCAN_STATUS_PROCESSING, worker_id: str | None = None
     ) -> bool:
-        """Fail a scan only while it is still in ``status`` and, given one, still held by ``worker_id``,
-        so a stale writer cannot fail a run housekeeping reset and another worker claimed."""
+        """Guarded on status and worker, so a stale writer cannot fail a run that another worker has since claimed."""
         query: dict[str, Any] = {"_id": scan_id, "status": status}
         if worker_id:
             query["worker_id"] = worker_id
@@ -221,14 +209,12 @@ class ScanRepository:
         return failed is not None
 
     async def report_rescan_run(self, root_id: str, sbom_generation: int | None, fields: dict[str, Any]) -> None:
-        """Record a rescan's run on the build it re-analyses, unless that build was re-ingested past the
-        SBOM the rescan analysed."""
+        """Skipped once the build was re-ingested past the SBOM the rescan analysed."""
         await self.collection.update_one({"_id": root_id, "sbom_generation": sbom_generation}, {"$set": fields})
 
     async def requeue(
         self, scan_id: str, worker_id: str | None, *, counter: Literal["retry_count", "stuck_retry_count"]
     ) -> bool:
-        """Send a processing scan still held by ``worker_id`` back to pending for another attempt."""
         result = await self.collection.update_one(
             {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
             {
@@ -239,7 +225,6 @@ class ScanRepository:
         return bool(result.modified_count)
 
     async def renew_claim(self, scan_id: str, worker_id: str) -> bool:
-        """Move the stuck-scan lease forward; False once the scan is no longer this worker's."""
         result = await self.collection.update_one(
             {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
             {"$set": {"analysis_started_at": datetime.now(timezone.utc)}},
@@ -247,7 +232,6 @@ class ScanRepository:
         return bool(result.matched_count)
 
     async def reopen_finished(self, scan_id: str, *, statuses: Sequence[ScanStatus] = SCAN_USABLE_STATUSES) -> bool:
-        """Send a scan finished in one of ``statuses`` back to pending because new input arrived for it."""
         result = await self.collection.update_one(
             {"_id": scan_id, "status": {"$in": statuses}},
             {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0, "stuck_retry_count": 0}},
@@ -260,7 +244,7 @@ class ScanRepository:
         return await self.collection.find_one(query)
 
     async def _tip(self, match: dict[str, Any], projection: dict[str, int] | None = _TIP_PROJECTION) -> dict | None:
-        """The newest scan under ``match`` in the best tier that holds one; each tier is one index seek."""
+        """Each tier is one index seek."""
         for tier in _TIP_TIERS:
             doc: dict | None = await self.collection.find_one({**match, **tier}, projection, sort=SCANS_TIP_SORT)
             if doc:
@@ -280,12 +264,11 @@ class ScanRepository:
         return await self._tip(base, projection)
 
     async def head_build(self, project: Any, match: dict[str, Any], projection: dict[str, int]) -> dict | None:
-        """The build that heads the project among scans under ``match``, before the lineage step."""
+        """The heading build itself, before the lineage step."""
         project_id, scope = _head_scope(project)
         return await self._head_build(project_id, scope, match, projection) if project_id else None
 
     async def branch_tip(self, project_id: str, branch: str) -> Scan | None:
-        """The head rule scoped to one branch: its tip build, resolved to the freshest analysis of it."""
         tip = await self._tip({"project_id": project_id, "branch": branch})
         doc = (await self._freshest_analysis_docs([tip])).get(tip["_id"]) if tip else None
         return Scan(**doc) if doc else None
@@ -293,8 +276,7 @@ class ScanRepository:
     async def branch_tips(
         self, project_id: str, deleted_branches: list[str] | None = None, since: datetime | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
-        """``(branch, build count, branch_tip's answer)`` per branch the project has not deleted, sorted by branch;
-        ``since`` keeps the branches scanned at or after it and counts only those scans."""
+        """(branch, build count, branch_tip's answer) per live branch; ``since`` counts only the scans since then."""
         match: dict[str, Any] = {"project_id": project_id, **BRANCH_SCAN_FILTER}
         if deleted_branches:
             match["branch"] = {"$nin": list(deleted_branches)}
@@ -354,8 +336,7 @@ class ScanRepository:
         query: dict[str, Any],
         limit: int,
     ) -> list[ScanWithStats]:
-        # Callers derive the limit from the id list they are asking about, and Mongo reads
-        # limit(0) as unbounded, so an empty list has to answer before the query is built.
+        # Mongo reads limit(0) as unbounded, and the limit is the length of an id list that may be empty.
         if limit <= 0:
             return []
         cursor = self.collection.find(query, {"_id": 1, "stats": 1}).limit(limit)
@@ -368,26 +349,22 @@ class ScanRepository:
         return await self.collection.count_documents(query or {})
 
     async def get_latest_active_scan_id(self, project: Any) -> str | None:
-        """The project's head id; ``project`` may be a model or a raw dict."""
         project_id, scope = _head_scope(project)
         if not project_id:
             return None
         return (await self._head_scan_ids({project_id: scope})).get(project_id)
 
     async def get_latest_active_scan(self, project: Any) -> Scan | None:
-        """The project's head as a full document."""
         scan_id = await self.get_latest_active_scan_id(project)
         return await self.get_by_id(scan_id) if scan_id else None
 
     async def belongs_to_project(self, scan_ids: set[str], project_id: str) -> bool:
-        """Whether every one of ``scan_ids`` is a scan of ``project_id``."""
         return (
             await self.count({"_id": {"$in": list(scan_ids)}, "project_id": project_id}, limit=len(scan_ids))
         ) == len(scan_ids)
 
     async def sync_project_head(self, project_id: str) -> str | None:
-        """Cache the project's head, derived afresh, with its stats over the pointer it replaces; returns the head
-        written, or None when the project is gone, nothing may head it, or the pointer kept moving."""
+        """latest_scan_id's only writer, guarded on the pointer it replaces; None if no head could be written."""
         for _ in range(_HEAD_SYNC_ATTEMPTS):
             project = await self.db.projects.find_one({"_id": project_id}, _HEAD_SCOPE_PROJECTION)
             if not project:
@@ -406,10 +383,7 @@ class ScanRepository:
         return None
 
     async def get_preceding_scans(self, scan_id: str, limit: int) -> list[Scan]:
-        """The builds the given scan's commit succeeded, newest first: the usable builds that predate it
-        on its branch, or among the project's tag builds for a tag build that names no branch. A rescan
-        carries today's date over an older commit, so a rescan is measured by the build it re-analysed
-        and never counts as a predecessor."""
+        """A rescan is measured by the build it re-analysed, as it carries today's date over an older commit."""
         fields = {"project_id": 1, "branch": 1, "commit_tag": 1, "created_at": 1, "is_rescan": 1, "original_scan_id": 1}
         current = await self.collection.find_one({"_id": scan_id}, fields)
         if current and current.get("is_rescan") and current.get("original_scan_id"):
@@ -429,8 +403,7 @@ class ScanRepository:
     async def freshest_in_lineage(
         self, scan_ids: Iterable[str], seeds: dict[str, dict[str, Any]] | None = None
     ) -> dict[str, LineageAnalysis]:
-        """The freshest readable analysis of each scan along its rescan chain, absent when the chain has none; the
-        walk is bounded against a cyclic pointer, and ``seeds`` are scans already read with the chain fields."""
+        """``seeds`` are scans already read with the chain fields; a chain without a readable analysis is left out."""
         frontier: dict[str, str] = {scan_id: scan_id for scan_id in scan_ids}
         seeded = seeds or {}
         visited: set[str] = set()
@@ -472,7 +445,6 @@ class ScanRepository:
         }
 
     async def oldest_analysis_at(self, scan_ids: Sequence[str]) -> datetime | None:
-        """The date of the oldest of these scans: how far back the answer they carry reaches."""
         if not scan_ids:
             return None
         doc = await self.collection.find_one(
@@ -481,7 +453,6 @@ class ScanRepository:
         return doc.get("created_at") if doc else None
 
     async def _freshest_analysis_docs(self, tips: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Each of these tip builds' ids mapped to the whole document of the analysis its lineage resolves to."""
         if not tips:
             return {}
         resolved = await self.freshest_in_lineage([tip["_id"] for tip in tips], seeds={tip["_id"]: tip for tip in tips})
@@ -492,9 +463,6 @@ class ScanRepository:
         return {scan_id: docs[analysis.scan_id] for scan_id, analysis in resolved.items() if analysis.scan_id in docs}
 
     async def get_latest_active_scan_ids(self, projects: list[Any]) -> dict[str, str]:
-        """Maps project_id -> the scan that represents its head, under this module's head rule;
-        projects resolving to no scan are omitted.
-        """
         scopes: dict[str, _HeadScope] = {}
         for project in projects:
             project_id, scope = _head_scope(project)
@@ -503,14 +471,11 @@ class ScanRepository:
         return await self._head_scan_ids(scopes)
 
     async def _head_scan_ids(self, scopes: dict[str, _HeadScope]) -> dict[str, str]:
-        """The one head resolver: pick each project's tip build, then report the freshest analysis of
-        it. ``latest_scan_id`` stands in for the pick while it names a readable scan that may head the
-        project; it names whichever analysis was last cached, so it goes through the lineage step too."""
+        """A cached latest_scan_id that may still head the project stands in for the pick, lineage step included."""
         pointers = {pid: scope.pointer for pid, scope in scopes.items() if scope.pointer}
         readable: dict[str, dict[str, Any]] = {}
         if pointers:
-            # Retention deletes a scan without clearing the pointer, and re-ingest or a late analyzer
-            # result sends a completed scan back to pending.
+            # Retention leaves a pointer to a deleted scan, and re-ingest or a late result reopens a completed one.
             cursor = self.collection.find(
                 {"_id": {"$in": list(pointers.values())}, "status": {"$in": SCAN_USABLE_STATUSES}}, _TIP_PROJECTION
             )

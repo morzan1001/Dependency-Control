@@ -1,5 +1,3 @@
-"""Dependency enrichment data from external sources (deps.dev, license compliance)."""
-
 import logging
 from itertools import batched
 from typing import Any
@@ -22,10 +20,7 @@ class DependencyEnrichmentRepository:
         self.collection: AsyncIOMotorCollection = db[self.collection_name]
 
     async def upsert_many(self, entries: list[dict[str, Any]]) -> int:
-        """Upsert each entry with a purl and data under its canonical purl; the number persisted.
-
-        A failed chunk is logged and skipped: enrichment is advisory and must not fail the analysis.
-        """
+        """A failed chunk is logged and skipped, as enrichment is advisory and must not fail the analysis."""
         ops = []
         for entry in entries:
             if not (entry["purl"] and entry["data"]):

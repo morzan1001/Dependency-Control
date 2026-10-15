@@ -39,7 +39,7 @@ from app.services.analysis.notifications import notify_analysis_failed
 
 logger = logging.getLogger(__name__)
 
-# Default graceful shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
+# Below the pod's terminationGracePeriodSeconds, so shutdown finishes before Kubernetes kills it.
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
 
 # Far below HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS, so a live run is never taken for a stuck one.
@@ -70,7 +70,6 @@ async def _renew_adhoc_claim(db: AsyncIOMotorDatabase, job_id: str, worker_id: s
 
 
 async def _run_adhoc_job(db: AsyncIOMotorDatabase, job: dict[str, Any]) -> dict[str, Any]:
-    """The fields that finish the job: its result file, or the error that ended it."""
     fs = AsyncIOMotorGridFSBucket(db)
     try:
         raw = await (await open_gridfs_download_with_retry(fs, ObjectId(job["input_file_id"]))).read()
@@ -85,7 +84,7 @@ async def _run_adhoc_job(db: AsyncIOMotorDatabase, job: dict[str, Any]) -> dict[
 
 
 def _release_memory_to_os() -> None:
-    """Force gc and release glibc heap pages back to OS (Linux-only)."""
+    """glibc keeps freed heap pages unless malloc_trim returns them; elsewhere this is a plain gc."""
     gc.collect()
     with contextlib.suppress(OSError, AttributeError):
         ctypes.CDLL("libc.so.6").malloc_trim(0)
@@ -105,7 +104,6 @@ async def _fail_scan(
     status: ScanStatus = SCAN_STATUS_PROCESSING,
     worker_id: str | None = None,
 ) -> None:
-    """Fail the scan while it is still in ``status`` (and ``worker_id``'s); count and announce it in the background."""
     if await ScanRepository(db).mark_failed(scan["_id"], error, status=status, worker_id=worker_id):
         _record_job("failed", started)
         notice = asyncio.create_task(notify_analysis_failed(db, scan["_id"], scan.get("project_id"), error))
@@ -114,8 +112,6 @@ async def _fail_scan(
 
 
 class AnalysisWorkerManager:
-    """Manages analysis worker tasks and job queue."""
-
     def __init__(self, num_workers: int = 2) -> None:
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.num_workers = num_workers
@@ -132,7 +128,7 @@ class AnalysisWorkerManager:
         return self.queue.qsize() >= self.num_workers
 
     async def start(self) -> None:
-        """Start the workers and the background loops; the stale loop picks up the scans left pending in the DB."""
+        """Scans left pending in the DB are picked up by the stale loop, not here."""
         logger.info(f"Starting {self.num_workers} analysis workers...")
 
         for i in range(self.num_workers):
@@ -197,8 +193,6 @@ class AnalysisWorkerManager:
             )
 
     async def stop(self) -> None:
-        """Graceful shutdown: stop accepting jobs, finish active scans within
-        ``DEFAULT_SHUTDOWN_TIMEOUT_SECONDS``, then force-cancel any stragglers."""
         timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
 
         logger.info(
@@ -228,7 +222,6 @@ class AnalysisWorkerManager:
         logger.info("Graceful shutdown complete.")
 
     async def add_job(self, scan_id: str) -> bool:
-        """Add a scan to the queue. Returns False when rejected during shutdown."""
         if self._shutting_down:
             logger.warning(
                 f"Job {scan_id} rejected - worker manager is shutting down. "
@@ -248,7 +241,6 @@ class AnalysisWorkerManager:
         return await self.add_job(_ADHOC_JOB + job_id)
 
     async def _handle_rescheduled(self, scan: dict[str, Any], db: AsyncIOMotorDatabase, started: float) -> None:
-        """Re-queue a scan the engine sent back to pending, or fail it once its retry budget is spent."""
         scan_id = scan["_id"]
         # Every reschedule follows exactly one engine requeue, which added one to the claimed retry_count.
         retry_count = scan.get("retry_count", 0) + 1

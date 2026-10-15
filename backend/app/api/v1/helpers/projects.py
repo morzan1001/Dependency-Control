@@ -1,5 +1,3 @@
-"""Shared helper functions for project-related operations."""
-
 import secrets
 from typing import Any
 
@@ -37,7 +35,7 @@ async def build_user_project_query(
     user: User,
     team_repo: TeamRepository,
 ) -> dict[str, Any]:
-    """The projects ``check_project_access`` admits the user to, as a query; empty for read_all or a write superuser."""
+    """The projects ``check_project_access`` admits the user to, as a query."""
     if is_write_superuser(user):
         return {}
 
@@ -69,7 +67,6 @@ def may_read_projects(user: User) -> bool:
 
 
 def max_project_role(role_a: ProjectRole | None, role_b: ProjectRole | None) -> ProjectRole | None:
-    """Return the higher of two project roles (by PROJECT_ROLES order); either may be None."""
     if role_a is None:
         return role_b
     if role_b is None:
@@ -78,12 +75,10 @@ def max_project_role(role_a: ProjectRole | None, role_b: ProjectRole | None) -> 
 
 
 def team_grant_role(team_role: str | None) -> ProjectRole:
-    """The project role membership of an owning team grants: team admin -> admin, member -> viewer."""
     return PROJECT_ROLE_ADMIN if team_role == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
 
 
 def direct_member_role(project: Project, user_id: str) -> ProjectRole | None:
-    """Return the user's direct project-member role, or ``None`` if not a member."""
     return next((member.role for member in project.members if member.user_id == user_id), None)
 
 
@@ -104,7 +99,6 @@ async def team_derived_role(
 
 
 async def effective_project_role(project: Project, user: User, team_repo: TeamRepository) -> ProjectRole | None:
-    """MAX(direct, team-derived); None when the user is neither a member nor on an owning team."""
     user_id = str(user.id)
     return max_project_role(
         direct_member_role(project, user_id), await team_derived_role(project.team_ids, user_id, team_repo)
@@ -112,7 +106,6 @@ async def effective_project_role(project: Project, user: User, team_repo: TeamRe
 
 
 async def admin_supplying_owners(team_ids: list[str], team_repo: TeamRepository) -> list[str]:
-    """The teams among ``team_ids`` that have an admin, each of whom administers the project."""
     by_team = await team_repo.members_by_team(team_ids)
     return sorted(
         team_id
@@ -122,7 +115,6 @@ async def admin_supplying_owners(team_ids: list[str], team_repo: TeamRepository)
 
 
 async def project_admin_ids(projects: list[Project], team_repo: TeamRepository) -> dict[str, set[str]]:
-    """Each project's admins: its direct admin members and the admins of every team that owns it."""
     by_team = await team_repo.members_by_team(sorted({team_id for p in projects for team_id in p.team_ids}))
     team_admins = {
         team_id: {m["user_id"] for m in members if m.get("role") == TEAM_ROLE_ADMIN}
@@ -166,7 +158,6 @@ async def check_project_access(
     write: bool = False,
     global_permission: str = Permissions.PROJECT_UPDATE,
 ) -> Project:
-    """Return the project or raise 403/404; read_all opens reads only, and ``write`` asks WRITE without a role."""
     project = await ProjectRepository(db).get_by_id(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -188,7 +179,6 @@ async def check_project_access(
 
 
 async def authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
-    """waiver:read or read_all opens global waivers, read_all every project's, read the viewable projects'."""
     if not has_permission(user.permissions, [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
     if project_id and not has_permission(user.permissions, Permissions.WAIVER_READ_ALL):
@@ -196,7 +186,6 @@ async def authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOM
 
 
 def _merge_team_members(data: dict[str, Any], teams: list[dict[str, Any]], usernames: dict[str, str]) -> None:
-    """Add the owning teams' members, named with each owner, and set every row's ``effective_role``; direct rows win."""
     team_roles: dict[str, ProjectRole | None] = {}
     owners: dict[str, set[str]] = {}
 
@@ -226,7 +215,6 @@ def _merge_team_members(data: dict[str, Any], teams: list[dict[str, Any]], usern
 
 
 async def load_project_with_members(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, Any] | None:
-    """The raw project with every member named: its own, then each owning team's at the role it grants."""
     data = await ProjectRepository(db).get_raw_by_id(project_id)
     if data is None:
         return None
@@ -249,7 +237,6 @@ async def ensure_crypto_overrides_writable(db: AsyncIOMotorDatabase) -> None:
 
 
 def generate_project_api_key(project_id: str) -> tuple[str, str]:
-    """Generate a project API key, returning (api_key "project_id.secret", api_key_hash)."""
     secret = secrets.token_urlsafe(32)
     api_key = f"{project_id}.{secret}"
     api_key_hash = security.get_password_hash(secret)
@@ -261,7 +248,6 @@ def apply_system_settings_enforcement(
     retention_mode: str,
     rescan_mode: str,
 ) -> dict[str, Any]:
-    """Strip globally-enforced fields from project update data when their mode is "global"."""
     result = update_data.copy()
 
     if retention_mode == SETTINGS_MODE_GLOBAL:

@@ -1,17 +1,13 @@
-"""Schemas for parsing and validating callgraph data from various tools."""
-
 from typing import Any
 
 from pydantic import BaseModel
 
 
 class CallgraphUploadRequest(BaseModel):
-    """Request body for callgraph upload endpoint."""
-
     format: str = "auto"  # auto, madge, generic
 
     # Required if format is generic or auto-detection fails.
-    language: str | None = None  # javascript, typescript, python, go, java
+    language: str | None = None
 
     # Matched on scan_id (uuid5 of project+pipeline+commit), else on pipeline_id (GitLab pipeline or GitHub run).
     pipeline_id: int | None = None
@@ -28,8 +24,6 @@ class CallgraphUploadRequest(BaseModel):
 
 
 class CallgraphUploadResponse(BaseModel):
-    """Response from callgraph upload endpoint."""
-
     success: bool
     message: str
     project_id: str
@@ -43,7 +37,5 @@ class CallgraphUploadResponse(BaseModel):
 
 
 class DeleteCallgraphResponse(BaseModel):
-    """Response for delete callgraph endpoint."""
-
     success: bool
     message: str

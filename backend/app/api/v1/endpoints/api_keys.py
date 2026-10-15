@@ -1,5 +1,3 @@
-"""User-facing endpoints for minting, listing and revoking unified API keys."""
-
 from collections.abc import Sequence
 
 from fastapi import HTTPException, status
@@ -23,7 +21,6 @@ router = CustomAPIRouter()
 
 
 def _authorize_surfaces(user: User, surfaces: Sequence[ApiKeySurface]) -> None:
-    """Refuse to mint a key that outranks its holder, naming the first surface they cannot reach."""
     for surface in surfaces:
         permission = SURFACE_PERMISSIONS[surface]
         if not has_permission(user.permissions, permission):

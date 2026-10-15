@@ -42,8 +42,6 @@ class GitLabInstanceBase(VcsInstanceBase):
 
 
 class GitLabInstanceCreate(GitLabInstanceBase, VcsInstanceCreate):
-    """Schema for creating a new GitLab instance."""
-
     _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
 
     @model_validator(mode="after")
@@ -54,8 +52,6 @@ class GitLabInstanceCreate(GitLabInstanceBase, VcsInstanceCreate):
 
 
 class GitLabInstanceUpdate(VcsInstanceUpdate):
-    """Schema for updating a GitLab instance. All fields optional."""
-
     team_sync_depth: int | None = Field(
         None, ge=0, description="GitLab group path depth for team creation (0 = full path)."
     )
@@ -72,16 +68,12 @@ class GitLabInstanceResponse(GitLabInstanceBase, VcsInstanceResponse):
 
 
 class GitLabGroupOption(BaseModel):
-    """One group of an instance, as offered for binding."""
-
     id: int = Field(..., description="Numeric group id; the binding is stored on this, not on the path")
     full_path: str = Field(..., description="Full path, which tells two same-named subgroups apart")
     name: str = Field(..., description="Display name")
 
 
 class GitLabInstanceTestConnectionResponse(BaseModel):
-    """Response for connection test."""
-
     success: bool = Field(..., description="Whether the connection test succeeded")
     message: str = Field(..., description="Status message")
     gitlab_version: str | None = Field(None, description="GitLab version if successful")

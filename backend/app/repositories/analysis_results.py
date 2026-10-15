@@ -1,5 +1,3 @@
-"""Repository for analysis results."""
-
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -37,7 +35,7 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
     async def save_result(
         self, scan_id: str, analyzer_name: str, result: Mapping[str, Any], source: str | None = None
     ) -> None:
-        """Replace the row of this scan, analyzer and source; ``None`` also replaces legacy rows stored without one."""
+        """A None source also replaces the legacy rows stored without one."""
         key = {"scan_id": scan_id, "analyzer_name": analyzer_name, "source": source}
         # Upserting on a key-derived _id lets the unique _id index merge concurrent first writes into one row.
         row_id = ":".join(filter(None, (scan_id, analyzer_name, source)))
@@ -59,7 +57,7 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
         return row["result"]
 
     async def carry_over(self, from_scan_id: str, to_scan_id: str, exclude_names: list[str]) -> None:
-        """Copy a scan's rows onto a rescan server-side; the derived ``_id`` makes a repeated copy a no-op."""
+        """The derived _id makes a repeated copy onto the rescan a no-op."""
         await self.aggregate(
             [
                 {"$match": {"scan_id": from_scan_id, "analyzer_name": {"$nin": exclude_names}}},

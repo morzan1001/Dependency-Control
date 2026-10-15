@@ -1,5 +1,3 @@
-"""MongoDB connection management."""
-
 import asyncio
 import logging
 from datetime import timezone
@@ -24,7 +22,7 @@ DEFAULT_SOCKET_TIMEOUT_MS = 30000
 async def open_gridfs_download_with_retry(
     fs: AsyncIOMotorGridFSBucket, file_id: ObjectId, attempts: int = 4, base_delay: float = 0.25
 ) -> Any:
-    """Open a GridFS download stream, retrying with exponential backoff; a just-committed file can momentarily be unreadable under load."""
+    """A just-committed GridFS file can momentarily be unreadable under load."""
     last_err: Exception | None = None
     for attempt in range(attempts):
         try:
@@ -38,8 +36,6 @@ async def open_gridfs_download_with_retry(
 
 
 class Database:
-    """Singleton database client holder."""
-
     client: AsyncIOMotorClient[Any] | None = None
 
 
@@ -47,14 +43,12 @@ db = Database()
 
 
 async def get_database() -> AsyncIOMotorDatabase[Any]:
-    """Return the Motor database, or raise if the client is not initialized."""
     if db.client is None:
         raise RuntimeError("Database client not initialized.")
     return db.client[settings.DATABASE_NAME]
 
 
 def create_client(url: str, **options: Any) -> AsyncIOMotorClient[Any]:
-    """A client whose reads see their own writes and whose datetimes come back aware UTC."""
     # A keyword beats a URI option, so a readPreference in the URL cannot move reads to a lagging secondary.
     return AsyncIOMotorClient(
         url,
@@ -67,7 +61,6 @@ def create_client(url: str, **options: Any) -> AsyncIOMotorClient[Any]:
 
 
 async def connect_to_mongo() -> None:
-    """Establish the pooled connection to MongoDB."""
     db.client = create_client(
         settings.MONGODB_URL,
         maxPoolSize=DEFAULT_MAX_POOL_SIZE,
@@ -91,7 +84,6 @@ async def connect_to_mongo() -> None:
 
 
 async def close_mongo_connection() -> None:
-    """Close the MongoDB connection gracefully."""
     if db.client is not None:
         db.client.close()
         db.client = None

@@ -1,5 +1,3 @@
-"""Repository for user database operations."""
-
 import re
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -56,7 +54,6 @@ class UserRepository(BaseRepository[User]):
             return await super().update(id, update_data)
 
     async def claim_totp_step(self, user_id: str, step: int) -> bool:
-        """Spend ``step``; False when it or a later step was already spent."""
         return await self.update_raw(
             user_id, {"$set": {"totp_last_step": step}}, guard={"totp_last_step": {"$not": {"$gte": step}}}
         )
@@ -80,7 +77,6 @@ class UserRepository(BaseRepository[User]):
         return {user["email"].lower(): user for user in await cursor.to_list(None)}
 
     async def usernames_by_id(self, user_ids: Iterable[str]) -> dict[str, str]:
-        """Id -> username of every account among ``user_ids``, in one read; a deleted or nameless account is absent."""
         cursor = self.collection.find({"_id": {"$in": sorted(set(user_ids))}}, {"username": 1})
         return {doc["_id"]: doc["username"] async for doc in cursor if doc.get("username")}
 
@@ -92,7 +88,6 @@ class UserRepository(BaseRepository[User]):
         return await self.exists({"username": username})
 
     async def ensure_username_free(self, username: str, except_id: str | None = None) -> None:
-        """A name someone picks must be no other account's in any case."""
         query = _case_insensitive("username", username)
         if except_id is not None:
             query["_id"] = {"$ne": except_id}

@@ -7,7 +7,6 @@ _LOCATION = b"location"
 
 
 def _relative_location(location: str, own_origin: tuple[str, str]) -> str | None:
-    """``location`` as a path, or None when it does not point back at this same origin."""
     parsed = urlsplit(location)
     if not parsed.netloc or (parsed.scheme, parsed.netloc) != own_origin:
         return None
@@ -28,13 +27,7 @@ def _rewrite_header(name: bytes, value: bytes, own_origin: tuple[str, str]) -> t
 
 
 class RelativeLocationMiddleware:
-    """Answers a redirect back to this same origin with a relative ``Location``.
-
-    Behind the reverse proxy the app only ever sees the in-cluster Host, so Starlette's
-    slash redirect would hand the client an absolute URL naming the internal service --
-    which discloses it and resolves for nobody outside the cluster. RFC 7231 section 7.1.2
-    allows a relative reference, and the client resolves it against the host it used.
-    """
+    """Behind the proxy an absolute redirect would name the in-cluster Host; RFC 7231 7.1.2 allows a relative one."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

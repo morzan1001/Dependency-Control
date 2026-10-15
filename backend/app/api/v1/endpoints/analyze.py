@@ -1,5 +1,3 @@
-"""Ad-hoc analysis: queue a posted SBOM for the analysis pipeline and fetch the result without a scan."""
-
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone

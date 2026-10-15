@@ -118,15 +118,13 @@ async def delete_instance(
 
 
 class _Refusal(Enum):
-    """What turned a GitHub read into a refusal, as far as the budget reading can establish."""
-
     BUDGET = auto()
     SCOPE = auto()
     UNDETERMINED = auto()
 
 
 async def _why_refused(github_service: GitHubService) -> tuple[_Refusal, str]:
-    """What refused a read, from its rate-limit headers or the uncharged GET /rate_limit, and when a limit lifts."""
+    """Asks the uncharged GET /rate_limit only when the read's own rate-limit headers are silent."""
     reset_at = github_service.rate_limited_until
     if reset_at is None:
         limit = await github_service.get_core_rate_limit()
@@ -141,7 +139,7 @@ async def _why_refused(github_service: GitHubService) -> tuple[_Refusal, str]:
 
 
 async def _refused_listing(github_service: GitHubService, subject: str, scope_hint: str) -> HTTPException:
-    """The 502 for a picker listing GitHub refused, naming what refused rather than assuming the scope."""
+    """Names what refused rather than assuming a missing scope."""
     cause, reset = await _why_refused(github_service)
     if cause is _Refusal.BUDGET:
         detail = (
@@ -216,7 +214,6 @@ def _budget_failure(instance: GitHubInstance, blocked: str, reset: str) -> GitHu
 async def _probe_token(
     github_service: GitHubService, instance: GitHubInstance
 ) -> GitHubInstanceTestConnectionResponse | str:
-    """A failure response, or the sentence saying GitHub accepts the token."""
     if github_service.api_url is None:
         return _failed_test(
             instance,
@@ -248,7 +245,6 @@ async def _probe_token(
 async def _refused_org_listing(
     github_service: GitHubService, instance: GitHubInstance
 ) -> GitHubInstanceTestConnectionResponse | None:
-    """The failure the org probe's refusal established, or None to leave it to the scope message."""
     cause, reset = await _why_refused(github_service)
     if cause is _Refusal.BUDGET:
         return _budget_failure(instance, "its organisations could not be listed", reset)
@@ -265,10 +261,8 @@ async def _refused_org_listing(
 async def _refused_team_listing(
     github_service: GitHubService, instance: GitHubInstance, unreadable: list[str]
 ) -> GitHubInstanceTestConnectionResponse:
-    """The failure behind an organisation whose teams went unread, accusing only what was established."""
     cause, reset = await _why_refused(github_service)
-    # Exhaustion mid-loop makes every organisation after it look unreadable, so naming any of them
-    # would accuse organisations the token may well be able to read.
+    # Exhaustion mid-loop makes every later organisation look unreadable, so naming any could accuse a readable one.
     if cause is _Refusal.BUDGET:
         return _budget_failure(instance, "its team access could not be checked", reset)
     if cause is _Refusal.UNDETERMINED:
@@ -291,7 +285,6 @@ async def _refused_team_listing(
 async def _probe_team_access(
     github_service: GitHubService, instance: GitHubInstance
 ) -> GitHubInstanceTestConnectionResponse | str:
-    """A failure response, or the sentence naming every organisation whose teams the token reads."""
     orgs = await github_service.get_viewer_organisations()
     # Only a refusal can be a throttle; a 200 carrying an empty list already spent budget to answer.
     if orgs is None and (refused := await _refused_org_listing(github_service, instance)):
@@ -306,8 +299,7 @@ async def _probe_team_access(
             "organisation, or it will silently see only part of it.",
         )
 
-    # Every organisation the token belongs to is one team sync will act on, so a single
-    # unreadable one is a red test: a green one hiding it is the §8 partial-team failure.
+    # Team sync acts on every organisation of the token, so one unreadable organisation fails the test.
     probes = [(name, await github_service.count_org_teams(name)) for name in org_names]
     unreadable = [name for name, count in probes if count is None]
     if unreadable:
@@ -341,8 +333,7 @@ async def test_connection(
             if isinstance(token_check, GitHubInstanceTestConnectionResponse):
                 return token_check
             message += token_check
-        # Only an instance that syncs teams needs organisation access; demanding it of a
-        # pure-ingest instance would fail a perfectly good setup.
+        # Only a team-syncing instance needs organisation access; a pure-ingest one would fail a good setup.
         if instance.sync_teams:
             team_access = await _probe_team_access(github_service, instance)
             if isinstance(team_access, GitHubInstanceTestConnectionResponse):

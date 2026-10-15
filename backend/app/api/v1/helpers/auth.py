@@ -1,5 +1,3 @@
-"""Account mails and the email precondition of the endpoints that send them."""
-
 from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, status
@@ -27,7 +25,6 @@ def _queue_email(
     message: str,
     html_message: str,
 ) -> bool:
-    """Queue the mail when the stored settings can deliver it; report whether it was queued."""
     if not system_settings.email_configured:
         return False
     background_tasks.add_task(

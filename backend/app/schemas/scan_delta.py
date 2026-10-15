@@ -1,5 +1,3 @@
-"""Response envelopes for the unified scan-delta API (findings, components, crypto)."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,16 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeltaCategory(str, Enum):
-    """Top-level category of delta the response describes."""
-
     FINDINGS = "findings"
     COMPONENTS = "components"
     CRYPTO = "crypto"
 
 
 class ScanDeltaTotals(BaseModel):
-    """Aggregate counts for a scan-delta response."""
-
     model_config = ConfigDict(extra="forbid")
 
     added: int = 0
@@ -33,7 +27,7 @@ class ScanDeltaTotals(BaseModel):
 
 
 class FindingDeltaItem(BaseModel):
-    """A single finding between two scans; 'changed' is a vulnerability record whose version or advisories moved."""
+    """'changed' is a vulnerability record whose version or advisories moved."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -54,8 +48,6 @@ class FindingDeltaItem(BaseModel):
 
 
 class ComponentDeltaItem(BaseModel):
-    """A single component change between two scans."""
-
     model_config = ConfigDict(extra="forbid")
 
     change: Literal["added", "removed", "version_changed", "license_changed"]
@@ -70,8 +62,6 @@ class ComponentDeltaItem(BaseModel):
 
 
 class CryptoDeltaItem(BaseModel):
-    """A single crypto asset change between two scans."""
-
     model_config = ConfigDict(extra="forbid")
 
     change: Literal["added", "removed"]
@@ -86,8 +76,7 @@ DeltaItem = FindingDeltaItem | ComponentDeltaItem | CryptoDeltaItem
 
 
 class ScanDeltaReachability(BaseModel):
-    """Reachability coverage of one side of a delta. A build without a callgraph is coverable-but-unanalysed
-    while the other side can be enriched, and their risk scores are then not comparable."""
+    """A side without a callgraph is coverable but unanalysed; its risk scores cannot compare with an analysed one."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -96,8 +85,7 @@ class ScanDeltaReachability(BaseModel):
 
 
 class ScanDeltaSide(BaseModel):
-    """Which build one side of a delta actually is. A symbolic side resolves server-side, so
-    without the branch and commit a caller cannot tell which artefact the totals describe."""
+    """A symbolic side resolves server-side, so the caller needs branch and commit to know which artefact it got."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -108,8 +96,6 @@ class ScanDeltaSide(BaseModel):
 
 
 class ScanDeltaResponse(BaseModel):
-    """Unified response envelope for the scan-delta endpoint."""
-
     model_config = ConfigDict(extra="forbid")
 
     from_scan_id: str
@@ -123,9 +109,7 @@ class ScanDeltaResponse(BaseModel):
     page_size: int = 50
     total_pages: int = 1
     items: list[DeltaItem] = Field(default_factory=list)
-    # None means the scan reports no reachability at all, which is distinct from zero coverage.
-    # Coverage is the whole scan's, not the filtered item set's: it describes the enrichment a side
-    # was scored with, so it counts every vulnerability in the scan whatever the delta asked for.
+    # None: no reachability, unlike zero coverage; counts every vulnerability of the scan, not the filtered items.
     from_reachability: ScanDeltaReachability | None = None
     to_reachability: ScanDeltaReachability | None = None
     # Wholly or partly waived findings per side, filtered by finding_type only; severity and `change` scope items.

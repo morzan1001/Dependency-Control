@@ -1,10 +1,3 @@
-"""
-Crypto-policy rule schema.
-
-CryptoRule is the unit of matching: it has matchers (what crypto it identifies)
-and a finding_type + default_severity (what to emit when it matches).
-"""
-
 from collections import Counter
 from enum import Enum
 
@@ -49,7 +42,7 @@ class CryptoRule(BaseModel):
         description="When true, match if primitive is PKE/SIGNATURE/KEM/KEY-AGREE and name is in match_name_patterns",
     )
 
-    # Certificate-Lifecycle thresholds (in days). None = "not used by this rule"
+    # Certificate-lifecycle thresholds in days; None means the rule does not use one.
     expiry_critical_days: int | None = Field(
         None,
         ge=0,
@@ -89,8 +82,7 @@ class CryptoRule(BaseModel):
 
     @model_validator(mode="after")
     def _quantum_vulnerable_requires_name_patterns(self) -> "CryptoRule":
-        # Without name patterns every PKE/SIGNATURE/KEM asset would match,
-        # including post-quantum primitives (ML-KEM, ML-DSA, SLH-DSA).
+        # Without name patterns every PKE/SIGNATURE/KEM asset would match, post-quantum ones (ML-KEM, ML-DSA) included.
         if self.quantum_vulnerable is True and not self.match_name_patterns:
             raise ValueError(
                 "quantum_vulnerable=True requires match_name_patterns to be set "
@@ -121,7 +113,6 @@ _MAX_RULES = 200
 
 
 def _unevaluable(rule: CryptoRule) -> str | None:
-    """Why the rule cannot be stored, or why no analyzer would evaluate it while enabled; None otherwise."""
     oversized = [f for f in _BOUNDED_LISTS if len(getattr(rule, f)) > _MAX_LIST_ITEMS]
     if oversized:
         return f"{', '.join(oversized)} hold more than {_MAX_LIST_ITEMS} entries"
@@ -161,8 +152,7 @@ def _unevaluable(rule: CryptoRule) -> str | None:
 
 
 class CryptoRuleIn(CryptoRule):
-    """A rule as written through the API. Stored rules keep the lenient CryptoRule so an older
-    document still reads."""
+    """Strict for API writes; stored rules keep the lenient CryptoRule so an older document still reads."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -175,8 +165,7 @@ class CryptoRuleIn(CryptoRule):
 
 
 class CryptoPolicyPutRequest(BaseModel):
-    """Full replacement of a policy's rule set. `rules` is required: an absent or misspelled key
-    used to read as an empty list, which silently disarmed every crypto analyzer under a 200."""
+    """Replaces the whole rule set; ``rules`` is required, as reading an absent key as [] disarms every analyzer."""
 
     rules: list[CryptoRuleIn] = Field(..., max_length=_MAX_RULES)
     comment: str | None = Field(None, max_length=POLICY_COMMENT_MAX_LENGTH)

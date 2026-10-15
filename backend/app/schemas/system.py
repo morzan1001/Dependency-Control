@@ -28,8 +28,7 @@ OidcProviderName = Annotated[
 
 
 class SystemSettingsUpdate(SystemSettingsFields):
-    # Narrowed only on the way in: the response shares these fields and must stay able to render a
-    # setting that predates this constraint.
+    # Narrowed only on input, as the response must still render a setting stored before this constraint.
     oidc_provider_name: OidcProviderName = "GitLab"
     smtp_encryption: Literal["starttls", "ssl", "none"] = "starttls"
     retention_mode: SettingsMode = SETTINGS_MODE_PROJECT
@@ -43,16 +42,10 @@ class SystemSettingsUpdate(SystemSettingsFields):
 
 
 class SystemSettingsResponse(SystemSettingsFields):
-    """Response schema for GET/PUT /system/settings.
-
-    Secret credentials are never echoed back: each is redeclared with
-    ``exclude=True`` (still readable to derive the ``*_configured`` flags) and
-    exposed only as a boolean ``<field>_configured``.
-    """
+    """Secrets are never echoed: each is excluded from output and reported only as a boolean ``<field>_configured``."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    # Secret fields: accepted from the stored model, excluded from output.
     github_token: str | None = Field(default=None, exclude=True)
     smtp_password: str | None = Field(default=None, exclude=True)
     open_source_malware_api_key: str | None = Field(default=None, exclude=True)
@@ -104,18 +97,13 @@ class SystemSettingsResponse(SystemSettingsFields):
 
 
 class NotificationChannels(BaseModel):
-    """Available notification channels based on system configuration."""
-
     email: bool = False
     slack: bool = False
     mattermost: bool = False
 
 
 class PublicConfig(BaseModel):
-    """
-    Public configuration available without authentication.
-    Used by login/registration pages to determine available options.
-    """
+    """Served without authentication, so it holds nothing sensitive."""
 
     allow_public_registration: bool = False
     enforce_2fa: bool = False
@@ -126,10 +114,7 @@ class PublicConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    """
-    Lightweight configuration for authenticated users.
-    Contains only non-sensitive data needed by various frontend components.
-    """
+    """Non-sensitive configuration for any authenticated user."""
 
     archive_enabled: bool
     retention_mode: str
@@ -140,5 +125,4 @@ class AppConfig(BaseModel):
     global_rescan_interval: int
     notifications: NotificationChannels
     chat_enabled: bool
-    # What a project created without an explicit choice runs; the create dialog starts from it.
     default_project_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))

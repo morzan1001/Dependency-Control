@@ -1,5 +1,3 @@
-"""Shared utilities for system settings operations."""
-
 from app.core.constants import (
     NOTIFICATION_CHANNEL_EMAIL,
     NOTIFICATION_CHANNEL_MATTERMOST,
@@ -9,7 +7,6 @@ from app.models.system import SystemSettings
 
 
 def get_available_channels(settings: SystemSettings) -> list[str]:
-    """Return the notification channels configured in system settings."""
     channels: list[str] = []
 
     if settings.email_configured:

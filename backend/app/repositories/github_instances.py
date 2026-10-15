@@ -1,5 +1,3 @@
-"""Repository for GitHub instances."""
-
 from app.models.github_instance import GitHubInstance
 from app.repositories.vcs_instances import VcsInstanceRepository
 

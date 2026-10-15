@@ -1,5 +1,3 @@
-"""Generic, type-safe base class for repositories."""
-
 import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime
@@ -22,11 +20,7 @@ DUPLICATE_KEY_ERROR = 11000
 async def find_window(
     collection: AsyncIOMotorCollection, query: dict[str, Any], limit: int, **find_kwargs: Any
 ) -> tuple[list[dict[str, Any]], int]:
-    """The first ``limit`` matches and how many match in total.
-
-    The count costs a round trip only once the read saturates, the only time the two can differ;
-    a caller compares them to tell a truncated result from one that exactly fills the limit.
-    """
+    """Counts only once the read saturates, the one case where the total can exceed what was read."""
     if limit <= 0:
         return [], await collection.count_documents(query)
     rows: list[dict[str, Any]] = await collection.find(query, limit=limit, **find_kwargs).to_list(length=limit)
@@ -44,8 +38,6 @@ def and_filters(*filters: dict[str, Any]) -> dict[str, Any]:
 
 
 class BaseRepository[T: BaseModel]:
-    """Generic CRUD base. Subclasses set ``collection_name`` and ``model_class``."""
-
     collection_name: str
     model_class: type[T]
 
@@ -137,7 +129,7 @@ class BaseRepository[T: BaseModel]:
         await self.collection.insert_one(data)
 
     async def replace_many_raw(self, docs: list[dict[str, Any]], fresh: bool = False) -> int:
-        """Upsert each document whole by ``_id``; ordered=False so one failed write doesn't abort the batch."""
+        """ordered=False, so one failed write does not abort the batch."""
         if not docs:
             return 0
         try:
@@ -171,11 +163,7 @@ class BaseRepository[T: BaseModel]:
         return await self.get_by_id(id)
 
     async def update_raw(self, id: str, update_ops: UpdateOps, guard: dict[str, Any] | None = None) -> bool:
-        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
-
-        ``guard`` joins the write's own filter so a condition established beforehand cannot go
-        stale in between. False when it no longer held.
-        """
+        """``guard`` joins the write's filter, so a check made beforehand cannot go stale; False once it fails."""
         result = await self.collection.update_one({"_id": id, **(guard or {})}, update_ops)
         return bool(result.matched_count)
 

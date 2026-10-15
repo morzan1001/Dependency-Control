@@ -1,4 +1,4 @@
-"""The one JSON body path of every upload route, read after the route's auth dependencies ran."""
+"""Upload bodies are read here, after the route's auth dependencies ran."""
 
 import asyncio
 

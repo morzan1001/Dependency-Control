@@ -9,18 +9,14 @@ from app.core.constants import (
 
 
 class SystemSettingsFields(BaseModel):
-    # General
     instance_name: str = "Dependency Control"
 
-    # Limits
     project_limit_per_user: int = 0  # 0 means unlimited
 
-    # Security
     allow_public_registration: bool = False
     enforce_2fa: bool = False
     enforce_email_verification: bool = False
 
-    # Email / SMTP
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_user: str | None = None
@@ -29,7 +25,6 @@ class SystemSettingsFields(BaseModel):
     emails_from_email: str = "info@dependencycontrol.local"
     emails_from_name: str | None = "Dependency Control"
 
-    # Integrations
     github_token: str | None = Field(
         None,
         description=(
@@ -46,39 +41,32 @@ class SystemSettingsFields(BaseModel):
     mattermost_bot_token: str | None = None
     mattermost_url: str | None = None
 
-    # OIDC / SSO
     oidc_enabled: bool = False
     oidc_provider_name: str = "GitLab"
     oidc_client_id: str | None = None
     oidc_client_secret: str | None = None
-    oidc_issuer: str | None = None  # e.g. https://gitlab.com
+    oidc_issuer: str | None = None
     oidc_authorization_endpoint: str | None = None
     oidc_token_endpoint: str | None = None
     oidc_userinfo_endpoint: str | None = None
     oidc_scopes: str = "openid profile email"
     oidc_auto_provision: bool = True
 
-    # Periodic Scanning Defaults
     rescan_mode: str = SETTINGS_MODE_PROJECT
     global_rescan_enabled: bool = False
     global_rescan_interval: int = 24  # Hours
 
-    # Default Analyzers for auto-created projects
+    # For auto-created projects.
     default_active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
 
-    # Retention
     retention_mode: str = SETTINGS_MODE_PROJECT
     global_retention_days: int = DEFAULT_RETENTION_DAYS  # 0 means keep forever
     global_retention_action: str = RETENTION_ACTION_DELETE
 
-    # Crypto policy enforcement
-    # "project": each project may override the system rules.
-    # "global": the system policy is enforced and project overrides are ignored
-    # at resolve-time and rejected on write. Existing override docs are preserved
-    # so they re-apply if the mode is switched back to "project".
+    # "global" ignores project overrides and refuses new ones, but keeps them for a switch back to "project".
     crypto_policy_mode: str = SETTINGS_MODE_PROJECT
 
-    # Chat / AI Assistant — feature flag is deployment-time (settings.CHAT_ENABLED)
+    # The chat's on/off switch is deployment-time: settings.CHAT_ENABLED.
     chat_rate_limit_per_minute: int = 10
     chat_rate_limit_per_hour: int = 60
     chat_max_tool_rounds: int = 20

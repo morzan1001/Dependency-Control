@@ -1,5 +1,3 @@
-"""Shared constants used across the application."""
-
 import os
 import re
 from collections.abc import Mapping
@@ -10,8 +8,7 @@ from app.models.finding import Severity
 # HOSTNAME alone repeats across the processes of one host.
 INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
 
-# The two CISA KEV flags enrichment persists on a finding's details and on each of its
-# details.vulnerabilities entries; every writer and reader of those flags uses these keys.
+# Keys of the KEV flags on a finding's details and each advisory; every writer and reader of them uses these.
 DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 
@@ -32,28 +29,23 @@ def severity_rank_expr(severity: Any) -> dict[str, Any]:
 
 
 def get_severity_value(severity: str | None) -> int:
-    """Get numeric value for severity. Higher = more severe."""
     if not severity:
         return 0
     return SEVERITY_ORDER.get(severity.upper(), 0)
 
 
 def max_severity[S: str | None](*severities: S) -> S:
-    """The most severe label; the first one wins a tie."""
     return max(severities, key=get_severity_value)
 
 
 def sort_by_severity[T: Mapping[str, Any]](items: list[T]) -> list[T]:
-    """Most severe first; items of equal severity keep their order."""
     return sorted(items, key=lambda item: get_severity_value(item.get("severity")), reverse=True)
 
 
-# EPSS score thresholds based on exploitation probability
-EPSS_HIGH_THRESHOLD: float = 0.1  # >= 10% - Very likely to be exploited
-EPSS_MEDIUM_THRESHOLD: float = 0.01  # >= 1% - Moderate exploitation risk
+EPSS_HIGH_THRESHOLD: float = 0.1
+EPSS_MEDIUM_THRESHOLD: float = 0.01
 
 
-# SPDX identifiers defined once, shared by LICENSE_URL_PATTERNS and LICENSE_ALIASES.
 SPDX_GPL_3_0 = "GPL-3.0"
 SPDX_GPL_3_0_OR_LATER = "GPL-3.0-or-later"
 SPDX_GPL_2_0 = "GPL-2.0"
@@ -71,16 +63,15 @@ SPDX_BSD_2_CLAUSE = "BSD-2-Clause"
 SPDX_MPL_2_0 = "MPL-2.0"
 SPDX_MPL_1_1 = "MPL-1.1"
 
-# License URL patterns to SPDX ids, matched against the lowercased URL.
+# Matched against the lowercased URL.
 LICENSE_URL_PATTERNS: dict[str, str] = {
-    # GNU; the version 2 licences live under /old-licenses/.
+    # gnu.org keeps the version 2 licences under /old-licenses/.
     r"gnu\.org/licenses/gpl-3\.0": SPDX_GPL_3_0,
     r"gnu\.org/licenses/(old-licenses/)?gpl-2\.0": SPDX_GPL_2_0,
     r"gnu\.org/licenses/lgpl-3\.0": SPDX_LGPL_3_0,
     r"gnu\.org/licenses/(old-licenses/)?lgpl-2\.1": SPDX_LGPL_2_1,
     r"gnu\.org/licenses/(old-licenses/)?lgpl-2\.0": SPDX_LGPL_2_0,
     r"gnu\.org/licenses/agpl-3\.0": SPDX_AGPL_3_0,
-    # Apache
     r"apache\.org/licenses/license-2\.0": SPDX_APACHE_2_0,
     r"apache\.org/licenses/license-1\.1": SPDX_APACHE_1_1,
     # opensource.org serves both /licenses/<id> and /license/<id>.
@@ -90,14 +81,12 @@ LICENSE_URL_PATTERNS: dict[str, str] = {
     r"opensource\.org/licenses?/bsd-3-clause": SPDX_BSD_3_CLAUSE,
     r"opensource\.org/licenses?/bsd-2-clause": SPDX_BSD_2_CLAUSE,
     r"opensource\.org/licenses?/isc": "ISC",
-    # Creative Commons
     r"creativecommons\.org/licenses/by/4\.0": "CC-BY-4.0",
     r"creativecommons\.org/licenses/by-sa/4\.0": "CC-BY-SA-4.0",
     r"creativecommons\.org/publicdomain/zero/1\.0": "CC0-1.0",
-    # Mozilla, with or without a locale segment
+    # mozilla.org may insert a locale segment.
     r"mozilla\.org/([a-z-]+/)?mpl/2\.0": SPDX_MPL_2_0,
     r"mozilla\.org/([a-z-]+/)?mpl/1\.1": SPDX_MPL_1_1,
-    # Eclipse
     r"eclipse\.org/legal/epl-2\.0": "EPL-2.0",
     r"eclipse\.org/legal/epl-v10": "EPL-1.0",
     r"unlicense\.org": "Unlicense",
@@ -110,7 +99,6 @@ LICENSE_ALIASES: dict[str, str] = {
     "MIT/X11": SPDX_MIT,
     "Expat": SPDX_MIT,
     "The MIT License": SPDX_MIT,
-    # Apache variations
     "Apache 2": SPDX_APACHE_2_0,
     "Apache 2.0": SPDX_APACHE_2_0,
     "Apache License": SPDX_APACHE_2_0,
@@ -120,7 +108,6 @@ LICENSE_ALIASES: dict[str, str] = {
     "Apache Software License": SPDX_APACHE_2_0,
     "The Apache Software License, Version 2.0": SPDX_APACHE_2_0,
     "ASL 2.0": SPDX_APACHE_2_0,
-    # BSD variations
     "BSD": SPDX_BSD_3_CLAUSE,
     "BSD License": SPDX_BSD_3_CLAUSE,
     "BSD-2": SPDX_BSD_2_CLAUSE,
@@ -132,7 +119,6 @@ LICENSE_ALIASES: dict[str, str] = {
     "Simplified BSD": SPDX_BSD_2_CLAUSE,
     "New BSD": SPDX_BSD_3_CLAUSE,
     "Modified BSD": SPDX_BSD_3_CLAUSE,
-    # GPL variations
     "GPL": SPDX_GPL_2_0_OR_LATER,
     "GPLv2": SPDX_GPL_2_0,
     "GPLv2+": SPDX_GPL_2_0_OR_LATER,
@@ -145,22 +131,19 @@ LICENSE_ALIASES: dict[str, str] = {
     "GNU GPLv3": SPDX_GPL_3_0,
     "GNU General Public License, version 2": SPDX_GPL_2_0,
     "GNU General Public License, version 3": SPDX_GPL_3_0,
-    # LGPL variations
     "LGPL": SPDX_LGPL_2_1_OR_LATER,
     "LGPLv2": SPDX_LGPL_2_1,
     "LGPLv2.1": SPDX_LGPL_2_1,
     "LGPLv3": SPDX_LGPL_3_0,
     "GNU LGPL": SPDX_LGPL_2_1_OR_LATER,
     "GNU Lesser General Public License": SPDX_LGPL_2_1_OR_LATER,
-    # AGPL variations
     "AGPL": SPDX_AGPL_3_0,
     "AGPLv3": SPDX_AGPL_3_0,
     "GNU AGPL": SPDX_AGPL_3_0,
-    # MPL variations
     "MPL": SPDX_MPL_2_0,
     "MPL 2.0": SPDX_MPL_2_0,
     "Mozilla Public License 2.0": SPDX_MPL_2_0,
-    # Eclipse variations as Maven POMs spell them
+    # As Maven POMs spell them.
     "EPL 1.0": "EPL-1.0",
     "EPL 2.0": "EPL-2.0",
     "Eclipse Public License - v 1.0": "EPL-1.0",
@@ -168,7 +151,6 @@ LICENSE_ALIASES: dict[str, str] = {
     "Eclipse Public License v1.0": "EPL-1.0",
     "Eclipse Public License v2.0": "EPL-2.0",
     "CDDL": "CDDL-1.0",
-    # Other
     "Public Domain": "Unlicense",
     "CC0": "CC0-1.0",
     "ISC License": "ISC",
@@ -178,7 +160,6 @@ LICENSE_ALIASES: dict[str, str] = {
     "PSF": "Python-2.0",
 }
 
-# Placeholders meaning the SBOM carries no licence data.
 UNKNOWN_LICENSE_PATTERNS = {"NOASSERTION", "UNKNOWN", "NONE", "N/A", "NOT FOUND"}
 
 # Project roles, weakest first: the order is the hierarchy.
@@ -188,38 +169,28 @@ PROJECT_ROLE_EDITOR: ProjectRole = "editor"
 PROJECT_ROLE_VIEWER: ProjectRole = "viewer"
 PROJECT_ROLES: list[str] = list(get_args(ProjectRole))
 
-# Owning teams per project. Every project access resolves each owner's document to derive the
-# caller's role, so the list is a per-request cost, and a sync resolving past this many teams has
-# gone wrong in a way that would hand the project to everyone rather than to its owners.
+# Each owner costs a read on every project access, and a sync past this many teams has gone wrong.
 MAX_PROJECT_TEAMS = 16
 
-# Provenance of one owning-team entry, and of one team member. An entry no provenance value names
-# is read as this one: nothing can establish which provider put it there, and naming a provider by
-# guess would have that provider's next sync retire an owner, or drop a member, nobody chose to.
+# Unattributed entries read as manual, since guessing a provider would let its next sync retire them.
 TEAM_SOURCE_MANUAL = "manual"
 
 TEAM_SOURCE_GITLAB = "gitlab"
 TEAM_SOURCE_GITHUB = "github"
 
-# A provider alone cannot say which sync established an owner or a member, and two instances of one
-# provider then read each other's entries as their own and retire them, alternating, on every CI
-# run. A colon-joined string keeps the value a plain scalar, so the $objectToArray provenance
-# arithmetic and its $eq on the value stay exactly as they are; instance ids are uuid4 and carry no
-# colon.
+# Provider plus instance, so two instances of one provider never retire each other's entries; uuid4 has no colon.
 TEAM_SOURCE_SEPARATOR = ":"
 
 
 def team_source(provider: str, instance_id: str) -> str:
-    """The provenance value for an owner or a member that one instance of ``provider`` established."""
     return f"{provider}{TEAM_SOURCE_SEPARATOR}{instance_id}"
 
 
 def team_binding_key(provider: str, instance_id: str, external_id: int) -> str:
-    """The unique key of one team binding, one string so that its uniqueness is a single-field equality on its index."""
+    """One string, so its uniqueness is a single-field equality on its index."""
     return f"{provider}{TEAM_SOURCE_SEPARATOR}{instance_id}{TEAM_SOURCE_SEPARATOR}{external_id}"
 
 
-# Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
 POLICY_COMMENT_MAX_LENGTH = 1000
 POLICY_CHANGE_SUMMARY_MAX_LENGTH = 200
 
@@ -229,15 +200,13 @@ TEAM_ROLE_ADMIN: TeamRole = "admin"
 TEAM_ROLE_MEMBER: TeamRole = "member"
 TEAM_ROLES: list[str] = list(get_args(TeamRole))
 
-# A key names the surfaces it may enter. This is deliberately not the permission vocabulary: the
-# user permissions decide what a caller may do, the key only decides which doors it opens.
+# Deliberately not the permission vocabulary: permissions decide what a caller may do, a key only which doors it opens.
 ApiKeySurface = Literal["mcp", "adhoc"]
 API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
 API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
 # The UI shows a key's last use to the minute, so stamping it more often only adds primary writes.
 API_KEY_LAST_USED_RESOLUTION_SECONDS = 60
 
-# Per-finding base of the impact pre-score, before reach and threat-intel boosts.
 IMPACT_SEVERITY_WEIGHTS: dict[str, float] = {
     "CRITICAL": 10.0,
     "HIGH": 7.0,
@@ -258,11 +227,9 @@ DEV_DEPENDENCY_PATTERN = re.compile(
 )
 # Runtime packages that share a dev tool's prefix.
 DEV_DEPENDENCY_RUNTIME_PACKAGES = frozenset({"eslint-scope", "jest-worker", "playwright-core", "puppeteer-core"})
-# CycloneDX scopes of components that do not ship at runtime.
 NON_RUNTIME_SCOPES = frozenset({"optional", "excluded"})
 
 
-# Scoring weights for identifying "Quick Win" updates
 QUICK_WIN_SCORING_WEIGHTS: dict[str, int] = {
     "base_per_vuln": 10,
     "critical": 50,
@@ -272,19 +239,15 @@ QUICK_WIN_SCORING_WEIGHTS: dict[str, int] = {
 }
 
 
-# Weights for calculating recommendation priority scores
 RECOMMENDATION_SCORING_WEIGHTS: dict[str, int] = {
-    # Base priority scores
     "priority_critical": 10000,
     "priority_high": 1000,
     "priority_medium": 100,
     "priority_low": 10,
-    # Impact multipliers
     "impact_critical": 100,
     "impact_high": 50,
     "impact_medium": 20,
     "impact_low": 5,
-    # Threat intel bonuses
     "kev_bonus": 500,
     "kev_ransomware_bonus": 250,
     "high_epss_bonus": 200,
@@ -292,7 +255,6 @@ RECOMMENDATION_SCORING_WEIGHTS: dict[str, int] = {
 }
 
 
-# Weights for reachability analysis
 REACHABILITY_SCORING_WEIGHTS: dict[str, int] = {
     "critical_bonus": 150,
     "high_bonus": 75,
@@ -306,13 +268,9 @@ REACHABILITY_MODIFIERS: dict[str, float] = {
     "medium_unreachable_penalty": 0.7,
 }
 
-# Bonus for actionable vulnerabilities
 ACTIONABLE_VULN_BONUS: int = 100
 
-# Type-based bonuses for recommendation scoring
-# Higher values = higher priority in the recommendation list
 RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
-    # Critical security issues - highest priority
     "malware_detected": 5000,
     "ransomware_risk": 4000,
     "known_exploit": 3000,
@@ -322,16 +280,13 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "hash_mismatch": 1800,
     "typosquat_detected": 1500,
     "critical_risk": 1500,
-    # High impact updates
     "base_image_update": 500,
     "single_update_multi_fix": 400,
     "quick_win": 300,
     "toxic_dependency": 250,
     "shared_vulnerability": 200,
-    # Regression/recurring - important to address
     "regression_detected": 150,
     "recurring_vulnerability": 120,
-    # Standard updates
     "direct_dependency_update": 100,
     "fix_infrastructure": 100,
     "license_compliance": 90,
@@ -343,7 +298,6 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "outdated_dependency": 40,
     "attack_surface_reduction": 40,
     "cross_project_pattern": 30,
-    # Low priority hygiene
     "version_fragmentation": 20,
     "deep_dependency_chain": 15,
     "duplicate_functionality": 10,
@@ -357,7 +311,6 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "rotate_certificate": 0,
 }
 
-# Effort-based bonuses (lower effort = higher bonus)
 EFFORT_BONUSES: dict[str, int] = {
     "low": 50,
     "medium": 20,
@@ -367,39 +320,29 @@ EFFORT_BONUSES: dict[str, int] = {
 # Dependencies nested deeper than this below their nearest direct dependency are reported.
 MAX_DEPENDENCY_DEPTH: int = 5
 
-# Thresholds for recommendation analysis
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"
-FINDING_DELTA_THRESHOLD: int = 10  # Min new findings to trigger regression warning
-CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project patterns
+FINDING_DELTA_THRESHOLD: int = 10
+CROSS_PROJECT_MIN_OCCURRENCES: int = 2
 
-# EPSS very high threshold (for immediate action recommendations)
-EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
+EPSS_VERY_HIGH_THRESHOLD: float = 0.5
 
-# OpenSSF Scorecard thresholds
-# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold;
-# normalize_scorecard grades a score below it at least MEDIUM.
+# Below this a scorecard finding is raised, unless the project sets scorecard_threshold, and graded MEDIUM or worse.
 SCORECARD_FLAG_THRESHOLD: float = 5.0
-# normalize_scorecard grades a score below this HIGH.
 SCORECARD_HIGH_SEVERITY_THRESHOLD: float = 3.0
-# Recommendations call a scored package poor quality below this.
 SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 
-# Maintainer risk thresholds (days since last release)
-STALE_PACKAGE_THRESHOLD_DAYS: int = 730  # 2 years = potentially abandoned
-STALE_PACKAGE_WARNING_DAYS: int = 365  # 1 year = warning
+# Days since the last release.
+STALE_PACKAGE_THRESHOLD_DAYS: int = 730
+STALE_PACKAGE_WARNING_DAYS: int = 365
 
 # Days past an end-of-life date at which the finding is raised to HIGH, then to MEDIUM.
 EOL_HIGH_AFTER_DAYS: int = 365
 EOL_MEDIUM_AFTER_DAYS: int = 180
 
-# Typosquatting detection threshold (similarity ratio 0-1)
 TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
 TYPOSQUATTING_HIGH_SIMILARITY: float = 0.90
 TYPOSQUATTING_CRITICAL_SIMILARITY: float = 0.95
-# Download-rank depth of the corpus a package name is compared against. The upstream list serves
-# 15 000 ranks and every 1 000 of them costs ~3 ms per unrecognised component, so the depth is a
-# scan-time budget: 5 000 ranks is ~15 ms per component. The analyzer result reports the depth,
-# because a name similar to a package below it is not flagged.
+# A scan-time budget: each 1 000 of the upstream's 15 000 ranks costs ~3 ms per unrecognised component.
 TYPOSQUATTING_POPULAR_PACKAGE_RANKS: int = 5000
 
 # A project's analyzers unless overridden; without epss_kev a scan has no in_kev, epss_score or enrichment risk_score.
@@ -414,7 +357,6 @@ DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
 # Scanners that run in the CI pipeline; the pipeline reads their switch from the project's analyzers.
 CI_SCANNER_ANALYZERS: frozenset[str] = frozenset({"trufflehog", "opengrep", "kics", "bearer", "cbomkit"})
 
-# Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: dict[str, int] = {
     "osv": 500,
     "deps_dev": 10,
@@ -426,7 +368,6 @@ ANALYZER_BATCH_SIZES: dict[str, int] = {
     "epss": 100,  # Max CVEs per EPSS API request
 }
 
-# Analyzer HTTP timeouts (seconds)
 ANALYZER_TIMEOUTS: dict[str, float] = {
     "osv": 60.0,
     "deps_dev": 10.0,
@@ -441,7 +382,7 @@ ANALYZER_TIMEOUTS: dict[str, float] = {
     "ghsa": 15.0,
 }
 
-# GHSA concurrent fetching (with GitHub token: 5000 req/hour, without: 60 req/hour)
+# GitHub allows 5000 requests an hour with a token, 60 without.
 GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
 EPSS_CONCURRENT_BATCHES: int = 4
@@ -454,7 +395,6 @@ EXPLOIT_MATURITY_ORDER: dict[ExploitMaturity, int] = {
     level: rank for rank, level in enumerate(get_args(ExploitMaturity))
 }
 
-# Exploit maturity boost factors for impact score calculation
 EXPLOIT_MATURITY_BOOST: dict[ExploitMaturity, float] = {
     "weaponized": 1.4,
     "active": 1.3,
@@ -464,51 +404,38 @@ EXPLOIT_MATURITY_BOOST: dict[ExploitMaturity, float] = {
     "unknown": 1.0,
 }
 
-# Dependency rows one request holds in memory for a single scan. Measured against MongoDB 7:
-# 10 000 rows cost 0.32 s and 52 MiB peak through the graph builder, 50 000 cost 1.96 s and
-# 261 MiB, and 200 000 cost 9.25 s and 1.04 GiB against a 2 GiB pod.
+# Measured on MongoDB 7: 10 000 rows cost 52 MiB through the graph builder, 200 000 cost 1.04 GiB of a 2 GiB pod.
 SCAN_DEPENDENCY_READ_LIMIT: int = 10_000
 
-# Maximum items returned by analytics aggregation queries
-# Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
 # Projects one analytics scope may hold; the $in of 120 000 ids encodes to 4.8 MiB against the 16 MB BSON limit.
 ANALYTICS_MAX_SCOPE_PROJECTS: int = 100_000
 
-# Page ceilings for services reachable both through their REST endpoint and through a chat tool.
-# One name per concept, so the two entry points cannot bound the same read at different numbers.
+# Shared by each REST endpoint and chat tool, so the two entry points cannot bound one read differently.
 MAX_CRYPTO_HOTSPOT_PAGE: int = 500
 MAX_PQC_PLAN_ITEMS: int = 2000
 DEFAULT_PQC_PLAN_ITEMS: int = 500
 MAX_COMPLIANCE_REPORT_PAGE: int = 200
 MAX_POLICY_AUDIT_PAGE: int = 200
 
-# The /impact and /hotspots $group stages must not cap per-group arrays with a
-# post-$group $slice: it can't shrink a materialized accumulator, and capping in
-# MATCH order would drop high-EPSS/KEV CVEs. They keep the working set small via
-# pre-$group $project slimming, scalar $sum/$cond counts, $addToSet, and allowDiskUse.
 
-# Impact score calculation parameters
-IMPACT_REACH_MULTIPLIER_CAP: int = 10  # Max multiplier for affected projects
-IMPACT_FIX_AVAILABLE_BOOST: float = 1.2  # Boost for issues with available fixes
-IMPACT_AGE_BOOST: float = 1.1  # Boost for vulnerabilities known > 90 days
+IMPACT_REACH_MULTIPLIER_CAP: int = 10
+IMPACT_FIX_AVAILABLE_BOOST: float = 1.2
+IMPACT_AGE_BOOST: float = 1.1
 
-# KEV boost factors for impact calculation
-KEV_RANSOMWARE_BOOST: float = 3.0  # Used in ransomware campaigns
-KEV_OVERDUE_BOOST: float = 2.5  # CISA deadline overdue
-KEV_DUE_SOON_BOOST: float = 2.0  # Due within 30 days
-KEV_DEFAULT_BOOST: float = 1.8  # Any KEV entry
+KEV_RANSOMWARE_BOOST: float = 3.0
+KEV_OVERDUE_BOOST: float = 2.5
+KEV_DUE_SOON_BOOST: float = 2.0
+KEV_DEFAULT_BOOST: float = 1.8
 
-# EPSS boost factors for impact calculation
-EPSS_VERY_HIGH_BOOST: float = 1.5  # >= 50% exploitation probability
-EPSS_HIGH_BOOST: float = 1.3  # >= 10% exploitation probability
-EPSS_MEDIUM_BOOST: float = 1.1  # >= 1% exploitation probability
+EPSS_VERY_HIGH_BOOST: float = 1.5
+EPSS_HIGH_BOOST: float = 1.3
+EPSS_MEDIUM_BOOST: float = 1.1
 
-# Thresholds for priority reasons in analytics
-DAYS_KNOWN_OVERDUE_THRESHOLD: int = 90  # Days a vuln is known before flagged as overdue
-BLAST_RADIUS_THRESHOLD: int = 3  # Min affected projects for "high blast radius"
-KEV_DUE_SOON_DAYS: int = 30  # Days until KEV deadline to be "due soon"
+DAYS_KNOWN_OVERDUE_THRESHOLD: int = 90
+BLAST_RADIUS_THRESHOLD: int = 3
+KEV_DUE_SOON_DAYS: int = 30
 
 # The largest boost product; every boost is >= 1.0, so fix_impact_score lies in [base, base * IMPACT_MAX_SCORE_BOOST].
 IMPACT_MAX_SCORE_BOOST: float = (
@@ -519,30 +446,25 @@ IMPACT_MAX_SCORE_BOOST: float = (
     * IMPACT_AGE_BOOST
 )
 
-# Threat intelligence
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 GITHUB_API_URL = "https://api.github.com"
 GHSA_API_URL = f"{GITHUB_API_URL}/advisories"
 
-# Vulnerability databases
 # querybatch answers with {id, modified} only; the full record must be fetched per id.
 OSV_BATCH_API_URL = "https://api.osv.dev/v1/querybatch"
 OSV_VULN_API_URL = "https://api.osv.dev/v1/vulns"
 
-# Package metadata APIs
 DEPS_DEV_API_URL = "https://api.deps.dev/v3alpha"
 PYPI_API_URL = "https://pypi.org/pypi"
 NPM_REGISTRY_URL = "https://registry.npmjs.org"
 
-# Other service APIs
 EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
 TOP_PYPI_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages-30-days.json"
 
-# Databases and servers; a client-registry package with one of these names is a client library, not a release.
+# A client-registry package with one of these names is a client library, not a release.
 SERVER_NAME_TO_EOL_MAPPING: dict[str, str] = {
-    # Databases
     "postgresql": "postgresql",
     "postgres": "postgresql",
     "pg": "postgresql",
@@ -557,7 +479,6 @@ SERVER_NAME_TO_EOL_MAPPING: dict[str, str] = {
     "cassandra": "apache-cassandra",
     "couchdb": "apache-couchdb",
     "neo4j": "neo4j",
-    # Web Servers & Proxies
     "nginx": "nginx",
     "apache": "apache-http-server",
     "httpd": "apache-http-server",
@@ -565,17 +486,14 @@ SERVER_NAME_TO_EOL_MAPPING: dict[str, str] = {
     "traefik": "traefik",
     "haproxy": "haproxy",
     "envoy": "envoy",
-    # Container & Orchestration
     "kubernetes": "kubernetes",
     "k8s": "kubernetes",
     "docker": "docker-engine",
     "containerd": "containerd",
     "podman": "podman",
-    # Message Queues
     "rabbitmq": "rabbitmq",
     "kafka": "apache-kafka",
     "activemq": "apache-activemq",
-    # Other Tools
     "vault": "hashicorp-vault",
     "consul": "consul",
     "grafana": "grafana",
@@ -588,11 +506,8 @@ SERVER_NAME_TO_EOL_MAPPING: dict[str, str] = {
     "istio": "istio",
 }
 
-# Mapping from package/component names to endoflife.date product IDs
-# See https://endoflife.date/api for all available products
 NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     **SERVER_NAME_TO_EOL_MAPPING,
-    # Programming Languages & Runtimes
     "python": "python",
     "python3": "python",
     "cpython": "python",
@@ -612,7 +527,6 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "kotlin": "kotlin",
     "elixir": "elixir",
     "erlang": "erlang",
-    # Operating Systems
     "ubuntu": "ubuntu",
     "debian": "debian",
     "centos": "centos",
@@ -625,7 +539,6 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "opensuse": "opensuse",
     "sles": "sles",
     "windows-server": "windows-server",
-    # Frontend Frameworks
     # "angular" is AngularJS 1.x as an npm name but Angular 2+ as a CPE product; the cycle match separates them.
     "angular": ("angularjs", "angular"),
     "@angular/core": "angular",
@@ -642,7 +555,6 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "nuxt.js": "nuxt",
     "ember": "emberjs",
     "jquery": "jquery",
-    # Backend Frameworks
     "django": "django",
     "rails": "rails",
     "ruby-on-rails": "rails",
@@ -653,20 +565,17 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "http-server": "apache-http-server",
     "laravel": "laravel",
     "symfony": "symfony",
-    # Build Tools & Package Managers
     "yarn": "yarn",
     "pnpm": "pnpm",
     "maven": "apache-maven",
     "gradle": "gradle",
     "composer": "composer",
-    # Cloud & Infrastructure
     "terraform": "terraform",
     "ansible": "ansible",
     "packer": "hashicorp-packer",
     "numpy": "numpy",
 }
 
-# Severity aliases for normalizing different scanner output formats
 SEVERITY_ALIASES: dict[str, str] = {
     "MODERATE": "MEDIUM",
     "WARNING": "MEDIUM",
@@ -674,7 +583,6 @@ SEVERITY_ALIASES: dict[str, str] = {
     "TRACE": "INFO",
 }
 
-# Notification channel identifiers
 NOTIFICATION_CHANNEL_EMAIL = "email"
 NOTIFICATION_CHANNEL_SLACK = "slack"
 NOTIFICATION_CHANNEL_MATTERMOST = "mattermost"
@@ -685,7 +593,6 @@ NOTIFICATION_CHANNELS = [
     NOTIFICATION_CHANNEL_MATTERMOST,
 ]
 
-# Per-user notification events: each user picks channels per event in their preferences.
 NotificationEvent = Literal[
     "analysis_completed",
     "vulnerability_found",
@@ -707,14 +614,11 @@ NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED: NotificationEvent = "compliance_
 
 NOTIFICATION_EVENTS: frozenset[str] = frozenset(get_args(NotificationEvent))
 
-# SMTP timeout in seconds
 SMTP_TIMEOUT_SECONDS: int = 60
 
-# Slack token expiry buffer in seconds (refresh 5 minutes before expiry)
 SLACK_TOKEN_EXPIRY_BUFFER_SECONDS: int = 300
 SLACK_OAUTH_STATE_TTL_SECONDS: int = 600
 
-# Groups of packages that often provide similar/duplicate functionality
 SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
     {
         "category": "HTTP Clients",
@@ -758,28 +662,21 @@ SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
     },
 ]
 
-# Authentication providers
 AUTH_PROVIDER_LOCAL = "local"
 
-# Token expiration times
 EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
 PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 1
 
-# OIDC State TTL in seconds (5 minutes for authorization flow)
 OIDC_STATE_TTL_SECONDS = 300
 OIDC_HANDOFF_TTL_SECONDS = 60
 
-# TOTP (2FA) settings
-TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current
+TOTP_VALID_WINDOW: int = 1
 
-# OIDC HTTP client timeout (seconds)
 OIDC_HTTP_TIMEOUT_SECONDS: float = 30.0
 
-# Webhook configuration
-WEBHOOK_BACKOFF_BASE: int = 2  # Exponential backoff base (2^n seconds)
+WEBHOOK_BACKOFF_BASE: int = 2
 WEBHOOK_RESPONSE_BODY_LIMIT_BYTES: int = 64 * 1024  # Only a diagnostic prefix of a receiver's answer is kept
 
-# Webhook event types (dot-notation canonical names)
 WEBHOOK_EVENT_SCAN_COMPLETED = "scan.completed"
 WEBHOOK_EVENT_VULNERABILITY_FOUND = "vulnerability.found"
 WEBHOOK_EVENT_ANALYSIS_FAILED = "analysis.failed"
@@ -811,7 +708,6 @@ WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.ke
 
 WebhookType = Literal["generic", "teams", "slack"]
 
-# Webhook HTTP headers
 WEBHOOK_HEADER_CONTENT_TYPE = "Content-Type"
 WEBHOOK_HEADER_USER_AGENT = "User-Agent"
 WEBHOOK_HEADER_EVENT = "X-Webhook-Event"
@@ -823,7 +719,6 @@ WEBHOOK_HEADER_DELIVERY = "X-Webhook-Delivery"
 WEBHOOK_HEADER_TEST = "X-Webhook-Test"
 WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 
-# Webhook URL validation
 WEBHOOK_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # Cloud-metadata hostnames — never an allowed webhook target.
 WEBHOOK_BLOCKED_HOSTNAMES = frozenset({"metadata.google.internal", "metadata.goog", "metadata"})
@@ -838,7 +733,6 @@ SCAN_STATUS_FAILED: ScanStatus = "failed"
 # Scans a worker still owns or will claim; housekeeping neither rescans nor deletes them.
 SCAN_ACTIVE_STATUSES = [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]
 
-# Scans whose analysis results are usable for rollups, exports and analytics.
 SCAN_USABLE_STATUSES = [
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
@@ -847,30 +741,24 @@ SCAN_USABLE_STATUSES = [
 # BSON dates are milliseconds, so a date-ordered pick of scans tie-breaks on _id, lowest first.
 SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", 1)]
 
-# Indexes that reads over every head scan hint: unhinted, a selective filter makes the planner trial-run
-# each scan_id index to the end before it picks one. init_db creates them; a hint without its index errors.
+# Hinted, as unhinted the planner trial-runs each scan_id index to the end; init_db must create them.
 FINDINGS_SCAN_TYPE_INDEX: dict[str, int] = {"scan_id": 1, "type": 1}
 FINDINGS_SCAN_COMPONENT_INDEX: dict[str, int] = {"scan_id": 1, "component": 1, "version": 1}
 DEPENDENCIES_SCAN_PACKAGE_INDEX: dict[str, int] = {"scan_id": 1, "name": 1, "version": 1, "purl": 1}
 
-# Version changes the "recent updates" list answers with.
 RECENT_UPDATES_LIMIT: int = 30
 UpdateKind = Literal["major", "minor", "patch", "unknown", "downgrade"]
 # Downgrades are recorded but are not update activity.
 COUNTED_UPDATE_KINDS: tuple[UpdateKind, ...] = ("patch", "minor", "major", "unknown")
-# The order the cut is taken in, so a scan with more changes than the limit loses the same ones
-# on every request; downgrades rank last.
+# A fixed cut order, so a scan with more changes than the limit drops the same ones every time; downgrades last.
 UPDATE_SAMPLE_RANK: dict[str, int] = {kind: rank for rank, kind in enumerate(get_args(UpdateKind))}
 
-# Rows of the slowest-to-update table, ranked by scans outdated with ties broken on the package
-# name; without the tie-break, packages tied at the cap swap places between requests.
+# Ties at the cap break on the package name, or tied packages swap places between requests.
 SLOWEST_PACKAGES_LIMIT: int = 15
 
-# Bound on the pointer hops a rescan-lineage walk follows, so a cyclic pointer cannot hang a
-# request. A walk whose first iteration reads the starting scan spends that one on zero hops.
+# Bounds a rescan-lineage walk so a cyclic pointer cannot hang it; reading the starting scan costs no hop.
 MAX_RESCAN_HOPS: int = 10
 
-# SPDX originator/supplier prefix for organization entities
 SPDX_ORGANIZATION_PREFIX = "Organization:"
 
 SOURCE_TYPE_IMAGE = "image"
@@ -878,7 +766,6 @@ SOURCE_TYPE_APPLICATION = "application"
 SOURCE_TYPE_FILE = "file"
 SOURCE_TYPE_DIRECTORY = "directory"
 
-# Package types that are typically OS/system packages (from container base images)
 OS_PACKAGE_TYPES = frozenset(
     {
         "deb",
@@ -893,7 +780,6 @@ OS_PACKAGE_TYPES = frozenset(
     }
 )
 
-# Package types that are typically application dependencies
 APP_PACKAGE_TYPES = frozenset(
     {
         "npm",
@@ -912,39 +798,31 @@ APP_PACKAGE_TYPES = frozenset(
     }
 )
 
-# Analysis levels
 REACHABILITY_LEVEL_NONE = "none"
 REACHABILITY_LEVEL_IMPORT = "import"
 REACHABILITY_LEVEL_SYMBOL = "symbol"
 
-# Confidence scores for reachability analysis
-REACHABILITY_CONFIDENCE_NOT_USED = 0.9  # High confidence package is NOT used
-REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS = 0.5  # Package imported, unknown functions
-REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO = 0.4  # Package imported, no symbol analysis available
+REACHABILITY_CONFIDENCE_NOT_USED = 0.9
+REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS = 0.5
+REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO = 0.4
 REACHABILITY_CONFIDENCE_SYMBOL_MATCHED = 1.0
 # Vulnerable symbols searched and none used directly: weaker evidence than having no symbol data.
 REACHABILITY_CONFIDENCE_SYMBOLS_NOT_USED = 0.35
 
-# Threshold above which a "reachable" verdict is considered high-confidence
-# enough to drive prioritisation/headline counts. Values below this still
-# count as reachable but may surface as "needs verification" — they're
-# typically import-only matches without symbol-level corroboration.
+# Below this a reachable verdict still counts but may show as needs verification, typically an import-only match.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
 GITLAB_ACCESS_REPORTER = 20
 GITLAB_ACCESS_MAINTAINER = 40
 
-# Minimum access level for admin role in DependencyControl
 GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
 # Guest and Minimal Access members cannot read a group's code, so they own none of its projects.
 GITLAB_TEAM_MEMBER_MIN_ACCESS = GITLAB_ACCESS_REPORTER
 
-# Aggregation key prefixes for finding deduplication
 AGG_KEY_VULNERABILITY = "AGG:VULN"
 AGG_KEY_QUALITY = "AGG:QUALITY"
 
-# Cross-linking is pairwise, so a component carrying thousands of findings costs O(n^2) to
-# produce a related-findings list no reader can use. Above this the group is left unlinked.
+# Cross-linking is pairwise, so a larger group is left unlinked rather than paying O(n^2) for an unusable list.
 MAX_CROSS_LINK_GROUP_SIZE: int = 100
 
 WaiverStatus = Literal["accepted_risk", "false_positive"]
@@ -960,7 +838,6 @@ WAIVER_SCOPE_RULE: WaiverScope = "rule"
 # A waiver change restamps only the tips of branches built within this many days.
 WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS: int = 30
 
-# Default CVSS scores used when actual score is not available
 CVSS_SEVERITY_SCORES: dict[str, float] = {
     "CRITICAL": 10.0,
     "HIGH": 7.5,
@@ -972,73 +849,55 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
     "UNKNOWN": 5.0,
 }
 
-# Per-severity fallback risk score (0-100) for findings without EPSS/KEV enrichment.
-# Uses the same CVSS contribution as calculate_risk_score ((cvss/10)*40) so enriched
-# and non-enriched findings share one comparable scale and neither outranks the other.
+# calculate_risk_score's CVSS share, so unenriched findings sit on the same scale as enriched ones.
 SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
     sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
 }
-# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, NEGLIGIBLE/INFO=0.0, UNKNOWN=20.0
 
 JWKS_CACHE_TTL = 3600
 JWKS_URI_CACHE_TTL = 86400
 
-# GitLab answers a non-admin token's GET /users/:id at most 300 times per 10 minutes by default, and
-# public emails rarely change: at a day one token keeps ~43,000 members answered, at an hour ~1,800.
-GITLAB_USER_EMAIL_CACHE_TTL = 86400  # 24 hours
+# GitLab answers a non-admin token's GET /users/:id 300 times per 10 minutes, and public emails rarely change.
+GITLAB_USER_EMAIL_CACHE_TTL = 86400
 
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
-GITHUB_TEAM_SYNC_CACHE_TTL = 300  # 5 minutes
+GITHUB_TEAM_SYNC_CACHE_TTL = 300
 
 # Every job of every pipeline ingests, so a project's GitLab ownership is resolved once per window.
-GITLAB_TEAM_SYNC_WINDOW_SECONDS = 600  # 10 minutes
+GITLAB_TEAM_SYNC_WINDOW_SECONDS = 600
 
 # Profile emails rarely change, and each is a request per member of every holding team.
-GITHUB_USER_EMAIL_CACHE_TTL = 21600  # 6 hours
+GITHUB_USER_EMAIL_CACHE_TTL = 21600
 
-# Building the map costs one request per team of the organisation, and the largest one here has 204.
-# At this TTL the three configured organisations together spend ~313 of the token's 5000 requests per
-# hour on it; at five minutes they would spend more than the whole budget. Which repositories a team
-# holds changes when a repository is created or handed over, so an hour of lag is the cost of a
-# repository joining its group one sync late.
-GITHUB_ORG_REPO_MAP_CACHE_TTL = 3600  # 1 hour
+# One request per organisation team: at an hour the map spends ~313 of the token's 5000 hourly requests.
+GITHUB_ORG_REPO_MAP_CACHE_TTL = 3600
 
-# Threshold for classifying a CVE as high-risk based on its composite risk score
 HIGH_RISK_SCORE_THRESHOLD: float = 70.0
 
-# Time (seconds) since last result to trigger aggregation for stale scans
-# This is tuned for typical CI pipeline timing - don't change unless you understand the implications
+# Quiet seconds after a scan's last result before it is analysed, tuned to typical CI pipeline timing.
 HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS: int = 30
 
-# Maximum retries for stuck scans before marking as failed
 HOUSEKEEPING_MAX_SCAN_RETRIES: int = 3
 
-# Rescheduled analysis attempts before the worker stops re-queueing a scan
 ANALYSIS_MAX_RETRIES: int = 5
 
-# Interval (seconds) for checking stale pending scans (fast loop for responsiveness)
 HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS: int = 10
 
-# Interval (seconds) for main housekeeping loop (stuck scans, re-scans)
-HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS: int = 300  # 5 minutes
+HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS: int = 300
 
-# Fixed interval for retention cleanup checks (hours)
 HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS: int = 24
 
-# Interval (hours) for branch status sync against VCS providers
 HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 
-# UTC hour the nightly update-frequency ledger reconcile runs in. Local night in
-# europe-west1, so its repair writes do not land in the working day.
+# Night in europe-west1, so the reconcile's repair writes stay out of the working day.
 HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 
 # Usable rescans each build keeps; older runs are near-identical full copies of the same SBOM.
 RESCAN_HISTORY_RUNS: int = 7
 
-# TTL (seconds) of the per-source rescan-creation lock; only the insert runs under it.
+# Only the insert runs under this lock.
 HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS: int = 60
 
-# Archive / Retention Action Constants
 RetentionAction = Literal["delete", "archive", "none"]
 RETENTION_ACTION_DELETE: RetentionAction = "delete"
 RETENTION_ACTION_ARCHIVE: RetentionAction = "archive"
@@ -1050,36 +909,28 @@ DEFAULT_RETENTION_DAYS: int = 90
 # timedelta overflows near 740 000 days, and a cutoff housekeeping cannot compute stops the sweep.
 MAX_RETENTION_DAYS: int = 36500
 
-# The reach of an analytics, compliance or crypto query.
 ScopeName = Literal["project", "team", "global", "user"]
 
-# Whether a system setting is enforced for every project or left to each project.
 SettingsMode = Literal["project", "global"]
 SETTINGS_MODE_PROJECT: SettingsMode = "project"
 SETTINGS_MODE_GLOBAL: SettingsMode = "global"
 
-# Archive bundle wire format
 ARCHIVE_BUNDLE_VERSION = 2
 ARCHIVE_PATH_TEMPLATE = "{project_id}/{scan_id}-{archived_at_unix}.bundle"
 ARCHIVE_RESTORE_LOCK_TEMPLATE = "restore:{scan_id}"
 REACHABILITY_LOCK_TEMPLATE = "reachability:{scan_id}"
 
-# Encryption wire format (chunked AES-GCM)
 ENCRYPTION_MAGIC = b"DCEN"
 ENCRYPTION_FORMAT_VERSION = 2
-ENCRYPTION_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB plaintext per chunk
+ENCRYPTION_CHUNK_SIZE = 8 * 1024 * 1024
 
-# S3 multipart upload
-S3_MULTIPART_PART_SIZE = 5 * 1024 * 1024 + 256 * 1024  # ~5.25 MiB (S3 min is 5 MiB except final part)
+S3_MULTIPART_PART_SIZE = 5 * 1024 * 1024 + 256 * 1024  # S3 parts other than the last must be at least 5 MiB
 
-# Restore batching
 RESTORE_INSERT_BATCH_SIZE = 1000
 
-# Housekeeping
 ARCHIVE_BATCH_SIZE = 50
 
-# Everything a scan owns, addressed by a scan_id field. Deletion, archival and restore all read
-# this: a second hand-kept copy is how crypto_assets came to outlive the project it belonged to.
+# Every collection a scan owns by a scan_id field; deletion, archival and restore must all read this one list.
 SCAN_SCOPED_COLLECTIONS: tuple[str, ...] = (
     "analysis_results",
     "findings",
@@ -1089,27 +940,23 @@ SCAN_SCOPED_COLLECTIONS: tuple[str, ...] = (
     "crypto_assets",
 )
 
-# The update-frequency rollups are keyed by scan id, not by a scan_id field, and an archive bundle
-# does not carry them: the restore recomputes them.
+# Keyed by scan id rather than a scan_id field; archive bundles leave them out, as the restore recomputes them.
 SCAN_KEYED_COLLECTIONS: tuple[str, ...] = ("scan_update_deltas", "scan_outdated_sets")
 
 # Bundle sections of the scan's GridFS files: whole SBOMs (older bundles, still restored) and ordered file chunks.
 ARCHIVE_GRIDFS_FRAME = "gridfs_sboms"
 ARCHIVE_GRIDFS_CHUNK_FRAME = "gridfs_chunks"
 
-# BSON int32 is a different type from bool, so a flag written outside the model as 1 satisfies
-# {"$ne": True} and the scan is deleted for good. The retention guards spell out both spellings.
+# A flag written outside the model as int32 1 satisfies {"$ne": True}, so the guards name both spellings.
 RETENTION_PROTECTED_FLAG_VALUES: list[object] = [True, 1]
 
 # Scan ids per round trip of the release-flag reconcile; both directions splice one into an $in.
 RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
 
-# Orphan reaper: only delete S3 objects older than this without metadata
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 
 ADHOC_JOB_TTL_SECONDS: int = 24 * 3600
 
-# CBOM / Crypto
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 # Per process; at ~55 MiB per saturated report, 2 slots x 2 workers stay near 220 MiB of the 2 GiB pod limit.
 COMPLIANCE_REPORT_SLOTS: int = 2

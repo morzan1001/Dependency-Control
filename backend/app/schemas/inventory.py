@@ -1,5 +1,3 @@
-"""Response envelopes for the per-project inventory endpoints."""
-
 from datetime import datetime
 
 from pydantic import BaseModel, Field

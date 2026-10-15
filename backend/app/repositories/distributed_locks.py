@@ -1,5 +1,3 @@
-"""Distributed locks for multi-pod coordination (e.g. Slack token refresh)."""
-
 import asyncio
 import logging
 import uuid
@@ -66,8 +64,7 @@ class DistributedLocksRepository:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=ttl_seconds)
 
-        # A held/unexpired lock makes the filter match nothing, so the upsert hits a
-        # duplicate _id (E11000); that just means someone else holds it, so return False.
+        # While the lock is held the filter matches nothing, so the upsert's E11000 means another holder has it.
         try:
             result = await self.collection.find_one_and_update(
                 {

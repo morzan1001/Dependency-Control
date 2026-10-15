@@ -1,5 +1,3 @@
-"""Shared utilities for user-related operations."""
-
 from collections.abc import Sequence
 from typing import Any
 
@@ -14,14 +12,12 @@ from app.repositories.users import UserRepository
 async def resolve_usernames(
     db: AsyncIOMotorDatabase, rows: Sequence[dict[str, Any]], field: str, id_field: str | None = None
 ) -> list[dict[str, Any]]:
-    """Rows with ``field`` set to the current username of the user id in ``id_field`` (default ``field``), else as stored."""
     id_field = id_field or field
     names = await UserRepository(db).usernames_by_id(row[id_field] for row in rows if row.get(id_field))
     return [{**row, field: names[row[id_field]]} if row.get(id_field) in names else row for row in rows]
 
 
 async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> dict[str, Any]:
-    """Fetch a raw user document by ID, raising 404 if not found."""
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_id(user_id)
     if not user:
@@ -30,13 +26,11 @@ async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> dict[str, A
 
 
 def check_admin_or_self(current_user: User, target_user_id: str, permissions: list[str]) -> None:
-    """Raise 403 unless the current user holds one of ``permissions`` or is the target user."""
     if not has_permission(current_user.permissions, permissions) and str(current_user.id) != target_user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
 
 def ensure_can_manage_target(caller: User, target: dict[str, Any]) -> None:
-    """Raise 403 unless the caller holds every permission of the target account or holds system:manage."""
     if has_permission(caller.permissions, Permissions.SYSTEM_MANAGE):
         return
     if not set(target.get("permissions") or []) <= set(caller.permissions):

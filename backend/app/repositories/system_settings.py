@@ -1,5 +1,3 @@
-"""Repository for system settings."""
-
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -15,7 +13,6 @@ class SystemSettingsRepository:
         self.collection = db.system_settings
 
     async def get(self) -> SystemSettings:
-        """The stored settings, or the defaults while none are stored; update() upserts the document."""
         data = await self.collection.find_one({"_id": self.SETTINGS_ID})
         return SystemSettings(**data) if data else SystemSettings()
 
