@@ -222,6 +222,8 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         ttl_seconds: int = GITHUB_TEAM_SYNC_CACHE_TTL,
         max_wait_seconds: float = 5.0,
     ) -> Any:
+        """Wrapped so a None answer is cached for ttl_seconds rather than the generic negative-result TTL."""
+
         async def wrapped() -> dict[str, Any]:
             return {_CACHED_FIELD: await fetch()}
 

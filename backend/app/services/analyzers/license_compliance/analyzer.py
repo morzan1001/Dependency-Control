@@ -207,6 +207,7 @@ class LicenseAnalyzer(Analyzer):
         readable_groups: list[list[str]],
         policy: LicensePolicySchema,
     ) -> tuple[list[str] | None, list[dict[str, Any]]]:
+        """A consumer may take any OR alternative, so the least severe, then least restrictive, one is chosen."""
         candidates: list[tuple[tuple[int, int], list[str], list[dict[str, Any]]]] = []
         for and_group in readable_groups:
             verdicts = [evaluator.evaluate_license(component, LICENSE_DATABASE[lic_id], policy) for lic_id in and_group]

@@ -195,6 +195,7 @@ class ResultAggregator:
 
         project = metadata.get("project") or {}
         links = metadata.get("links") or {}
+        # Recorded before the repository's license, so the version's own one wins primary.
         for lic in metadata.get("licenses") or []:
             self._record_deps_dev_license(enrichment, lic, "deps_dev")
         self._record_deps_dev_license(enrichment, project.get("license"), "deps_dev_project")

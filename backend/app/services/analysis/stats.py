@@ -427,7 +427,7 @@ class StatsAccumulator:
                 self._reachable_high_hc += 1
 
     def result(self) -> Stats:
-        # None on an empty or fully waived scan: the threat-intelligence view tells no-data from all-zero.
+        # Empty or fully waived: sub-models stay None so the threat-intelligence view tells no-data from all-zero.
         if self._counted == 0:
             return Stats()
 
@@ -510,7 +510,7 @@ def _stats_projection() -> dict[str, int]:
     return projection
 
 
-# scan_id + type never change after insert; hinting an index on severity or waived risks skips mid-cursor.
+# The waiver restamp rewrites severity and waived, so hinting their index could skip docs; scan_id + type never change.
 _STATS_CURSOR_HINT = FINDINGS_SCAN_TYPE_INDEX
 
 

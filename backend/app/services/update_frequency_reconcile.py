@@ -1,4 +1,4 @@
-"""The writer is not on every scan path; a delete at a branch's newest end stays invisible here."""
+"""The writer is not on every scan path; a delete shows only via its successor, so one at a branch tip stays unseen."""
 
 import asyncio
 import logging

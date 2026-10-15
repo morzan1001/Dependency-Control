@@ -127,7 +127,7 @@ def _fill_missing_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -
 
 
 def _detail_precedence(entry: Any) -> tuple[str, str]:
-    """Alias-linked entries can share a scanner name, so the entry id breaks the tie."""
+    """Total order, so detail conflicts settle commutatively even for alias-linked entries sharing a scanner name."""
     return min(str(s) for s in (entry.get("scanners") or ["~"])), str(entry.get("id"))
 
 

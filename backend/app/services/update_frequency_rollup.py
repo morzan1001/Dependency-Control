@@ -260,7 +260,7 @@ async def _repair_successors(
     *,
     only_when_linked: bool,
 ) -> None:
-    """only_when_linked: a deleted anchor can only have affected the successors pointing at it."""
+    """Writing an anchor invalidates its successor even unlinked; a deleted anchor only affected linked ones."""
     repo = ScanUpdateDeltaRepository(db)
     anchor_id = after_id
     for _ in range(_MAX_REPAIR_HOPS):
@@ -277,7 +277,7 @@ async def _repair_successors(
         recomputed = await _record(db, successor["_id"])
         if recomputed is not None and recomputed.dep_count > 0:
             return
-        # A failed recomputation leaves an error document, never a predecessor, so the scan behind it is affected too.
+        # Neither an error document nor an SBOM-less delta is ever a predecessor, so the scan behind it is affected too.
         after = successor["scan_created_at"]
         after_id = successor["_id"]
     logger.warning(
