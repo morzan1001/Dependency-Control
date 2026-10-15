@@ -158,10 +158,10 @@ describe("FindingsDeltaTab", () => {
     );
   });
 
-  it("says so when no finding changed", async () => {
+  it("says so under the table when no finding changed, where a phone shows it", async () => {
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ...sampleResponse, items: [] });
     renderTab();
 
-    expect(await screen.findByText("No findings changes")).toBeInTheDocument();
+    expect((await screen.findByText("No findings changes")).closest("table")).toBeNull();
   });
 });

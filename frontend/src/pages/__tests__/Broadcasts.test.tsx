@@ -206,3 +206,12 @@ describe('Broadcasts - send failures', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to send advisory', { description: 'Network Error' }))
   })
 })
+
+describe('Broadcasts - history on a phone', () => {
+  it('says there is no history under the table, where a phone shows it, instead of in a row centred on the scrolling table', () => {
+    render(<Broadcasts />)
+    fireEvent.click(screen.getByRole('tab', { name: /History/i }))
+
+    expect(screen.getByText('No broadcast history found.').closest('table')).toBeNull()
+  })
+})

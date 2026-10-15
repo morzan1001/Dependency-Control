@@ -32,33 +32,24 @@ export function DeltaFilterGroup<T extends string>({ label, options, isActive, o
 const SKELETON_ROWS = ["s1", "s2", "s3"];
 const SKELETON_CELLS = ["c1", "c2", "c3", "c4", "c5", "c6"];
 
-export function DeltaStatusRows({ isLoading, rows, columns, emptyText }: Readonly<{
-  isLoading: boolean;
-  rows: number;
-  columns: number;
-  emptyText: string;
-}>) {
-  if (isLoading) {
-    return (
-      <>
-        {SKELETON_ROWS.map((row) => (
-          <TableRow key={row}>
-            {SKELETON_CELLS.slice(0, columns).map((cell) => (
-              <TableCell key={cell}>
-                <Skeleton className="h-5 w-20" />
-              </TableCell>
-            ))}
-          </TableRow>
-        ))}
-      </>
-    );
-  }
-  if (rows > 0) return null;
+export function DeltaLoadingRows({ isLoading, columns }: Readonly<{ isLoading: boolean; columns: number }>) {
+  if (!isLoading) return null;
   return (
-    <TableRow>
-      <TableCell colSpan={columns} className="py-8 text-center text-muted-foreground">
-        {emptyText}
-      </TableCell>
-    </TableRow>
+    <>
+      {SKELETON_ROWS.map((row) => (
+        <TableRow key={row}>
+          {SKELETON_CELLS.slice(0, columns).map((cell) => (
+            <TableCell key={cell}>
+              <Skeleton className="h-5 w-20" />
+            </TableCell>
+          ))}
+        </TableRow>
+      ))}
+    </>
   );
+}
+
+export function DeltaEmptyText({ isLoading, rows, text }: Readonly<{ isLoading: boolean; rows: number; text: string }>) {
+  if (isLoading || rows > 0) return null;
+  return <p className="py-8 text-center text-sm text-muted-foreground">{text}</p>;
 }
