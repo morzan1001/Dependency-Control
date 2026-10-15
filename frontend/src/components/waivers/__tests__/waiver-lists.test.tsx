@@ -139,12 +139,12 @@ describe('the project waiver list', () => {
   it.each([
     [{}, 'No active waivers found.'],
     [{ orphaned: true }, 'No orphaned waivers found.'],
-  ])('says why the list is empty (%o)', async (filter, text) => {
+  ])('says why the list is empty, under the table where a phone shows it (%o)', async (filter, text) => {
     vi.mocked(waiverApi.getAll).mockResolvedValue(page([]))
     renderList(<ProjectWaivers projectId="p1" />)
     if ('orphaned' in filter) fireEvent.click(await screen.findByRole('checkbox', { name: /only orphaned/i }))
 
-    expect(await screen.findByText(text)).toBeInTheDocument()
+    expect((await screen.findByText(text)).closest('table')).toBeNull()
   })
 
   it('names an empty search as such', async () => {
@@ -169,11 +169,11 @@ describe('the project waiver list', () => {
     expect(lastQuery()).toMatchObject({ skip: 0 })
   })
 
-  it('offers more rows while the server holds more', async () => {
+  it('offers more rows under the table while the server holds more, where a phone shows it', async () => {
     vi.mocked(waiverApi.getAll).mockResolvedValue(page([WAIVER], 120))
     renderList(<ProjectWaivers projectId="p1" />)
 
-    expect(await screen.findByText('Scroll to load more')).toBeInTheDocument()
+    expect((await screen.findByText('Scroll to load more')).closest('table')).toBeNull()
   })
 
   it('keeps the loaded rows, stops requesting a failed later page and offers a retry', async () => {
