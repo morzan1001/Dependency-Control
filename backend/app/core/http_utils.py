@@ -40,8 +40,7 @@ def _retry_after_seconds(outcome: httpx.Response | httpx.TransportError) -> floa
 
 
 def quota_lifts_at(response: httpx.Response) -> float | None:
-    """The epoch second a 403/429 quota refusal lifts, the later of its Retry-After and a spent quota's reset;
-    None for any other answer, a 403 without either header included."""
+    """A 403 counts as a quota refusal only with Retry-After or a spent quota; it lifts at the later of the two."""
     status, headers = response.status_code, response.headers
     spent = headers.get("X-RateLimit-Remaining") == "0"
     if status != 429 and not (status == 403 and ("Retry-After" in headers or spent)):
@@ -57,8 +56,6 @@ def quota_lifts_at(response: httpx.Response) -> float | None:
 
 
 class InstrumentedAsyncClient:
-    """httpx.AsyncClient wrapper that records request/duration/error Prometheus metrics."""
-
     def __init__(
         self,
         service_name: str,
@@ -135,7 +132,6 @@ class InstrumentedAsyncClient:
         deadline: float | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
-        """Retries 429, 5xx and non-timeout transport errors; returns the last answer or re-raises the last error."""
         loop = asyncio.get_running_loop()
         outcome: httpx.Response | httpx.TransportError
         for attempt in range(attempts):
@@ -191,7 +187,6 @@ class InstrumentedAsyncClient:
 async def gather_bounded[T, R](
     items: Iterable[T], worker: Callable[[T], Awaitable[R]], limit: int
 ) -> list[R | BaseException]:
-    """Run ``worker`` over ``items`` with at most ``limit`` in flight; a failure stays in its item's slot."""
     slots = list(items)
     results: list[Any] = [None] * len(slots)
     pending = iter(enumerate(slots))

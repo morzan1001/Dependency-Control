@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "dependency_control"
 
-    # Redis Cache Settings
     REDIS_URL: str = "redis://localhost:6379/0"
     CACHE_PREFIX: str = "dc:"
     CACHE_DEFAULT_TTL_HOURS: int = 24
@@ -19,10 +18,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Worker Settings
     WORKER_COUNT: int = 2
 
-    # Frontend
     FRONTEND_BASE_URL: str = "http://localhost:3000"
 
     @field_validator("FRONTEND_BASE_URL")
@@ -30,77 +27,54 @@ class Settings(BaseSettings):
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
 
-    # Time (seconds) a scan can be in 'processing' before considered stuck
-    # Increase this if your analysis typically takes longer
-    HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS: int = 1800  # 30 minutes
+    HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS: int = 1800
 
-    # Timeout for webhook deliveries (depends on webhook endpoint response times)
     WEBHOOK_TIMEOUT_SECONDS: float = 30.0
     WEBHOOK_MAX_RETRIES: int = 3
     # Local development only: a loopback target is the backend's own host.
     WEBHOOK_ALLOW_LOCALHOST: bool = False
 
-    # Timeout for notification providers (Slack, Mattermost API latency)
     NOTIFICATION_HTTP_TIMEOUT_SECONDS: float = 30.0
 
-    # Enrichment service settings
     ENRICHMENT_MAX_RETRIES: int = 3
     ENRICHMENT_RETRY_DELAY: float = 1.0
 
-    # Pod lifecycle settings
-    # Maximum time (seconds) a pod can run before it should restart
-    # Set to 0 to disable automatic restarts
-    # Default: 43200 (12 hours) - helps manage memory growth
+    # 0 disables the restart; recycling pods bounds memory growth.
     MAX_POD_UPTIME_SECONDS: int = 43200
 
-    # Trivy Server Mode (empty = use local CLI)
-    # When set, the Trivy CLI uses --server flag to offload scanning to a
-    # central server. This avoids storing the 1GB Trivy DB on every pod.
-    TRIVY_SERVER_URL: str = ""  # e.g. "http://trivy-server:4954"
+    # Empty runs the local Trivy CLI; a server spares every pod the 1GB Trivy DB.
+    TRIVY_SERVER_URL: str = ""
 
-    # S3 / Archive Storage Settings
-    S3_ENDPOINT_URL: str = ""  # e.g. "http://minio:9000" (empty = archive disabled)
+    S3_ENDPOINT_URL: str = ""  # empty disables the archive
     S3_ACCESS_KEY: str = ""
     S3_SECRET_KEY: str = ""
     S3_BUCKET_NAME: str = "dc-archives"
     S3_REGION: str = "us-east-1"
-    S3_USE_SSL: bool = False  # True for AWS S3, False for local MinIO
+    S3_USE_SSL: bool = False
 
-    # Archive Encryption (empty = archives not encrypted)
+    # Empty leaves archives unencrypted.
     ARCHIVE_ENCRYPTION_KEY: str = ""
 
-    # Ollama / LLM — default points to the in-cluster Kubernetes service
-    # (`ollama.<namespace>.svc.cluster.local`); cluster traffic is mesh-encrypted
-    # so plain http here is intentional. Override via env var for external hosts.
+    # Plain http is intentional: the default in-cluster service is reached over the mesh-encrypted network.
     OLLAMA_BASE_URL: str = "http://ollama:11434"  # NOSONAR
     OLLAMA_MODEL: str = "gemma4:26b"
     OLLAMA_TIMEOUT_SECONDS: int = 120
     OLLAMA_NUM_CTX: int = 16384
 
-    # Chat — feature flag is deployment-time (set true in Helm only when the
-    # ollama sub-chart is also deployed). Runtime tunables (rate limits, tool
-    # rounds) stay in SystemSettings so admins can adjust them via the UI.
+    # Deployment-time: true only where Helm deploys the ollama sub-chart; runtime tunables live in SystemSettings.
     CHAT_ENABLED: bool = False
     CHAT_MAX_HISTORY_MESSAGES: int = 15
 
-    # Policy audit settings
-    # Minimum age (days) an entry must have before it can be manually pruned via API.
     POLICY_AUDIT_MIN_PRUNE_DAYS: int = 90
-    # Automatic retention window (days). 0 = keep forever (housekeeping no-op).
+    # 0 keeps entries forever.
     POLICY_AUDIT_RETENTION_DAYS: int = 0
 
-    # Compliance report retention (days from completion until sweep deletes report + artifact).
     COMPLIANCE_REPORT_RETENTION_DAYS: int = 90
 
-    # Kill switch for the per-scan update-frequency rollup written during ingest.
     UPDATE_FREQUENCY_ROLLUP_ENABLED: bool = True
-    # Serve the update-frequency comparison from that rollup; the project view walks its
-    # scans either way. Stays off until the backfill has run: without deltas a project can
-    # only be reported as pending.
+    # Off until the backfill has run: without deltas the comparison can only report a project as pending.
     UPDATE_FREQUENCY_USE_ROLLUP: bool = False
-    # The nightly reconcile of that rollup against the scans. Stays off until the backfill
-    # has run: an unbackfilled window is drift in every chain, which turns the reconcile
-    # into a second backfill that never gets past its per-night cap.
+    # Off until the backfill has run, or the nightly reconcile becomes a backfill stuck at its per-night cap.
     UPDATE_FREQUENCY_RECONCILE_ENABLED: bool = False
 
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")

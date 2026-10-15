@@ -27,16 +27,14 @@ logger = logging.getLogger(__name__)
 MONGO_TYPE = "$type"
 
 RELEASES_UPSERT_KEY_NAME = "releases_upsert_key"
-# One release per (project, environment, scan): the upsert filter and the constraint behind it,
-# so a test double can declare the same key rather than a copy of it.
+# One release per (project, environment, scan), shared by the upsert filter and the unique index behind it.
 RELEASES_UPSERT_KEY_FIELDS: tuple[str, ...] = ("project_id", "environment", "scan_id")
 
 RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
 
 GITLAB_PROJECT_KEY_NAME = "projects_gitlab_key"
 
-# BSON dates are milliseconds, so a date-ordered pick tie-breaks on _id. Each sort is the trailing
-# keys of its index: sorting on anything else turns an indexed seek into a blocking sort.
+# BSON dates are milliseconds, so ties break on _id; each sort is its index's trailing keys, keeping the seek indexed.
 RELEASES_LATEST_SORT: list[tuple[str, int]] = [("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
 
 SCANS_TIP_INDEX_KEY: list[tuple[str, int]] = [
@@ -54,17 +52,7 @@ RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
 
 
 async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Idempotent provenance backfill: stamp the GitLab instance that holds the group on the owner
-    entry of projects owned by a gitlab-synced team, but only where that entry is unset.
-
-    A team bound to more than one GitLab instance is skipped rather than attributed to one of
-    them: a value naming the wrong instance hands the owner to that instance's next ingest to
-    delete.
-
-    Members are intentionally left unstamped: stamping existing members "gitlab" would put
-    manually-added members inside the gitlab subset the next sync's merge replaces, silently
-    removing them. Unstamped members default to "manual" on read, which the merge preserves.
-    """
+    """Skips a team bound to several GitLab instances, as the wrong one's next ingest would delete the owner."""
     teams = database["teams"]
     projects = database["projects"]
 
@@ -79,8 +67,7 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
     failed = 0
     for team in synced_teams:
         team_id = team.get("_id")
-        # Per-team isolation: this runs before index creation, so an unhandled raise
-        # would crash startup for every other team/project.
+        # Isolated per team: this runs before index creation, so one raise would crash startup for every other team.
         try:
             instances = {
                 binding.get("instance_id")
@@ -92,12 +79,9 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
                 continue
             (instance_id,) = tuple(instances)
 
-            # Per owner, not per project: a project can hold several, and only this one's entry
-            # is known to have come from GitLab. Without it the next sync sees no owner of its
-            # own to replace and leaves a transferred project owned by both teams.
+            # Per owner: only this entry is known to be GitLab's; unstamped, a transferred project ends up owned twice.
             provenance = f"team_sources.{team_id}"
-            # Absent and null, and nothing else: any stored value already names a source, and
-            # overwriting one would move an owner between instances on a startup.
+            # Only absent or null, as overwriting a stored source would move an owner between instances on startup.
             result = await projects.update_many(
                 {"team_ids": team_id, provenance: {"$in": [None]}},
                 {"$set": {provenance: team_source(TEAM_SOURCE_GITLAB, instance_id)}},
@@ -126,15 +110,7 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
 
 
 TEAM_BINDING_KEY_FIELD = "bindings.key"
-# Partial, not sparse: a unique index over a path inside a missing array indexes the document
-# under the key null, so the second team holding no binding collides — measured, not inferred.
-# The filter selects on type, so a team with no bindings stays out of the unique scope entirely.
-#
-# A constraint, and nothing else: the planner cannot prove an equality on the key implies the
-# $type filter, so the binding lookup is a COLLSCAN. Measured on percona-server-mongodb:8.0.17-6
-# — 0.507 ms/op scanning 5 000 teams against 0.442 ms indexed, on an estate of 29. Serving that
-# read means rebuilding the constraint under an $exists filter, which is not worth a uniqueness
-# gap for 0.06 ms; revisit if the collection ever reaches five figures.
+# Partial, as a sparse unique index keys teams without bindings as null; lookups COLLSCAN, fine below five figures.
 TEAM_BINDING_KEY_PARTIAL_FILTER = {TEAM_BINDING_KEY_FIELD: {MONGO_TYPE: "string"}}
 
 
@@ -145,8 +121,7 @@ async def _create_unique_index(
     try:
         await collection.create_index(keys, unique=True, **options)
     except pymongo.errors.OperationFailure as exc:
-        # Named "response" rather than "details": the Finding.details contract test reads any
-        # local of that name as a finding-details access.
+        # Not named "details": the Finding.details contract test reads any local of that name as a details access.
         response = exc.details or {}
         logger.exception(
             "Skipping unique %s index, build failed with %s; the key stays unenforced "
@@ -158,7 +133,6 @@ async def _create_unique_index(
 
 
 async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """The teams keys, including the one that keeps a binding to a single holder."""
     await database["teams"].create_index("members.user_id")
     await _create_unique_index(
         database["teams"],
@@ -169,55 +143,41 @@ async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
 
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Create indexes for all collections."""
     logger.info("Creating database indexes...")
 
     await _backfill_member_and_team_provenance(database)
 
-    # Users
     await database["users"].create_index("username", unique=True)
     await database["users"].create_index("email", unique=True)
 
-    # Projects
-    # Multikey: serves the element equality every ownership filter is and the $in a member's visible
-    # scope is. The project list sorts after filtering and this index cannot supply that order, so it
-    # blocking-sorts the matched set; a compound {team_ids, <sort key>} would remove it (measured), but
-    # only one sort key can be picked and the list offers six, so at this collection size the sort is
-    # left to run in memory.
+    # Serves ownership filters; the list then sorts in memory, as its six sort keys rule out one compound index.
     await database["projects"].create_index("team_ids")
     await database["projects"].create_index("name")
     await database["projects"].create_index("members.user_id")
 
     await create_team_indexes(database)
 
-    # Scans
     await database["scans"].create_index("pipeline_id")
     await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
     await database["scans"].create_index("sbom_refs.gridfs_id")
 
-    # Analysis Results
     await database["analysis_results"].create_index(
         [("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)]
     )
     await database["analysis_results"].create_index("result_gridfs_id", sparse=True)
 
-    # Waivers
     await database["waivers"].create_index("expiration_date")
     await database["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
-    # Dependencies
-    # Unique key permits idempotent upserts during concurrent SBOM ingestion and serves every (scan_id, name,
-    # version) read. sparse is inert (every row has a scan_id, so purl-less rows are indexed and unique too) but
-    # stays: changing it fails on the built index.
+    # Unique for idempotent concurrent upserts; sparse is inert but stays, as changing it fails on the built index.
     await database["dependencies"].create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
 
-    # Update-frequency rollups (scan_outdated_sets is only ever read by _id)
-    # _id joins the key because the neighbour lookups order by (scan_created_at, _id).
+    # scan_outdated_sets is read by _id only; _id is in this key as neighbour lookups order by (scan_created_at, _id).
     await database["scan_update_deltas"].create_index(
         [
             ("project_id", pymongo.ASCENDING),
@@ -230,7 +190,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)]
     )
 
-    # Findings
     # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
     await database["findings"].create_index(
         [
@@ -241,7 +200,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ]
     )
 
-    # GitLab compound index: project_id must be unique per instance; "int" would match int32 alone.
+    # A $type of "int" would match int32 alone.
     await _create_unique_index(
         database["projects"],
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
@@ -288,7 +247,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ],
         name="scans_released_list",
         partialFilterExpression={"is_release": True},
-    )  # Partial so only released scans are indexed; serves the released-only scan list.
+    )  # Serves the released-only scan list.
     await database["scans"].create_index(
         [("project_id", pymongo.ASCENDING), *SCANS_TIP_SORT],
         name="scans_tag_builds",
@@ -328,23 +287,19 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # TTL: drops deliveries after 30 days.
     await database["webhook_deliveries"].create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)
 
-    # TTL: auto-cleans expired distributed locks.
     await database["distributed_locks"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
     # TTL: drops blacklisted JWTs after they would have expired anyway.
     await database["token_blacklist"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
-    # GitLab Instances
     await database["gitlab_instances"].create_index("url", unique=True)
     await database["gitlab_instances"].create_index("name", unique=True)
     await database["gitlab_instances"].create_index("is_active")
 
-    # GitHub Instances
     await database["github_instances"].create_index("url", unique=True)
     await database["github_instances"].create_index("name", unique=True)
     await database["github_instances"].create_index("is_active")
 
-    # GitHub compound index: repository_id must be unique per instance.
     await database["projects"].create_index(
         [("github_instance_id", pymongo.ASCENDING), ("github_repository_id", pymongo.ASCENDING)],
         unique=True,
@@ -358,12 +313,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("reachability_pending", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)]
     )
 
-    # Callgraphs
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["callgraphs"].create_index("graph_gridfs_id", sparse=True)
-    # One callgraph per language per scan. The type filter keeps rows with a null scan_id
-    # (pipeline-only uploads) out of the uniqueness scope.
+    # The type filter keeps pipeline-only uploads, whose scan_id is null, out of the uniqueness scope.
     await _create_unique_index(
         database["callgraphs"],
         [
@@ -375,7 +328,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         partialFilterExpression={"scan_id": {MONGO_TYPE: "string"}},
     )
 
-    # System Invitations
     await database["system_invitations"].create_index("token", unique=True)
     await database["system_invitations"].create_index(
         [
@@ -388,30 +340,25 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("is_used", pymongo.ASCENDING), ("expires_at", pymongo.ASCENDING)]
     )
 
-    # Cached package metadata.
     await database["dependency_enrichments"].create_index("purl", unique=True)
 
-    # Archive Metadata
     await database["archive_metadata"].create_index("scan_id", unique=True)
     await database["archive_metadata"].create_index(
         [("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
     )
 
-    # Chat Conversations
     chat_conversations = database["chat_conversations"]
     await chat_conversations.create_index(
         [("user_id", pymongo.ASCENDING), ("updated_at", pymongo.DESCENDING)],
         name="user_conversations_listing",
     )
 
-    # Chat Messages
     chat_messages = database["chat_messages"]
     await chat_messages.create_index(
         [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
         name="conversation_messages_chronological",
     )
 
-    # Unified API keys
     api_keys = database["api_keys"]
     await api_keys.create_index(
         [("user_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)],
@@ -422,14 +369,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="api_keys_token_lookup",
         unique=True,
     )
-    # TTL: Mongo expires docs after expires_at, no housekeeping job needed.
     await api_keys.create_index(
         [("expires_at", pymongo.ASCENDING)],
         name="api_keys_ttl",
         expireAfterSeconds=0,
     )
 
-    # Crypto Assets (CBOM)
     await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)])
     await database["crypto_assets"].create_index(
@@ -440,12 +385,11 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)]
     )
 
-    # Crypto Policies
     await database["crypto_policies"].create_index(
         [("scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)], unique=True
     )
 
-    # Policy Audit Entries (PolicyAuditRepository stores these in "crypto_policy_history").
+    # PolicyAuditRepository's entries live in crypto_policy_history.
     await database["crypto_policy_history"].create_index(
         [
             ("policy_type", pymongo.ASCENDING),
@@ -456,7 +400,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
     await database["crypto_policy_history"].create_index([("timestamp", pymongo.DESCENDING)])
 
-    # Compliance Reports
     await database["compliance_reports"].create_index(
         [
             ("scope", pymongo.ASCENDING),
@@ -484,7 +427,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
 
 async def init_db() -> None:
-    """Initialize the database with indexes and initial admin user."""
     database = await get_database()
 
     await create_indexes(database)

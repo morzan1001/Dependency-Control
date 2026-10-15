@@ -84,6 +84,7 @@ def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
                 "details": SLIM_DETAILS_EXPR,
             }
         },
+        # No $slice after this $group: it cannot shrink the accumulator, and a cap in match order drops KEV/EPSS CVEs.
         {
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},

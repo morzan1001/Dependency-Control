@@ -1,5 +1,3 @@
-"""Risk score plus the reachability, exploit and actionability classifications all scoring consumers share."""
-
 from typing import Any
 
 from app.core.constants import (
@@ -11,7 +9,7 @@ from app.core.constants import (
 )
 from app.core.epss import bucket_epss
 
-# Relative weight per finding: 1 CRITICAL = 5 HIGH = 20 MEDIUM = 80 LOW; INFO/UNKNOWN/NEGLIGIBLE carry none.
+# INFO, UNKNOWN and NEGLIGIBLE findings carry no weight.
 RISK_SEVERITY_WEIGHTS: dict[str, float] = {
     "CRITICAL": 20.0,
     "HIGH": 4.0,
@@ -19,8 +17,7 @@ RISK_SEVERITY_WEIGHTS: dict[str, float] = {
     "LOW": 0.25,
 }
 
-# Half saturation at 12.5 CRITICALs' worth of exposure, calibrated on the prod estate so the
-# median project lands mid-scale instead of the whole top decile compressing into 99.x.
+# Calibrated on the prod estate so the median project lands mid-scale, not the top decile all at 99.x.
 RISK_SCORE_HALF_SATURATION: float = 250.0
 
 UNREACHABLE_RISK_MODIFIER: float = 0.4
@@ -28,7 +25,7 @@ CONFIRMED_REACHABLE_RISK_MODIFIER: float = 1.1
 
 
 def saturating_risk_score(exposure: float) -> float:
-    """Map a weighted exposure sum onto 0-100; monotone, so extra findings can never lower the score."""
+    """Monotone, so extra findings can never lower the score."""
     if exposure <= 0:
         return 0.0
     return round(100.0 * exposure / (exposure + RISK_SCORE_HALF_SATURATION), 1)
@@ -44,7 +41,7 @@ def severity_exposure(critical: int, high: int, medium: int, low: int) -> float:
 
 
 def risk_score_expr(count_paths: dict[str, str]) -> dict[str, Any]:
-    """Aggregation-expression form of saturating_risk_score over severity-count field paths (e.g. "$stats.critical")."""
+    """saturating_risk_score as an aggregation expression over severity-count field paths."""
     exposure = {
         "$add": [
             {"$multiply": [{"$ifNull": [count_paths[sev.lower()], 0]}, weight]}
@@ -65,7 +62,6 @@ def risk_score_expr(count_paths: dict[str, str]) -> dict[str, Any]:
 
 
 def reachability_display_tier(is_reachable: bool | None, analysis_level: str | None) -> str:
-    """Persisted reachability (is_reachable + none/import/symbol level) as confirmed/likely/unreachable/unknown."""
     if is_reachable is False:
         return "unreachable"
     if is_reachable is True:
@@ -77,7 +73,7 @@ def reachability_display_tier(is_reachable: bool | None, analysis_level: str | N
 
 
 def reachability_risk_modifier(is_reachable: bool | None, analysis_level: str | None) -> float:
-    """Risk weight of a reachability verdict; not reachable is not zero, because analysis is imperfect."""
+    """Unreachable still weighs, not zero, because the analysis is imperfect."""
     tier = reachability_display_tier(is_reachable, analysis_level)
     if tier == "unreachable":
         return UNREACHABLE_RISK_MODIFIER
@@ -86,12 +82,10 @@ def reachability_risk_modifier(is_reachable: bool | None, analysis_level: str | 
     return 1.0
 
 
-# details.exploit_maturity values meaning actively exploited in the wild (KEV-listed).
 ACTIVELY_EXPLOITED_MATURITY = ("active", "weaponized")
 
 
 def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> ExploitMaturity:
-    """Maturity level: weaponized > active > high/medium/low (EPSS) > unknown."""
     if kev_ransomware:
         return "weaponized"
     if is_kev:
@@ -102,17 +96,12 @@ def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: f
 
 
 def is_actionable_vulnerability(*, epss_score: float | None, is_kev: bool, reachable: bool | None) -> bool:
-    """Exploitable (KEV or high EPSS) and not ruled out by a reachability verdict."""
     exploitable = is_kev or (epss_score is not None and epss_score >= EPSS_HIGH_THRESHOLD)
     return exploitable and (reachable is True or reachable is None)
 
 
 def is_deprioritized_vulnerability(*, epss_score: float | None, is_kev: bool, reachable: bool | None) -> bool:
-    """Proven unreachable, or measured too unlikely to be exploited to compete for attention.
-
-    An absent EPSS score means the CVE is not in the dataset, not that its exploitation is
-    unlikely, so it decides nothing here — as an absent reachability verdict decides nothing above.
-    """
+    """An absent EPSS score means the CVE is not in the dataset, not that its exploitation is unlikely."""
     if reachable is False:
         return True
     return not is_kev and epss_score is not None and epss_score < EPSS_MEDIUM_THRESHOLD
@@ -124,5 +113,4 @@ def is_actionable_secret(verified: bool | None) -> bool:
 
 
 def is_deprioritized_secret(verified: bool | None, in_current_tree: bool | None) -> bool:
-    """Unverified and no longer present in the scanned tree."""
     return verified is not True and in_current_tree is False

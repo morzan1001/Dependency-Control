@@ -1,5 +1,3 @@
-"""CVSS base scores from vector strings: v3.x is computed here, v4.0 is delegated to the `cvss` package."""
-
 import math
 
 from cvss import CVSS4
@@ -25,8 +23,7 @@ def _roundup(value: float) -> float:
 
 
 def _parse_metrics(vector: str) -> dict[str, str] | None:
-    """None when a metric is repeated: which occurrence wins would change the score, and the
-    reference implementation rejects such a vector rather than picking one."""
+    """A repeated metric yields None, as the reference implementation rejects such a vector rather than picking one."""
     metrics: dict[str, str] = {}
     for part in vector.split("/")[1:]:
         key, separator, value = part.partition(":")
@@ -39,7 +36,6 @@ def _parse_metrics(vector: str) -> dict[str, str] | None:
 
 
 def cvss3_base_score(vector: str) -> float | None:
-    """Base score of a CVSS v3.0/v3.1 vector; None when it is not a vector we can score."""
     text = vector.strip()
     if not text.startswith(_V3_PREFIXES):
         return None
@@ -76,7 +72,6 @@ def cvss3_base_score(vector: str) -> float | None:
 
 
 def cvss4_base_score(vector: str) -> float | None:
-    """Base score of a CVSS v4.0 vector via the `cvss` package; None when it cannot be scored."""
     text = vector.strip()
     if not text.startswith(_V4_PREFIX):
         return None
@@ -87,7 +82,6 @@ def cvss4_base_score(vector: str) -> float | None:
 
 
 def cvss_base_score(vector: str) -> float | None:
-    """Base score of a v3.0/v3.1/v4.0 vector, dispatched on its prefix."""
     text = vector.strip()
     if text.startswith(_V4_PREFIX):
         return cvss4_base_score(text)

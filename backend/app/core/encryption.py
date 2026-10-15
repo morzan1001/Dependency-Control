@@ -1,24 +1,4 @@
-"""Chunked AES-256-GCM streaming encryption for archive bundles.
-
-Wire format (big-endian for length fields):
-    MAGIC (4 bytes)          : b"DCEN"
-    VERSION (1 byte)         : ENCRYPTION_FORMAT_VERSION
-    CHUNK_SIZE (4 bytes BE)  : plaintext chunk size used by writer (informational on read)
-    [repeated per chunk]:
-        LEN (4 bytes BE)     : ciphertext+tag length for this chunk (LEN=0 marks end)
-        NONCE (12 bytes)     : random per chunk
-        PAYLOAD (LEN bytes)  : ciphertext || 16-byte GCM tag
-
-The 32-byte key is derived from settings.ARCHIVE_ENCRYPTION_KEY (hex-decoded if it's
-exactly 64 hex chars, otherwise SHA-256 of the UTF-8 bytes).
-
-Security note: a chunk's GCM tag authenticates only that chunk's ciphertext, with no
-sequence-number binding and no stream-level MAC, so chunk reordering, deletion and
-cross-stream injection are not detected at the crypto layer. Acceptable for the archive use
-case because storage is access-controlled and the threat model is confidentiality against
-passive readers, not active tampering by a party holding both storage access and the key;
-callers requiring active-adversary resistance must add an outer MAC or sequence-number binding.
-"""
+"""Per-chunk GCM tags leave chunk reordering, deletion and splicing undetected: this guards confidentiality only."""
 
 import hashlib
 import os
@@ -58,7 +38,6 @@ def _seal(aesgcm: AESGCM, plaintext: bytes) -> bytes:
 
 
 async def encrypt_stream(source: AsyncIterator[bytes], chunk_size: int = ENCRYPTION_CHUNK_SIZE) -> AsyncIterator[bytes]:
-    """Encrypt a byte stream: the header, one frame per chunk_size of plaintext, then the LEN=0 terminator."""
     aesgcm = AESGCM(_get_key())
     yield ENCRYPTION_MAGIC + bytes([ENCRYPTION_FORMAT_VERSION]) + struct.pack(">I", chunk_size)
     buffer = bytearray()
@@ -73,8 +52,6 @@ async def encrypt_stream(source: AsyncIterator[bytes], chunk_size: int = ENCRYPT
 
 
 class _StreamReader:
-    """Reads exact byte counts from an AsyncIterator[bytes]."""
-
     def __init__(self, source: AsyncIterator[bytes]):
         self._source = source
         self._buffer = bytearray()
@@ -96,7 +73,6 @@ class _StreamReader:
 
 
 async def decrypt_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-    """Decrypt a chunked AES-GCM stream, yielding plaintext chunks."""
     aesgcm = AESGCM(_get_key())
     reader = _StreamReader(source)
 

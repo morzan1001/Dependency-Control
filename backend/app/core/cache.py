@@ -1,8 +1,4 @@
-"""Async Redis-backed cache for cross-pod deduplication of external API calls.
-
-For in-process memoization of cheap MongoDB aggregations use
-``app.services.analytics.cache.TTLCache`` instead.
-"""
+"""Redis cache shared across pods; in-process memoization of Mongo aggregations belongs in analytics.cache.TTLCache."""
 
 import asyncio
 import hashlib
@@ -38,8 +34,7 @@ REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
 _LOCK_POLL_INTERVAL_SECONDS = 0.1
 
-# Atomic compare-and-delete: release the lock only if the value still matches our
-# token, so a slow fetch can't delete a lock re-acquired by another pod.
+# Compare-and-delete, so a slow fetch cannot delete a lock another pod has re-acquired since.
 _UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
 
@@ -48,11 +43,7 @@ _writes_suppressed: ContextVar[bool] = ContextVar("cache_writes_suppressed", def
 
 @contextmanager
 def suppress_cache_writes() -> Iterator[None]:
-    """Serve reads from the shared cache but publish nothing into it.
-
-    Context-local rather than an attribute on the service: the cache is one process-wide
-    singleton, so a flag would silence the concurrent scans that legitimately populate it.
-    """
+    """Context-local, as a flag on the process-wide singleton would also silence concurrent scans that populate it."""
     token = _writes_suppressed.set(True)
     try:
         yield
@@ -69,55 +60,47 @@ class _FetchFailed(Exception):
 
 
 class CacheTTL:
-    """Standard TTL values for different types of cached data."""
-
     # Global catalogs that update daily
-    KEV_CATALOG = 24 * 3600  # 24 hours
-    POPULAR_PACKAGES = 24 * 3600  # 24 hours
+    KEV_CATALOG = 24 * 3600
+    POPULAR_PACKAGES = 24 * 3600
 
-    # Vulnerability data
-    EPSS_SCORE = 24 * 3600  # 24 hours (EPSS updates daily)
-    GHSA_DATA = 7 * 24 * 3600  # 7 days (GHSA rarely changes)
-    OSV_VULNERABILITY = 6 * 3600  # 6 hours (more volatile)
-    OSV_VULN_RECORD = 7 * 24 * 3600  # 7 days (keyed on the record's modified stamp)
+    EPSS_SCORE = 24 * 3600  # EPSS updates daily
+    GHSA_DATA = 7 * 24 * 3600  # GHSA rarely changes
+    OSV_VULNERABILITY = 6 * 3600  # more volatile
+    OSV_VULN_RECORD = 7 * 24 * 3600  # keyed on the record's modified stamp
 
-    # Package metadata
-    DEPS_DEV_METADATA = 12 * 3600  # 12 hours
-    LATEST_VERSION = 12 * 3600  # 12 hours
-    EOL_STATUS = 24 * 3600  # 24 hours
+    DEPS_DEV_METADATA = 12 * 3600
+    LATEST_VERSION = 12 * 3600
+    EOL_STATUS = 24 * 3600
 
-    # Package hashes (immutable)
-    PACKAGE_HASH = 7 * 24 * 3600  # 7 days
+    # Package hashes are immutable.
+    PACKAGE_HASH = 7 * 24 * 3600
 
-    # Maintainer data
-    MAINTAINER_INFO = 24 * 3600  # 24 hours
+    MAINTAINER_INFO = 24 * 3600
 
-    # Malware check (can change, moderate TTL)
-    MALWARE_CHECK = 6 * 3600  # 6 hours
+    # A malware verdict can change.
+    MALWARE_CHECK = 6 * 3600
 
-    # Negative cache (when API returns no data)
-    NEGATIVE_RESULT = 1 * 3600  # 1 hour
+    NEGATIVE_RESULT = 1 * 3600
 
-    # Update frequency analysis (changes only on new scan completion)
-    UPDATE_FREQUENCY = 30 * 60  # 30 minutes
+    # Changes only when a scan completes.
+    UPDATE_FREQUENCY = 30 * 60
 
     # Keyed by the scan's completion, so the TTL only bounds staleness of the cross-project signal.
-    RECOMMENDATIONS = 10 * 60  # 10 minutes
+    RECOMMENDATIONS = 10 * 60
 
     # Long TTL: version histories almost never change retroactively; new releases append.
-    RELEASE_HISTORY = 24 * 3600  # 24 hours
+    RELEASE_HISTORY = 24 * 3600
 
 
 def scope_digest(ids: Iterable[str] | None) -> str:
-    """Digest of an id set for cache keys; None (global scope) gets a sentinel no set can equal."""
+    """None (global scope) gets a sentinel no id set's digest can equal."""
     if ids is None:
         return "*"
     return hashlib.sha256(",".join(sorted(ids)).encode()).hexdigest()[:16]
 
 
 class CacheKeys:
-    """Cache key builders for consistent key naming."""
-
     @staticmethod
     def kev_catalog() -> str:
         return "kev:catalog"
@@ -132,7 +115,6 @@ class CacheKeys:
 
     @staticmethod
     def osv(purl: str) -> str:
-        # MD5 used only as a fast non-cryptographic shortener for the cache key.
         purl_hash = hashlib.md5(purl.encode(), usedforsecurity=False).hexdigest()[:16]
         # Holds only the querybatch stubs; the records they name are cached under osv_vuln.
         return f"osv4:{purl_hash}"
@@ -188,14 +170,12 @@ class CacheKeys:
 
     @staticmethod
     def update_frequency_comparison(scope_hash: str, team_id: str | None) -> str:
-        # Keying on the scope digest rather than the user shares one entry between
-        # callers that see the same projects, without crossing access boundaries.
+        # Keyed on the scope digest, so callers that see the same projects share one entry and no one else reads it.
         return f"update_freq_cmp:{scope_hash}:" + (f"team={team_id}" if team_id else "all-teams")
 
     @staticmethod
     def recommendations(project_id: str, scan_id: str, analysis_stamp: str, scope_hash: str) -> str:
-        # scope_hash (digest of caller's accessible project ids) prevents cross-project
-        # recommendation data leaking across users with different project access.
+        # scope_hash keeps users with different project access from sharing cross-project recommendation data.
         return f"recommendations:{project_id}:{scan_id}:{analysis_stamp}:{scope_hash}"
 
 
@@ -223,8 +203,6 @@ class _CacheOp:
 
 
 class CacheService:
-    """Distributed Redis cache shared across pods for horizontal dedup of external API calls."""
-
     RECONNECT_INTERVAL_SECONDS = 30
 
     def __init__(self) -> None:
@@ -235,7 +213,6 @@ class CacheService:
         self._unavailable_since: float = 0
 
     async def get_client(self) -> redis.Redis:
-        """Get or create the Redis client, locked against concurrent first-call races."""
         if self._client is not None and self._pool is not None:
             return self._client
 
@@ -297,7 +274,6 @@ class CacheService:
         return f"{settings.CACHE_PREFIX}{key}"
 
     async def get(self, key: str) -> Any | None:
-        """Returns cached value or None if not found/expired."""
         if not await self._ensure_available():
             return None
 
@@ -311,7 +287,6 @@ class CacheService:
         return None
 
     async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
-        """Set a JSON-serializable value with TTL (defaults to CACHE_DEFAULT_TTL_HOURS)."""
         if _writes_suppressed.get() or not await self._ensure_available():
             return False
 
@@ -328,7 +303,6 @@ class CacheService:
         return False
 
     async def mget(self, keys: list[str]) -> dict[str, Any]:
-        """Batch get; returns {key: value-or-None}."""
         if not keys:
             return {}
         if not await self._ensure_available():
@@ -352,7 +326,6 @@ class CacheService:
         return dict.fromkeys(keys)
 
     async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
-        """Batch set with shared TTL."""
         if _writes_suppressed.get() or not mapping or not await self._ensure_available():
             return False
 
@@ -395,7 +368,6 @@ class CacheService:
         return None
 
     async def eval(self, script: str, key: str, *args: str) -> Any | None:
-        """Run a Lua script over one key; None while Redis is unreachable."""
         if not await self._ensure_available():
             return None
 
@@ -414,14 +386,12 @@ class CacheService:
         max_wait_seconds: float = 5.0,
         reraise_fetch_errors: bool = False,
     ) -> Any | None:
-        """Only one pod fetches on a miss while peers wait on the distributed lock, so multi-pod
-        deploys cannot stampede the upstream."""
+        """One pod fetches a miss while its peers wait on the lock, so a multi-pod deploy cannot stampede upstream."""
         cached = await self.get(key)
         if cached is not None:
             return cached
 
-        # The stampede lock is itself a key derived from ``key``, so a suppressed caller has to
-        # skip the whole locked path rather than only the ``set`` that publishes the result.
+        # The stampede lock is itself a key, so a suppressed caller skips the whole locked path, not only the set.
         if not self._available or _writes_suppressed.get():
             return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
 
@@ -430,9 +400,7 @@ class CacheService:
             client = await self.get_client()
             deadline = time.monotonic() + max_wait_seconds
 
-            # Re-acquiring on each pass covers a holder that dropped the lock without
-            # publishing (crash or cancellation): a waiter takes over instead of
-            # reporting the miss as a permanent absence to its caller.
+            # Re-acquired each pass, so a waiter takes over from a holder that died without publishing.
             while time.monotonic() < deadline:
                 # Unique per-acquisition token so we only release a lock we still own.
                 lock_token = uuid.uuid4().hex
@@ -487,8 +455,7 @@ class CacheService:
     async def get_many_or_fetch(
         self, keys: Iterable[str], fetch_fn: Callable[[str], Awaitable[Any]], ttl_seconds: int, concurrency: int
     ) -> dict[str, Any]:
-        """Every key's value from one batched read, each miss fetched as get_or_fetch_with_lock fetches it, at most
-        ``concurrency`` at a time; a failed fetch leaves its exception as the key's value."""
+        """Misses are fetched as get_or_fetch_with_lock does; a failed fetch leaves its exception as the key's value."""
         wanted = list(dict.fromkeys(keys))
         values = {key: value for key, value in (await self.mget(wanted)).items() if value is not None}
         missing = [key for key in wanted if key not in values]
@@ -514,7 +481,6 @@ class CacheService:
     async def _wait_for_lock_holder(
         self, client: "redis.Redis", key: str, full_lock_key: str, deadline: float
     ) -> Any | None:
-        """Poll until the holder publishes a value, returning None once it drops the lock."""
         while time.monotonic() < deadline:
             await asyncio.sleep(_LOCK_POLL_INTERVAL_SECONDS)
             cached = await self.get(key)
@@ -525,7 +491,6 @@ class CacheService:
         return None
 
     async def _release_lock(self, client: "redis.Redis", full_lock_key: str, token: str) -> None:
-        """Release the stampede lock only if we still hold it (value == token)."""
         try:
             # redis-py types eval() as Awaitable[str] | str; the asyncio client always returns an awaitable.
             await cast(Awaitable[str], client.eval(_UNLOCK_LUA, 1, full_lock_key, token))
@@ -568,7 +533,6 @@ cache_service = CacheService()
 
 
 async def update_cache_stats() -> None:
-    """Refresh cache Prometheus metrics — call from the housekeeping loop."""
     try:
         if not cache_service._available:
             return

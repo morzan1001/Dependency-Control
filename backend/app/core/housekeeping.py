@@ -69,11 +69,7 @@ _EXPIRABLE = {"pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES}, "status": {"$
 
 
 async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
-    """Which of these scans a rescan points at (via original_scan_id); retention must not delete those.
-
-    Asked per batch rather than as one estate-wide set: the whole set spliced into the retention
-    cursor as ``$nin`` outgrows the 16 MB BSON document limit and the cursor stops opening at all.
-    """
+    """Asked per batch: one estate-wide set spliced into the retention cursor as $nin outgrows the 16 MB BSON limit."""
     referenced: set[str] = set()
     async for doc in db.scans.find(
         {"is_rescan": True, "original_scan_id": {"$in": scan_ids}},
@@ -86,11 +82,7 @@ async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
 
 
 async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
-    """Delete callgraphs whose scan_id matches no scan, once past the orphan safety window.
-
-    Scan deletion already removes callgraphs by scan_id; this covers uploads whose scan never
-    existed. The age window protects a callgraph that arrives before its scan is created.
-    """
+    """Covers uploads whose scan never existed; the age window spares a callgraph that arrives before its scan."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
 
     async def _reap_batch(scan_ids: list[str]) -> int:
@@ -123,7 +115,6 @@ _RESCAN_PROJECT_PROJECTION = dict.fromkeys(
 
 
 def resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
-    """Return effective rescan interval hours, or None if rescans are disabled."""
     project_decides = system_settings.rescan_mode != SETTINGS_MODE_GLOBAL
     enabled = project.rescan_enabled if project_decides else None
     if enabled is None:
@@ -141,7 +132,6 @@ def resolve_rescan_interval(project: Project, system_settings: Any) -> int | Non
 
 
 def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
-    """Whether this source scan has gone interval_hours without a rescan; one never rescanned counts from its creation."""
     last_rescan: datetime | None = source_scan.get("last_rescanned_at") or source_scan.get("created_at")
     if not last_rescan:
         return False
@@ -150,22 +140,14 @@ def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
 
 
 async def _rescan_targets(project: Project, db: Any) -> list[dict]:
-    """The branch tip plus the newest release per environment. A release is a second identity that
-    has to keep being re-evaluated, not just the tip of its branch.
-
-    Every target is an original, never a rescan: rescans are this loop's own output, and taking one
-    back in would deepen the lineage chain by a link per interval and hand the tip slot to whichever
-    rescan ran last.
-    """
-    # Head's own tip build, so the rescan refreshes the analysis head reports; the lineage step is
-    # left out because a rescan target has to be the build, not the previous interval's output.
+    """The branch tip plus each environment's newest release, which has to keep being re-evaluated as well."""
+    # Head's own tip build, not its lineage, so the rescan refreshes what head reports instead of the last rescan.
     tip = await ScanRepository(db).head_build(
         project, {**HAS_SBOM_MATCH, **USABLE_BUILD_MATCH}, RESCAN_SOURCE_PROJECTION
     )
     targets = [tip] if tip else []
 
-    # The marked scan itself, never its rescan: rescanning the rescan would grow the chain past
-    # the bound effective_scan_ids walks. A failed one is retried, as nothing else analyses it.
+    # The marked scan, never its rescan, which would grow the chain past effective_scan_ids' bound; failed ones retry.
     marked_ids = set((await released_scan_ids(db, project.id)).values()) - {target["_id"] for target in targets}
     if marked_ids:
         marked = db.scans.find(
@@ -184,7 +166,6 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
 async def _process_project_rescan(
     project_data: dict, system_settings: Any, db: Any, worker_manager: "AnalysisWorkerManager"
 ) -> None:
-    """Evaluate a single project and create a rescan for every source that is due."""
     project = Project(**project_data)
     interval_hours = resolve_rescan_interval(project, system_settings)
     if interval_hours is None:
@@ -203,16 +184,12 @@ async def _process_project_rescan(
 
 
 async def check_scheduled_rescans(worker_manager: "AnalysisWorkerManager") -> None:
-    """
-    Checks for projects that need a periodic re-scan.
-    """
     logger.debug("Checking for scheduled re-scans...")
     db = await get_database()
 
     repo = SystemSettingsRepository(db)
     system_settings = await repo.get()
 
-    # Pre-filter to projects that have been scanned at least once.
     async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}, _RESCAN_PROJECT_PROJECTION):
         # The due targets left over stay due, so a later pass, in whichever process has room, takes them.
         if worker_manager.is_saturated():
@@ -224,9 +201,7 @@ async def check_scheduled_rescans(worker_manager: "AnalysisWorkerManager") -> No
 
 
 async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
-    """Delete archive_metadata rows of scans whose restore completed after they were archived, reclassifying
-    their S3 object as an orphan for the next sweep. Batched to avoid N+1 lookups.
-    """
+    """Drops the metadata of scans restored since archiving, which leaves their S3 object to the orphan reaper."""
     lock_repo = DistributedLocksRepository(db)
 
     async def _reap_batch(metas: list[dict[str, Any]]) -> int:
@@ -273,13 +248,9 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
 
 
 async def _reap_orphan_s3_objects(db: Any) -> int:
-    """Delete S3 archive objects that have no matching ``archive_metadata`` record, returning how
-    many were deleted. Best-effort: errors are logged and swallowed.
-    """
     if not is_archive_enabled():
         return 0
 
-    # Pass 1: clean up stale metadata before computing known_keys
     await _reap_stale_metadata(db)
 
     try:
@@ -323,7 +294,6 @@ async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
 
 
 async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) -> None:
-    """Archive scans to S3, then delete those archived, unchanged since picked and still expirable."""
     from app.services.archive import archive_scan
 
     picked_at = datetime.now(timezone.utc)
@@ -364,7 +334,6 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
 
 
 def _retention_can_act(action: str, label: str) -> bool:
-    """Whether the action can expire scans; one that cannot is reported."""
     if action == RETENTION_ACTION_DELETE or (action == RETENTION_ACTION_ARCHIVE and is_archive_enabled()):
         return True
     if action == RETENTION_ACTION_ARCHIVE:
@@ -382,7 +351,6 @@ def _retention_can_act(action: str, label: str) -> bool:
 
 
 async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, label: str) -> None:
-    """Expire the scans by deleting or by archiving them."""
     if not scan_ids:
         return
     if action == RETENTION_ACTION_ARCHIVE:
@@ -399,8 +367,7 @@ async def _project_heads(db: Any, project_ids: set[str]) -> set[str]:
 
 
 async def _unreferenced(db: Any, scans: list[dict[str, Any]]) -> list[str]:
-    """The batch minus every scan something still points at: a rescan's source, either end of a
-    release's analysis chain, and a project's head, which otherwise passes to an older or feature build."""
+    """Spares rescan sources, both ends of a release's analysis chain, and heads, which would pass to another build."""
     scan_ids = [str(doc["_id"]) for doc in scans]
     protected = await _referenced_scan_ids(db, scan_ids)
     protected |= await release_protected_scan_ids(db, scan_ids)
@@ -416,8 +383,7 @@ async def _process_scans_in_batches(
 
 
 async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-    """Each build's rescans older than its newest RESCAN_HISTORY_RUNS usable ones, except the one its
-    latest_rescan_id names."""
+    """Rescans past each build's newest RESCAN_HISTORY_RUNS usable ones, sparing the one latest_rescan_id names."""
     # Keyed on original_scan_id so its index, not a pass over every build, finds the rescans.
     runs = {**scope, "original_scan_id": {"$ne": None}, **_EXPIRABLE}
     # Read up front: a cursor would sit idle past the session timeout while the batches archive.
@@ -444,8 +410,7 @@ async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[d
 
 
 async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, label: str) -> None:
-    """Retention for one group: scans past its age and rescans past the history cap. A stored retention no
-    cutoff can be computed for fails only its own group."""
+    """A stored retention no cutoff can be computed for fails only its own group."""
     if not _retention_can_act(action, label):
         return
     try:
@@ -488,7 +453,6 @@ async def _expire_scans(db: Any) -> None:
 
     logger.info("Running project-specific housekeeping...")
 
-    # Group projects by (retention_days, retention_action) to minimize DB queries
     pipeline: list[dict[str, Any]] = [
         {
             "$match": {
@@ -516,7 +480,6 @@ async def _expire_scans(db: Any) -> None:
 
 
 async def _best_effort[*Ts](label: str, task: Callable[[*Ts], Awaitable[object]], *args: *Ts) -> None:
-    """Run ``task(*args)``; a failure is logged under ``label`` and keeps the caller's other tasks running."""
     try:
         await task(*args)
     except Exception as e:
@@ -524,7 +487,6 @@ async def _best_effort[*Ts](label: str, task: Callable[[*Ts], Awaitable[object]]
 
 
 async def run_housekeeping() -> None:
-    """The cluster's daily sweep: release flags, audit and compliance report retention, and the orphan reapers."""
     db = await get_database()
     # Held to expiry, never released: its TTL is the cadence across pods.
     if not await DistributedLocksRepository(db).acquire_lock(
@@ -544,8 +506,7 @@ async def run_housekeeping() -> None:
 
 
 async def trigger_stale_pending_scans(worker_manager: "AnalysisWorkerManager") -> None:
-    """Queue the oldest pending scans no scanner result has reached for a while: findings-only runs
-    no SBOM triggered, and scans whose queue entry died with its pod."""
+    """Covers findings-only runs no SBOM triggered and scans whose queue entry died with its pod."""
     if worker_manager.is_saturated():
         return
     db = await get_database()
@@ -569,7 +530,7 @@ async def trigger_stale_pending_scans(worker_manager: "AnalysisWorkerManager") -
 
 
 async def requeue_waiting_adhoc_jobs(worker_manager: "AnalysisWorkerManager") -> None:
-    """Queue again the oldest pending ad-hoc jobs whose queue entry died with its pod."""
+    """Covers ad-hoc jobs whose queue entry died with its pod."""
     if worker_manager.is_saturated():
         return
     db = await get_database()
@@ -584,10 +545,6 @@ async def requeue_waiting_adhoc_jobs(worker_manager: "AnalysisWorkerManager") ->
 
 
 async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
-    """
-    Identifies scans that have been stuck in 'processing' state for too long
-    and resets them to 'pending' or marks them as 'failed'.
-    """
     logger.debug("Running stuck scan recovery...")
     db = await get_database()
     timeout_threshold = datetime.now(timezone.utc) - timedelta(seconds=settings.HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS)
@@ -625,7 +582,6 @@ async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
 
 
 async def sync_branch_status() -> None:
-    """Sync branch status for all projects with VCS connections, on one pod per interval."""
     db = await get_database()
     # Held to expiry, never released: its TTL is the cadence across pods.
     if not await DistributedLocksRepository(db).acquire_lock(
@@ -666,10 +622,6 @@ async def sync_branch_status() -> None:
 
 
 async def stale_scan_loop(worker_manager: "AnalysisWorkerManager") -> None:
-    """
-    Fast loop to check for stale pending scans that need aggregation.
-    Runs frequently to quickly catch scans without SBOM trigger.
-    """
     while True:
         for requeue in (trigger_stale_pending_scans, requeue_waiting_adhoc_jobs):
             await _best_effort(f"Stale scan loop: {requeue.__name__}", requeue, worker_manager)
@@ -678,26 +630,17 @@ async def stale_scan_loop(worker_manager: "AnalysisWorkerManager") -> None:
 
 
 def _reconcile_due(now: datetime, last_run: datetime) -> bool:
-    """Once per calendar day, and only inside the quiet hour.
-
-    An elapsed-time gate would anchor the run to whenever the pod that wins the lock was
-    rolled out, so a midday deploy would put a run that re-reads a dependency set per
-    repaired scan straight into the working day.
-    """
+    """Calendar-day gated: an elapsed-time gate would anchor the heavy run to whenever the lock winner was deployed."""
     return now.hour == HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC and last_run.date() < now.date()
 
 
 async def reconcile_update_frequency_ledger() -> None:
-    """Check the update-frequency delta ledger against the scans and repair what drifted."""
     if not settings.UPDATE_FREQUENCY_RECONCILE_ENABLED:
         return
     await _best_effort("Update-frequency reconcile", run_update_frequency_reconcile, await get_database())
 
 
 async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
-    """Runs the housekeeping tasks on a loop; stale pending scan aggregation runs in its own,
-    faster loop.
-    """
     last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
@@ -714,8 +657,7 @@ async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
         await _best_effort("Housekeeping: retention", _run_retention, db)
         await _best_effort("Branch status sync", sync_branch_status)
 
-        # Stamped whatever the reconcile did: only one pod gets the lock, and the others
-        # must not come back for it every five minutes.
+        # Stamped whatever the reconcile did, so the pods that lost the lock do not retry it every five minutes.
         now = datetime.now(timezone.utc)
         if _reconcile_due(now, last_update_frequency_reconcile):
             await reconcile_update_frequency_ledger()
