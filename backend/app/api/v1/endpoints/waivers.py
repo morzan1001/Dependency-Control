@@ -207,11 +207,10 @@ async def list_waivers(
             {"project_id": {"$in": accessible_project_ids}},
         ]
 
-    if finding_id:
-        query["finding_id"] = finding_id
-
-    if package_name:
-        query["package_name"] = package_name
+    # $regex ignores the listing's collation, so these filters stay case-exact like waiver matching.
+    for field, value in (("finding_id", finding_id), ("package_name", package_name)):
+        if value:
+            query[field] = {"$regex": f"^{re.escape(value)}$"}
 
     if search:
         search_query = {"$regex": re.escape(search), "$options": "i"}

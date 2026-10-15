@@ -105,21 +105,29 @@ async def test_the_waivers_order_finding_ids_packages_and_reasons_whatever_their
     assert [waiver[sort_by] for waiver in resp.json()["items"]] == ["alice", "Bob", "carol"]
 
 
-async def test_the_waiver_total_counts_what_the_case_insensitive_page_lists(client, db, admin_auth_headers):
+@pytest.mark.parametrize("sort_by", ["created_at", "created_by"])
+@pytest.mark.parametrize(
+    ("field", "values"),
+    [("finding_id", ("CVE-2024-1", "cve-2024-1", "CVE-2024-2")), ("package_name", ("Django", "django", "Flask"))],
+)
+async def test_the_waiver_filters_match_case_exactly_as_waivers_apply(
+    client, db, admin_auth_headers, sort_by, field, values
+):
     await db.waivers.insert_many(
         [
-            Waiver(reason="accepted", created_by="u-1", finding_id=finding_id).model_dump(by_alias=True)
-            for finding_id in ("CVE-2024-1", "cve-2024-1", "CVE-2024-2")
+            Waiver(**{"reason": "accepted", "created_by": "u-1", field: value}).model_dump(by_alias=True)
+            for value in values
         ]
     )
 
     resp = await client.get(
         "/api/v1/waivers/",
-        params={"global_only": True, "finding_id": "CVE-2024-1", "sort_by": "finding_id"},
+        params={"global_only": True, field: values[0], "sort_by": sort_by},
         headers=admin_auth_headers,
     )
 
-    assert resp.json()["total"] == len(resp.json()["items"]) == 2
+    assert resp.json()["total"] == 1
+    assert [waiver[field] for waiver in resp.json()["items"]] == [values[0]]
 
 
 async def test_the_chat_team_list_orders_names_whatever_their_case(db):
