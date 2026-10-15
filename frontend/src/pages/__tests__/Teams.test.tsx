@@ -85,9 +85,14 @@ describe('TeamsPage edit dialog', () => {
   it('stays open until the refetched team list holds the new name', async () => {
     const renamed = { ...TEAM, name: 'Team Gamma' }
     let answerRefetch: (teams: Team[]) => void = () => undefined
-    vi.mocked(teamApi.getAll)
-      .mockResolvedValueOnce([TEAM])
-      .mockReturnValueOnce(new Promise((resolve) => (answerRefetch = resolve)))
+    const refetch = new Promise<Team[]>((resolve) => (answerRefetch = resolve))
+    let pageFetches = 0
+    // The page asks with its empty search box, the dialog's name check without a search.
+    vi.mocked(teamApi.getAll).mockImplementation((search) => {
+      if (search !== '') return Promise.resolve([TEAM])
+      pageFetches += 1
+      return pageFetches === 1 ? Promise.resolve([TEAM]) : refetch
+    })
     vi.mocked(teamApi.update).mockResolvedValue(renamed)
     await renderPage()
     const dialog = editTeam()
@@ -96,7 +101,7 @@ describe('TeamsPage edit dialog', () => {
     // The save runs on microtasks only, so a dialog that closes on the PUT alone is gone after one task.
     await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
-    expect(teamApi.getAll).toHaveBeenCalledTimes(2)
+    expect(pageFetches).toBe(2)
     expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
 
     answerRefetch([renamed])
