@@ -385,8 +385,8 @@ export default function ScanDetails() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-          <Card>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <Card className="md:col-span-2 xl:col-span-1">
                 <CardHeader>
                     <CardTitle>Scan Metadata</CardTitle>
                 </CardHeader>

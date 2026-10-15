@@ -660,6 +660,14 @@ describe('ScanDetails metadata', () => {
     expect(branch.closest('a')?.querySelector('svg.lucide-external-link')).toHaveClass('shrink-0')
     expect(branch.closest('a')?.parentElement?.querySelector('svg.lucide-git-branch')).toHaveClass('shrink-0')
   })
+  it('gives the metadata card its own row above the two charts until xl, where the three share a row', () => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+    renderPage()
+
+    const card = screen.getByText('Scan Metadata').closest('.bg-card') as HTMLElement
+    expect(card).toHaveClass('md:col-span-2', 'xl:col-span-1')
+    expect(card.parentElement).toHaveClass('md:grid-cols-2', 'xl:grid-cols-3')
+  })
 })
 
 describe('ScanDetails distribution charts', () => {
