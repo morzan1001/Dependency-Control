@@ -169,3 +169,17 @@ describe("UpdateFrequency", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("UpdateFrequency on a phone", () => {
+  it("gives the granularity and slowest-package cards one shrinkable column below md, so the table cannot widen them past the screen", async () => {
+    mockedFrequency.mockResolvedValue({
+      ...metrics,
+      outdated_backlog: 1,
+      slowest_packages: [{ name: "libfoo", type: "pypi", current_version: "1.0.0", latest_version: "2.0.0", scans_outdated: 4 }],
+    });
+    renderFrequency();
+
+    const card = (await screen.findByText("Slowest to Update")).closest(".grid");
+    expect(card).toHaveClass("grid-cols-1", "md:grid-cols-2");
+  });
+});

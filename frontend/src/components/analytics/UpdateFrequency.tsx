@@ -474,7 +474,7 @@ export function UpdateFrequency() {
 
           <TimelineChart data={data} />
 
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             <GranularityChart data={data} />
             <SlowPackagesTable data={data} />
           </div>
