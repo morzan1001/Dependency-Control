@@ -127,7 +127,8 @@ describe("FindingsTable later page error", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByText("Loading more...")).toBeInTheDocument();
+    // Under the table, where a phone shows it rather than centred on the scrolling table.
+    expect((await screen.findByText("Loading more...")).closest("table")).toBeNull();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load more findings");
     expect(getFindingsMock.mock.calls.map(([, params]) => (params as { skip: number }).skip)).toEqual([0, 1, 1]);

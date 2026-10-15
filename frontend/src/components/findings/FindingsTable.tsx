@@ -360,19 +360,15 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                 </TableRow>
                             )
                         })}
-                        {isFetchingNextPage && (
-                            <TableRow>
-                                <TableCell colSpan={6} className="text-center py-4">
-                                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        Loading more...
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        )}
                     </TableBody>
                 </table>
                 </TooltipProvider>
+            )}
+            {isFetchingNextPage && (
+                <div className="flex items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading more...
+                </div>
             )}
 
             {isError && !isFetchingNextPage && (
