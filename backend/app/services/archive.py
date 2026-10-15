@@ -1,5 +1,3 @@
-"""Archive scans as streaming NDJSON bundles to S3 with gzip and optional chunked AES-GCM, lock-guarded per scan_id."""
-
 import asyncio
 import contextlib
 import json
@@ -78,14 +76,12 @@ _GRIDFS_RESTORE_LOCK_POLL_SECONDS = 1
 # zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
 _COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
 
-# Collections a bundle may restore into. Marker names are attacker-influenceable (footer
-# is a plain sha256, not an HMAC), so any name outside this set must abort the restore.
+# Marker names are attacker-influenceable (the footer is a plain sha256, not an HMAC), so others abort the restore.
 _RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME, ARCHIVE_GRIDFS_CHUNK_FRAME})
 
 
 class _ArchiveSourceReadError(Exception):
-    """A source document could not be read intact; raised to abort the S3 upload so
-    housekeeping (which only deletes successfully-archived scans) can't lose data."""
+    """Aborts the upload so housekeeping, which deletes only archived scans, cannot lose an unread document."""
 
 
 def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
@@ -106,7 +102,7 @@ async def _hash_plaintext_secrets_in(
 
 
 async def _stream_gridfs_chunks(db: Any, scan_doc: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-    """Yield every GridFS file of the scan as ordered chunk frames, each file opening with n=0 even when empty."""
+    """Each file opens with an n=0 frame, even when empty."""
     scan_id = scan_doc["_id"]
     file_ids = dict.fromkeys(
         [
@@ -126,8 +122,7 @@ async def _stream_gridfs_chunks(db: Any, scan_doc: dict[str, Any]) -> AsyncItera
             if n == 0:
                 yield {"_id": file_id, "n": 0, "filename": stream.filename, "data": Binary(b"")}
         except Exception as e:
-            # Re-raise rather than skip: a dropped file would archive as success while
-            # missing data, then housekeeping would delete the source and lose it forever.
+            # Re-raised: a skipped file would archive as success and housekeeping would then delete the only copy.
             logger.error(
                 "Failed to load GridFS file; aborting archive to avoid data loss",
                 extra={"gridfs_id": sanitize_for_log(gid), "error": sanitize_for_log(e)},
@@ -136,7 +131,6 @@ async def _stream_gridfs_chunks(db: Any, scan_doc: dict[str, Any]) -> AsyncItera
 
 
 async def _gzip_compress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-    """Stream-compress with gzip (wbits=31)."""
     compressor = zlib.compressobj(level=6, wbits=31)
     async for chunk in source:
         if not chunk:
@@ -171,7 +165,6 @@ def _build_archive_payload(
     scan_id: str,
     stats: BundleStats,
 ) -> tuple[AsyncIterator[bytes], str]:
-    """Build the upload payload iterator and its content-type string."""
     frames = BundleFrames.write(
         scan_doc=scan_doc,
         collections={
@@ -195,7 +188,6 @@ def _count_failure(operation: str, reason: str) -> None:
 
 
 async def _drop_upload(s3_key: str, reason: str) -> None:
-    """Delete an upload whose metadata this archive must not write, and count the failed archive."""
     try:
         await delete_object(s3_key)
     except Exception:
@@ -212,7 +204,6 @@ async def _save_archive_metadata(
     stats: BundleStats,
     archived_at: datetime,
 ) -> ArchiveMetadata | None:
-    """Persist ArchiveMetadata; on unique-key collision delete the S3 orphan and return None."""
     sbom_filenames = [
         ref["filename"] for ref in scan_doc.get("sbom_refs", []) if isinstance(ref, dict) and ref.get("filename")
     ]
@@ -260,10 +251,7 @@ async def _load_scan_for_archive(
     repo: ArchiveMetadataRepository,
     scan_id: str,
 ) -> tuple[ArchiveMetadata | None, dict[str, Any] | None]:
-    """Look up the scan for archival, returning (existing_metadata, scan_doc).
-
-    Exactly one is non-None on the happy path; both None means there is nothing to archive (metrics recorded).
-    """
+    """Exactly one is non-None on the happy path; both None means nothing to archive."""
     existing = await repo.find_by_scan_id(scan_id)
     scan_doc = await db.scans.find_one({"_id": scan_id})
     if not scan_doc:
@@ -311,7 +299,6 @@ async def _upload_archive_bundle(
     scan_id: str,
     s3_key: str,
 ) -> tuple[int, BundleStats] | None:
-    """Build and upload the archive bundle; returns (total_bytes, stats) or None on failure (metrics recorded)."""
     stats = BundleStats()
     payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats)
     try:
@@ -338,7 +325,6 @@ async def archive_scan(
     db: AsyncIOMotorDatabase,
     scan_id: str,
 ) -> ArchiveMetadata | None:
-    """Archive one scan and its related data to S3 under a distributed lock on archive:{scan_id}."""
     if not is_archive_enabled():
         logger.warning("Archive requested but S3 is not configured.")
         return None
@@ -427,12 +413,7 @@ async def archive_scan(
 
 
 async def _open_bundle_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
-    """Yield a decompressed (and, if encrypted, decrypted) byte stream for the bundle.
-
-    Encryption is detected by sniffing the ENCRYPTION_MAGIC prefix, not the live
-    ``is_encryption_enabled()`` flag, since each bundle was written under whatever config
-    existed at archive time and there is no per-bundle marker.
-    """
+    """Encryption is sniffed from the ENCRYPTION_MAGIC prefix: a bundle keeps the config of its archive time."""
     s3_chunks = download_stream(metadata.s3_key, bucket=metadata.s3_bucket)
 
     head = bytearray()
@@ -467,13 +448,7 @@ def _hash_plaintext_secrets_in_line(collection: str, line: bytes) -> bytes:
 
 
 def stream_bundle_for_download(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
-    """Stream the bundle as unencrypted gzip NDJSON, TruffleHog plaintext hashed and the footer digest recomputed."""
     return _gzip_compress_stream(rewrite_bundle_frames(_open_bundle_stream(metadata), _hash_plaintext_secrets_in_line))
-
-
-# ---------------------------------------------------------------------------
-# restore_scan helpers
-# ---------------------------------------------------------------------------
 
 
 async def _flush_batches(
@@ -493,11 +468,7 @@ async def _handle_header_event(
     data: dict[str, Any],
     collections_restored: list[str],
 ) -> None:
-    """Insert the scan doc from a header event, marked as a restore still in progress.
-
-    Version validation lives in ``read_bundle_frames``, which raises before yielding a
-    header with a mismatched version, so no version check is needed here.
-    """
+    """read_bundle_frames already rejected a header of another version."""
     scan_data = data["scan"]
     scan_data["pinned"] = True
     # A re-archived scan's bundle carries its old restored_at, the reaper's restore evidence, and a cut cascade's mark.
@@ -523,8 +494,6 @@ async def _handle_doc_event(
 
 
 class _GridFSRestore:
-    """Writes chunk frames file by file, each under a lock shared by every restore of that file id."""
-
     def __init__(self, db: Any) -> None:
         self._db = db
         self._locks = DistributedLocksRepository(db)
@@ -534,7 +503,6 @@ class _GridFSRestore:
         self._renew_at = 0.0
 
     async def write(self, frame: dict[str, Any]) -> None:
-        """n=0 closes the previous file and opens this one unless it is already stored."""
         if frame["n"] == 0:
             await self.close()
             await self._open(frame["_id"], frame["filename"])
@@ -589,7 +557,6 @@ class _GridFSRestore:
 
 
 def _whole_file_frame(entry: dict[str, Any]) -> dict[str, Any]:
-    """The chunk frame for a gridfs_sboms entry, which carries a whole SBOM as parsed JSON."""
     return {
         "_id": ObjectId(entry["gridfs_id"]),
         "filename": entry["filename"],
@@ -603,10 +570,6 @@ async def _replay_bundle(
     scan_id: str,
     decompressed: AsyncIterator[bytes],
 ) -> tuple[str | None, list[str]]:
-    """Read bundle frames, insert scan + batched collections and GridFS files.
-
-    Returns (failure_reason_or_None, collections_restored).
-    """
     collections_restored: list[str] = []
     batch_by_collection: dict[str, list[dict[str, Any]]] = {}
     gridfs = _GridFSRestore(db)
@@ -619,8 +582,6 @@ async def _replay_bundle(
             elif etype == "doc":
                 coll = event["collection"]
                 if coll not in _RESTORABLE_COLLECTIONS:
-                    # Marker names come from unauthenticated bundle content (footer is a plain sha256,
-                    # not an HMAC); refuse unknown names so a crafted marker can't write into arbitrary collections.
                     raise ValueError(f"Unexpected collection in bundle: {sanitize_for_log(coll)}")
                 if coll in (ARCHIVE_GRIDFS_CHUNK_FRAME, ARCHIVE_GRIDFS_FRAME):
                     # A file skipped as already stored is unreferenced, and so reapable, until its rows are in.
@@ -660,10 +621,7 @@ async def _replay_bundle(
 
 
 async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
-    """Best-effort cleanup of the MongoDB state a failed or abandoned restore left behind.
-
-    The scan doc goes last, so a failed cleanup leaves it marked restore_in_progress for the next restore to retry.
-    """
+    """The scan doc goes last so a failed cleanup stays marked restore_in_progress for the next restore."""
     try:
         for coll in SCAN_SCOPED_COLLECTIONS:
             await getattr(db, coll).delete_many({"scan_id": scan_id})
@@ -680,10 +638,6 @@ async def _load_restore_metadata(
     repo: ArchiveMetadataRepository,
     scan_id: str,
 ) -> ArchiveMetadata | None:
-    """Return restore metadata once an unfinished restore's leftovers are rolled back.
-
-    Returns None (metrics recorded) if the metadata is missing or the scan exists without restore_in_progress.
-    """
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
         logger.error(
@@ -717,7 +671,7 @@ async def _finalize_restore_cleanup(
     metadata: ArchiveMetadata,
     scan_id: str,
 ) -> None:
-    """Delete the metadata, then its S3 object, so no metadata points at a deleted bundle; reapers retry failures."""
+    """Metadata first, so none points at a deleted bundle; reapers retry failures."""
     try:
         await repo.delete_by_scan_id(scan_id)
     except Exception as e:
@@ -744,7 +698,6 @@ async def _mark_restore_complete(
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
 ) -> str | None:
-    """Stamp the scan restored, raising LockLost if another restore took it over; return why else it failed."""
     # The heartbeat checks the lock only every TTL/3, so a takeover in between must still be caught before finalize.
     if not await renew_lock():
         raise LockLost
@@ -767,7 +720,6 @@ async def _abandon_restore(
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
 ) -> None:
-    """Roll back a failed restore's writes while it still owns the scan's restore lock."""
     try:
         still_held = await renew_lock()
     except PyMongoError as e:
@@ -789,7 +741,6 @@ async def _run_restore_pipeline(
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
 ) -> ArchiveRestoreResponse | None:
-    """Drive the replay+GridFS+cleanup pipeline after preconditions are met."""
     start_time = time.monotonic()
     decompressed = _open_bundle_stream(metadata)
     failure_reason, collections_restored = await _replay_bundle(db, scan_id, decompressed)
@@ -829,11 +780,6 @@ async def restore_scan(
     db: AsyncIOMotorDatabase,
     scan_id: str,
 ) -> ArchiveRestoreResponse | None:
-    """Restore an archived scan back to MongoDB under a distributed lock on restore:{scan_id}.
-
-    An unfinished restore's leftovers (restore_in_progress) are rolled back and replayed; any other
-    existing scan aborts the restore.
-    """
     if not is_archive_enabled():
         return None
 

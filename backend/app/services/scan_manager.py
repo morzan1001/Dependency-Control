@@ -1,5 +1,3 @@
-"""ScanManager - scan lifecycle: find/create scans, apply waivers, register scanner results."""
-
 import logging
 import uuid
 from collections import defaultdict
@@ -26,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
-    """The scan one CI run's SBOM, scanner results and callgraphs share, or None without a pipeline."""
+    """Shared by one CI run's SBOM, scanner results and callgraphs."""
     if not pipeline_id:
         return None
     seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
@@ -34,8 +32,6 @@ def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash:
 
 
 class ScanManager:
-    """Manages the lifecycle of scans."""
-
     def __init__(self, db: AsyncIOMotorDatabase, project: Project):
         self.db = db
         self.project = project
@@ -43,7 +39,6 @@ class ScanManager:
         self._waivers: list[Waiver] | None = None
 
     def build_pipeline_url(self, data: BaseIngest) -> str | None:
-        """Construct pipeline URL if not provided."""
         if data.pipeline_url:
             return data.pipeline_url
         if data.project_url and data.pipeline_id:
@@ -55,7 +50,6 @@ class ScanManager:
     async def record_release_and_build_scan_upsert(
         self, data: BaseIngest, scan_id: str, now: datetime
     ) -> dict[str, Any]:
-        """The scan document every ingest of the run writes, sbom_refs aside; records the release the payload marks."""
         update: dict[str, Any] = {
             "$set": {
                 "branch": data.branch or "unknown",
@@ -93,8 +87,7 @@ class ScanManager:
         return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
     async def find_or_create_scan(self, data: BaseIngest, scan_id: str, scan_type: str | None = None) -> None:
-        """Upserts the run's scan so concurrent scanners of one run share it across pods.
-        ``scan_type`` is only ever set, never cleared, since the run's other scanners pass none."""
+        """scan_type is only set, never cleared, since the run's other scanners pass none."""
         update = await self.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
         if scan_type is not None:
@@ -102,13 +95,12 @@ class ScanManager:
         await ScanRepository(self.db).upsert({"_id": scan_id}, update)
 
     async def _get_waivers(self) -> list[Waiver]:
-        """Active waivers for this project, memoized for this request-scoped instance."""
         if self._waivers is None:
             self._waivers = await WaiverRepository(self.db).find_active_for_project(str(self.project.id))
         return self._waivers
 
     async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
-        """(non-waived findings, waived count); best effort, as the recalculation re-anchors a moved location finding."""
+        """Best effort: the recalculation re-anchors a moved location finding."""
         # Keyed by what a matching finding must equal, so each finding meets only the waivers that can match it.
         by_anchor: dict[tuple[str, str | None], list[tuple[MatchSignature, str]]] = defaultdict(list)
         by_finding_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -140,10 +132,6 @@ class ScanManager:
         return kept, len(findings) - len(kept)
 
     async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
-        """Record a scanner's submission; if the scan was completed, reset to pending and re-aggregate.
-
-        Triggers aggregation when ``trigger_analysis`` is set or a late result reopened the scan.
-        """
         now = datetime.now(timezone.utc)
 
         # Atomic update to avoid races across pods.

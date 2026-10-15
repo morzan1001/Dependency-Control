@@ -1,4 +1,4 @@
-"""GridFS files: SBOM reference shape, JSON upload, load and streaming, and the orphan reaper, the one deleter of files."""
+"""The orphan reaper is the one deleter of GridFS files."""
 
 import asyncio
 import contextlib
@@ -40,20 +40,18 @@ def make_gridfs_ref(file_id: Any, filename: str) -> dict[str, Any]:
 
 
 def gridfs_ref_id(ref: Any) -> str | None:
-    """The GridFS file id of an SBOM reference, or None when ``ref`` is not one."""
     if isinstance(ref, dict) and ref.get("type") == _GRIDFS_REFERENCE and ref.get("gridfs_id"):
         return str(ref["gridfs_id"])
     return None
 
 
 async def load_gridfs_json(fs: AsyncIOMotorGridFSBucket, file_id: str) -> Any:
-    """Download and parse one stored JSON file; raises on failure so each caller keeps its own policy."""
+    """Raises on failure so each caller keeps its own policy."""
     stream = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
     return await asyncio.to_thread(json.loads, await stream.read())
 
 
 async def iter_gridfs_chunks(stream: Any) -> AsyncIterator[bytes]:
-    """Yield an open download stream chunk by chunk and close it once drained or abandoned."""
     try:
         while chunk := await stream.readchunk():
             yield chunk
@@ -69,7 +67,6 @@ def extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
 
 
 async def gridfs_lengths(db: Any, file_ids: list[str]) -> dict[str, int]:
-    """The stored byte length of each file; a file that is gone has no entry."""
     files = db["fs.files"].find({"_id": {"$in": [ObjectId(i) for i in file_ids]}}, {"length": 1})
     return {str(doc["_id"]): doc["length"] async for doc in files}
 
@@ -87,7 +84,6 @@ async def _referenced_ids(db: Any, file_ids: list[str]) -> set[str]:
 
 
 async def _reap_orphan_chunks(db: Any, cutoff: datetime) -> None:
-    """Delete the chunks an upload left without a files document, e.g. when its pod died mid-upload."""
     before = ObjectId.from_datetime(cutoff)
     files_ids = db["fs.chunks"].aggregate([{"$match": {"files_id": {"$lt": before}}}, {"$group": {"_id": "$files_id"}}])
     async for batch in abatched(files_ids, _REAP_BATCH_SIZE):
@@ -100,7 +96,6 @@ async def _reap_orphan_chunks(db: Any, cutoff: datetime) -> None:
 
 
 async def reap_orphan_gridfs_files(db: Any) -> int:
-    """Delete GridFS files no registry field references, and orphan chunks, once older than the safety window."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
     fs = AsyncIOMotorGridFSBucket(db)
     locks = DistributedLocksRepository(db)
