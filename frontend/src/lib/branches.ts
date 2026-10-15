@@ -18,7 +18,7 @@ function isHigher(candidate: number[], current: number[]): boolean {
   return false
 }
 
-/** The worst branch stands in for a multi-branch selection; never a sum, the same CVE lives on every branch. */
+/** The worst branch stands in for a multi-branch selection so no headline under-reports; never a sum, the same CVE lives on every branch. */
 export function highestRiskBranch(scansByBranch: Record<string, Scan>): string | null {
   let best: string | null = null
   let bestRank: number[] = []

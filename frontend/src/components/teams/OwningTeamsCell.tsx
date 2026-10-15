@@ -5,7 +5,7 @@ interface OwningTeamsCellProps {
   teams?: TeamRef[]
 }
 
-// Up to sixteen owners in a fixed-width column: the first is laid out, the rest are counted in the title.
+// Up to sixteen owners share a fixed-width column, so only the first is laid out; a badge counts the rest and the title names all.
 export function OwningTeamsCell({ teams }: Readonly<OwningTeamsCellProps>) {
   const owners = teams ?? []
 

@@ -9,7 +9,7 @@ export const refusesUsername = (sent: UserUpdate | UserUpdateMe | undefined, err
   return sent?.username !== undefined && (status === 400 || status === 422);
 };
 
-// Email refusals: 400 taken (even by this account), 404 unverified, 422 malformed, 501 no mail server to confirm.
+// Email refusals: 400 taken, already this account's or already a member's; 404 no user verified it; 422 malformed; 501 no mail server to confirm it.
 export const refusesEmail = (error: unknown) => {
   const status = (error as ApiError).response?.status;
   return status === 400 || status === 404 || status === 422 || status === 501;

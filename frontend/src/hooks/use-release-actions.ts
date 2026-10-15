@@ -38,7 +38,7 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
       {
         onSuccess: (release) => {
           onMarked?.()
-          // The mark lands on the commit's newest analysis, which a re-run pipeline can make another scan than this one.
+          // The mark goes to the commit's newest analysis, which after a re-run pipeline can be another scan than this one.
           if (release.scan_id === scan.id) {
             toast.success(markedAs(environment, release.version))
             return
