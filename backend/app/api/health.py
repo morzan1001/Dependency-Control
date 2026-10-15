@@ -61,7 +61,6 @@ async def readiness() -> dict[str, Any] | JSONResponse:
         components["workers"] = f"operational ({len(active_workers)}/{worker_manager.num_workers} active)"
     else:
         components["workers"] = "stopped"
-        # Fail readiness only if workers are configured but all are dead.
         if worker_manager.num_workers > 0:
             is_ready = False
 

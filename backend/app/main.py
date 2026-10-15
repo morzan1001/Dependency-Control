@@ -129,7 +129,6 @@ app.add_middleware(RelativeLocationMiddleware)
 
 @app.exception_handler(ScopeResolutionError)
 async def scope_resolution_exception_handler(request: Request, exc: ScopeResolutionError) -> JSONResponse:
-    """Map analytics scope-authorization failures to a uniform 403 response."""
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 

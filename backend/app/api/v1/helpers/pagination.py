@@ -1,5 +1,3 @@
-"""Shared utilities for building paginated responses."""
-
 from typing import Any
 
 
@@ -14,5 +12,4 @@ def build_pagination_response(
     skip: int,
     limit: int,
 ) -> dict[str, Any]:
-    """Build a standardized pagination response (items, total, page, size, pages)."""
     return {"items": items, **page_meta(total, skip, limit)}

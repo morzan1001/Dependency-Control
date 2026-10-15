@@ -1,5 +1,3 @@
-"""Shared helper functions for webhook-related operations."""
-
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -16,7 +14,6 @@ async def get_webhook_or_404(
     webhook_repo: WebhookRepository,
     webhook_id: str,
 ) -> Webhook:
-    """Fetch a webhook by ID, raising 404 if not found."""
     webhook = await webhook_repo.get_by_id(webhook_id)
     if not webhook:
         raise HTTPException(status_code=404, detail="Webhook not found")

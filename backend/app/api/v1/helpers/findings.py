@@ -1,5 +1,3 @@
-"""Shared utilities for finding-related operations."""
-
 from app.models.finding import CRYPTO_FINDING_TYPES
 
 TYPE_CATEGORY_MAP: dict[str, str] = {
@@ -20,18 +18,15 @@ TYPE_CATEGORY_MAP: dict[str, str] = {
 
 
 def get_category_type_filter(category: str) -> dict[str, list[str]] | None:
-    """Get the MongoDB 'type' filter for a finding category, or None if unknown."""
     types = [finding_type for finding_type, owner in TYPE_CATEGORY_MAP.items() if owner == category]
     return {"$in": types} if types else None
 
 
 def get_category_for_type(finding_type: str) -> str:
-    """Get the category for a finding type, or 'other' if unknown."""
     return TYPE_CATEGORY_MAP.get(finding_type, "other")
 
 
 def aggregate_stats_by_category(type_counts: list) -> dict[str, int]:
-    """Aggregate finding counts by category from a list of {_id: type, count} dicts."""
     stats = {
         "security": 0,
         "secret": 0,

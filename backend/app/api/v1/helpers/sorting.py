@@ -1,5 +1,3 @@
-"""Shared utilities for sorting across endpoints."""
-
 import unicodedata
 from typing import Annotated, Literal
 
@@ -45,7 +43,6 @@ SortOrderQuery = Annotated[SortOrder, Query(description="Sort order: asc or desc
 
 
 def parse_sort_direction(sort_order: SortOrder) -> int:
-    """The MongoDB direction (1/-1) of a sort order."""
     return -1 if sort_order == "desc" else 1
 
 
@@ -54,6 +51,5 @@ def get_sort_field(
     sort_by: str,
     default: str = "created_at",
 ) -> str:
-    """Get the validated MongoDB sort field path for an entity type."""
     fields = SORT_FIELDS.get(entity_type, {})
     return fields.get(sort_by, fields.get(default, default))

@@ -1,5 +1,3 @@
-"""Helper functions for ingest endpoints."""
-
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.ingest import BaseIngest, FindingsIngestResponse, ScanStatsResponse
@@ -11,12 +9,7 @@ _STATS_FIELDS = {path.split(".", 1)[0] for path in StatsAccumulator.REQUIRED_PAT
 
 
 async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data: BaseIngest) -> FindingsIngestResponse:
-    """Common processing for findings-based ingests (TruffleHog, OpenGrep, KICS, Bearer).
-
-    Does NOT trigger aggregation, so a fast scanner can't mark the scan
-    'completed' before slower scanners (e.g. SBOM) finish; aggregation is kicked
-    off later by the SBOM scanner or the housekeeping job.
-    """
+    """Triggers no analysis, so a fast scanner cannot complete the scan before slower ones such as the SBOM finish."""
     scan_id = manager.run_scan_id(data)
     result_dict = data.model_dump(exclude=set(BaseIngest.model_fields))
     await ScanRepository(manager.db).touch(scan_id)

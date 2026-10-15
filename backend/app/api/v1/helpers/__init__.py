@@ -1,5 +1,3 @@
-"""Shared helper functions for API v1 endpoints."""
-
 from app.api.v1.helpers.analytics import get_user_project_ids
 from app.api.v1.helpers.findings import aggregate_stats_by_category, get_category_type_filter
 from app.api.v1.helpers.pagination import build_pagination_response

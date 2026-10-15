@@ -1,5 +1,3 @@
-"""Shared OpenAPI response definitions for FastAPI route decorators."""
-
 from typing import Any
 
 _Responses = dict[int | str, dict[str, Any]]

@@ -1,5 +1,3 @@
-"""Helper functions for analytics endpoints."""
-
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -50,8 +48,7 @@ from app.services.recommendation.common import live_advisories, live_cves
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
 
-# Projects a project's recommendations are compared across, itself first. Each one costs a scan
-# resolution plus its share of two aggregations; the response reports how many were reached.
+# Counts the project itself; each costs a scan resolution and a share of two aggregations.
 _CROSS_PROJECT_COMPARISON_LIMIT = 20
 
 ReleaseEnvironmentQuery = Annotated[
@@ -76,7 +73,6 @@ _ANALYTICS_FEATURE_PERMISSIONS = [
 
 
 def require_any_analytics_permission(user: User) -> None:
-    """Raise 403 unless the user holds a permission that opens some analytics feature."""
     if not has_permission(user.permissions, _ANALYTICS_FEATURE_PERMISSIONS):
         raise HTTPException(
             status_code=403,
@@ -85,7 +81,6 @@ def require_any_analytics_permission(user: User) -> None:
 
 
 def require_analytics_permission(user: User, permission: str) -> None:
-    """Raise 403 if user doesn't have the required analytics permission."""
     if not has_permission(user.permissions, [Permissions.ANALYTICS_READ, permission]):
         raise HTTPException(
             status_code=403,
@@ -98,12 +93,10 @@ def require_analytics_permission(user: User, permission: str) -> None:
 
 
 async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str]:
-    """Get list of project IDs the user has access to."""
     return [p.id for p in await get_user_projects(user, db)]
 
 
 async def get_user_projects(user: User, db: AsyncIOMotorDatabase) -> list[ProjectWithScanId]:
-    """The projects the user may read, as the one read that feeds names and scan resolution."""
     from app.services.analytics.scopes import ScopeResolver
 
     return await ScopeResolver(db, user).list_user_projects()
@@ -115,7 +108,6 @@ async def get_latest_scan_ids(
     *,
     release_environment: str | None = None,
 ) -> list[str]:
-    """Scan IDs representing the given projects; the branch tip, or their release when asked."""
     from app.services.releases import resolve_scan_ids
 
     resolved = await resolve_scan_ids(
@@ -130,22 +122,17 @@ async def get_projects_with_scans(
     *,
     release_environment: str | None = None,
 ) -> tuple[dict[str, str], list[str]]:
-    """Return (project_name_map, scan_ids) for the given projects."""
     scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     return {p.id: p.name for p in projects}, scan_ids
 
 
 def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str]) -> tuple[int, int]:
-    """(projects that contributed, projects in scope with no resolvable scan). The resolver
-    returns one scan per project, so the scan count is the contributing-project count.
-    Without a release filter the second value counts projects with no usable scan at all, so the
-    projects_without_release field it feeds reads as "no scan" on a head-mode request."""
+    """One scan per resolved project, so the scan count is the contributor count; in head mode the rest have no scan."""
     resolved = len(scan_ids)
     return resolved, len(project_ids) - resolved
 
 
 def calculate_days_until_due(kev_due_date: str | None) -> int | None:
-    """Calculate days until KEV due date (negative = overdue)."""
     if not kev_due_date:
         return None
     try:
@@ -156,12 +143,10 @@ def calculate_days_until_due(kev_due_date: str | None) -> int | None:
 
 
 def calculate_days_known(first_seen: datetime | None) -> int | None:
-    """Calculate how many days a vulnerability has been known."""
     return (datetime.now(timezone.utc) - first_seen).days if first_seen else None
 
 
 def extract_fix_versions(details_list: list[Any], installed_version: str | None) -> set[str]:
-    """The versions fixing every advisory of the group, else each advisory's own fixes."""
     advisories = [vuln for details in details_list for vuln in live_advisories(details)]
     fixes_all = aggregate_fixed_version(advisories, installed_version)
     if fixes_all:
@@ -192,7 +177,6 @@ def process_cve_enrichments(
 
 
 def _calculate_kev_boost(enrichment_data: CVEEnrichmentResult) -> float:
-    """Calculate the KEV-based boost multiplier for impact scoring."""
     if not enrichment_data.has_kev:
         return 1.0
 
@@ -209,7 +193,6 @@ def _calculate_kev_boost(enrichment_data: CVEEnrichmentResult) -> float:
 
 
 def _calculate_epss_boost(max_epss: float | None) -> float:
-    """Calculate the EPSS-based boost multiplier for impact scoring."""
     if not max_epss:
         return 1.0
 
@@ -224,9 +207,7 @@ def _calculate_epss_boost(max_epss: float | None) -> float:
 
 
 def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) -> float:
-    """Un-boosted severity*reach base of the impact score. Every boost is >= 1.0, so this
-    is a provable lower bound on the final fix_impact_score (and base * IMPACT_MAX_SCORE_BOOST
-    its upper bound)."""
+    """Every boost is >= 1.0, so this bounds the final score from below and, times IMPACT_MAX_SCORE_BOOST, above."""
     severity_score = sum(
         severity_counts.get(sev.lower(), 0) * weight for sev, weight in IMPACT_SEVERITY_WEIGHTS.items()
     )
@@ -250,7 +231,6 @@ def calculate_impact_score(
     has_fix: bool,
     days_known: int | None,
 ) -> float:
-    """Calculate fix impact score based on severity, reach, and threat intelligence."""
     base_impact = impact_pre_score(severity_counts, affected_projects)
 
     base_impact *= _calculate_kev_boost(enrichment_data)
@@ -273,7 +253,6 @@ def build_priority_reasons(
     has_fix: bool,
     days_known: int | None,
 ) -> list[str]:
-    """Build human-readable priority reasons list."""
     reasons = []
     days_until_due = enrichment_data.days_until_due
     max_epss = enrichment_data.max_epss
@@ -307,8 +286,7 @@ def build_priority_reasons(
     return reasons
 
 
-# Slim details before $group so the group never accumulates the raw analyzer payload: keep the
-# per-advisory fields the CVE counts, severities, enrichment and fix versions read.
+# Slimmed before $group, so the group holds only the per-advisory fields read later, never the raw analyzer payload.
 SLIM_DETAILS_EXPR: dict[str, Any] = {
     "vulnerabilities": {
         "$map": {
@@ -347,7 +325,6 @@ def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
 async def vuln_details_by(
     finding_repo: Any, match: dict[str, Any], *fields: str, hint: dict[str, int] | None = None
 ) -> dict[tuple[Any, ...], list[Any]]:
-    """The distinct live advisories of the vulnerability findings `match` selects, per value tuple of `fields`."""
     rows = await finding_repo.aggregate(
         [
             {MONGO_MATCH: {**match, "type": "vulnerability", "waived": {"$ne": True}}},
@@ -378,11 +355,7 @@ async def vuln_details_by(
 
 
 def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:
-    """Packages carrying more than one version across the compared scans.
-
-    Grouped in Mongo rather than by pushing each scan's package list to the caller: the answer is
-    a version count per package, and a per-scan sample of the input cannot produce it.
-    """
+    """Grouped in Mongo because a per-scan sample of the packages cannot produce a version count per package."""
     return [
         {MONGO_MATCH: {"scan_id": {"$in": scan_ids}}},
         {
@@ -411,10 +384,6 @@ async def gather_cross_project_data(
     current_project_id: str,
     db: AsyncIOMotorDatabase,
 ) -> dict[str, Any] | None:
-    """Gather cross-project vulnerability and dependency data for shared-vuln analysis.
-
-    Returns None if the user has one project or fewer.
-    """
     if len(user_projects) <= 1:
         return None
 
