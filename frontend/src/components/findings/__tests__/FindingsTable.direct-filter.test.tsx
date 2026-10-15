@@ -236,4 +236,13 @@ describe("FindingsTable on a narrow screen", () => {
     expect(table).toHaveClass("table-fixed", "min-w-[930px]");
     expect(table?.parentElement).toHaveClass("overflow-x-auto");
   });
+
+  it("drops its scroll container from xl on, where the table fits, so the header sticks while the page scrolls", async () => {
+    getFindingsMock.mockResolvedValue({ ...emptyEnvelope, items: [{ id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: ["trivy"], details: {} }], total: 1 });
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" stickyHeaderTop={0} />);
+
+    const table = (await screen.findByText("lodash")).closest("table");
+    expect(table?.parentElement).toHaveClass("overflow-x-auto", "xl:overflow-visible");
+    expect(table?.querySelector("thead")).toHaveClass("sticky");
+  });
 });

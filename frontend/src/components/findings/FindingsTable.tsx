@@ -252,8 +252,9 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     const { isFetchingNextPage, isLoading, isError, error } = findings
     const { rows: allRows, nextPageFailed, retry, observeEnd } = useInfiniteRows(findings, (page) => page.items)
 
+    // Scrolls until xl, where the table fits: a scroll container would keep the sticky header from sticking.
     return (
-        <div className="relative w-full overflow-x-auto">
+        <div className="relative w-full overflow-x-auto xl:overflow-visible">
             {/* Narrower than its fixed columns, the table would leave the Component column no width at all. */}
             {isLoading && (
                 <div className="relative">
