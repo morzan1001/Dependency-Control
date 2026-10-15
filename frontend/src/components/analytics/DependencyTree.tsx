@@ -82,8 +82,8 @@ function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChil
 
           <Package className="h-4 w-4 text-muted-foreground" />
 
-          <div className="flex-1 flex items-center gap-2">
-            <span className="font-medium">{node.name}</span>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium wrap-anywhere">{node.name}</span>
             <Badge variant="outline" className="text-xs">{node.version}</Badge>
             {node.direct && (
               <Tooltip>
@@ -266,7 +266,7 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
           if (hasDependencies) {
             return (
             <div className="space-y-4">
-              <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4 bg-muted rounded-lg">
                 <div className="flex items-center gap-2">
                   <Shield className="h-5 w-5 text-green-500" />
                   <span className="text-sm font-medium">

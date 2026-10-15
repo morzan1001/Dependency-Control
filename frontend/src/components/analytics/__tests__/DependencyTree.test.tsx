@@ -130,4 +130,20 @@ describe("DependencyTree on a narrow screen", () => {
     expect(picker).toHaveClass("w-full", "sm:w-[300px]");
     expect(picker.parentElement).toHaveClass("flex-wrap");
   });
+
+  it("wraps a row's version and badges under a long package name instead of running past the card", async () => {
+    const name = "@company-internal/extremely-long-scoped-package-name-for-layout-testing-purposes";
+    renderTree(graph([node("a", { name, direct: true })], ["a"]));
+
+    const label = await screen.findByText(name);
+    expect(label).toHaveClass("wrap-anywhere");
+    expect(label.parentElement).toHaveClass("min-w-0", "flex-wrap");
+  });
+
+  it("wraps the direct, transitive and vulnerable counts onto further lines on a phone", async () => {
+    renderTree(graph([node("a", { direct: true, child_ids: ["b"] }), node("b")], ["a"]));
+
+    const count = await screen.findByText("1 direct dependencies");
+    expect(count.parentElement?.parentElement).toHaveClass("flex-wrap");
+  });
 });
