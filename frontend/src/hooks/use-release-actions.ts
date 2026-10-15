@@ -38,8 +38,7 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
       {
         onSuccess: (release) => {
           onMarked?.()
-          // The mark resolves the commit to its newest analysis, and a re-run pipeline on the same
-          // commit makes a second one, so the row can land on a scan other than the one open here.
+          // The mark lands on the commit's newest analysis, which a re-run pipeline can make another scan than this one.
           if (release.scan_id === scan.id) {
             toast.success(markedAs(environment, release.version))
             return
@@ -64,8 +63,7 @@ export function useReleaseActions(projectId: string, scan: ScanWithReleases): Re
       { projectId, scanId: scan.id, environment: withdrawnFrom },
       {
         onSuccess: (response) => {
-          // Marks are history, so a withdrawal can uncover an older one and leave the environment
-          // reporting a build nobody chose to deploy.
+          // Marks are history: a withdrawal can uncover an older one, so the environment reports a build nobody chose.
           const uncovered = response.environment_release
           if (!uncovered) {
             toast.success(`Withdrawn from ${withdrawnFrom}`)

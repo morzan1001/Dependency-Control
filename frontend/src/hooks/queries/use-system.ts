@@ -10,7 +10,7 @@ export const systemKeys = {
   publicConfig: () => [...systemKeys.all, 'publicConfig'] as const,
 };
 
-// Full system settings; requires 'system:manage' permission.
+// Requires system:manage.
 export const useSystemSettings = () => {
   return useQuery({
     queryKey: systemKeys.settings(),
@@ -36,7 +36,7 @@ interface UseAppConfigOptions {
   enabled?: boolean;
 }
 
-// Lightweight, non-secret app config for authenticated users.
+// Readable by any authenticated user; holds no secrets.
 export const useAppConfig = (options: UseAppConfigOptions = {}) => {
   const { enabled = true } = options;
   return useQuery({

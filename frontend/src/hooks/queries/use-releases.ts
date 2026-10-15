@@ -9,8 +9,7 @@ import { scanKeys } from './use-scans';
 const RELEASES_STALE_TIME_MS = 30_000;
 const NO_RELEASES = 0;
 
-// The endpoint answers newest-first across every environment, so one row is both the project's
-// newest release and the answer to whether it releases at all.
+// The endpoint answers newest-first across environments, so one row also tells whether the project releases at all.
 export const LATEST_RELEASE_LIMIT = 1;
 
 export const releaseKeys = {
@@ -53,13 +52,11 @@ export const useReleaseEnvironments = (projectId: string, enabled: boolean) => {
 
 export interface LatestProjectRelease {
     latestRelease: ReleaseItem | undefined;
-    // Whether the project reports releases at all. The release surfaces are hidden until it does,
-    // because an empty one reads as a missing report rather than as a repo that does not release.
+    // Release surfaces stay hidden until true: an empty one reads as a missing report, not a repo that never releases.
     hasReleases: boolean;
     isLoading: boolean;
 }
 
-// Three consumers, one query key, one request.
 export const useLatestProjectRelease = (projectId: string): LatestProjectRelease => {
     const { data, isLoading } = useProjectReleases(projectId, undefined, LATEST_RELEASE_LIMIT);
     return {
