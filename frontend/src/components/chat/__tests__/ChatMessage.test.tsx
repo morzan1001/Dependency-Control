@@ -47,3 +47,35 @@ describe('ChatMessage markdown', () => {
     expect(link).not.toHaveAttribute('target');
   });
 });
+
+describe('ChatMessage on a phone', () => {
+  it('scrolls a wide markdown table in its own wrapper and wraps a long command inside the message', () => {
+    renderAssistant('| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |\n\nRun `mvn versions:use-dep-version -Dincludes=org.apache.logging.log4j:log4j-core`');
+
+    expect(screen.getByRole('table').parentElement).toHaveClass('overflow-x-auto');
+    const body = screen.getByRole('table').closest('.prose');
+    expect(body).toHaveClass('break-words');
+    expect(body?.parentElement).toHaveClass('min-w-0');
+  });
+
+  it("truncates a long tool name in its call's header and names it in full as the title", () => {
+    render(
+      <MemoryRouter>
+        <ChatMessage
+          message={{
+            id: 'm2',
+            conversation_id: 'c1',
+            role: 'assistant',
+            content: 'Done.',
+            tool_calls: [{ tool_name: 'get_findings_by_cve_and_project_branch', arguments: {}, result: {} }],
+            created_at: '2026-10-05T00:00:00Z',
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    const name = screen.getByText('get_findings_by_cve_and_project_branch');
+    expect(name).toHaveClass('min-w-0', 'truncate');
+    expect(name).toHaveAttribute('title', 'get_findings_by_cve_and_project_branch');
+  });
+});
