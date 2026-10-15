@@ -45,8 +45,7 @@ export function DeltaComparability({ delta }: DeltaComparabilityProps) {
   // Equal counts hide unequal sets, so the warning keys on the changes a waiver actually explains.
   const waiverOnly = delta.waiver_only_changes
 
-  // Two scans that both report nothing have nothing to explain; the labels only earn their space
-  // where one of the two channels actually differs from the plain reading of the counts.
+  // Two scans that both report nothing have nothing to explain.
   const showReachability = Boolean(from) || Boolean(to)
   const showWaived = fromWaived > NONE || toWaived > NONE
   if (!showReachability && !showWaived) return null

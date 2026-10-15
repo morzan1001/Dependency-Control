@@ -14,8 +14,7 @@ export interface ScanListFilters {
     sortOrder: 'asc' | 'desc';
     excludeRescans: boolean;
     excludeDeletedBranches: boolean;
-    // Tri-state, and part of the query key: leaving it out means "every scan", false means
-    // "not a release" — which on the backend includes scans predating the flag.
+    // Tri-state query-key part: omitted is every scan; false is "not a release", including scans predating the flag.
     isRelease?: boolean;
 }
 

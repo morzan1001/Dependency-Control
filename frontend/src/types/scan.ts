@@ -266,8 +266,7 @@ export interface Finding {
   found_in: string[];
   aliases: string[];
   related_findings?: string[];
-  // Set when the component's finding group was too large to cross-link, so an empty
-  // related_findings above means "too many to list", not "none".
+  // Set when the group was too large to cross-link: an empty related_findings then means too many, not none.
   related_findings_omitted?: number | null;
   waived: boolean;
   waiver_reason?: string;
@@ -296,8 +295,7 @@ export interface ThreatIntelligenceStats {
 
 export interface ReachabilityStats {
   analyzed_count: number;
-  // Findings in an ecosystem a callgraph can analyse at all. Zero means no callgraph job
-  // would change anything here — OS packages from a container scan are never coverable.
+  // Findings in an ecosystem a callgraph can analyse; zero means no callgraph job would change anything here.
   coverable_count?: number;
   // Total = confirmed (symbol-level) + likely (import-level).
   reachable_count: number;

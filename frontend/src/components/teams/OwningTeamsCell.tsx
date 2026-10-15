@@ -5,9 +5,7 @@ interface OwningTeamsCellProps {
   teams?: TeamRef[]
 }
 
-// A project can be owned by up to sixteen teams and the cell holding them is a fixed-width column,
-// so only the first name is laid out; the rest are counted and carried in the title, and the
-// project's own settings list them in full.
+// Up to sixteen owners share a fixed-width column, so only the first is laid out; a badge counts the rest and the title names all.
 export function OwningTeamsCell({ teams }: Readonly<OwningTeamsCellProps>) {
   const owners = teams ?? []
 

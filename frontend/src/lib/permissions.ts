@@ -1,29 +1,24 @@
 export const Permissions = {
-  // System Management
   SYSTEM_MANAGE: "system:manage",
 
-  // User Management
   USER_CREATE: "user:create",
   USER_READ_ALL: "user:read_all",
   USER_UPDATE: "user:update",
   USER_DELETE: "user:delete",
   USER_MANAGE_PERMISSIONS: "user:manage_permissions",
 
-  // Team Management
   TEAM_CREATE: "team:create",
   TEAM_READ: "team:read",
   TEAM_READ_ALL: "team:read_all",
   TEAM_UPDATE: "team:update",
   TEAM_DELETE: "team:delete",
 
-  // Project Management
   PROJECT_CREATE: "project:create",
   PROJECT_READ: "project:read",
   PROJECT_READ_ALL: "project:read_all",
   PROJECT_UPDATE: "project:update",
   PROJECT_DELETE: "project:delete",
 
-  // Analytics
   ANALYTICS_READ: "analytics:read",
   ANALYTICS_SUMMARY: "analytics:summary",
   ANALYTICS_DEPENDENCIES: "analytics:dependencies",
@@ -34,56 +29,44 @@ export const Permissions = {
   ANALYTICS_RECOMMENDATIONS: "analytics:recommendations",
   ANALYTICS_GLOBAL: "analytics:global",
 
-  // Notifications
   NOTIFICATIONS_BROADCAST: "notifications:broadcast",
 
-  // Waivers
   WAIVER_READ: "waiver:read",
   WAIVER_READ_ALL: "waiver:read_all",
   WAIVER_MANAGE: "waiver:manage",
   WAIVER_DELETE: "waiver:delete",
 
-  // Webhooks
   WEBHOOK_CREATE: "webhook:create",
   WEBHOOK_READ: "webhook:read",
   WEBHOOK_UPDATE: "webhook:update",
   WEBHOOK_DELETE: "webhook:delete",
 
-  // Archives
   ARCHIVE_READ: "archive:read",
   ARCHIVE_RESTORE: "archive:restore",
   ARCHIVE_DOWNLOAD: "archive:download",
   ARCHIVE_READ_ALL: "archive:read_all",
 
-  // Chat
   CHAT_ACCESS: "chat:access",
   CHAT_HISTORY_READ: "chat:history_read",
   CHAT_HISTORY_DELETE: "chat:history_delete",
 
-  // MCP — issue API keys for external LLM clients
   MCP_ACCESS: "mcp:access",
 
-  // Ad-hoc analysis — /analyze endpoint via API key
   ANALYZE_ADHOC: "analyze:adhoc",
 } as const;
 
 export type Permission = (typeof Permissions)[keyof typeof Permissions];
 
-// All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
+// Excludes internal permissions such as auth:setup_2fa.
 export const ALL_PERMISSIONS: Permission[] = Object.values(Permissions);
 
-// Admin: All permissions
 export const PRESET_ADMIN: Permission[] = [...ALL_PERMISSIONS];
 
-// Regular User: Can create/manage own projects and teams, view analytics
 export const PRESET_USER: Permission[] = [
-  // Team - can create and view teams
   Permissions.TEAM_CREATE,
   Permissions.TEAM_READ,
-  // Project - can create and view projects
   Permissions.PROJECT_CREATE,
   Permissions.PROJECT_READ,
-  // Analytics - can view all analytics for accessible projects
   Permissions.ANALYTICS_READ,
   Permissions.ANALYTICS_SUMMARY,
   Permissions.ANALYTICS_DEPENDENCIES,
@@ -92,31 +75,22 @@ export const PRESET_USER: Permission[] = [
   Permissions.ANALYTICS_HOTSPOTS,
   Permissions.ANALYTICS_SEARCH,
   Permissions.ANALYTICS_RECOMMENDATIONS,
-  // Waivers - can view own waivers
   Permissions.WAIVER_READ,
-  // Archives - can view and download archives for accessible projects
   Permissions.ARCHIVE_READ,
   Permissions.ARCHIVE_DOWNLOAD,
-  // Webhooks - managed via project roles (admin), no global override needed
-  // Chat + MCP for regular users; analytics stays own-projects-only (no analytics:global / project:read_all)
+  // Webhooks come from project roles; leaving out analytics:global and project:read_all keeps analytics own-projects-only.
   Permissions.CHAT_ACCESS,
   Permissions.CHAT_HISTORY_READ,
   Permissions.CHAT_HISTORY_DELETE,
   Permissions.MCP_ACCESS,
 ];
 
-// Viewer: Read-only access
 export const PRESET_VIEWER: Permission[] = [
-  // Team - can view teams they belong to
   Permissions.TEAM_READ,
-  // Project - can view projects they have access to
   Permissions.PROJECT_READ,
-  // Analytics - can view summaries
   Permissions.ANALYTICS_READ,
   Permissions.ANALYTICS_SUMMARY,
-  // Waivers - can view waivers
   Permissions.WAIVER_READ,
-  // Archives - can view archives
   Permissions.ARCHIVE_READ,
 ];
 

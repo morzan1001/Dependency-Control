@@ -18,14 +18,12 @@ import { useAuth } from "@/context/useAuth";
 import { useTeams } from "@/hooks/queries/use-teams";
 
 const FRAMEWORKS: { value: ReportFramework; label: string }[] = [
-  // Crypto / CBOM
   { value: "nist-sp-800-131a", label: "NIST SP 800-131A" },
   { value: "bsi-tr-02102", label: "BSI TR-02102" },
   { value: "cnsa-2.0", label: "CNSA 2.0" },
   { value: "fips-140-3", label: "FIPS 140-3 (algorithm-level)" },
   { value: "iso-19790", label: "ISO/IEC 19790 (algorithm-level)" },
   { value: "pqc-migration-plan", label: "PQC Migration Plan" },
-  // SBOM
   { value: "license-audit", label: "License Audit (project policy)" },
   { value: "cve-remediation-sla", label: "CVE Remediation SLA" },
 ];

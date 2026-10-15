@@ -36,8 +36,7 @@ export default function UsersPage() {
     !debouncedSearch || invite.email.toLowerCase().includes(debouncedSearch.toLowerCase())
   ) || [];
 
-  // Invitations are a global non-paginated list; kept separate from the paginated
-  // users so they don't skew UserTable's `length >= limit` has-next check. Shown only on page 1.
+  // Unpaginated invitations stay apart from the users so UserTable's `length >= limit` next-page check holds.
   const invitationUsers: User[] = filteredInvitations.map(invite => ({
     id: invite.id,
     email: invite.email,

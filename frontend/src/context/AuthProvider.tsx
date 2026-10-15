@@ -45,7 +45,6 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
     return permissions.includes(permission)
   }, [permissions])
 
-  // Ref keeps the latest logout so the mount-only init effect stays stable across navigation.
   const logoutRef = useRef(logout)
   useEffect(() => {
     logoutRef.current = logout
@@ -89,7 +88,6 @@ export function AuthProvider({ children }: Readonly<{ children: React.ReactNode 
       const perms = decoded.permissions || []
       setPermissions(perms)
 
-      // Limited token issued for 2FA setup only.
       if (perms.length === 1 && perms[0] === 'auth:setup_2fa') {
         setIsAuthenticated(true)
         navigate('/setup-2fa', { replace: true })

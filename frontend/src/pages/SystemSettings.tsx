@@ -20,8 +20,7 @@ import { CryptoPolicyPage } from "@/pages/admin/CryptoPolicyPage"
 
 function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsType }>) {
   const [formData, setFormData] = useState<Partial<SystemSettingsType>>(settings)
-  // Re-sync formData when the server settings reference changes (e.g. Slack OAuth refetch),
-  // without clobbering in-progress edits while nothing changed.
+  // Re-sync on a new settings reference (e.g. Slack OAuth refetch) without clobbering edits while it is unchanged.
   const [prevSettings, setPrevSettings] = useState(settings)
   if (settings !== prevSettings) {
     setPrevSettings(settings)

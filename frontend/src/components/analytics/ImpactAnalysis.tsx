@@ -45,7 +45,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
 
   const renderPriorityReason = (reason: string) => {
     const [type, ...rest] = reason.includes(':') ? reason.split(':') : ['', reason]
-    const text = rest.join(':').trim() // Rejoin in case text contains colons
+    const text = rest.join(':').trim()
     
     const iconMap: Record<string, React.ReactNode> = {
       'ransomware': <Lock className="h-3 w-3 text-purple-500 flex-shrink-0" />,

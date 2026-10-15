@@ -6,8 +6,7 @@ export interface UpdateFrequencyOpts {
     windowDays?: number;
 }
 
-// Release mode reports a different scan per project, so every key of an endpoint that accepts the
-// environment carries it: a shared key would serve head-mode rows under a release heading.
+// Keys carry the mode: a key shared with head mode would serve head rows under a release heading.
 const modeOf = (releaseEnvironment?: string) => releaseEnvironment ?? null;
 
 export const analyticsKeys = {
@@ -43,8 +42,7 @@ export const useAnalyticsScope = (releaseEnvironment?: string) => {
     return useQuery({
         queryKey: analyticsKeys.scope(releaseEnvironment),
         queryFn: () => analyticsApi.getScope(releaseEnvironment),
-        // The mode switch is rendered from this data, so without the previous scope it unmounts
-        // itself for the duration of the request it just triggered.
+        // The mode switch renders from this data and would unmount itself during the request it triggered.
         placeholderData: keepPreviousData,
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
@@ -125,8 +123,7 @@ export const useProjectRecommendations = (projectId: string) => {
     });
 }
 
-// An uncached update-frequency run is open-ended, so neither query ever refetches on its own;
-// new results only appear once the user asks again.
+// An uncached run is open-ended, so neither query refetches on its own; results update when the user asks again.
 export const useUpdateFrequency = (projectId: string, opts?: UpdateFrequencyOpts) => {
     return useQuery<Awaited<ReturnType<typeof analyticsApi.getUpdateFrequency>>, ApiError>({
         queryKey: analyticsKeys.updateFrequency(projectId, opts),

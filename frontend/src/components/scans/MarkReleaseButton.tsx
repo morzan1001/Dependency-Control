@@ -88,8 +88,7 @@ export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButto
             <DialogTitle>{MARK_BUTTON}</DialogTitle>
             <DialogDescription>{scan.is_rescan ? RESCAN_NOTE : DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
-          {/* mark_release resolves the commit to the scan that is not a re-scan, so a mark taken
-              here would land on a record this page can never show. */}
+          {/* mark_release resolves the commit to its non-rescan scan, so a mark here lands on a record this page never shows. */}
           {scan.is_rescan ? (
             scan.original_scan_id && (
               <Link

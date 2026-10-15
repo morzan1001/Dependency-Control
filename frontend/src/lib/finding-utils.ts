@@ -2,7 +2,6 @@ import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-
 import type { Severity } from '@/types/common'
 import type { ReachabilityInfo } from '@/types/scan'
 
-// Maps a CVE/GHSA id to its public advisory URL, or null if unknown.
 export function advisoryUrl(id: string): string | null {
   if (id?.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${id}`
   if (id?.startsWith('GHSA-')) return `https://github.com/advisories/${id}`
@@ -11,16 +10,15 @@ export function advisoryUrl(id: string): string | null {
 
 // Recharts can't take Tailwind token classes, so the charts of both themes share these fixed colours.
 export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
-  CRITICAL: '#dc2626', // red-600
-  HIGH: '#f97316', // orange-500
-  MEDIUM: '#eab308', // yellow-500
-  LOW: '#3b82f6', // blue-500
-  NEGLIGIBLE: '#d1d5db', // gray-300
-  INFO: '#6b7280', // gray-500
-  UNKNOWN: '#9ca3af', // gray-400
+  CRITICAL: '#dc2626',
+  HIGH: '#f97316',
+  MEDIUM: '#eab308',
+  LOW: '#3b82f6',
+  NEGLIGIBLE: '#d1d5db',
+  INFO: '#6b7280',
+  UNKNOWN: '#9ca3af',
 }
 
-// Canonical severity ordering, most severe first.
 export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NEGLIGIBLE', 'INFO', 'UNKNOWN']
 
 // A Recharts legend sorts its entries alphabetically unless given a sorter.
@@ -110,8 +108,7 @@ export function formatEpssScore(
   return `${(epss * 100).toFixed(decimals)}%`
 }
 
-// Maps backend exploit_maturity to a text colour class; weaponized/active are
-// real-world exploited (KEV) so they render as critical.
+// weaponized/active mean exploited in the wild (KEV), so they render as critical.
 export function getExploitMaturityClass(maturity: string | null | undefined): string {
   if (maturity === 'weaponized' || maturity === 'active') return 'text-severity-critical font-medium';
   if (maturity === 'high') return 'text-severity-high';
@@ -121,8 +118,7 @@ export function getExploitMaturityClass(maturity: string | null | undefined): st
 
 export type ReachabilityVerdict = 'reachable' | 'unreachable' | 'unknown'
 
-// is_reachable is tri-state: only an explicit false means a callgraph covering the finding's
-// ecosystem falsified it. Missing verdicts must never read as "not reachable".
+// Only an explicit false is a falsification by a covering callgraph; a missing verdict must never read as unreachable.
 export function getReachabilityDisplay(
   reachability: ReachabilityInfo
 ): { verdict: ReachabilityVerdict; label: string } {
@@ -153,9 +149,7 @@ interface SecretFindingLike {
   details?: { in_current_tree?: boolean | null; verified?: boolean }
 }
 
-// A deprioritized secret is unverified AND gone from the current tree; the backend lowers
-// these to LOW severity. Mirrors calculate_secret_severity so the row de-emphasis matches
-// the stored severity (and stays correct on pre-change scans, which keep CRITICAL).
+// Mirrors calculate_secret_severity (these drop to LOW); recomputed because older stored scans still say CRITICAL.
 export function isSecretDeprioritized(finding: SecretFindingLike): boolean {
   return (
     finding.type === 'secret' &&
@@ -187,9 +181,6 @@ export function getDisplayId(finding: FindingWithDetails): string | undefined {
   return finding.id
 }
 
-// Remediation guidance keyed on tree state: a history-only secret cannot be cleared by deleting
-// the current file — the credential must be rotated (verified ones are a live leak). Null for
-// unknown tree state (no actionable, non-obvious advice to give).
 export function getSecretRemediationHint(
   verified: boolean | null | undefined,
   inCurrentTree: boolean | null | undefined

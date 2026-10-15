@@ -123,7 +123,6 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
         ? canCreateProjectWaiver(project, currentUser.id, permissions)
         : hasPermission('waiver:manage')
 
-    // Prefill the re-waive form with the lapsed waiver's reason/status/expiration.
     const { data: lapsedWaiver } = useWaiverById(finding.lapsed_waiver_id)
 
     const handleWaive = (vulnId?: string) => {

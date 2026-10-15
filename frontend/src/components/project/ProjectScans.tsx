@@ -30,8 +30,7 @@ const RESCAN_NOTE_DELIVERED = 'Updated via re-scan'
 const RESCAN_NOTE_IN_FLIGHT = 'Re-scan in progress'
 const RESCAN_NOTE_FAILED = 'Re-scan failed'
 
-// The row keeps counting the source scan until the re-scan delivers, so the note has to name the
-// re-scan's own state rather than its mere existence.
+// The row counts the source scan until the re-scan delivers, so the note names the re-scan's state.
 function rescanNote(status?: string): string {
   if (isScanUsable(status)) return RESCAN_NOTE_DELIVERED
   return status === SCAN_STATUS_FAILED ? RESCAN_NOTE_FAILED : RESCAN_NOTE_IN_FLIGHT
@@ -48,8 +47,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
   const { data: branches } = useProjectBranches(projectId)
 
   const { hasReleases } = useLatestProjectRelease(projectId)
-  // Withdrawing the last release while the filter is on would change the table under the user with
-  // no control left to undo it, so an engaged filter keeps its button until it is switched off.
+  // An engaged filter keeps its button, or withdrawing the last release would leave no control to undo it.
   const showReleaseFilter = hasReleases || releasesOnly
 
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active) || [], [branches])
@@ -69,7 +67,6 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
   const scanList = useMemo(() => scans || [], [scans])
   const hasMore = scanList.length === limit
 
-  // Delta partner = the chronologically previous completed scan of the same branch.
   const deltaPartners = useMemo(() => {
     const partners = new Map<string, Scan>()
     const byBranch = new Map<string, Scan[]>()
@@ -296,8 +293,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                       <Button
                         variant="outline"
                         size="sm"
-                        // The delta compares the runs the two rows count, so a queued rescan is not
-                        // a side: it would diff against a scan that has analysed nothing.
+                        // Diffs the runs the rows count; a queued rescan has analysed nothing.
                         onClick={() =>
                           navigate(`/projects/${projectId}/delta?from=${resolveRun(prevScan).scanId}&to=${resolveRun(scan).scanId}`)
                         }

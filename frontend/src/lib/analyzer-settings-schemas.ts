@@ -1,5 +1,3 @@
-// Per-analyzer configurable field schemas rendered by AnalyzerSettingsDialog.
-
 export type AnalyzerSettingFieldType = 'select' | 'switch' | 'number' | 'slider';
 
 export interface AnalyzerSettingSelectOption {
@@ -14,9 +12,7 @@ export interface AnalyzerSettingField {
   label: string;
   description?: string;
   default: string | number | boolean;
-  /** For 'select' type */
   options?: AnalyzerSettingSelectOption[];
-  /** For 'number' / 'slider' types */
   min?: number;
   max?: number;
   step?: number;

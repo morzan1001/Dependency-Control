@@ -129,7 +129,6 @@ export async function getServerFile(
   }
 }
 
-// Build URLSearchParams, skipping null/undefined/empty values; arrays joined with commas.
 export function buildQueryParams(obj: Record<string, string | number | boolean | string[] | undefined | null>): URLSearchParams {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(obj)) {
@@ -143,7 +142,6 @@ export function buildQueryParams(obj: Record<string, string | number | boolean |
   return params;
 }
 
-// Generic CRUD API factory for SCM instance resources.
 export function createInstanceApi<
   TInstance,
   TCreate,

@@ -81,7 +81,6 @@ function preferSamePackage<T extends Finding>(matches: readonly T[], from: Findi
         ?? pick(f => artifactName(f.component) === artifactName(from.component))
 }
 
-/** Resolve a reference `from` holds: exact id first, then format-specific match; undefined for LIC-/unknown. */
 export function resolveRelatedFindingInRows<T extends Finding>(rows: readonly T[], id: string, from: Finding): T | undefined {
     const exact = preferSamePackage(rows.filter(f => f.id === id), from)
     if (exact) return exact
@@ -119,7 +118,6 @@ export function resolveRelatedFindingInRows<T extends Finding>(rows: readonly T[
     }
 }
 
-/** The window a search read against the matches it had, so a miss can name which of the two it is. */
 export function lookupOutcome(finding: Finding | undefined, matched: number): RelatedFindingLookup {
     if (finding) return { status: 'found', finding }
     if (matched > RELATED_FINDING_SEARCH_LIMIT) {
@@ -134,7 +132,6 @@ function searchTerm(parsed: ParsedRelatedId, id: string, from: Finding): string 
     return parsed.kind === 'exact' ? id : parsed.component
 }
 
-/** Resolve a related-finding reference via the API when it is not in the loaded rows. */
 export async function fetchRelatedFinding(scanId: string, id: string, from: Finding): Promise<RelatedFindingLookup> {
     const parsed = parseRelatedFindingId(id)
     const res = await scanApi.getFindings(scanId, {

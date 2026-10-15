@@ -159,7 +159,6 @@ function FieldRenderer({ field, value, onChange, disabled }: Readonly<FieldRende
     )
   }
 
-  // number / slider
   return (
     <div className="space-y-2">
       <Label htmlFor={`field-${field.key}`}>{field.label}</Label>

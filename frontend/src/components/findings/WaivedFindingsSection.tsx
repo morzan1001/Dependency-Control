@@ -14,7 +14,6 @@ interface WaivedFindingsSectionProps {
     stickyHeaderTop?: number;
 }
 
-/** Secondary, de-emphasised list of waived findings; self-hides when none are in scope. Stats exclude waived findings, so this is purely for transparency. */
 export function WaivedFindingsSection({
     scanId,
     projectId,

@@ -1,5 +1,3 @@
-// Shared EPSS/KEV/exploit-maturity cells for the impact-analysis and hotspots
-// tables; per-site output differences are preserved via explicit props.
 import { Badge } from '@/components/ui/badge'
 import {
   Tooltip,
@@ -12,7 +10,6 @@ import { formatEpssScore, getEpssColorClass } from '@/lib/finding-utils'
 interface EpssCellProps {
   score?: number | null
   percentile?: number | null
-  /** 'hotspot' adds the "Top X%" sub-line and a different tooltip label; 'impact' omits them. */
   variant: 'impact' | 'hotspot'
 }
 
@@ -54,7 +51,6 @@ interface KevCellProps {
   kevCount?: number | null
   ransomwareUse?: boolean | null
   dueDate?: string | null
-  /** When true the ransomware badge carries a "Ransomware" text label; when false it is icon-only. */
   ransomwareLabel?: boolean
 }
 
@@ -98,7 +94,6 @@ export function KevCell({
   )
 }
 
-/** Returns null for unknown/absent maturity so callers can drop it directly inside a tooltip body. */
 export function ExploitMaturityBadge({ maturity }: Readonly<{ maturity?: string }>) {
   if (!maturity || maturity === 'unknown') return null
   const colors: Record<string, string> = {

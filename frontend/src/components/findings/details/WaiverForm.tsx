@@ -20,7 +20,6 @@ function extractRuleId(finding: Finding): string | undefined {
   return details?.sast_findings?.[0]?.id || details?.rule_id || details?.check_id || undefined
 }
 
-// Normalize an ISO timestamp or yyyy-mm-dd string to the yyyy-mm-dd value an `<input type="date">` expects; '' if empty/invalid.
 function isoToDateInput(iso: string | null | undefined): string {
   if (!iso) return ''
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso

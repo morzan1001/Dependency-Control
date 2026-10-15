@@ -33,8 +33,7 @@ export const releaseApi = {
     return response.data;
   },
 
-  // The environment is required because withdrawal is per-environment and the endpoint would
-  // otherwise silently fall back to its own default while the scan runs elsewhere.
+  // Required: withdrawal is per-environment, and without one the endpoint falls back to its own default.
   unmark: async (projectId: string, scanId: string, environment: string): Promise<UnmarkReleaseResponse> => {
     const response = await api.delete<UnmarkReleaseResponse>(
       `/projects/${projectId}/scans/${scanId}/release`,

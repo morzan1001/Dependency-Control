@@ -324,8 +324,7 @@ export interface Recommendation {
   affected_components: string[];
   // Components the recommendation covers, counted before the list was cut.
   affected_components_total: number;
-  // Position in the ranked list this came from and how many were ranked; both 0 unless the
-  // generator cut that list.
+  // Position in the ranked list and its length; both 0 unless the generator cut that list.
   rank: number;
   ranked_out_of: number;
   action: RecommendationAction;
@@ -443,8 +442,7 @@ export interface UpdateFrequencyMetrics {
     upstream_days_since_latest_release_median: number | null;
     adoption_latency_days_median: number | null;
     dominant_ecosystem: string | null;
-    // Scans the numbers cover when the branch holds more than either read path follows;
-    // null when the whole window was read.
+    // Scans covered when the branch holds more than either read path follows; null when the whole window was read.
     window_scan_cap: number | null;
     // Packages still outdated in the newest measured scan, counted before slowest_packages was cut.
     outdated_backlog: number;
@@ -453,10 +451,7 @@ export interface UpdateFrequencyMetrics {
     recent_updates: DependencyUpdateEvent[];
 }
 
-// "partial" = the numbers are exact but cover noticeably fewer scans than the window
-// holds, so they may not be compared with fully measured projects, "pending" = no
-// per-scan rollup recorded yet, "insufficient_data" = fewer than two usable scans in
-// the window, "error" = the rollup itself failed.
+// partial: exact but over too few scans to compare; pending: no rollup yet; insufficient_data: under two usable scans.
 export type UpdateDataStatus = 'ready' | 'partial' | 'pending' | 'insufficient_data' | 'error';
 
 export interface ProjectUpdateSummary {
@@ -476,13 +471,11 @@ export interface ProjectUpdateSummary {
     total_updates: number | null;
     last_scan_date: string | null;
     data_status: UpdateDataStatus;
-    // Scans the row covers when the branch holds more than either read path follows;
-    // null when the whole window was read.
+    // Scans the row covers when the branch holds more than either read path follows; null when the whole window was read.
     window_scan_cap: number | null;
 }
 
-// projects holds every project in scope: the ranked ones first, then partial,
-// pending, insufficient_data and error rows, none of which enter the averages.
+// projects lists the ranked ones first, then partial, pending, insufficient_data and error rows, which skip the averages.
 export interface UpdateFrequencyComparison {
     projects: ProjectUpdateSummary[];
     team_avg_updates_per_month: number | null;

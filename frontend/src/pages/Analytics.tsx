@@ -63,8 +63,7 @@ export default function AnalyticsPage() {
   const activeTab = pickedTab && availableTabs.some((tab) => tab.id === pickedTab) ? pickedTab : defaultTab
   const headOnlyTab = availableTabs.find((tab) => tab.id === activeTab && !tab.readsRelease)?.label
 
-  // A head-only tab reports the branch tip whatever the switch says, so the page drops to head
-  // there and the switch names what is on screen instead of a mode nothing below it obeys.
+  // A head-only tab ignores the switch, so the page drops to head there and the switch names what is on screen.
   const scopeEnvironment = headOnlyTab === undefined ? releaseEnvironment : undefined
 
   const openTab = (tab: string) => setSearchParams((prev) => {
@@ -89,8 +88,7 @@ export default function AnalyticsPage() {
           </p>
         </div>
 
-        {/* Above the tabs, so the coverage caption stays on screen on the tabs that show no counters
-            of their own — and outside the summary gate, whose permission not every tab implies. */}
+        {/* Above the tabs and outside the summary gate, whose permission not every tab implies, so every tab keeps the caption. */}
         <AnalyticsScopeControl
           releaseEnvironment={scopeEnvironment}
           onChange={setReleaseEnvironment}

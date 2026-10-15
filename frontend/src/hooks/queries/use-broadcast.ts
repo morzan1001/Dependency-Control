@@ -13,9 +13,8 @@ export const broadcastKeys = {
 export const useBroadcast = () => {
   return useMutation({
     mutationFn: (data: BroadcastRequest) => broadcastApi.send(data),
-    // No success toast: the caller toasts real sends; dry runs must not claim a send happened.
+    // The caller toasts real sends, success and errors alike; a dry run must not claim a send happened.
     onError: (error, variables) => {
-      // Only dry runs report errors here; real sends toast their own errors.
       if (variables.dry_run) {
         toast.error("Failed to calculate impact", {
           description: getErrorMessage(error)

@@ -10,11 +10,9 @@ export interface ReleaseItem {
   branch: string | null;
   // null once retention removed the released scan.
   scan_status: string | null;
-  // The scan whose analysis represents this release after any rescan; null while nothing in its
-  // chain has finished analysing, so a deploy awaiting analysis reads apart from a stale one.
+  // The scan whose analysis represents the release after any rescan; null until one in its chain finishes.
   analysis_scan_id: string | null;
-  // The rescan chain still had links at the resolver's hop bound, so analysis_scan_id is the
-  // freshest found within it rather than the freshest that exists.
+  // The chain hit the resolver's hop bound, so analysis_scan_id is the freshest within it, not the freshest overall.
   analysis_chain_bounded: boolean;
 }
 
@@ -33,7 +31,6 @@ export interface UnmarkReleaseResponse {
   // Still true while another environment holds the scan.
   is_release: boolean;
   remaining_environments: string[];
-  // What the environment reports as running now: the record the withdrawal uncovered, or null
-  // once nothing is released there.
+  // What the environment reports as running now: the uncovered record, or null once nothing is released there.
   environment_release: ReleaseItem | null;
 }

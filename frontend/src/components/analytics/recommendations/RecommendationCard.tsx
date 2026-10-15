@@ -423,7 +423,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
               </div>
             )}
 
-            {/* CVEs (skip when the action type already renders its own CVE list) */}
+            {/* These action types render their own CVE list. */}
             {!['address_recurring', 'fix_cross_project_vuln'].includes(recommendation.action.type) &&
               recommendation.action.cves && recommendation.action.cves.length > 0 && (
               <div className="space-y-2">

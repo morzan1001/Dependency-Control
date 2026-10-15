@@ -11,8 +11,7 @@ export const SECRET_SETTINGS_FIELDS = [
   'mattermost_bot_token',
 ] as const;
 
-// An empty secret input means "unchanged", not "clear" — the API never echoes
-// secrets back, so sending "" would wipe a stored value.
+// The API never echoes secrets, so an empty input means unchanged; sending "" would wipe the stored value.
 export function stripEmptySecrets(payload: Partial<SystemSettings>): Partial<SystemSettings> {
   const result = { ...payload };
   for (const key of SECRET_SETTINGS_FIELDS) {

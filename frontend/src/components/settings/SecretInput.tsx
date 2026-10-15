@@ -9,8 +9,7 @@ interface SecretInputProps {
   readonly placeholder?: string
 }
 
-// Secret values are never echoed by the API; `configured` drives the placeholder
-// so a stored secret doesn't look missing. null asks the save to clear it.
+// The API never echoes secrets, so `configured` drives the placeholder; null asks the save to clear it.
 export function SecretInput({ id, value, configured, onChange, placeholder }: SecretInputProps) {
   const removing = value === null
   let effectivePlaceholder = placeholder
