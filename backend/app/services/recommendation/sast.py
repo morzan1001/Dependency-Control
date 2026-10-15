@@ -4,12 +4,12 @@ from typing import Any
 from app.schemas.recommendation import Effort, Recommendation, RecommendationType
 from app.services.analytics.findings_delta import sast_rule_ids
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
     label_by_keywords,
     priority_for,
     recommend,
-    sample_components,
     sampled,
     severity_impact,
     worth_a_card,
@@ -68,7 +68,6 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
             continue
 
         files = sorted({get_attr(f, "component", "unknown") for f in cat_findings})
-        files_shown, files_total = sample_components(files)
         rule_ids = sorted(set().union(*(sast_rule_ids(get_attr(f, "details", {})) for f in cat_findings)))
 
         recommendations.append(
@@ -85,8 +84,7 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
                 action={
                     "type": "fix_code",
                     "category": category,
-                    "files": files_shown,
-                    "files_total": files_total,
+                    **sampled("files", files, AFFECTED_COMPONENTS_SHOWN),
                     **sampled("rule_ids", rule_ids, _RULES_SAMPLED),
                 },
                 effort=Effort.MEDIUM if len(cat_findings) < 10 else Effort.HIGH,

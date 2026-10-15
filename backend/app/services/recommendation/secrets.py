@@ -1,10 +1,11 @@
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
     name_some,
     recommend,
-    sample_components,
+    sampled,
     severity_impact,
 )
 
@@ -55,7 +56,6 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
             }
         )
         files = sorted({component for f in group if (component := get_attr(f, "component", ""))})
-        files_shown, files_total = sample_components(files)
 
         recommendations.append(
             recommend(
@@ -71,8 +71,7 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
                 action={
                     "type": "rotate_secrets",
                     "secret_types": secret_types,
-                    "files": files_shown,
-                    "files_total": files_total,
+                    **sampled("files", files, AFFECTED_COMPONENTS_SHOWN),
                     "steps": list(steps),
                 },
                 effort=Effort.HIGH,

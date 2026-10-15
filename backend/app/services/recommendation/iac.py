@@ -2,12 +2,13 @@ from collections import Counter, defaultdict
 
 from app.schemas.recommendation import Effort, Recommendation, RecommendationType
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
     label_by_keywords,
     priority_for,
     recommend,
-    sample_components,
+    sampled,
     severity_impact,
     worth_a_card,
 )
@@ -36,7 +37,6 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
             continue
 
         files = sorted({get_attr(f, "component", "unknown") for f in plat_findings})
-        files_shown, files_total = sample_components(files)
 
         recommendations.append(
             recommend(
@@ -52,8 +52,7 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
                 action={
                     "type": "fix_infrastructure",
                     "platform": platform,
-                    "files": files_shown,
-                    "files_total": files_total,
+                    **sampled("files", files, AFFECTED_COMPONENTS_SHOWN),
                     "common_issues": _get_common_iac_issues(plat_findings),
                 },
                 effort=Effort.MEDIUM,
