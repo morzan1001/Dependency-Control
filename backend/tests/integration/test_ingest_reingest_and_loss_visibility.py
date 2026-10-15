@@ -51,6 +51,7 @@ _GOOD_SBOM = _cyclonedx(
 
 @pytest.fixture
 def worker_after_ingest(running_worker, monkeypatch):
+    """Ingest queues its job where nothing takes it, so the test decides when the engine runs."""
     monkeypatch.setattr(scan_manager, "worker_manager", AnalysisWorkerManager(num_workers=1))
     return running_worker
 

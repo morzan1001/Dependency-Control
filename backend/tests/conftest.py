@@ -25,6 +25,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
 
+# CI sets this, so a missing native stack fails the run instead of skipping the PDF tests.
 _WEASYPRINT_REQUIRED = os.environ.get("DC_REQUIRE_WEASYPRINT") == "1"
 
 

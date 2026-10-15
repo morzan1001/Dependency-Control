@@ -645,6 +645,7 @@ class TestTeamSyncGroupMembers:
 
             teams_coll.insert_one.assert_called_once()
             team_data = teams_coll.insert_one.call_args[0][0]
+            # team_sync_depth defaults to 1, which keeps only the top-level group.
             assert team_data["name"] == "GitLab Group: org"
 
     def test_updates_existing_team_members(self, gitlab_instance_a):

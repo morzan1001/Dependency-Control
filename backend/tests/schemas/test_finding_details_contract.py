@@ -1,4 +1,4 @@
-"""Guard blind spot: the AST walk only sees details dicts held in variables named details or *_details."""
+"""Blind spots: dicts not named details or *_details, runtime-built keys, wrong-level reads, writer ** spreads."""
 
 import ast
 from dataclasses import dataclass

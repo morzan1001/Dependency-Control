@@ -88,7 +88,7 @@ def test_v4_scores_match_the_published_base_score(vector, expected):
     "vector",
     [
         "CVSS:4.0/AV:N/AC:L",  # truncated, missing mandatory metrics
-        "CVSS:4.0/AV:Z/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+        "CVSS:4.0/AV:Z/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",  # unknown metric value
         "CVSS:4.0/",
         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",  # v3 is not this function's job
         "",

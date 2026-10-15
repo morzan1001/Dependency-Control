@@ -121,7 +121,7 @@ async def test_a_syft_json_sbom_reaches_trivy_converted_and_grype_as_stored(db, 
     assert list(scanners.tmp_dir.iterdir()) == []
 
 
-# Mimics trivy's own 5m deadline, which fires first unless --timeout moves it past cli_timeout.
+# Trivy's own 5m deadline equals the default cli_timeout and ends in a retryable error unless --timeout moves it past.
 _HANGING_TRIVY = """#!/bin/sh
 echo trivy >> "$SCANNER_LOG"
 case " $* " in *" --timeout "*) exec sleep 400;; esac

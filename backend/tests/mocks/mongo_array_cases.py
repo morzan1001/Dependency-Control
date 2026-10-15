@@ -397,7 +397,6 @@ PIPELINE_UPDATE_CASES = [
     ),
 ]
 
-# Without $ifNull a document missing either field is written team_ids: null, matching no ownership filter.
 _GITLAB_A = team_source(TEAM_SOURCE_GITLAB, "gl-inst-a")
 _GITLAB_B = team_source(TEAM_SOURCE_GITLAB, "gl-inst-b")
 _GITHUB_A = team_source(TEAM_SOURCE_GITHUB, "gh-inst-a")
@@ -427,6 +426,7 @@ TEAM_OWNERSHIP_CASES = [
         replace_team_subset_pipeline(_GITLAB_A, ["gl-c"]),
         expected={"team_ids": ["gl-c", "manual-b"], "team_sources": {"manual-b": "manual", "gl-c": _GITLAB_A}},
     ),
+    # Without $ifNull a document missing either field is written team_ids: null, matching no ownership filter.
     UpdateCase(
         "the guard turns absent fields into an empty list",
         {"name": "x"},

@@ -169,6 +169,8 @@ class TestContextStaysWithItsVersion:
 
 
 class TestAheadOfDefaultIsNotOutdated:
+    """An install newer than the registry default is minted as OUTDATED with ahead_of_default set."""
+
     @staticmethod
     def _findings_by_type() -> dict:
         ahead: list = []

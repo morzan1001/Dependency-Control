@@ -1,4 +1,4 @@
-"""Unmodelled, as the app never issues them: dotted distinct, $push modifiers, count_documents skip."""
+"""Unmodelled, as the app never issues them: dotted or array-valued distinct, $push modifiers, count_documents skip."""
 
 from __future__ import annotations
 
@@ -847,6 +847,7 @@ def _run_lookup(docs: list, spec: dict, database: Any) -> list:
     as_field = spec["as"]
     for doc in docs:
         if "pipeline" in spec:
+            # "$$name" resolves as the path "$name", so the let-vars ride on each candidate under that key.
             bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
             candidates = [{**bound, **fd} for fd in _copy.deepcopy(foreign_docs)]
             matched = _run_pipeline(candidates, spec["pipeline"], database)
@@ -1584,7 +1585,6 @@ class FakeCollection:
 
 class FakeDatabase:
     def __init__(self):
-        # Pre-created so a test seeding db.projects._docs writes into the collection the code reads.
         for name in (
             "projects",
             "scans",
