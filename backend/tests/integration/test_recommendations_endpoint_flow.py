@@ -17,6 +17,7 @@ from app.models.waiver import Waiver
 from app.repositories.waivers import WaiverRepository
 from app.schemas.finding_details import ReachabilityInfo
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _prepare_finding_records
 from app.services.reachability_enrichment import store_reachability
 from app.services.sbom_parser import parse_sbom
@@ -474,6 +475,39 @@ async def test_an_os_package_outside_the_inventory_window_still_joins_its_row(
     assert resp.json()["dependencies_read"] == 1
     assert "base_image_update" in _card_types(resp)
     assert "direct_dependency_update" not in _card_types(resp)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_outdated_direct_dependency_outside_the_inventory_window_still_joins_its_row(
+    client, db, owner_auth_headers_proj, monkeypatch, no_live_intel
+):
+    await _insert_scan(db, "s")
+    filler = {"_id": "d-filler", "project_id": "p", "scan_id": "s", "name": "aaa-filler", "version": "1.0"}
+    express = {
+        "_id": "d-express",
+        "project_id": "p",
+        "scan_id": "s",
+        "name": "express",
+        "version": "4.17.1",
+        "direct": True,
+    }
+    await db.dependencies.insert_many([filler, express])
+    aggregator = ResultAggregator()
+    aggregator.aggregate(
+        "outdated_packages",
+        {"outdated_dependencies": [{"component": "express", "current_version": "4.17.1", "latest_version": "4.21.2"}]},
+    )
+    records, _ = _prepare_finding_records(aggregator.get_findings(), "s", "p", None)
+    await db.findings.insert_many(records)
+    monkeypatch.setattr(rec_module, "SCAN_DEPENDENCY_READ_LIMIT", 1)
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["dependencies_read"] == 1
+    [card] = [r for r in resp.json()["recommendations"] if r["type"] == "outdated_dependency"]
+    assert card["title"] == "Upgrade 1 outdated direct dependencies"
 
 
 @pytest.mark.live_mongo

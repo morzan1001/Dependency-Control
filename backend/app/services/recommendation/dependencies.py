@@ -35,11 +35,11 @@ _OUTDATED_TRANSITIVE_CARD_MIN = 3
 def analyze_outdated_dependencies(
     outdated_findings: list[ModelOrDict],
     upgrading_findings: list[ModelOrDict],
-    dependencies: list[ModelOrDict],
+    join_dependencies: list[ModelOrDict],
 ) -> list[Recommendation]:
     """Installs behind their registry's default release that no vulnerability or end-of-life card upgrades."""
     upgraded = installed_copy_lookup(upgrading_findings, "component")
-    row_of = installed_copy_lookup(dependencies, "name")
+    row_of = installed_copy_lookup(join_dependencies, "name")
     direct: list[ModelOrDict] = []
     transitive: list[ModelOrDict] = []
     for finding in sorted(outdated_findings, key=lambda f: (get_attr(f, "component").lower(), get_attr(f, "version"))):

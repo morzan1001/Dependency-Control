@@ -105,7 +105,7 @@ def generate_recommendations(
         lambda: dep_analysis.analyze_outdated_dependencies(
             findings_by_type["outdated"],
             [*(v for v in vulns if common.live_fixed_version(v)), *findings_by_type["eol"]],
-            dependencies_list,
+            join_list,
         ),
         "outdated_dependencies",
     )

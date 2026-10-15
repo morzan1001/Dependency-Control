@@ -606,3 +606,10 @@ def test_a_package_whose_vulnerability_names_no_fix_stays_on_the_outdated_card(s
 
     [outdated] = [r for r in recs if r.type == RecommendationType.OUTDATED_DEPENDENCY]
     assert [p["name"] for p in outdated.action["packages"]] == ["flask", "requests"]
+
+
+def test_an_outdated_direct_dependency_outside_the_read_window_stays_direct():
+    recs = _outdated_requests_and_flask(dependencies=[])
+
+    [outdated] = [r for r in recs if r.type == RecommendationType.OUTDATED_DEPENDENCY]
+    assert outdated.title == "Upgrade 2 outdated direct dependencies"

@@ -148,7 +148,14 @@ async def get_project_recommendations(
             projection=_DEPENDENCY_PROJECTION,
         )
         # The window above can miss a finding's row; the join reads exactly the rows the findings name.
-        names = list({n for f in findings if f.type == "vulnerability" for n in component_name_candidates(f.component)})
+        names = list(
+            {
+                n
+                for f in findings
+                if f.type in ("vulnerability", "outdated")
+                for n in component_name_candidates(f.component)
+            }
+        )
         join_query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
         join_dependencies = [dep async for dep in dep_repo.iterate_raw(join_query, _JOIN_PROJECTION)]
 
