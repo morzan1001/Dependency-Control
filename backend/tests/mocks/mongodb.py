@@ -1,9 +1,4 @@
-"""Mock MongoDB objects for testing repository logic without a real database.
-
-This double records calls; it does not store documents. It still rejects an update whose
-modifiers touch overlapping paths, because the server rejects that at parse time and a test
-asserting such a call would otherwise prove a write that can never land.
-"""
+"""Records calls without storing documents, yet refuses overlapping update paths as the server does at parse time."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,8 +6,6 @@ from tests.mocks.fake_mongo import assert_no_path_conflict
 
 
 def _validating_update(result):
-    """An update method that answers with a canned result once the update parses."""
-
     def _update(_filter, update, *_args, **_kwargs):
         assert_no_path_conflict(update)
         return result
@@ -21,13 +14,6 @@ def _validating_update(result):
 
 
 def create_mock_collection(**method_returns):
-    """Create a mock MongoDB collection with AsyncMock methods.
-
-    Args:
-        **method_returns: Override default return values.
-            Supported keys: find_one, find (list), count_documents (int),
-            bulk_write (int), aggregate (list), distinct (list).
-    """
     collection = MagicMock()
     collection.find_one = AsyncMock(return_value=method_returns.get("find_one"))
     collection.insert_one = AsyncMock(return_value=MagicMock(inserted_id="mock-id"))
@@ -40,7 +26,6 @@ def create_mock_collection(**method_returns):
     collection.bulk_write = AsyncMock(return_value=MagicMock(modified_count=method_returns.get("bulk_write", 0)))
     collection.create_index = AsyncMock(return_value=None)
 
-    # find() returns a chainable cursor mock
     cursor = MagicMock()
     cursor.skip.return_value = cursor
     cursor.limit.return_value = cursor
@@ -48,7 +33,6 @@ def create_mock_collection(**method_returns):
     cursor.to_list = AsyncMock(return_value=method_returns.get("find", []))
     collection.find = MagicMock(return_value=cursor)
 
-    # aggregate() returns an async cursor mock
     class AsyncIteratorMock:
         def __init__(self, items):
             self.items = items
@@ -71,20 +55,12 @@ def create_mock_collection(**method_returns):
 
 
 def create_mock_db(collection_map=None):
-    """Create a mock database with named collections.
-
-    Args:
-        collection_map: Dict mapping collection names to mock collections.
-    """
     db = MagicMock()
     col_map = dict(collection_map or {})
     for name, coll in col_map.items():
         setattr(db, name, coll)
 
-    # BaseRepository uses db[collection_name] (dict-style), not db.collection_name.
-    # Cache fallbacks so repeat lookups for the same key return the same mock —
-    # otherwise assertions made on the first access can't see calls made on later
-    # accesses for the same collection.
+    # Cached so every db[name] lookup returns the mock the test's assertions inspect.
     def _getitem(key):
         if key not in col_map:
             col_map[key] = create_mock_collection()

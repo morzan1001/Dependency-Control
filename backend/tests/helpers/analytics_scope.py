@@ -1,5 +1,3 @@
-"""The caller's analytics scope as ``get_user_projects`` returns it, built from project ids."""
-
 from app.schemas.projections import ProjectWithScanId
 
 

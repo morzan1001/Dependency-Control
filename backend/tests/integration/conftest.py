@@ -1,5 +1,3 @@
-"""Fixtures for integration tests: real FastAPI app with in-process fake Mongo and auth bypassed via dependency overrides."""
-
 import asyncio
 import os
 import uuid
@@ -37,11 +35,7 @@ def _project():
 
 @pytest_asyncio.fixture
 async def db(request):
-    """FakeDatabase, or a throwaway database on a real MongoDB for a test marked ``live_mongo``.
-
-    CI sets ``DC_REQUIRE_LIVE_MONGO`` so an unreachable server fails the run; without it a marked
-    test would silently skip and stop guarding anything, which is the state it came from.
-    """
+    """CI sets DC_REQUIRE_LIVE_MONGO so an unreachable server fails the run instead of skipping live tests."""
     if not request.node.get_closest_marker(_LIVE_MONGO_MARKER):
         yield FakeDatabase()
         return
@@ -69,11 +63,7 @@ async def db(request):
 
 @pytest_asyncio.fixture
 async def running_worker(db, monkeypatch):
-    """One in-process analysis worker bound to the test's database.
-
-    The worker resolves its database and the ingest and ad-hoc paths resolve their queue through
-    module-level singletons, so all of them have to be replaced for a job to reach this worker.
-    """
+    """The worker's database and the ingest and ad-hoc queues resolve through module singletons; all are replaced."""
     from app.api.v1.endpoints import analyze as analyze_mod
     from app.core import worker as worker_mod
     from app.services import scan_manager as scan_manager_mod
@@ -97,7 +87,6 @@ async def running_worker(db, monkeypatch):
 
 @pytest_asyncio.fixture
 async def client(db, _project):
-    """AsyncClient wired to the real FastAPI app with auth and DB overridden."""
     from app.api.deps import (
         get_current_active_user,
         get_current_user,
@@ -179,15 +168,13 @@ async def member_auth_headers(_project, db):
         is_active=True,
     )
 
-    # _fake_get_current_user derives current_user.id from the JWT "sub" (username),
-    # so membership must key off the username too, not User.id.
+    # _fake_get_current_user sets current_user.id to the JWT sub (the username), so membership keys off it.
     member = ProjectMember(user_id=user.username, role="viewer")
     if not _project.members:
         _project.members = []
     _project.members.append(member)
 
-    # The `client` fixture may have already persisted a member-less snapshot of
-    # `_project`; push the membership into the DB doc so check_project_access sees it.
+    # The client fixture may already have stored a member-less _project, so update the stored document.
     await db.projects.update_one(
         {"_id": str(_project.id)},
         {"$set": {"members": [m.model_dump(by_alias=True) for m in _project.members]}},

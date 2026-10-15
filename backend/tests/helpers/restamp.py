@@ -1,5 +1,3 @@
-"""Run the one waiver restamp over seeded finding documents and read back what it stamped."""
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -11,8 +9,6 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 
 class RecordingWaiverRepository(WaiverRepository):
-    """Keeps what the restamp wrote about each waiver."""
-
     def __init__(self, db: Any):
         super().__init__(db)
         self.writes: dict[str, dict[str, Any]] = {}

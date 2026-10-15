@@ -1,10 +1,3 @@
-"""Cursor consumption, generated ids and write counts, measured against the real server.
-
-Each of these reads the same in the attrappe and on the server only if the attrappe consumes
-what it hands out: a paging loop that never terminates, an id the driver stamped that is not
-there, or an upsert count that is a mock, all turn a green test into a claim about nothing.
-"""
-
 import pytest
 from pymongo import UpdateOne
 

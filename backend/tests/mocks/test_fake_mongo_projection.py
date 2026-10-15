@@ -1,4 +1,4 @@
-"""Projection fidelity of the Mongo attrappe: a wrong trim would validate wrong production reads."""
+"""A projection the fake trims wrongly would validate wrong production reads."""
 
 import pytest
 

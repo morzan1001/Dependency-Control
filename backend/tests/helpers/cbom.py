@@ -1,5 +1,3 @@
-"""Large CBOMs inflated from a fixture component, for size proofs."""
-
 import copy
 import json
 from collections.abc import Iterable
@@ -32,7 +30,6 @@ def filler_components(indices: Iterable[int]) -> list[dict[str, Any]]:
 
 
 def content_ref(component: dict[str, Any]) -> str:
-    """The bom-ref the parser derives for a crypto component that appears once in its document."""
     [asset] = parse_crypto_components([component])
     return asset.bom_ref
 
@@ -42,7 +39,6 @@ def cbom_of(components: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def store_cbom(db: Any, project_id: str, scan_id: str, cbom: dict[str, Any]) -> None:
-    """Store the parsed assets the way the engine persists an embedded CBOM."""
     assets = parse_cbom(cbom)
     await CryptoAssetRepository(db).bulk_upsert(
         project_id, scan_id, [CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in assets]
