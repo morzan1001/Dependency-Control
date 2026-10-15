@@ -1,7 +1,6 @@
 import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-react'
+import type { Severity } from '@/types/common'
 import type { ReachabilityInfo } from '@/types/scan'
-
-export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NEGLIGIBLE' | 'INFO' | 'UNKNOWN'
 
 // Maps a CVE/GHSA id to its public advisory URL, or null if unknown.
 export function advisoryUrl(id: string): string | null {

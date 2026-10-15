@@ -9,8 +9,9 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
+import type { Severity } from "@/types/common";
 import type {
-  CryptoRule, Severity, CryptoFindingType, CryptoPolicySource,
+  CryptoRule, CryptoFindingType, CryptoPolicySource,
 } from "@/types/cryptoPolicy";
 import { CRYPTO_FINDING_TYPES } from "@/lib/constants";
 

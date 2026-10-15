@@ -1,8 +1,6 @@
 import type { PaginatedResponse, Severity } from './common';
 import type { CryptoFindingType } from './cryptoPolicy';
 
-export type { Severity } from './common';
-
 export type FindingType =
   | "vulnerability"
   | "license"

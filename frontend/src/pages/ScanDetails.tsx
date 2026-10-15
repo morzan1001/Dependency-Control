@@ -28,7 +28,8 @@ import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
 import { cn, formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, bySeriesOrder, type Severity } from '@/lib/finding-utils'
+import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, bySeriesOrder } from '@/lib/finding-utils'
+import type { Severity } from '@/types/common'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 

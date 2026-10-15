@@ -1,7 +1,7 @@
+import type { Severity } from "./common";
 import type { CryptoPrimitive } from "./crypto";
 import type { CRYPTO_FINDING_TYPES } from "@/lib/constants";
 
-export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NEGLIGIBLE" | "INFO" | "UNKNOWN";
 export type CryptoFindingType = (typeof CRYPTO_FINDING_TYPES)[number]["value"];
 
 export type CryptoPolicySource =

@@ -55,7 +55,8 @@ import {
   Copy,
   Check,
 } from "lucide-react"
-import { getDisplayId, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
+import { getDisplayId, SEVERITY_ORDER } from '@/lib/finding-utils'
+import type { Severity } from '@/types/common'
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
 import { SeverityBadge } from '@/components/findings/SeverityBadge'
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
