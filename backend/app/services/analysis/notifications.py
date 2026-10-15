@@ -147,82 +147,64 @@ async def send_scan_notifications(
     analyzer_outcomes: list[AnalyzerOutcome],
     db: Database,
 ) -> None:
-    """Announce the scan's completion, then the priority vulnerabilities it found, each once per distinct content."""
-    await _announce_completion(scan_id, project, len(findings), stats, status, failed_analyzers, analyzer_outcomes, db)
-    await _announce_vulnerabilities(scan_id, project, findings, db)
+    """Send notifications and trigger webhooks for a completed scan.
 
-
-async def _announce_completion(
-    scan_id: str,
-    project: Project,
-    findings_count: int,
-    stats: Stats,
-    status: ScanStatus,
-    failed_analyzers: list[str],
-    analyzer_outcomes: list[AnalyzerOutcome],
-    db: Database,
-) -> None:
-    """The analysis_completed notification to the members and the scan.completed webhook."""
-    severity_counts = {"CRITICAL": stats.critical, "HIGH": stats.high, "MEDIUM": stats.medium, "LOW": stats.low}
-    completion = [findings_count, severity_counts, status, failed_analyzers]
-    if not await _first_announcement(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion):
-        return
+    Each notification type is handled independently so one failure does not block others.
+    """
     link = scan_link(str(project.id), scan_id)
-    results_summary = [str(outcome) for outcome in analyzer_outcomes]
-    analyzer_count = sum(1 for outcome in analyzer_outcomes if outcome.name not in POST_PROCESSOR_ANALYZERS)
-    try:
-        html_content = get_analysis_completed_template(
-            analysis_link=link,
-            project_name_scanned=project.name,
-            total_findings=findings_count,
-            analyzer_count=analyzer_count,
-            severity_critical=stats.critical,
-            severity_high=stats.high,
-            severity_medium=stats.medium,
-            severity_low=stats.low,
-            results_summary=results_summary,
-        )
+    severity_counts = {"CRITICAL": stats.critical, "HIGH": stats.high, "MEDIUM": stats.medium, "LOW": stats.low}
+    completion = [len(findings), severity_counts, status, failed_analyzers]
+    if await _first_announcement(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion):
+        results_summary = [str(outcome) for outcome in analyzer_outcomes]
+        analyzer_count = sum(1 for outcome in analyzer_outcomes if outcome.name not in POST_PROCESSOR_ANALYZERS)
+        try:
+            html_content = get_analysis_completed_template(
+                analysis_link=link,
+                project_name_scanned=project.name,
+                total_findings=len(findings),
+                analyzer_count=analyzer_count,
+                severity_critical=stats.critical,
+                severity_high=stats.high,
+                severity_medium=stats.medium,
+                severity_low=stats.low,
+                results_summary=results_summary,
+            )
 
-        results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
-        completed_card: dict[str, Any] = {
-            "project_name": project.name,
-            "scan_id": scan_id,
-            "total_findings": findings_count,
-            "severity_counts": severity_counts,
-            "results_summary": results_summary,
-            "analyzer_count": analyzer_count,
-            "scan_link": link,
-        }
-        await notification_service.notify_project_members(
-            project=project,
-            event_type=NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
-            subject=f"Analysis Completed: {project.name}",
-            message=f"Scan {scan_id} completed.\nFound {findings_count} issues.\nResults:\n{results_text}",
+            results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
+            completed_card: dict[str, Any] = {
+                "project_name": project.name,
+                "scan_id": scan_id,
+                "total_findings": len(findings),
+                "severity_counts": severity_counts,
+                "results_summary": results_summary,
+                "analyzer_count": analyzer_count,
+                "scan_link": link,
+            }
+            await notification_service.notify_project_members(
+                project=project,
+                event_type=NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
+                subject=f"Analysis Completed: {project.name}",
+                message=f"Scan {scan_id} completed.\nFound {len(findings)} issues.\nResults:\n{results_text}",
+                db=db,
+                html_message=html_content,
+                slack_blocks=build_analysis_completed_blocks(**completed_card),
+                mattermost_props=mm_analysis_props(**completed_card),
+            )
+        except Exception as e:
+            logger.exception("Failed to send analysis_completed notification: %s", e)
+
+        await webhook_service.trigger_scan_completed(
             db=db,
-            html_message=html_content,
-            slack_blocks=build_analysis_completed_blocks(**completed_card),
-            mattermost_props=mm_analysis_props(**completed_card),
+            scan_id=scan_id,
+            project_id=str(project.id),
+            project_name=project.name,
+            findings_count=len(findings),
+            stats=stats.model_dump(),
+            scan_status=status,
+            failed_analyzers=failed_analyzers,
+            team_ids=project.team_ids,
         )
-    except Exception as e:
-        logger.exception("Failed to send analysis_completed notification: %s", e)
 
-    await webhook_service.trigger_scan_completed(
-        db=db,
-        scan_id=scan_id,
-        project_id=str(project.id),
-        project_name=project.name,
-        findings_count=findings_count,
-        stats=stats.model_dump(),
-        scan_status=status,
-        failed_analyzers=failed_analyzers,
-        team_ids=project.team_ids,
-    )
-
-
-async def _announce_vulnerabilities(
-    scan_id: str, project: Project, findings: list[dict[str, Any]], db: Database
-) -> None:
-    """The vulnerability_found notification and webhook for the scan's priority vulnerabilities, if it has any."""
     try:
         vulnerability_findings = [f for f in findings if f["type"] == "vulnerability"]
 
@@ -236,7 +218,6 @@ async def _announce_vulnerabilities(
         if not await _first_announcement(db, scan_id, NOTIFICATION_EVENT_VULNERABILITY_FOUND, alerted):
             return
 
-        link = scan_link(str(project.id), scan_id)
         # Order: KEV first, then higher EPSS, then more severe.
         top_vulns = sorted(
             priority_vulns,
