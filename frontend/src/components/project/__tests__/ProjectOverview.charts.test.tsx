@@ -92,11 +92,25 @@ describe('ProjectOverview branch chart', () => {
     )
 
     const card = screen.getByText('Severity Distribution by Branch').closest('.bg-card') as HTMLElement
-    expect(await within(card).findByText('feature/PAY-4821-che…')).toBeInTheDocument()
+    expect(await within(card).findByText('…21-checkout-redesign')).toBeInTheDocument()
     expect(within(card).queryByText(LONG_BRANCH)).not.toBeInTheDocument()
 
     fireEvent.focus(card.querySelector('.recharts-wrapper')!)
 
     expect(await within(card).findByText(LONG_BRANCH)).toBeInTheDocument()
+  })
+
+  it('names two branches that share their first 20 characters apart under their bars', async () => {
+    const hotfixBranch = 'feature/PAY-4821-checkout-hotfix'
+    branchTips.current = [LONG_BRANCH, hotfixBranch].map((branch) => ({ branch, scan_count: 1, tip: { ...SCAN, id: branch, branch } }))
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectOverview projectId="p1" selectedBranches={[LONG_BRANCH, hotfixBranch]} />
+      </QueryClientProvider>,
+    )
+
+    const card = screen.getByText('Severity Distribution by Branch').closest('.bg-card') as HTMLElement
+    expect(await within(card).findByText('…21-checkout-redesign')).toBeInTheDocument()
+    expect(within(card).getByText('…4821-checkout-hotfix')).toBeInTheDocument()
   })
 })

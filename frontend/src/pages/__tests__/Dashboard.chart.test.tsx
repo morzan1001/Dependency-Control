@@ -22,6 +22,8 @@ vi.mock('@/hooks/queries/use-analytics', () => ({
       top_risky_projects: [
         { id: 'p1', name: LONG_NAME, risk: 80 },
         { id: 'p2', name: 'search', risk: 40 },
+        { id: 'p3', name: 'aufstrg/tm/app', risk: 30 },
+        { id: 'p4', name: 'aufstrg/tm/web', risk: 20 },
       ],
     },
     isLoading: false,
@@ -36,11 +38,19 @@ describe('Dashboard riskiest projects chart', () => {
     const { container } = render(<Dashboard />)
 
     await waitFor(() => expect(screen.getByText('search')).toBeInTheDocument())
-    expect(screen.getByText('identity-an…')).toBeInTheDocument()
+    expect(screen.getByText('…ent-gateway')).toBeInTheDocument()
     expect(screen.queryByText(LONG_NAME)).not.toBeInTheDocument()
 
     fireEvent.focus(container.querySelector('.recharts-wrapper')!)
 
     expect(await screen.findByText(LONG_NAME)).toBeInTheDocument()
+  })
+
+  it('names two projects of one group apart under their bars by the ends of their paths', async () => {
+    const { container } = render(<Dashboard />)
+
+    await waitFor(() => expect(screen.getByText('search')).toBeInTheDocument())
+    const ticks = [...container.querySelectorAll('.recharts-xAxis-tick-labels text')].map((tick) => tick.textContent)
+    expect(ticks).toEqual(['…ent-gateway', 'search', '…strg/tm/app', '…strg/tm/web'])
   })
 })

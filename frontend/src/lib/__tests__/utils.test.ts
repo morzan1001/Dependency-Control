@@ -28,9 +28,9 @@ describe('toggle', () => {
 })
 
 describe('truncateLabel', () => {
-  it('keeps a label as long as the limit and cuts a longer one with an ellipsis', () => {
+  it('keeps a label as long as the limit and cuts a longer one down to its tail behind an ellipsis', () => {
     expect(truncateLabel('a'.repeat(20))).toBe('a'.repeat(20))
-    expect(truncateLabel('a'.repeat(21))).toBe(`${'a'.repeat(20)}…`)
-    expect(truncateLabel('payments-service', 11)).toBe('payments-se…')
+    expect(truncateLabel(`b${'a'.repeat(20)}`)).toBe(`…${'a'.repeat(20)}`)
+    expect(truncateLabel('aufstrg/tm/app', 11)).toBe('…strg/tm/app')
   })
 })

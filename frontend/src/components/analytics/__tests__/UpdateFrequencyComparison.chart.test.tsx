@@ -58,7 +58,7 @@ describe("UpdateFrequencyComparison chart", () => {
     fireEvent.click(screen.getByRole("button", { name: /load comparison/i }));
 
     const card = (await screen.findByText("Project Comparison")).closest(".bg-card") as HTMLElement;
-    expect(await within(card).findByText("identity-and-access-…")).toBeInTheDocument();
+    expect(await within(card).findByText("…s-management-gateway")).toBeInTheDocument();
     expect(within(card).queryByText(LONG_NAME)).not.toBeInTheDocument();
 
     fireEvent.focus(card.querySelector(".recharts-wrapper")!);

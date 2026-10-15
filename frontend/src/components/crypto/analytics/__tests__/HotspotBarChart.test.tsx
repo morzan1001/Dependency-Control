@@ -47,7 +47,7 @@ describe("HotspotBarChart", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("org.bouncycastle:bcp…")).toBeInTheDocument();
+    expect(await screen.findByText("…:bcprov-jdk18on:1.78")).toBeInTheDocument();
     expect(screen.queryByText(LONG_KEY)).not.toBeInTheDocument();
 
     fireEvent.focus(container.querySelector(".recharts-wrapper")!);
