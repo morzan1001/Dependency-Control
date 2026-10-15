@@ -50,6 +50,16 @@ describe('ProjectMembers', () => {
     expect(header).toContainElement(screen.getByRole('button', { name: 'Invite Member' }))
   })
 
+  it('names an empty member list under the table, as the other tables do', () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ mutationCache: createMutationCache() })}>
+        <ProjectMembers project={{ id: 'p1', name: 'acme/widget', members: [] } as Project} projectId="p1" />
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByText('No members found.').closest('table')).toBeNull()
+  })
+
   it('leaves a single owner reading as it did', () => {
     renderMembers('Team: The TOURists')
 

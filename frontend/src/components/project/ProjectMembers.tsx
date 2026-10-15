@@ -235,15 +235,11 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
                 </TableCell>
               </TableRow>
             ))}
-            {(!project.members || project.members.length === 0) && (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  No members found.
-                </TableCell>
-              </TableRow>
-            )}
           </TableBody>
         </Table>
+        {(!project.members || project.members.length === 0) && (
+          <p className="p-4 text-center text-sm text-muted-foreground">No members found.</p>
+        )}
       </CardContent>
     </Card>
   )
