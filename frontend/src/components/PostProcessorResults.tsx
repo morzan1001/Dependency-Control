@@ -318,7 +318,7 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
                     <div className="grid gap-2 text-sm pl-2 border-l-2 border-muted ml-2">
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4 text-muted-foreground" />
-                        <span>{cve.component}@{cve.version}</span>
+                        <span className="wrap-anywhere">{cve.component}@{cve.version}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -498,7 +498,7 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
                     <div className="space-y-2 text-sm pl-2 border-l-2 border-red-200 dark:border-red-800 ml-2">
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4 text-muted-foreground" />
-                        <span>{vuln.component}@{vuln.version}</span>
+                        <span className="wrap-anywhere">{vuln.component}@{vuln.version}</span>
                       </div>
                       {vuln.reachable_functions.length > 0 && (
                         <div>
@@ -543,7 +543,7 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
                 <div key={`${vuln.cve}-${vuln.component}`} className="flex flex-wrap items-center justify-between gap-2 p-2 rounded bg-muted/50">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="font-mono text-sm">{vuln.cve}</span>
-                    <span className="text-sm text-muted-foreground">
+                    <span className="text-sm text-muted-foreground wrap-anywhere">
                       {vuln.component}@{vuln.version}
                     </span>
                   </div>

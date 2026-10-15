@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { EPSSKEVResults, ReachabilityResults } from "../PostProcessorResults";
 import type { EPSSKEVSummary } from "../PostProcessorResults";
@@ -195,6 +195,15 @@ describe("EPSSKEVResults on a phone", () => {
     expect(screen.getByText("Risk: 99").parentElement).toHaveClass("flex-wrap");
   });
 
+  it("breaks a high-risk CVE's long component@version anywhere, as the KEV rows do", () => {
+    const cve = { ...highRiskCve(0), component: "org.apache.logging.log4j:log4j-core", version: "2.14.1" };
+    render(<EPSSKEVResults data={{ ...baseData, high_risk_cves: [cve], high_risk_total: 1 }} />);
+
+    fireEvent.click(screen.getByText(cve.cve));
+
+    expect(screen.getByText("org.apache.logging.log4j:log4j-core@2.14.1")).toHaveClass("wrap-anywhere");
+  });
+
   it("puts a maturity label above its bar on a phone, so the bar keeps a width, and beside it from sm on", () => {
     render(<EPSSKEVResults data={baseData} />);
 
@@ -211,6 +220,25 @@ describe("ReachabilityResults on a phone", () => {
     const label = screen.getByText("Confirmed").closest("div");
     expect(label).toHaveClass("w-full", "sm:w-32");
     expect(label?.parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("breaks a long component@version anywhere in the reachable and the unreachable list", () => {
+    render(
+      <ReachabilityResults
+        data={{
+          ...reachabilityData,
+          reachable_vulnerabilities: [{ ...reachabilityData.reachable_vulnerabilities[0], cve: "CVE-2021-44228", component: "org.apache.logging.log4j:log4j-core", version: "2.14.1" }],
+          unreachable_vulnerabilities: [{ ...reachabilityData.unreachable_vulnerabilities[0], cve: "CVE-2022-42889", component: "org.apache.commons:commons-text", version: "1.9" }],
+          reachable_total: 1,
+          unreachable_total: 1,
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("CVE-2021-44228"));
+
+    expect(screen.getByText("org.apache.logging.log4j:log4j-core@2.14.1")).toHaveClass("wrap-anywhere");
+    expect(screen.getByText("org.apache.commons:commons-text@1.9")).toHaveClass("wrap-anywhere");
   });
 
   it("wraps a vulnerability row's badges under the CVE", () => {
