@@ -1,4 +1,4 @@
-"""Every evaluator branch must carry the license's risks — they are a property of the license, not the policy context."""
+"""Every evaluator branch carries the license's risks: they belong to the license, not the policy context."""
 
 import pytest
 

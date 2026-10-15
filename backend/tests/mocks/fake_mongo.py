@@ -1226,7 +1226,7 @@ class FakeCollection:
         collision = self._duplicate_key(doc)
         if collision is not None:
             raise _duplicate_key_error(collision)
-        # The driver stamps the _id onto the caller's document, which code reads the new id back from.
+        # The driver stamps the _id onto the caller's document, where code reads the new id back.
         doc.setdefault("_id", ObjectId())
         self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
@@ -1584,7 +1584,7 @@ class FakeCollection:
 
 class FakeDatabase:
     def __init__(self):
-        # Pre-created so tests that seed through db.projects._docs reach the instance code will read.
+        # Pre-created so a test seeding db.projects._docs writes into the collection the code reads.
         for name in (
             "projects",
             "scans",

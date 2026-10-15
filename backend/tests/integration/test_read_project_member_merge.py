@@ -84,7 +84,7 @@ def _roles(project) -> dict[str, str]:
 @pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("team_order", _TEAM_ORDERS, ids=_ORDER_IDS)
 async def test_the_stronger_of_two_owning_teams_wins(db, database, team_order):
-    """Both insertion orders run: the join answers in the teams collection's order, and first-wins passes one."""
+    """Both insertion orders run: the join answers in the teams collection's order, so first-wins passes only one."""
     await _seed(db, team_order=team_order)
 
     project = await read_project(_PROJECT, _user("u-both"), db)

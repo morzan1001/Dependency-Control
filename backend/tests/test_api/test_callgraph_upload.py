@@ -108,7 +108,7 @@ _PRODUCERS = [
     pytest.param(
         _envelope("generic", "python", _PYTHON_DATA),
         "python",
-        # A first-party import ("app.config") reads as a distribution at parse time; analyzed_modules gates.
+        # A first-party import reads as a distribution at parse time, so only analyzed_modules gates the verdict.
         {"requests", "urllib3.util.retry", "app.config"},
         ["pyyaml", "requests", "urllib3"],
         id="python-ast",
@@ -478,7 +478,7 @@ async def _seed_rescan(db) -> None:
 class TestReachabilityVerdicts:
     @pytest.mark.asyncio
     async def test_second_language_upload_is_also_applied(self, client, db):
-        """Every upload re-runs enrichment, so language two is not silently dropped after language one cleared the flag."""
+        """Every upload re-runs enrichment, so a second language is not dropped after the first cleared the flag."""
         await _seed_scan_with_findings(db)
 
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))

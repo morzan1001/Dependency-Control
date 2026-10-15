@@ -102,7 +102,7 @@ class TestGetScriptContent:
 
 
 class TestPrefixCollisionImmunity:
-    """An attacker sibling dir like scripts/versions-evil/ is never served for a version missing from scripts/versions/."""
+    """A sibling dir like scripts/versions-evil/ is never served for a version missing from scripts/versions/."""
 
     def test_sibling_directory_not_served(self, tmp_path: Path):
         scripts_dir = tmp_path / "scripts"

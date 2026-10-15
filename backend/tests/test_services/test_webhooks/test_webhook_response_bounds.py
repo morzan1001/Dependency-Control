@@ -1,4 +1,4 @@
-"""A webhook receiver controls the response, so delivery and the test button must bound both its size and its duration."""
+"""A webhook receiver controls the response, so delivery and the test button bound its size and duration."""
 
 from __future__ import annotations
 

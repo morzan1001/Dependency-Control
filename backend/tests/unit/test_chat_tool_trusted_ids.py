@@ -38,7 +38,7 @@ def _caller() -> User:
 
 
 def _seed_project(db: FakeDatabase, project_id: str, marker: str, member: str) -> None:
-    """Every document carries marker, so an answer shows whose data it was built from."""
+    """Every document carries the marker, so an answer shows whose data it was built from."""
     head, prior = f"{project_id}-scan", f"{project_id}-prior"
     db.projects._docs[project_id] = {
         "_id": project_id,

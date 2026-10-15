@@ -1146,7 +1146,6 @@ class TestStreamingOrchestrator:
         for i in range(200):
             deps[f"s{i}"] = [_make_dep(f"s{i}", f"pkg-{p}", f"1.{i}.{p}") for p in range(5)]
         m = await _compute(scans, deps, max_scans=200)
-        # It returns at all, with 199 transitions x 5 packages of update events.
         assert m.scan_count == 200
         assert m.total_updates == 199 * 5
 

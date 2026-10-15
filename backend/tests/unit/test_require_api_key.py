@@ -167,7 +167,7 @@ async def test_an_inactive_owner_is_401(monkeypatch):
     assert exc.value.status_code == _UNAUTHORIZED
 
 
-# A gate widened to accept the sibling permission would hand every ad-hoc key owner MCP; only it shows that.
+# A gate widened to accept either permission would hand every ad-hoc key owner MCP; only the sibling shows it.
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
 @pytest.mark.parametrize("held", ["unrelated", "sibling"])
 @pytest.mark.asyncio
