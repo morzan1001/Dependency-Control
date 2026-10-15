@@ -1,5 +1,3 @@
-"""Two scans holding the same findings report no change, whatever order each side's rows come back in."""
-
 import pytest
 
 from app.services.analytics.findings_delta import compare_findings

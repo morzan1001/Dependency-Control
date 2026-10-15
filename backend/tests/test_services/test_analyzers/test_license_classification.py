@@ -1,5 +1,3 @@
-"""The analyzer classifies every recognised component license, not just policy violations."""
-
 import pytest
 
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
@@ -55,8 +53,7 @@ async def test_copyleft_component_yields_both_issue_and_classification():
 
 @pytest.mark.asyncio
 async def test_suppressed_transitive_finding_still_classifies():
-    # Weak copyleft on a transitive dep: the INFO finding is suppressed as noise,
-    # but the classification must survive for the inventory category column.
+    # The INFO finding is suppressed as noise, but the inventory category column still needs the class.
     result = await _analyze([_component("libfoo", "1.0", "LGPL-2.1-or-later", direct=False)])
 
     assert result["license_issues"] == []

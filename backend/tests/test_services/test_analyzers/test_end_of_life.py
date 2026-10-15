@@ -1,5 +1,3 @@
-"""End-of-life detection: components resolve to endoflife.date products, versions to that product's release cycles."""
-
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -74,8 +72,6 @@ _TRAEFIK = [_cycle("3.5", False, "3.5.2"), _cycle("2.10", _days_ago(600), "2.10.
 
 
 class _EndOfLifeDate:
-    """endoflife.date: the product index, a cycle list for each product it serves, and 404 for anything else."""
-
     def __init__(self, cycles: dict[str, Any], index: Any = _PRODUCT_INDEX, index_status: int = 200):
         self.cycles = cycles
         self.index = index
@@ -567,8 +563,6 @@ class TestRecommendation:
 
 
 class TestFindings:
-    """What the stored finding says, from the analyzer's own output."""
-
     async def _finding(self, component: dict) -> Any:
         aggregator = ResultAggregator()
         aggregator.aggregate("end_of_life", await analyze_cyclonedx(EndOfLifeAnalyzer(), [component]))

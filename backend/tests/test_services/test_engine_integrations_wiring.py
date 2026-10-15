@@ -1,5 +1,3 @@
-"""Every completed scan must reach both VCS decorators and the notifier with the run's outcome."""
-
 import asyncio
 from unittest.mock import AsyncMock, patch
 

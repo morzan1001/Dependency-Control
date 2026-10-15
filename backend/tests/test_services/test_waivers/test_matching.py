@@ -51,8 +51,6 @@ class TestWaiverStrongMatch:
 
 
 class _W:
-    """Minimal waiver stand-in."""
-
     def __init__(self, id, status, match):
         self.id = id
         self.status = status
@@ -90,7 +88,6 @@ class TestOrchestrator:
         w = _W("w1", "false_positive", sig(anchor="fpA", ch="c1"))
         res = apply_waivers_to_findings(findings, [w])
         assert res.waived == {"f1": "w1"}
-        # sibling stays active despite identical content
         assert "f2" not in res.waived
 
     def test_accepted_risk_content_change_lapses(self):
@@ -129,8 +126,7 @@ class TestOrchestrator:
         assert res.lapsed == {"f1": "w1"}
 
     def test_finding_not_both_waived_and_lapsed(self):
-        # A lapsing accepted_risk waiver and a following false_positive waiver on the same
-        # candidate must never place the finding in both waived and lapsed, in either order.
+        # A lapsing and a matching waiver on one candidate must never leave it both waived and lapsed.
         findings = [mf("f1", anchor="cur", kind="scanner_fp", ch="c1", line=20)]
         w_lapse = _W("wB", "accepted_risk", sig(anchor="old", kind="scanner_fp", ch="cX", line=10))
         w_follow = _W("wA", "false_positive", sig(anchor="old2", kind="scanner_fp", ch="c1", line=10))

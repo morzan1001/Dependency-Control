@@ -1,5 +1,3 @@
-"""Tests for the LicenseAnalyzer - license compliance analysis."""
-
 import asyncio
 import itertools
 from dataclasses import replace
@@ -175,8 +173,6 @@ class TestEvaluateLicense:
 
 
 class TestLicenseDatabase:
-    """Spot-check that LICENSE_DATABASE has correct entries and categories."""
-
     def setup_method(self):
         self.db = LICENSE_DATABASE
 
@@ -230,8 +226,6 @@ class TestLicenseDatabase:
 
 
 class TestEvaluateLicenseWithContext:
-    """Context-aware license evaluation driven by LicensePolicySchema."""
-
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
@@ -242,8 +236,6 @@ class TestEvaluateLicenseWithContext:
         info = self._get_license_info(spdx_id)
         policy = LicensePolicySchema(**policy_kwargs)
         return evaluate_license(_TEST_PKG, info, policy)
-
-    # --- Weak Copyleft + library_usage ---
 
     @pytest.mark.parametrize(
         "spdx_id",
@@ -274,8 +266,6 @@ class TestEvaluateLicenseWithContext:
         assert result is not None
         assert result["severity"] == Severity.INFO.value
 
-    # --- Strong Copyleft + distribution_model ---
-
     @pytest.mark.parametrize(
         "policy_kwargs",
         [
@@ -289,8 +279,6 @@ class TestEvaluateLicenseWithContext:
         assert result["severity"] == Severity.INFO.value
         assert result["context_reason"]
         assert result["severity_without_context"] == Severity.HIGH.value
-
-    # --- Network Copyleft + deployment_model ---
 
     @pytest.mark.parametrize(
         ("spdx_id", "policy_kwargs", "expected_severity"),
@@ -374,15 +362,12 @@ class TestEvaluateLicenseWithContext:
 
 
 class TestSpdxExpressionEvaluation:
-    """SPDX OR/AND expression handling."""
-
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
     @pytest.mark.parametrize(
         "or_groups",
         [
-            # MIT is permissive -> no issue, the least restrictive alternative.
             pytest.param([["MIT"], ["GPL-3.0"]], id="permissive-beside-strong-copyleft"),
             pytest.param([["MIT"], ["Apache-2.0"]], id="all-permissive"),
         ],
@@ -413,8 +398,6 @@ class TestSpdxExpressionEvaluation:
 
 
 class TestOrResolution:
-    """The alternative a dual-licensed component is settled on, and what is reported for it."""
-
     @staticmethod
     async def _analyze(expression, settings=None):
         components = _parsed_cyclonedx([_library("dual", expression)])
@@ -503,8 +486,6 @@ class TestLicenseException:
 
 
 class TestTransitiveDependencySeverity:
-    """Transitive dependency severity adjustment."""
-
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
@@ -554,8 +535,6 @@ class TestTransitiveDependencySeverity:
 
 
 class TestLicenseCompatibility:
-    """Cross-component conflicts, judged on the licences the analyzer settled each component on."""
-
     _GPL_PAIR: ClassVar[list[dict[str, Any]]] = [_library("a", "GPL-2.0-only"), _library("b", "GPL-3.0-only")]
 
     @staticmethod
@@ -686,13 +665,10 @@ class TestIncompatibilityTable:
 
 
 class TestTransitiveDirectness:
-    """End-to-end analyze() directness detection via the top-level `direct` field."""
-
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
     def _gpl_component(self, name, *, direct):
-        """A GPL-3.0 component in ParsedDependency.model_dump() shape."""
         return {
             "name": name,
             "version": "1.0.0",
@@ -774,8 +750,6 @@ class TestTransitiveDirectness:
 
 
 class TestIgnoredScopes:
-    """Which dependency scopes `ignore_dev_dependencies` takes out of the licence verdict."""
-
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
@@ -872,8 +846,6 @@ class TestIgnoredScopes:
 
 
 class TestStoredPolicy:
-    """The analyzer grades against the policy stored in analyzer_settings, read the way the write validator stores it."""
-
     _GPL: ClassVar[dict[str, Any]] = {
         "name": "gpl-lib",
         "version": "1.0",
@@ -903,8 +875,6 @@ _ONE_ALTERNATIVE_RESOLVED = 1
 
 
 class TestUndeterminableLicense:
-    """A component the SBOM does not let us classify must reach the audit control as a finding."""
-
     UNDETERMINABLE_SHAPES: ClassVar[list[dict[str, Any]]] = [
         {"type": "library", "name": "no-licenses-key", "version": "1.0.0"},
         {"type": "library", "name": "empty-licenses-list", "version": "1.0.0", "licenses": []},
@@ -979,8 +949,7 @@ class TestUndeterminableLicense:
 
     @pytest.mark.asyncio
     async def test_an_unreadable_spdx_expression_is_undeterminable_too(self):
-        """The OR-expression path resolves an alternative before classifying it, so an expression
-        naming nothing we know reached neither the unknown count nor a finding."""
+        """The OR path resolves an alternative first, so an all-unknown expression could slip both counts."""
         component = {
             "type": "library",
             "name": "expression-lib",
@@ -1115,8 +1084,6 @@ class TestUnreadableOrAlternative:
 
 
 class TestPolicyAcceptability:
-    """The line between a licence a consumer could take and one policy refuses."""
-
     def test_no_finding_is_acceptable(self):
         assert is_acceptable_under_policy(None) is True
 
@@ -1130,8 +1097,6 @@ class TestPolicyAcceptability:
 
 
 class TestPartitionOrGroups:
-    """Splitting OR-alternatives into the readable ones and what made the rest unreadable."""
-
     def test_a_group_with_an_unreadable_member_is_not_readable(self):
         readable, unreadable = partition_or_groups([[_PERMISSIVE_ID, _UNREADABLE_ALTERNATIVE], [_STRONG_COPYLEFT_ID]])
         assert readable == [[_STRONG_COPYLEFT_ID]]

@@ -1,5 +1,3 @@
-"""Unit tests for policy-audit retention pruning."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendations."""
-
 import pytest
 
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
@@ -478,8 +476,7 @@ def test_every_generated_card_carries_an_effort_member():
 
 
 class TestTyposquatCollection:
-    """The typosquatting analyzer stores the imitated name under details.imitated_package
-    (2,572 production findings; zero carry a details.similar_to)."""
+    """The typosquatting analyzer stores the imitated name under details.imitated_package, never similar_to."""
 
     @staticmethod
     def _malware_finding(component, imitated_package=None):
@@ -559,7 +556,6 @@ _OUTDATED_ROWS = [_make_dependency("requests", "2.28.0"), _make_dependency("flas
 
 
 def _outdated_requests_and_flask(*trivy_vulnerabilities, dependencies=_OUTDATED_ROWS):
-    """Cards for outdated requests and flask beside Trivy's rows; ``dependencies`` is the inventory read window."""
     aggregator = ResultAggregator()
     aggregator.aggregate(
         "outdated_packages",

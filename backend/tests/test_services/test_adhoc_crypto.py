@@ -1,5 +1,3 @@
-"""Crypto rules are evaluated in memory from the SBOM's embedded CBOM components."""
-
 import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
@@ -25,8 +23,7 @@ _AES_REF = "crypto/aes-256"
 _MD5_REF = "crypto/md5"
 _DSA_REF = "crypto/dsa"
 
-# A seeded rule the certificate-lifecycle analyzer grades. It constrains nothing the matcher
-# reads, so an unscoped evaluation would attribute it to every asset in the CBOM.
+# Graded by the certificate-lifecycle analyzer and constraining nothing, so unscoped it would hit every asset.
 _CERTIFICATE_RULE = "cert-expiry-default"
 
 _FIRST_SBOM_NAME = "first-service"
@@ -147,11 +144,7 @@ async def test_rules_of_two_types_at_the_same_severity_each_keep_their_finding()
 
 @pytest.mark.asyncio
 async def test_the_same_cbom_twice_yields_the_same_finding_ids():
-    """finding_id is how the response says findings are addressed, so it cannot be a per-run nonce.
-
-    A random id makes two identical requests look like two different results, and no waiver
-    written against one run can ever match the next.
-    """
+    """finding_id addresses findings in the response and waivers, so it cannot be a per-run nonce."""
     first = _crypto_findings(await _run([_cbom(_RSA_1024, _MD5)]))
     second = _crypto_findings(await _run([_cbom(_RSA_1024, _MD5)]))
 

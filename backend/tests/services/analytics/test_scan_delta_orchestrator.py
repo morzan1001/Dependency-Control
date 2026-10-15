@@ -71,7 +71,6 @@ def _findings_comparison(*changes: str) -> ScanDeltaResponse:
 
 
 def _envelope(category: DeltaCategory) -> ScanDeltaResponse:
-    """A per-category sentinel the dispatcher must hand back untouched."""
     return ScanDeltaResponse(
         from_scan_id=_FROM_SCAN,
         to_scan_id=_TO_SCAN,
@@ -122,7 +121,6 @@ async def test_dispatch_accepts_uppercase_severity(db):
 
 @pytest.mark.asyncio
 async def test_dispatch_accepts_the_maximum_page_size(db):
-    """The advertised maximum is inclusive: the largest page a caller may ask for is answered."""
     with _service("compare_findings", DeltaCategory.FINDINGS) as mock:
         result = await _dispatch(db, page_size=_PAGE_SIZE_AT_MAXIMUM)
 

@@ -1,5 +1,3 @@
-"""A stored webhook whose URL today's rules reject stays readable and deletable; delivery still refuses it."""
-
 import pytest
 
 from app.models.webhook import Webhook

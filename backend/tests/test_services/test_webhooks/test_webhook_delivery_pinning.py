@@ -1,5 +1,3 @@
-"""The real webhook delivery path must connect through the DNS-rebinding-safe pinned transport."""
-
 import asyncio
 import importlib
 import logging
@@ -14,8 +12,7 @@ import pytest
 from app.core.config import settings
 from app.services.webhooks.validation import _PinnedIPTransport
 
-# The package binds ``webhook_service`` to a singleton instance, shadowing the submodule;
-# import the real module via importlib so the WebhookService and patch target resolve.
+# The package's webhook_service singleton shadows the submodule, so importlib reaches the module itself.
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
 
 
@@ -44,7 +41,6 @@ def _service(attempts: int = 3):
 
 
 def _resolving(*answers):
-    """Resolver stand-in answering each call with the next entry; an exception entry is raised."""
     pending = list(answers)
 
     async def getaddrinfo(host, port, type=None):

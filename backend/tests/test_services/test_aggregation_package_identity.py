@@ -1,10 +1,4 @@
-"""Vulnerability findings must be keyed by package identity, not by the bare artifact name.
-
-Fixtures mirror real prod shapes: npm components arrive scoped from trivy/grype
-(``@angular/core``) and bare from the OSV path (the CycloneDX ``name`` field with the
-``group`` split off), Maven components arrive as ``group:artifact`` from trivy and bare
-from grype.
-"""
+"""npm arrives scoped from trivy/grype and bare from OSV; Maven as group:artifact from trivy and bare from grype."""
 
 import pytest
 
@@ -26,7 +20,6 @@ def _vuln(component: str, version: str, vuln_id: str, scanner: str, severity=Sev
 
 
 def _components(aggregator: ResultAggregator) -> dict[str, list[str]]:
-    """{component: [entry ids]} of the aggregated vulnerability findings."""
     return {
         f.component: sorted(v["id"] for v in f.details.get("vulnerabilities", []))
         for f in aggregator.get_findings()
@@ -36,7 +29,6 @@ def _components(aggregator: ResultAggregator) -> dict[str, list[str]]:
 
 class TestDistinctPackagesStaySeparate:
     def test_two_npm_scopes_sharing_a_last_segment(self):
-        """@angular/core and @angular-devkit/core at the same version are different packages."""
         agg = ResultAggregator()
         agg.add_finding(_vuln("@angular/core", "21.1.5", "CVE-2026-50557", "trivy"))
         agg.add_finding(_vuln("@angular-devkit/core", "21.1.5", "CVE-2026-11111", "trivy"))
@@ -137,7 +129,6 @@ class TestMostQualifiedNameWins:
         assert "postgresql:42.7.3" in findings[0].aliases
 
     def test_related_findings_still_link_across_qualification(self):
-        """An outdated finding on the bare dependency name links to the qualified vulnerability."""
         agg = ResultAggregator()
         agg.add_finding(_vuln("org.postgresql:postgresql", "42.7.3", "CVE-2024-1597", "trivy"))
         agg.add_finding(_outdated("postgresql", "42.7.3", "42.7.4"))
@@ -177,7 +168,6 @@ def _outdated(component: str, version: str, latest: str) -> Finding:
 
 class TestPackageNameWaiverTargetsOnePackage:
     def test_waiver_query_hits_the_qualified_component_only(self):
-        """A waiver created from an @angular/core finding must not waive @angular-devkit/core."""
         import asyncio
 
         from app.models.waiver import Waiver

@@ -1,5 +1,3 @@
-"""One criteria builder answers the Mongo query and the in-memory check alike, scope and rule_id included."""
-
 import asyncio
 
 import pytest

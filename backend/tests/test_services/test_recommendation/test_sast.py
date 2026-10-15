@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.sast."""
-
 import json
 from pathlib import Path
 
@@ -124,8 +122,6 @@ class TestProcessSastClassification:
 
 
 class TestProcessSastBelowThreshold:
-    """No critical/high severity and fewer than three findings -> skip."""
-
     @pytest.mark.parametrize(
         ("severity", "count"),
         [
@@ -155,8 +151,6 @@ class TestProcessSastPriority:
 
 
 class TestProcessSastEffort:
-    """Effort is 'medium' for <10 findings, 'high' for >=10."""
-
     @pytest.mark.parametrize(
         ("count", "expected"),
         [

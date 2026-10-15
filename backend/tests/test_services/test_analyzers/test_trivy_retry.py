@@ -1,5 +1,3 @@
-"""Tests for the TrivyAnalyzer retry policy: transient stderr patterns (including EOF) trigger retries."""
-
 import pytest
 
 from app.services.analyzers.trivy import TrivyAnalyzer
@@ -41,8 +39,7 @@ class TestTrivyRetryablePatternMatching:
         assert TrivyAnalyzer()._is_retryable_error(stderr_text.encode()) is False
 
     def test_all_patterns_are_lowercase(self):
-        # Guard against reintroducing an uppercase pattern that can never match
-        # the lowercased stderr.
+        # The stderr is lowercased, so an uppercase pattern could never match.
         for pattern in TrivyAnalyzer.retryable_patterns:
             assert pattern == pattern.lower(), pattern
 

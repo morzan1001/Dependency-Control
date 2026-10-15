@@ -51,12 +51,6 @@ class TestMayBindSignature:
         assert may_bind_signature(_waiver(finding_type="sast", finding_id="X", scope="file")) is False
 
 
-# ---------------------------------------------------------------------------
-# recalculate_project_stats must produce the same authoritative Stats as
-# calculate_comprehensive_stats (severity counts excluding waived, saturating
-# severity-weighted risk_score, populated enrichment fields).
-# ---------------------------------------------------------------------------
-
 PROJECT_ID = "proj-w4"
 SCAN_ID = "scan-w4"
 
@@ -104,7 +98,6 @@ def _finding(
 
 @pytest_asyncio.fixture
 async def seeded_db():
-    """A fake DB with a project, scan, and enriched findings (one waived)."""
     db = FakeDatabase()
     await db.projects.insert_one(
         {
@@ -152,17 +145,14 @@ async def seeded_db():
 class TestRecalculateUnifiedStats:
     @pytest.mark.asyncio
     async def test_recalc_matches_comprehensive_stats(self, seeded_db):
-        """recalc persists the SAME Stats as calculate_comprehensive_stats."""
         from app.services.analysis.stats import calculate_comprehensive_stats
         from app.services.stats import recalculate_project_stats
 
-        # recalc resets + re-applies waivers, then computes stats. Comparing
-        # comprehensive on the SAME post-recalc state proves identical filtering.
+        # Comparing on the same post-recalc state proves both paths filter waivers identically.
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
         comprehensive = (await calculate_comprehensive_stats(seeded_db, SCAN_ID)).stats
 
         assert result is not None
-        # Severity counts identical and exclude the waived CRITICAL finding.
         assert result.critical == comprehensive.critical == 1
         assert result.high == comprehensive.high == 1
         assert result.medium == comprehensive.medium == 1
@@ -170,7 +160,6 @@ class TestRecalculateUnifiedStats:
 
     @pytest.mark.asyncio
     async def test_recalc_populates_enrichment_fields(self, seeded_db):
-        """The unified path must populate the enrichment fields, not leave them at defaults."""
         from app.services.stats import recalculate_project_stats
 
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
@@ -180,13 +169,11 @@ class TestRecalculateUnifiedStats:
         assert result.threat_intel is not None
         assert result.reachability is not None
         assert result.prioritized is not None
-        # KEV + reachability enrichment actually reflected.
         assert result.threat_intel.kev_count == 1
         assert result.reachability.reachable_count == 1
 
     @pytest.mark.asyncio
     async def test_recalc_persists_to_scan_and_project(self, seeded_db):
-        """Persisted scan.stats / project.stats carry the enrichment fields, not zeros."""
         from app.services.stats import recalculate_project_stats
 
         await recalculate_project_stats(PROJECT_ID, seeded_db)
@@ -199,11 +186,7 @@ class TestRecalculateUnifiedStats:
         assert scan_doc["ignored_count"] == 1
 
 
-# ---------------------------------------------------------------------------
-# A waiver is a decision that holds now rather than a property of the build it
-# was written against, so revoking one has to reach the build that is in
-# production as well as the one at head.
-# ---------------------------------------------------------------------------
+# A waiver holds now, not per build, so revoking one must reach the production build as well as head.
 
 RELEASE_SCAN_ID = "scan-w4-released"
 PRODUCTION = "production"
@@ -216,8 +199,7 @@ CRITICALS_AT_HEAD = 1
 
 @pytest_asyncio.fixture
 async def released_db(seeded_db):
-    """The head scan plus a shipped build whose one live CRITICAL still carries the waived flag a
-    waiver nobody holds any more left on it."""
+    """Head plus a shipped build whose live CRITICAL still carries the flag of a waiver nobody holds."""
     await seeded_db.scans.insert_one(
         {"_id": RELEASE_SCAN_ID, "project_id": PROJECT_ID, "status": "completed", "is_release": True}
     )
@@ -424,11 +406,7 @@ class TestRecalculateReachesANamedScan:
         assert (await seeded_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
 
 
-# ---------------------------------------------------------------------------
-# A waiver with no matching criteria must NOT waive every finding: an empty
-# waiver query ({}) would match all findings, so the restamp must
-# skip criteria-less waivers.
-# ---------------------------------------------------------------------------
+# An empty waiver query ({}) matches every finding, so the restamp skips criteria-less waivers.
 
 
 FEATURE_SCAN_ID = "scan-w4-feature"
@@ -505,8 +483,7 @@ class TestRecalculateReachesEveryBranchTip:
 class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
     @pytest.mark.asyncio
     async def test_criteria_less_waiver_is_skipped(self, seeded_db):
-        # A criteria-less waiver: only reason/created_by set. Goes to the legacy
-        # path (finding_type None -> not a signature waiver, no vulnerability_id).
+        # Only reason and created_by set, so it takes the path for waivers without a signature.
         await seeded_db.waivers.insert_one(
             {
                 "_id": "w-empty",
@@ -520,8 +497,7 @@ class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
 
         assert result is not None
-        # Only the properly-targeted waiver (w-1 -> f-waived) suppresses a finding.
-        # The empty-criteria waiver must be skipped, NOT applied as match-all.
+        # Only w-1 suppresses a finding; the criteria-less waiver is skipped.
         assert result.critical == 1
         assert result.high == 1
         assert result.medium == 1
@@ -529,15 +505,9 @@ class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
         scan_doc = await seeded_db.scans.find_one({"_id": SCAN_ID})
         assert scan_doc["ignored_count"] == 1
 
-        # The non-targeted findings stay un-waived.
         for fid in ("f-crit", "f-high", "f-med"):
             doc = await seeded_db.findings.find_one({"_id": fid})
             assert doc["waived"] is False, f"{fid} was wrongly waived by empty-criteria waiver"
-
-
-# ---------------------------------------------------------------------------
-# Lock contention must be retried (bounded backoff), not dropped.
-# ---------------------------------------------------------------------------
 
 
 class TestLockContentionRetry:
@@ -565,11 +535,9 @@ class TestLockContentionRetry:
 
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
 
-        assert result is not None  # recalc completed despite initial contention
-        assert calls["n"] == 3  # retried until it won the lock
-        # Backed off between the two failed attempts with exponential delays. (Filter
-        # to our backoff values: patching asyncio.sleep is process-wide, so unrelated
-        # asyncio.sleep(0) calls during recalc may also be recorded.)
+        assert result is not None
+        assert calls["n"] == 3
+        # Patching asyncio.sleep is process-wide, so unrelated sleeps are filtered out by value.
         backoff_delays = [d for d in slept if d in (0.2, 0.4, 0.8, 1.6, 3.2)]
         assert backoff_delays == [pytest.approx(0.2), pytest.approx(0.4)]
 
@@ -614,11 +582,6 @@ async def test_stats_count_findings_that_carry_no_waived_field():
     assert stats.critical == 1
 
 
-# ---------------------------------------------------------------------------
-# What a waiver's own fields are allowed to narrow the finding query down to.
-# ---------------------------------------------------------------------------
-
-
 async def _insert_finding(db, doc):
     base = {
         "scan_id": SCAN_ID,
@@ -659,8 +622,7 @@ class TestWhatAWaiverMatchesOn:
 
     @pytest.mark.asyncio
     async def test_an_unknown_package_version_is_a_placeholder_and_not_a_version_to_match(self, seeded_db):
-        """Scanners write "Unknown" where they have no version; matching on it literally would
-        leave the waiver suppressing nothing."""
+        """Scanners write "Unknown" where they have no version, so matching it literally would suppress nothing."""
         await _insert_finding(
             seeded_db,
             {"_id": "f-ghost", "type": "vulnerability", "component": "ghost-pkg", "version": "2.0.0"},
@@ -683,8 +645,7 @@ class TestWhatAWaiverMatchesOn:
 
     @pytest.mark.asyncio
     async def test_a_rule_scope_waiver_reaches_the_same_rule_in_another_file(self, seeded_db):
-        """Rule scope means "this rule everywhere"; keeping the waiver's own file in the query
-        would silently degrade it to file scope."""
+        """Rule scope means this rule everywhere, so the waiver's own file must not narrow the query."""
         rule = {"sast_findings": [{"id": "weak_rng"}]}
         await _insert_finding(
             seeded_db,
@@ -759,8 +720,7 @@ class TestWhatAWaiverMatchesOn:
 
     @pytest.mark.asyncio
     async def test_a_file_scope_waiver_on_an_id_that_carries_no_line_number_still_matches_it(self, seeded_db):
-        """Only a trailing line number is a line number: stripping the last segment of any
-        hyphenated id turns the waiver into a regex that matches nothing."""
+        """Only a trailing line number is one; stripping any hyphenated id's last segment would match nothing."""
         await _insert_finding(
             seeded_db,
             {

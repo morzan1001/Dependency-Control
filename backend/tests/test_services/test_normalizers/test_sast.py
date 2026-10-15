@@ -1,5 +1,3 @@
-"""Tests for SAST normalizers (OpenGrep, Bearer)."""
-
 import json
 from pathlib import Path
 
@@ -41,7 +39,6 @@ class TestNormalizeOpengrep:
         assert "opengrep" in f.scanners
 
     def test_severity_mapping(self):
-        """OpenGrep ERROR -> HIGH, WARNING -> MEDIUM, INFO -> LOW."""
         for og_sev, expected in [("ERROR", "HIGH"), ("WARNING", "MEDIUM"), ("INFO", "LOW")]:
             agg = ResultAggregator()
             result = self._opengrep_result(
@@ -100,7 +97,6 @@ class TestNormalizeOpengrep:
         assert f.details["owasp"] == ["A01:2021"]
 
     def test_rule_name_in_description(self):
-        """When check_id has dots, last part should prefix the description."""
         result = self._opengrep_result(
             [
                 {
@@ -163,7 +159,6 @@ class TestNormalizeOpengrep:
         assert f.details["end"] == {"line": 15, "column": 20}
 
     def test_fingerprint_and_lines_survive_ingest(self):
-        """extra.fingerprint and extra.lines must reach details."""
         from app.schemas.opengrep import OpenGrepFinding
 
         raw = {
@@ -331,7 +326,6 @@ class TestNormalizeBearer:
         assert "bearer" in f.scanners
 
     def test_severity_mapping(self):
-        """Bearer uses lowercase severities that map to standard severities."""
         for bearer_sev, expected in [
             ("critical", "CRITICAL"),
             ("high", "HIGH"),
@@ -367,7 +361,6 @@ class TestNormalizeBearer:
         assert len(self.agg.findings) == 2
 
     def test_severity_injected_from_group_key(self):
-        """When findings are grouped by severity, items without 'severity' get it from the key."""
         result = {"findings": {"high": [{"id": "rule1", "title": "test", "full_filename": "a.py", "line_number": 1}]}}
         self.agg.aggregate("bearer", result)
         f = next(iter(self.agg.findings.values()))
@@ -391,7 +384,6 @@ class TestNormalizeBearer:
         assert f.details["cwe_ids"] == ["79", "89"]
 
     def test_filename_fallback(self):
-        """Bearer uses full_filename, filename, or file as fallback."""
         result = {
             "findings": [
                 {

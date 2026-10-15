@@ -11,7 +11,6 @@ from app.services.analytics.findings_delta import (
 
 
 def test_identity_key_vulnerability_uses_aggregated_shape():
-    """Aggregated shape: ids live under details.vulnerabilities[].id and version is top-level; key is the sorted id set plus version."""
     f = {
         "type": "vulnerability",
         "component": "lodash",
@@ -116,9 +115,7 @@ def test_identity_key_license_uses_license():
 
 
 def test_identity_key_eol_uses_eol_date_only():
-    """EolDetails declares no `version` and the EOL writer never writes one: 0 of 5,669
-    production EOL findings carry details.version, all 5,669 carry eol_date. The extra
-    fallback key was invisible to the drift guard because it travels through *keys."""
+    """EolDetails declares no version and the EOL writer never writes one; every production EOL finding has eol_date."""
     f = {
         "type": "eol",
         "component": "python",
@@ -217,11 +214,10 @@ def test_identity_key_unknown_falls_back_to_full_fingerprint():
     key = finding_identity_key(f)
     assert key[0] == "other"
     assert key[1] == "x"
-    assert key[2] != ""  # some fallback identifier present
+    assert key[2] != ""
 
 
 def _agg_vuln_doc(_id, scan_id, component, version, cve_ids, severity="CRITICAL", description=""):
-    """Build a persisted vulnerability finding in the real AGGREGATED shape."""
     return {
         "_id": _id,
         "project_id": "p1",
@@ -286,7 +282,6 @@ async def test_findings_delta_added_and_removed(db):
 
 @pytest.mark.asyncio
 async def test_an_advisory_is_named_by_its_cve_as_on_the_scan_page(db):
-    """A GHSA with a CVE alias, or a CVE behind a GHSA-only advisory, is shown under the CVE."""
     aliased = _agg_vuln_doc("fb1", "sb", "lodash", "4.17.20", [])
     aliased["details"]["vulnerabilities"] = [{"id": "GHSA-35jh-r3h4-6jhm", "aliases": ["CVE-2021-23337"]}]
     later = _agg_vuln_doc("fb2", "sb", "minimist", "1.2.0", ["GHSA-vh95-rmgr-6w4m", "CVE-2020-7598"])
@@ -299,7 +294,6 @@ async def test_an_advisory_is_named_by_its_cve_as_on_the_scan_page(db):
 
 @pytest.mark.asyncio
 async def test_breakdowns_decompose_full_totals_under_change_filter(db):
-    """by_severity/by_type decompose the full added+removed totals even when the change filter scopes the paginated item list."""
     await _seed_added_removed(db)
     resp = page_of(
         await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None),
@@ -307,16 +301,13 @@ async def test_breakdowns_decompose_full_totals_under_change_filter(db):
         1,
         50,
     )
-    # totals are independent of the change filter: 1 added, 1 removed
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
-    # breakdowns reconcile with added + removed (= 2), not just the displayed 'added'
     assert sum(resp.totals.by_severity.values()) == resp.totals.added + resp.totals.removed
-    assert resp.totals.by_severity.get("MEDIUM") == 1  # added CVE-NEW
-    assert resp.totals.by_severity.get("HIGH") == 1  # removed secret
+    assert resp.totals.by_severity.get("MEDIUM") == 1
+    assert resp.totals.by_severity.get("HIGH") == 1
     assert resp.totals.by_type.get("vulnerability") == 1
     assert resp.totals.by_type.get("secret") == 1
-    # the paginated items remain scoped to the change filter
     assert resp.items and all(i.change == "added" for i in resp.items)
 
 
@@ -371,7 +362,6 @@ async def test_findings_delta_pagination(db):
 
 @pytest.mark.asyncio
 async def test_aggregated_vuln_cve_swap_is_one_changed_record(db):
-    """Dropping CVE-A and gaining CVE-B at the same version is a change to the record, not unchanged."""
     await db["findings"].insert_many(
         [
             _agg_vuln_doc("a", "sa", "lodash", "4.17.20", ["CVE-A"]),
@@ -539,7 +529,6 @@ def _sast_doc(_id, scan_id, rule_ids, line=42):
 
 @pytest.mark.asyncio
 async def test_sast_rule_swap_on_same_line_is_added_and_removed(db):
-    """Swapping rule A for rule B on the same file/line must not read as unchanged."""
     await db["findings"].insert_many(
         [
             _sast_doc("sa1", "sa", ["rule-a"]),
@@ -554,7 +543,6 @@ async def test_sast_rule_swap_on_same_line_is_added_and_removed(db):
 
 @pytest.mark.asyncio
 async def test_malware_similarity_text_change_stays_unchanged(db):
-    """A typosquat whose similarity/description changes keeps its identity via imitated_package."""
     base = {
         "project_id": "p1",
         "finding_id": "TYPO-axios2",
@@ -589,7 +577,6 @@ async def test_malware_similarity_text_change_stays_unchanged(db):
 
 @pytest.mark.asyncio
 async def test_secret_identity_stable_across_scans_by_finding_id(db):
-    """Same finding_id in both scans stays unchanged even though per-scan _id differs and details carry no hash."""
     await db["findings"].insert_many(
         [
             _secret_doc("s_a", "sa", description="Secret detected: AWS"),
@@ -604,7 +591,6 @@ async def test_secret_identity_stable_across_scans_by_finding_id(db):
 
 @pytest.mark.asyncio
 async def test_fetch_uses_projection(db, monkeypatch):
-    """Fetch must pass a projection covering the read fields rather than pulling full documents."""
     captured = {}
     coll = db["findings"]
     original_find = coll.find
@@ -619,7 +605,6 @@ async def test_fetch_uses_projection(db, monkeypatch):
 
     proj = captured["projection"]
     assert proj is _FETCH_PROJECTION
-    # Fields the identity/item builders read must be present in the projection.
     for field in (
         "type",
         "component",
@@ -638,7 +623,6 @@ async def test_fetch_uses_projection(db, monkeypatch):
         "details.license",
     ):
         assert proj.get(field) == 1
-    # Keys the delta does not read must not be fetched.
     for gone in (
         "created_at",
         "details.fixed_version",
@@ -651,7 +635,6 @@ async def test_fetch_uses_projection(db, monkeypatch):
 
 
 def test_identity_key_vulnerability_survives_a_component_requalification():
-    """The same package reported bare and group-qualified must not read as removed + added."""
     bare = {
         "type": "vulnerability",
         "component": "jackson-databind",

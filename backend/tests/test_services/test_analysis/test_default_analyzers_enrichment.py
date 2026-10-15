@@ -1,10 +1,4 @@
-"""A default installation must reach the EPSS/KEV enrichment service.
-
-_run_epss_kev_enrichment is its only caller and is gated on the active analyzer set, so a default
-set without epss_kev leaves in_kev, epss_score and the enrichment risk_score unwritten on every
-scan — and the KEV tab, the prioritized counts and the three incident cards read the resulting
-zeros as "no actively exploited vulnerabilities".
-"""
+"""The epss_kev enrichment runs only when the active analyzer set holds it, so the default set must."""
 
 import asyncio
 from types import SimpleNamespace

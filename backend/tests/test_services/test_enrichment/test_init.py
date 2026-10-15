@@ -1,5 +1,3 @@
-"""Importing one enrichment module must not build the enrichment service and its dependency graph."""
-
 import subprocess
 import sys
 from pathlib import Path

@@ -1,8 +1,4 @@
-"""An empty GitLab group and an unreachable one demand opposite writes.
-
-A group nobody is left in must have its members removed; a group GitLab could not answer for must
-be left exactly as it is. Anything that turns a failure into a falsy value collapses the two.
-"""
+"""An empty group removes its members, an unanswered one keeps them, so a failure must never read as falsy."""
 
 import asyncio
 from typing import ClassVar
@@ -79,9 +75,7 @@ class TestAnEmptyGroupRetiresItsMembers:
         assert _written_subset(team_repo).source == _OWN
 
     def test_an_empty_group_no_team_is_bound_to_creates_none(self):
-        """Determined, and the answer is nobody. A team with no members owns its projects on behalf
-        of no one, and every project of the group would then show an owner nobody can be reached
-        through."""
+        """A memberless team would own the group's projects on behalf of no one."""
         service = _service()
 
         with (
@@ -149,8 +143,7 @@ class TestAnUnreachableGroupChangesNothing:
         team_repo.create_bound.assert_not_awaited()
 
     def test_a_parent_path_the_token_cannot_see_leaves_the_owner_undetermined(self):
-        """A 404 on an ancestor is a group the token may not see; binding the deepest namespace
-        instead would split the group's people across two teams of different granularity."""
+        """A 404 on an ancestor may be a group the token cannot see; binding deeper would split the group's people."""
         service = _service()
 
         with (
@@ -274,8 +267,7 @@ class TestNoGroupOwnsTheProject:
 
 
 class TestATeamNothingChangedAboutIsNotWritten:
-    """Every CI job of every pipeline syncs, so a bare updated_at bump is a write per job over a
-    team nothing changed about."""
+    """Every CI job syncs, so a bare updated_at bump would be a write per job for nothing."""
 
     # Nobody resolves, so the members are left alone and only a rename or a move is left to write.
     _UNRESOLVABLE: ClassVar = [GitLabMember(username="ghost", email="ghost@test.com", access_level=30)]
@@ -318,8 +310,7 @@ class TestATeamNothingChangedAboutIsNotWritten:
 
         update = team_repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitLab Group: grp"
-        # The description names the group as well, and left behind it goes on naming the one the
-        # team was moved out of.
+        # The description names the group too, so it must follow the move.
         assert update["description"] == "Imported from GitLab Group grp"
 
     def test_a_name_generated_for_another_instances_binding_is_left_alone(self):

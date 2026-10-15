@@ -1,5 +1,3 @@
-"""Archive round-trip: restoring a scan must rebuild its update-frequency delta and re-point the successor."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 

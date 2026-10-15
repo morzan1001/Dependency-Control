@@ -1,5 +1,3 @@
-"""EPSS scores from FIRST.org: what is cached, what is fetched, and when the answer is incomplete."""
-
 import asyncio
 
 import httpx

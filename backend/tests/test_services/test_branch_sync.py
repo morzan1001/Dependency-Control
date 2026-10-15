@@ -1,8 +1,4 @@
-"""Branch sync writes deleted_branches and default_branch, which the head resolver then trusts.
-
-A branch wrongly listed there takes the project's head off the branch it is really on, and the
-same pass rewrites latest_scan_id and the stats block the project tile renders.
-"""
+"""The head resolver trusts deleted_branches, so a wrongly listed branch moves head, latest_scan_id and stats."""
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -177,8 +173,7 @@ async def test_a_head_on_a_deleted_branch_moves_to_the_newest_live_one():
 
 @pytest.mark.asyncio
 async def test_a_head_the_rule_no_longer_names_is_repointed_in_the_same_pass():
-    """The resolver would not trust a pointer parked on a live non-default branch, so leaving it would
-    keep project.stats on a branch analytics no longer reports."""
+    """The resolver distrusts a pointer on a live non-default branch, so leaving it would strand project.stats."""
     stored = await _run(
         _project(latest_scan_id="s-release"),
         [
@@ -267,8 +262,7 @@ async def test_a_backfilled_default_branch_takes_the_cached_head_along():
 
 @pytest.mark.asyncio
 async def test_a_default_branch_the_vcs_deleted_is_replaced_by_the_vcs_default():
-    """A renamed default branch (main to develop) would otherwise leave head roaming over whichever
-    branch built last."""
+    """A renamed default branch would otherwise leave head roaming over whichever branch built last."""
     stored = await _run(
         _project(latest_scan_id="s-main"),
         [_scan("s-main", _MAIN, _T0), _scan("s-develop", _DEVELOP, _T0 - _HOUR)],
@@ -414,7 +408,7 @@ async def test_the_endpoint_syncs_the_project_it_was_granted():
 
 @pytest.mark.asyncio
 async def test_the_endpoint_reports_an_unreachable_vcs_as_502():
-    """A failed VCS call answered 200 with the unchanged list, so the failure read as 'nothing changed'."""
+    """Answering 200 with the unchanged list would make a failed VCS call read as 'nothing changed'."""
     with pytest.raises(HTTPException) as raised:
         await _call_endpoint(Project(id=_PROJECT_ID, name="p", gitlab_instance_id="missing", gitlab_project_id=1))
 

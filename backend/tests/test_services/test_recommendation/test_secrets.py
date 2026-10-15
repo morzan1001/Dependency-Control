@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.secrets."""
-
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.aggregation import ResultAggregator
 from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN
@@ -213,8 +211,6 @@ class TestProcessSecretsSplitsLiveFromDeprioritized:
 
 
 class TestProcessSecretsDetectorFallbacks:
-    """Credential type is details.detector_name, falling back to the stored details.detector."""
-
     def test_detector_named_in_description(self):
         rec = process_secrets([_secret(detector="8", detector_name="Github")])[0]
         assert "Github" in rec.description

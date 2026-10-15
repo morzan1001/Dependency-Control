@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.common."""
-
 from collections.abc import Iterable
 
 import pytest
@@ -44,7 +42,6 @@ def _rec(priority: Priority, rtype: RecommendationType, impact: dict) -> Recomme
 
 class TestSortKey:
     def test_priority_tier_outranks_raw_volume(self):
-        # a medium item with a huge vuln count must NOT outrank a critical exploit fix
         critical = _rec(
             Priority.CRITICAL, RecommendationType.KNOWN_EXPLOIT, {"total": 1, "critical": 1, "kev_count": 1}
         )
@@ -214,7 +211,6 @@ class TestVersionOrdering:
 
 
 def _best_fix(fixed_versions):
-    """The target a package card names for findings whose fixes are these stored fixed_version values."""
     vulns = [
         VulnerabilityInfo(advisories=[], severity="HIGH", package_name="pkg", current_version="1.0", fixed_version=fix)
         for fix in fixed_versions
@@ -413,7 +409,6 @@ class TestCalculateScore:
         )
 
     def test_zero_total_no_crash(self):
-        # total=0 must not cause a division by zero.
         rec = _make_recommendation(
             impact={
                 "critical": 0,
@@ -499,8 +494,6 @@ class TestNameSome:
 
 
 class TestRecommend:
-    """A card lists a sample of the components it covers and counts every one of them."""
-
     @staticmethod
     def _card(components: Iterable[str]) -> Recommendation:
         return recommend(

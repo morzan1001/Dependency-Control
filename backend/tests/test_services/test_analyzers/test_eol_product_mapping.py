@@ -1,5 +1,3 @@
-"""NAME_TO_EOL_MAPPING names real endoflife.date products, and a component's CPE and name both count."""
-
 import json
 from pathlib import Path
 

@@ -1,5 +1,3 @@
-"""A scan grades licences under the policy the project settings page shows and saves."""
-
 import pytest
 
 from app.models.finding import Severity

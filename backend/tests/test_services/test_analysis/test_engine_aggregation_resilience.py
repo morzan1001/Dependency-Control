@@ -1,5 +1,3 @@
-"""_aggregate_external_results skips malformed results and emits a SYSTEM_WARNING when one fails to aggregate."""
-
 import asyncio
 from types import SimpleNamespace
 
@@ -24,8 +22,6 @@ def _repo_yielding(*rows: dict) -> SimpleNamespace:
 
 
 class TestAggregateExternalResultsResilience:
-    """_aggregate_external_results is isolated per result."""
-
     def _make_aggregator(self):
         return ResultAggregator()
 
@@ -55,7 +51,6 @@ class TestAggregateExternalResultsResilience:
             },
         )
 
-        # simulates corrupt stored data
         bad_result = _row("bad_analyzer", {"corrupt": object()})
 
         result_repo = _repo_yielding(bad_result, good_result)

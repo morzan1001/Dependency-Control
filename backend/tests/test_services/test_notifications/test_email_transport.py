@@ -1,5 +1,3 @@
-"""EmailProvider.send against a local SMTP server that offers STARTTLS: each encryption setting means what it says."""
-
 import asyncio
 import datetime
 import ipaddress
@@ -47,8 +45,6 @@ def _self_signed_cert(directory) -> tuple[str, str]:
 
 
 class _FakeSmtpServer:
-    """Speaks just enough ESMTP to deliver one message and records every command verb it receives."""
-
     def __init__(self, tls_context: ssl.SSLContext, implicit_tls: bool):
         self.tls_context = tls_context
         self.implicit_tls = implicit_tls

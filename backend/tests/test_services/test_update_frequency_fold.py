@@ -1,5 +1,3 @@
-"""Tests for the pure update-frequency fold over per-scan delta documents."""
-
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -43,10 +41,7 @@ def _delta(
     project_id: str = "p1",
     branch: str = "main",
 ) -> dict[str, Any]:
-    """A scan_update_deltas document with every field the writer stores.
-
-    Predecessor links are left unset; ``_chain`` fills them the way the writer does.
-    """
+    """Predecessor links stay unset; _chain fills them the way the writer does."""
     created = _at(day)
     return {
         "_id": scan_id,
@@ -357,17 +352,11 @@ class TestUnusableScans:
 
 
 class TestCommitCoverage:
-    """What the ledger reached, against the commits of the window it could reach."""
-
     @staticmethod
     def _over(
         deltas: list[dict[str, Any]], _window_commits: int | None = None, undelivered: dict[str, int] | None = None
     ) -> tuple[int, int, str]:
-        """Coverage against the scan side these deltas imply, plus scans that owe one.
-
-        Every delta stands for one scan of its commit, so the scan side follows from the
-        fixture; ``undelivered`` adds scans the ledger has not written a delta for.
-        """
+        """undelivered adds scans the ledger owes a delta for."""
         scans_per_commit: dict[str, int] = {}
         for delta in deltas:
             token = delta.get("commit_hash") or delta["_id"]
@@ -378,8 +367,7 @@ class TestCommitCoverage:
         return coverage.accounted, coverage.coverable, coverage.status
 
     def test_the_scans_the_fold_drops_on_purpose_leave_no_hole(self) -> None:
-        # Same-commit retries share a bar and an SBOM-less scan measured nothing;
-        # counting bars or documents instead read this healthy branch as half measured.
+        # Retries share a bar and an SBOM-less scan measured nothing, so counting documents would halve this branch.
         deltas = _chain(
             [
                 _delta("s0", 0, commit_hash="c1"),
@@ -418,8 +406,7 @@ class TestCommitCoverage:
         assert self._over(deltas, 5) == (2, 5, "partial")
 
     def test_a_scan_the_writer_never_wrote_a_delta_for_is_a_real_hole(self) -> None:
-        # Four commits scanned, a delta for the newest three: the fourth is unwritten,
-        # and an unwritten delta says nothing about what its scan measured.
+        # Four commits scanned but three deltas: an unwritten delta says nothing about what its scan measured.
         deltas = _chain([_delta(f"s{i}", i * 10, patch=1) for i in range(4)])
         assert self._over(deltas[1:], undelivered={"commit-s0": 1}) == (3, 4, "partial")
 
@@ -437,8 +424,7 @@ class TestCommitCoverage:
         assert self._over(broken, 4) == (3, 4, "partial")
 
     def test_a_failure_on_a_scan_that_carried_no_dependencies_is_still_a_hole(self) -> None:
-        # The writer stores no dep_count on a failure, so only the error tells the
-        # two apart: a scan it never measured is not a scan it measured as empty.
+        # The writer stores no dep_count on a failure, so only the error tells unmeasured from measured-empty.
         deltas = _chain(
             [
                 _delta("s0", 0, patch=1),
@@ -466,8 +452,7 @@ class TestCoverage:
         assert _fold(deltas, {"a", "b"}).update_coverage_pct == 100.0
 
     def test_baseline_set_seeds_the_denominator(self) -> None:
-        # outdated_added on the anchor is a diff against a pre-window scan; only
-        # the full set passed in can size the denominator.
+        # The anchor's outdated_added diffs against a pre-window scan, so only the full set sizes the denominator.
         deltas = _chain(
             [_delta("s0", 0, added=["a"], outdated_count=3), _delta("s1", 10, resolved=["a"], outdated_count=2)]
         )
@@ -477,8 +462,7 @@ class TestCoverage:
 
 
 class TestMissingOutdatedAnalysis:
-    """The writer reports the whole outdated set again once it has no measured
-    predecessor to subtract, which is what keeps the denominator complete here."""
+    """Without a measured predecessor the writer reports the whole outdated set again, keeping the denominator."""
 
     def _backlog(self) -> set[str]:
         return {f"pkg-{i}" for i in range(40)}
@@ -584,7 +568,6 @@ class TestDominantEcosystem:
 
 
 def _timeline(updates: Sequence[int], outdated: Sequence[int | None]) -> list[ScanTimelineEntry]:
-    """Timeline with a leading baseline entry, as the fold builds it."""
     entries = [_entry("anchor", 0, 0, 0)]
     entries.extend(_entry(f"s{i}", i + 1, u, o) for i, (u, o) in enumerate(zip(updates, outdated, strict=True)))
     return entries

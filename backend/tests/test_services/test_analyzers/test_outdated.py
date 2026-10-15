@@ -1,5 +1,3 @@
-"""Tests for the outdated analyzer: version classification from one cached deps.dev package document."""
-
 import asyncio
 from typing import Any
 
@@ -30,11 +28,6 @@ def _component(name: str, version: str, ptype: str = "pypi") -> dict[str, Any]:
 
 
 class _ScriptedClient:
-    """deps.dev stand-in: one answer (document, status or raised error) per package name, else 404.
-
-    Records every request and the peak number in flight.
-    """
-
     def __init__(self, answers_by_name: dict[str, Any]) -> None:
         self._answers = answers_by_name
         self.urls: list[str] = []

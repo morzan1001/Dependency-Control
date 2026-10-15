@@ -1,5 +1,3 @@
-"""Tests for secret normalizer (TruffleHog)."""
-
 import hashlib
 
 import pytest
@@ -134,7 +132,6 @@ class TestNormalizeTrufflehog:
         assert f.description == "Secret detected: AWS"
 
     def test_file_path_from_git_source(self):
-        """When no Filesystem source, fall back to Git source."""
         result = {
             "findings": [
                 {
@@ -163,7 +160,6 @@ class TestNormalizeTrufflehog:
         assert f.component == "unknown"
 
     def test_finding_id_contains_secret_hash(self):
-        """Finding ID should include truncated MD5 hash of the raw secret."""
         raw_secret = "my-secret-value"
         expected_hash = hashlib.md5(raw_secret.encode()).hexdigest()[:8]
         result = {
@@ -231,9 +227,7 @@ class TestNormalizeTrufflehog:
         assert len(self.agg.findings) == 2
 
     def test_detector_type_ordinal_is_the_stored_identity(self):
-        """The ordinal, not the name, must reach finding_id and details.detector: 373 of 504
-        production waivers carry `SECRET-<ordinal>-<hash>` and a `match.rule_key` of the same
-        ordinal, so a name there would silently un-suppress them."""
+        """Production waivers key on SECRET-<ordinal>-<hash>, so a detector name there would un-suppress them."""
         result = {
             "findings": [
                 {
@@ -383,8 +377,7 @@ class TestNormalizeTrufflehog:
         assert f.details["adjusted_risk_score"] == 16.0
 
     def test_unverified_historical_secret_severity_is_low(self):
-        """Unverified + gone-from-tree is the deprioritized bucket: severity drops to LOW so it
-        leaves the critical counts everywhere (all aggregations key on severity)."""
+        """Every aggregation keys on severity, so the deprioritized bucket drops to LOW to leave the critical counts."""
         result = {
             "findings": [
                 {

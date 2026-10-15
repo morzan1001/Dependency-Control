@@ -24,8 +24,6 @@ _TEST_GUARD = 5.0
 
 
 class _Body:
-    """Response body that counts how many bytes the client actually pulled."""
-
     def __init__(self, total_bytes: int | None, chunk: bytes, pause: float = 0.0) -> None:
         self.pulled = 0
         self._total = total_bytes

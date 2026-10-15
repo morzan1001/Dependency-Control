@@ -1,5 +1,3 @@
-"""Tests for IaC normalizer (KICS)."""
-
 import json
 from pathlib import Path
 
@@ -69,7 +67,6 @@ class TestNormalizeKics:
         assert len(self.agg.findings) == 2
 
     def test_severity_mapping(self):
-        """KICS TRACE maps to INFO."""
         result = {
             "queries": [
                 {

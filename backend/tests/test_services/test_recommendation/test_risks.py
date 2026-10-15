@@ -1,5 +1,3 @@
-"""Tests for risk detection: hotspots, toxic dependencies, and attack surface analysis."""
-
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.aggregation import ResultAggregator
 from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN, MALWARE_REMEDIATION_STEPS
@@ -168,14 +166,12 @@ class TestDetectCriticalHotspotsNotHotspot:
         assert result == []
 
     def test_3_low_vulns_without_critical_or_high_not_hotspot(self):
-        """3 vulns but none CRITICAL/HIGH => critical_high==0 => NOT a hotspot via that path."""
         findings = [
             _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
             _vuln("pkg", "LOW", finding_id="CVE-2024-002"),
             _vuln("pkg", "LOW", finding_id="CVE-2024-003"),
         ]
         result = _hotspots(findings)
-        # No KEV, no malware, no high-EPSS+reachable, vuln_count>=3 but critical_high==0
         assert result == []
 
 
@@ -223,11 +219,8 @@ class TestDetectCriticalHotspotsTop10Limit:
 class TestDetectCriticalHotspotsSorting:
     def test_sorted_malware_first_then_kev_then_risk_score(self):
         findings = [
-            # Package A: high risk_score only (KEV triggers hotspot)
             _vuln("pkg-risk", "CRITICAL", is_kev=True, risk_score=500, finding_id="CVE-2024-001"),
-            # Package B: KEV
             _vuln("pkg-kev", "CRITICAL", is_kev=True, finding_id="CVE-2024-002"),
-            # Package C: malware
             _malware("pkg-malware"),
         ]
         result = _hotspots(findings)
@@ -272,7 +265,6 @@ class TestDetectCriticalHotspotsRemediation:
         assert result[0].action["steps"][0] == "Update pkg to version 2.0 or later"
 
     def test_no_fix_remediation_steps(self):
-        # 3 vulns with critical but no fixed_version
         findings = [
             _vuln("pkg", "CRITICAL", finding_id="CVE-2024-001"),
             _vuln("pkg", "HIGH", finding_id="CVE-2024-002"),
@@ -418,10 +410,8 @@ class TestDetectToxicDependenciesTop5Limit:
 class TestDetectToxicDependenciesSortedByScore:
     def test_sorted_by_total_score_descending(self):
         findings = [
-            # Low-score package: 1 vuln + eol
             _vuln("pkg-low", "LOW", finding_id="CVE-2024-001"),
             _eol("pkg-low"),
-            # High-score package: 1 critical vuln + eol
             _vuln("pkg-high", "CRITICAL", finding_id="CVE-2024-002"),
             _eol("pkg-high"),
         ]

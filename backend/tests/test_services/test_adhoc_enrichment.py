@@ -1,5 +1,3 @@
-"""How the ad-hoc EPSS/KEV stage reports what the enrichment did and where it reached."""
-
 from unittest.mock import AsyncMock
 
 import pytest

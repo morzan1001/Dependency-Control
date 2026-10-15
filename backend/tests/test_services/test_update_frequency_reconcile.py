@@ -1,5 +1,3 @@
-"""Tests for the nightly reconcile of the update-frequency delta ledger."""
-
 import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -29,8 +27,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 PROJECT = "proj-1"
 BRANCH = "main"
-# Relative to now: the reconcile only looks at a rolling window, so a fixed date would
-# quietly walk out of scope.
+# Relative to now: the reconcile only looks at a rolling window, which a fixed date would leave.
 T0 = (datetime.now(tz=timezone.utc) - timedelta(days=10)).replace(microsecond=0)
 
 
@@ -91,7 +88,6 @@ async def _seed_scan(
 
 
 async def _seed_chain(db: FakeDatabase, versions: dict[str, str], *, record: bool = True) -> None:
-    """One scan per entry, each carrying a single package at the given version."""
     for index, (scan_id, version) in enumerate(versions.items()):
         await _seed_scan(db, scan_id, _at(index), [_dep(scan_id, "requests", version)], outdated=("requests",))
     if record:
@@ -101,7 +97,6 @@ async def _seed_chain(db: FakeDatabase, versions: dict[str, str], *, record: boo
 
 @pytest.fixture
 def spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Scan ids handed to the writer, in the order the reconcile handed them over."""
     calls: list[str] = []
 
     async def _record(db: Any, scan_id: str) -> None:
@@ -126,7 +121,6 @@ async def _delta(db: FakeDatabase, scan_id: str) -> dict[str, Any] | None:
 
 
 async def _run_with_probe(db: FakeDatabase, monkeypatch: pytest.MonkeyPatch, probe: Any) -> Any:
-    """Run the reconcile with ``probe`` called while the run holds the lock."""
     real_reconcile = reconcile_module._reconcile
 
     async def _hooked(inner_db: Any) -> Any:
@@ -258,8 +252,7 @@ class TestSkipLink:
         await _seed_project(db)
         await _seed_chain(db, {"p": "1.0.0", "a": "1.1.0", "b": "1.2.0"}, record=False)
         await record_scan_update_delta(db, "p")
-        # b's ingest finds its predecessor before a's delta exists, and a's successor repair
-        # runs before b's delta does.
+        # b's ingest finds its predecessor before a's delta exists; a's successor repair runs before b's delta.
         b_delta, b_outdated = await rollup_module._compute_delta(db, await rollup_module._load_scan(db, "b"))
         await record_scan_update_delta(db, "a")
         await rollup_module._persist(db, b_delta, b_outdated)
@@ -366,9 +359,7 @@ class TestOrphanDelta:
     async def test_a_delta_that_moved_to_another_chain_survives_the_delete(
         self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
     ):
-        """The orphan verdict is made against a census. A re-ingest that rewrites the delta's
-        branch in between has already re-derived it under the new chain, so this run's verdict no
-        longer describes the document it is about to delete."""
+        """A re-ingest that moved the delta to another branch re-derived it, so the census verdict is stale."""
         db = FakeDatabase()
         await _seed_project(db)
         await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
@@ -393,15 +384,12 @@ class TestConcurrentIngest:
     async def test_a_scan_finishing_between_the_two_censuses_keeps_its_delta(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Whichever census runs second decides how the gap reads. Scans-second makes the
-        # newcomer a scan the ledger owes a delta for; ledger-second would make its fresh
-        # delta look unowned, and the repair for that deletes it.
+        # The scan census runs second, so a newcomer reads as owed a delta rather than as an unowned one to delete.
         db = FakeDatabase()
         await _seed_project(db)
         await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
 
-        # Seed after whichever census runs first, so the test pins the ORDER rather than
-        # the hook: scans-first would leave the newcomer's delta unowned and delete it.
+        # Seeded after the first census, so the test pins the order: scans first would delete the newcomer's delta.
         real_scan_census = reconcile_module.window_scan_ids_by_branch
         real_ledger_census = ScanUpdateDeltaRepository.window_ledger_by_branch
         arrived: list[int] = []
@@ -438,8 +426,7 @@ class TestRepairOrder:
     async def test_a_chain_is_derived_oldest_first(self, spy: list[str]):
         db = FakeDatabase()
         await _seed_project(db)
-        # Inserted newest first: the census hands back whatever order the group pushed,
-        # so nothing but the repair sort can put the oldest scan in front.
+        # Inserted newest first, so only the repair sort can put the oldest scan in front.
         for hours, scan_id in reversed(list(enumerate(("s1", "s2", "s3")))):
             await _seed_scan(db, scan_id, _at(hours), [_dep(scan_id, "requests", "1.0.0")])
 
@@ -535,16 +522,14 @@ class TestCaps:
         assert report.resolved == {"orphan": 1}
         assert report.deferred == {"orphan": 1}
         assert len(await db.scan_update_deltas.find({}).to_list(None)) == 1
-        # The delta left behind is the deleted one's successor, but its own scan is gone
-        # too: handing it to the writer would count a repair the writer cannot make.
+        # The leftover successor delta's own scan is gone too, so the writer could not repair it.
         assert spy == []
 
     @pytest.mark.asyncio
     async def test_an_orphan_delete_does_not_spend_the_repair_budget(
         self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
     ):
-        """The repair budget bounds re-derivations, which re-read two dependency sets each; a bulk
-        delete costs nothing like that, so a sweep of orphans must not stall the repairs behind it."""
+        """The repair budget bounds costly re-derivations; a cheap bulk orphan delete must not stall them."""
         db = FakeDatabase()
         await _seed_project(db)
         await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
@@ -649,8 +634,7 @@ class TestLock:
 
         await _run_with_probe(db, monkeypatch, _probe)
 
-        # The shipped pause, not the zero the fixture patches in; the writer's own work
-        # between the pauses comes on top of this floor.
+        # The shipped pause, not the fixture's zero; the writer's own work comes on top of this floor.
         budget = timedelta(seconds=_MAX_REPAIRS * _REPAIR_PAUSE_SECONDS)
         assert held[0]["expires_at"] - held[0]["acquired_at"] >= budget
 

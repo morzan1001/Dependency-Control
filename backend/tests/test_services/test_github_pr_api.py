@@ -1,5 +1,3 @@
-"""GitHubService pull-request and comment API methods."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -62,7 +60,6 @@ def _error_body(message):
 
 
 def _routed_api_get(routes):
-    """An _api_get double keyed by endpoint; an unrouted endpoint behaves as a transport failure."""
     return AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
 
 
@@ -101,8 +98,7 @@ class TestGetPullRequestsForCommit:
 
 
 class TestMergeCommitFallback:
-    """A `pull_request` workflow checks out an ephemeral test-merge commit that GitHub associates with no
-    pull request — it answers 200 with [], never 404. Its parents[1] is the PR head and does resolve."""
+    """A pull_request workflow's test-merge commit maps to no PR (200 with []); its parents[1], the PR head, does."""
 
     def test_empty_result_retries_the_merge_commits_second_parent(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
@@ -188,8 +184,7 @@ class TestMergeCommitFallback:
 
 
 class TestRejectedLookupsAreLoud:
-    """A rejected lookup must not read like "this commit has no pull request": _api_get logs transport
-    exceptions only, so an unlogged 403 or 429 would end at the INFO miss line and mislead the operator."""
+    """_api_get logs transport exceptions only, so an unlogged 403 or 429 would read as "no pull request"."""
 
     def test_a_rejected_direct_lookup_warns_with_endpoint_and_status(self, caplog):
         service = GitHubService(make_github_instance(access_token="ghp-x"))

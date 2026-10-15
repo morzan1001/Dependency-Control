@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.trends."""
-
 import pytest
 
 from app.models.finding import Finding
@@ -51,7 +49,6 @@ def _previous(*docs):
 
 
 def _stored(analyzer, result, scan_id="scan-b"):
-    """What the analysis engine persists for one analyzer result."""
     aggregator = ResultAggregator()
     aggregator.aggregate(analyzer, result)
     records, _ = _prepare_finding_records(aggregator.get_findings(), scan_id, "proj-1", None)
@@ -127,8 +124,6 @@ class TestAnalyzeRegressionsNewHighVuln:
 
 
 class TestAnalyzeRegressionsDeltaThreshold:
-    """More than FINDING_DELTA_THRESHOLD (10) new findings, none of them a critical/high CVE."""
-
     def test_delta_above_threshold_produces_one_low_priority_card(self):
         [rec] = analyze_regressions(_licences([f"lib-{i}" for i in range(12)]), PreviousScan())
         assert rec.priority == Priority.LOW
@@ -142,8 +137,6 @@ class TestAnalyzeRegressionsDeltaThreshold:
 
 
 class TestAnalyzeRegressionsPerAdvisory:
-    """A regression is an advisory the preceding scan did not report on the same artifact."""
-
     def test_same_findings_no_regression(self):
         finding = _vuln()
         assert analyze_regressions([finding], _previous(finding)) == []
@@ -236,8 +229,6 @@ class TestAnalyzeRegressionsPerAdvisory:
 
 
 class TestAnalyzeRegressionsNewCount:
-    """The fallback card counts security findings the previous scan did not report."""
-
     def test_swapped_findings_are_new_although_the_count_is_unchanged(self):
         previous = _licences([f"old-{i}" for i in range(30)], scan_id="scan-a")
         current = _licences([f"new-{i}" for i in range(30)])
@@ -301,7 +292,6 @@ _OVERFLOW_FINDINGS = 600
 
 
 def _scan_vuln(scan_id, cve_id=_CVE_DEFAULT, severity=_SEV_CRITICAL, component=_COMPONENT):
-    """The projection ``iter_vulnerability_identities`` yields, one row per stored finding."""
     return {
         "scan_id": scan_id,
         "component": component,
@@ -331,8 +321,6 @@ class TestAnalyzeRecurringIssuesEmpty:
 
 
 class TestAnalyzeRecurringIssuesThreshold:
-    """A CVE must appear in 3+ scans to be recurring."""
-
     @pytest.mark.asyncio
     async def test_cve_in_two_scans_no_recommendation(self):
         assert analyze_recurring_issues(await _recurrence(_across(2)), _WINDOW_SCANS) == []
@@ -359,8 +347,6 @@ class TestAnalyzeRecurringIssuesThreshold:
 
 
 class TestAnalyzeRecurringIssuesPriority:
-    """Priority depends on whether any recurring CVE is CRITICAL."""
-
     @pytest.mark.asyncio
     async def test_critical_recurring_gives_medium_priority(self):
         rec = analyze_recurring_issues(await _recurrence(_across(3, severity="CRITICAL")), _WINDOW_SCANS)[0]

@@ -1,10 +1,4 @@
-"""Analyzers finish concurrently, so the aggregator sees them in an arbitrary order.
-
-Identical scanner output must therefore produce byte-identical findings regardless of the
-order the results arrive in; otherwise two scans of unchanged code disagree and the scan
-delta fabricates churn. Fixtures mirror real grype/trivy/osv payloads for prod's
-brace-expansion 2.0.2 and stdlib 1.23.12.
-"""
+"""Analyzers finish concurrently, so identical output must aggregate byte-identically in any arrival order."""
 
 import itertools
 import json

@@ -1,5 +1,3 @@
-"""Tests for the GrypeAnalyzer retry policy (mirrors trivy: retries transient failures)."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,20 +10,17 @@ NON_RETRYABLE_STDERR = b"invalid command line argument: --bogus"
 
 
 def _exec_results(*results):
-    """AsyncMock returning each tuple in sequence."""
     return AsyncMock(side_effect=list(results))
 
 
 @pytest.fixture(autouse=True)
 def _no_sleep():
-    """Skip the exponential backoff sleep so tests run fast."""
     with patch("app.services.analyzers.cli_base.asyncio.sleep", new=AsyncMock()):
         yield
 
 
 @pytest.fixture(autouse=True)
 def _stub_temp_io():
-    """Avoid hitting the filesystem during tests."""
     with (
         patch.object(GrypeAnalyzer, "_create_temp_sbom", return_value="/tmp/sbom.json"),
         patch.object(GrypeAnalyzer, "_cleanup_files"),
@@ -67,8 +62,7 @@ class TestGrypeRetryablePatternMatching:
 
     @pytest.mark.parametrize("stderr_bytes", [b"", b"   ", b"\n\t "])
     def test_empty_stderr_is_retryable(self, stderr_bytes):
-        # No stderr on a non-zero exit means grype was killed (signal/OOM) or
-        # silenced (--quiet); retry rather than surface an empty finding.
+        # No stderr on a non-zero exit means grype was killed (signal/OOM) or silenced, so it retries.
         analyzer = GrypeAnalyzer()
         assert analyzer._is_retryable_error(stderr_bytes) is True
 
@@ -127,7 +121,6 @@ class TestGrypeRetryLoop:
 
     @pytest.mark.asyncio
     async def test_retries_on_empty_stderr(self):
-        # Killed/quiet grype -> empty stderr on a non-zero exit must still retry.
         analyzer = GrypeAnalyzer()
         mock_exec = _exec_results(
             (b"", b"", 1),

@@ -1,5 +1,4 @@
-"""db.releases is the record; Scan.is_release only denormalises it, and both writers can lose the
-second of their two writes in either direction."""
+"""Scan.is_release denormalises db.releases, and both writers can lose their second write in either direction."""
 
 from datetime import datetime, timezone
 

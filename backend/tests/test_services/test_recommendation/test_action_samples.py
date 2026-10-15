@@ -1,8 +1,4 @@
-"""Evidence inside a recommendation's action block is what a reader acts on.
-
-Each of these lists is cut to a sample; without the population beside it the sample reads as
-everything the card found, and the card has no chart next to it to disagree with.
-"""
+"""Action lists are samples, so without the population beside them a sample reads as everything the card found."""
 
 import pytest
 
@@ -43,8 +39,7 @@ class TestSampled:
 
 
 def _vulnerability(index):
-    """One record per advisory on the same installed copy, which is how the generator groups
-    the CVEs it lists in the update action."""
+    """One record per advisory on one installed copy, the grouping the update action lists CVEs by."""
     cve = f"CVE-2021-{index:05d}"
     return {
         "type": "vulnerability",
@@ -237,7 +232,6 @@ def test_a_package_action_names_how_many_packages_it_sampled(card):
 
 
 def _trivy_findings_marked(**marks):
-    """One advisory per package, marked the way enrichment marks it."""
     vulnerabilities = [
         {
             "VulnerabilityID": f"CVE-2021-{i:05d}",

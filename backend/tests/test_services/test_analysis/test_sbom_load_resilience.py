@@ -1,5 +1,3 @@
-"""SBOM GridFS load resilience: primary read with bounded retry."""
-
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock

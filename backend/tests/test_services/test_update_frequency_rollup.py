@@ -1,5 +1,3 @@
-"""Tests for the per-scan update-frequency rollup writer."""
-
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -330,8 +328,7 @@ class TestOutdatedMeasurement:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert doc["outdated_count"] == 2
-        # Without an earlier measurement there is nothing to subtract, so the
-        # fold sees the whole set instead of losing it from the denominator.
+        # With no earlier measurement to subtract, the fold sees the whole set and keeps the denominator.
         assert doc["outdated_added"] == ["flask", "requests"]
         # Whether the predecessor considered them outdated is unknown.
         assert doc["outdated_resolved"] == []
@@ -629,8 +626,7 @@ class TestOutOfOrderArrival:
 
 
 class TestReIngest:
-    """A re-ingest rewrites the dependencies of an existing scan, so the diff its
-    successor recorded describes a comparison that no longer happened."""
+    """A re-ingest rewrites a scan's dependencies, so its successor's recorded diff describes a stale comparison."""
 
     @pytest.mark.asyncio
     async def test_a_rewritten_predecessor_invalidates_the_successors_diff(self):
@@ -719,8 +715,7 @@ class TestSkippedScans:
 
 
 class TestScanLostItsUsableStatus:
-    """A re-ingest deletes the dependencies before rewriting them, so a scan that ends
-    failed can be left with a delta counting dependencies that no longer exist."""
+    """A re-ingest deletes dependencies before rewriting them, so a failed one can leave a delta counting ghosts."""
 
     @pytest.mark.asyncio
     async def test_failed_re_ingest_drops_the_delta_and_repoints_the_successor(self):
@@ -758,11 +753,7 @@ class TestScanLostItsUsableStatus:
 
 
 class _failing_dependency_reads:
-    """Make ``dependencies`` reads fail, the way a server error would.
-
-    ``only_scan`` narrows the failure to one scan, which is how a single delta
-    ends up as an error document while the rest of the branch stays computable.
-    """
+    """only_scan narrows the failure to one scan, leaving one error delta among computable ones."""
 
     def __init__(self, db: FakeDatabase, only_scan: str | None = None):
         self._collection = db.dependencies

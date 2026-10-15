@@ -1,9 +1,4 @@
-"""Which subscriptions a fired event actually reaches, and what counts as delivered.
-
-A subscription that was switched off, or one still inside its circuit-breaker cool-down, must not
-be dialled; and a rejected POST must not be filed away as a success, because the delivery log and
-the consecutive-failure counter are the only places an operator can see that a hook is broken.
-"""
+"""The delivery log and failure counter are an operator's only sign of a broken hook, so a rejected POST must fail."""
 
 from __future__ import annotations
 
@@ -335,8 +330,6 @@ class TestDeliveryHeaders:
 
 
 class TestTestDeliveryIsRecorded:
-    """A test tells the row and the delivery log what the receiver answered."""
-
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("status", "stamped"), [(200, "last_triggered_at"), (400, "last_failure_at")])
     async def test_the_receivers_answer_lands_on_the_webhook_and_in_the_log(self, status, stamped):

@@ -1,5 +1,3 @@
-"""Tests for archive service (archive_scan, restore_scan)."""
-
 import hashlib
 import json
 import zlib
@@ -19,13 +17,7 @@ MODULE = "app.services.archive"
 _NO_IDS: list[str] = []
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _make_scan_doc(**overrides):
-    """Create a minimal scan document for testing."""
     doc = {
         "_id": "scan-1",
         "project_id": "proj-1",
@@ -109,7 +101,6 @@ def _make_mock_db(
 
 
 def _patch_repos(lock_acquires: bool = True, existing_metadata=None):
-    """Returns a contextmanager that patches the metadata repo and lock repo."""
     from contextlib import contextmanager
 
     @contextmanager
@@ -130,11 +121,6 @@ def _patch_repos(lock_acquires: bool = True, existing_metadata=None):
     return cm
 
 
-# ---------------------------------------------------------------------------
-# archive_scan tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_archive_scan_uploads_and_inserts_metadata(archive_env):
     scan_doc = _make_scan_doc()
@@ -147,12 +133,10 @@ async def test_archive_scan_uploads_and_inserts_metadata(archive_env):
 
     assert result is not None
     assert result.scan_id == "scan-1"
-    # An object was uploaded to S3
     assert len(archive_env.objects) == 1
     key = next(iter(archive_env.objects))
     assert key.startswith("proj-1/scan-1-")
     assert key.endswith(".bundle")
-    # Metadata was created
     RepoCls.return_value.create.assert_awaited_once()
 
 
@@ -204,7 +188,6 @@ async def test_archive_key_carries_the_archive_time(archive_env):
 
 @pytest.mark.asyncio
 async def test_archive_scan_includes_crypto_assets(archive_env):
-    """crypto_assets must be streamed into the bundle alongside findings/deps."""
     scan_doc = _make_scan_doc()
     crypto_assets = [
         {"_id": "ca1", "scan_id": "scan-1", "name": "MD5", "primitive": "hash"},
@@ -216,7 +199,6 @@ async def test_archive_scan_includes_crypto_assets(archive_env):
         result = await archive_scan(db, "scan-1")
 
     assert result is not None
-    # The collection was queried by archive_scan with the scan_id filter
     db.crypto_assets.find.assert_called_once()
     call = db.crypto_assets.find.call_args
     assert call.args[0] == {"scan_id": "scan-1"}
@@ -245,7 +227,6 @@ async def test_archive_scan_returns_existing_metadata_if_already_archived(archiv
         result = await archive_scan(db, "scan-1")
 
     assert result is existing
-    # No upload happens
     assert archive_env.objects == {}
     RepoCls.return_value.create.assert_not_awaited()
 
@@ -264,7 +245,6 @@ async def test_archive_scan_returns_none_when_scan_not_found(archive_env):
 
 @pytest.mark.asyncio
 async def test_archive_scan_aborts_s3_on_failure(archive_env):
-    """When an S3 upload_part fails, the multipart upload must be aborted and no metadata written."""
     archive_env.fail_next_upload_part = True
     # Big enough to trigger multipart (>5 MiB)
     big_findings = [{"_id": f"f{i}", "scan_id": "scan-1", "severity": "LOW", "blob": "x" * 1000} for i in range(20000)]
@@ -279,14 +259,8 @@ async def test_archive_scan_aborts_s3_on_failure(archive_env):
     RepoCls.return_value.create.assert_not_awaited()
 
 
-# ---------------------------------------------------------------------------
-# restore_scan tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_restore_scan_roundtrip(archive_env):
-    """Archive a scan, then restore it. All collections must be re-inserted."""
     scan_doc = _make_scan_doc()
     findings = [
         {"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"},
@@ -295,15 +269,12 @@ async def test_restore_scan_roundtrip(archive_env):
     dependencies = [{"_id": "d1", "scan_id": "scan-1", "name": "lib"}]
     db = _make_mock_db(scan_doc=scan_doc, findings=findings, dependencies=dependencies)
 
-    # 1. Archive
     with _patch_repos()() as (RepoCls, _):
         meta = await archive_scan(db, "scan-1")
         assert meta is not None
 
-    # 2. Restore — simulate that the scan no longer exists, metadata still does
     db.scans.find_one = AsyncMock(return_value=None)
 
-    # Repo returns the metadata we just created
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
         patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
@@ -318,11 +289,9 @@ async def test_restore_scan_roundtrip(archive_env):
 
     assert result is not None
     assert result.scan_id == "scan-1"
-    # Scan was reinserted (with pinned=True)
     db.scans.insert_one.assert_awaited()
     inserted = db.scans.insert_one.await_args.args[0]
     assert inserted["pinned"] is True
-    # Findings + dependencies were reinserted
     db.findings.insert_many.assert_awaited()
     db.dependencies.insert_many.assert_awaited()
 
@@ -347,7 +316,6 @@ async def test_restore_scan_aborts_when_lock_held(archive_env):
 
 @pytest.mark.asyncio
 async def test_restore_scan_aborts_when_scan_already_exists(archive_env):
-    """If the scan exists in MongoDB, restore must abort to avoid partial state."""
     meta = _make_archive_metadata()
     existing_scan = _make_scan_doc()
     db = _make_mock_db(scan_doc=existing_scan)
@@ -385,8 +353,6 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
 
 @pytest.mark.asyncio
 async def test_replay_labels_mongo_error_not_as_s3_error():
-    """A PyMongoError during replay must produce reason=UNKNOWN, not S3_ERROR."""
-
     from pymongo.errors import OperationFailure
 
     from app.services.archive import _replay_bundle
@@ -410,14 +376,11 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
 @pytest.mark.asyncio
 async def test_replay_labels_invalid_tag_as_encryption():
-    """An InvalidTag during replay (e.g. wrong key) must produce reason=ENCRYPTION."""
     from cryptography.exceptions import InvalidTag
 
     from app.services.archive import _replay_bundle
 
     class _RaisingStream:
-        """Async iterator that raises InvalidTag on the first iteration."""
-
         def __aiter__(self):
             return self
 
@@ -445,17 +408,14 @@ async def test_replay_labels_a_broken_download_as_s3_error():
 
 @pytest.mark.asyncio
 async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
-    """S3 delete failure must NOT leave a zombie metadata record."""
     scan_doc = _make_scan_doc()
     findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
     db = _make_mock_db(scan_doc=scan_doc, findings=findings)
 
-    # 1. Archive normally
     with _patch_repos()() as (RepoCls, _):
         meta = await archive_scan(db, "scan-1")
         assert meta is not None
 
-    # 2. Set up restore with: scan doesn't exist, metadata exists, S3 DELETE will fail
     db.scans.find_one = AsyncMock(return_value=None)
 
     delete_metadata = AsyncMock(return_value=True)
@@ -473,16 +433,15 @@ async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
 
         result = await restore_scan(db, "scan-1")
 
-    assert result is not None  # restore is still successful
+    assert result is not None
     delete_metadata.assert_awaited_once_with("scan-1")
 
 
 @pytest.mark.asyncio
 async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, monkeypatch):
-    """When _replay_bundle fails, partial scan + collections must be cleaned up."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
-    db.scans.find_one = AsyncMock(return_value=None)  # scan not yet present
+    db.scans.find_one = AsyncMock(return_value=None)
     db.scans.delete_one = AsyncMock()
     db.findings.delete_many = AsyncMock()
     db.finding_records.delete_many = AsyncMock()
@@ -491,12 +450,10 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
     db.callgraphs.delete_many = AsyncMock()
     db.crypto_assets.delete_many = AsyncMock()
 
-    # Force _replay_bundle to return a failure reason
     monkeypatch.setattr(
         f"{MODULE}._replay_bundle",
         AsyncMock(return_value=("integrity", ["scans"])),
     )
-    # Bypass the S3 stream construction
     monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     with (
@@ -510,8 +467,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
 
         result = await restore_scan(db, "scan-1")
 
-    assert result is None  # failure
-    # Rollback was attempted across the touched collections
+    assert result is None
     db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
     db.findings.delete_many.assert_awaited()
     db.dependencies.delete_many.assert_awaited()
@@ -519,12 +475,10 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
 
 @pytest.mark.asyncio
 async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, monkeypatch):
-    """Losing the metadata insert counts ALREADY_EXISTS, not UNKNOWN, and deletes this archive's upload."""
     from pymongo.errors import DuplicateKeyError
 
     from app.core.metrics import archive_failures_total
 
-    # Capture which reason label was used
     seen_reasons: list[str] = []
     orig_labels = archive_failures_total.labels
 
@@ -594,7 +548,6 @@ async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_en
 
 @pytest.mark.asyncio
 async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypatch):
-    """A failed metadata delete after a restore still reports success and keeps the bundle the metadata points at."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
@@ -630,7 +583,7 @@ async def _aiter(items):
 
 @pytest.mark.asyncio
 async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
-    """A GridFS read failure must fail the archive, not silently drop the SBOM and let housekeeping delete the source scan."""
+    """Dropping an unreadable SBOM silently would let housekeeping delete the source scan."""
     scan_doc = _make_scan_doc(
         sbom_refs=[
             {
@@ -657,7 +610,6 @@ async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
     assert result is None
     # No metadata written -> housekeeping will NOT delete the source scan.
     RepoCls.return_value.create.assert_not_awaited()
-    # The failed multipart upload was aborted (nothing left in S3).
     assert archive_env.objects == {}
 
 
@@ -681,7 +633,7 @@ async def test_an_encrypted_archive_restores_its_findings(archive_env, monkeypat
 
 @pytest.mark.asyncio
 async def test_restore_succeeds_when_encryption_flag_toggled_after_plaintext_archive(archive_env, monkeypatch):
-    """Restore must sniff the bundle, not the live global flag: a plaintext bundle must still restore after encryption is enabled."""
+    """Restore sniffs the bundle, not the live flag, so a plaintext bundle restores after encryption is enabled."""
     scan_doc = _make_scan_doc()
     findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
     db = _make_mock_db(scan_doc=scan_doc, findings=findings)
@@ -714,7 +666,7 @@ async def test_restore_succeeds_when_encryption_flag_toggled_after_plaintext_arc
 
 @pytest.mark.asyncio
 async def test_replay_rejects_unknown_collection_marker():
-    """A marker naming a non-allowlisted collection must abort: the footer is a plain sha256 (not HMAC), so a crafted marker must not be replayed into arbitrary collections."""
+    """The footer is a plain sha256, not an HMAC, so a crafted marker must not reach a collection off the allowlist."""
     from app.services.archive import _replay_bundle
     from app.services.archive_bundle import BundleFrames, BundleStats
 
@@ -731,13 +683,11 @@ async def test_replay_rejects_unknown_collection_marker():
     reason, _ = await _replay_bundle(db, "scan-1", bundle())
 
     assert reason == "integrity"
-    # Nothing was written into the forbidden collection.
     db.users.insert_many.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_replay_maps_bad_version_to_version_mismatch():
-    """An unsupported header version must surface as VERSION_MISMATCH via the reader's ValueError."""
     from app.services.archive import _replay_bundle
 
     header = json.dumps({"version": 99, "scan": {"_id": "x"}}).encode() + b"\n"

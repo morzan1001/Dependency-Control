@@ -1,5 +1,3 @@
-"""Registry fan-out is one bounded gather: at most ``limit`` lookups in flight and no idle pauses."""
-
 import asyncio
 
 import pytest

@@ -38,13 +38,11 @@ async def test_write_then_read_roundtrip():
 
     raw = await _collect(gen())
 
-    # Stats updated as we write
     assert stats.findings == 2
     assert stats.dependencies == 1
     assert stats.critical_findings == 1
     assert stats.high_findings == 1
 
-    # Round-trip read
     parsed_header = None
     rows_by_coll: dict[str, list[dict]] = {}
     footer = None
@@ -73,7 +71,6 @@ async def test_write_then_read_roundtrip():
 
 @pytest.mark.asyncio
 async def test_write_includes_crypto_assets_in_bundle_and_stats():
-    """crypto_assets must round-trip through the bundle and bump the stats counter."""
     from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
 
     stats = BundleStats()
@@ -118,7 +115,7 @@ async def test_write_includes_crypto_assets_in_bundle_and_stats():
 
 @pytest.mark.asyncio
 async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
-    """Restore must get real BSON datetime/ObjectId back, not strings, so date-range filters and created_at sorts keep working."""
+    """Restored dates and ObjectIds must be BSON types, not strings, or date-range filters and sorts break."""
     import datetime as dt
 
     from bson import ObjectId
@@ -159,11 +156,9 @@ async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
 
     assert header is not None
     restored_scan = header["scan"]
-    # Datetime fields come back as real datetimes so $gte/$lte/sort work.
     assert isinstance(restored_scan["created_at"], dt.datetime)
     assert restored_scan["created_at"] == created_utc_naive
     assert isinstance(restored_scan["completed_at"], dt.datetime)
-    # _id comes back as a real ObjectId.
     assert isinstance(restored_scan["_id"], ObjectId)
     assert restored_scan["_id"] == scan_oid
 
@@ -192,7 +187,6 @@ async def test_read_rejects_unknown_version():
 async def test_read_detects_integrity_failure():
     from app.services.archive_bundle import read_bundle_frames
 
-    # Build a valid prefix but with a footer SHA-256 that doesn't match
     header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {}}).encode() + b"\n"
     coll = json.dumps({"collection": "findings"}).encode() + b"\n"
     doc = json.dumps({"_id": "f1"}).encode() + b"\n"
@@ -242,7 +236,6 @@ async def test_read_raises_when_footer_missing():
     header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}).encode() + b"\n"
     marker = json.dumps({"collection": "findings"}).encode() + b"\n"
     doc = json.dumps({"_id": "f1"}).encode() + b"\n"
-    # NO footer line at the end
     truncated = header + marker + doc
 
     async def source():

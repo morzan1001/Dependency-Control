@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.graph."""
-
 from app.core.constants import MAX_DEPENDENCY_DEPTH
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.graph import (
@@ -245,7 +243,6 @@ def _chain(length):
 
 
 def _depths(deps, threshold=1):
-    """Depth per reported package, read off the card's population."""
     [rec] = [r for r in analyze_deep_dependency_chains(deps, max_dependency_depth=threshold) if "max depth" in r.title]
     return {c.split("@")[0]: int(c.split("depth: ")[1].rstrip(")")) for c in rec.affected_components}
 
@@ -349,8 +346,6 @@ class TestAnalyzeDuplicatePackagesEmpty:
 
 
 class TestAnalyzeDuplicatePackagesFound:
-    """Two packages from the same SIMILAR_PACKAGE_GROUPS category trigger a duplicate."""
-
     def test_http_clients_duplicate(self):
         deps = [
             _dep("axios", version="1.0", direct=True),

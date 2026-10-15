@@ -1,5 +1,3 @@
-"""The parser is the only component source: analyzers get its list, and an unparseable SBOM runs only the CLI scanners."""
-
 import json
 import threading
 from pathlib import Path

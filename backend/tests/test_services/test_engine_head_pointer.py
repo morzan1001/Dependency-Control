@@ -1,8 +1,4 @@
-"""Finalizing a scan re-derives the project's head through the repository's head rule and caches it.
-
-``latest_scan_id`` and ``project.stats`` are the head rule of ``app/repositories/scans.py`` cached,
-so every case here asserts that the cache equals what the rule derives from the stored scans.
-"""
+"""latest_scan_id and project.stats cache the head rule, so each case compares them with what the rule derives."""
 
 from datetime import datetime, timedelta, timezone
 

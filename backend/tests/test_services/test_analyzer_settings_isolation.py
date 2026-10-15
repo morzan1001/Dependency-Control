@@ -1,5 +1,4 @@
-"""An analyzer binds the calling project's settings to itself, so the registry must not share one
-instance across scans: two overlapping scans would otherwise persist each other's severities."""
+"""Analyzers bind the calling project's settings to themselves, so overlapping scans must not share an instance."""
 
 import asyncio
 from datetime import datetime, timedelta, timezone

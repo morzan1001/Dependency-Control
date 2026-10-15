@@ -1,5 +1,3 @@
-"""A restore counts as finished only once every write landed while it still owned the scan's restore lock."""
-
 import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
@@ -22,7 +20,6 @@ _ARCHIVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
 async def _archived_scan(db: FakeDatabase) -> None:
-    """Archive a scan and drop it from MongoDB, as retention housekeeping does."""
     await db.scans.insert_one(
         {
             "_id": SCAN_ID,
@@ -126,8 +123,6 @@ async def test_a_retry_after_a_crashed_restore_restores_the_scan(archive_env):
 
 
 class _FirstDependenciesBatchStall:
-    """Holds the first dependencies batch until released, the way a slow write keeps a big restore busy."""
-
     def __init__(self, db: FakeDatabase, fails_with: Exception | None = None):
         self._insert_many = db.dependencies.insert_many
         self._fails_with = fails_with

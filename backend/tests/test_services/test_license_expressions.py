@@ -1,5 +1,3 @@
-"""One SPDX expression grammar from SBOM licence entries to the licence verdict."""
-
 import asyncio
 import time
 from typing import Any

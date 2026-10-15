@@ -1,5 +1,3 @@
-"""Tests for upstream release-history analytics (release-cadence metrics)."""
-
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -23,8 +21,6 @@ from app.services.release_history import (
 
 
 class _Store(dict):
-    """cache_service's batch calls over a dict, remembering the TTL each write asked for."""
-
     async def mget(self, keys: list[str]) -> dict[str, Any]:
         return {key: self.get(key) for key in keys}
 
@@ -42,7 +38,6 @@ def cache(monkeypatch: pytest.MonkeyPatch) -> _Store:
 
 
 def _serve(monkeypatch: pytest.MonkeyPatch, answer: Callable[[str], dict[str, Any] | int]) -> list[str]:
-    """Answer each deps.dev request with ``answer(url)``: a payload, or a status code to fail with."""
     urls: list[str] = []
 
     def _handle(request: httpx.Request) -> httpx.Response:
@@ -73,7 +68,6 @@ _REF = datetime(2026, 6, 1, tzinfo=timezone.utc)
 
 
 def _ri(years_ago: float = 0, days_ago: float = 0, version: str = "1.0.0") -> ReleaseInfo:
-    """Build a ReleaseInfo `years_ago` years and `days_ago` days before _REF."""
     delta = timedelta(days=years_ago * 365.25 + days_ago)
     return ReleaseInfo(version=version, published_at=_REF - delta)
 
@@ -87,7 +81,7 @@ class TestReleasesInLastNDays:
             _ri(days_ago=10),
             _ri(days_ago=100),
             _ri(days_ago=400),  # outside 365-day window
-            _ri(days_ago=730),  # outside
+            _ri(days_ago=730),
         ]
         assert releases_in_last_n_days(releases, window_days=365, ref=_REF) == 2
 
@@ -134,8 +128,7 @@ class TestComputeAdoptionLatencies:
         assert result == []
 
     def test_latency_for_observed_versions(self):
-        # pkg-a v1.1.0 published 30 days before _REF; first scan that saw it 5 days before _REF
-        # -> adoption latency = 25 days
+        # Published 30 days before _REF, first scanned 5 days before it: an adoption latency of 25 days.
         history = {
             ("pypi", "pkg-a"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=400)),
@@ -163,8 +156,7 @@ class TestAggregateUpstreamMetrics:
         assert result.adoption_latency_days_median is None
 
     def test_aggregates_across_packages(self):
-        # pkg-a: 3 releases in last year, gap median ~60d, last 30 days ago
-        # pkg-b: 1 release in last year, no gap median, last 90 days ago
+        # pkg-a: 3 releases this year, gaps ~60d, last 30 days ago; pkg-b: 1 release, last 90 days ago.
         history = {
             ("pypi", "pkg-a"): [
                 _ri(days_ago=180),
@@ -182,8 +174,7 @@ class TestAggregateUpstreamMetrics:
         assert result.upstream_releases_last_12m_median is not None
         assert abs(result.upstream_releases_last_12m_median - 2.5) < 0.01
 
-        # days between releases: pkg-a has gaps {60, 60, 30} -> median 60. pkg-b has none.
-        # Aggregate median across packages-with-data = 60.
+        # pkg-a's gaps {60, 60, 30} give median 60; pkg-b has none, so the aggregate median is 60.
         assert result.upstream_days_between_releases_median is not None
         assert abs(result.upstream_days_between_releases_median - 60.0) < 0.01
 
@@ -285,8 +276,7 @@ class TestAggregateUpstreamMetrics:
         assert abs(result.upstream_days_between_releases_median - 100.0) < 1.0
 
     def test_days_since_latest_excludes_prerelease(self):
-        # Latest stable is 200 days old; a beta released yesterday must
-        # not pretend the package is "actively maintained".
+        # The latest stable is 200 days old; yesterday's beta must not make the package look maintained.
         history = {
             ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=200)),
@@ -297,9 +287,7 @@ class TestAggregateUpstreamMetrics:
         assert result.upstream_days_since_latest_release_median == 200
 
     def test_adoption_latency_includes_prereleases(self):
-        # If the team adopted a beta, the adoption_latency must measure
-        # the right thing — the upstream publish date of *that* beta,
-        # not a hypothetical filtered-out release.
+        # An adopted beta measures latency from that beta's publish date, not from a filtered-out release.
         history = {
             ("pypi", "pkg"): [
                 ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=20)),
@@ -310,8 +298,7 @@ class TestAggregateUpstreamMetrics:
         assert result.adoption_latency_days_median == 15
 
     def test_parse_deps_dev_skips_versions_without_published_at(self):
-        # Real-world deps.dev responses occasionally omit publishedAt.
-        # Those entries must be dropped; valid ones kept.
+        # deps.dev occasionally omits publishedAt; such entries are dropped, valid ones kept.
         payload = {
             "versions": [
                 {
@@ -320,7 +307,6 @@ class TestAggregateUpstreamMetrics:
                 },
                 {
                     "versionKey": {"version": "1.0.1"},
-                    # publishedAt missing
                 },
                 {
                     "versionKey": {"version": "1.0.2"},
@@ -332,7 +318,7 @@ class TestAggregateUpstreamMetrics:
         versions = sorted(r.version for r in releases)
         assert versions == ["1.0.0", "1.0.2"]
         for r in releases:
-            assert r.published_at.tzinfo is not None  # must be timezone-aware
+            assert r.published_at.tzinfo is not None
 
     def test_parse_deps_dev_handles_empty_payload(self):
         assert parse_deps_dev_response({}) == []
@@ -355,8 +341,6 @@ class TestAggregateUpstreamMetrics:
 
 
 class TestDepsDevFetcher:
-    """The fetcher as the update-frequency view runs it: the cache first, deps.dev for the rest."""
-
     def test_a_cache_miss_is_fetched_parsed_and_cached(self, monkeypatch, cache):
         urls = _serve(monkeypatch, lambda _url: _dated("1.0.0", "1.1.0"))
 
@@ -427,8 +411,6 @@ class TestDepsDevFetcher:
 
 
 class TestEcosystemKeyingNoConflation:
-    """Keying history/observations by (system, name) keeps same-named packages in different ecosystems separate."""
-
     def test_an_observation_never_borrows_another_ecosystems_publish_date(self):
         history = {
             ("npm", "chalk"): [ReleaseInfo(version="5.3.0", published_at=_REF - timedelta(days=300))],
@@ -437,8 +419,7 @@ class TestEcosystemKeyingNoConflation:
         assert compute_adoption_latencies(history, [("npm", "chalk", "0.1.0", _REF)]) == []
 
     def test_aggregate_counts_both_ecosystems_of_same_name(self):
-        # Cadence aggregation iterates history values; with (system, name) keys
-        # both same-named packages contribute instead of one clobbering the other.
+        # With (system, name) keys both same-named packages contribute instead of one clobbering the other.
         history = {
             ("npm", "foo"): [_ri(days_ago=30), _ri(days_ago=10)],
             ("pypi", "foo"): [_ri(days_ago=200)],
@@ -449,8 +430,7 @@ class TestEcosystemKeyingNoConflation:
         assert abs(result.upstream_releases_last_12m_median - 1.5) < 0.01
 
     def test_adoption_latency_disambiguates_by_system(self):
-        # Same name+version in two ecosystems, published on different dates.
-        # A system-aware (4-tuple) observation must match the RIGHT ecosystem.
+        # One name@version in two ecosystems, published on different dates; each observation matches its own.
         history = {
             ("npm", "foo"): [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=50))],
             ("pypi", "foo"): [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=10))],

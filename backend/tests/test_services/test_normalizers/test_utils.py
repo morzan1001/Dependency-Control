@@ -1,5 +1,3 @@
-"""Tests for normalizer utility functions."""
-
 from app.models.finding import Severity
 from app.services.normalizers.utils import (
     build_finding_id,
@@ -194,8 +192,7 @@ class TestExtractCvss:
         assert score == 6.5
 
     def test_source_priority_redhat_over_ghsa(self):
-        """The order of the sources, not the order the scanner happened to emit them in, decides
-        which CVSS reaches the risk score."""
+        """Source order, not emission order, decides which CVSS reaches the risk score."""
         data = {
             "ghsa": {"V3Score": 6.5, "V3Vector": "GHSA"},
             "redhat": {"V3Score": 7.0, "V3Vector": "RH"},
@@ -286,7 +283,6 @@ class TestExtractGrypeCvss:
         assert score is None
 
     def test_version_3_10_vs_3_2_picks_higher(self):
-        """Version 3.10 must be picked over 3.2 (numeric, not lexicographic, comparison)."""
         cvss_list = [
             {"version": "3.2", "metrics": {"baseScore": 5.0}, "vector": "V32"},
             {"version": "3.10", "metrics": {"baseScore": 9.0}, "vector": "V310"},
@@ -298,8 +294,7 @@ class TestExtractGrypeCvss:
         )
 
     def test_a_tie_on_version_keeps_the_first_block(self):
-        """Grype emits one block per source at the same CVSS version; the pick has to be the one
-        it listed first rather than whichever vendor happens to come last."""
+        """Grype emits one block per source at one CVSS version, so the first listed must win, not the last vendor."""
         cvss_list = [
             {"version": "3.1", "metrics": {"baseScore": 9.8}, "vector": "FIRST"},
             {"version": "3.1", "metrics": {"baseScore": 4.0}, "vector": "LAST"},

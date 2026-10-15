@@ -1,10 +1,4 @@
-"""No CLI scanner outlives the run that started it.
-
-``cli_timeout`` is awaited inside the analyzer's own coroutine, so a caller that cancels the run —
-the ad-hoc deadline, a worker shutdown — cancels the ceiling along with it and leaves the scanner
-bounded only by the tool deciding to exit. Both analyzers that fork are covered: the shared
-``_execute_command`` every CLI analyzer runs through, and Trivy's syft conversion beside it.
-"""
+"""cli_timeout is awaited inside the analyzer's coroutine, so cancelling the run cancels the ceiling with it."""
 
 import asyncio
 import json
@@ -17,8 +11,7 @@ from app.schemas.sbom import SBOMFormat
 from app.services.analyzers.grype import GrypeAnalyzer
 from app.services.analyzers.trivy import TrivyAnalyzer
 
-# Stands in for a scanner that has not finished yet: the real binaries are absent here and the
-# image's are not reproducible, and what these assert is the lifetime, not the output.
+# Stands in for an unfinished scanner: the real binaries are absent and the assertion is about lifetime.
 _HANGING_SCANNER = ["sleep", "400"]
 _SCALED_TIMEOUT = 0.3
 _CANCEL_AFTER_SECONDS = 0.3
@@ -33,7 +26,6 @@ _FAILING_CONVERTER = ["sh", "-c", "echo 'unknown SBOM format' >&2; exit 1"]
 
 
 def _record_and_hang(monkeypatch: pytest.MonkeyPatch, spawned: list, stand_in: list[str] = _HANGING_SCANNER) -> None:
-    """Every subprocess the analyzer starts becomes the stand-in, hanging by default, and is handed back."""
     start_process = asyncio.create_subprocess_exec
 
     async def _stand_in(*_args, **kwargs):
@@ -73,8 +65,7 @@ async def test_the_tools_own_timeout_still_ends_the_scanner_when_nothing_cancels
 
 @pytest.mark.asyncio
 async def test_a_syft_conversion_that_never_finishes_is_bounded_and_the_scan_goes_on(monkeypatch):
-    """Trivy reads the posted format well enough to continue, so a stuck converter is worth
-    abandoning rather than waiting out."""
+    """Trivy reads the posted format well enough to continue, so a stuck converter is abandoned, not waited out."""
     spawned: list = []
     _record_and_hang(monkeypatch, spawned)
     analyzer = TrivyAnalyzer()

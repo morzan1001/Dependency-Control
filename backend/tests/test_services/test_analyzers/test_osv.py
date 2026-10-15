@@ -1,5 +1,3 @@
-"""Unit tests for the OSV analyzer's pure helpers (CVSS-score extraction, withdrawn handling, per-component data)."""
-
 from typing import Any
 
 import pytest
@@ -43,8 +41,6 @@ def _without_purls(record: dict[str, Any]) -> dict[str, Any]:
 
 
 class TestParseCvssScore:
-    """_parse_cvss_score: numeric scores pass through, vectors are scored."""
-
     def setup_method(self):
         self.analyzer = OSVAnalyzer()
 
@@ -72,8 +68,6 @@ class TestParseCvssScore:
 
 
 class TestWithdrawnVulnerabilities:
-    """Vulnerabilities carrying a `withdrawn` timestamp are dropped."""
-
     def setup_method(self):
         self.analyzer = OSVAnalyzer()
 
@@ -106,8 +100,6 @@ class TestWithdrawnVulnerabilities:
 
 
 class TestNormalizedEntryShape:
-    """The fields normalize_osv reads, resolved from the raw record."""
-
     def test_an_entry_carries_the_resolved_fields_of_the_record(self):
         assert _normalized(DJANGO_REDOS, _DJANGO_4_2_0) == {
             "id": "GHSA-vm8q-m57g-pff3",
@@ -143,8 +135,6 @@ class TestNormalizedEntryShape:
 
 
 class TestFixedVersion:
-    """The fix closing the affected interval the installed version is in, from the queried package's entries."""
-
     @pytest.mark.parametrize(
         ("record", "query", "expected"),
         [
@@ -239,7 +229,6 @@ class TestCvssVersionAwareSeverity:
     @pytest.mark.parametrize(
         ("severity_array", "expected"),
         [
-            # v2 spec: 7.0-10.0 = HIGH; there is no CRITICAL bucket.
             pytest.param([{"type": "CVSS_V2", "score": "9.5"}], "HIGH", id="v2-top-score-is-high"),
             pytest.param([{"type": "CVSS_V3", "score": "9.5"}], "CRITICAL", id="v3-critical-score"),
             # Both v2 and v3 present: prefer the newer standard -> 5.0 -> MEDIUM.
@@ -267,8 +256,7 @@ class TestCvssVersionAwareSeverity:
 
 
 class TestParseCvssScoreNonFinite:
-    """float() accepts "nan"/"inf"; NaN survives _cvss_to_severity's clamp as 10.0 because no
-    comparison against it is true, so it would land in CRITICAL despite the clamp."""
+    """float() accepts "nan", and NaN passes the clamp because no comparison with it is true, landing in CRITICAL."""
 
     @pytest.mark.parametrize("score", ["nan", "NaN", "inf", "-inf", "infinity"])
     def test_non_finite_scores_do_not_produce_a_severity(self, score):
@@ -284,8 +272,7 @@ class TestParseCvssScoreNonFinite:
 
 
 class TestV4OnlyRecords:
-    """A live census of 369 OSV records fetched for production findings found 28 rated only by
-    a CVSS:4.0 vector with no database_specific.severity — 28 of the 44 that derived UNKNOWN."""
+    """Production OSV records exist that are rated only by a CVSS:4.0 vector, with no database_specific.severity."""
 
     @pytest.mark.parametrize(
         ("record", "expected"),

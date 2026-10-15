@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.licenses."""
-
 import pytest
 
 from app.schemas.recommendation import Priority, RecommendationType
@@ -237,7 +235,7 @@ async def _analyzed(components, settings):
 
 
 class TestProcessLicensesPolicyAccepted:
-    """INFO is the evaluator's verdict for an outcome the policy accepts; only the undeterminable licence needs action."""
+    """INFO is the verdict for an outcome the policy accepts; only the undeterminable licence needs action."""
 
     @pytest.mark.asyncio
     async def test_licences_the_policy_accepted_produce_no_card(self):
@@ -269,9 +267,6 @@ class TestProcessLicensesPolicyAccepted:
         assert rec.priority == Priority.LOW
         assert rec.impact["total"] == 1
         assert rec.action["problematic_licenses"] == [UNDETERMINED_LICENSE_ID]
-
-
-# --- License Drift Detection ---
 
 
 async def _stored(*components):

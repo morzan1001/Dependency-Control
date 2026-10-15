@@ -1,5 +1,3 @@
-"""Trivy results are stored as the scanner wrote them; Grype's keep only the match keys normalize_grype reads."""
-
 import asyncio
 import json
 import os

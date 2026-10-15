@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.insights."""
-
 import pytest
 
 from app.schemas.recommendation import Priority, RecommendationType
@@ -34,8 +32,7 @@ def _quality_finding(
     has_maintenance_issues=None,
 ):
     critical = critical_issues or []
-    # Mirrors the stored aggregated shape: per-issue scorecard fields live one
-    # level down in quality_issues[].details, only the roll-ups sit at the top.
+    # Stored shape: per-issue scorecard fields live in quality_issues[].details, only roll-ups at the top.
     return {
         "type": "quality",
         "severity": "HIGH",
@@ -72,8 +69,7 @@ def _cross_project_data(projects, total_projects=None, shared_packages=None):
 
 
 def _shared_package(name="requests", versions=("2.28.0", "2.31.0"), project_count=2):
-    """One row of the cross-project package aggregation, which counts in Mongo over every
-    dependency row rather than sampling each scan."""
+    """A row of the cross-project aggregation, which counts every dependency row in Mongo instead of sampling."""
     return {
         "name": name,
         "versions": list(versions),
@@ -133,8 +129,6 @@ class TestCorrelateScorceardCriticalUnmaintained:
 
 
 class TestCorrelateScorceardHighVulnLowScore:
-    """High vuln in a package the scorecard analyzer flagged, whatever threshold the project set."""
-
     def test_high_vuln_low_score_produces_recommendation(self):
         vulns = [_vuln_finding(component="pkg", severity="HIGH")]
         quality = [_quality_finding(component="pkg", overall_score=3.5)]
@@ -210,8 +204,6 @@ class TestAnalyzeCrossProjectPatternsEmpty:
 
 
 class TestAnalyzeCrossProjectPatternsSharedVuln:
-    """CVE in 2+ projects (CROSS_PROJECT_MIN_OCCURRENCES = 2)."""
-
     @pytest.mark.parametrize(
         ("p1_cves", "p2_cves", "expected"),
         [
@@ -284,8 +276,6 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
 
 
 class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
-    """Projects with > 5 critical findings trigger prioritization recommendation."""
-
     @pytest.mark.parametrize(
         ("projects", "expected"),
         [

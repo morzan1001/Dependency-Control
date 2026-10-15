@@ -1,9 +1,4 @@
-"""Query and advisory waivers must record what they matched, like signature waivers do.
-
-Without an outcome an operator cannot tell that a waiver suppresses nothing any more —
-prod has 81 waivers on this path with ``last_match_count: None``. Fixtures use the real
-stored waiver shape (package_name always set, scope 'finding'/'file', status a risk label).
-"""
+"""Without a recorded outcome an operator cannot tell that a waiver suppresses nothing any more."""
 
 import asyncio
 
@@ -132,11 +127,7 @@ class TestLegacyWaiverRecordsItsOutcome:
 
 
 class TestOverlappingWaiversBothReportTheirCoverage:
-    """A no-op $set does not count as modified in real Mongo.
-
-    Two waivers covering the same finding with the same reason would otherwise leave the
-    second at last_match_count 0, which the UI badges as "Matches nothing".
-    """
+    """A no-op $set is not counted as modified, which would leave the second waiver badged "Matches nothing"."""
 
     def test_second_overlapping_waiver_is_not_reported_as_matching_nothing(self, db):
         first = Waiver(

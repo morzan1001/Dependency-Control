@@ -1,9 +1,3 @@
-"""The single implementation of the finding-component / dependency-name join.
-
-Every consumer that joins the two collections on a name goes through these helpers, so
-the "exact spelling, else the artifact name, never across packages" rule is defined once.
-"""
-
 import asyncio
 
 import pytest
@@ -132,7 +126,6 @@ class TestAnNpmScopeIsPartOfThePackageName:
 
 
 def _eval_expr(expr, doc):
-    """Evaluate the aggregation fragment with the in-process Mongo emulation."""
     from tests.mocks.fake_mongo import _eval_expr as evaluate
 
     scoped = {**doc, **{f"${k}": v for k, v in doc.items()}}

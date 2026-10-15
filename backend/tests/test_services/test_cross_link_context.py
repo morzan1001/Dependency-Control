@@ -1,5 +1,4 @@
-"""K4: the frontend renders details.additional_finding_types and details.vulnerability_info;
-the aggregator has always known both relationships but wrote neither."""
+"""The frontend renders details.additional_finding_types and details.vulnerability_info."""
 
 import asyncio
 
@@ -170,8 +169,6 @@ class TestContextStaysWithItsVersion:
 
 
 class TestAheadOfDefaultIsNotOutdated:
-    """An install newer than the registry default is minted as OUTDATED with ahead_of_default set."""
-
     @staticmethod
     def _findings_by_type() -> dict:
         ahead: list = []

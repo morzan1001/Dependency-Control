@@ -1,5 +1,3 @@
-"""Tests for license normalizer."""
-
 from app.services.aggregation import ResultAggregator
 from tests.helpers.enrichment import enrichment_payload
 

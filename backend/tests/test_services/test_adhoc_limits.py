@@ -1,5 +1,3 @@
-"""What large ad-hoc inputs cost: crowded findings, a large callgraph, and parsing kept off the event loop."""
-
 import threading
 import time
 
@@ -14,7 +12,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 _COMPONENT = "requests"
 _VERSION = "2.31.0"
 
-# 2 000 findings crowded onto one path cross-linked for 24.27 s before the cross-link cap, without an await.
+# Without the cross-link cap, 2 000 findings on one path cross-link for 24 s without an await.
 _CROWDED_FINDINGS = 2_000
 _CROWDED_PATH = "app/handlers.py"
 # Forty times the post-guard measurement, so a loaded runner cannot make this flap.
@@ -83,7 +81,6 @@ _SHARED_SYMBOLS = ["sym0", "common", "sym1", "sym2", "sym3"]
 
 
 def _large_callgraph() -> dict:
-    """Every file imports a submodule of every package, naming one rotating symbol and one shared one."""
     imports = [
         {
             "module": f"{module}.sub{file % 3}",

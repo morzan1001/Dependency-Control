@@ -1,5 +1,3 @@
-"""deps.dev analyzer: the scorecard threshold, the identity of cached results and the deps.dev status policy."""
-
 import asyncio
 from typing import Any
 
@@ -190,8 +188,6 @@ def _babel_routes() -> dict[str, Any]:
 
 
 class _DepsDev:
-    """Answers like api.deps.dev: a JSON body, a status, a raw body or a raised error per URL, else 404."""
-
     def __init__(self, routes: dict[str, Any]) -> None:
         self.routes = routes
         self.requested: list[str] = []

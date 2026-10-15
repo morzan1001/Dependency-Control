@@ -1,5 +1,3 @@
-"""Tests for app.services.recommendation.quality."""
-
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation import quality
@@ -18,8 +16,7 @@ def _quality(
     has_maintenance_issues=None,
 ):
     critical = critical_issues if critical_issues is not None else []
-    # Mirrors the stored aggregated shape: per-issue scorecard fields live one
-    # level down in quality_issues[].details, only the roll-ups sit at the top.
+    # Stored shape: per-issue scorecard fields live in quality_issues[].details, only roll-ups at the top.
     return {
         "type": "quality",
         "severity": severity,
@@ -184,7 +181,6 @@ class TestProcessQualityLowScorecard:
         assert low_recs[0].title == "Review Low-Quality Dependencies"
 
     def test_score_exactly_at_threshold_not_flagged(self):
-        """Score exactly at SCORECARD_POOR_QUALITY_THRESHOLD is NOT below it."""
         finding = _quality(overall_score=SCORECARD_POOR_QUALITY_THRESHOLD)
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
@@ -223,7 +219,6 @@ class TestProcessQualityLowScoreWithUnmaintained:
         assert len(unmaintained_recs) == 1
 
     def test_multiple_with_mixed_unmaintained(self):
-        """A package the unmaintained card names is not listed again as low-quality."""
         findings = [
             _quality(
                 overall_score=2.0,
@@ -343,7 +338,6 @@ class TestProcessQualityCombinedScenarios:
         titles = {r.title for r in recs}
         assert "Replace Unmaintained Dependencies" in titles
         assert "Dependencies with Limited Code Review" in titles
-        # Low-quality suppressed because unmaintained is present
         assert "Review Low-Quality Dependencies" not in titles
 
     def test_all_issue_types_without_unmaintained(self):

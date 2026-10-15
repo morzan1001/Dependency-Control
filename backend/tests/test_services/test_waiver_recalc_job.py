@@ -1,6 +1,3 @@
-"""Queued waiver changes and expiries: one run at a time recalculates what they reach, and a change stays queued
-until its pass is done."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

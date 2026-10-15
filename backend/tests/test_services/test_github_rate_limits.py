@@ -1,5 +1,3 @@
-"""A refusal carrying GitHub's rate-limit headers is a rate limit, a secondary one included, and is waited out."""
-
 import time
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -16,7 +14,6 @@ _SECONDARY_LIMIT = {
 
 
 def _serve(monkeypatch, *answers: httpx.Response) -> list[httpx.Request]:
-    """api.github.com giving ``answers`` in turn; returns the requests that went out."""
     queue = list(answers)
     seen: list[httpx.Request] = []
 

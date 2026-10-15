@@ -1,5 +1,3 @@
-"""Tests for vulnerable symbols extraction."""
-
 from app.services.vulnerable_symbols import (
     extract_symbols_from_vulnerability,
     get_symbols_for_finding,

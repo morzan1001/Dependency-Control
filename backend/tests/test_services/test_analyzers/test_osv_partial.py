@@ -1,5 +1,3 @@
-"""W15: OSV must report skipped coverage instead of silently dropping whole batches."""
-
 import json
 from typing import Any
 
@@ -18,7 +16,6 @@ _CLEAN = httpx.Response(200, json={"results": [{} for _ in _COMPONENTS]})
 
 
 def _answers(*outcomes: httpx.Response | Exception):
-    """Answers each querybatch with the next outcome, repeating the last."""
     sent: list[int] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
@@ -113,8 +110,6 @@ async def test_full_success_has_no_partial_marker(monkeypatch):
 
 
 def _paged(later_pages: dict[str, httpx.Response]):
-    """querybatch: pkg-0 has further pages behind ``page-2``, answered per token; records echo their id."""
-
     def handle(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(200, json={"id": request.url.path.rsplit("/", 1)[-1]})
