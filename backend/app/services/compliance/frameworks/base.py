@@ -1,5 +1,3 @@
-"""Common framework machinery: the ComplianceFramework protocol and default evaluator."""
-
 import functools
 import hashlib
 import logging
@@ -33,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 _GAPS_REASON = "Withheld: the {subject} this verdict rests on do not cover the whole scope: {gaps}."
 
-# Gaps or assets one sentence names before it only counts the rest.
 NAMES_SHOWN = 5
 
 
@@ -47,12 +44,11 @@ class _Applicability(Enum):
     RULES_UNRESOLVED = auto()
     # An asset an enabled rule matches carries no finding, so the analysis that should flag it did not.
     UNFLAGGED = auto()
-    # The CBOM states no key size for an asset a key-size minimum applies to.
     KEY_SIZE_UNKNOWN = auto()
 
 
 def _withheld(status: ControlStatus, coverage: EvaluationCoverage, subject: str) -> tuple[ControlStatus, str | None]:
-    """`status` unless gaps could hide a match; not for FAILED, which a partial scope cannot invent."""
+    """Not for FAILED, which a partial scope cannot invent."""
     if not coverage.gaps:
         return status, None
     return ControlStatus.NOT_EVALUATED, _GAPS_REASON.format(subject=subject, gaps=name_some(coverage.gaps, NAMES_SHOWN))
@@ -62,7 +58,6 @@ def findings_verdict(
     status: ControlStatus,
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
-    """`status`, or NOT_EVALUATED, for a verdict resting on the findings holding no match."""
     return _withheld(status, coverage, "findings")
 
 
@@ -70,7 +65,6 @@ def crypto_assets_verdict(
     status: ControlStatus,
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
-    """`status`, or NOT_EVALUATED, for a verdict resting on the inventory holding no such asset."""
     return _withheld(status, coverage, "crypto assets")
 
 
@@ -91,8 +85,6 @@ class EvaluationInput:
 
 
 class ComplianceFramework(Protocol):
-    """Interface every framework must implement."""
-
     name: str
     key: ReportFramework
     version: str
@@ -105,7 +97,6 @@ def default_evaluator(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> ControlResult:
-    """FAILED stands; else NOT_EVALUATED when a finding could be missing, NOT_APPLICABLE when nothing is in scope."""
     matching = [f for f in data.findings if _finding_matches_control(f, control)]
     status, evidence, status_reason = _classify(matching, data.coverage)
     if status is not ControlStatus.FAILED:
@@ -234,8 +225,6 @@ def build_evaluation(
 
 @dataclass
 class SeedFramework:
-    """A framework with one control per rule of its crypto-policy seed file."""
-
     key: ReportFramework
     name: str
     version: str
@@ -263,7 +252,6 @@ class SeedFramework:
 
 
 def extract_finding_id(finding: dict[str, Any]) -> str:
-    """Finding ID from _id or id ('' when neither is present)."""
     return str(finding.get("_id") or finding.get("id") or "")
 
 
@@ -271,8 +259,6 @@ def _classify(
     matching: list[dict[str, Any]],
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, list[str], str | None]:
-    """Map matched findings to (status, evidence_ids, status_reason): empty -> PASSED, any active
-    -> FAILED, else WAIVED, with the absence-backed verdicts withheld on partial coverage."""
     if not matching:
         status, status_reason = findings_verdict(ControlStatus.PASSED, coverage)
         return status, [], status_reason
@@ -288,7 +274,6 @@ def _waiver_reasons(findings: list[dict[str, Any]]) -> list[str]:
 
 
 def build_summary(results: list[ControlResult]) -> dict[str, int]:
-    """Count controls by status bucket."""
     counts = {
         "passed": 0,
         "failed": 0,
@@ -303,7 +288,6 @@ def build_summary(results: list[ControlResult]) -> dict[str, int]:
 
 
 def build_residual_risks(results: list[ControlResult]) -> list[ResidualRisk]:
-    """Convert every FAILED ControlResult into a ResidualRisk entry."""
     return [
         ResidualRisk(
             control_id=r.control_id,

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 def normalize_malware(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
-    """os_malware scanner findings; OpenSSF malware arrives via OSV, handled elsewhere."""
+    """OpenSSF malware arrives via OSV and is normalized there."""
     for item in result.get("malware_issues") or []:
         malware_info = item.get("malware_info") or {}
         threats = malware_info.get("threats") or []

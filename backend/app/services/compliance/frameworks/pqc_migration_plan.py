@@ -1,5 +1,3 @@
-"""PQC Migration Plan framework: one ControlResult per plan item."""
-
 from app.models.finding import Severity
 from app.schemas.compliance import (
     ControlResult,
@@ -57,8 +55,7 @@ class PQCMigrationPlanFramework:
 
 
 def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationCoverage:
-    """The engine's coverage widened by the plan's own bound: past the ceiling the control list
-    is a cut of a plan whose summary counts every item."""
+    """Past the plan's ceiling the control list is a cut of a plan whose summary counts every item."""
     return data.coverage.model_copy(
         update={
             "plan_items": InputCoverage(

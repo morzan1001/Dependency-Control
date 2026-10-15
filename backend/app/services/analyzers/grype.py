@@ -11,8 +11,7 @@ class GrypeAnalyzer(CLIAnalyzer):
     cli_command = "grype"
     empty_result_key = "matches"
 
-    # Grype's shared read-only vuln DB can briefly disappear during its refresh CronJob;
-    # such transient DB errors almost always succeed on retry.
+    # Grype's shared vuln DB briefly disappears during its refresh CronJob; a retry almost always succeeds.
     max_retries = 3
     retry_delay = 3.0
     # Large Java SBOMs can exceed the 5-min default.
@@ -35,11 +34,7 @@ class GrypeAnalyzer(CLIAnalyzer):
         return {"matches": [{key: m[key] for key in _READ_MATCH_KEYS if key in m} for m in parsed.get("matches") or []]}
 
     def _build_command_args(self, sbom_path: str) -> list[str]:
-        """Build Grype command arguments.
-
-        Do not add ``--quiet``: it suppresses the stderr that ``_is_retryable_error``
-        inspects, so transient DB failures would never be retried.
-        """
+        """No --quiet: it hides the stderr _is_retryable_error inspects, so transient DB failures would never retry."""
         return [
             "grype",
             f"sbom:{sbom_path}",

@@ -1,12 +1,9 @@
-"""Quality-finding presentation helpers."""
-
 from __future__ import annotations
 
 from app.models.finding import Finding
 
 
 def update_quality_description(finding: Finding) -> None:
-    """Update an aggregated quality finding's description to summarise its issues."""
     quality_issues = finding.details.get("quality_issues", [])
     count = len(quality_issues)
     if count == 1:

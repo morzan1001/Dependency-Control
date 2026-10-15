@@ -1,9 +1,4 @@
-"""NDJSON-frame archive bundle format (v2).
-
-Each line is a complete JSON document terminated by '\\n': a header line, then per-collection
-sections opened by a one-field ``{"collection": ...}`` marker, then a footer line carrying
-stats and a sha256 over every byte before the footer.
-"""
+"""NDJSON bundle v2: a header, {"collection": ...}-opened sections, and a footer hashing every prior byte."""
 
 import datetime as dt
 import hashlib
@@ -19,8 +14,6 @@ from app.core.constants import ARCHIVE_BUNDLE_VERSION
 
 @dataclass
 class BundleStats:
-    """Mutable per-archive counters; populated as docs stream through the writer."""
-
     findings: int = 0
     finding_records: int = 0
     dependencies: int = 0
@@ -32,14 +25,11 @@ class BundleStats:
 
 
 def json_line(obj: Any) -> bytes:
-    """Encode an object as one Extended-JSON line ('\\n'-terminated) via ``bson.json_util``,
-    so ObjectId/datetime re-hydrate to BSON types on restore."""
+    """Extended JSON via bson.json_util so ObjectId and datetime re-hydrate to BSON types on restore."""
     return (json_util.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 class BundleFrames:
-    """Streaming NDJSON frame writer yielding line-bytes to pipe into gzip/encryption/S3."""
-
     @staticmethod
     async def write(
         *,
@@ -94,7 +84,6 @@ class _Frame(NamedTuple):
 
 def _loads(line: bytes) -> Any:
     try:
-        # json_util re-hydrates Extended JSON ($date/$oid) back to BSON types.
         return json_util.loads(line)
     except json.JSONDecodeError as e:
         raise ValueError(f"Malformed bundle line: {e}") from e
@@ -114,7 +103,6 @@ async def _bundle_lines(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
             yield line
             idx = buffer.find(b"\n")
     if buffer:
-        # Trailing data without a newline: yield as one final line.
         yield bytes(buffer)
 
 
@@ -133,11 +121,7 @@ def _verify_footer(footer: Any, actual: str) -> None:
 
 
 async def _read_frames(source: AsyncIterator[bytes], *, decode_docs: bool) -> AsyncIterator[_Frame]:
-    """Yield header/marker/doc/footer frames, verifying the version and the footer digest.
-
-    Without decode_docs a doc line stays undecoded; the writer starts every doc with its _id, never with a marker or
-    footer key.
-    """
+    """Undecoded doc lines are told apart because the writer starts every doc with its _id."""
     lines = _bundle_lines(source)
     first = await anext(lines, None)
     if first is None:
@@ -166,11 +150,6 @@ async def _read_frames(source: AsyncIterator[bytes], *, decode_docs: bool) -> As
 
 
 async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[dict[str, Any]]:
-    """Read an NDJSON bundle and yield header/doc/footer events.
-
-    Raises ValueError on unknown version, doc-before-collection-marker, missing header,
-    or footer SHA-256 mismatch.
-    """
     async for frame in _read_frames(source, decode_docs=True):
         if frame.kind == "doc":
             yield {"type": "doc", "collection": frame.collection, "data": frame.data}
@@ -182,10 +161,7 @@ async def rewrite_bundle_frames(
     source: AsyncIterator[bytes],
     rewrite_doc_line: Callable[[str, bytes], bytes],
 ) -> AsyncIterator[bytes]:
-    """Copy a bundle with each doc line passed through ``rewrite_doc_line``, and a footer digest over the copy.
-
-    Doc lines reach the callback undecoded, so an SBOM line costs its bytes rather than a decoded copy of them.
-    """
+    """Doc lines reach the callback undecoded, so an SBOM line costs its bytes, not a decoded copy."""
     sha = hashlib.sha256()
     async for frame in _read_frames(source, decode_docs=False):
         if frame.kind == "footer":

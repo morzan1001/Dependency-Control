@@ -1,5 +1,3 @@
-"""Shared base for analyzers that execute CLI tools (trivy, grype, etc.)."""
-
 import asyncio
 import json
 import logging
@@ -21,7 +19,6 @@ TEMP_SBOM_PREFIX = "dc-sbom-"
 
 
 async def run_process(args: list[str], time_limit: float) -> tuple[bytes, bytes, int] | None:
-    """Run a command to completion and return (stdout, stderr, returncode); None if it outlived ``time_limit``."""
     process = await asyncio.create_subprocess_exec(
         *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -38,13 +35,10 @@ async def run_process(args: list[str], time_limit: float) -> tuple[bytes, bytes,
 
 
 class CLIAnalyzer(Analyzer):
-    """Base class for analyzers that execute CLI tools with temp-file management and retry."""
-
     cli_command: str
     empty_result_key: str = "results"
 
     def is_tool_available(self) -> bool:
-        """Check if the CLI tool is available in the system PATH."""
         return shutil.which(self.cli_command) is not None
 
     retryable_patterns: tuple[str, ...] = (
@@ -68,7 +62,6 @@ class CLIAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Scan ``sbom`` from a temp file of its JSON."""
         sbom_path = await asyncio.to_thread(self._create_temp_sbom, sbom)
         try:
             return await self.analyze_file(sbom_path, sbom_parser.detect_format(sbom))
@@ -76,7 +69,7 @@ class CLIAnalyzer(Analyzer):
             self._cleanup_files([sbom_path])
 
     async def analyze_file(self, sbom_path: str, sbom_format: SBOMFormat) -> dict[str, Any]:
-        """Scan the SBOM file at ``sbom_path``, which stays the caller's, retrying transient failures."""
+        """The file at sbom_path stays the caller's to remove."""
         if not self.is_tool_available():
             logger.warning(f"{self.name}: CLI tool '{self.cli_command}' not found in PATH")
             return {
@@ -113,18 +106,16 @@ class CLIAnalyzer(Analyzer):
             self._cleanup_files(extra_paths)
 
     def _create_temp_sbom(self, sbom: dict[str, Any]) -> str:
-        """Create a temporary file containing the SBOM JSON."""
         with tempfile.NamedTemporaryFile(mode="w+", prefix=TEMP_SBOM_PREFIX, suffix=".json", delete=False) as tmp_file:
             json.dump(sbom, tmp_file)
             return tmp_file.name
 
     async def _preprocess_sbom(self, sbom_path: str, _sbom_format: SBOMFormat) -> tuple[str, list[str]]:
-        """Preprocess SBOM before analysis; returns (target_path, extra_temp_files_to_cleanup)."""
+        """Returns the path to scan and the extra temp files to clean up."""
         return sbom_path, []
 
     @abstractmethod
     def _build_command_args(self, sbom_path: str) -> list[str]:
-        """Build command line arguments. Must be implemented by subclasses."""
         raise NotImplementedError
 
     cli_timeout: int = 300
@@ -133,7 +124,6 @@ class CLIAnalyzer(Analyzer):
     retry_delay: float = 2.0  # base delay in seconds, doubles each retry
 
     async def _execute_command(self, args: list[str]) -> tuple[bytes, bytes, int]:
-        """Execute the CLI command and return stdout, stderr, returncode."""
         result = await run_process(args, self.cli_timeout)
         if result is None:
             logger.error("%s timed out after %ss", self.name, self.cli_timeout)
@@ -141,13 +131,11 @@ class CLIAnalyzer(Analyzer):
         return result
 
     def _handle_error(self, stderr: bytes) -> dict[str, Any]:
-        """Handle CLI error output."""
         error_msg = stderr.decode()
         logger.error(f"{self.name} failed: {error_msg}")
         return {"error": f"{self.name} analysis failed", "details": error_msg}
 
     def _parse_output(self, stdout: bytes) -> dict[str, Any]:
-        """Parse CLI JSON output."""
         try:
             output_str = stdout.decode()
             if not output_str.strip():
@@ -163,7 +151,6 @@ class CLIAnalyzer(Analyzer):
             }
 
     def _cleanup_files(self, paths: list[str]) -> None:
-        """Remove temporary files."""
         for path in paths:
             if os.path.exists(path):
                 try:

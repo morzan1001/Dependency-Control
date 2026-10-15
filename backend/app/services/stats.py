@@ -47,7 +47,7 @@ async def _restamp_scan(
     finding_repo: FindingRepository,
     waiver_repo: WaiverRepository | None,
 ) -> Stats:
-    """Restamp one scan and rewrite its stats; ``waiver_repo`` also records each waiver's outcome."""
+    """Passing waiver_repo also records each waiver's outcome."""
     await restamp_waivers(finding_repo, waiver_repo, scan_id, waivers)
     tally = await calculate_comprehensive_stats(db, scan_id)
     await ScanRepository(db).set_stats(
@@ -61,13 +61,7 @@ def _copy(waivers: list[Waiver]) -> list[Waiver]:
 
 
 async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> list[str]:
-    """The scans release mode reports for this project, one per environment.
-
-    A waiver is a decision that holds now, not a property of the build it was written against, so
-    revoking one has to reach the shipped build too — otherwise "what is in production" answers
-    through flags frozen at analysis time and can report zero criticals against a build that has
-    one. The scan's own age is disclosed rather than corrected; its waiver flags are corrected.
-    """
+    """A waiver holds now, not for the build it was written against, so revoking one must reach shipped builds too."""
     marked = set((await released_scan_ids(db, project_id)).values())
     if not marked:
         return []
@@ -104,8 +98,6 @@ async def _acquire_with_backoff(lock_repo: DistributedLocksRepository, lock_name
 async def recalculate_project_stats(
     project_id: str, db: AsyncIOMotorDatabase, reach: dict[str, Any] | None = None, restamp: Sequence[str] = ()
 ) -> Stats | None:
-    """Restamp head, recent branch tips, released scans and ``restamp`` where ``reach`` can touch them, and re-cache
-    head; returns head's new stats when this run restamped a settled head, else None."""
     project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
@@ -166,7 +158,7 @@ async def recalculate_project_stats(
 
 
 async def restamp_single_scan(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> None:
-    """Restamp a scan with the project's active waivers now, or leave it to the queue while its stats lock is taken."""
+    """While the project's stats lock is taken, the queued waiver recalc restamps the scan instead."""
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"stats_recalc:{project_id}"
     holder_id = new_lock_holder()
@@ -182,7 +174,6 @@ async def restamp_single_scan(db: AsyncIOMotorDatabase, project_id: str, scan_id
 async def refresh_scan_stats(
     db: AsyncIOMotorDatabase, project_id: str, scan_id: str, component_languages: ComponentLanguages | None = None
 ) -> None:
-    """Recompute one scan's stats under the project's stats lock and re-cache the project's head."""
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"stats_recalc:{project_id}"
     holder_id = new_lock_holder()
@@ -199,12 +190,11 @@ async def refresh_scan_stats(
 
 
 async def request_waiver_recalc(db: AsyncIOMotorDatabase, waiver: Waiver, restamp: Sequence[str] = ()) -> None:
-    """Queue a created, changed or deleted waiver for run_waiver_recalc, with the scans ``restamp`` names."""
     await db.waiver_recalc.insert_one({"waiver": waiver.model_dump(by_alias=True), "restamp": list(restamp)})
 
 
 async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
-    """Recalculate what queued waiver changes and new expiries reach; a change stays queued until its pass is done."""
+    """A change stays queued until its pass is done."""
     lock_repo = DistributedLocksRepository(db)
     holder_id = new_lock_holder()
     while await lock_repo.acquire_lock(_RECALC_LOCK, holder_id, _LOCK_TTL_SECONDS):
@@ -224,7 +214,7 @@ async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
 
 
 async def _queue_expired_waivers(db: AsyncIOMotorDatabase) -> None:
-    """Queue the waivers that expired since the last sweep: an expiry changes the active set as a delete does."""
+    """An expiry changes the active set as a delete does."""
     now = datetime.now(timezone.utc)
     sweep = await db.waiver_recalc.find_one({"_id": _EXPIRY_SWEEP})
     window: dict[str, Any] = {"$lte": now}
@@ -238,8 +228,6 @@ async def _queue_expired_waivers(db: AsyncIOMotorDatabase) -> None:
 async def _recalculate_changed(
     db: AsyncIOMotorDatabase, queued: list[dict[str, Any]], lock_repo: DistributedLocksRepository, holder_id: str
 ) -> bool:
-    """Recalculate every project the queued waivers can reach, each on its own; False once the run lost its lock or
-    a project's stats lock stayed taken."""
     changed = []
     restamps: dict[str, list[str]] = {}
     for doc in queued:

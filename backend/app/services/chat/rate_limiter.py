@@ -1,5 +1,3 @@
-"""Redis sliding-window rate limiter for chat messages and MCP tool calls."""
-
 import logging
 import time
 
@@ -47,7 +45,7 @@ return {1, max_reqs - count - 1}
 
 
 async def rate_limit_retry_after(owner_id: str, *, per_minute: int, per_hour: int) -> int:
-    """Seconds until the owner's windows admit a request, 0 when they admit this one; a Redis outage admits it."""
+    """Fails open: a Redis outage admits the request."""
     now = time.time()
     member = f"{owner_id}:{now}"
     # An hour-window denial still spends a minute slot, acceptable as the hour limit rarely triggers.
@@ -63,7 +61,6 @@ async def rate_limit_retry_after(owner_id: str, *, per_minute: int, per_hour: in
 
 
 async def enforce_rate_limit(owner_id: str, *, per_minute: int, per_hour: int) -> None:
-    """Raise 429 with Retry-After once the owner's chat window is spent."""
     if retry_after := await rate_limit_retry_after(owner_id, per_minute=per_minute, per_hour=per_hour):
         chat_rate_limited_total.inc()
         raise HTTPException(

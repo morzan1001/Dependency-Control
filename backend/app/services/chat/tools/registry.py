@@ -1,5 +1,3 @@
-"""Central dispatcher for chat tool calls with permission checks and result post-processing."""
-
 import logging
 import re
 import time
@@ -133,7 +131,7 @@ _ERR_NEED_TWO_SCANS = "Need at least two builds on the head branch to compare"
 
 
 def _rendered_fields(model: type[BaseModel], *, withheld: frozenset[str] = frozenset()) -> list[str]:
-    """Keys a REST response model renders, read off its fields since a validation error quotes the secrets."""
+    """Read off the model's fields because a validation error would quote the secrets."""
     return [
         "_id" if name == "id" else name
         for name, field in model.model_fields.items()
@@ -166,19 +164,15 @@ _MEMBER_FIELDS = ("user_id", "username", "role", "effective_role", "inherited_fr
 _WEBHOOK_FIELDS = _rendered_fields(WebhookResponse, withheld=frozenset({"headers"}))
 _ARCHIVE_FIELDS = _rendered_fields(AdminArchiveListItem)
 
-# Everything an answer needs to name the build it describes.
 _BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
 _SCAN_DETAIL_PROJECTION = _BUILD_PROJECTION | dict.fromkeys(
     ("project_id", "completed_at", "error", "failed_analyzers", "enrichment_failures", "findings_count", "stats"), 1
 )
 
-# Candidate set pulled per severity tier and ranked in-process on the numeric tiebreakers, which
-# `severity` being a string cannot express in a server-side sort. Bounding a tier rather than the
-# whole match is what keeps the highest severities in the sample.
+# Per severity tier: a string severity cannot sort server-side, and a per-tier bound keeps the worst in the sample.
 _FINDING_RANK_FETCH_CAP = 1000
 
-# Highest severity first; the trailing clause catches values outside the known set so no finding
-# is unreachable to the walk.
+# The trailing clause catches values outside the known set so no finding escapes the walk.
 _SEVERITY_TIERS: tuple[str, ...] = tuple(s.value for s in Severity)
 
 _RANKING_SAMPLED = (
@@ -205,8 +199,7 @@ _DEPENDENCY_ROW_PROJECTION = {
 }
 _PARENTS_SHOWN = 5
 
-# Read ceilings for the tools that answer from a whole collection rather than from a ranked page.
-# Every answer built on one of these carries the population it was cut from.
+# Read ceilings; every answer built on one carries the population it was cut from.
 _TEAM_LIST_READ = 100
 _TEAM_PROJECT_READ = 50
 _WAIVER_READ = 100
@@ -237,7 +230,6 @@ _CALLGRAPH_MODULES_SHOWN = 25
 
 
 def _callgraph_summary(graph: dict[str, Any]) -> dict[str, Any]:
-    """Every module's import and call counts, busiest first, without the file and symbol lists."""
     usage = graph.get("module_usage") or {}
     busiest = sorted(
         usage.items(), key=lambda m: (m[1].get("call_count", 0), m[1].get("import_count", 0)), reverse=True
@@ -251,7 +243,6 @@ def _callgraph_summary(graph: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject: str) -> dict[str, Any]:
-    """The waivers `query` selects, bounded, each marked with whether it is still active."""
     now = datetime.now(timezone.utc)
     waivers, waivers_total = await bounded_read(db["waivers"], query, subject=subject, limit=_WAIVER_READ)
     waivers = await resolve_usernames(db, waivers, "created_by")
@@ -264,7 +255,7 @@ async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject:
 
 
 def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
-    """Project ids worst first by head critical, then high; the id breaks ties so the order is stable."""
+    """The id breaks ties so the order is stable."""
     return sorted(stats, key=lambda pid: (-stats[pid].critical, -stats[pid].high, pid))[:limit]
 
 
@@ -281,7 +272,6 @@ def _top_risky(stats: dict[str, Stats], names: dict[str, str]) -> list[dict[str,
 
 
 def _row_project_id(row: dict[str, Any]) -> str:
-    """A row's project id as a name-lookup key; the empty string for a row carrying none."""
     return str(row.get("project_id") or "")
 
 
@@ -290,7 +280,6 @@ def _slim_with_project(rows: list[dict[str, Any]], names: dict[str, str]) -> lis
 
 
 def _stale_since(finding: dict[str, Any], allowed_sev: list[str], cutoff: datetime) -> tuple[datetime, str | None, str]:
-    """A vulnerability's worst live advisory in range open before cutoff, oldest among equals; others by their own."""
     found = finding.get("first_seen_at") or finding["scan_created_at"]
     if finding.get("type") != "vulnerability":
         return found, None, finding["severity"]
@@ -302,8 +291,7 @@ def _stale_since(finding: dict[str, Any], allowed_sev: list[str], cutoff: dateti
     return min(stale, key=lambda entry: (-get_severity_value(entry[2]), entry[0]))
 
 
-# How a dependency's directness was established. `direct` alone cannot express it: an
-# inferred-direct package is direct, but ranks below a declared one when ordering fixes.
+# direct alone cannot rank an inferred-direct package below a declared one when ordering fixes.
 _DIRECT_CONFIDENCE_RANK = {"declared": 0, "inferred": 1, "transitive": 2}
 
 
@@ -325,7 +313,6 @@ _PLAN_PROJECTION = {
 
 
 def _fix_target(fix_lists: list[str], current: str | None) -> str | None:
-    """The version fixing every list on the lowest release line from `current` up, else the highest fix listed."""
     installed = parse_version_key(current or "")
     lines = split_fixed_versions(aggregate_fixed_version([{"fixed_version": fix} for fix in fix_lists], current))
     return next((line for line in lines if parse_version_key(line) >= installed), None) or max(
@@ -334,7 +321,6 @@ def _fix_target(fix_lists: list[str], current: str | None) -> str | None:
 
 
 def _plan_step(findings: list[dict[str, Any]], dep_meta: dict[str, Any]) -> dict[str, Any]:
-    """One upgrade of one installed version; an advisory counts as resolved only when it names its own fix."""
     current = findings[0].get("version") or dep_meta.get("version")
     advisories = [(f, v) for f in findings for v in live_advisories(f.get("details"))]
     # An EOL finding carries its recommended version and no advisory.
@@ -394,7 +380,7 @@ _WAIVER_STATE_PROJECTION = {
 
 
 def _waiver_state(finding: dict[str, Any], vulnerability_id: str) -> dict[str, Any]:
-    """One head finding's waiver state; asked about by an advisory id, `waived` is that advisory's on this component."""
+    """Asked about by an advisory id, waived is that advisory's waiver on this component."""
     waived_advisories = [v for v in (finding.get("details") or {}).get("vulnerabilities") or [] if v.get("waived")]
     return {
         "component": finding.get("component"),
@@ -410,8 +396,7 @@ def _waiver_state(finding: dict[str, Any], vulnerability_id: str) -> dict[str, A
 
 
 def _severity_tiers(requested: Any) -> list[Any]:
-    """The `severity` clauses to walk, worst first. A caller's own clause narrows the walk instead
-    of being overwritten, so a tool asking for CRITICAL still only ever sees CRITICAL."""
+    """A caller's own clause narrows the walk instead of being overwritten."""
     if isinstance(requested, str):
         return [requested.upper()]
     if isinstance(requested, dict) and isinstance(requested.get("$in"), list):
@@ -424,9 +409,7 @@ def _severity_tiers(requested: Any) -> list[Any]:
 async def _ranked_findings(
     db: AsyncIOMotorDatabase, query: dict[str, Any], limit: int
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """The `limit` worst findings for `query`, filled one severity tier at a time so a scan whose
-    natural order opens with thousands of LOW findings cannot hide its criticals. Also returns the
-    ranking_note to relay when a tier that fed the answer held more candidates than the cap."""
+    """Filled one severity tier at a time so thousands of LOW findings cannot hide the criticals."""
     out: list[dict[str, Any]] = []
     ranking: dict[str, str] = {}
     for tier in _severity_tiers(query.get("severity")):
@@ -455,15 +438,12 @@ async def _ranked_findings(
 
 
 class _ToolRefusal(Exception):
-    """The answer a handler stops with: the tool's error, or an empty `listing` the error explains."""
-
     def __init__(self, error: str, listing: str | None = None):
         super().__init__(error)
         self.answer: dict[str, Any] = {listing: [], "message": error} if listing else {"error": error}
 
 
 async def _gated[T](check: Awaitable[T], refusal: str) -> T:
-    """REST's access check, its HTTP refusal turned into the tool's own answer."""
     try:
         return await check
     except HTTPException:
@@ -528,7 +508,6 @@ class ChatToolRegistry:
             if saturated:
                 result["_bounded_read"] = True
                 result["_bounded_read_note"] = saturated
-            # Cap JSON size so a large dump can't blow the LLM's context budget.
             answer = _truncate_if_too_large(result)
             status = "rejected" if "error" in result else "success"
             return answer
@@ -610,8 +589,7 @@ class ChatToolRegistry:
 
     async def _tool_get_scan_history(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        # Newest-first across every branch and status, so the first row is a queued run on a
-        # branch nobody ships as often as it is the build the project stands on.
+        # The newest row is as often a queued run on a side branch as the head build, hence is_head.
         scans, scans_total = await bounded_read(
             ctx.db["scans"],
             {"project_id": project["_id"]},
@@ -986,8 +964,7 @@ class ChatToolRegistry:
                 "message": "No unwaived CRITICAL/HIGH findings on the head build.",
             }
 
-        # Keyed by lowercase component name — purl would be more precise
-        # but findings don't consistently carry it.
+        # Keyed by lowercase name: findings do not consistently carry a purl.
         dep_index: dict[str, dict[str, Any]] = {}
         async for dep in ctx.db["dependencies"].find(
             {"scan_id": head_scan_id},
@@ -1327,8 +1304,7 @@ class ChatToolRegistry:
             if get_severity_value(s) >= SEVERITY_ORDER.get(sev_min, SEVERITY_ORDER["HIGH"])
         ]
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        # Aged as the CVE SLA ages it: by a live advisory in range, one stored without a date by its finding's,
-        # and a finding stored without one by its scan's.
+        # Aged as the CVE SLA ages it, falling back from the advisory's date to its finding's, then its scan's.
         old_advisory = {
             "severity": {"$in": allowed_sev},
             "$or": [{"first_seen_at": {"$lt": cutoff}}, {"first_seen_at": None}],
@@ -1418,8 +1394,7 @@ class ChatToolRegistry:
         return {
             "team_id": team.id,
             "team_name": team.name,
-            # Totals are summed over the projects read; project_count is the team's whole
-            # holding, so the two disagree exactly when the read saturated.
+            # Summed over the projects read; it differs from project_count exactly when the read saturated.
             "projects_summed": len(projects),
             "project_count": projects_total,
             "severity_totals": totals,
@@ -1522,7 +1497,6 @@ class ChatToolRegistry:
             check_webhook_permission(ctx.user, ctx.db, Permissions.WEBHOOK_READ, project_id=project["_id"]),
             _ERR_PROJECT_NOT_FOUND,
         )
-        # Every hook that fires for the project's events: its own, its owning teams', the global ones.
         scopes: list[dict[str, Any]] = [{"project_id": project["_id"]}]
         for team_id in project.get("team_ids") or []:
             try:
@@ -1657,7 +1631,6 @@ class ChatToolRegistry:
         )
 
     async def _tool_list_policy_audit_entries(self, ctx: _ToolContext) -> dict[str, Any]:
-        # System-scope audit is admin-only (system:manage).
         if ctx.args.get("policy_scope") == "system":
             if not has_permission(ctx.user.permissions, Permissions.SYSTEM_MANAGE):
                 return {"error": _ERR_ACCESS_DENIED}
@@ -1690,7 +1663,6 @@ class ChatToolRegistry:
     async def _require_project(
         self, ctx: _ToolContext, project_id: str | None = None, *, refusal: str = _ERR_PROJECT_NOT_FOUND
     ) -> dict[str, Any]:
-        """The project (the `project_id` argument unless one is named) if the caller's visibility query admits it."""
         wanted = ctx.args.get("project_id") if project_id is None else project_id
         project: dict[str, Any] | None = await ctx.db["projects"].find_one(
             and_filters({"_id": wanted}, ctx.user_project_query)
@@ -1710,11 +1682,9 @@ class ChatToolRegistry:
         return [row["_id"] for row in rows]
 
     async def _in_scope(self, ctx: _ToolContext) -> dict[str, Any]:
-        """A `project_id` filter to the caller's projects; none for a caller who reads them all."""
         return {"project_id": {"$in": await self._get_authorized_project_ids(ctx)}} if ctx.user_project_query else {}
 
     async def _require_finding(self, ctx: _ToolContext, project: dict[str, Any]) -> dict[str, Any]:
-        """The finding `finding_id` names: a row's id, or a finding_id in the project's head build."""
         wanted = ctx.args["finding_id"]
         named = [{"_id": wanted}, {"finding_id": wanted, "scan_id": await self._head_scan_id(project, ctx.db)}]
         finding: dict[str, Any] | None = await ctx.db["findings"].find_one({"project_id": project["_id"], "$or": named})
@@ -1723,13 +1693,11 @@ class ChatToolRegistry:
         return finding
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
-        """The scan representing the head of a project the caller already read and authorised."""
+        """The caller must already have read and authorised the project."""
         return await ScanRepository(db).get_latest_active_scan_id(project)
 
     async def _scan_under_answer(self, ctx: _ToolContext, project: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        """The build a scan-scoped tool answers about, with the block that names it. No scan_id means
-        head; a caller that names one gets it, labelled against head, because a relayed answer carries
-        no chart beside it against which a reader could notice the wrong build."""
+        """A named scan is labelled against head: a relayed answer has no chart beside it to reveal the wrong build."""
         requested = ctx.args.get("scan_id")
         head_scan_id = await self._head_scan_id(project, ctx.db)
         wanted = requested or head_scan_id
@@ -1752,13 +1720,11 @@ class ChatToolRegistry:
         }
 
     async def _head_scan_stats(self, db: AsyncIOMotorDatabase, head: dict[str, str]) -> dict[str, Stats]:
-        """project_id -> its head scan's stats; a scan carrying none counts as zero."""
         scans = await ScanRepository(db).find_many_with_stats({"_id": {"$in": list(head.values())}}, limit=len(head))
         by_scan = {scan.id: scan.stats for scan in scans}
         return {pid: by_scan.get(scan_id) or Stats() for pid, scan_id in head.items()}
 
     async def _heads_in_scope(self, ctx: _ToolContext) -> tuple[dict[str, str], dict[str, str]]:
-        """Head scan ids and names by project id, for the `project_id` argument or the whole scope in one read."""
         if ctx.args.get("project_id"):
             project = await self._require_project(ctx)
             scan_id = await self._head_scan_id(project, ctx.db)
@@ -1768,14 +1734,12 @@ class ChatToolRegistry:
         return heads, {p.id: p.name for p in projects}
 
     async def _require_head(self, ctx: _ToolContext, project: dict[str, Any], listing: str | None = None) -> str:
-        """The project's head scan id; a project with no usable build ends the tool with no scan data."""
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             raise _ToolRefusal(_ERR_NO_SCAN_DATA, listing)
         return head_scan_id
 
     async def _require_heads(self, ctx: _ToolContext, listing: str) -> tuple[list[str], dict[str, str]]:
-        """`_heads_in_scope` as a list of head scan ids; with none the tool answers an empty `listing`."""
         heads, names = await self._heads_in_scope(ctx)
         if not heads:
             raise _ToolRefusal(_ERR_NO_SCAN_DATA, listing)
@@ -1784,8 +1748,6 @@ class ChatToolRegistry:
     async def _ranked_head_findings(
         self, ctx: _ToolContext, *queries: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]:
-        """The `limit` worst unwaived head findings in scope, filled from `queries` in turn, with the project
-        names and the ranking note of the first query whose tier was sampled."""
         heads, names = await self._require_heads(ctx, "findings")
         rows: list[dict[str, Any]] = []
         ranking: dict[str, str] = {}

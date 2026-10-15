@@ -1,5 +1,3 @@
-"""Slack Block Kit message formatting."""
-
 from collections.abc import Callable
 from typing import Any
 
@@ -22,17 +20,16 @@ def _escape_mrkdwn(text: str) -> str:
 
 
 def _fit(text: str) -> str:
-    """Section text within Slack's per-block budget, saying so when it did not fit."""
     if len(text) <= _SECTION_TEXT_MAX_LENGTH:
         return text
     return text[: _SECTION_TEXT_MAX_LENGTH - len(_CUT_MARKER)] + _CUT_MARKER
 
 
 SEVERITY_EMOJI = {
-    "CRITICAL": "\U0001f534",  # red circle
-    "HIGH": "\U0001f7e0",  # orange circle
-    "MEDIUM": "\U0001f7e1",  # yellow circle
-    "LOW": "\U0001f535",  # blue circle
+    "CRITICAL": "\U0001f534",
+    "HIGH": "\U0001f7e0",
+    "MEDIUM": "\U0001f7e1",
+    "LOW": "\U0001f535",
 }
 
 
@@ -41,7 +38,6 @@ _CODE_SPAN_UNSAFE = str.maketrans("", "", "`<>&")
 
 
 def format_vuln_line(index: int, vuln: AlertVulnerability, emphasis: str, escape: Callable[[str], str]) -> str:
-    """One alert line, with ``escape`` applied to the SBOM-sourced package and version."""
     emoji = SEVERITY_EMOJI.get(vuln.severity, "\u26aa")
     line = f"{index}. `{vuln.id.translate(_CODE_SPAN_UNSAFE)}` {emoji} {vuln.severity} \u2014 "
     line += escape(vuln.versioned_package)
@@ -57,7 +53,6 @@ def project_findings_summary(findings: list[str]) -> str:
 
 
 def _section_blocks(text: str, slots: int) -> list[dict[str, Any]]:
-    """``text`` in at most ``slots`` sections, the last one saying how much did not fit."""
     remaining = text.strip()
     chunks: list[str] = []
     while remaining and len(chunks) < slots - 1:
@@ -69,7 +64,6 @@ def _section_blocks(text: str, slots: int) -> list[dict[str, Any]]:
 
 
 def build_generic_blocks(subject: str, message: str) -> list[dict[str, Any]]:
-    """Default Block Kit layout built from subject + message."""
     return [
         {
             "type": "header",
@@ -93,7 +87,6 @@ def build_analysis_completed_blocks(
     analyzer_count: int,
     scan_link: str,
 ) -> list[dict[str, Any]]:
-    """Build rich Block Kit layout for analysis completed notification."""
     blocks: list[dict[str, Any]] = [
         {
             "type": "header",
@@ -177,7 +170,6 @@ def build_vulnerability_found_blocks(
     top_vulns: list[AlertVulnerability],
     scan_link: str,
 ) -> list[dict[str, Any]]:
-    """Build rich Block Kit layout for vulnerability found notification."""
     blocks: list[dict[str, Any]] = [
         {
             "type": "header",
@@ -242,7 +234,6 @@ def build_advisory_blocks(
     affected_projects: list[dict[str, Any]] | None = None,
     dashboard_link: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Build Block Kit layout for advisory / broadcast notifications."""
     body_slots = _MAX_BLOCKS - 2 - bool(affected_projects) - bool(dashboard_link)
     blocks: list[dict[str, Any]] = [
         {

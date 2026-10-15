@@ -1,5 +1,3 @@
-"""Statistics calculation for SBOM analysis (EPSS/KEV and reachability)."""
-
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any, ClassVar, NamedTuple, cast
@@ -65,7 +63,6 @@ def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss
 
 
 def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
-    """Emit one row per known-exploited CVE of a finding."""
     component = finding.get("component", "")
     rows: list[KEVDetail] = [
         {
@@ -85,7 +82,6 @@ def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summa
 def _process_finding_risk(
     finding: dict[str, Any], details: dict[str, Any], risk_scores: list[float], summary: EPSSKEVSummary
 ) -> None:
-    """Collect the finding's risk score and one high-risk row per advisory scored above the threshold."""
     risk_score = details.get("risk_score")
     if risk_score is not None:
         risk_scores.append(float(risk_score))
@@ -114,7 +110,6 @@ _HIGH_RISK_SAMPLE_CAP = 20
 
 
 def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
-    """Build a summary of EPSS/KEV enrichment for the raw data view."""
     epss_scores_counts: EPSSScoreCounts = {"high": 0, "medium": 0, "low": 0}
 
     exploit_maturity_counts: ExploitMaturityCounts = {
@@ -182,7 +177,6 @@ def build_reachability_summary(
     findings: list[dict[str, Any]],
     callgraphs: Sequence[CallgraphMinimal],
 ) -> ReachabilitySummary:
-    """Build a summary of reachability analysis for the raw data view."""
     reachability_levels: ReachabilityLevelCounts = {
         "confirmed": 0,
         "likely": 0,
@@ -217,7 +211,6 @@ def build_reachability_summary(
     for finding in findings:
         reachability_data = finding.get("details", {}).get("reachability", {})
         reachable = reachability_data.get("is_reachable")
-        # Map persisted none/import/symbol level onto the confirmed/likely/unreachable/unknown buckets.
         tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info: VulnerabilityInfo = {
@@ -255,14 +248,13 @@ _BUCKETED_SEVERITIES: tuple[str, ...] = tuple(s.value for s in Severity if s is 
 
 
 def _numeric(raw: Any) -> float | None:
-    """A real number, or None. bool is rejected despite subclassing int: True would score as a perfect 1.0."""
+    """bool is rejected despite subclassing int: True would score as a perfect 1.0."""
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
     return float(raw)
 
 
 def _live_threat_intel(details: Mapping[str, Any]) -> tuple[float | None, bool, bool]:
-    """The finding's EPSS, KEV and ransomware marks, taken off its unwaived advisories."""
     live = live_advisories(details)
     epss = max((score for entry in live if (score := _numeric(entry.get("epss_score"))) is not None), default=None)
     in_kev = any(entry.get(DETAILS_KEY_IN_KEV) is True for entry in live)
@@ -270,8 +262,6 @@ def _live_threat_intel(details: Mapping[str, Any]) -> tuple[float | None, bool, 
 
 
 class StatsAccumulator:
-    """Scan statistics, folded over a stream of findings."""
-
     # Projection of the stats cursor: add() must read no field outside this set.
     REQUIRED_PATHS: ClassVar[frozenset[str]] = frozenset(
         {
@@ -350,8 +340,7 @@ class StatsAccumulator:
         level = finding.get("reachability_level")
         epss, in_kev, kev_ransomware = _live_threat_intel(details)
 
-        # Weights are keyed on bucket, not on raw severity: a new RISK_SEVERITY_WEIGHTS key that is
-        # not also in _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
+        # A RISK_SEVERITY_WEIGHTS key missing from _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
         self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * reachability_risk_modifier(reachable, level)
 
         finding_type = finding.get("type")
@@ -438,8 +427,7 @@ class StatsAccumulator:
                 self._reachable_high_hc += 1
 
     def result(self) -> Stats:
-        # The four sub-models stay None on an empty or fully waived scan: the frontend's
-        # threat-intelligence view distinguishes no-data from all-zero.
+        # Empty or fully waived: sub-models stay None so the threat-intelligence view tells no-data from all-zero.
         if self._counted == 0:
             return Stats()
 
@@ -522,8 +510,7 @@ def _stats_projection() -> dict[str, int]:
     return projection
 
 
-# scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
-# the waiver restamp, so hinting either opens a skip window mid-cursor.
+# The waiver restamp rewrites severity and waived, so hinting their index could skip docs; scan_id + type never change.
 _STATS_CURSOR_HINT = FINDINGS_SCAN_TYPE_INDEX
 
 
@@ -535,7 +522,6 @@ class ScanTally(NamedTuple):
 async def calculate_comprehensive_stats(
     db: Database, scan_id: str, component_languages: ComponentLanguages | None = None
 ) -> ScanTally:
-    """A scan's statistics and waived count from one cursor; pass ``component_languages`` when the run built it."""
     if component_languages is None:
         component_languages = await build_component_language_map(db, scan_id)
     acc = StatsAccumulator(component_languages)

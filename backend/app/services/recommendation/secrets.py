@@ -42,7 +42,6 @@ _SECRET_CARDS = (
 
 
 def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """One card for live secrets and one for secrets scored LOW, each at its own priority."""
     recommendations = []
     for deprioritized, priority, title, advice, steps in _SECRET_CARDS:
         group = [f for f in findings if (get_attr(f, "severity") == "LOW") is deprioritized]

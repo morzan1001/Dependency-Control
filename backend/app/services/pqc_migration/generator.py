@@ -1,5 +1,3 @@
-"""Turns quantum-vulnerable crypto assets into a priority-ranked PQC migration plan."""
-
 from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -49,8 +47,7 @@ class PQCMigrationPlanGenerator:
             scope_id=resolved.scope_id,
             generated_at=now,
             items=returned,
-            # Summarised over every migratable group: a plan that under-counts the work is a
-            # planning document wrong in the direction that matters.
+            # Summarised over every migratable group: an under-counting plan is wrong in the direction that matters.
             summary=self._summarise(items, items_returned=len(returned)),
             mappings_version=CURRENT_MAPPINGS_VERSION,
         )
@@ -121,7 +118,6 @@ class PQCMigrationPlanGenerator:
         self,
         resolved: ResolvedScope,
     ) -> list[CryptoAsset]:
-        """Quantum-vulnerable assets from the head build of each resolved project."""
         from app.services.releases import resolve_scan_ids
 
         scan_ids = await resolve_scan_ids(self.db, resolved.project_ids, projects=resolved.projects)

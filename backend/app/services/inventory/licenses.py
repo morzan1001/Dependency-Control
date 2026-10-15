@@ -1,5 +1,3 @@
-"""License aggregation over a scan's dependencies."""
-
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from typing import Any
@@ -18,7 +16,6 @@ UNKNOWN_LICENSE = "unknown"
 
 
 def license_ids(raw: str | None) -> list[str]:
-    """The license rows a component is listed under; one without a license is listed as unknown."""
     return tokenize_license_string(raw or "") or [UNKNOWN_LICENSE]
 
 

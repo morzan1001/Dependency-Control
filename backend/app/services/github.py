@@ -37,14 +37,11 @@ _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/
 _PUBLIC_GITHUB_WEB_HOSTS = frozenset({"github.com", "www.github.com"})
 
 
-# The resolution runs inside the ingest request. One deadline covers every call it makes -- the
-# per-team checks and the per-member reads that follow them -- so a GitHub that answers slowly costs
-# an ingest this much once, rather than this much per phase.
+# One deadline over the whole resolution, which runs inside the ingest request, so slowness costs this once.
 _GITHUB_RESOLUTION_TIMEOUT = 30.0
 
 _DEFAULT_ACCEPT = "application/vnd.github+json"
-# Without this media type the team/repository check answers 204 with no body, and the body is the
-# only place the team's permission level on the repository is reported.
+# Without this media type the team/repository check answers 204 without the body that reports the permission.
 _REPOSITORY_ACCEPT = "application/vnd.github.v3.repository+json"
 
 # The walk's share of the resolution budget, from its first gated listing; a timeout is cached as a failure.
@@ -53,8 +50,7 @@ _GITHUB_ORG_WALK_TIMEOUT = 15.0
 # A failed fetch is cached as a bare {} for an hour; the wrapper keeps a real None answer distinct.
 _CACHED_FIELD = "value"
 
-# Write access or better. Read access is not ownership: a group holding every repository of the
-# organisation on pull would otherwise own the whole estate.
+# Read access is not ownership: a group pulling every repository would otherwise own the whole estate.
 _WRITE_PERMISSIONS = ("push", "maintain", "admin")
 
 _GITHUB_TEAM_ROLES = (("maintainer", TEAM_ROLE_ADMIN), ("member", TEAM_ROLE_MEMBER))
@@ -64,14 +60,12 @@ _rate_limit_holds: dict[str, datetime] = {}
 
 
 def split_repo_path(path: str | None) -> tuple[str, str] | None:
-    """``owner/repo`` as its two parts, or None unless both are present."""
     owner, _, repo = (path or "").partition("/")
     return (owner, repo) if owner and repo else None
 
 
 def _team_writes_to(repository: dict[str, Any]) -> bool | None:
-    """Whether the team's access to the repository is write or better; None when the listing did not
-    say, which must not read as read-only and retire the owners of a whole organisation."""
+    """None when the listing did not say, which must not read as read-only and retire a whole organisation's owners."""
     permissions = repository.get("permissions")
     if not isinstance(permissions, dict):
         return None
@@ -79,7 +73,6 @@ def _team_writes_to(repository: dict[str, Any]) -> bool | None:
 
 
 def _auto_team_name(org: str, slug: str) -> str:
-    """The name a team gets while nobody has renamed it."""
     return f"GitHub Team: {org}/{slug}"
 
 
@@ -102,11 +95,7 @@ def _team_slug(team: dict[str, Any]) -> str | None:
 
 
 def build_team_slug_map(org_teams: list[dict[str, Any]]) -> dict[int, str]:
-    """Team id -> current slug from GET /orgs/{org}/teams.
-
-    A stored slug would address the wrong team after a rename, so the slug the API is called with
-    is always the one the organisation listing reports for the bound team number.
-    """
+    """A stored slug would address the wrong team after a rename, so calls use the listing's current slug."""
     return {
         team_id: slug
         for team in org_teams
@@ -115,8 +104,7 @@ def build_team_slug_map(org_teams: list[dict[str, Any]]) -> dict[int, str]:
 
 
 def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[GitHubOrgTeam]:
-    """The teams of an organisation a human can bind to, with the parent that tells two same-named
-    nested teams apart. An entry that cannot address a team is left out, as it is everywhere else."""
+    """The parent tells two same-named nested teams apart."""
     options = []
     for team in org_teams:
         team_id = _team_id(team)
@@ -136,11 +124,7 @@ def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[GitHubOrgTea
 
 
 class _HolderBinding(NamedTuple):
-    """A GitHub team holding the repository, before its Dependency Control team is settled.
-
-    ``team`` carries the bound team where one is bound, and None for a group whose team is still to
-    be adopted or created — which happens only once the whole set is known to fit the project.
-    """
+    """team is None until adopted or created, which waits until the whole set is known to fit the project."""
 
     team_id: int
     slug: str
@@ -148,7 +132,7 @@ class _HolderBinding(NamedTuple):
 
 
 class GitHubCoreRateLimit(NamedTuple):
-    """The core budget of a token; ``remaining == 0`` is what turns every other call into a 403."""
+    """remaining == 0 is what turns every other call into a 403."""
 
     remaining: int
     reset_at: datetime
@@ -159,7 +143,6 @@ def _hostname(url: str) -> str:
 
 
 def is_public_github(github_url: str | None, issuer_url: str) -> bool:
-    """Whether an instance's API, and so its access token, belongs to github.com rather than a GHES host."""
     # The parsed host, not a substring: "github.company.com" and "github.com.corp.internal" are GHES.
     if github_url:
         return _hostname(github_url) in _PUBLIC_GITHUB_WEB_HOSTS
@@ -167,7 +150,6 @@ def is_public_github(github_url: str | None, issuer_url: str) -> bool:
 
 
 def github_api_headers(token: str | None) -> dict[str, str]:
-    """REST headers for api.github.com, pinned to one API version; anonymous without a token."""
     headers = {"Accept": _DEFAULT_ACCEPT, "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -175,8 +157,6 @@ def github_api_headers(token: str | None) -> dict[str, str]:
 
 
 class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
-    """OIDC token validation and API operations for github.com and GHES instances."""
-
     provider = "GitHub"
     _cache_prefix = "github:gh_instance"
     team_provider = TEAM_SOURCE_GITHUB
@@ -197,7 +177,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     @property
     def rate_limited_until(self) -> datetime | None:
-        """When the rate limit GitHub refused this instance's token with lifts; None once it has."""
         lifts_at = _rate_limit_holds.get(self.instance_id)
         return lifts_at if lifts_at is not None and datetime.now(timezone.utc) < lifts_at else None
 
@@ -225,11 +204,9 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         )
 
     async def list_branches(self, owner: str, repo: str) -> list[str] | None:
-        """Every branch name of a GitHub repository; None on API failure."""
         return await self._branch_names(f"/repos/{owner}/{repo}/branches")
 
     async def get_default_branch(self, owner: str, repo: str) -> str | None:
-        """The repository's default branch. Returns None on API failure."""
         response = await self._get_ok(f"/repos/{owner}/{repo}")
         if response is None:
             return None
@@ -245,7 +222,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         ttl_seconds: int = GITHUB_TEAM_SYNC_CACHE_TTL,
         max_wait_seconds: float = 5.0,
     ) -> Any:
-        """One fetch per key and TTL across every pod, its None cached for the TTL as well."""
+        """Wrapped so a None answer is cached for ttl_seconds rather than the generic negative-result TTL."""
 
         async def wrapped() -> dict[str, Any]:
             return {_CACHED_FIELD: await fetch()}
@@ -257,12 +234,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return value if isinstance(value, expected_type) else None
 
     async def team_writes_to_repository(self, org: str, team_slug: str, team_id: int, repo: str) -> bool | None:
-        """Whether one team holds one repository with write access or better; None when GitHub did
-        not answer.
-
-        Answers on a read-only organisation token, which asking the repository for its teams
-        cannot: that requires the admin role on every single repository.
-        """
+        """Works with a read-only org token; listing a repository's teams would need admin on every repository."""
         cache_key = self._get_cache_key(f"team_write:{org}/{team_id}:{org}/{repo}")
         cached: bool | None = await cache_service.get(cache_key)
         if cached is not None:
@@ -275,9 +247,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
             return None
 
         if response.status_code == 200:
-            # This endpoint is a permission check, not a write check: it answers 200 on pull as
-            # readily as on admin, so the level in the body is what decides, exactly as it does
-            # when the organisation walk reads the same repository from the team's listing.
+            # The endpoint answers 200 on pull as on admin, so the permission level in the body decides.
             writes = _team_writes_to(json_document(response))
             if writes is None:
                 logger.warning(
@@ -292,8 +262,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         elif response.status_code == 404:
             writes = False
         else:
-            # A refusal read as "this team does not hold the repository" would retire the team
-            # from every project it owns.
+            # A refusal read as "the team lacks the repository" would retire the team from every project it owns.
             logger.warning("GitHub API GET %s returned HTTP %d", endpoint, response.status_code)
             return None
 
@@ -301,8 +270,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return writes
 
     async def _repository_visible(self, org: str, repo: str) -> bool | None:
-        """Whether the token can see the repository at all; None when GitHub did not answer."""
-
         async def fetch() -> bool | None:
             endpoint = f"/repos/{org}/{repo}"
             async with request_gate(self.instance_id):
@@ -322,7 +289,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return visible
 
     async def _is_personal_account(self, owner: str) -> bool:
-        """Whether a repository owner is a user, whose repositories no team can hold, not an organisation."""
+        """A user's repositories, unlike an organisation's, no team can hold."""
 
         async def fetch() -> bool | None:
             async with request_gate(self.instance_id):
@@ -332,8 +299,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return await self._cached(f"owner_kind:{owner}", fetch, bool) is True
 
     async def get_org_teams(self, org: str) -> list[dict[str, Any]] | None:
-        """Every team of an organisation, with the parent that tells two same-named ones apart."""
-
         async def fetch() -> list[dict[str, Any]] | None:
             async with request_gate(self.instance_id):
                 teams = await self._api_get_paginated(f"/orgs/{org}/teams")
@@ -355,11 +320,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return teams
 
     async def _list_team_repositories(self, org: str, slug: str, budget: asyncio.Timeout) -> list[str] | None:
-        """The full names one team may write to, lower-cased; None when a page went unanswered or
-        did not say what the team's access is.
-
-        A team with mere read access is not an owner: the people who can change the code are.
-        """
         written: list[str] = []
         async with request_gate(self.instance_id):
             if budget.when() is None:
@@ -409,13 +369,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return repo_map
 
     async def get_org_repository_map(self, org: str, slug_map: dict[int, str]) -> dict[str, list[int]] | None:
-        """Repository full name -> the teams of ``org`` holding it; None when the walk did not finish.
-
-        Asking the repository which teams hold it needs the admin role on that repository, so the
-        only answer a read-only organisation token can give costs a request per team. One walk per
-        organisation and TTL, behind the stampede lock: the jobs of one workflow run arrive
-        together, and eight of them walking a 204-team organisation is 1632 of 5000 hourly requests.
-        """
+        """One walk per org and TTL behind the stampede lock: a run's jobs arrive together and would each walk."""
         repo_map: dict[str, list[int]] | None = await self._cached(
             f"org_repository_map:{org}",
             lambda: self._walk_org_repository_map(org, slug_map),
@@ -427,16 +381,12 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return repo_map
 
     async def count_org_teams(self, org: str) -> int | None:
-        """How many teams the token can read in an organisation; None when the API refuses.
-
-        Uncached, unlike ``get_org_teams``: a connection test must observe the token as it is now,
-        not as it was five minutes ago.
-        """
+        """Uncached: a connection test must see the token as it is now, not five minutes ago."""
         teams = await self._api_get_paginated(f"/orgs/{org}/teams")
         return None if teams is None else len(teams)
 
     async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:
-        """Logins tagged with their role. Cached on the numeric id: the slug is renameable."""
+        """Cached on the numeric id because the slug is renameable."""
 
         async def fetch() -> list[dict[str, Any]] | None:
             endpoint = f"/orgs/{org}/teams/{team_slug}/members"
@@ -454,12 +404,11 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return members
 
     async def get_viewer_organisations(self) -> list[dict[str, Any]] | None:
-        """Organisations the token's own identity belongs to. Uncached: a connection test must
-        observe the token as it is now, not as it was five minutes ago."""
+        """Uncached: a connection test must see the token as it is now, not five minutes ago."""
         return await self._api_get_paginated("/user/orgs")
 
     async def get_core_rate_limit(self) -> GitHubCoreRateLimit | None:
-        """The token's core budget from the uncharged GET /rate_limit; None if unreadable, as on GHES without limits."""
+        """GET /rate_limit costs no quota; None also on GHES without rate limits."""
         response = await self._api_get("/rate_limit")
         if response is None or response.status_code != 200:
             return None
@@ -474,7 +423,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
             return None
 
     async def _resolve_logins(self, logins: list[str], user_repo: UserRepository) -> dict[str, dict[str, Any]] | None:
-        """Login -> existing local user by verified public email, never by username; None when GitHub won't say."""
+        """Matched by verified public email, never by username."""
         emails = await self._public_emails(logins)
         if emails is None:
             return None
@@ -482,7 +431,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return {login: user for login, email in emails.items() if email and (user := by_email.get(email.lower()))}
 
     async def resolve_login(self, login: str, user_repo: UserRepository) -> dict[str, Any] | None:
-        """The EXISTING local user that verified the login's public email, if GitHub names one."""
+        """Only an existing local user who verified the login's public email; never creates one."""
         return (await self._resolve_logins([login], user_repo) or {}).get(login)
 
     async def _build_team_members(
@@ -490,7 +439,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         members: list[dict[str, Any]],
         user_repo: UserRepository,
     ) -> list[TeamMember] | None:
-        """GitHub members as existing local users tagged with this instance; None when GitHub won't answer for one."""
         users = await self._resolve_logins([member["login"] for member in members], user_repo)
         if users is None:
             return None
@@ -526,11 +474,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         team: dict[str, Any],
         team_members: list[TeamMember] | None,
     ) -> None:
-        """Write what GitHub has since changed about a holding team.
-
-        ``team_members`` is None to leave the stored members alone, which the rename must not hang
-        on: barely a login resolves here, so a name would otherwise never follow a renamed team.
-        """
+        """None team_members leaves members alone without blocking the rename, since few logins resolve."""
         binding = binding_of(team, self.instance_id) or {}
         # The binding is the numeric team id, so a renamed slug has to follow it.
         await self._write_team_refresh(
@@ -549,17 +493,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         team_id: int,
         slug: str,
     ) -> dict[str, Any] | None:
-        """The Dependency Control team for a GitHub team: the one bound to it, or a new one.
-
-        A binding hands every member of that team project-admin over everything the group holds,
-        which is system:manage's to grant, while a team's name is its own admin's to set; binding
-        by name let anyone who can name a team collect the group's repositories.
-
-        Created even when GitHub names members none of whom resolve: logins here are personal
-        handles while usernames are directory ids, so requiring a resolved member — as the GitLab
-        sync does — would mean never creating anything. An empty team its owner fills by hand is
-        worth more than a group that never appears.
-        """
+        """Never matched by name, which any team admin can set; created even if no member resolves, as few logins do."""
         existing = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, self.instance_id, team_id)
         if existing:
             return existing
@@ -583,7 +517,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         holder_ids: list[int],
         current_owner_ids: set[str],
     ) -> list[_HolderBinding] | None:
-        """Mapped holders plus current owners, whom the listing can omit; None when an owner cannot be asked."""
+        """Current owners are added because the listing can omit them."""
         addressed = []
         for team in bound_teams:
             owns = str(team["_id"]) in current_owner_ids
@@ -608,7 +542,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     async def _collect_repository_candidates(
         self, org: str, repo: str, addressed: list[_HolderBinding]
     ) -> list[_HolderBinding] | None:
-        """The addressed teams holding the repository; None on any unanswered check, which would retire its owner."""
+        """None on any unanswered check, which would otherwise retire its owner."""
         accesses = await asyncio.gather(
             *(self.team_writes_to_repository(org, holder.slug, holder.team_id, repo) for holder in addressed)
         )
@@ -624,7 +558,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         addressed: list[_HolderBinding],
         slug_map: dict[int, str],
     ) -> list[_HolderBinding]:
-        """Unbound groups holding the repository, read every sync so a group granted access later is found."""
+        """Read every sync so a group granted access later is found."""
         # Already asked about this repository directly, and that answer is the fresher one.
         asked = {holder.team_id for holder in addressed}
         bindings: list[_HolderBinding] = []
@@ -653,8 +587,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         bound_teams: list[dict[str, Any]],
         current_owner_ids: set[str],
     ) -> list[_HolderBinding] | None:
-        """Every GitHub team holding the repository, or None when GitHub could not answer for all
-        of them. Reads only: nothing is written before the whole set is known."""
+        """Reads only: nothing is written before the whole set is known."""
         org_teams = await self.get_org_teams(org)
         if org_teams is None:
             if await self._is_personal_account(org):
@@ -695,7 +628,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         repo: str,
         holder: _HolderBinding,
     ) -> list[TeamMember] | None:
-        """The members to store for a holding team, or None to leave the stored ones alone."""
         # An empty list is a team nobody is left in, and its members must go; only None is a failure.
         members = await self.get_team_members(org, holder.slug, holder.team_id)
         if members is None:
@@ -711,8 +643,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
         team_members = await self._build_team_members(members, user_repo)
         if team_members is None:
-            # Whoever GitHub would not answer for is absent from the resolved set, and writing it
-            # would retire them from the team along with the role it gives them on its projects.
+            # Members GitHub would not answer for are missing; writing the set would retire them from the team.
             logger.warning(
                 "GitHub would not say who the %d members of team %s/%s (id=%d) are while syncing %s/%s; "
                 "leaving the existing members untouched.",
@@ -733,7 +664,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         current_owner_ids: set[str],
         owner_budget: int = MAX_PROJECT_TEAMS,
     ) -> TeamSyncResult:
-        """All teams holding the repository, creating unbound ones only within ``owner_budget``; never raises."""
+        """Never raises."""
         try:
             parts = split_repo_path(repository_path)
             if parts is None:
@@ -781,8 +712,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
                 [holder.slug for holder in holders],
             )
 
-            # Local writes, outside the deadline: the ownership answer below is what the ingest is
-            # here for, and it needs every holder to have a team.
+            # Local writes stay outside the deadline: the ownership answer below needs every holder to have a team.
             teams: list[dict[str, Any]] = []
             for holder in holders:
                 team = holder.team or await self._team_for_github_group(team_repo, org, holder.team_id, holder.slug)
@@ -792,8 +722,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
             user_repo = UserRepository(db)
             members: list[list[TeamMember] | None] = [None] * len(holders)
             try:
-                # The same deadline, so the reads and the member listing and profile read per team
-                # share one budget instead of each getting a whole one.
+                # The same deadline, so all per-team reads share one budget instead of each getting a whole one.
                 async with asyncio.timeout_at(deadline):
                     for index, holder in enumerate(holders):
                         members[index] = await self._resolve_holder_members(user_repo, org, repo, holder)
@@ -823,13 +752,11 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     async def get_pull_requests_for_commit(
         self, owner: str, repo: str, commit_sha: str, branch: str
     ) -> tuple[str, list[GitHubPullRequest]]:
-        """The sha that matched and its pull requests; a "<number>/merge" build reaches that PR via the head parent."""
         pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
         if pull_requests or not branch.endswith("/merge"):
             return commit_sha, pull_requests
 
-        # A `pull_request` workflow (GITHUB_REF_NAME "<number>/merge") checks out an ephemeral test-merge
-        # commit GitHub associates with no pull request (HTTP 200 and [], never a 404); parents[1] is the PR head.
+        # A "<number>/merge" build runs a test-merge commit GitHub links to no PR (200, []); parents[1] is the PR head.
         head_sha = await self._merge_commit_head_parent(owner, repo, commit_sha)
         if head_sha:
             pull_requests = [
@@ -860,7 +787,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return [] if response is None else [GitHubPullRequest(**pr) for pr in response.json()]
 
     async def _merge_commit_head_parent(self, owner: str, repo: str, commit_sha: str) -> str | None:
-        """Second parent of a two-parent merge commit. Parent order is a git convention, not an API guarantee."""
+        """Parent order is a git convention, not an API guarantee."""
         response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{commit_sha}")
         if response is None:
             return None
@@ -871,7 +798,6 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return str(head_sha) if head_sha else None
 
     async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment] | None:
-        """Issue comments on a pull request; None when a page failed."""
         comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments")
         return None if comments is None else [GitHubIssueComment(**c) for c in comments]
 

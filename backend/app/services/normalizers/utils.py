@@ -1,5 +1,3 @@
-"""Shared helpers for normalizing scanner result data."""
-
 import re
 from enum import StrEnum
 from typing import Any
@@ -12,7 +10,6 @@ def safe_severity(
     value: str | None,
     default: Severity = Severity.UNKNOWN,
 ) -> Severity:
-    """Parse a scanner severity string to a Severity enum, never raising."""
     if not value:
         return default
 
@@ -26,7 +23,6 @@ def safe_severity(
 
 
 def normalize_list(value: str | list[str] | None) -> list[str]:
-    """Coerce a string, list, or None into a list of non-empty strings."""
     if not value:
         return []
     if isinstance(value, list):
@@ -35,7 +31,6 @@ def normalize_list(value: str | list[str] | None) -> list[str]:
 
 
 def normalize_cwe_list(cwe: str | list[str] | None) -> list[str]:
-    """Extract bare CWE number strings from any scanner CWE format (e.g. "CWE-327" -> "327")."""
     if not cwe:
         return []
 
@@ -81,7 +76,6 @@ def build_finding_id(
     *parts: Any,
     separator: str = "-",
 ) -> str:
-    """Build a finding ID like "PREFIX-part1-part2", skipping None/empty parts."""
     valid_parts = [str(p) for p in parts if p]
 
     if not valid_parts:
@@ -95,7 +89,6 @@ _TRIVY_CVSS_VERSIONS = (("V3Score", "V3Vector"), ("V40Score", "V40Vector"), ("V2
 
 
 def extract_cvss(cvss_data: dict[str, Any]) -> tuple[float | None, str | None]:
-    """Extract a (score, vector) CVSS pair from Trivy data: v3, then v4, then v2, each by source priority."""
     if not cvss_data:
         return None, None
     for score_key, vector_key in _TRIVY_CVSS_VERSIONS:
@@ -109,7 +102,6 @@ def extract_cvss(cvss_data: dict[str, Any]) -> tuple[float | None, str | None]:
 def extract_grype_cvss(
     cvss_list: list[dict[str, Any]],
 ) -> tuple[float | None, str | None]:
-    """Pick the highest-version CVSS (score, vector) from Grype's CVSS list."""
     if not cvss_list:
         return None, None
 
@@ -141,7 +133,6 @@ def extract_grype_cvss(
 
 
 def prefer_cve_as_primary_id(vuln_id: str, aliases: list[str]) -> tuple[str, list[str]]:
-    """Swap a non-CVE primary id with a CVE from aliases, keeping the original as an alias."""
     cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
     if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
         others = [alias for alias in aliases if alias != cve_alias]

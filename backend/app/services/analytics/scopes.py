@@ -1,5 +1,3 @@
-"""Resolves an analytics (scope, scope_id) into the projects the caller may query."""
-
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,7 +29,6 @@ class ScopeTooLargeError(Exception):
 
 
 async def read_scope_projects(db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[ProjectWithScanId]:
-    """The projects ``query`` selects with the fields head resolution reads, refused past the ceiling."""
     projects = await ProjectRepository(db).find_many_with_scan_id(query, limit=ANALYTICS_MAX_SCOPE_PROJECTS + 1)
     if len(projects) > ANALYTICS_MAX_SCOPE_PROJECTS:
         raise ScopeTooLargeError(_SCOPE_TOO_LARGE.format(limit=ANALYTICS_MAX_SCOPE_PROJECTS))
@@ -43,7 +40,7 @@ def may_query_global(user: User) -> bool:
 
 
 def team_scope_filter(user: User) -> dict[str, Any] | None:
-    """Teams whose analytics the user may query, None for none; team:read_all opens team metadata, not project data."""
+    """None means no team; team:read_all opens team metadata, not project data."""
     from app.api.v1.helpers.projects import may_read_projects
 
     if may_query_global(user) or has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
@@ -114,7 +111,6 @@ class ScopeResolver:
         return True
 
     async def list_user_projects(self) -> list[ProjectWithScanId]:
-        """Every project the user may see, under the query the project routes are filtered by."""
         from app.api.v1.helpers.projects import build_user_project_query
 
         return await read_scope_projects(self.db, await build_user_project_query(self.user, TeamRepository(self.db)))

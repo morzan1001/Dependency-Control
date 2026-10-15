@@ -1,6 +1,3 @@
-"""Matches the cipher suites of protocol assets against the IANA catalog, emitting one finding per weak
-suite at the stricter of its catalog baseline and the enabled match_cipher_weaknesses rules it trips."""
-
 from typing import Any
 
 from app.core.constants import max_severity

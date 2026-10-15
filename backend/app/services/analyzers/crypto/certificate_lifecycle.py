@@ -1,5 +1,3 @@
-"""Certificate lifecycle checks; each check is independent and fail-soft."""
-
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -253,7 +251,6 @@ def evaluate_certificates(assets: list[CryptoAsset], policy: EffectivePolicy) ->
 
 
 def _policy_severity(policy: EffectivePolicy, finding_type: FindingType, default: Severity) -> Severity | None:
-    """Without a rule of the type the check keeps its built-in severity; rules of the type set it, or turn it off."""
     if not any(rule.finding_type == finding_type for rule in policy.rules):
         return default
     enabled = [rule for rule in policy.active_rules if rule.finding_type == finding_type]

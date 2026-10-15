@@ -123,7 +123,6 @@ _ANNOUNCED_FINDING_PROJECTION = {
     },
 }
 
-# Result rows the engine writes itself on every run, as opposed to rows posted by external scanners.
 _ENGINE_RESULT_NAMES = frozenset(analyzer_factories) | POST_PROCESSOR_ANALYZERS | CRYPTO_ANALYZERS
 
 # Crypto findings span the whole scan, so none is credited to one SBOM.
@@ -132,8 +131,6 @@ _CRYPTO_SOURCE = "CBOM"
 
 @dataclass(frozen=True)
 class _RunContext:
-    """What every step of one scan's analysis reads, fixed once the claimed scan is loaded."""
-
     scan: Scan
     db: Database
     worker_id: str
@@ -154,21 +151,18 @@ class _RunContext:
 
 @dataclass(frozen=True)
 class _Verdict:
-    """How the run ended, as the scan stores it and the announcements report it."""
-
     status: ScanStatus
     error: str | None
     stats: Stats
     findings_count: int
     ignored_count: int
-    # Each analyzer's worst outcome, in the order first reported.
     outcomes: list[AnalyzerOutcome]
     failed_analyzers: list[str]
     enrichment_failures: list[str]
 
 
 async def _get_github_instance_token(db: Database) -> str | None:
-    """The token of the oldest active github.com instance, since GHSA lookups send it to api.github.com."""
+    """A github.com instance's token, since GHSA lookups send it to api.github.com."""
     cursor = db.github_instances.find(
         {"is_active": True, "access_token": {"$nin": [None, ""]}},
         {"access_token": 1, "github_url": 1, "url": 1},
@@ -192,7 +186,6 @@ async def _run_context(
 
 
 async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Database) -> None:
-    """Copy non-SBOM analyzer results (e.g. Secret Scanning, SAST) from the original scan to a rescan."""
     if not (scan_doc.is_rescan and scan_doc.original_scan_id):
         return
 
@@ -206,11 +199,7 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Databas
 
 
 async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) -> None:
-    """Re-key the original scan's crypto assets onto a rescan.
-
-    A CBOM posted to /ingest/cbom is not stored in GridFS, so a rescan cannot re-derive the assets
-    it described and every crypto surface would read the rescan as having no cryptography at all.
-    """
+    """A CBOM posted to /ingest/cbom is not in GridFS, so a rescan cannot re-derive its assets."""
     if not (scan_doc.is_rescan and scan_doc.original_scan_id):
         return
 
@@ -233,7 +222,6 @@ async def _keep_result(
 
 
 def _account(ctx: _RunContext, aggregator: ResultAggregator, outcome: AnalyzerOutcome) -> AnalyzerOutcome:
-    """Log and count an analyzer the engine ran; a raised failure and a coverage gap also become findings."""
     name, reason = outcome.name, outcome.reason
     if outcome.error is not None:
         logger.error("Analysis %s failed: %s", name, outcome.error, exc_info=outcome.error)
@@ -285,7 +273,7 @@ def _evaluate_crypto(
 
 
 async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) -> list[AnalyzerOutcome]:
-    """Evaluate the scan's stored crypto assets once, after every SBOM's embedded assets are persisted."""
+    """Must run after every SBOM's embedded crypto assets are persisted."""
     try:
         docs = await CryptoAssetRepository(ctx.db).find_all_raw(scan_query(ctx.project_id, ctx.scan_id))
         policy = await CryptoPolicyResolver(ctx.db).resolve(ctx.project_id)
@@ -302,12 +290,11 @@ async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) 
     return outcomes
 
 
-# Marker substring of the system-error raised when a GridFS SBOM cannot be read.
 _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
 def _worst_outcomes(outcomes: list[AnalyzerOutcome]) -> list[AnalyzerOutcome]:
-    """Each analyzer's worst outcome, in the order first reported; an analyzer reports once per SBOM."""
+    """An analyzer reports once per SBOM."""
     worst: dict[str, AnalyzerOutcome] = {}
     for outcome in outcomes:
         if outcome.name not in worst or outcome.status > worst[outcome.name].status:
@@ -316,7 +303,7 @@ def _worst_outcomes(outcomes: list[AnalyzerOutcome]) -> list[AnalyzerOutcome]:
 
 
 def _failed_analyzer_names(outcomes: list[AnalyzerOutcome]) -> tuple[list[str], list[str]]:
-    """(analyzers, enrichments) that failed or ran partially; a failed enrichment loses metadata, not findings."""
+    """Enrichments are listed apart: a failed enrichment loses metadata, not findings."""
     failed = sorted(outcome.name for outcome in outcomes if outcome.status is not OutcomeStatus.SUCCESS)
     return (
         [name for name in failed if name not in POST_PROCESSOR_ANALYZERS],
@@ -332,7 +319,6 @@ def _sbom_load_failed(aggregator: ResultAggregator, reason: object) -> None:
 async def _stored_sbom_ids(
     fs: AsyncIOMotorGridFSBucket, sboms: list[Any], aggregator: ResultAggregator
 ) -> list[str | None]:
-    """Each ref's GridFS id, or None with the load failure recorded when no stored file backs it."""
     gridfs_ids = [gridfs_ref_id(item) for item in sboms]
     wanted = [bson.ObjectId(gid) for gid in gridfs_ids if gid and bson.ObjectId.is_valid(gid)]
     stored = {str(file._id) async for file in fs.find({"_id": {"$in": wanted}})} if wanted else set()
@@ -346,7 +332,6 @@ async def _stored_sbom_ids(
 async def _load_sbom(
     fs: AsyncIOMotorGridFSBucket, gridfs_id: str, position: int, write_file: bool
 ) -> tuple[ParsedSBOM | None, AnalyzerInput]:
-    """Download one stored SBOM, write its bytes for the CLI scanners when asked, and parse it."""
     analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
     data = await (await open_gridfs_download_with_retry(fs, bson.ObjectId(gridfs_id))).read()
     path = None
@@ -368,7 +353,6 @@ async def _load_sbom(
 def _parse_and_track_sbom(
     document: Any, position: int = 1, path: str | None = None
 ) -> tuple[ParsedSBOM | None, AnalyzerInput]:
-    """Pre-parse the SBOM and track metrics; a document that fails to parse leaves only the raw-document scanners."""
     parsed_components: list[dict[str, Any]] = []
     parsed_sbom = None
     name, sbom_format = None, SBOMFormat.UNKNOWN
@@ -390,7 +374,6 @@ def _parse_and_track_sbom(
 
 
 async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, scan_id: str, db: Database) -> None:
-    """Persist crypto assets that were embedded in a parsed SBOM."""
     try:
         crypto_assets = [
             CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed_sbom.crypto_assets
@@ -414,7 +397,6 @@ def _resolve_effective_analyzers(
 ) -> list[str]:
     if parsed_sbom is None:
         active_analyzers = [n for n in active_analyzers if n in RAW_SBOM_ANALYZERS]
-    # CBOM-only scans with no real SBOM content: drop SBOM-format scanners
     if not parsed_components and scan_type == "cbom":
         return sorted(n for n in active_analyzers if n not in VULNERABILITY_ANALYZERS)
     return sorted(active_analyzers)
@@ -423,7 +405,6 @@ def _resolve_effective_analyzers(
 async def _process_sbom(
     ctx: _RunContext, aggregator: ResultAggregator, parsed_sbom: ParsedSBOM | None, sbom: AnalyzerInput
 ) -> list[AnalyzerOutcome]:
-    """Run the analyzers over one loaded SBOM."""
     if parsed_sbom is not None and parsed_sbom.crypto_assets:
         await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
     names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components, ctx.scan.scan_type)
@@ -434,9 +415,8 @@ async def _process_sbom(
 async def _analyse_sboms(
     ctx: _RunContext, fs: AsyncIOMotorGridFSBucket, stored_ids: list[str | None], aggregator: ResultAggregator
 ) -> tuple[list[ParsedSBOM | None], int, list[AnalyzerOutcome]]:
-    """Load and analyse the stored SBOMs one at a time; returns the payload, the load failures and the outcomes."""
     write_file = bool(RAW_SBOM_ANALYZERS & set(ctx.active_analyzers))
-    # Collected rather than stored per SBOM: the inventory is replaced once per payload (see store_scan_dependencies).
+    # Collected rather than stored per SBOM: the inventory is replaced once per payload.
     payload: list[ParsedSBOM | None] = []
     load_failures = stored_ids.count(None)
     outcomes: list[AnalyzerOutcome] = []
@@ -473,7 +453,6 @@ async def _analyse_sboms(
 
 
 def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
-    """Track Prometheus metrics for aggregated findings."""
     for finding in aggregated_findings:
         analysis_findings_by_type_total.labels(type=finding.type, severity=finding.severity).inc()
         for scanner_name in finding.scanners:
@@ -486,20 +465,15 @@ _LICENSE_PRESENT = {"$nin": [None, ""]}
 
 
 def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMany]:
-    """Per-scan dependency updates for one enrichment entry, covering every duplicate doc."""
     slim = {key: entry["data"][key] for key in _DEP_ENRICHMENT_COPY_KEYS if key in entry["data"]}
     if not slim:
         return []
 
     if entry["purl"]:
-        # The canonical purl names package and version whatever each SBOM called it; the prefix
-        # match keeps qualifier variants together. A lookahead, unlike an alternation, leaves the
-        # server a tight index range on the literal prefix.
+        # Prefix match keeps qualifier variants; a lookahead, unlike an alternation, keeps the index range tight.
         dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(entry['purl'])}(?![^?#])"}}
     else:
-        # Without a purl the enrichment describes an unidentified package; restrict it to
-        # the equally purl-less docs so it cannot stamp a same-named package of another
-        # ecosystem with its licence.
+        # Purl-less docs only, so it cannot stamp a same-named package of another ecosystem with its licence.
         dep_filter = {
             "scan_id": scan_id,
             "name": entry["name"],
@@ -519,7 +493,6 @@ def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMa
 
 
 async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id: str, db: Database) -> None:
-    """Persist aggregated enrichment: purl-keyed upserts plus a slim per-scan dependency copy."""
     if not enrichment_entries:
         return
 
@@ -542,7 +515,6 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
 async def _run_epss_kev_enrichment(
     ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], outcomes: list[AnalyzerOutcome]
 ) -> None:
-    """Run EPSS/KEV enrichment on vulnerability findings."""
     try:
         _, unavailable = await vulnerability_enrichment_service.enrich_findings(
             vulnerability_findings, github_token=ctx.github_token
@@ -573,7 +545,6 @@ async def _run_epss_kev_enrichment(
 async def _run_reachability_enrichment(
     ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], outcomes: list[AnalyzerOutcome]
 ) -> ComponentLanguages | None:
-    """Run reachability analysis on vulnerability findings; returns the inventory language map it built."""
     callgraphs = await fetch_callgraphs(ctx.project_id, ctx.scan_id, ctx.db)
     if not callgraphs:
         await ScanRepository(ctx.db).update_raw(ctx.scan_id, {"$set": {"reachability_pending": True}})
@@ -595,7 +566,6 @@ async def _run_reachability_enrichment(
 async def _aggregate_external_results(
     aggregator: ResultAggregator, result_repo: AnalysisResultRepository, scan_id: str
 ) -> list[AnalyzerOutcome]:
-    """Fetch external analyzer results and aggregate them; returns each one's outcome."""
     outcomes: list[AnalyzerOutcome] = []
     query = {"scan_id": scan_id, "analyzer_name": {"$nin": list(_ENGINE_RESULT_NAMES)}}
     async for row in result_repo.iterate_raw(query, RESULT_PROJECTION):
@@ -626,11 +596,7 @@ def _prepare_finding_records(
     project_id: str,
     scan_created_at: datetime,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Convert aggregated findings to insertion records, splitting out vulnerabilities.
-
-    ``_id`` is deterministic per (scan, finding identity) so a re-analysis or a raced double-persist
-    writes over the stored copy instead of storing the whole finding set twice.
-    """
+    """A deterministic _id per (scan, finding identity) makes a re-analysis or raced double-persist overwrite."""
     findings_to_insert: list[dict[str, Any]] = []
     vulnerability_findings: list[dict[str, Any]] = []
     seen_identities: dict[str, int] = {}
@@ -655,7 +621,6 @@ def _prepare_finding_records(
 async def _run_vuln_enrichments(
     ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], outcomes: list[AnalyzerOutcome]
 ) -> ComponentLanguages | None:
-    """Run the vulnerability enrichments; returns the inventory language map reachability built."""
     if "epss_kev" in ctx.active_analyzers and vulnerability_findings:
         await _run_epss_kev_enrichment(ctx, vulnerability_findings, outcomes)
 
@@ -665,8 +630,7 @@ async def _run_vuln_enrichments(
 
 
 async def _stamp_first_seen(records: list[dict[str, Any]], project_id: str, finding_repo: FindingRepository) -> None:
-    """Carry each finding's earliest detection in the project forward, since retention deletes the scans
-    that first saw it; a vulnerability's advisories are dated one by one across its component's versions."""
+    """Carried forward because retention deletes the scans that first saw a finding."""
     vulnerabilities = [r for r in records if r["type"] == FindingType.VULNERABILITY.value]
     others = [r for r in records if r["type"] != FindingType.VULNERABILITY.value]
     earliest, advisories = await asyncio.gather(
@@ -685,7 +649,6 @@ async def _stamp_first_seen(records: list[dict[str, Any]], project_id: str, find
 
 
 def _fit_finding(record: dict[str, Any]) -> dict[str, Any]:
-    """The record, with its advisories slimmed when a vulnerability finding outgrows a Mongo document."""
     size = len(bson.encode(record))
     if size <= _MAX_DOCUMENT_BYTES:
         return record
@@ -706,7 +669,6 @@ def _fit_finding(record: dict[str, Any]) -> dict[str, Any]:
 async def _persist_findings_and_waivers(
     findings_to_insert: list[dict[str, Any]], scan_id: str, project_id: str, db: Database
 ) -> int:
-    """Write findings over the scan's stored ones and stamp the waiver set on them and the scan; returns the count."""
     finding_repo = FindingRepository(db)
     # Before the write, so re-analysing a scan still sees the dates its own copies inherited.
     await _stamp_first_seen(findings_to_insert, project_id, finding_repo)
@@ -745,13 +707,8 @@ async def _apply_handed_over_callgraphs(scan_id: str, project_id: str, db: Datab
 async def _write_final_state(
     ctx: _RunContext, status: ScanStatus, update: dict[str, Any], external_load_start: datetime
 ) -> ScanStatus | None:
-    """Apply ``update`` while this run holds the scan and saw all its input.
-
-    Returns ``status`` once written, PENDING when new input arrived during the run (rescheduled),
-    and None when the claim moved to another run, which then owns the scan.
-    """
-    # A replaced SBOM, or a scanner result that arrived after loading began, would otherwise be
-    # finalized over and never analysed.
+    """Returns status, PENDING when new input arrived mid-run (rescheduled), or None when another run took the claim."""
+    # Otherwise a replaced SBOM or a scanner result arriving mid-load would be finalized over, never analysed.
     guard: dict[str, Any] = {
         "_id": ctx.scan_id,
         "status": SCAN_STATUS_PROCESSING,
@@ -776,8 +733,6 @@ async def _write_final_state(
 async def _finalize_scan_and_project(
     ctx: _RunContext, verdict: _Verdict, external_load_start: datetime
 ) -> ScanStatus | None:
-    """Persist the final scan status, ignored count, and (on success) project stats; returns what
-    ``_write_final_state`` returns."""
     scan, scan_id, status = ctx.scan, ctx.scan_id, verdict.status
     completed_at = datetime.now(timezone.utc)
     stats = verdict.stats.model_dump()
@@ -832,7 +787,7 @@ async def _finalize_scan_and_project(
 
 
 async def _unwaived_findings(scan_id: str, db: Database) -> list[dict[str, Any]]:
-    """The scan's findings no waiver covers, read back from the DB because waivers are applied only there."""
+    """Read back from the DB because waivers are applied only there."""
     query = {"scan_id": scan_id, "waived": {"$ne": True}}
     return [doc async for doc in FindingRepository(db).iterate_raw(query, _ANNOUNCED_FINDING_PROJECTION)]
 
@@ -902,7 +857,6 @@ async def _announce_outcome(ctx: _RunContext, verdict: _Verdict) -> None:
 
 
 async def _keep_previous_analysis(ctx: _RunContext, load_start: datetime) -> ScanStatus | None:
-    """A re-analysis whose SBOM failed to load keeps the stored analysis once the worker stops re-queueing it."""
     scan_repo = ScanRepository(ctx.db)
     # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
     if ctx.scan.retry_count + 1 < ANALYSIS_MAX_RETRIES:
@@ -939,11 +893,7 @@ async def run_analysis(
     worker_id: str,
     sbom_generation: int | None = None,
 ) -> ScanStatus | None:
-    """Analyse a scan claimed by ``worker_id``; returns what ``_finalize_scan_and_project`` returns,
-    or None when the scan is gone or the claim was lost before the results were written.
-
-    ``sboms`` and ``sbom_generation`` come from the same claimed scan document.
-    """
+    """sboms and sbom_generation must come from the same claimed scan document."""
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregation_start_time = time.time()
 

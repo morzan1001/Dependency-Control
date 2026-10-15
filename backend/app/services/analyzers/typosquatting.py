@@ -66,7 +66,6 @@ def _normalize_pkg_name(name: str | None) -> str:
 
 
 def _corpus(ranking: list[str]) -> tuple[set[str], list[str]]:
-    """Every ranked name, scope kept, as known-legitimate, and the top ones a component is compared against."""
     # A component is compared with its scope stripped, so a scoped package's bare name is no imitation target.
     unscoped = (name for name in ranking if not name.startswith("@"))
     top = itertools.islice(unscoped, TYPOSQUATTING_POPULAR_PACKAGE_RANKS)
@@ -74,7 +73,6 @@ def _corpus(ranking: list[str]) -> tuple[set[str], list[str]]:
 
 
 def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
-    """True if ``longer`` extends ``shorter`` after a separator (``react-dom`` yes, ``expresss`` no)."""
     return longer.startswith(shorter + "-")
 
 
@@ -108,12 +106,9 @@ def _build_typosquat_issue(
 
 
 class TyposquattingAnalyzer(Analyzer):
-    """Detects typosquatting by comparing package names against the popular packages of their ecosystem."""
-
     name = "typosquatting"
 
     async def _ensure_popular_packages(self) -> dict[str, list[str]]:
-        """PyPI's cached ranking (built-in names while it is unavailable) and npm's shipped one, most downloaded first."""
         # Lock and wait outlast the 30 s fetch, so peers wait for the holder instead of re-downloading.
         pypi = await cache_service.get_or_fetch_with_lock(
             CacheKeys.popular_packages("pypi"),
@@ -125,11 +120,9 @@ class TyposquattingAnalyzer(Analyzer):
         return {"pypi": pypi or sorted(_STATIC_PYPI_FALLBACK), "npm": _NPM_RANKING}
 
     async def _fetch_pypi_packages(self) -> list[str] | None:
-        """PyPI's package names, most downloaded first, or None when the ranking cannot be read."""
         timeout = ANALYZER_TIMEOUTS["typosquatting"]
         try:
-            # The corpus has moved host before, and a 301 that is not followed leaves the
-            # detector comparing against the handful of built-in names.
+            # The corpus has moved host before; an unfollowed 301 leaves only the handful of built-in names.
             async with InstrumentedAsyncClient("PyPI API", timeout=timeout, follow_redirects=True) as client:
                 resp = await client.get(TOP_PYPI_PACKAGES_URL)
             reason = f"HTTP {resp.status_code}"
@@ -168,8 +161,7 @@ class TyposquattingAnalyzer(Analyzer):
             settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY),
         )
 
-        # A name similar to a package outside this corpus produces no finding, so the corpus
-        # the comparison ran against travels with the result.
+        # Names near a package outside this corpus produce no finding, so the corpus travels with the result.
         return {
             "typosquatting_issues": issues,
             "popular_packages_compared": {
@@ -186,7 +178,7 @@ class TyposquattingAnalyzer(Analyzer):
         critical_at: float,
         high_at: float,
     ) -> list[dict[str, Any]]:
-        corpora: dict[str, tuple[set[str], list[str]]] = {}  # lazy per ecosystem
+        corpora: dict[str, tuple[set[str], list[str]]] = {}
         issues = []
         for component in components:
             issue = self._scan_component(
@@ -205,7 +197,6 @@ class TyposquattingAnalyzer(Analyzer):
         critical_at: float,
         high_at: float,
     ) -> dict[str, Any] | None:
-        """Return a typosquat finding for ``component``, or ``None`` if clean."""
         parsed = parse_purl(component.get("purl") or "")
         ecosystem = parsed.registry_system if parsed else None
         if ecosystem not in popular_packages:
@@ -242,5 +233,4 @@ class TyposquattingAnalyzer(Analyzer):
         return _build_typosquat_issue(component, best_popular, best_ratio, severity)
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
-        """Whether ``name`` near-matches another ``popular``; a prefix then ``-`` (``react-dom``) is legitimate."""
         return not (_has_legitimate_prefix(name, popular) or _has_legitimate_prefix(popular, name))

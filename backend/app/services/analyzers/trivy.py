@@ -16,8 +16,7 @@ class TrivyAnalyzer(CLIAnalyzer):
     # Retry transient Trivy server errors (e.g. layer cache miss after a DB update).
     max_retries = 3
     retry_delay = 3.0
-    # Format conversion reads one file and writes one file, so a syft that is still going after
-    # this is stuck rather than busy, and Trivy reads the original format well enough to continue.
+    # A syft conversion still running after this is stuck, and Trivy reads the original format well enough.
     syft_convert_timeout = 120
 
     retryable_patterns = (
@@ -28,7 +27,6 @@ class TrivyAnalyzer(CLIAnalyzer):
     )
 
     def _build_command_args(self, sbom_path: str) -> list[str]:
-        """Build Trivy CLI command arguments; adds --server when TRIVY_SERVER_URL is set."""
         args = [
             "trivy",
             "sbom",
@@ -47,7 +45,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         return args
 
     async def _preprocess_sbom(self, sbom_path: str, sbom_format: SBOMFormat) -> tuple[str, list[str]]:
-        """Convert to CycloneDX via syft when the SBOM isn't already CycloneDX or SPDX (both native to Trivy)."""
+        """CycloneDX and SPDX are native to Trivy; other formats go through syft first."""
         if sbom_format in (SBOMFormat.CYCLONEDX, SBOMFormat.SPDX):
             return sbom_path, []
 

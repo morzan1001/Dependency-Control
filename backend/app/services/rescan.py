@@ -1,4 +1,4 @@
-"""The one way a rescan is created, whether the scheduler or a user asks for it."""
+"""The one way a rescan is created."""
 
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -65,7 +65,6 @@ def build_rescan(source: dict[str, Any]) -> Scan:
 
 
 async def create_rescan(db: Any, source: dict[str, Any], worker_manager: "AnalysisWorkerManager") -> Scan | None:
-    """Queue a rescan of ``source``, or return None while its lineage already has one under way."""
     rescan = build_rescan(source)
     root_id = rescan.original_scan_id
     lock_repo = DistributedLocksRepository(db)

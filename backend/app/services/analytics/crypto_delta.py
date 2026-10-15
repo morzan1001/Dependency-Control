@@ -1,7 +1,3 @@
-"""Crypto-delta: match crypto assets across two scans by ``(name, variant, primitive)``
-(``bom_ref`` is regenerated per scan and unusable for matching), as a ScanDeltaResponse.
-"""
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
@@ -17,7 +13,7 @@ _PROJECTION = dict.fromkeys(("name", "variant", "primitive", "occurrence_locatio
 
 
 def _key(asset: dict) -> tuple[str, str, str]:
-    """Semantic identity used for cross-scan matching."""
+    """bom_ref is regenerated per scan, so the identity is (name, variant, primitive)."""
     return (asset.get("name") or "", asset.get("variant") or "", asset.get("primitive") or "")
 
 

@@ -1,5 +1,3 @@
-"""DNS-pinned transport that keeps webhook delivery on the address that was vetted."""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +21,7 @@ class WebhookTargetBlocked(ValueError):
 
 
 async def _resolve_and_vet(host: str) -> str | None:
-    """Return the first vetted IP for ``host``; None only for loopback hosts, which are exempt from pinning."""
+    """None only for loopback hosts, which are exempt from pinning."""
     if host in WEBHOOK_LOOPBACK_HOSTS:
         return None
     try:
@@ -69,7 +67,7 @@ class _PinnedIPTransport(httpx.AsyncHTTPTransport):
 
 
 async def build_pinned_transport(url: str) -> httpx.AsyncHTTPTransport:
-    """Transport pinned to the vetted IP of ``url``'s host, so a rebinding DNS answer cannot redirect delivery."""
+    """Pinned to the vetted IP so a rebinding DNS answer cannot redirect delivery."""
     try:
         # A stored URL predates today's rules, which WebhookCreate/WebhookUpdate enforce only inbound.
         validate_webhook_url(url)

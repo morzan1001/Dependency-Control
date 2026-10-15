@@ -57,7 +57,6 @@ class NotificationService:
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Send each recipient the message on their channels; one failed send never cancels the others."""
         if not any(channels for _, channels in recipients):
             return
         system_settings = await SystemSettingsRepository(db).get()
@@ -107,7 +106,6 @@ class NotificationService:
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Send each user the event on the forced channels, else on their own preferences."""
         await self._deliver(
             db,
             [(user, forced_channels or (user.notification_preferences or {}).get(event_type, [])) for user in users],
@@ -127,7 +125,6 @@ class NotificationService:
         subject: str,
         message: str,
     ) -> None:
-        """Notify all active users whose permissions include any of the given ones."""
         query = {"permissions": {"$in": permission}, "is_active": True}
         await self._notify_matching(db, query, event_type=event_type, subject=subject, message=message)
 
@@ -144,7 +141,6 @@ class NotificationService:
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Notify every user the query matches, one batch in memory at a time."""
         async for batch in abatched(UserRepository(db).iterate(query), _FAN_OUT_BATCH_SIZE):
             await self.notify_users(
                 batch,
@@ -169,7 +165,6 @@ class NotificationService:
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Notify the active direct and owning-team members; enforced, then project, then account preferences."""
         enforced = (project.enforced_notification_preferences or {}) if project.enforce_notification_settings else None
         if enforced is not None and not enforced.get(event_type):
             return
@@ -208,7 +203,6 @@ async def safe_notify_project_event(
     *,
     context: str = "notify",
 ) -> None:
-    """Look up the project and dispatch the event to its members; errors are logged, never raised."""
     if not project_id:
         return
     try:

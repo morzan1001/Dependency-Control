@@ -1,5 +1,3 @@
-"""Row builder for the crypto asset inventory."""
-
 from collections.abc import AsyncIterator
 from typing import Any
 

@@ -1,5 +1,3 @@
-"""System prompt and context management for chat sessions."""
-
 import json
 from itertools import pairwise
 from typing import Any
@@ -14,12 +12,10 @@ def _approx_tokens(value: Any) -> int:
 
 
 def message_token_budget(tools: list[dict[str, Any]]) -> int:
-    """Context left for messages once the tool catalogue sent every round and the reply are reserved."""
     return settings.OLLAMA_NUM_CTX - _approx_tokens(tools) - _REPLY_RESERVE_TOKENS
 
 
 def trim_to_token_budget(messages: list[dict[str, Any]], budget: int) -> list[dict[str, Any]]:
-    """Drop whole groups oldest first, keeping the system prompt, the current question and the newest group."""
     sizes = [_approx_tokens(m) for m in messages]
     total = sum(sizes)
     if total <= budget:
@@ -131,7 +127,6 @@ def build_messages(
 
 
 def tool_exchange_messages(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Each tool call as the assistant message that requested it, followed by its result."""
     return [
         message
         for call in calls

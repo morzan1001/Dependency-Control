@@ -11,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class EPSSProvider:
-    """Provider for Exploit Prediction Scoring System (EPSS) data."""
-
     def __init__(self) -> None:
         self._batch_size = ANALYZER_BATCH_SIZES["epss"]
         self._timeout = ANALYZER_TIMEOUTS["epss"]
@@ -37,7 +35,7 @@ class EPSSProvider:
         }
 
     async def _fetch_and_cache(self, cves: list[str]) -> tuple[dict[str, EPSSData], bool]:
-        """Fetch uncached CVEs; True when every batch answered, so a CVE it left out has no score."""
+        """True when every batch answered, so a CVE missing from the result has no score."""
         batches = [cves[i : i + self._batch_size] for i in range(0, len(cves), self._batch_size)]
         async with InstrumentedAsyncClient("EPSS API", timeout=self._timeout) as client:
             outcomes = await gather_bounded(
@@ -62,7 +60,6 @@ class EPSSProvider:
         return scores, failed == 0
 
     async def load_epss_scores(self, cves: list[str]) -> tuple[dict[str, EPSSData], bool]:
-        """EPSS scores for `cves` from Redis, then FIRST.org; False when some could not be fetched."""
         cached_data = await cache_service.mget([CacheKeys.epss(cve) for cve in cves])
         result: dict[str, EPSSData] = {}
         missing: list[str] = []

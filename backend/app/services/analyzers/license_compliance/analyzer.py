@@ -1,5 +1,3 @@
-"""License compliance analyzer that walks SBOM components and aggregates findings."""
-
 from __future__ import annotations
 
 from dataclasses import replace
@@ -20,7 +18,6 @@ from .constants import (
 
 
 def classify_license(member: str, license_id: str | None = None) -> LicenseInfo | None:
-    """The catalogue entry for an expression member, its linking exception applied; license_id overrides its id."""
     license_info = LICENSE_DATABASE.get(license_id or member.partition(" WITH ")[0])
     if license_info and " WITH " in member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
         return replace(
@@ -43,7 +40,6 @@ class LicenseAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Analyze SBOM components for license compliance issues."""
         policy = license_policy_from_settings(settings)
 
         components = parsed_components or []
@@ -72,7 +68,6 @@ class LicenseAnalyzer(Analyzer):
         *,
         policy: LicensePolicySchema,
     ) -> list[str]:
-        """Classify and judge one component; return the licences it settled on for the conflict check."""
         # The distro descriptor is kept for EOL detection; it is not a licensed dependency.
         if component.get("type") == "operating-system":
             stats["skipped"] += 1
@@ -135,8 +130,7 @@ class LicenseAnalyzer(Analyzer):
                 self._emit_policy_issue(issue, raw_expression, is_transitive, issues)
 
         if unrecognized:
-            # Neither adjusted nor filtered by transitivity: the audit control reads presence, so
-            # dropping the transitive ones would let it pass over components it cannot audit.
+            # Never filtered by transitivity: the audit control reads presence and would miss unauditable components.
             issues.append(evaluator.create_undeterminable_issue(component, unrecognized))
         return [license_id for license_id in settled if license_id not in excepted]
 
@@ -149,7 +143,6 @@ class LicenseAnalyzer(Analyzer):
         stats: dict[str, int],
         component_licenses: list[dict[str, Any]],
     ) -> None:
-        """Count the licence and classify it, regardless of the policy verdict."""
         stats[CATEGORY_STAT_KEY[license_info.category]] += 1
         entry: dict[str, Any] = {
             "component": component.get("name", "unknown"),
@@ -190,15 +183,13 @@ class LicenseAnalyzer(Analyzer):
         is_transitive: bool,
         policy: LicensePolicySchema,
     ) -> list[str]:
-        """Resolve an OR-expression to the alternative a consumer would take, or report it undeterminable."""
         readable_groups, unreadable = compatibility.partition_or_groups(or_groups)
         selected, member_issues = self._select_or_alternative(component, readable_groups, policy)
 
         if selected is None or (
             unreadable and not all(evaluator.is_acceptable_under_policy(issue) for issue in member_issues)
         ):
-            # No alternative is both readable and acceptable, so the expression settles nothing:
-            # an acceptable licence may sit behind the identifier we do not recognise.
+            # Settles nothing: an acceptable licence may sit behind the identifier we do not recognise.
             stats["unknown"] += 1
             rejected = list(dict.fromkeys(lic_id for group in readable_groups for lic_id in group))
             issues.append(evaluator.create_undeterminable_issue(component, unreadable, rejected))
@@ -216,8 +207,7 @@ class LicenseAnalyzer(Analyzer):
         readable_groups: list[list[str]],
         policy: LicensePolicySchema,
     ) -> tuple[list[str] | None, list[dict[str, Any]]]:
-        """Choose the OR-alternative a consumer would take: lowest worst-member severity, then lowest restrictiveness,
-        then declaration order. Returns the chosen group and its members' issues, or (None, []) when none is readable."""
+        """A consumer may take any OR alternative, so the least severe, then least restrictive, one is chosen."""
         candidates: list[tuple[tuple[int, int], list[str], list[dict[str, Any]]]] = []
         for and_group in readable_groups:
             verdicts = [evaluator.evaluate_license(component, LICENSE_DATABASE[lic_id], policy) for lic_id in and_group]

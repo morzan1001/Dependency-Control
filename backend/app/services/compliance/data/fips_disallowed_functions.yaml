@@ -1,9 +1,4 @@
-# Security functions FIPS 140-3 disallows (abridged), per category; the FIPS 140-3 and
-# ISO/IEC 19790 reports fail any crypto asset of the category that uses one.
-# Source: NIST SP 800-140C (Symmetric Key), SP 800-140D (Asymmetric Key),
-# SP 800-140F (Hash Functions).
-# This catalog enables algorithm-level conformance checks. Module-level
-# CMVP certification is OUT OF SCOPE.
+# Abridged from NIST SP 800-140C (symmetric key), SP 800-140D (asymmetric key) and SP 800-140F (hash functions).
 
 hash_functions:
   - MD5

@@ -1,5 +1,3 @@
-"""Run a registered analyzer over one SBOM and judge its result."""
-
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -10,7 +8,6 @@ from app.services.aggregation import is_error_result
 from app.services.analysis.registry import analyzer_factories
 from app.services.analyzers.cli_base import CLIAnalyzer
 
-# Analyzer result keys reporting incomplete coverage, with how to phrase each.
 _PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
     ("partial_components_skipped", "{count} component(s) were not scanned"),
     ("partial_vulnerabilities_unhydrated", "{count} vulnerability record(s) could not be fetched"),
@@ -18,7 +15,6 @@ _PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
 
 
 def _partial_result_reason(result: Any) -> str | None:
-    """Why an analyzer's coverage is incomplete, or None when it is complete."""
     if not isinstance(result, dict):
         return None
     reasons = [template.format(count=result[key]) for key, template in _PARTIAL_RESULT_KEYS if result.get(key)]
@@ -26,7 +22,6 @@ def _partial_result_reason(result: Any) -> str | None:
 
 
 def sbom_name(sbom: dict[str, Any]) -> str | None:
-    """The SBOM's root component name, else its serial number."""
     metadata = sbom.get("metadata")
     if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
         # An explicit ``"name": null`` is a present key, so a dict default would never fire.
@@ -42,7 +37,6 @@ def build_settings_resolver(
     project_analyzer_settings: dict[str, dict[str, Any]] | None,
     github_token: str | None = None,
 ) -> Callable[[str], dict[str, Any]]:
-    """Return a function that yields per-analyzer settings dicts."""
     base_settings = system_settings.model_dump() if system_settings else {}
     base_settings["github_token"] = github_token
 
@@ -63,14 +57,10 @@ def sbom_label(position: int) -> str:
 
 @dataclass(frozen=True)
 class AnalyzerInput:
-    """One SBOM as the analyzers read it."""
-
     # 1-based, so a label names the SBOM the caller sent even when an earlier one was skipped.
     position: int
     components: list[dict[str, Any]]
-    # The root component name or serial number, which a finding's source prefers over the label.
     name: str | None = None
-    # What a CLI scanner reads: the written file when there is one, else the document.
     document: dict[str, Any] = field(default_factory=dict)
     path: str | None = None
     format: SBOMFormat = SBOMFormat.UNKNOWN
@@ -96,11 +86,8 @@ class OutcomeStatus(IntEnum):
 class AnalyzerOutcome:
     name: str
     status: OutcomeStatus
-    # The failure message, or the coverage the analyzer missed.
     reason: str = ""
-    # What the status line counts, such as "12 enriched".
     detail: str = ""
-    # The exception raised in place of a judgeable result: by the analyzer, its inputs or storing its result.
     error: Exception | None = None
 
     @classmethod
@@ -125,7 +112,6 @@ Keep = Callable[[Any], Awaitable[None]]
 
 
 async def record_result(name: str, result: Any, keep: Keep) -> AnalyzerOutcome:
-    """Hand the result to ``keep`` and judge it; a ``keep`` that raises fails the analyzer."""
     try:
         await keep(result)
     except Exception as exc:
@@ -134,7 +120,6 @@ async def record_result(name: str, result: Any, keep: Keep) -> AnalyzerOutcome:
 
 
 async def run_analyzer(name: str, sbom: AnalyzerInput, settings: dict[str, Any], keep: Keep) -> AnalyzerOutcome:
-    """Run the registered analyzer over one SBOM and record its result; what it raises is a failed outcome."""
     analyzer = analyzer_factories[name]()
     try:
         if isinstance(analyzer, CLIAnalyzer) and sbom.path:

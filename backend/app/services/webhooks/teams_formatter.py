@@ -1,5 +1,3 @@
-"""Teams Adaptive Card formatter for webhook payloads."""
-
 from collections.abc import Mapping
 from typing import Any
 

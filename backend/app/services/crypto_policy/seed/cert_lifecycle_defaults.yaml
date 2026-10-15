@@ -1,6 +1,4 @@
-# The analyzer picks the expiring-soon severity via the threshold ladder on each rule.
-# Disabling cert-expiry-default silences only the expiring-soon warnings; expired, not-yet-valid
-# and self-signed certificates are governed by a rule of that finding type, if the policy has one.
+# cert-expiry-default covers only expiring-soon; expired, not-yet-valid and self-signed certs have their own types.
 
 rules:
   - rule_id: cert-expiry-default

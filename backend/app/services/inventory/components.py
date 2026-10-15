@@ -1,5 +1,3 @@
-"""Row builder for the components inventory (dependencies + license + lifecycle)."""
-
 import re
 from collections.abc import AsyncIterator
 from typing import Any
@@ -94,9 +92,7 @@ async def get_components_page(
     total = await deps.count(query)
     sort_field = sort_by if sort_by in _SORT_FIELDS else "name"
 
-    # The unique (scan_id, name, version, purl) index serves the name sort in either direction;
-    # the other sorts are blocking anyway, so a unique tail costs nothing.
-    # pymongo keeps a repeated sort key at its first position with its last direction.
+    # The unique scan_id/name/version/purl index serves name sorts; pymongo gives a repeated key its last direction.
     sort_spec = (
         [("name", direction), ("version", direction), ("purl", direction)]
         if sort_field == "name"

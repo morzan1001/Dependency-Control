@@ -41,11 +41,9 @@ from app.services.recommendation.common import (
     vuln_priority,
 )
 
-# Hotspots and toxic packages are one recommendation each, so these bound the advice feed
-# rather than a list inside one card; each emitted card carries the rank it was cut at.
+# These bound the advice feed (one card per package), not a list in a card; each card carries its cut rank.
 CRITICAL_HOTSPOTS_SHOWN = 10
 TOXIC_DEPENDENCIES_SHOWN = 5
-# Parents named per transitive dependency on the attack-surface card before "and N more".
 _PARENTS_NAMED = 3
 
 # Scorecard and license findings land on every installed copy; these single one out.
@@ -54,8 +52,6 @@ _COPY_FINDING_TYPES = frozenset({"vulnerability", "malware", "eol"})
 
 @dataclass
 class _PackageRisks:
-    """Every fact the hotspot and toxic cards read about one package, from one pass over its findings."""
-
     name: str
     finding_versions: set[str] = field(default_factory=set)
     flagged_versions: set[str] = field(default_factory=set)
@@ -152,7 +148,6 @@ def detect_toxic_dependencies(packages: list[_PackageRisks]) -> list[Recommendat
 
 
 def _hotspot_reasons(pkg: _PackageRisks) -> tuple[bool, list[str]]:
-    """Whether a package is a hotspot, and every reason the card names."""
     stats = pkg.stats
     is_hotspot = False
     reasons: list[str] = []
@@ -181,7 +176,6 @@ def _hotspot_reasons(pkg: _PackageRisks) -> tuple[bool, list[str]]:
 
 
 def _hotspot_steps(pkg: _PackageRisks) -> list[str]:
-    """Specific remediation steps for a hotspot."""
     if pkg.has_malware:
         return list(MALWARE_REMEDIATION_STEPS)
     if pkg.stats.kev > 0:
@@ -249,7 +243,6 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
 
 
 def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
-    """Determine severity label for vulnerability risk factor."""
     if critical > 0 or kev > 0:
         return "CRITICAL"
     if high > 0:
@@ -258,7 +251,6 @@ def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
 
 
 def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
-    """A package's independent risk factors and the score ranking toxic packages."""
     factors: list[dict[str, str]] = []
     score = 0
     if pkg.is_eol:
@@ -332,7 +324,6 @@ def analyze_attack_surface(
     dependencies: list[ModelOrDict],
     findings: list[ModelOrDict],
 ) -> list[Recommendation]:
-    """Analyze attack surface and recommend reduction strategies."""
     if not dependencies:
         return []
 
@@ -366,7 +357,6 @@ def analyze_attack_surface(
                 "name": get_attr(dep, "name", ""),
                 "version": version,
                 "vuln_count": len(severities),
-                # A parent ref naming no inventory entry is shown as stored.
                 "parents": [
                     dependency_label(edges.dep_by_key[ref]) if ref in edges.dep_by_key else ref
                     for ref in edges.parents_by_key[key]

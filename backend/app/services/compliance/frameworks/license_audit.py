@@ -1,5 +1,3 @@
-"""License Audit: evaluates SBOM licenses against the project license policy."""
-
 from typing import Any
 
 from app.models.finding import FindingType, Severity

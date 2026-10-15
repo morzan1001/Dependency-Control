@@ -1,5 +1,3 @@
-"""Constants for the license-compliance analyzer."""
-
 from __future__ import annotations
 
 from dataclasses import replace
@@ -30,7 +28,6 @@ NOT_DESIGNED_FOR_SOFTWARE = "Not designed for software"
 NON_COMMERCIAL_USE_ONLY = "Non-commercial use only"
 CANNOT_USE_IN_COMMERCIAL_PRODUCTS = "Cannot use in commercial products"
 
-# Stands in for the licence of a component the SBOM does not let us determine.
 UNDETERMINED_LICENSE_ID = "UNKNOWN"
 UNDETERMINED_LICENSE_MESSAGE = "License could not be determined from the SBOM"
 

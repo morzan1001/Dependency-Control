@@ -1,5 +1,3 @@
-"""Ad-hoc analysis: the analysis pipeline without a scan, a project or a write."""
-
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -79,17 +77,14 @@ _VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 
-# Counted as skipped from the dependency graph by design: a crypto asset is routed into
-# ``crypto_assets`` once it parses, and the rest are not dependencies.
+# Deliberate skips: a parsed crypto asset goes to crypto_assets, and the other reasons name non-dependencies.
 _CRYPTO_ASSET = "cryptographic-asset"
 _DELIBERATE_SKIP_REASONS = frozenset({_CRYPTO_ASSET, "file", "non-dependency", "root-component"})
 _UNRECOGNISED_PAYLOAD = "unrecognised payload shape: expected {keys}"
 
 _BEARER = "bearer"
 
-# The top-level keys each normalizer reads and the typed entry it reads under them. A payload
-# missing every key, or carrying entries the model rejects, normalises to no finding or a
-# placeholder one, and neither may be reported as coverage.
+# A payload missing every key, or with entries the model rejects, must not be reported as coverage.
 _POSTED_SCANNERS: dict[str, tuple[tuple[str, ...], type[BaseModel]]] = {
     "trufflehog": (("findings",), TruffleHogFinding),
     "opengrep": (("findings", "results"), OpenGrepFinding),
@@ -101,8 +96,7 @@ _WHOLE_ENTRY = "entry"
 
 _OSV = "osv"
 
-# What a caller gets without naming an analyzer: an SBOM in, vulnerabilities and licence
-# verdicts out, with no CLI process and one batched upstream call.
+# The defaults run no CLI process and make one batched upstream call.
 ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = (_OSV, "license_compliance")
 
 _NOT_REQUESTED = "not requested"
@@ -126,8 +120,7 @@ ADHOC_SKIP_REASONS: dict[str, str] = {
 
 _CRYPTO_RULES = "crypto_rules"
 _NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
-# ``normalize_crypto`` rebuilds each dict into a Finding carrying its own type, so one dispatch
-# key covers every crypto finding type the rules emit.
+# normalize_crypto keeps each finding's own type, so one dispatch key covers every crypto finding type.
 _CRYPTO_DISPATCH_KEY = "crypto_weak_algorithm"
 # Names the assets within this request only; nothing here is stored or looked up by it.
 _ADHOC_SCOPE = "adhoc"
@@ -136,8 +129,7 @@ _CRYPTO_ANALYZER_REPLACED = (
     "replaced ad-hoc by the 'crypto_rules' stage: the registered analyzer reads stored crypto "
     "assets from the database, the stage evaluates the seeded rules against the posted CBOM"
 )
-# The two crypto analyzers that grade against an external reference rather than a policy rule.
-# Their coverage is genuinely absent here, so claiming the stage replaces them would be false.
+# These grade against an external reference, not a policy rule, so the rule stage does not replace them.
 _CRYPTO_ANALYZER_NO_EQUIVALENT: dict[str, str] = {
     "crypto_certificate_lifecycle": (
         "no ad-hoc equivalent: certificate lifecycle is graded against the wall clock by an "
@@ -151,16 +143,13 @@ _CRYPTO_ANALYZER_NO_EQUIVALENT: dict[str, str] = {
 
 
 def _hosts(*urls: str) -> str:
-    """The distinct hosts behind the given endpoints, read off the constants the analyzers use
-    so a note can never name somewhere the code no longer calls."""
+    """Read off the analyzers' own URL constants so a note never names a host the code no longer calls."""
     return ", ".join(dict.fromkeys(urlsplit(url).netloc for url in urls))
 
 
 _COORDINATES_SENT = "package coordinates from the posted SBOMs are sent to {hosts}"
 
-# What a stage that ran does not otherwise reveal. Keeping a result is not sending it, so
-# every stage that puts something the caller posted on the wire is named here, and the crypto
-# stage says it grades against the shipped seeds because it never reads this installation's policy.
+# Every stage that puts posted data on the wire must be named here.
 _STAGE_NOTES: dict[str, str] = {
     _OSV: _COORDINATES_SENT.format(hosts=_hosts(OSV_BATCH_API_URL, OSV_VULN_API_URL)),
     "deps_dev": _COORDINATES_SENT.format(hosts=_hosts(DEPS_DEV_API_URL)),
@@ -195,7 +184,6 @@ _WAIVERS_NONE = "none"
 
 
 def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] | None:
-    """The entry list under `key`, or None when the payload carries no readable list there."""
     container = payload.get(key)
     if name == _BEARER:
         return bearer_entries(container)
@@ -223,8 +211,7 @@ def _record_errored(report: AnalyzerReport, name: str, reason: str) -> None:
 
 
 async def _aggregate_unless_errored(aggregator: ResultAggregator, name: str, source: str, result: Any) -> None:
-    # The aggregator turns every ``{"error": ...}`` into a HIGH SYSTEM_WARNING finding, which would
-    # read as a real defect instead of as missing coverage; ``report.errored`` carries it instead.
+    # The aggregator would turn the error into a HIGH SYSTEM_WARNING finding that reads as a real defect.
     if not is_error_result(result):
         aggregator.aggregate(name, result, source=source)
 
@@ -236,8 +223,7 @@ def _record_outcome(report: AnalyzerReport, outcome: AnalyzerOutcome, label: str
         return
     reason = outcome.reason
     if outcome.status is OutcomeStatus.PARTIAL:
-        # What the analyzer did find is kept; what it could not reach is a gap, and an unreachable
-        # CVE source must not answer a Log4Shell SBOM with an empty finding list and no reason.
+        # An unreachable CVE source must not answer with an empty finding list and no reason.
         reason = _PARTIAL_COVERAGE.format(reason=reason)
     logger.warning("adhoc: analyzer %s on %s: %s", outcome.name, label, reason)
     _record_errored(report, outcome.name, f"{label}: {reason}")
@@ -256,11 +242,7 @@ def _first_reason(exc: ValidationError) -> str:
 
 
 def _entry_shortfall(name: str, payload: dict[str, Any]) -> str | None:
-    """Why the normalizer cannot read the posted entries, or None when it can read them all.
-
-    The container being the right shape says nothing about the entries in it: 200 kics queries
-    carrying no ``files`` normalise to zero findings, which is an all-clear the run never earned.
-    """
+    """A well-shaped container says nothing about its entries: kics queries without files would read as an all-clear."""
     keys, model = _POSTED_SCANNERS[name]
     for key in keys:
         entries = _posted_entries(name, payload, key)
@@ -285,12 +267,7 @@ def _aggregate_posted_scanners(
     aggregator: ResultAggregator,
     report: AnalyzerReport,
 ) -> None:
-    """Normalise caller-posted scanner output.
-
-    The normalizers were written for trusted first-party output and dereference list elements
-    without type checks, so a scanner version that reshapes its report must land in
-    ``report.errored`` rather than abort the request.
-    """
+    """Normalizers trust first-party shapes, so a reshaped report must land in report.errored, not abort the request."""
     if request.scanners is None:
         return
     for name, payload in request.scanners.model_dump(exclude_none=True).items():
@@ -320,7 +297,6 @@ def _aggregate_posted_scanners(
 
 
 def _input_defects(parsed: ParsedSBOM) -> list[str]:
-    """What the caller needs to know about an input the parser only partly understood."""
     defects: list[str] = []
     if not parsed.dependencies and not parsed.crypto_assets:
         defects.append(_NO_COMPONENTS.format(sbom_format=parsed.format.value))
@@ -339,12 +315,7 @@ def _input_defects(parsed: ParsedSBOM) -> list[str]:
 
 
 def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_ParsedInput]:
-    """Parse every SBOM, reporting each defect the parser found.
-
-    A document-level failure rejects that whole input rather than analysing what survived: the
-    parser is shared with the scan pipeline, where a half-built dependency graph is worse than
-    none. The caller gets the parser's own message and can fix the document and retry.
-    """
+    """A document-level failure rejects the whole input: a half-built graph is worse than none."""
     parsed_inputs: list[_ParsedInput] = []
     for position, sbom in enumerate(request.sboms, start=1):
         label = sbom_label(position)
@@ -365,7 +336,6 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
 
 
 def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport) -> list[str]:
-    """Pick the analyzers to run and record a reason for every registered one left out."""
     selected = list(ADHOC_DEFAULT_ANALYZERS) if requested is None else list(dict.fromkeys(requested))
 
     resolved: list[str] = []
@@ -390,12 +360,7 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
 def _aggregate_crypto_rules(
     parsed_inputs: list[_ParsedInput], aggregator: ResultAggregator, report: AnalyzerReport
 ) -> None:
-    """Evaluate the rule-driven crypto policy against each SBOM's embedded CBOM components.
-
-    The registered crypto analyzers read their assets back from ``crypto_assets``, which does not
-    exist here; the rules themselves are pure. The rules are the shipped defaults, for the same
-    reason the analyzers get a default ``SystemSettings``.
-    """
+    """Registered crypto analyzers read crypto_assets, absent here; the pure rules run on the shipped defaults."""
     if not any(parsed_input.parsed.crypto_assets for parsed_input in parsed_inputs):
         report.skipped[_CRYPTO_RULES] = _NO_CRYPTO_ASSETS
         return
@@ -418,7 +383,6 @@ def _aggregate_crypto_rules(
 async def _enrich_vulnerabilities(
     records: list[dict[str, Any]], report: AnalyzerReport
 ) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
-    """Add EPSS/KEV to the vulnerability records; returns the EPSS/KEV summary and the per-CVE enrichment."""
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     sends = sends_ids(vulnerabilities)
@@ -439,7 +403,6 @@ async def _enrich_vulnerabilities(
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
-    """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
     from app.api.v1.helpers.callgraph import resolve_callgraph_payload
 
     data = {key: value for key, value in payload.items() if key not in ("format", "language")}
@@ -474,8 +437,7 @@ def _run_reachability(
         _record_errored(report, _REACHABILITY, str(exc))
         return None
 
-    # The list holds the same dict objects as ``records``, so the mirroring store_reachability
-    # does in place stays visible to every later stage.
+    # Same dict objects as records, so store_reachability's in-place mirroring reaches every later stage.
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
@@ -501,7 +463,6 @@ def _apply_field_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
 
 
 def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[Waiver]) -> int:
-    """Apply global waivers, which keep no signature and go by their criteria; returns how many records end up waived."""
     for waiver in waivers:
         if route_waiver(waiver) == "vulnerability":
             _apply_vulnerability_waiver(records, waiver)
@@ -511,11 +472,7 @@ def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[
 
 
 async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
-    """Analyze the posted SBOMs and scanner results in memory. Writes nothing.
-
-    The analyzers cache through a Redis shared with the scan pipeline under keys built from the
-    package names they are given, so this path reads that cache but publishes nothing into it.
-    """
+    """Writes nothing, not even to the analyzers' Redis cache it shares with the scan pipeline."""
     with suppress_cache_writes():
         return await _analyze(request, db)
 

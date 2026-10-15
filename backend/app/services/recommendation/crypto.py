@@ -1,5 +1,3 @@
-"""Recommendations for crypto findings, grouped by (finding_type, asset_name)."""
-
 from collections import defaultdict
 from typing import NamedTuple
 
@@ -16,10 +14,8 @@ from app.services.recommendation.common import (
     severity_impact,
 )
 
-# Findings quoted verbatim in the action block; `sampled` pairs the sample with its population.
 _EVIDENCE_SAMPLED = 3
 
-# Well-known modern replacements; falls back to generic phrasing when absent.
 _MODERN_HASH = "SHA-256 or SHA-3"
 _MODERN_BLOCK_CIPHER = "AES-256-GCM"
 _ALGORITHM_REPLACEMENTS: dict[str, str] = {
@@ -116,7 +112,6 @@ _SEVERITY_TO_PRIORITY: dict[str, Priority] = {
 
 
 def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Build remediation recommendations for crypto findings."""
     grouped: dict[tuple[str, str], list[ModelOrDict]] = defaultdict(list)
     for f in findings:
         asset_name = get_attr(f, "details", {}).get("asset_name") or get_attr(f, "component") or "unknown"

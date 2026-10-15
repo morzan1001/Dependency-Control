@@ -1,8 +1,5 @@
-# NIST SP 800-131A Rev. 3 — Transitioning the Use of Cryptographic Algorithms and Key Lengths
-# https://csrc.nist.gov/pubs/sp/800/131/a/r3/final
-#
-# These rules form the default enabled baseline. BSI and CNSA rules that cover
-# the same weakness are disabled to avoid duplicate findings.
+# Source: https://csrc.nist.gov/pubs/sp/800/131/a/r3/final
+# The enabled baseline: BSI and CNSA rules covering the same weakness stay disabled to avoid duplicate findings.
 
 rules:
   - rule_id: nist-131a-md5

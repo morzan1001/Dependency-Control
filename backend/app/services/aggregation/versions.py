@@ -1,5 +1,3 @@
-"""Stateless version-handling helpers used during aggregation."""
-
 from __future__ import annotations
 
 import re
@@ -36,16 +34,14 @@ def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | s
     if token.isdigit():
         return (_NUMBER, int(token))
     rank = _PRERELEASE_RANK.get(token)
-    # A lone letter is a prerelease only before a number (1.0a1, 1.0-M2); OpenSSL's 1.1.1a follows 1.1.1,
-    # and a Debian binNMU's +b6 follows its base.
+    # A lone letter is a prerelease only before a number (1.0a1); OpenSSL's 1.1.1a and Debian's +b6 follow their base.
     if rank is None or (len(token) == 1 and (prev_char == "+" or not next_char.isdigit())):
         return (_SUFFIX, token)
     return (_PRERELEASE, rank)
 
 
 def parse_version_key(v: str) -> VersionKey:
-    """Parse a version into (flag, value) pairs in version order; the first two, major and minor, name its release line.
-    An epoch and trailing zeros past the minor drop out and a bare major gains .0: 1:2.30.0 ranks as 2.30, 2 as 2.0."""
+    """Its first two pairs, major and minor, name the release line (a bare 2 ranks as 2.0)."""
     text = v.lower().split(":", 1)[-1].removeprefix("v")
     parts = [
         _token_key(m.group(), text[m.start() - 1 : m.start()], text[m.end() : m.end() + 1])
@@ -69,7 +65,7 @@ def _is_prerelease(key: VersionKey) -> bool:
 
 
 def newest_first(versions: Iterable[Any]) -> list[str]:
-    """Versions ranked newest first; the raw string breaks ties, so a set-derived input orders the same every run."""
+    """The raw string breaks ties so a set-derived input orders the same every run."""
     return sorted((str(v) for v in versions), key=lambda v: (parse_version_key(v), v), reverse=True)
 
 
@@ -79,7 +75,7 @@ def split_fixed_versions(value: Any) -> list[str]:
 
 
 def _upgrade_candidates(fixed_version: Any, installed_key: VersionKey) -> list[tuple[VersionKey, str]]:
-    """One advisory's fix candidates; a fix below the installed release is another line's backport."""
+    """A fix below the installed release is another line's backport."""
     candidates = [(key, part) for part in split_fixed_versions(fixed_version) if (key := parse_version_key(part))]
     return [(key, c) for key, c in candidates if key >= installed_key] or candidates
 
@@ -89,7 +85,6 @@ def _major_sort_key(major: int | str) -> tuple[bool, int, str]:
 
 
 def aggregate_fixed_version(entries: Iterable[Mapping[str, Any]], installed_version: str | None) -> str | None:
-    """The version per major line that fixes every advisory, e.g. "1.2.6, 2.0.1"; None when one has no fix."""
     installed_key = parse_version_key(installed_version or "")
     advisories = [_upgrade_candidates(entry.get("fixed_version"), installed_key) for entry in entries]
     by_major: dict[int | str, dict[int, list[tuple[VersionKey, str]]]] = {}

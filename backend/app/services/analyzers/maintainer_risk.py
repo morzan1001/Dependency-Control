@@ -1,5 +1,3 @@
-"""Analyzes package maintainer activity to flag supply-chain risk from abandoned or under-maintained packages."""
-
 import logging
 import re
 from datetime import datetime, timezone
@@ -42,7 +40,6 @@ _GITHUB_REPO = re.compile(r"(?:github\.com[/:]|^github:)([\w-]+)/(\.?[\w-][\w.-]
 
 
 def correlate_maintainer_risks(risks: list[dict[str, Any]], github_active: bool | None) -> list[dict[str, Any]]:
-    """Drop staleness signals when the source repository is still active."""
     if github_active is not True:
         return risks
     return [r for r in risks if r.get("type") not in _STALENESS_TYPES]
@@ -70,7 +67,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Analyze maintainer health for packages in the SBOM."""
         settings = settings or {}
         github_token = settings.get("github_token")
         self._stale_after_days = settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
@@ -103,7 +99,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         component: dict[str, Any],
         github_token: str | None,
     ) -> dict[str, Any] | None:
-        """One package's risks from its registry facts and the facts of its GitHub repository."""
         name = component.get("name", "")
         purl = component.get("purl", "")
         parsed = parse_purl(purl)
@@ -167,7 +162,6 @@ class MaintainerRiskAnalyzer(Analyzer):
 
     @staticmethod
     def _resolve_github_repo(component: dict[str, Any], registry_info: dict[str, Any]) -> str | None:
-        """owner/repo from the SBOM, then npm's repository, then PyPI's project URLs and home page."""
         project_urls = {label.lower(): url for label, url in (registry_info.get("project_urls") or {}).items()}
         candidates = [
             component.get("repository_url"),
@@ -182,7 +176,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         return None
 
     def _calculate_overall_severity(self, risks: list[dict[str, Any]]) -> str:
-        """Calculate overall severity from individual risk scores."""
         max_severity = max(r["severity_score"] for r in risks)
         if max_severity >= 4:
             return Severity.CRITICAL.value
@@ -193,7 +186,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         return Severity.LOW.value
 
     async def _check_pypi(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
-        """Maintainer info from PyPI, or None when PyPI has no such project; any other failure raises."""
         data = await fetch_deps_dev_json(client, f"{PYPI_API_URL}/{name}/json")
         if data is None:
             return None
@@ -223,7 +215,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         }
 
     async def _check_npm(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
-        """Maintainers and repository of the latest npm release, or None when npm has no such package."""
         data = await fetch_deps_dev_json(client, f"{NPM_REGISTRY_URL}/{name.replace('/', '%2F')}/latest")
         if data is None:
             return None
@@ -239,7 +230,6 @@ class MaintainerRiskAnalyzer(Analyzer):
     async def _check_github(
         self, client: InstrumentedAsyncClient, repo: str, github_token: str | None
     ) -> dict[str, Any] | None:
-        """Repository health from the GitHub API; None when the repository is gone, any other failure raises."""
         response = await client.get(
             f"{GITHUB_API_URL}/repos/{repo}", headers=github_api_headers(github_token), follow_redirects=True
         )
@@ -259,7 +249,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         }
 
     def _assess_risks(self, info: dict[str, Any]) -> list[dict[str, Any]]:
-        """Assess maintainer risks based on registry info."""
         risks = []
 
         days_since_release = info.get("days_since_release")
@@ -314,7 +303,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         return risks
 
     def _infer_github_active(self, gh_info: dict[str, Any] | None) -> bool | None:
-        """True if the repo shows recent activity, False if archived/stale, None if data is unavailable."""
         if not gh_info:
             return None
         if gh_info.get("archived"):
@@ -325,7 +313,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         return bool(days_since_push <= self._warn_after_days)
 
     def _assess_github_risks(self, gh_info: dict[str, Any]) -> list[dict[str, Any]]:
-        """Assess risks from GitHub repository info."""
         risks = []
 
         if gh_info.get("archived"):

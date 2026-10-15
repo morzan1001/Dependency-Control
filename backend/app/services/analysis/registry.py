@@ -1,9 +1,4 @@
-"""Central registry of analyzers and post-processors with name-based lookup.
-
-Each entry is a factory, not an instance: an analyzer that binds the calling project's settings to
-``self`` would otherwise let one project's thresholds decide another project's severities whenever
-two scans overlap.
-"""
+"""Entries are factories, not instances: an analyzer binding project settings to self would leak them across scans."""
 
 from collections.abc import Callable
 from functools import partial

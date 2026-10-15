@@ -1,5 +1,3 @@
-"""Project-level update-frequency metrics folded from per-scan delta documents."""
-
 from __future__ import annotations
 
 import logging
@@ -24,24 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Narrow ``scan_update_deltas`` docs of one branch to a window that can be summed.
-
-    Input must be one project, one branch, oldest first — a reversed or
-    branch-mixed window would otherwise fold into negative cadences and
-    cross-branch version differences counted as updates.
-
-    SBOM-less scans and writer failures drop out: a missing measurement is
-    not a measurement of zero, and keeping it would add a structural
-    zero-update bar. ``window[0]`` is the anchor: its update counts are dropped
-    because they compare against a scan outside the window, while its id, date
-    and outdated count still enter the fold.
-    """
+    """Input must be one project's one branch, oldest first; the anchor window[0] contributes no update counts."""
     usable = [d for d in deltas if int(d.get("dep_count", 0)) > 0 and not d.get("error")]
     return _contiguous_tail(usable)
 
 
 def window_bars(window: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """The window's same-commit runs: one timeline bar each."""
     return same_commit_runs(window, commit_of=lambda delta: delta.get("commit_hash"))
 
 
@@ -53,8 +39,6 @@ def _commit_token(delta: dict[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class CommitCoverage:
-    """How much of a branch's window the ledger accounted for, in commits."""
-
     accounted: int
     coverable: int
 
@@ -66,19 +50,7 @@ class CommitCoverage:
 def commit_coverage(
     deltas: Sequence[dict[str, Any]], window: Sequence[dict[str, Any]], scans_per_commit: Mapping[str, int]
 ) -> CommitCoverage:
-    """What ``select_window(deltas)`` reached of the commits its branch window holds.
-
-    Both sides count commits rather than documents, or a CI retry storm would read as
-    missing data. A commit leaves both sides only when the ledger proves nobody could
-    measure it: every one of its scans in the window carries a delta, and every one of
-    those reports no dependencies and no writer failure. One scan of it still owing a
-    delta is a hole, a failure is a hole, and so is everything before the window's
-    anchor, which the fold could not reach.
-
-    Both sides are keyed on the same token set, the one the scan side counted. A delta
-    whose scan is no longer in the window -- an orphan the nightly reconcile has yet to
-    remove -- can therefore neither shrink the denominator nor pad the numerator.
-    """
+    """Counts commits, not documents, so a CI retry storm does not read as missing data."""
     measured: dict[str, int] = {}
     unmeasurable: dict[str, int] = {}
     for delta in deltas:
@@ -104,14 +76,7 @@ def fold_window(
     baseline_outdated: set[str] | None,
     window_days: int | None,
 ) -> FoldedWindow:
-    """Fold a window from ``select_window`` into one project's metrics.
-
-    ``baseline_outdated`` is the full outdated set of ``window[0]``, or None
-    when that scan carried no outdated analysis. ``window_days`` is the
-    calendar span the caller selected on, or None when it asked for a fixed
-    number of scans instead. A comparison row shows no ecosystem, so the ledger
-    keeps none and the window names no dominant one.
-    """
+    """baseline_outdated is window[0]'s outdated set, None without an analysis; window_days is None for a scan count."""
     per_scan = [_timeline_entry(window[0], baseline=True)] if window else []
     per_scan.extend(_timeline_entry(delta, baseline=False) for delta in window[1:])
     timeline = fold_runs_into_bars(per_scan, [delta.get("commit_hash") for delta in window])
@@ -129,14 +94,7 @@ def fold_window(
 
 
 def _contiguous_tail(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The newest run of deltas that really were diffed against one another.
-
-    Every count of a delta describes the interval to its recorded predecessor.
-    Where that link skips a scan the window no longer tiles the time range, so
-    summing it would count one interval twice. Truncating rather than dropping
-    the offending delta keeps every retained number exact and keeps the newest
-    scans, which is what the tab is asked about.
-    """
+    """A link that skips a scan breaks the tiling and would count an interval twice, so the window truncates there."""
     start = len(deltas) - 1
     while start > 0 and deltas[start].get("prev_scan_id") == deltas[start - 1]["_id"]:
         start -= 1
@@ -152,14 +110,7 @@ def _contiguous_tail(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _outdated_movement(
     window: Sequence[dict[str, Any]], baseline_outdated: set[str] | None
 ) -> tuple[set[str], set[str]]:
-    """Packages ever outdated and ever brought up to date across the window.
-
-    Both lists are summed unconditionally because the writer already leaves them
-    empty wherever a comparison lacked a measurement, and reports the full
-    outdated set of a scan whose predecessor carried none. Skipping such a scan
-    here instead would keep packages that went outdated across the unmeasured
-    stretch out of the denominator while later resolutions kept counting.
-    """
+    """Summed unconditionally: the writer already empties the lists where a comparison lacked a measurement."""
     ever_outdated = set(baseline_outdated or ())
     ever_resolved: set[str] = set()
     for delta in window[1:]:

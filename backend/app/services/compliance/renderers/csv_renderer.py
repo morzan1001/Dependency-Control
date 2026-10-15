@@ -1,5 +1,3 @@
-"""CSV renderer — one row per control."""
-
 import csv
 import io
 from typing import ClassVar

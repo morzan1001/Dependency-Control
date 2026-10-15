@@ -1,4 +1,4 @@
-"""Scan-delta orchestrator; callers have already checked access and that both scans belong to the project."""
+"""Callers must already have checked access and that both scans belong to the project."""
 
 from __future__ import annotations
 
@@ -44,7 +44,6 @@ def _reject_unknown(
     *,
     case_insensitive: bool = False,
 ) -> None:
-    """Raise if any value is outside ``allowed``, echoing user-typed casing in the error."""
     if case_insensitive:
         unknown = [v for v in values if v.lower() not in allowed]
     else:
@@ -65,8 +64,7 @@ def _validate_query(
     finding_type: list[str] | None,
     allow_same_scan: bool,
 ) -> DeltaCategory:
-    # A pair the server resolved onto one scan is a real question with an empty answer; a caller
-    # naming the same id twice made a mistake.
+    # A server-resolved pair may land on one scan (an empty answer); a caller naming one id twice made a mistake.
     if from_scan == to_scan and not allow_same_scan:
         raise InvalidDeltaQuery("from_scan_id and to_scan_id must differ")
     try:
@@ -89,7 +87,6 @@ def _validate_query(
 
 
 def _describe_sides(sides: list[tuple[str, dict]]) -> dict[str, Any]:
-    """Each side's build and reachability, so a caller can check a symbolic side resolved as expected."""
     fields: dict[str, Any] = {}
     for side, (scan_id, doc) in zip(("from", "to"), sides, strict=True):
         reach = (doc.get("stats") or {}).get("reachability")

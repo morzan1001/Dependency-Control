@@ -1,5 +1,3 @@
-"""Unified parsing of CycloneDX, SPDX, and Syft JSON SBOMs into a common representation."""
-
 import base64
 import contextlib
 import logging
@@ -56,7 +54,6 @@ _HEX_SHA512 = re.compile(r"[0-9a-fA-F]{128}")
 
 
 def _join_licenses(entries: list[str], purl: str | None) -> str:
-    """One SPDX expression for a component's licence entries, each kept whole."""
     unique = list(dict.fromkeys(entries))
     if len(unique) < 2:
         return "".join(unique)
@@ -66,12 +63,9 @@ def _join_licenses(entries: list[str], purl: str | None) -> str:
 
 
 def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[list[ParsedDependency], int]:
-    """Collapse (name, version, purl) duplicates so the unique DB index doesn't silently drop them.
-
-    Applied across every SBOM of a payload, not just within one: the index is per scan.
-    """
+    """The unique per-scan index would silently drop duplicates, so this runs across every SBOM of a payload."""
     by_key: dict[tuple[str, str, str | None], ParsedDependency] = {}
-    # Built on a key's first merge and kept: rebuilding per duplicate is quadratic again.
+    # Built on a key's first merge and kept: rebuilding it per duplicate is quadratic.
     seen_by_key: dict[tuple[str, str, str | None], dict[str, set[str]]] = {}
     merged = 0
     for dep in dependencies:
@@ -114,7 +108,6 @@ def _graph_entries(value: Any, field: str) -> list[dict[str, Any]]:
 def _resolve_directness(
     forward: dict[Any, list[Any]], anchors: set[Any], transparent: set[Any], project: set[Any]
 ) -> tuple[Callable[[Any], tuple[bool, bool]], set[Any]]:
-    """(ref -> (direct, direct_inferred), root refs that are the scanned subject rather than a dependency)."""
     targets = {child for children in forward.values() for child in children}
     subjects = {ref for ref in anchors if forward.get(ref)}
     inferred = not subjects
@@ -139,7 +132,6 @@ def _resolve_directness(
 
 
 def _resolve_parent_refs(parsed_by_ref: dict[Any, ParsedDependency], *edge_maps: dict[Any, list[Any]]) -> None:
-    """Set each parsed dependency's parents as node keys; refs of skipped components drop out."""
     parents: dict[Any, dict[str, None]] = {}
     for edges in edge_maps:
         for parent_ref, child_refs in edges.items():
@@ -163,7 +155,6 @@ def _image_reference(name: Any, version: Any) -> str | None:
 
 
 def _has_local_origin(metadata: Any) -> bool:
-    """Whether a syft lock-file entry is the checked-out project itself rather than a fetched package."""
     if not isinstance(metadata, dict):
         return False
     return (
@@ -186,7 +177,6 @@ _TRIVY_ROOT_PACKAGE_TYPES = tuple(("aquasecurity:trivy:Type", kind) for kind in 
 
 
 def is_url(value: str) -> bool:
-    """Check if a string is a URL."""
     if not value:
         return False
     try:
@@ -197,7 +187,6 @@ def is_url(value: str) -> bool:
 
 
 def _hash_map(entries: Any, alg_key: str, value_key: str) -> dict[str, str]:
-    """Algorithm -> digest from a list of hash entries; the first digest per algorithm wins."""
     hashes: dict[str, str] = {}
     for entry in entries if isinstance(entries, list) else []:
         if not isinstance(entry, dict):
@@ -209,14 +198,12 @@ def _hash_map(entries: Any, alg_key: str, value_key: str) -> dict[str, str]:
 
 
 def _people_to_str(value: Any) -> str | None:
-    """Join a people field given as a string, a contact object or a list of either."""
     entries = value if isinstance(value, list) else [value]
     names = [(entry.get("name") or entry.get("email")) if isinstance(entry, dict) else entry for entry in entries]
     return ", ".join(name for name in names if isinstance(name, str) and name) or None
 
 
 def _normalize_cpes(*sources: Any) -> list[str]:
-    """CPE strings from each list source, deduplicated in first-seen order."""
     # Syft JSON before schema 16 emits plain strings, newer releases {"cpe": ...} dicts.
     values = (
         entry.get("cpe") if isinstance(entry, dict) else entry
@@ -228,7 +215,6 @@ def _normalize_cpes(*sources: Any) -> list[str]:
 
 
 def _group_for(declared: str | None, purl: str | None) -> str | None:
-    """The declared group, else the purl namespace where it is part of the package's name."""
     if declared:
         return declared
     parsed = parse_purl(purl) if purl else None
@@ -244,7 +230,6 @@ _FABRICATED_PURL_TYPES = {"library": "generic", "framework": "generic", "contain
 def _purl_less_identity(
     kind: str, name: str, version: str, pkg_type: str, group: str | None, cpes: list[str]
 ) -> tuple[bool, str | None]:
-    """(keep, purl) for a component without a purl; kind is 'os', 'binary' or 'package'."""
     if kind == "os":
         return True, None
     if kind == "binary":
@@ -293,8 +278,6 @@ _OS_SOURCE_PACKAGE_PROPERTIES = tuple(
 
 
 class SBOMParser:
-    """Universal SBOM parser that handles multiple formats and normalizes output."""
-
     def __init__(self) -> None:
         self.format_handlers = {
             SBOMFormat.CYCLONEDX: self._parse_cyclonedx,
@@ -332,19 +315,14 @@ class SBOMParser:
         return self._detect_cyclonedx(sbom) or self._detect_spdx(sbom) or self._detect_syft(sbom) or SBOMFormat.UNKNOWN
 
     def parse(self, sbom: dict[str, Any]) -> ParsedSBOM:
-        """Parse an SBOM and return normalized representation."""
-
         format_type = self.detect_format(sbom)
 
         result = ParsedSBOM(format=format_type)
 
-        # A document-level failure must propagate: swallowing it would report an
-        # empty parse as success, and persistence would then replace the scan's
-        # previous dependency set with nothing.
+        # A document-level failure must propagate, or persistence would replace the dependency set with nothing.
         if format_type == SBOMFormat.UNKNOWN:
             logger.warning("Unknown SBOM format, attempting best-effort parsing")
-            # Each attempt gets a fresh result so a failed handler cannot leave partial
-            # dependencies or counters behind for the next one to build on.
+            # A fresh result per attempt, so a failed handler leaves no partial dependencies or counters behind.
             last_error: Exception | None = None
             handler_completed = False
             for handler in self.format_handlers.values():
@@ -383,7 +361,7 @@ class SBOMParser:
 
     @staticmethod
     def _append_distro(result: ParsedSBOM, distro_id: Any, version: Any, description: Any = None) -> None:
-        """The scanned operating system, shaped like the CycloneDX row base-image end-of-life detection reads."""
+        """Shaped like the CycloneDX row base-image end-of-life detection reads."""
         if not (isinstance(distro_id, str) and distro_id and isinstance(version, str) and version):
             return
         result.dependencies.append(
@@ -399,12 +377,10 @@ class SBOMParser:
             )
         )
 
-    # Placeholder tokens generators emit when they could not determine a version.
     _PLACEHOLDER_VERSIONS = frozenset({"", "unknown", "noassertion", "none"})
 
     @classmethod
     def _normalize_version(cls, raw: Any, purl: str | None = None) -> str:
-        """The version, else the purl's version, else UNKNOWN_VERSION."""
         version = str(raw).strip() if isinstance(raw, (str, int, float)) else ""
         if version.lower() not in cls._PLACEHOLDER_VERSIONS:
             return version
@@ -421,7 +397,6 @@ class SBOMParser:
             forward.setdefault(ref, []).extend(depends_on)
         return forward
 
-    # CycloneDX component types that are never software dependencies.
     _NON_DEPENDENCY_COMPONENT_TYPES = frozenset({"device", "device-driver", "data", "firmware"})
     _NON_PACKAGE_COMPONENT_TYPES = _NON_DEPENDENCY_COMPONENT_TYPES | {"file", "cryptographic-asset", "operating-system"}
 
@@ -429,7 +404,6 @@ class SBOMParser:
     def _cyclonedx_graph_roles(
         cls, components: list[dict[str, Any]], forward: dict[Any, list[Any]]
     ) -> tuple[set[Any], set[Any], set[Any]]:
-        """(graph refs that are no package, Trivy lock-file root packages, syft roots that are the scanned project)."""
         packages: set[str] = set()
         trivy_roots: set[Any] = set()
         syft_roots_by_lock: dict[str, list[str]] = {}
@@ -572,7 +546,6 @@ class SBOMParser:
         layer_digest: str | None,
         global_source_type: str | None,
     ) -> str | None:
-        """Determine a component's likely source: image, application, file, or None."""
         if is_os_package_type(purl, pkg_type) and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
             return SOURCE_TYPE_IMAGE
 
@@ -597,7 +570,6 @@ class SBOMParser:
         cls,
         comp: dict[str, Any],
     ) -> tuple[str | None, str | None, list[str], dict[str, str], list[str]]:
-        """(layer_digest, found_by, locations, properties, cpes) of comp; a layer digest wins over a diff id."""
         layer_digest: str | None = None
         found_by: str | None = None
         locations: list[str] = []
@@ -633,7 +605,6 @@ class SBOMParser:
 
     @staticmethod
     def _normalize_vcs_url(raw: str) -> str | None:
-        """Normalise Maven SCM / git-remote forms to an https URL, or None if unusable."""
         value = raw.strip()
         for prefix in ("scm:git:", "scm:svn:", "scm:hg:", "scm:", "git+"):
             if value.lower().startswith(prefix):
@@ -652,7 +623,6 @@ class SBOMParser:
         cls,
         external_refs: Any,
     ) -> tuple[str | None, str | None, str | None, list[Any]]:
-        """Return (homepage, repository_url, download_url, distribution hash entries) from externalReferences."""
         homepage: str | None = None
         repository_url: str | None = None
         download_url: str | None = None
@@ -679,8 +649,6 @@ class SBOMParser:
         source_target: str | None,
         directness: Callable[[Any], tuple[bool, bool]],
     ) -> ParsedDependency | None:
-        """Parse a single CycloneDX component with all available fields."""
-
         purl = comp.get("purl")
         name = comp.get("name")
         version = self._normalize_version(comp.get("version"), purl)
@@ -765,7 +733,6 @@ class SBOMParser:
 
     @staticmethod
     def _classify_license_value(value: str, fallback_url: str | None = None) -> tuple[str | None, str | None]:
-        """The licence name, or the id its URL names, and the licence URL the entry carries."""
         if is_url(value):
             return extract_license_from_url(value), value
         return value, fallback_url
@@ -776,7 +743,6 @@ class SBOMParser:
         handle_dict: Callable[[dict[str, Any]], tuple[str | None, str | None]],
         purl: str | None,
     ) -> tuple[str, str | None]:
-        """A component's licence expression and first licence URL from its CycloneDX or Syft licence entries."""
         names: list[str] = []
         license_url: str | None = None
         for lic in licenses:
@@ -792,7 +758,6 @@ class SBOMParser:
         return _join_licenses(names, purl), license_url
 
     def _handle_cyclonedx_license_dict(self, lic: dict[str, Any]) -> tuple[str | None, str | None]:
-        """Classify one CycloneDX licence choice: a license object or an SPDX expression."""
         if "license" in lic:
             inner = lic["license"]
             if not isinstance(inner, dict):
@@ -807,7 +772,6 @@ class SBOMParser:
 
     @staticmethod
     def _resolve_syft_source(source: dict[str, Any]) -> tuple[str | None, str | None]:
-        """Return (source_type, source_target) from a syft source of any JSON schema version."""
         source_type = source.get("type")
         if source_type not in _SYFT_SOURCE_TYPES:
             return None, None
@@ -825,7 +789,7 @@ class SBOMParser:
     def _build_syft_dependency_graph(
         relationships: Any, node_ids: set[Any]
     ) -> tuple[dict[Any, list[Any]], dict[Any, list[Any]]]:
-        """(dependency, containment) edges between artifacts; 'dependency-of' reads 'parent IS A DEPENDENCY OF child'."""
+        """Syft's 'dependency-of' reads 'parent IS A DEPENDENCY OF child'."""
         forward: dict[Any, list[Any]] = {}
         contains: dict[Any, list[Any]] = {}
         for rel in _graph_entries(relationships, "artifactRelationships"):
@@ -876,7 +840,6 @@ class SBOMParser:
     def _extract_syft_locations(
         location_entries: list[dict[str, Any]],
     ) -> tuple[list[str], str | None]:
-        """Return (locations, first_layer_digest) from a syft location list."""
         # `path` is the resolved file; `accessPath` may be a symlink to it.
         locations = list(dict.fromkeys(loc["path"] for loc in location_entries if loc.get("path")))
         layer_digest = next((loc["layerID"] for loc in location_entries if loc.get("layerID")), None)
@@ -884,7 +847,6 @@ class SBOMParser:
 
     @staticmethod
     def _extract_syft_hashes(pkg_type: str, metadata: dict[str, Any]) -> dict[str, str]:
-        """Hashes from syft metadata: plain fields, SRI integrity strings, digests and Cargo.lock checksums."""
         entries: list[dict[str, Any]] = [
             {"algorithm": alg, "value": metadata.get(alg)} for alg in ("md5", "sha1", "sha256")
         ]
@@ -913,8 +875,6 @@ class SBOMParser:
         source_target: str | None,
         directness: Callable[[Any], tuple[bool, bool]],
     ) -> ParsedDependency | None:
-        """Parse a single Syft artifact with all available fields."""
-
         purl = artifact.get("purl")
         name = artifact.get("name")
         version = self._normalize_version(artifact.get("version"), purl)
@@ -983,7 +943,6 @@ class SBOMParser:
 
     @staticmethod
     def _syft_license_dict_url(lic: dict[str, Any]) -> str | None:
-        """Extract a dedicated license URL from a syft license dict ('url'/'urls')."""
         for url_key in ("url", "urls"):
             url_val = lic.get(url_key)
             if url_val:
@@ -991,7 +950,6 @@ class SBOMParser:
         return None
 
     def _handle_syft_license_dict(self, lic: dict[str, Any]) -> tuple[str | None, str | None]:
-        """Classify one syft licence entry; one syft knows only by URL resolves through the URL."""
         dedicated_url = self._syft_license_dict_url(lic)
         # Syft fills spdxExpression only when it resolved the value to an SPDX id.
         value = lic.get("spdxExpression") or lic.get("value") or dedicated_url or ""
@@ -1001,7 +959,6 @@ class SBOMParser:
     def _build_spdx_dependency_graph(
         relationships: Any, doc_spdx_id: Any
     ) -> tuple[dict[Any, list[Any]], set[Any], set[str]]:
-        """(DEPENDS_ON edges with DEPENDENCY_OF reversed into them, the packages the document describes, containers)."""
         forward: dict[Any, list[Any]] = {}
         described: set[Any] = set()
         containers: set[str] = set()
@@ -1100,7 +1057,6 @@ class SBOMParser:
     def _extract_spdx_external_refs(
         external_refs: list[dict[str, Any]],
     ) -> tuple[str | None, list[str]]:
-        """Return (purl, cpes) from an SPDX externalRefs list."""
         purl: str | None = None
         cpes: list[str] = []
         for ref in external_refs:
@@ -1114,7 +1070,6 @@ class SBOMParser:
 
     @classmethod
     def _infer_spdx_pkg_type_from_download(cls, download_loc: str) -> str:
-        """Infer a package type from an SPDX downloadLocation hint."""
         for needles, pkg_type in cls._SPDX_DOWNLOAD_LOC_TYPE_MAP:
             if any(n in download_loc for n in needles):
                 return pkg_type
@@ -1122,7 +1077,6 @@ class SBOMParser:
 
     @staticmethod
     def _spdx_license_refs(sbom: dict[str, Any]) -> dict[str, str]:
-        """The document's LicenseRef ids whose extracted licence names a known licence, mapped to its SPDX id."""
         refs: dict[str, str] = {}
         for info in sbom.get("hasExtractedLicensingInfos") or []:
             if not isinstance(info, dict) or not isinstance(info.get("licenseId"), str):
@@ -1137,7 +1091,6 @@ class SBOMParser:
 
     @staticmethod
     def _resolve_spdx_license(pkg: dict[str, Any], license_refs: dict[str, str]) -> tuple[str, str | None]:
-        """Extract (license_str, license_url) from SPDX licenseConcluded/Declared."""
         license_str = next(
             (
                 value
@@ -1154,7 +1107,6 @@ class SBOMParser:
     def _resolve_spdx_originator(
         pkg: dict[str, Any],
     ) -> tuple[str | None, str | None]:
-        """Extract (author, publisher) from SPDX originator/supplier fields."""
         author: str | None = None
         publisher: str | None = None
 
@@ -1178,8 +1130,6 @@ class SBOMParser:
         source_target: str | None,
         found_by: str | None,
     ) -> ParsedDependency | None:
-        """Parse a single SPDX package with all available fields."""
-
         name = _spdx_value(pkg, "name")
         if not name:
             return None
@@ -1232,10 +1182,8 @@ class SBOMParser:
         )
 
 
-# Singleton instance for easy import
 sbom_parser = SBOMParser()
 
 
 def parse_sbom(sbom: dict[str, Any]) -> ParsedSBOM:
-    """Convenience function to parse an SBOM."""
     return sbom_parser.parse(sbom)

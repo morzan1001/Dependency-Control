@@ -1,5 +1,3 @@
-"""Webhook delivery to the subscribers of dot-notation events."""
-
 from __future__ import annotations
 
 import asyncio
@@ -66,8 +64,6 @@ logger = logging.getLogger(__name__)
 
 
 class WebhookService:
-    """Webhook delivery with retries, HMAC signing, and per-delivery audit logging."""
-
     def __init__(
         self,
         timeout: float | None = None,
@@ -141,8 +137,7 @@ class WebhookService:
         webhook: Webhook,
         success: bool,
     ) -> None:
-        """Track delivery state in DB with circuit-breaker — required for multi-pod
-        deployments where any pod may fire a webhook."""
+        """Delivery state lives in the DB because any pod may fire a webhook."""
         try:
             repo = WebhookRepository(db)
             now = datetime.now(timezone.utc)
@@ -217,7 +212,7 @@ class WebhookService:
     async def _post_bounded(
         self, client_name: str, webhook: Webhook, content: str, headers: Mapping[str, str]
     ) -> tuple[int | None, str | None, float | None]:
-        """One POST under one deadline: the status, the error text and the retry delay (None: do not retry)."""
+        """A None retry delay means do not retry."""
         try:
             async with asyncio.timeout(self.timeout):
                 transport = await build_pinned_transport(webhook.url)
@@ -266,7 +261,7 @@ class WebhookService:
         payload: Mapping[str, Any],
         event_type: str,
     ) -> bool:
-        """Send a single webhook with retries. Retries are in-memory — delivery is lost if the pod crashes mid-retry."""
+        """Retries are in-memory, so a pod crash mid-retry loses the delivery."""
         json_payload = json.dumps(self._format_payload(webhook.webhook_type, event_type, payload))
         headers = self._build_headers(webhook, event_type, json_payload)
 
@@ -307,7 +302,6 @@ class WebhookService:
         *,
         team_ids: Sequence[str] | None = None,
     ) -> list[Webhook]:
-        """Deliverable webhooks of the project, its owning teams (read from it unless given) and global scope."""
         if team_ids is None:
             team_ids = []
             if project_id:
@@ -331,7 +325,6 @@ class WebhookService:
         team_ids: Sequence[str] | None = None,
         context: str = "webhook",
     ) -> None:
-        """Non-blocking trigger_webhooks — a failed dispatch never rolls back the caller."""
         try:
             await self.trigger_webhooks(
                 db, event_type=event_type, payload=payload, project_id=project_id, team_ids=team_ids
@@ -352,7 +345,7 @@ class WebhookService:
         *,
         team_ids: Sequence[str] | None = None,
     ) -> None:
-        """Dispatch an event to all matching webhooks; a failure while resolving webhooks may propagate, so use safe_trigger_webhooks when the caller must not be affected."""
+        """Resolving webhooks may raise; use safe_trigger_webhooks when the caller must not be affected."""
         webhooks = await self._get_webhooks_for_event(db, project_id, event_type, team_ids=team_ids)
 
         if not webhooks:

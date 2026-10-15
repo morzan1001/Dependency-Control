@@ -1,5 +1,3 @@
-"""Chat service — orchestrates Ollama, tools, and SSE streaming."""
-
 import asyncio
 import json
 import time
@@ -32,7 +30,6 @@ from app.services.chat.context import (
 from app.services.chat.ollama_client import OllamaClient
 from app.services.chat.tools import ChatToolRegistry
 
-# Seconds between cold-start keepalive info events; module-level so tests can patch it.
 _WARMUP_SLICE_SECONDS = 10.0
 
 _KEEPALIVE = {"type": "keepalive"}
@@ -51,10 +48,8 @@ def _sse(event: str, **data: Any) -> str:
 
 
 async def _chunks(stream: AsyncIterator[dict[str, Any]], *, warming: bool) -> AsyncGenerator[dict[str, Any], None]:
-    """The model's chunks; while `warming`, a keepalive chunk for every slice the first one keeps the client waiting."""
     if warming:
-        # A cold start loads the model for 60-90s, long enough for proxies to idle-timeout a silent connection.
-        # One fetch spans every slice: asyncio.wait, unlike wait_for, leaves it running when a slice runs out.
+        # A cold load (60-90s) outlasts proxy idle timeouts; asyncio.wait, unlike wait_for, spares the fetch on timeout.
         first = asyncio.ensure_future(anext(stream, None))
         try:
             while not (await asyncio.wait({first}, timeout=_WARMUP_SLICE_SECONDS))[0]:
@@ -73,8 +68,6 @@ async def _chunks(stream: AsyncIterator[dict[str, Any]], *, warming: bool) -> As
 
 @dataclass
 class _Turn:
-    """One answer in the making: the transcript the model reads and what its rounds produced so far."""
-
     messages: list[dict[str, Any]]
     budget: int
     started: float
@@ -85,7 +78,6 @@ class _Turn:
     failed: bool = False
 
     def settle(self) -> tuple[str, str | None]:
-        """The turn's status and, for a turn left without a final answer, the fallback to stream in its place."""
         if self.round_tool_calls:
             status, self.answer = "max_rounds_exhausted", _ROUNDS_EXHAUSTED.format(calls=len(self.tool_calls))
         elif not self.answer.strip():
@@ -95,7 +87,6 @@ class _Turn:
         return status, f"\n\n{self.answer}" if self.first_token else self.answer
 
     def interrupt(self) -> str:
-        """Mark the answer as cut short; returns the status it is saved under."""
         self.answer = f"{self.answer}\n\n{_INTERRUPTED}" if self.answer else _INTERRUPTED
         return "error" if self.failed else "interrupted"
 
@@ -122,7 +113,6 @@ class ChatService:
         *,
         max_tool_rounds: int,
     ) -> AsyncIterator[str]:
-        """Process a user message and stream the response as SSE event strings."""
         started = time.time()
         # Load history before persisting the new message so the current turn isn't replayed twice.
         history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
@@ -164,7 +154,6 @@ class ChatService:
                     await self._persist_assistant(conversation_id, turn, turn.interrupt())
 
     async def _model_round(self, turn: _Turn, tools: list[dict[str, Any]], user: User) -> AsyncGenerator[str, None]:
-        """One model call streamed as SSE events; its text and tool calls land on `turn`."""
         # Only the last round's text answers the question; earlier rounds only led up to tool calls.
         turn.answer, turn.round_tool_calls = "", 0
         stream = self.ollama.chat_stream(turn.messages, tools=tools)
@@ -196,7 +185,6 @@ class ChatService:
                     return
 
     async def _call_tool(self, turn: _Turn, name: str, arguments: Any, user: User) -> dict[str, Any]:
-        """Run a tool call the model asked for and feed its result back into the transcript."""
         turn.round_tool_calls += 1
         tool_start = time.monotonic()
         result = await self.tools.execute_tool(name, arguments, user, self.db)

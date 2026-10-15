@@ -1,5 +1,3 @@
-"""Replaces a scan's dependency documents with the parsed SBOMs', in chunked batches."""
-
 from datetime import datetime, timezone
 
 from app.models.dependency import Dependency
@@ -26,14 +24,12 @@ async def store_scan_dependencies(
     scan_id: str,
     dep_repo: DependencyRepository,
 ) -> int | None:
-    """Replace the scan's inventory with the payload's merged dependencies; writes nothing and returns None
-    when an SBOM failed (None), so a re-run cannot swap a stored complete inventory for a partial one."""
+    """Writes nothing when an SBOM failed (None) so a re-run cannot replace a complete inventory with a partial one."""
     sboms = [sbom for sbom in parsed_sboms if sbom is not None]
     if not sboms or len(sboms) < len(parsed_sboms):
         return None
     merged, _ = merge_duplicate_dependencies([dep for sbom in sboms for dep in sbom.dependencies])
-    # Deletes only rows no write since this one has touched, so after a failure part-way or an
-    # overlapping store of the same scan the newest write's rows are all still there.
+    # Only rows no later write touched are deleted, so a failed or overlapping store keeps the newest rows.
     written_at = datetime.now(timezone.utc)
     fresh = not await dep_repo.exists({"scan_id": scan_id})
     for start in range(0, len(merged), _DEP_CHUNK_SIZE):

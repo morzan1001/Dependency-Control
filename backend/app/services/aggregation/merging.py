@@ -1,5 +1,3 @@
-"""Merge helpers for ResultAggregator that operate purely on their inputs."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -13,7 +11,6 @@ from app.services.aggregation.versions import VersionKey, parse_version_key, spl
 
 
 def to_sast_aggregate(f: Finding) -> Finding:
-    """Wrap one scanner's SAST finding in the persisted sast_findings shape."""
     entry = {
         "id": f.details.get("rule_id", "unknown"),
         "scanner": f.scanners[0],
@@ -38,7 +35,6 @@ def _canonical_id(a: str, b: str) -> str:
 
 
 def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Merge scanners, aliases, and severity (using the maximum)."""
     tv["scanners"] = sorted(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
 
     all_ids = set(tv.get("aliases", [])) | set(source_entry.get("aliases", [])) | {tv["id"], source_entry["id"]}
@@ -62,7 +58,7 @@ def _fix_candidates(value: Any) -> set[tuple[VersionKey, str]]:
 
 
 def _merged_fixed_version(a: Any, b: Any) -> str | None:
-    """Both scanners' fixes, less those below the higher of their lowest fixes per release line (still vulnerable)."""
+    """A fix below the higher of the two lowest fixes on its release line is still vulnerable."""
     sides = _fix_candidates(a), _fix_candidates(b)
     floor: dict[VersionKey, VersionKey] = {}
     for side in sides:
@@ -72,7 +68,6 @@ def _merged_fixed_version(a: Any, b: Any) -> str | None:
 
 
 def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Merge fixed_version (as _merged_fixed_version) and CVSS (taking the higher score)."""
     merged_fix = _merged_fixed_version(tv.get("fixed_version"), source_entry.get("fixed_version"))
     if merged_fix is not None:
         tv["fixed_version"] = merged_fix
@@ -84,14 +79,12 @@ def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntr
 
 
 def _merge_vuln_references(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Union references from both entries."""
     tv_refs = set(tv.get("references", []) or [])
     sv_refs = set(source_entry.get("references", []) or [])
     tv["references"] = sorted(tv_refs | sv_refs)
 
 
 def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry, source_first: bool) -> None:
-    """Union the per-scanner detail blobs; a value conflict is settled by scanner name."""
     source_details = source_entry.get("details") or {}
     if not source_details:
         return
@@ -126,7 +119,6 @@ _EXPLICITLY_MERGED_KEYS = frozenset(
 
 
 def _fill_missing_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Carry enrichment fields (resolved_cve, EPSS/KEV, advisory URL, ...) from an absorbed duplicate."""
     for key, value in source_entry.items():
         if key in _EXPLICITLY_MERGED_KEYS or value is None:
             continue
@@ -135,15 +127,11 @@ def _fill_missing_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -
 
 
 def _detail_precedence(entry: Any) -> tuple[str, str]:
-    """Total order over entries settling detail conflicts commutatively.
-
-    Lowest scanner name first; alias-linked entries can share it, so the entry id decides.
-    """
+    """Total order, so detail conflicts settle commutatively even for alias-linked entries sharing a scanner name."""
     return min(str(s) for s in (entry.get("scanners") or ["~"])), str(entry.get("id"))
 
 
 def _absorb_entry(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Fold source_entry into tv, which then represents both."""
     source_first = _detail_precedence(source_entry) < _detail_precedence(tv)
     _merge_vuln_ids_and_severity(tv, source_entry)
     _merge_vuln_description(tv, source_entry)
@@ -154,7 +142,6 @@ def _absorb_entry(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
 
 
 def dedupe_vulnerability_entries(entries: list[Any]) -> None:
-    """Fold each entry into the earliest kept entry of its advisory; an absorber is re-linked until nothing matches."""
     kept: list[Any] = []
     kept_by_id: dict[str, set[int]] = {}
     # Advisory matching is not transitive, so a fixed order decides which entry absorbs an ambiguous one.
@@ -179,14 +166,12 @@ def dedupe_vulnerability_entries(entries: list[Any]) -> None:
 
 
 def absorb_header(target: Finding, other: Finding, source: str | None = None) -> None:
-    """Fold other's scanners, severity and found_in (first-seen order) into target."""
     target.scanners = sorted(set(target.scanners) | set(other.scanners))
     target.severity = max_severity(target.severity, other.severity)
     target.found_in = list(dict.fromkeys([*target.found_in, *other.found_in, *([source] if source else [])]))
 
 
 def merge_findings_data(target: Finding, source: Finding) -> None:
-    """Merge data from source finding into target finding."""
     absorb_header(target, source)
     target.aliases = sorted(set(target.aliases + source.aliases) | ({source.id} if source.id != target.id else set()))
 

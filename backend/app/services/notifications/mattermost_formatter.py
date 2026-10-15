@@ -1,5 +1,3 @@
-"""Mattermost message attachment formatting."""
-
 import re
 from typing import Any
 
@@ -27,7 +25,6 @@ def _escape_markdown(text: str) -> str:
 
 
 def build_generic_props(subject: str, message: str) -> dict[str, Any]:
-    """Default Mattermost props: a simple attachment from subject + message."""
     return {
         "attachments": [
             {
@@ -48,7 +45,6 @@ def build_analysis_completed_props(
     analyzer_count: int,
     scan_link: str,
 ) -> dict[str, Any]:
-    """Build Mattermost attachment props for analysis completed notification."""
     critical = severity_counts.get("CRITICAL", 0)
     high = severity_counts.get("HIGH", 0)
 
@@ -98,7 +94,6 @@ def build_vulnerability_found_props(
     top_vulns: list[AlertVulnerability],
     scan_link: str,
 ) -> dict[str, Any]:
-    """Build Mattermost attachment props for vulnerability found notification."""
     fields: list[dict[str, Any]] = []
     if kev_count:
         fields.append({"short": True, "title": "\u26a0\ufe0f KEV Vulnerabilities", "value": str(kev_count)})
@@ -139,7 +134,6 @@ def build_advisory_props(
     affected_projects: list[dict[str, Any]] | None = None,
     dashboard_link: str | None = None,
 ) -> dict[str, Any]:
-    """Build Mattermost attachment props for advisory / broadcast notifications."""
     text = message
 
     if affected_projects:

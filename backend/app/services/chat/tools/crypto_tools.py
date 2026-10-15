@@ -1,5 +1,3 @@
-"""Standalone async tool functions for crypto / CBOM / compliance / PQC migration."""
-
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, cast
@@ -93,7 +91,7 @@ async def suggest_crypto_policy_override(
     project_id: str,
     scan_id: str,
 ) -> dict[str, Any]:
-    """Advisory only — returns the enabled policy rules matching the most findings; does not write."""
+    """Advisory only: it never writes a policy."""
     enabled = {rule.rule_id for rule in (await CryptoPolicyResolver(db).resolve(project_id)).active_rules}
     cursor = db.findings.find(
         {"project_id": project_id, "scan_id": scan_id, "type": {"$in": sorted(CRYPTO_FINDING_TYPES)}},
@@ -160,7 +158,7 @@ async def generate_pqc_migration_plan(
     project_id: str,
     limit: int,
 ) -> dict[str, Any]:
-    """Generate the PQC migration plan for one project the caller already authorised."""
+    """The caller must already have authorised the project."""
     resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     gen = PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
@@ -175,7 +173,6 @@ async def list_compliance_reports(
     framework: str | None,
     limit: int,
 ) -> dict[str, Any]:
-    """Recent compliance reports among those ``visibility`` admits (metadata only, no artifacts)."""
     fw = ReportFramework(framework) if framework else None
     reports = await ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
@@ -207,7 +204,6 @@ async def get_framework_evaluation_summary(
     scope_id: str | None,
     framework: str,
 ) -> dict[str, Any]:
-    """Run compliance evaluation in-process and return summary counts."""
     fw_enum = ReportFramework(framework)
     resolver = ScopeResolver(db, user)
     resolved = await resolver.resolve(

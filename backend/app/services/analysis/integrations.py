@@ -1,5 +1,3 @@
-"""External integrations for scan results (GitLab MR and GitHub PR comments)."""
-
 from __future__ import annotations
 
 import logging
@@ -58,7 +56,7 @@ async def _upsert_scan_comment(
     post: Callable[[str], Awaitable[bool]],
     label: str,
 ) -> None:
-    """Edit the first marked comment (the bot's own, oldest first) or post one; an unread list (None) posts no second."""
+    """Skips on None (comments unreadable): posting blind could duplicate the bot's comment."""
     if comments is None:
         logger.warning("Scan comment on %s skipped: its comments could not be read", label)
         return
@@ -86,7 +84,6 @@ async def decorate_gitlab_mr(
     project: Project,
     db: AsyncIOMotorDatabase,
 ) -> None:
-    """Comment the scan result on the open GitLab merge requests whose head is the scanned commit."""
     if not project.gitlab_mr_comments_enabled:
         return
     if not project.gitlab_instance_id or not project.gitlab_project_id:
@@ -153,7 +150,6 @@ async def decorate_github_pr(
     project: Project,
     db: AsyncIOMotorDatabase,
 ) -> None:
-    """Comment the scan result on the open GitHub pull requests whose head is the scanned commit."""
     if not project.github_pr_comments_enabled:
         return
     repo_path = split_repo_path(project.github_repository_path)

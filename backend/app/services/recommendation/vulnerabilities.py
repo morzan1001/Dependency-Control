@@ -36,13 +36,12 @@ from app.services.recommendation.common import (
     worth_a_card,
 )
 
-# Evidence samples inside the update action; each is paired with its population by `sampled`.
 _CVES_SAMPLED = 10
 _MARKED_CVES_SAMPLED = 5
 
 
 def process_vulnerabilities(findings: list[ModelOrDict], join_dependencies: list[ModelOrDict]) -> list[Recommendation]:
-    """Update, base-image and no-fix cards; ``join_dependencies`` holds the inventory rows the findings name."""
+    """join_dependencies holds the inventory rows the findings name."""
     recommendations = []
 
     vulns_by_source = _categorize_by_source(findings, join_dependencies)
@@ -70,9 +69,7 @@ def _by_installed_version(vulns: list[VulnerabilityInfo]) -> dict[tuple[str, str
 
 
 def _classify_category(vuln: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
-    """Determine which category a vulnerability belongs to."""
-    # An advisory that records no fixed version does not say a fix is absent, only that it does
-    # not name one, so this bucket is "no fix known" and the card it produces says as much.
+    # No recorded fixed version means no fix is known, not that none exists; the card says so.
     if not vuln.fixed_version:
         return "no_fix"
     if not dep:
@@ -94,7 +91,6 @@ def _categorize_by_source(
     findings: list[ModelOrDict],
     join_dependencies: list[ModelOrDict],
 ) -> dict[str, list[VulnerabilityInfo]]:
-    """Categorize vulnerabilities by their source type."""
     row_of = installed_copy_lookup(join_dependencies, "name")
     categories = defaultdict(list)
 
@@ -118,8 +114,6 @@ def _scanned_image(dependencies: list[ModelOrDict]) -> str | None:
 
 
 def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], image: str | None) -> Recommendation | None:
-    """Analyze if a base image update would be beneficial."""
-
     impact = severity_impact(summarize_vulns(vulns, names_fix).severity.elements())
     if not worth_a_card(impact):
         return None
@@ -247,7 +241,6 @@ def _without_single_fix(v: VulnerabilityInfo) -> VulnerabilityInfo:
 
 
 def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
-    """Analyze vulnerabilities no single recorded fixed version covers."""
     vulns = [_without_single_fix(v) for v in vulns]
     impact = severity_impact(summarize_vulns(vulns).severity.elements())
     if not impact["critical"] + impact["high"]:

@@ -1,9 +1,4 @@
-# BSI TR-02102-1 Cryptographic Mechanisms: Recommendations and Key Lengths
-# https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html
-#
-# Overlap policy: rules covering the same weakness as an enabled NIST rule are
-# disabled by default to avoid duplicate findings. Enable them explicitly when
-# targeting BSI compliance.
+# Source: https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html
 
 rules:
   # ── Already covered by NIST (disabled to avoid duplicate findings) ─────────

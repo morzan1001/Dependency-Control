@@ -1,6 +1,3 @@
-"""A VCS-linked project's branch status: the scanned branches its VCS deleted, its default branch, and
-the head both of them decide."""
-
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -19,7 +16,6 @@ _VcsRepo = tuple[Callable[[], Awaitable[list[str] | None]], Callable[[], Awaitab
 
 
 async def _vcs_repo(project: dict[str, Any], db: Any) -> _VcsRepo | None:
-    """The project's branch-list and default-branch lookups, or None without a usable VCS link."""
     gitlab_project_id = project.get("gitlab_project_id")
     if project.get("gitlab_instance_id") and gitlab_project_id:
         gitlab = await GitLabInstanceRepository(db).get_usable(project["gitlab_instance_id"])
@@ -41,8 +37,7 @@ async def _vcs_repo(project: dict[str, Any], db: Any) -> _VcsRepo | None:
 
 
 async def sync_project_branches(project: dict[str, Any], db: Any) -> bool:
-    """Bring the project's branch status in line with its VCS; False when the VCS could not be asked
-    or listed no branches, which leaves the project untouched."""
+    """Leaves the project untouched when the VCS could not be asked or listed no branches."""
     vcs = await _vcs_repo(project, db)
     if not vcs:
         return False

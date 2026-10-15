@@ -23,7 +23,7 @@ _BEARER_OVERRIDES = {"WARNING": "LOW"}
 
 
 def _finding_type_from_rule(rule_id: Any) -> FindingType:
-    """crypto-misuse-* rules map to CRYPTO_KEY_MANAGEMENT; check_id may be a dotted path."""
+    """check_id may be a dotted path."""
     if not isinstance(rule_id, str):
         return FindingType.SAST
     if rule_id.startswith(_CRYPTO_MISUSE_RULE_ID_PREFIX):
@@ -114,8 +114,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: dict[str, Any], s
 
 
 def bearer_entries(container: Any) -> list[Any] | None:
-    """Bearer's findings as one list: a flat list as posted, or each severity group's entries with the group as default
-    severity; None for any other shape."""
+    """Bearer posts a flat list or severity groups; a group's severity is each entry's default."""
     if isinstance(container, list):
         return container
     if isinstance(container, dict):

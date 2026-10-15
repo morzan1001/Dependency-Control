@@ -1,5 +1,3 @@
-"""Waiver matching: routing, field criteria (query and in-memory), advisory roll-up, two-pass signature matcher."""
-
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -24,14 +22,12 @@ _RULE_ID_PATHS = ("details.sast_findings.id", "details.rule_id", "details.detect
 
 
 def finding_rule_id(details: Mapping[str, Any] | None) -> str | None:
-    """The rule a location finding reports: its first merged SAST entry's, else its own rule or detector."""
     details = details or {}
     entries = details.get("sast_findings") or []
     return (entries[0].get("id") if entries else None) or details.get("rule_id") or details.get("detector")
 
 
 def waiver_criteria(waiver: Waiver) -> dict[str, Any]:
-    """The finding fields a waiver constrains; a file or rule scope widens to its rule_id, else stays on its finding."""
     # An advisory lives only in vulnerability documents, whatever type or rule the waiver names.
     advisory = bool(waiver.vulnerability_id)
     widened = waiver.scope != WAIVER_SCOPE_FINDING and bool(waiver.rule_id)
@@ -50,7 +46,6 @@ def waiver_criteria(waiver: Waiver) -> dict[str, Any]:
 
 
 def waiver_query(waiver: Waiver) -> dict[str, Any]:
-    """waiver_criteria as a MongoDB filter over findings."""
     query: dict[str, Any] = {}
     for key, expected in waiver_criteria(waiver).items():
         if key == _RULE_ID:
@@ -61,7 +56,6 @@ def waiver_query(waiver: Waiver) -> dict[str, Any]:
 
 
 def record_matches(record: Mapping[str, Any], criteria: Mapping[str, Any]) -> bool:
-    """waiver_criteria checked against one in-memory finding record."""
     for key, expected in criteria.items():
         if key == _RULE_ID:
             details = record.get("details") or {}
@@ -78,7 +72,6 @@ WaiverRoute = Literal["vulnerability", "signature", "query"]
 
 
 def route_waiver(waiver: Waiver) -> WaiverRoute:
-    """Which path applies a waiver: its advisory, its location signature, or its field criteria."""
     if waiver.vulnerability_id:
         return "vulnerability"
     # A widened scope keeps its criteria: one signature would narrow it to the location it was taken from.
@@ -88,8 +81,7 @@ def route_waiver(waiver: Waiver) -> WaiverRoute:
 
 
 def may_bind_signature(waiver: Waiver) -> bool:
-    """A project waiver without a signature that names a location finding it could take one from; a global waiver
-    spans projects, keeps no signature and goes by its criteria."""
+    """A global waiver spans projects, so it keeps no signature and goes by its criteria."""
     return (
         waiver.project_id is not None
         and waiver.match is None
@@ -103,7 +95,7 @@ def may_bind_signature(waiver: Waiver) -> bool:
 def bind_legacy_signatures(
     waivers: Iterable[Waiver], signed: Iterable[tuple[str, MatchSignature]]
 ) -> dict[str, MatchSignature]:
-    """Sign each unsigned waiver with the finding its id names, in its named file if any (a secret id spans files)."""
+    """Matched in the waiver's named file if any, since a secret id spans files."""
     sigs = {(finding_id, file_key): sig for finding_id, sig in signed for file_key in (sig.file_key, None)}
     bound = {}
     for waiver in waivers:
@@ -114,14 +106,12 @@ def bind_legacy_signatures(
 
 
 def waiver_reach_filter(waiver: Waiver) -> dict[str, Any] | None:
-    """The findings a global waiver can stamp, as a MongoDB filter; None when it can stamp none."""
     if waiver.vulnerability_id:
         return {**waiver_query(waiver), "type": "vulnerability", **advisory_match(waiver.vulnerability_id)}
     return waiver_query(waiver) or None
 
 
 def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
-    """Waive the record's nested advisories known under the waiver's vulnerability_id; False when it holds none."""
     vid = waiver.vulnerability_id
     hit = False
     for entry in (record.get("details") or {}).get("vulnerabilities") or []:
@@ -133,7 +123,7 @@ def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
 
 
 def roll_up_advisories(record: dict[str, Any]) -> None:
-    """Roll advisories up: severity is the highest live one, waived once all are; never un-waives the document."""
+    """Never un-waives the document."""
     entries = (record.get("details") or {}).get("vulnerabilities") or []
     if not entries:
         return
@@ -153,12 +143,12 @@ def _content_equal(a: str | None, b: str | None) -> bool:
 
 
 def _rule_keys_intersect(a: MatchSignature, b: MatchSignature) -> bool:
-    """True if the two signatures share at least one rule key (handles scanner-selection drift)."""
+    """Any shared rule key counts, to survive scanner-selection drift."""
     return bool(a.effective_rule_keys & b.effective_rule_keys)
 
 
 def waiver_strong_match(finding_sig: MatchSignature, waiver_sig: MatchSignature, status: str) -> bool:
-    """Pass-1 exact-instance match. Only strong anchors qualify; empty anchors never match."""
+    """Only strong anchors qualify; empty anchors never match."""
     if not finding_sig.is_strong or not waiver_sig.is_strong:
         return False
     if finding_sig.file_key != waiver_sig.file_key or not _rule_keys_intersect(finding_sig, waiver_sig):
@@ -189,7 +179,6 @@ _Signed = tuple[Waiver, MatchSignature]
 
 
 def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequence[Waiver]) -> WaiverApplication:
-    """Assign each finding to at most one waiver via Pass-1 strong-exact then Pass-2 re-anchoring; lapse on ambiguity."""
     app = WaiverApplication()
     # Sorted, so which waiver claims a contested finding does not depend on load order.
     signed = sorted(((w, w.match) for w in waivers if w.match is not None), key=lambda pair: pair[0].id)
@@ -207,7 +196,6 @@ def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequenc
 def _pass1_strong_exact(
     app: WaiverApplication, signed: list[_Signed], findings: Sequence[MatchFinding]
 ) -> list[_Signed]:
-    """Pass 1: bind each waiver to the finding carrying its exact strong anchor; return the waivers left over."""
     by_anchor: dict[tuple[str, str | None], list[MatchFinding]] = {}
     for f in findings:
         by_anchor.setdefault((f.sig.file_key, f.sig.anchor), []).append(f)
@@ -239,7 +227,7 @@ def _refresh(app: WaiverApplication, w: Waiver, wsig: MatchSignature, finding: M
 
 
 def _pass2_reanchor(app: WaiverApplication, unmatched: list[_Signed], findings: Sequence[MatchFinding]) -> None:
-    """Pass 2: content matches, then false_positive proximity; a taken best candidate shadows, never falls back."""
+    """A taken best candidate shadows the waiver; it never falls back to the next one."""
     by_file: dict[str, list[MatchFinding]] = {}
     for f in findings:
         by_file.setdefault(f.sig.file_key, []).append(f)
@@ -281,7 +269,6 @@ def _line_distance(f: MatchFinding, last_line: int | None) -> float:
 
 
 def _pick_unique_nearest(candidates: list[MatchFinding], last_line: int | None) -> MatchFinding | None:
-    """Return the nearest candidate within WINDOW when it beats the runner-up by MARGIN or sits at the exact line."""
     ranked = sorted(candidates, key=lambda f: _line_distance(f, last_line))
     d0 = _line_distance(ranked[0], last_line)
     d1 = _line_distance(ranked[1], last_line) if len(ranked) > 1 else float("inf")
@@ -300,7 +287,6 @@ def _bind_reanchor(app: WaiverApplication, w: Waiver, wsig: MatchSignature, find
 
 
 def _mark_lapsed(app: WaiverApplication, candidates: list[MatchFinding], last_line: int | None, waiver_id: str) -> None:
-    """Flag the waiver's likely former location for re-review; with no candidate near its last line it stays dormant."""
     in_window = [f for f in candidates if _line_distance(f, last_line) <= REANCHOR_WINDOW]
     if not in_window:
         app.dormant[waiver_id] = "no_candidate_in_window"

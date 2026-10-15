@@ -1,4 +1,4 @@
-"""Enrich vulnerability findings with call-graph reachability: import-based (reliable) and symbol-based (heuristic)."""
+"""Import-level reachability is reliable; symbol-level matching is a heuristic."""
 
 import logging
 from collections.abc import Iterable, Mapping, Sequence
@@ -76,8 +76,7 @@ ComponentLanguages = Mapping[str, list[tuple[str, frozenset[str], bool]]]
 
 
 def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset[str] | None:
-    """Callgraph language(s) that can analyze a package, from its dependency type or else its purl;
-    empty for an ecosystem no producer reads, None when the ecosystem is unknown."""
+    """Empty for an ecosystem no producer reads, None when the ecosystem is unknown."""
     for kind in ((ecosystem or "").lower(), get_purl_type(purl)):
         if kind in _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES:
             return _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES[kind]
@@ -85,12 +84,7 @@ def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset[s
 
 
 def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, list[tuple[str, frozenset[str], bool]]]:
-    """Map component name -> a (version, callgraph languages, confirmed transitive) candidate per ecosystem.
-
-    This is the reliable ecosystem signal: vulnerability findings carry no purl (the OSV/Trivy/Grype
-    normalizers do not persist one), so the fail-closed gate looks the package up in the inventory.
-    Ecosystems sharing a name stay separate, so one ecosystem's callgraph never speaks for another.
-    """
+    """Vulnerability findings carry no purl, so the fail-closed gate reads the ecosystem off the inventory."""
     out: dict[str, dict[tuple[str, frozenset[str]], bool]] = {}
     for dep in deps:
         name = dep.get("name")
@@ -119,8 +113,6 @@ async def build_component_language_map(
 def _candidate_languages(
     component_languages: ComponentLanguages, component: str, version: str | None
 ) -> tuple[list[frozenset[str]], bool]:
-    """The language sets of every ecosystem a finding's package may belong to, narrowed by its version,
-    and whether any of those inventory rows confirms the package is transitive."""
     candidates = lookup_component(component_languages, component) or []
     matching = [candidate for candidate in candidates if candidate[0] == version] or candidates
     return list(dict.fromkeys(langs for _, langs, _ in matching)), any(transitive for *_, transitive in matching)
@@ -128,15 +120,13 @@ def _candidate_languages(
 
 @dataclass(frozen=True)
 class _PreparedCallgraph:
-    """One callgraph's lookup structures, built once per enrichment run."""
-
     language: str
     usage_index: dict[str, Any]
     analyzed_index: dict[str, bool]
 
 
 def _with_enclosing_packages(module_usage: dict[str, Any]) -> dict[str, Any]:
-    """Fold each submodule's usage into every enclosing package key, as unresolved from-imports name the module path."""
+    """Unresolved from-imports name the module path, so each submodule counts for every enclosing package."""
     locations: dict[str, dict[str, None]] = {}
     symbols: dict[str, dict[str, None]] = {}
     calls: dict[str, int] = {}
@@ -172,13 +162,11 @@ def _prepare_callgraph(callgraph: CallgraphMinimal) -> _PreparedCallgraph:
 
 
 def _find_usage(prepared: _PreparedCallgraph, component: str) -> Any | None:
-    """The callgraph's usage entry for a component, under either spelling."""
     normalized = _normalize_component(component, prepared.language)
     return lookup_component(prepared.usage_index, component) or lookup_component(prepared.usage_index, normalized)
 
 
 def _lists_package(prepared: _PreparedCallgraph, component: str) -> bool:
-    """Whether the producer listed the package in its coverage universe (``analyzed_modules``)."""
     normalized = _normalize_component(component, prepared.language)
     return bool(
         lookup_component(prepared.analyzed_index, component) or lookup_component(prepared.analyzed_index, normalized)
@@ -188,7 +176,6 @@ def _lists_package(prepared: _PreparedCallgraph, component: str) -> bool:
 def _falsifying_languages(
     component: str, prepared_graphs: list[_PreparedCallgraph], language_sets: list[frozenset[str]]
 ) -> list[str]:
-    """Languages whose callgraphs covered the package, unused; empty unless every candidate ecosystem has one."""
     falsifying: list[str] = []
     for langs in language_sets:
         covering = [
@@ -203,7 +190,6 @@ def _falsifying_languages(
 
 
 def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
-    """Store ``details.risk_score`` scaled by the reachability verdict as ``adjusted_risk_score``."""
     details = finding.setdefault("details", {})
     base = details.get("risk_score")
     if base is None:
@@ -217,7 +203,7 @@ def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[st
 
 
 def is_high_confidence_reachable(is_reachable: Any, confidence: Any) -> bool:
-    """The gate for headline reachable counts; bool is no confidence, True would pass as a perfect 1.0."""
+    """bool is no confidence: True would pass as a perfect 1.0."""
     return (
         is_reachable is True
         and isinstance(confidence, (int, float))
@@ -231,8 +217,6 @@ async def fetch_callgraphs(
     scan_id: str,
     db: AsyncIOMotorDatabase,
 ) -> list[CallgraphMinimal]:
-    """Every callgraph of the scan (one per language): those uploaded under its id, else those of the
-    build a rescan re-analyses, else those of its pipeline. May be empty."""
     callgraph_repo = CallgraphRepository(db)
     scan_repo = ScanRepository(db)
     # Bounded, so a cyclic rescan pointer cannot hang the analysis.
@@ -251,11 +235,7 @@ async def fetch_callgraphs(
 
 
 def store_reachability(finding: dict[str, Any], verdict: ReachabilityInfo) -> None:
-    """Persist a verdict under ``details.reachability`` and mirror it to the top level.
-
-    The stats fold and the chat tools read the top-level fields; writing only
-    the nested block leaves every reachability counter at zero.
-    """
+    """Mirrored to the top level, which the stats fold and the chat tools read."""
     reachability = verdict.model_dump(exclude_unset=True)
     finding.setdefault("details", {})["reachability"] = reachability
     finding["reachable"] = verdict.is_reachable
@@ -265,7 +245,6 @@ def store_reachability(finding: dict[str, Any], verdict: ReachabilityInfo) -> No
 
 
 def reachability_set_fields(finding: dict[str, Any]) -> dict[str, Any]:
-    """The ``$set`` that persists what store_reachability wrote on the finding."""
     details = finding["details"]
     fields = {key: finding[key] for key in ("reachable", "reachability_level", "reachable_functions")}
     fields.update({f"details.{key}": details[key] for key in ("reachability", "adjusted_risk_score") if key in details})
@@ -278,7 +257,6 @@ def _unknown_verdict(
     language_sets: list[frozenset[str]],
     transitive: bool,
 ) -> str:
-    """Why absence from the analyzed callgraphs yields no verdict."""
     if not any(language_sets):
         return f"Package '{component}' is in an ecosystem no callgraph tool supports; reachability unknown."
 
@@ -320,8 +298,6 @@ def _enrich_finding_from_callgraphs(
     prepared_graphs: list[_PreparedCallgraph],
     component_languages: ComponentLanguages,
 ) -> None:
-    """Store the verdict every graph of the package's ecosystems supports (every graph when the inventory does not
-    list the package); absence falsifies only when a graph can falsify it."""
     component = finding["component"]
     language_sets, transitive = _candidate_languages(component_languages, component, finding.get("version"))
     graphs = [p for p in prepared_graphs if not language_sets or any(p.language in langs for langs in language_sets)]
@@ -359,7 +335,7 @@ def enrich_findings_with_reachability(
     callgraphs: Sequence[CallgraphMinimal],
     component_languages: ComponentLanguages,
 ) -> int:
-    """Store a verdict on every vulnerability finding (in place) from the scan's callgraphs; returns how many."""
+    """Mutates the findings in place."""
     prepared_graphs = [_prepare_callgraph(cg) for cg in callgraphs]
     logger.debug(f"Found {len(callgraphs)} callgraph(s): {[p.language for p in prepared_graphs]}")
     targets = [f for f in findings if f.get("type") == "vulnerability" and f.get("component")]
@@ -375,7 +351,6 @@ _MESSAGE_SYMBOL_SAMPLE = 5
 
 
 def _analyze_reachability(finding: dict[str, Any], usages: list[Mapping[str, Any]]) -> ReachabilityInfo:
-    """Import-level verdict from every graph's usage of the package, raised to symbol level on a matched symbol."""
     locations = sorted({location for usage in usages for location in usage.get("import_locations") or []})
     used_symbols = list(dict.fromkeys(symbol for usage in usages for symbol in usage.get("used_symbols") or []))
     call_count = sum(usage.get("call_count") or 0 for usage in usages)
@@ -421,12 +396,7 @@ def _analyze_reachability(finding: dict[str, Any], usages: list[Mapping[str, Any
 
 
 def _normalize_component(component: str, language: str) -> str:
-    """Read-side key for a finding's component, identical to the key the parsers stored.
-
-    Delegates the per-language rule to ``canonical_module_key`` so the write and read
-    sides cannot drift; only the version suffix is stripped here, because findings carry
-    it (``pkg@1.0.0``) and callgraph module names never do.
-    """
+    """Only the version suffix is stripped here: findings carry it (pkg@1.0.0), callgraph module names never do."""
     if not component:
         return component
 
@@ -437,10 +407,6 @@ def _normalize_component(component: str, language: str) -> str:
 
 
 def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> list[str]:
-    """
-    Match vulnerable symbols against used symbols.
-    Returns list of matched symbols.
-    """
     if not vulnerable_symbols or not used_symbols:
         return []
 
@@ -450,14 +416,11 @@ def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> li
     for used in used_symbols:
         used_lower = used.lower()
 
-        # Direct match
         if used_lower in vuln_lower:
             matched.append(used)
             continue
 
-        # Qualified-call boundary match on either side (dotted usage), e.g. used
-        # "openssl.SSL_read" vs vuln "SSL_read". Require a real symbol boundary, not
-        # any substring, so "get" in "getUser" doesn't spuriously promote findings.
+        # A real symbol boundary, not any substring, so "get" in "getUser" cannot promote a finding.
         for vuln in vulnerable_symbols:
             vuln_l = vuln.lower()
             if used_lower.endswith("." + vuln_l) or vuln_l.endswith("." + used_lower):
@@ -473,8 +436,6 @@ async def apply_reachability(
     findings: list[dict[str, Any]],
     callgraphs: Sequence[CallgraphMinimal],
 ) -> tuple[ComponentLanguages, int]:
-    """Judge the findings in place, persist the scan's summary of that snapshot and count the verdicts;
-    returns the inventory language map and how many findings got a verdict."""
     from app.services.analysis.stats import build_reachability_summary  # stats imports this module
 
     component_languages = await build_component_language_map(db, scan_id)
@@ -494,7 +455,6 @@ async def apply_reachability(
 async def _load_vulnerability_findings(
     finding_repo: FindingRepository, scan_id: str
 ) -> tuple[list[dict[str, Any]], int]:
-    """A scan's vulnerability findings up to the cap, in one cursor; second element is how many the cap left behind."""
     query = {"scan_id": scan_id, "type": "vulnerability"}
     findings = await finding_repo.find_many_raw(
         query, limit=_MAX_FINDINGS_PER_RUN, projection=_STORED_FINDING_PROJECTION
@@ -507,7 +467,6 @@ async def _load_vulnerability_findings(
 async def _apply_to_stored_findings(
     db: AsyncIOMotorDatabase, project_id: str, scan_id: str, callgraphs: list[CallgraphMinimal]
 ) -> int:
-    """Returns how many findings the per-run cap left without a verdict."""
     from app.services.stats import refresh_scan_stats  # stats imports this module
 
     finding_repo = FindingRepository(db)
@@ -531,8 +490,6 @@ async def _apply_to_stored_findings(
 
 
 async def run_pending_reachability_for_scan(scan_id: str, project_id: str, db: AsyncIOMotorDatabase) -> int:
-    """Apply the scan's callgraphs to its stored findings while it is flagged, one pass per scan at a time;
-    a flag set during a pass runs another. Returns how many findings the per-run cap left without a verdict."""
     scan_repo = ScanRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name, holder_id = REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id), new_lock_holder()

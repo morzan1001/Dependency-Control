@@ -1,5 +1,3 @@
-"""Generate actionable remediation recommendations from all finding types."""
-
 import functools
 import logging
 from collections import defaultdict
@@ -40,7 +38,7 @@ def _safe_extend(
     generator: Callable[[], list[Recommendation]],
     module_name: str,
 ) -> None:
-    """Extend recommendations from ``generator``, swallowing its exceptions so one module can't abort the rest."""
+    """Swallows the generator's exceptions so one module cannot abort the rest."""
     try:
         result = generator()
         if result:
@@ -61,7 +59,7 @@ def generate_recommendations(
     cross_project_data: dict[str, Any] | None = None,
     threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None,
 ) -> list[Recommendation]:
-    """Prioritized remediation; ``join_dependencies``: rows findings name; ``threat_intel``: per-CVE KEV/EPSS."""
+    """join_dependencies holds the inventory rows the findings name; threat_intel is per-CVE KEV/EPSS."""
     findings_list: list[ModelOrDict] = list(findings) if findings else []
     dependencies_list: list[ModelOrDict] = list(dependencies) if dependencies else []
     join_list: list[ModelOrDict] = list(join_dependencies) if join_dependencies else []
@@ -187,7 +185,6 @@ def generate_recommendations(
     )
     _safe_extend(recommendations, lambda: optimization.identify_quick_wins(vulns, join_list), "quick_wins")
 
-    # Priority tier first, then score, so a high-volume medium never outranks a critical fix.
     recommendations.sort(key=common.sort_key, reverse=True)
 
     logger.debug(f"Generated {len(recommendations)} total recommendations")

@@ -1,8 +1,4 @@
-"""The one cascade that removes everything a scan owns.
-
-Retention, archival and project deletion all route through it: a second hand-maintained list of
-the same collections is how ``crypto_assets`` and ``finding_records`` came to outlive their project.
-"""
+"""The one cascade removing everything a scan owns; a second hand-kept collection list would drift from it."""
 
 import logging
 from typing import Any
@@ -18,7 +14,7 @@ _CASCADE_TIMEOUT_SECONDS = 3600
 
 
 async def delete_scans_and_related_data(db: Any, scan_ids: list[str], label: str = "") -> int:
-    """Delete the scans and every document keyed to them; the orphan reaper frees their GridFS files."""
+    """The orphan reaper frees their GridFS files."""
     if not scan_ids:
         return 0
 

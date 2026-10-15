@@ -1,5 +1,3 @@
-"""Async HTTP client for Ollama REST API with streaming support."""
-
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -24,7 +22,6 @@ class OllamaClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Stream a chat completion, yielding token / tool_call / done / error dicts keyed by "type"."""
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,

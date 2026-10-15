@@ -36,16 +36,13 @@ _OSV_SERVICE_LABEL = "OSV API"
 
 # Parallel /v1/vulns fetches; OSV throttles aggressively and a scan can carry thousands of ids.
 _HYDRATION_CONCURRENCY = 8
-# Wall-clock budget for the whole hydration phase. Without it a slow-at-timeout OSV would add
-# hours to a cold-cache scan (per-request 60s x thousands of new ids / 8 in flight).
+# Without it a slow-at-timeout OSV would add hours to a cold-cache scan (60s x thousands of ids / 8 in flight).
 _HYDRATION_BUDGET_SECONDS = 300.0
 # Stop early when OSV is clearly down or throttling everything, rather than amplifying a storm.
 _HYDRATION_FAILURE_STREAK = 10
 
 
 class _HydrationBudget:
-    """Stops the hydration phase on a wall-clock deadline or a run of consecutive failures."""
-
     def __init__(self, deadline: float) -> None:
         self._deadline = deadline
         self._failures = 0
@@ -94,7 +91,7 @@ _Query = tuple[_Target, list[dict[str, Any]], str | None]
 
 
 def _versioned_purl(component: dict[str, Any]) -> str | None:
-    """The component's purl with its version, or None: unversioned, OSV answers with every advisory of the package."""
+    """None when unversioned: OSV would answer with every advisory of the package."""
     purl = str(component.get("purl") or "")
     if not purl:
         return None
@@ -110,7 +107,6 @@ def _versioned_purl(component: dict[str, Any]) -> str | None:
 
 
 def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
-    """The querybatch query for a versioned purl, or None when OSV would reject or cannot resolve it."""
     parsed = parse_purl(purl)
     if parsed is None or not parsed.name or not _PURL_TYPE.fullmatch(parsed.type) or _INVALID_ESCAPE.search(purl):
         return None
@@ -133,7 +129,6 @@ def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _os_source_package(parsed: ParsedPURL, component: dict[str, Any]) -> tuple[str, str | None] | None:
-    """``(name, version)`` of the source package an OS binary was built from, or None when unknown."""
     upstream = parsed.qualifiers.get("upstream")
     if upstream:
         name, _, version = upstream.partition("@")
@@ -155,7 +150,6 @@ def _os_source_package(parsed: ParsedPURL, component: dict[str, Any]) -> tuple[s
 
 
 def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int]:
-    """Every component OSV can be asked about, and how many it cannot although they are pinned."""
     targets: list[_Target] = []
     unqueryable: list[str] = []
     unpinned = 0
@@ -188,7 +182,7 @@ def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, s
 
 
 def _affected_entries(record: dict[str, Any], query: dict[str, Any], installed: str) -> list[dict[str, Any]]:
-    """The package's ``affected`` entries listing ``installed``, else all; Ubuntu releases and Pro share a purl."""
+    """Filtered by installed version because Ubuntu releases and Pro share a purl."""
     parsed = parse_purl(query["package"].get("purl") or "")
     purl_type = parsed.type if parsed else None
     key = _package_key(query["package"], purl_type)
@@ -206,7 +200,7 @@ def _installed_version(query: dict[str, Any]) -> str:
 
 
 def _fixed_version(entries: list[dict[str, Any]], installed: str) -> str | None:
-    """The ``fixed`` event closing the affected interval the installed version is in; GIT ranges fix by commit."""
+    """GIT ranges fix by commit, not by version."""
     current = parse_version_key(installed)
     if not current:
         return None
@@ -230,7 +224,6 @@ def _fixed_version(entries: list[dict[str, Any]], installed: str) -> str | None:
 
 
 def _vulnerable_symbols(entries: list[dict[str, Any]]) -> dict[str, list[Any]]:
-    """The entries' ``ecosystem_specific`` symbol data, which symbol-level reachability matches."""
     merged: dict[str, list[Any]] = {}
     for entry in entries:
         eco = entry.get("ecosystem_specific")
@@ -243,8 +236,6 @@ def _vulnerable_symbols(entries: list[dict[str, Any]]) -> dict[str, list[Any]]:
 
 
 class OSVAnalyzer(Analyzer):
-    """Vulnerability lookup via the OSV batch API, cached across pods."""
-
     name = "osv"
     api_url = OSV_BATCH_API_URL
 
@@ -277,7 +268,6 @@ class OSVAnalyzer(Analyzer):
         return result
 
     async def _get_cached_stubs(self, targets: list[_Target]) -> tuple[_Pending, list[_Target]]:
-        """``(pending, uncached)``: the targets with their cached querybatch stubs, and the targets without."""
         keys = [CacheKeys.osv(purl) for _, purl, _ in targets]
         cached = await cache_service.mget(list(dict.fromkeys(keys)))
         pending: _Pending = []
@@ -291,11 +281,6 @@ class OSVAnalyzer(Analyzer):
         return pending, uncached
 
     async def _fetch_uncached(self, client: InstrumentedAsyncClient, uncached: list[_Target], pending: _Pending) -> int:
-        """Ask querybatch about ``uncached``, caching each answer's stubs and adding them to ``pending``.
-
-        Returns how many components were never scanned: dropped batches, rejected queries,
-        persistent rate limiting and truncated responses.
-        """
         batch_size = ANALYZER_BATCH_SIZES["osv"]
         skipped = 0
         fetched: _Pending = []
@@ -313,11 +298,7 @@ class OSVAnalyzer(Analyzer):
     async def _hydrate_and_emit(
         self, client: InstrumentedAsyncClient, pending: _Pending
     ) -> tuple[list[dict[str, Any]], int]:
-        """The result entries built from the full OSV records behind ``pending``'s stubs, all hydrated together.
-
-        Also returns how many distinct ids stayed unresolved; their stubs are kept, so the
-        vulnerability is still reported — as UNKNOWN severity rather than an invented one.
-        """
+        """Unresolved ids keep their stubs: still reported, as UNKNOWN severity rather than an invented one."""
         stubs: dict[str, str] = {}
         for _target, vulns in pending:
             for vuln in vulns:
@@ -340,7 +321,6 @@ class OSVAnalyzer(Analyzer):
         client: InstrumentedAsyncClient,
         stubs: dict[str, str],
     ) -> tuple[dict[str, dict[str, Any]], set[str]]:
-        """``({id: record}, unresolved_ids)`` for the given ids, Redis-cached per id+modified."""
         if not stubs:
             return {}, set()
 
@@ -395,7 +375,6 @@ class OSVAnalyzer(Analyzer):
         vuln_id: str,
         deadline: float,
     ) -> dict[str, Any] | None:
-        """One full OSV record, or None when it stays unresolved."""
         try:
             response = await client.send_with_backoff(
                 "GET",
@@ -426,7 +405,6 @@ class OSVAnalyzer(Analyzer):
         chunk_start: int,
         resends: int,
     ) -> int:
-        """POST one chunk and collect its stubs in ``pending``; returns how many of its components were lost."""
         queries = [{**query, "page_token": token} if token else query for (_, _, query), _, token in chunk]
         try:
             response = await client.send_with_backoff(
@@ -460,7 +438,6 @@ class OSVAnalyzer(Analyzer):
         rejection: str,
         resends: int,
     ) -> int:
-        """Resend a rejected chunk minus the named query, else bisected; returns how many components stay lost."""
         named = _REJECTED_QUERY.search(rejection)
         index = int(named[1]) if named and int(named[1]) < len(chunk) else None
         if index is None and len(chunk) > 1:
@@ -478,10 +455,6 @@ class OSVAnalyzer(Analyzer):
         chunk: list[_Query],
         pending: _Pending,
     ) -> tuple[int, list[_Query]]:
-        """Parse a 200 response and align its ``{id, modified}`` stubs with their components.
-
-        Returns how many components the response left out, and the queries OSV has a further page for.
-        """
         try:
             data = response.json()
         except ValueError as exc:
@@ -505,7 +478,6 @@ class OSVAnalyzer(Analyzer):
         return skipped, next_pages
 
     def _result_entry(self, component: dict[str, Any], vulnerabilities: list[dict[str, Any]]) -> dict[str, Any]:
-        """The analyzer result for one component from its normalized vulnerabilities."""
         return {
             "component": component.get("name", ""),
             "version": component.get("version", ""),
@@ -514,7 +486,7 @@ class OSVAnalyzer(Analyzer):
         }
 
     def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]], query: dict[str, Any]) -> list[dict[str, Any]]:
-        """The fields normalize_osv reads, resolved for the queried package; retracted records (``withdrawn``) drop."""
+        """Keeps only the fields normalize_osv reads."""
         installed = _installed_version(query)
         normalized = []
         for vuln in vulns:
@@ -547,20 +519,11 @@ class OSVAnalyzer(Analyzer):
             normalized.append(entry)
         return normalized
 
-    # CVSS-type preference order — newest standard wins.
     _CVSS_TYPE_PREFERENCE = ("CVSS_V4", "CVSS_V3", "CVSS_V2")
 
     @staticmethod
     def _cvss_to_severity(cvss_score: float, cvss_type: str = "CVSS_V3") -> str:
-        """Map a CVSS score to a severity using version-specific cutoffs.
-
-        v2 has no CRITICAL tier; v3/v4 use 9 / 7 / 4 / 0. Scores outside ``[0, 10]`` are
-        clamped so malformed input can't land in CRITICAL; non-finite input never reaches
-        here (see _parse_cvss_score), because NaN would survive the clamp as 10.0.
-
-        A computed 0.0 maps to LOW: Severity has no NONE band, and a rating of 0.0 does not
-        occur in practice (0 of 3,920 NVD CVEs, and OSV only rates actual vulnerabilities).
-        """
+        """v2 has no CRITICAL tier; 0.0 maps to LOW since Severity has no NONE band and no real rating is 0.0."""
         score = max(0.0, min(10.0, cvss_score))
         if cvss_type == "CVSS_V2":
             if score >= 7.0:
@@ -577,7 +540,6 @@ class OSVAnalyzer(Analyzer):
         return Severity.LOW.value
 
     def _select_cvss(self, severity_array: list[dict[str, Any]]) -> tuple[float, str | None, str] | None:
-        """``(score, vector or None for a bare number, type)`` of the newest-standard rating that parses."""
         rank = {cvss_type: index for index, cvss_type in enumerate(self._CVSS_TYPE_PREFERENCE)}
         ratings = [rating for rating in severity_array if "CVSS" in rating.get("type", "") and rating.get("score")]
         # Unknown subtypes (e.g. a future v5) rank last, in their given order.
@@ -594,14 +556,12 @@ class OSVAnalyzer(Analyzer):
 
     @staticmethod
     def _severity_from_map(raw_severity: str | None) -> str | None:
-        """Look up a raw severity string in the OSV severity map."""
         if not raw_severity:
             return None
         sev = raw_severity.upper()
         return OSV_SEVERITY_MAP.get(sev)
 
     def _extract_severity(self, vuln: dict[str, Any]) -> str:
-        """Extract severity from OSV vulnerability data."""
         db_sev = self._severity_from_map(vuln.get("database_specific", {}).get("severity"))
         if db_sev:
             return db_sev
@@ -615,16 +575,13 @@ class OSVAnalyzer(Analyzer):
             if eco_sev:
                 return eco_sev
 
-        # A record OSV does not rate stays unrated. Any placeholder here would be max-merged
-        # against the other scanners and could only ever inflate a real severity.
+        # A placeholder severity would be max-merged against other scanners and could only inflate a real one.
         return Severity.UNKNOWN.value
 
     def _parse_cvss_score(self, score: str) -> float | None:
-        """A numeric score, else the base score computed from a CVSS v3.x vector."""
         try:
             value = float(score)
         except ValueError:
             return cvss_base_score(score)
-        # float() accepts "nan"/"inf"; NaN survives the clamp in _cvss_to_severity as 10.0
-        # (no comparison against it is true) and would land in CRITICAL.
+        # float() accepts "nan"/"inf", and NaN survives the clamp in _cvss_to_severity as 10.0 (CRITICAL).
         return value if math.isfinite(value) else None

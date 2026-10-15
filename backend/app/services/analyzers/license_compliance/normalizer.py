@@ -1,5 +1,3 @@
-"""Pure helpers for SPDX license normalization and expression parsing."""
-
 from __future__ import annotations
 
 import itertools
@@ -24,7 +22,6 @@ def _lookup(lic_id: str) -> str | None:
 
 
 def normalize_license(lic_id: str) -> str:
-    """Normalize a license identifier to SPDX format."""
     # Strip metadata suffixes like ;link="..." common in NuGet/RPM SBOMs.
     lic_id = lic_id.split(";", 1)[0].strip('" ')
     known = _lookup(lic_id)
@@ -37,7 +34,6 @@ def normalize_license(lic_id: str) -> str:
 
 
 def extract_license_from_url(url: str | None) -> str | None:
-    """The SPDX id a licence URL names, or None."""
     if not url:
         return None
     url_lower = url.lower()
@@ -54,7 +50,7 @@ _MAX_TITLE_PARTS = 1 + max(
 
 
 def split_license_list(raw: str) -> list[str]:
-    """Split a ', '-joined licence list without breaking a licence title that contains a comma."""
+    """Licence titles can contain commas, so a plain split would break them."""
     parts = [part.strip() for part in raw.split(",")]
     names: list[str] = []
     start = 0
@@ -86,7 +82,6 @@ class _Unparseable(Exception):
 
 
 def _tokens(raw: str) -> list[str]:
-    """Operators, parentheses and licence terms; a term keeps its spaces and any parentheses it opens."""
     tokens: list[str] = []
     term: tuple[int, int] | None = None
     open_in_term = 0
@@ -160,7 +155,7 @@ def _parse_or(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
 
 
 def parse_license_expression(raw: str) -> list[list[str]]:
-    """The OR-alternatives, each a list of AND-bound normalized ids, that a stored license value declares."""
+    """OR-alternatives, each a list of AND-bound normalized ids."""
     tokens = _tokens(raw)
     try:
         groups, pos = _parse_or(tokens, 0, 0)
@@ -172,5 +167,4 @@ def parse_license_expression(raw: str) -> list[list[str]]:
 
 
 def tokenize_license_string(raw: str) -> list[str]:
-    """The distinct licenses a stored license value names, each WITH exception kept on its license."""
     return list(dict.fromkeys(itertools.chain.from_iterable(parse_license_expression(raw))))

@@ -23,7 +23,6 @@ def _keep_lowest(entries: dict[str, dict[str, Any]], entry: dict[str, Any]) -> N
 
 
 def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Process supply chain quality findings from OpenSSF Scorecard."""
     if not findings:
         return []
 

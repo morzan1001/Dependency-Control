@@ -41,14 +41,11 @@ async def _fetch_kev_catalog() -> dict[str, Any]:
 
 
 class KEVProvider:
-    """Provider for CISA Known Exploited Vulnerabilities (KEV) catalog."""
-
     def __init__(self) -> None:
         self._memo: dict[str, KEVEntry] = {}
         self._memo_expires = 0.0
 
     async def load_kev_catalog(self) -> dict[str, KEVEntry] | None:
-        """The KEV catalog from this process, Redis or CISA, in that order; None when it could not be read."""
         if self._memo and time.monotonic() < self._memo_expires:
             return self._memo
         cached = await cache_service.get_or_fetch_with_lock(

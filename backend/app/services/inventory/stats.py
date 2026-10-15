@@ -1,5 +1,3 @@
-"""Aggregated head-tile numbers for the inventory page."""
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.project import Project, Scan
