@@ -134,7 +134,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="col-span-4">
+        <Card className="lg:col-span-4">
             <CardHeader>
             <CardTitle>Top 5 Riskiest Projects</CardTitle>
             </CardHeader>
@@ -189,7 +189,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
-        <Card className="col-span-3">
+        <Card className="lg:col-span-3">
             <CardHeader>
                 <CardTitle>Recent Activity</CardTitle>
             </CardHeader>
