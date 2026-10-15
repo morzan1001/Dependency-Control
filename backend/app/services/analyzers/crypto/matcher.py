@@ -1,5 +1,3 @@
-"""CryptoRule -> CryptoAsset matcher. AND semantics; glob matching is case-insensitive."""
-
 import re
 from fnmatch import fnmatchcase
 
@@ -9,7 +7,7 @@ from app.schemas.crypto_policy import CryptoRule
 
 
 def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
-    """True when the asset violates the rule: in scope AND below a threshold criterion."""
+    """True when the asset violates the rule."""
     if not asset_in_rule_scope(asset, rule):
         return False
 
@@ -23,8 +21,6 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
 
 
 def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
-    """True when the asset is within the rule's subject scope (primitive/name/curve/
-    protocol/quantum class), ignoring threshold criteria; used for compliance applicability."""
     if not (rule.match_primitive or rule.match_name_patterns or rule.match_curves or rule.match_protocol_versions):
         return False
 
@@ -40,8 +36,7 @@ def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     if rule.match_protocol_versions and not _protocol_version_matches(asset, rule.match_protocol_versions):
         return False
 
-    # match_name_patterns is validator-guaranteed non-empty here, so only the
-    # primitive gate remains.
+    # match_name_patterns is validator-guaranteed non-empty here, so only the primitive gate remains.
     if rule.quantum_vulnerable is True:
         return asset.primitive in QUANTUM_VULNERABLE_PRIMITIVES
 
@@ -69,7 +64,6 @@ _POST_QUANTUM_FAMILIES = ("mlkem", "mldsa", "slhdsa", "fndsa", "hashmldsa", "has
 
 
 def _family_tokens(name: str) -> set[str]:
-    """RSA-2048 -> {rsa, 2048}, SHA1withRSA -> {sha1, sha, rsa}: name parts plus the letters before a digit run."""
     tokens = set(_QUALIFIER.sub(r"\1", " ".join(re.split(r"[^a-z0-9]+|with", name))).split())
     if any(token.startswith(_POST_QUANTUM_FAMILIES) for token in tokens):
         return set()

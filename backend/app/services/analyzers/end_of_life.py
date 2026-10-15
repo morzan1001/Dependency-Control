@@ -22,8 +22,7 @@ from .base import Analyzer
 # endoflife.date's product list lives at the URL a product named "all" would have, so that name is never looked up.
 _PRODUCT_INDEX = "all"
 
-# os-release ids and Trivy OS families that are no endoflife.date slug; npm "ol" (OpenLayers) keeps them out of
-# NAME_TO_EOL_MAPPING.
+# OS ids that are no endoflife.date slug; kept out of NAME_TO_EOL_MAPPING because npm "ol" is OpenLayers.
 _OS_ALIASES = {
     "amzn": "amazon-linux",
     "amazon": "amazon-linux",
@@ -52,7 +51,6 @@ def _mapped_products(key: str) -> set[str]:
 
 
 def _resolve_eol_products(component: dict[str, Any]) -> set[str]:
-    """A component's candidate endoflife.date products: its CPE products and mapped name, else the bare name."""
     name = (component.get("name") or "").lower()
     purl_type = get_purl_type(component.get("purl"))
     products: set[str] = set()
@@ -70,7 +68,6 @@ def _resolve_eol_products(component: dict[str, Any]) -> set[str]:
 
 
 def collect_products_to_check(components: list[dict[str, Any]]) -> dict[str, list[tuple[str, str, bool]]]:
-    """Build ``product -> [(component_name, version, distro_build), ...]``; each version is checked on its own."""
     out: dict[str, list[tuple[str, str, bool]]] = {}
     for component in components:
         version = component.get("version") or ""
@@ -98,7 +95,6 @@ def _version_matches_cycle(version: str, cycle: str) -> bool:
 
 
 def _check_version(version: str, cycles: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The most specific cycle the version belongs to (LTS wins a tie), if that cycle is end-of-life."""
     comparable = _VERSION_DECORATION.sub("", version.strip().lower())
     matching = [c for c in cycles if _version_matches_cycle(comparable, str(c.get("cycle", "")).lower())]
     if not matching:
@@ -110,7 +106,7 @@ def _check_version(version: str, cycles: list[dict[str, Any]]) -> dict[str, Any]
 
 
 def _find_active_cycle(cycles: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The first still-supported cycle; endoflife.date lists the newest first."""
+    """endoflife.date lists the newest cycle first."""
     now = datetime.now(timezone.utc)
     for cycle in cycles:
         eol = cycle.get("eol")
@@ -120,7 +116,6 @@ def _find_active_cycle(cycles: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 async def _fetch_list(client: InstrumentedAsyncClient, product: str, item_type: type) -> list[Any]:
-    """``/api/<product>.json`` when it is a list of ``item_type``; [] for an unknown product or another shape."""
     response = await client.get(f"{EOL_API_URL}/{quote(product, safe='')}.json")
     if response.status_code == 404:
         return []
@@ -183,7 +178,6 @@ class EndOfLifeAnalyzer(Analyzer):
         return output
 
     def _apply_settings(self, settings: dict[str, Any] | None) -> None:
-        """Bind this project's thresholds to this run's instance."""
         s = settings or {}
         self._high_after_days = s.get("eol_high_after_days", EOL_HIGH_AFTER_DAYS)
         self._medium_after_days = s.get("eol_medium_after_days", EOL_MEDIUM_AFTER_DAYS)
@@ -197,7 +191,6 @@ class EndOfLifeAnalyzer(Analyzer):
         recommended: dict[str, Any] | None,
         distro_build: bool,
     ) -> dict[str, Any]:
-        """Grade by days past the cycle's EOL date; a distro rebuild stays LOW and gets no upstream upgrade."""
         eol_date = _parse_eol_date(cycle.get("eol"))
         # No date means endoflife.date marks the cycle end-of-life with ``eol: true``.
         days_past = (datetime.now(timezone.utc) - eol_date).days if eol_date else None

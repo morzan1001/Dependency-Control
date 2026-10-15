@@ -23,7 +23,6 @@ from app.services.enrichment.scoring import calculate_risk_score, fold_enrichmen
 
 logger = logging.getLogger(__name__)
 
-# Enrichment the document carries only as the roll-up over its advisories.
 _ROLLUP_ONLY_KEYS = frozenset({"epss_date"})
 
 
@@ -60,12 +59,10 @@ def _cves(findings: list[dict[str, Any]]) -> list[str]:
 
 
 def sends_ids(findings: list[dict[str, Any]]) -> bool:
-    """Whether enrich_findings puts any id of these findings on the wire."""
     return bool(_ghsa_ids(findings) or _cves(findings))
 
 
 def _resolve_ghsa(vuln: dict[str, Any], ghsa_data: GHSAData) -> bool:
-    """Record GitHub's CVE on a GHSA advisory; True when its identity grew."""
     vuln["github_advisory_url"] = ghsa_data.advisory_url
     aliases = vuln.setdefault("aliases", [])
     cve_id = ghsa_data.cve_id
@@ -80,7 +77,6 @@ def _resolve_ghsa(vuln: dict[str, Any], ghsa_data: GHSAData) -> bool:
 def _apply_ghsa_resolutions(
     findings: list[dict[str, Any]], resolutions: Mapping[str, GHSAData]
 ) -> list[dict[str, Any]]:
-    """Resolve every GHSA advisory; returns the findings whose advisories gained an id."""
     touched = []
     for finding in findings:
         changed = False
@@ -131,7 +127,6 @@ def _enrichment_fields(enrichment: VulnerabilityEnrichment) -> dict[str, Any]:
 def advisory_enrichment(
     vuln: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]
 ) -> VulnerabilityEnrichment:
-    """The advisory's CVEs folded, each scored on the advisory's own CVSS, or on its severity without one."""
     cvss = vuln.get("cvss_score")
     if cvss is None:
         cvss = CVSS_SEVERITY_SCORES.get(vuln.get("severity") or "UNKNOWN")
@@ -146,7 +141,6 @@ def advisory_enrichment(
 
 
 def apply_enrichments(details: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]) -> None:
-    """Mark each advisory with its own CVEs' enrichment, then roll the document up from its advisories."""
     folded = []
     for vuln in details.get("vulnerabilities") or []:
         advisory = advisory_enrichment(vuln, enrichments)
@@ -158,8 +152,6 @@ def apply_enrichments(details: dict[str, Any], enrichments: Mapping[str, Vulnera
 
 
 class VulnerabilityEnrichmentService:
-    """Enrich vulnerabilities with EPSS, KEV, and GHSA data, using Redis for cross-pod caching."""
-
     SENDS_IDS_TO = (EPSS_API_URL, GHSA_API_URL)
     DOWNLOADS_FROM = (KEV_CATALOG_URL,)
 
@@ -169,7 +161,6 @@ class VulnerabilityEnrichmentService:
         self._ghsa_provider = GHSAProvider()
 
     async def _enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
-        """Enrich CVEs with EPSS and KEV, scored without CVSS; also names the sources that could not be read."""
         unique_cves = list({cve for cve in cves if cve and cve.startswith("CVE-")})
         if not unique_cves:
             return {}, []
@@ -193,7 +184,7 @@ class VulnerabilityEnrichmentService:
     async def enrich_findings(
         self, findings: list[dict[str, Any]], github_token: str | None = None
     ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
-        """Fold GHSA, EPSS and KEV into the findings in place; returns per-CVE enrichment and the unreadable sources."""
+        """Mutates the findings in place."""
         if ghsa_ids := _ghsa_ids(findings):
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
             resolutions = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)

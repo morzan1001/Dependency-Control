@@ -1,5 +1,3 @@
-"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped."""
-
 import hashlib
 import json
 import logging
@@ -17,7 +15,6 @@ MAX_COMPONENT_NESTING_DEPTH = 100
 
 
 def flatten_cyclonedx_components(components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int, int]:
-    """Flatten nested components; returns (flat, depth_skipped, malformed) counting dropped entries."""
     flat: list[dict[str, Any]] = []
     depth_skipped = 0
     malformed = 0
@@ -74,7 +71,6 @@ def _content_ref(comp: dict[str, Any]) -> str:
 
 
 def _remapped(raw: Any, refs: dict[str, str]) -> Any:
-    """A reference to another asset of the document, by that asset's content ref when it is there."""
     return refs.get(raw, raw)
 
 
@@ -157,7 +153,7 @@ def _populate_algorithm(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None
 
 
 def _coerce_positive_int(raw: Any) -> int | None:
-    """Reject bools (Python's int(True)==1 footgun) and non-positive values."""
+    """Rejects bools, since int(True) == 1."""
     if raw is None or isinstance(raw, bool):
         return None
     try:

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict[str, Any] | None:
-    """The JSON document at url, or None on 404; any other failure raises so nothing is cached."""
+    """Any failure but a 404 raises so nothing is cached."""
     response = await client.get(url, follow_redirects=True)
     if response.status_code == 404:
         return None
@@ -32,7 +32,6 @@ async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict
 
 
 def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
-    """``(cache key, deps.dev system, deps.dev name)`` of a component deps.dev can look up at its version."""
     parsed = parse_purl(component.get("purl", ""))
     version = component.get("version", "")
     if not parsed or not parsed.deps_dev_system or not parsed.deps_dev_name or not has_known_version(version):
@@ -42,8 +41,6 @@ def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
 
 
 class DepsDevAnalyzer(Analyzer):
-    """Fetches package metadata and OpenSSF Scorecard data from the deps.dev API (Redis-cached)."""
-
     name = "deps_dev"
     base_url = DEPS_DEV_API_URL
 
@@ -56,7 +53,7 @@ class DepsDevAnalyzer(Analyzer):
         package_metadata: dict[str, Any],
         scorecard_issues: list[Any],
     ) -> None:
-        """Apply a payload under this scan's component (a cached one names its fetcher), re-checking the threshold."""
+        """Cached payloads come from other scans, so the component and the threshold are re-applied."""
         if not payload:
             return
         name, version, purl = component.get("name", ""), component.get("version", ""), component.get("purl", "")
@@ -108,7 +105,6 @@ class DepsDevAnalyzer(Analyzer):
 
     @staticmethod
     def _select_project_id(related_projects: list[dict[str, Any]]) -> str | None:
-        """Pick the best project id: prefer SOURCE_REPO, fall back to any GitHub project."""
         project_id: str | None = None
         for project in related_projects:
             project_key = project.get("projectKey", {})
@@ -121,7 +117,6 @@ class DepsDevAnalyzer(Analyzer):
         return project_id
 
     async def _cached_project(self, client: InstrumentedAsyncClient, project_id: str | None) -> dict[str, Any] | None:
-        """The project summary and trimmed scorecard, cached once for every version that links the project."""
         if not project_id:
             return None
         project: dict[str, Any] | None = await cache_service.get_or_fetch_with_lock(
@@ -176,7 +171,6 @@ class DepsDevAnalyzer(Analyzer):
         system: str,
         lookup_name: str,
     ) -> dict[str, Any] | None:
-        """Package metadata and scorecard issue for a component, or None when deps.dev does not know its version."""
         purl = component.get("purl", "")
         name = component.get("name", "")
         version = component.get("version", "")
@@ -219,7 +213,6 @@ class DepsDevAnalyzer(Analyzer):
 
     @staticmethod
     def _classify_link_label(label: str) -> str:
-        """Classify a link label into a normalized category name."""
         if "home" in label:
             return "homepage"
         if "repo" in label or "source" in label or "github" in label or "gitlab" in label:
@@ -235,7 +228,6 @@ class DepsDevAnalyzer(Analyzer):
     def _extract_metadata(
         self, data: dict[str, Any], name: str, version: str, system: str, purl: str
     ) -> dict[str, Any]:
-        """Extract useful metadata from version response."""
         links = {}
         for link in data.get("links", []):
             label = link.get("label", "").lower()

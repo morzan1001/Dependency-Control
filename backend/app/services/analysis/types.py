@@ -1,5 +1,3 @@
-"""Type definitions for the analysis module."""
-
 from typing import TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -8,16 +6,12 @@ Database = AsyncIOMotorDatabase
 
 
 class EPSSScoreCounts(TypedDict):
-    """Counts of findings per bucket_epss bucket."""
-
     high: int
     medium: int
     low: int
 
 
 class ExploitMaturityCounts(TypedDict):
-    """Counts of findings by exploit maturity level."""
-
     weaponized: int
     active: int
     high: int
@@ -27,8 +21,6 @@ class ExploitMaturityCounts(TypedDict):
 
 
 class KEVDetail(TypedDict):
-    """Details about a vulnerability in the CISA KEV catalog."""
-
     cve: str
     component: str
     due_date: str | None
@@ -36,8 +28,6 @@ class KEVDetail(TypedDict):
 
 
 class HighRiskCVE(TypedDict):
-    """Details about a high-risk CVE."""
-
     cve: str
     component: str
     version: str
@@ -48,8 +38,6 @@ class HighRiskCVE(TypedDict):
 
 
 class EPSSKEVSummary(TypedDict):
-    """Summary of EPSS/KEV enrichment data."""
-
     total_vulnerabilities: int
     epss_enriched: int
     kev_matches: int
@@ -58,9 +46,7 @@ class EPSSKEVSummary(TypedDict):
     exploit_maturity: ExploitMaturityCounts
     avg_epss_score: float | None
     max_epss_score: float | None
-    # Mean/max of the per-finding threat score (EPSS, KEV and exploit maturity) over this
-    # scan's vulnerability findings — NOT the project-level exposure score of the same name
-    # on the dashboard, which averages projects' saturating severity-weighted stats.risk_score.
+    # Per-finding threat score over this scan, not the dashboard's same-named project exposure score.
     avg_risk_score: float | None
     max_risk_score: float | None
     kev_details: list[KEVDetail]
@@ -71,17 +57,13 @@ class EPSSKEVSummary(TypedDict):
 
 
 class ReachabilityLevelCounts(TypedDict):
-    """Counts of findings by reachability level."""
-
     confirmed: int  # Symbol-level match
     likely: int  # Import-level match
-    unknown: int  # Could not determine
-    unreachable: int  # Confirmed not used
+    unknown: int
+    unreachable: int
 
 
 class CallgraphInfo(TypedDict):
-    """Information about the callgraph used for analysis."""
-
     language: str
     total_modules: int
     total_imports: int
@@ -91,21 +73,16 @@ class CallgraphInfo(TypedDict):
 
 
 class VulnerabilityInfo(TypedDict, total=False):
-    """Basic info about a vulnerability for reachability analysis."""
-
     cve: str
     component: str
     version: str
     severity: str
     reachability_level: str
     reachable_functions: list[str]
-    # True only when confidence_score cleared REACHABILITY_HIGH_CONFIDENCE_THRESHOLD.
     is_high_confidence: bool
 
 
 class ReachabilitySummary(TypedDict):
-    """Summary of reachability analysis data."""
-
     total_vulnerabilities: int
     analyzed: int
     reachability_levels: ReachabilityLevelCounts

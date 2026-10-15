@@ -1,5 +1,3 @@
-"""Loader for the IANA TLS cipher-suite catalog: shared-cache read of the live registry, bundled YAML fallback."""
-
 from __future__ import annotations
 
 import csv
@@ -74,7 +72,6 @@ class CipherSuiteEntry:
 
 
 async def load_iana_catalog() -> dict[str, CipherSuiteEntry]:
-    """The registry's suites graded by the current rules, or the bundled snapshot while the registry is unreachable."""
     raw = await cache_service.get_or_fetch_with_lock(_IANA_CACHE_KEY, _fetch_from_iana, _IANA_CACHE_TTL_SECONDS)
     if not isinstance(raw, list) or not raw:
         logger.info("IANA catalog: registry unavailable, using the bundled snapshot at %s", _CATALOG_FALLBACK_PATH)
@@ -83,7 +80,6 @@ async def load_iana_catalog() -> dict[str, CipherSuiteEntry]:
 
 
 async def _fetch_from_iana() -> list[dict[str, str]] | None:
-    """The registry's (name, value) rows; None when it is unreachable or answers with something else."""
     try:
         async with InstrumentedAsyncClient("IANA registry", timeout=_IANA_CSV_TIMEOUT) as client:
             resp = await client.get(_IANA_CSV_URL)

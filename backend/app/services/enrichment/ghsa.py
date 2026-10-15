@@ -22,8 +22,6 @@ def _parse_ghsa_advisory(data: dict[str, Any], ghsa_id: str) -> GHSAData:
 
 
 class GHSAProvider:
-    """Provider for GitHub Security Advisory (GHSA) data."""
-
     def __init__(self) -> None:
         # Anonymous and token lookups spend separate GitHub quotas, keyed by whether a token was sent.
         self._rate_limited_until: dict[bool, float] = {}
@@ -31,7 +29,6 @@ class GHSAProvider:
     async def fetch_ghsa_advisory(
         self, client: InstrumentedAsyncClient, ghsa_id: str, token: str | None
     ) -> GHSAData | None:
-        """One advisory through the cross-pod lock; None while GitHub's quota is exhausted."""
         authenticated = bool(token)
         if time.time() < self._rate_limited_until.get(authenticated, 0.0):
             return None
@@ -61,7 +58,6 @@ class GHSAProvider:
         return GHSAData(**cached) if cached else None
 
     async def resolve_ghsa_to_cve(self, ghsa_ids: list[str], token: str | None) -> dict[str, GHSAData]:
-        """Resolve GHSA IDs to CVEs from Redis, then GitHub; an id that could not be looked up comes back unresolved."""
         cached_data = await cache_service.mget([CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids])
         results: dict[str, GHSAData] = {}
         missing: list[str] = []

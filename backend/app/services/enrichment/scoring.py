@@ -12,7 +12,6 @@ from app.schemas.enrichment import VulnerabilityEnrichment
 
 
 def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> VulnerabilityEnrichment | None:
-    """The worst case across CVEs: highest EPSS, risk and maturity, and the KEV entry due first."""
     items = list(enrichments)
     if not items:
         return None
@@ -34,7 +33,6 @@ def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> Vulnerab
 
 
 def _calculate_epss_contribution(epss_score: float) -> float:
-    """EPSS 0..1 → 0..25 points, piecewise linear, continuous at bucket boundaries (0@0, 10@MEDIUM, 20@HIGH, 25@1.0)."""
     if epss_score <= 0:
         return 0.0
     if epss_score >= 1.0:
@@ -52,7 +50,6 @@ def calculate_risk_score(
     is_kev: bool,
     kev_ransomware: bool,
 ) -> float:
-    """Combined 0..100 risk = CVSS (<=40, 20 default) + EPSS (<=25) + KEV (+20) + ransomware (+5), capped at 100."""
     score = (cvss_score / 10.0) * 40 if cvss_score is not None else 20.0
     if epss_score is not None:
         score += _calculate_epss_contribution(epss_score)
@@ -66,7 +63,6 @@ def calculate_risk_score(
 def calculate_adjusted_risk_score(
     base_risk_score: float, is_reachable: bool | None, analysis_level: str | None
 ) -> float:
-    """An already-computed risk score scaled by its reachability verdict."""
     return min(base_risk_score * reachability_risk_modifier(is_reachable, analysis_level), 100.0)
 
 
@@ -74,7 +70,6 @@ def calculate_secret_risk_score(
     verified: bool | None,
     in_current_tree: bool | None,
 ) -> tuple[float, float]:
-    """CRITICAL-anchor (risk_score, adjusted_risk_score): verified secrets stay urgent regardless of tree state (already exposed until rotated), else 0.4x if gone from the tree."""
     base = SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"]
     if is_actionable_secret(verified):
         modifier = 1.1

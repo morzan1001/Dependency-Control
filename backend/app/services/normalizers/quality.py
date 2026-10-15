@@ -19,7 +19,6 @@ _FAILED_CHECK_ADVICE = {
 
 
 def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
-    """Turn deps_dev OpenSSF Scorecard results into findings and enrichment data."""
     # Package metadata is enrichment data, not findings.
     for metadata in (result.get("package_metadata") or {}).values():
         name = metadata.get("name", "")

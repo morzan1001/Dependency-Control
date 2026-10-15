@@ -1,5 +1,3 @@
-"""Package-name identity and name-join helpers shared by aggregation, analytics and reachability."""
-
 from __future__ import annotations
 
 import re
@@ -30,7 +28,6 @@ def npm_package_key(name: str) -> str:
 
 
 def canonical_callgraph_language(raw: str) -> str:
-    """Canonical spelling of an uploaded callgraph language; ValueError for one without callgraph support."""
     language = raw.strip().lower()
     language = _CALLGRAPH_LANGUAGE_ALIASES.get(language, language)
     if language not in _CALLGRAPH_LANGUAGES:
@@ -40,11 +37,7 @@ def canonical_callgraph_language(raw: str) -> str:
 
 
 def canonical_module_key(name: str, language: str) -> str:
-    """Canonical lookup key for a module/package name, per language.
-
-    The single meeting point between the callgraph parsers, which key stored modules by
-    it, and reachability enrichment, which derives it from a finding's component name.
-    """
+    """The single meeting point between callgraph parsers (stored keys) and reachability enrichment (lookup keys)."""
     if name.startswith(("./", "../")):
         return name
 
@@ -74,7 +67,7 @@ def _is_npm_scoped(name: str) -> bool:
 
 
 def artifact_segment(component: str) -> str:
-    """Bare artifact segment with its original case; an npm ``@scope/`` belongs to the name, not a qualifier."""
+    """An npm @scope/ belongs to the name, not a qualifier."""
     name = component.strip() if component else ""
     if ":" in name:
         name = name.rsplit(":", 1)[-1]
@@ -84,26 +77,19 @@ def artifact_segment(component: str) -> str:
 
 
 def component_name_candidates(component: str) -> list[str]:
-    """Inventory names a finding component can be stored under: itself and its bare artifact."""
     return list(dict.fromkeys((component, artifact_segment(component))))
 
 
 def extract_artifact_name(component: str) -> str:
-    """Bare artifact name, lowercased, for grouping and index keys."""
     return artifact_segment(component).lower() or "unknown"
 
 
 def _boundary_suffixes(name: str) -> list[str]:
-    """Every suffix of ``name`` that starts after a ':' or '/' boundary."""
     return [name[i + 1 :] for i, char in enumerate(name) if char in _QUALIFIER_SEPARATORS]
 
 
 def _resolve_bucket(names: list[str]) -> dict[str, str]:
-    """Map every name of one artifact-name bucket to its unique more-qualified spelling.
-
-    A name attaches to a more qualified spelling of itself only when exactly one such
-    candidate exists, so ``core`` is never guessed onto one of several ``*:core`` packages.
-    """
+    """A name attaches only to a unique more-qualified spelling, so core is never guessed onto one of several *:core."""
     members = set(names)
     qualifiers: dict[str, list[str]] = {}
     for name in names:
@@ -117,11 +103,7 @@ def _resolve_bucket(names: list[str]) -> dict[str, str]:
 
 
 def cluster_by_package_identity(components: Iterable[str]) -> dict[str, str]:
-    """Map each normalized component name to the name representing its package.
-
-    Only names where one is a qualified form of the other share a representative, so
-    genuinely different packages that end in the same segment stay apart.
-    """
+    """Only qualified forms of one another share a representative, so different packages ending alike stay apart."""
     buckets: dict[str, dict[str, None]] = {}
     for component in components:
         normalized = normalize_component(component)
@@ -134,15 +116,7 @@ def cluster_by_package_identity(components: Iterable[str]) -> dict[str, str]:
 
 
 def build_component_index(by_component: dict[str, _T]) -> dict[str, _T]:
-    """Index component-keyed entries so either spelling of a package resolves.
-
-    Dependency inventories store the bare name (Maven ``group`` sits in its own field) while an
-    aggregated finding carries the qualified coordinate. Each entry gains its bare artifact name
-    as an alias, but only when that name belongs to a single package, so one package's data is
-    never attributed to another that ends in the same segment.
-
-    Pair with :func:`lookup_component`; every finding/dependency name join goes through both.
-    """
+    """Bare-name aliases are added only for a single package; pair with lookup_component for every name join."""
     owners: dict[str, list[str]] = {}
     for component in by_component:
         owners.setdefault(extract_artifact_name(component), []).append(component)
@@ -165,12 +139,7 @@ def _qualified_alias(artifact: str) -> str:
 
 
 def lookup_component(index: Mapping[str, _T], component: str, default: _T | None = None) -> _T | None:
-    """Resolve ``component`` against an index built by :func:`build_component_index`.
-
-    The alias keys are lowercased by ``extract_artifact_name`` while real component names are
-    not, so the exact spelling is tried first and the artifact name second; only an unqualified
-    name falls back to the alias of a qualified entry.
-    """
+    """Exact spelling first: alias keys are lowercased while real component names are not."""
     found = index.get(component)
     if found is None:
         artifact = extract_artifact_name(component)
@@ -181,7 +150,7 @@ def lookup_component(index: Mapping[str, _T], component: str, default: _T | None
 
 
 def component_match_query(component: str) -> dict[str, Any]:
-    """Mongo filter for ``component`` or a qualified form of it; ``@scope/component`` is another npm package."""
+    """@scope/component is another npm package, not a qualified form."""
     escaped = re.escape(component)
     return {
         "$or": [
@@ -192,7 +161,7 @@ def component_match_query(component: str) -> dict[str, Any]:
 
 
 def artifact_name_expr(value: Any) -> dict[str, Any]:
-    """``extract_artifact_name`` as an aggregation expression (lowercased, like the Python one)."""
+    """Must stay equivalent to extract_artifact_name."""
     lowered = {"$toLower": value}
     return {
         "$switch": {
@@ -212,13 +181,7 @@ def artifact_name_expr(value: Any) -> dict[str, Any]:
 
 
 def component_match_expr(name_field: Any, component_expr: Any) -> dict[str, Any]:
-    """Aggregation ``$expr`` matching a dependency name against either spelling of a component.
-
-    Unlike :func:`build_component_index` this does NOT implement the ambiguity rule: a
-    bare-named dependency matches ANY same-artifact qualified component. Its only caller
-    narrows the join with ``scan_id`` + ``version`` first, where prod measures no
-    same-artifact/same-version collisions; a caller without that gate needs its own guard.
-    """
+    """No ambiguity rule: a bare name matches any same-artifact component, so narrow by scan_id and version first."""
     return {
         "$or": [
             {"$eq": [name_field, component_expr]},

@@ -1,5 +1,3 @@
-"""Crypto policy rule evaluation, registered once per FindingType."""
-
 from collections.abc import Sequence
 from typing import Any
 
@@ -18,10 +16,7 @@ MAX_FINDING_LOCATIONS = 20
 def crypto_findings_for_assets(
     assets: Sequence[CryptoAsset], rules: Sequence[CryptoRule], *, scanner: str
 ) -> list[dict[str, Any]]:
-    """One finding per asset and violated finding type, at the strictest severity matched within that type.
-
-    All matched rules of the type are recorded in details for cross-framework attribution.
-    """
+    """All matched rules of the type go into details for cross-framework attribution."""
     findings: list[dict[str, Any]] = []
     for asset in assets:
         by_type: dict[str, list[CryptoRule]] = {}
@@ -56,10 +51,7 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: s
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
 
     return {
-        # Addressable, not a nonce: findings are keyed by ``finding_id`` everywhere the API
-        # exposes them, so a random id would make each run report new findings and leave every
-        # crypto waiver matching nothing. One finding is emitted per asset per finding type,
-        # which is exactly what this pair names.
+        # Stable per asset and finding type: waivers and the API key findings by finding_id.
         "id": f"CRYPTO-{ft}-{asset.bom_ref or asset.name}",
         "type": ft,
         "severity": lead.default_severity,

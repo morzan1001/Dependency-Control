@@ -1,5 +1,3 @@
-"""Rehydrate pre-shaped crypto analyzer dicts into Finding objects."""
-
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding

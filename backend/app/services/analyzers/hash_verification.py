@@ -1,5 +1,3 @@
-"""Verifies package integrity by comparing SBOM hashes against registry hashes (PyPI, npm)."""
-
 import base64
 import logging
 from typing import Any, ClassVar
@@ -18,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_hash_algorithm(alg: str | None) -> str:
-    """Normalize a hash algorithm name (lowercase, no hyphens): "SHA-256" -> "sha256"."""
     return (alg or "").lower().replace("-", "")
 
 
@@ -37,7 +34,6 @@ class HashVerificationAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Compare each component's SBOM hashes with its registry's digests for that exact version."""
         components = parsed_components or []
         checks = []
         for component in components:
@@ -73,7 +69,6 @@ class HashVerificationAnalyzer(Analyzer):
         return result
 
     async def _registry_hashes(self, lookups: dict[str, tuple[str, str, str]]) -> tuple[dict[str, Any], int]:
-        """Registry digests per cache key, and how many lookups failed: one batched cache read, then a bounded fetch."""
         async with InstrumentedAsyncClient(
             "Package Registry API", timeout=ANALYZER_TIMEOUTS["hash_verification"]
         ) as client:
@@ -94,7 +89,6 @@ class HashVerificationAnalyzer(Analyzer):
         version: str,
         registry: str,
     ) -> dict[str, Any] | None:
-        """Compare SBOM hashes to registry hashes; return mismatch/verified/None."""
         for sbom_alg, sbom_value in sbom_hashes.items():
             registry_value = registry_hashes.get(sbom_alg)
             if registry_value is None:
@@ -123,7 +117,6 @@ class HashVerificationAnalyzer(Analyzer):
     async def _fetch_registry_hashes(
         self, client: InstrumentedAsyncClient, registry: str, name: str, version: str
     ) -> dict[str, Any]:
-        """Lower-cased digests per algorithm, {} when the registry has no such release; any other failure raises."""
         # npm scopes carry a slash; PyPI names never do.
         url = self.REGISTRY_APIS[registry].format(package=name.replace("/", "%2F"), version=version)
         data = await fetch_deps_dev_json(client, url)
@@ -143,7 +136,6 @@ class HashVerificationAnalyzer(Analyzer):
 
     @staticmethod
     def _parse_npm_dist(dist: dict[str, Any], name: str, version: str) -> dict[str, str]:
-        """Parse the npm dist payload into a flat hash dictionary."""
         registry_hashes_flat: dict[str, str] = {}
         shasum = dist.get("shasum")
         if shasum:

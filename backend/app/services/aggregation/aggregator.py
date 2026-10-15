@@ -1,5 +1,3 @@
-"""ResultAggregator - aggregates findings from multiple analyzers."""
-
 import re
 from collections import Counter
 from typing import Any
@@ -94,7 +92,7 @@ _NORMALIZERS = {
 
 
 def _package_key(finding: Finding) -> tuple[str, str]:
-    """(component, version) as every aggregate key spells them: trimmed, lowercased, v-prefix dropped."""
+    """The (component, version) spelling every aggregate key must share."""
     return normalize_component(finding.component), normalize_version(finding.version)
 
 
@@ -120,7 +118,7 @@ def _record_license(enrichment: DependencyEnrichment, entry: dict[str, Any]) -> 
 
 
 def _deps_dev_block(metadata: dict[str, Any]) -> dict[str, Any]:
-    """The persisted deps_dev block, copied key by key so cached metadata cannot add stray fields."""
+    """Copied key by key so cached metadata cannot add stray fields."""
     project = metadata.get("project") or {}
     dependents = metadata.get("dependents") or {}
     scorecard = metadata.get("scorecard") or {}
@@ -151,7 +149,7 @@ class ResultAggregator:
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
 
     def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
-        """Get or create a DependencyEnrichment, keyed by canonical purl so qualifier variants merge and same-named packages from different ecosystems stay apart."""
+        """Keyed by canonical purl: qualifier variants merge, same-named packages of different ecosystems stay apart."""
         key = canonical_purl(purl) if purl else f"{name}@{version}"
         if key not in self._dependency_enrichments:
             self._dependency_enrichments[key] = DependencyEnrichment(
@@ -191,7 +189,6 @@ class ResultAggregator:
             enrichment.primary_license = enrichment.primary_license or spdx_id
 
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
-        """Enrich dependency with data from deps.dev; the version's own license beats the repository's."""
         enrichment = self._get_or_create_enrichment(name, version, metadata.get("purl"))
         if "deps_dev" not in enrichment.sources:
             enrichment.sources.append("deps_dev")
@@ -224,7 +221,6 @@ class ResultAggregator:
         return incoming_rank > current_rank
 
     def enrich_from_license_scanner(self, name: str, version: str, license_info: dict[str, Any]) -> None:
-        """Enrich dependency with one classified license from the license compliance scanner."""
         spdx_id = license_info.get("license")
         if not spdx_id:
             return
@@ -258,9 +254,6 @@ class ResultAggregator:
                 enrichment.license_obligations.append(obligation)
 
     def aggregate(self, analyzer_name: str, result: dict[str, Any], source: str | None = None) -> None:
-        """
-        Dispatches the result to the specific normalizer based on analyzer name.
-        """
         if not result:
             return
 
@@ -281,7 +274,6 @@ class ResultAggregator:
         error_details: Any = None,
         source: str | None = None,
     ) -> None:
-        """Record an analyzer failure; every distinct failure stays listed in the description."""
         outcome = "returned partial results" if partial else "failed"
         error = {"source": source, "message": f"Scanner '{analyzer_name}' {outcome}: {message}"}
         if error_details is not None:
@@ -310,7 +302,6 @@ class ResultAggregator:
 
     @staticmethod
     def _merge_cluster(cluster: list[Finding], representative: str) -> Finding:
-        """Merge one package's findings into the entry carrying the most qualified name."""
         if len(cluster) == 1:
             return cluster[0]
         primary = next(f for f in cluster if normalize_component(f.component) == representative)
@@ -322,7 +313,6 @@ class ResultAggregator:
         return primary
 
     def _reduce_vuln_group(self, group: list[Finding]) -> list[Finding]:
-        """Split a vuln group into one primary per distinct package."""
         if len(group) == 1:
             return [group[0]]
 
@@ -335,7 +325,7 @@ class ResultAggregator:
         return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
 
     def fold_vulnerability_entries(self) -> None:
-        """Fold the advisory entries of each package that gained some, so the entries held do not grow with the SBOM count."""
+        """Keeps the held entries from growing with the SBOM count."""
         for agg_key in self._unfolded:
             dedupe_vulnerability_entries(self.findings[agg_key].details["vulnerabilities"])
         self._unfolded.clear()
@@ -345,11 +335,7 @@ class ResultAggregator:
         return (str(f.type), normalize_component(f.component), f.version or "", f.id)
 
     def get_findings(self) -> list[Finding]:
-        """Return deduplicated findings with merge/link post-processing applied.
-
-        Analyzers aggregate in completion order, so every step here is kept order-independent:
-        identical scanner output must yield an identical finding set between runs.
-        """
+        """Every step must stay order-independent: analyzers aggregate in completion order."""
         # Each spelling folds before its cluster merges, whether or not the caller folded along the way.
         self.fold_vulnerability_entries()
         final_findings: list[Finding] = []
@@ -388,12 +374,7 @@ class ResultAggregator:
                     cross_link_pair(f1, f2)
 
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
-        """Link findings for the same package, or the same file path, to each other.
-
-        ``related_findings_omitted`` counts the siblings left unlinked: same-type hits in one file,
-        which exchange no context but grow quadratically, and every sibling past
-        ``MAX_CROSS_LINK_GROUP_SIZE``. No severity, count or score depends on the links.
-        """
+        """Same-file same-type hits stay unlinked (no shared context, quadratic growth); no score reads links."""
         representatives = cluster_by_package_identity(
             f.component for f in findings if f.component and f.type in PACKAGE_FINDING_TYPES
         )
@@ -423,7 +404,6 @@ class ResultAggregator:
                     finding.related_findings_omitted = type_counts[finding.type] - 1 or None
 
     def get_dependency_enrichments(self) -> list[dict[str, Any]]:
-        """Enrichment entries for persistence: canonical purl (the match key), name/version (purl-less match), payload."""
         return [
             {
                 "name": enrichment.name,
@@ -435,7 +415,6 @@ class ResultAggregator:
         ]
 
     def add_finding(self, finding: Finding, source: str | None = None) -> None:
-        """Add a finding, merging if one already exists for the same key."""
         if finding.type == FindingType.VULNERABILITY:
             self._add_vulnerability_finding(finding, source)
         elif finding.type == FindingType.QUALITY:
@@ -445,7 +424,6 @@ class ResultAggregator:
 
     @staticmethod
     def _build_vuln_entry(finding: Finding) -> VulnerabilityEntry:
-        """Build a vulnerability entry dict from a finding."""
         refs_from_details = finding.details.get("references", []) or []
 
         entry: VulnerabilityEntry = {
@@ -464,14 +442,13 @@ class ResultAggregator:
         }
         ecosystem_specific = finding.details.get("ecosystem_specific")
         if ecosystem_specific:
-            # get_symbols_for_finding reads it at the entry level for symbol reachability.
+            # Symbol reachability reads it at the entry level.
             entry["ecosystem_specific"] = ecosystem_specific
         return entry
 
     def _merge_vuln_into_existing(
         self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None
     ) -> None:
-        """Merge a vulnerability finding into an existing aggregate."""
         absorb_header(existing, finding, source)
         _adopt_smallest_spelling(existing, finding, "")
         existing.details["vulnerabilities"].append(vuln_entry)
@@ -508,7 +485,6 @@ class ResultAggregator:
 
     @staticmethod
     def _has_maintenance_issue(finding: Finding, issue_type: str) -> bool:
-        """Detect whether the finding carries a maintenance signal."""
         if issue_type == "scorecard":
             return "Maintained" in finding.details.get("critical_issues", [])
         return any(r.get("type") in MAINTENANCE_RISK_TYPES for r in finding.details.get("risks", []))
@@ -522,7 +498,6 @@ class ResultAggregator:
         has_maintenance: bool,
         source: str | None,
     ) -> None:
-        """Merge a quality finding into an existing aggregated finding."""
         absorb_header(existing, finding, source)
         _adopt_smallest_spelling(existing, finding, "QUALITY:")
         quality_list: list[QualityEntry] = existing.details.get("quality_issues", [])
@@ -541,7 +516,6 @@ class ResultAggregator:
         update_quality_description(existing)
 
     def _add_quality_finding(self, finding: Finding, source: str | None = None) -> None:
-        """Aggregate quality findings (scorecard, maintainer_risk, ...) by component+version."""
         comp_key, version_key = _package_key(finding)
         agg_key = f"{AGG_KEY_QUALITY}:{comp_key}:{version_key}"
 
@@ -594,7 +568,6 @@ class ResultAggregator:
         existing.aliases = sorted(set(existing.aliases) | set(finding.aliases))
 
     def _add_generic_finding(self, finding: Finding, source: str | None = None) -> None:
-        """Add a finding keyed by ``type:id:component:version``, merging on an exact match of that key."""
         if source and source not in finding.found_in:
             finding.found_in.append(source)
 

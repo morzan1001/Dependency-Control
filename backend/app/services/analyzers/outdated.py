@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 def _is_older_than(current: str, latest: str) -> bool:
-    """Strict ``<`` via ``packaging.Version``; falls back to string inequality on InvalidVersion."""
     try:
         return Version(current) < Version(latest)
     except InvalidVersion:
@@ -26,7 +25,6 @@ def _is_older_than(current: str, latest: str) -> bool:
 
 
 def _is_ahead_of(current: str, latest: str) -> bool:
-    """Strict ``>``; covers cases where the install is newer than deps.dev's default."""
     try:
         return Version(current) > Version(latest)
     except InvalidVersion:
@@ -45,7 +43,6 @@ async def _fetch_package_info(
 
 
 async def fetch_package_info(client: InstrumentedAsyncClient, system: str, deps_dev_name: str) -> dict[str, Any] | None:
-    """A package's deps.dev default version and its publish date, fetched once and cached; a failure raises."""
     info: dict[str, Any] | None = await cache_service.get_or_fetch_with_lock(
         key=CacheKeys.latest_version(system, deps_dev_name),
         fetch_fn=lambda: _fetch_package_info(client, system, deps_dev_name),
@@ -56,8 +53,6 @@ async def fetch_package_info(client: InstrumentedAsyncClient, system: str, deps_
 
 
 class OutdatedAnalyzer(Analyzer):
-    """Outdated and ahead-of-default detection against deps.dev's default version, cached once per package."""
-
     name = "outdated_packages"
 
     async def analyze(
@@ -71,7 +66,6 @@ class OutdatedAnalyzer(Analyzer):
         ahead: list[dict[str, Any]] = []
         failed: list[str] = []
 
-        # One deps.dev document per distinct package; every installed version is classified against it.
         infos = await self._resolve_package_infos(components)
 
         for component, info in zip(components, infos, strict=True):
@@ -88,7 +82,6 @@ class OutdatedAnalyzer(Analyzer):
 
     @staticmethod
     def _package_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
-        """``(cache key, deps.dev system, deps.dev name)`` of a component deps.dev can compare by version."""
         parsed = parse_purl(component.get("purl", ""))
         if not parsed or not parsed.deps_dev_system or not has_known_version(component.get("version", "")):
             return None
@@ -98,7 +91,6 @@ class OutdatedAnalyzer(Analyzer):
     async def _resolve_package_infos(
         self, components: list[dict[str, Any]]
     ) -> list[dict[str, Any] | BaseException | None]:
-        """Each component's ``{"default": str | None}``, its failed lookup, or None; aligned with ``components``."""
         targets = [self._package_target(component) for component in components]
         skipped_count = targets.count(None)
         if skipped_count > 0:
@@ -122,7 +114,6 @@ class OutdatedAnalyzer(Analyzer):
         outdated: list[dict[str, Any]],
         ahead: list[dict[str, Any]],
     ) -> None:
-        """Classify a component as outdated, ahead-of-default, or up-to-date."""
         name = component.get("name", "")
         version = component.get("version", "")
         purl = component.get("purl", "")

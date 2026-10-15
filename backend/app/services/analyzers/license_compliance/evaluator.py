@@ -1,5 +1,3 @@
-"""License severity evaluation and finding-construction helpers."""
-
 from __future__ import annotations
 
 from functools import partial
@@ -25,7 +23,6 @@ from .constants import (
 
 
 def is_acceptable_under_policy(issue: dict[str, Any] | None) -> bool:
-    """Whether a consumer could actually take this licence: no finding, or one a policy escape already softened."""
     if issue is None:
         return True
     return get_severity_value(issue["severity"]) < POLICY_VIOLATION_MIN_RANK
@@ -37,8 +34,6 @@ def evaluate_license(
     policy: LicensePolicySchema,
     lic_url: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return an issue dict if the license is problematic under `policy`, else None."""
-
     if license_info.category in (
         LicenseCategory.PERMISSIVE,
         LicenseCategory.PUBLIC_DOMAIN,
@@ -277,10 +272,7 @@ def create_undeterminable_issue(
     unrecognized: list[str],
     rejected_alternatives: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Flag a component whose licence the SBOM does not let us determine, which is not auditable —
-    exactly what the audit control means. INFO is deliberate: "we cannot tell" is not the same class
-    as a disallowed licence, and the control keys on the finding's presence, not on its severity.
-    """
+    """INFO on purpose: "cannot tell" is no disallowed licence, and the audit control keys on presence, not severity."""
     if unrecognized:
         explanation = (
             f"The SBOM declares {', '.join(unrecognized)} for this component, which is not in the license "
@@ -310,7 +302,7 @@ def create_undeterminable_issue(
 
 
 def apply_transitive_adjustment(issue: dict[str, Any], is_transitive: bool) -> None:
-    """Downgrade one severity level for transitive deps, whose copyleft obligations may be abstracted away."""
+    """Transitive copyleft obligations may be abstracted away, hence one severity level lower."""
     if not is_transitive:
         return
 
@@ -350,7 +342,6 @@ def create_issue(
     context_reason: str | None = None,
     severity_without_context: Severity | None = None,
 ) -> dict[str, Any]:
-    """Create a license issue dict for the component whose name, version and purl it carries."""
     issue: dict[str, Any] = {
         "component": component.get("name", "unknown"),
         "version": component.get("version", "unknown"),

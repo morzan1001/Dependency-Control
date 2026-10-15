@@ -1,5 +1,3 @@
-"""Cross-linking helpers that mutate Finding objects without touching aggregator state."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -18,7 +16,6 @@ from app.services.aggregation.versions import normalize_version
 
 
 def cross_link_pair(f1: Finding, f2: Finding) -> None:
-    """Cross-reference two findings on the same package; context blocks only pass between one version."""
     if f2.id not in f1.related_findings:
         f1.related_findings.append(f2.id)
     if f1.id not in f2.related_findings:
@@ -39,7 +36,6 @@ def is_ahead_of_default(finding_type: str, details: dict[str, Any] | None) -> bo
 
 
 def record_additional_types(group: list[Finding]) -> None:
-    """List the other finding types a finding's package carries at its version, for the multi-type badge row."""
     by_version: dict[str, dict[str, str]] = {}
     for finding in group:
         if not is_ahead_of_default(finding.type, finding.details):
@@ -73,7 +69,6 @@ def _vulnerability_context(entries: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def _add_vulnerability_context(finding: Finding, vuln_finding: Finding) -> None:
-    """Tell a non-vulnerability finding that its package also has vulnerabilities."""
     if finding.type == FindingType.VULNERABILITY or vuln_finding.type != FindingType.VULNERABILITY:
         return
 
@@ -83,7 +78,6 @@ def _add_vulnerability_context(finding: Finding, vuln_finding: Finding) -> None:
 
 
 def _add_scorecard_context(finding: Finding, quality_finding: Finding) -> None:
-    """Show the package's OpenSSF Scorecard, held by its quality aggregate, on its other findings."""
     if (
         quality_finding.type != FindingType.QUALITY
         or finding.type == FindingType.QUALITY
@@ -105,7 +99,7 @@ def _add_scorecard_context(finding: Finding, quality_finding: Finding) -> None:
 
 
 def refresh_vulnerability_info(records: list[dict[str, Any]]) -> None:
-    """Recount each sibling's vulnerability_info once enrichment has folded GHSA-linked advisories."""
+    """Must run after enrichment has folded GHSA-linked advisories."""
     by_id: dict[Any, list[dict[str, Any]]] = {}
     for record in records:
         by_id.setdefault(record.get("id"), []).append(record)
@@ -125,7 +119,6 @@ def refresh_vulnerability_info(records: list[dict[str, Any]]) -> None:
 
 
 def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) -> None:
-    """Add contextual info from other finding types onto a vulnerability finding."""
     if vuln_finding.type != FindingType.VULNERABILITY:
         return
 

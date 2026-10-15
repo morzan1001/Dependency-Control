@@ -1,5 +1,3 @@
-"""Cross-component license compatibility checking against LICENSE_INCOMPATIBILITIES."""
-
 from __future__ import annotations
 
 import itertools
@@ -26,7 +24,6 @@ _CONFLICT_OPTIONS = (
 
 
 def partition_or_groups(or_groups: list[list[str]]) -> tuple[list[list[str]], list[str]]:
-    """Split OR-alternatives into readable ones, as database ids, and the unknown ids that made the rest unreadable."""
     readable: list[list[str]] = []
     unreadable: list[str] = []
     for group in or_groups:
@@ -45,8 +42,6 @@ def check_license_compatibility(
     settled: list[tuple[dict[str, Any], list[str]]],
     policy: LicensePolicySchema,
 ) -> list[tuple[dict[str, Any], bool]]:
-    """One issue per incompatible licence pair across the components' settled licences, each with whether
-    every component involved is transitive."""
     holders: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for component, license_ids in settled:
         for license_id in license_ids:

@@ -1,5 +1,3 @@
-"""Notification handling and webhook triggers for completed and failed scans."""
-
 import hashlib
 import json
 import logging
@@ -49,7 +47,6 @@ _TOP_VULNS_SHOWN = 10
 
 
 def _extract_vulnerability_info(entry_details: dict[str, Any], finding: dict[str, Any]) -> AlertVulnerability:
-    """Extract vulnerability info from a vulnerability entry and its parent finding."""
     return AlertVulnerability(
         id=canonical_cve(entry_details) or "Unknown",
         severity=entry_details["severity"],
@@ -73,7 +70,6 @@ def _is_priority(vuln: AlertVulnerability) -> bool:
 def _categorize_vulnerabilities(
     vulnerability_findings: list[dict[str, Any]],
 ) -> tuple[list[AlertVulnerability], list[AlertVulnerability], list[AlertVulnerability]]:
-    """Categorize vulnerabilities into (kev_vulns, high_epss_vulns, priority_vulns)."""
     vulns = [
         _extract_vulnerability_info(entry_details, finding)
         for finding in vulnerability_findings
@@ -95,7 +91,6 @@ def _build_vulnerability_message(
     top_vulns: list[AlertVulnerability],
     link: str,
 ) -> tuple[str, str]:
-    """Build (subject, message) for a vulnerability notification."""
     alarm = "critical" if critical_count else "high-priority"
     subject = "[SECURITY ALERT] "
     if kev_vulns:
@@ -147,10 +142,7 @@ async def send_scan_notifications(
     analyzer_outcomes: list[AnalyzerOutcome],
     db: Database,
 ) -> None:
-    """Send notifications and trigger webhooks for a completed scan.
-
-    Each notification type is handled independently so one failure does not block others.
-    """
+    """Each notification type is handled independently so one failure does not block the others."""
     link = scan_link(str(project.id), scan_id)
     severity_counts = {"CRITICAL": stats.critical, "HIGH": stats.high, "MEDIUM": stats.medium, "LOW": stats.low}
     completion = [len(findings), severity_counts, status, failed_analyzers]
@@ -218,7 +210,6 @@ async def send_scan_notifications(
         if not await _first_announcement(db, scan_id, NOTIFICATION_EVENT_VULNERABILITY_FOUND, alerted):
             return
 
-        # Order: KEV first, then higher EPSS, then more severe.
         top_vulns = sorted(
             priority_vulns,
             key=lambda v: (not v.in_kev, -(v.epss_score or 0), -get_severity_value(v.severity)),
@@ -290,7 +281,6 @@ async def send_scan_notifications(
 
 
 async def notify_analysis_failed(db: Database, scan_id: str, project_id: str | None, error: str) -> None:
-    """Send the analysis_failed webhook and member notification; errors are logged, never raised."""
     try:
         project = await db.projects.find_one({"_id": project_id})
         if not project:
