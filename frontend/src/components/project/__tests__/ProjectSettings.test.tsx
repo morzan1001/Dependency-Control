@@ -641,4 +641,10 @@ describe('ProjectSettings on a phone', () => {
 
     expect(await screen.findByLabelText('GitLab Instance')).toHaveClass('min-w-0', 'text-left')
   })
+
+  it('stacks a danger action\'s button under its description on a phone, like the waiver list\'s header', () => {
+    renderSettings(githubProject())
+
+    expect(screen.getByRole('button', { name: 'Rotate Key' }).parentElement).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
+  })
 })

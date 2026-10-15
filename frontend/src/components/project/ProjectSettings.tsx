@@ -153,7 +153,7 @@ interface DangerActionProps {
 
 function DangerAction({ title, description, label, pendingLabel, icon, confirmation, dialog, isPending, onConfirm }: Readonly<DangerActionProps>) {
   return (
-    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
       <div>
         <div className="font-medium">{title}</div>
         <div className="text-sm text-muted-foreground">{description}</div>
