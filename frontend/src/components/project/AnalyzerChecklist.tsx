@@ -31,7 +31,7 @@ export function AnalyzerChecklist({ idPrefix, selected, onToggle, className, ren
                 <div key={analyzer.id} className="flex items-start space-x-2 py-2">
                   <Checkbox id={checkboxId} checked={checked} onCheckedChange={() => onToggle(analyzer.id)} className="mt-1" />
                   <div className="flex flex-col gap-1 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <Label htmlFor={checkboxId} className="font-medium cursor-pointer">
                         {analyzer.label}
                       </Label>

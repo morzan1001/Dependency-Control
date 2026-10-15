@@ -12,4 +12,10 @@ describe('AnalyzerChecklist', () => {
 
     expect(onToggle).toHaveBeenCalledWith('cbomkit')
   })
+
+  it("wraps an analyzer's badges and action under its name on a phone instead of scrolling the list sideways", () => {
+    render(<AnalyzerChecklist idPrefix="settings" selected={[]} onToggle={vi.fn()} />)
+
+    expect(screen.getByText('Callgraph Required').parentElement).toHaveClass('flex-wrap')
+  })
 })
