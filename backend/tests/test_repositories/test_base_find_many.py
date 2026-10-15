@@ -1,5 +1,3 @@
-"""BaseRepository.find_many treats its limit as a caller budget."""
-
 import asyncio
 
 from app.repositories.dependencies import DependencyRepository

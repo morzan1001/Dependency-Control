@@ -11,7 +11,7 @@ from app.db import mongodb
 
 @pytest.mark.asyncio
 async def test_client_reads_primary_and_hands_back_aware_utc(monkeypatch):
-    """The Helm chart used to export secondaryPreferred; neither it nor the URI may move reads off the primary."""
+    """Neither a Helm-exported read preference nor the URI may move reads off the primary."""
     monkeypatch.setenv("MONGODB_READ_PREFERENCE", "secondaryPreferred")
     monkeypatch.setenv("MONGODB_URL", "mongodb://h:27017/?readPreference=secondaryPreferred")
     monkeypatch.setattr(mongodb, "settings", Settings())

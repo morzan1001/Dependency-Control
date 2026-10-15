@@ -1,9 +1,4 @@
-"""VcsInstanceRepository behaviour, driven through FakeDatabase.
-
-Asserting on the query document instead punishes correctness: rewriting exists_by_* as
-count_documents(query, limit=1) reddens ten call-shape tests while a dropped .skip() and an
-access token that never reaches Mongo both stay green.
-"""
+"""Driven through FakeDatabase: asserting on query documents misses a dropped .skip() and punishes rewrites."""
 
 import pytest
 

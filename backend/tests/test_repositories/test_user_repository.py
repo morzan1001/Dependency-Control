@@ -1,5 +1,3 @@
-"""Unit tests for UserRepository lookup/existence helpers."""
-
 import pytest
 import pytest_asyncio
 

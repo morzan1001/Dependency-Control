@@ -1,9 +1,4 @@
-"""Branch tips: one row per branch of a project, counted and picked over every scan it holds.
-
-The tip is the head rule of ``app/repositories/scans.py`` scoped to one branch — the branch's
-newest build, resolved to the freshest analysis of it — so the project tile and the analytics
-page report one set of numbers.
-"""
+"""A branch tip follows the head rule, so the project tile and the analytics page report one set of numbers."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -95,8 +90,7 @@ async def test_a_rescan_of_an_older_commit_does_not_become_the_tip():
 
 @pytest.mark.asyncio
 async def test_the_tip_is_the_freshest_analysis_of_the_newest_build():
-    """The tile reads the tip's stats, so demoting the rescan here would show the project one set
-    of numbers while the analytics page shows another."""
+    """The tile reads the tip's stats, so demoting the rescan would split it from the analytics page."""
     repo = ScanRepository(
         await _seeded([_scan("tip", _MAIN, 24), _scan("rescan", _MAIN, 1, is_rescan=True, original_scan_id="tip")])
     )
@@ -149,8 +143,7 @@ async def test_a_newer_unusable_build_does_not_displace_the_last_good_one(unusab
 
 @pytest.mark.asyncio
 async def test_two_builds_stamped_in_the_same_millisecond_resolve_to_one_tip():
-    """BSON dates are milliseconds, so the date alone cannot separate these two; the seeding order
-    is the one the server would hand back untied, and the tip must not be it."""
+    """BSON dates are milliseconds, so the date cannot separate these two, and the tip must not be insertion order."""
     scans = [_scan("z-build", _MAIN, 0), _scan("a-build", _MAIN, 0)]
     repo = ScanRepository(await _seeded(scans))
 

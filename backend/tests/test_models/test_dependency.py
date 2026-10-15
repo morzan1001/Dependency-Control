@@ -1,5 +1,3 @@
-"""Tests for Dependency model."""
-
 from datetime import datetime, timezone
 
 import pytest

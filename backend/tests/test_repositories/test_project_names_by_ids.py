@@ -1,5 +1,3 @@
-"""The id-to-name map names existing projects only; an empty or unknown id is the caller's to label."""
-
 import pytest
 
 from app.repositories.projects import ProjectRepository

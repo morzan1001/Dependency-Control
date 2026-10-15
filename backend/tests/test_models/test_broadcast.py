@@ -1,5 +1,3 @@
-"""Tests for Broadcast model."""
-
 from datetime import datetime, timezone
 
 import pytest

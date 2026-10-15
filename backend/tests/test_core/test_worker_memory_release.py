@@ -1,5 +1,3 @@
-"""Every finished job releases its garbage, whatever way the analysis ended."""
-
 import weakref
 from unittest.mock import AsyncMock, patch
 

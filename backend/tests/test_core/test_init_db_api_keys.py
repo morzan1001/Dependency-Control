@@ -1,5 +1,3 @@
-"""create_indexes must build the unified api_keys collection indexes."""
-
 import asyncio
 from unittest.mock import AsyncMock
 
@@ -12,8 +10,7 @@ _EXPECTED_INDEXES = 3
 
 
 def test_api_key_indexes_cover_listing_lookup_and_expiry():
-    """The unique token lookup is the one that stops a duplicate key ever being stored, and the
-    name alone does not say which field it covers; the count is what makes a fourth index visible."""
+    """The unique token index stops duplicate keys, and the count makes an unplanned fourth index visible."""
     db = FakeDatabase()
     db.api_keys.create_index = AsyncMock()
 

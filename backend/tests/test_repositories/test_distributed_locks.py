@@ -1,5 +1,3 @@
-"""Distributed locks: a held lock is refused, only its holder releases or renews it, and only unexpired locks count."""
-
 import asyncio
 import contextlib
 import os
@@ -51,8 +49,7 @@ async def test_holder_can_release_own_lock():
 
 
 def test_every_acquisition_gets_its_own_holder_carrying_the_process():
-    """Several processes share one host's HOSTNAME; a holder built from it alone lets one
-    process release the lock another took over after the TTL."""
+    """Processes share one host's HOSTNAME, so a holder built from it alone could release another's lock."""
     first, second = new_lock_holder(), new_lock_holder()
 
     assert first != second

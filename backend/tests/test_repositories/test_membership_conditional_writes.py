@@ -1,8 +1,4 @@
-"""Membership writes that cannot be raced.
-
-Every one of these was a read-then-write: a snapshot decided, and two requests holding the same
-snapshot both wrote. The guard is the write's own filter now, so the second one finds nothing.
-"""
+"""The guard is the write's own filter, so of two requests holding the same snapshot only one writes."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -176,7 +172,6 @@ async def test_two_admins_demoting_each_other_leave_the_project_one_admin() -> N
 
 @pytest.mark.asyncio
 async def test_an_unguarded_member_update_still_writes() -> None:
-    """The guard is opt-in: without one the write is unconditional."""
     db = FakeDatabase()
     await db.projects.insert_one(_project_doc([(_ADMIN_A, PROJECT_ROLE_ADMIN)]))
 

@@ -1,5 +1,3 @@
-"""Tests for Waiver model."""
-
 from datetime import datetime, timezone
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK

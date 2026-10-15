@@ -1,5 +1,3 @@
-"""What retention does to the update-frequency rollups, and what the reconcile makes of it."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -28,7 +26,6 @@ async def _seed(db: FakeDatabase, scan_id: str) -> None:
 
 
 async def _seed_chain(db: FakeDatabase, versions: dict[str, str]) -> None:
-    """One scan per entry, each carrying a single package at the given version, with its delta."""
     await db.projects.insert_one({"_id": PROJECT, "name": PROJECT, "default_branch": BRANCH})
     for index, (scan_id, version) in enumerate(versions.items()):
         await db.scans.insert_one(
@@ -77,8 +74,7 @@ async def test_retention_deletes_the_rollups_of_the_deleted_scans():
 @pytest.mark.asyncio
 async def test_the_reconcile_recovers_the_movement_across_a_scan_retention_took():
     db = FakeDatabase()
-    # The whole update happens at s2, so deleting it takes the movement out of the window
-    # unless s3 is diffed against s1 again.
+    # The whole update happens at s2, so deleting it loses the movement unless s3 is diffed against s1.
     await _seed_chain(db, {"s1": "1.0.0", "s2": "2.0.0", "s3": "2.0.0"})
     before = await db.scan_update_deltas.find_one({"_id": "s3"})
     assert (before or {})["prev_scan_id"] == "s2"

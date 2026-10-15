@@ -47,8 +47,7 @@ def _lose_the_insert_race(db: FakeDatabase) -> None:
 
 @pytest.mark.asyncio
 async def test_a_lost_insert_race_updates_the_row_the_winner_wrote(db):
-    """The in-process collection is single-threaded and its upsert filter is the unique key, so a real
-    race cannot happen here: the conflict is injected, and what is proven is the handler, not the race."""
+    """The fake is single-threaded, so the conflict is injected and the handler is proven, not the race."""
     _lose_the_insert_race(db)
 
     stored = await ReleaseRepository(db).record(
@@ -65,8 +64,7 @@ async def test_a_lost_insert_race_updates_the_row_the_winner_wrote(db):
 
 @pytest.mark.asyncio
 async def test_a_second_row_for_one_triple_is_refused(db):
-    """The constraint the retry handler exists for: recording is only idempotent because the server
-    refuses the second insert."""
+    """Recording is idempotent only because the server refuses the second insert."""
     await ReleaseRepository(db).record(
         Release(project_id=_PROJECT, environment=_ENVIRONMENT, version=_VERSION, scan_id=_SCAN, released_at=_NOW)
     )
@@ -77,8 +75,7 @@ async def test_a_second_row_for_one_triple_is_refused(db):
 
 @pytest.mark.asyncio
 async def test_the_upsert_filter_is_the_key_triple(db):
-    """A filter selecting on anything but the triple would insert, and the unique key would refuse
-    the insert, so one surviving row is the filter and the constraint agreeing."""
+    """A filter on anything but the triple would insert and be refused, so one surviving row proves they agree."""
     await ReleaseRepository(db).record(
         Release(project_id=_PROJECT, environment=_ENVIRONMENT, version=_VERSION, scan_id=_SCAN, released_at=_NOW)
     )

@@ -1,5 +1,3 @@
-"""WaiverRepository.find_active_global: the waivers that apply to every project, still live."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

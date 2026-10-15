@@ -1,9 +1,4 @@
-"""The project update primitives: what reaches the server, and what the ownership pipeline writes.
-
-``update`` and ``update_many`` take field documents and wrap them in ``$set``; the ``_raw`` pair
-hands the update to the server untouched, which is the only way to express ``$pull``, ``$unset``
-or an aggregation pipeline.
-"""
+"""Only the _raw pair passes an update through unwrapped, the one way to express $pull, $unset or a pipeline."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,7 +10,6 @@ from tests.mocks.mongodb import create_mock_db
 
 
 def _spy_repo() -> tuple[ProjectRepository, MagicMock]:
-    """A repository whose collection records the exact update it was handed."""
     collection = MagicMock()
     collection.update_one = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
     collection.update_many = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
@@ -86,8 +80,7 @@ async def test_update_many_raw_reports_how_many_documents_changed():
 
 @pytest.mark.asyncio
 async def test_the_ownership_pipeline_never_writes_null_over_absent_fields():
-    """team_ids: null matches neither {"$size": 0} nor an element equality, so a project written
-    that way disappears from the unassigned view and every ownership view at the same time."""
+    """team_ids: null matches neither {"$size": 0} nor an element equality, hiding the project from every view."""
     db = FakeDatabase()
     await db.projects.insert_one({"_id": "p1", "name": "never-owned"})
 
@@ -99,7 +92,6 @@ async def test_the_ownership_pipeline_never_writes_null_over_absent_fields():
 
 @pytest.mark.asyncio
 async def test_a_sync_does_not_evict_a_manual_co_owner():
-    """The near-miss this codebase already had on team member sync, in its multi-team shape."""
     db = FakeDatabase()
     await db.projects.insert_one(
         {

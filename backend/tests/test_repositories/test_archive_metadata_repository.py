@@ -1,5 +1,3 @@
-"""ArchiveMetadataRepository queries and CRUD, driven through FakeDatabase."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

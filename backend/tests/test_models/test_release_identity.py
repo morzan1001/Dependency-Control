@@ -1,5 +1,3 @@
-"""Both release writers name a release by one rule: the payload's version, else the scan's commit tag."""
-
 import pytest
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT

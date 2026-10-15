@@ -1,5 +1,3 @@
-"""Tests for User model and notification preferences validator."""
-
 import pytest
 from pydantic import ValidationError
 
@@ -90,7 +88,7 @@ class TestNotificationPreferencesValidator:
                 username="test",
                 email="test@example.com",
                 notification_preferences={
-                    "analysis_completed": "email",  # string instead of list
+                    "analysis_completed": "email",
                 },
             )
 
@@ -116,8 +114,8 @@ class TestNotificationPreferencesValidator:
             username="test",
             email="test@example.com",
             notification_preferences={
-                "analysis_completed": ["telegram", "discord"],  # all invalid
-                "vulnerability_found": ["telegram"],  # all invalid
+                "analysis_completed": ["telegram", "discord"],
+                "vulnerability_found": ["telegram"],
             },
         )
         assert "analysis_completed" not in user.notification_preferences

@@ -1,13 +1,3 @@
-"""Tests for the one head resolver on ScanRepository and its delegators.
-
-The rule these assert is stated once, in ``app/repositories/scans.py``: head is the freshest
-readable analysis of the tip commit of the project's head branch. Two steps — the newest build
-picks the commit, its rescan lineage picks the analysis — so a rescan reaches head with its
-enrichment without moving head onto the commit it re-analysed. ``latest_scan_id`` is that answer
-cached, trusted only while it names a readable scan that may head the project, and it goes through
-the lineage step like any other candidate.
-"""
-
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -20,15 +10,13 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 _HEAD = "head"
-# One read validates every pointer in the scope. A tip is already in hand when its lineage is
-# walked, so only a tip carrying a rescan link costs one more read, again per scope.
+# One read validates every pointer in the scope; only a tip carrying a rescan link costs one more read.
 _POINTER_READS = 1
 _NO_READS = 0
 _SBOM_REFS = [{"type": "gridfs_reference", "gridfs_id": "g1"}]
 
 
 def _project(project_id: str, **overrides) -> dict:
-    """The projection shape analytics passes in: id, pointer, and the two branch fields."""
     doc = {"_id": project_id, "deleted_branches": [], "latest_scan_id": None, "default_branch": None}
     doc.update(overrides)
     return doc
@@ -51,8 +39,7 @@ async def _seeded(scans: list[dict]) -> FakeDatabase:
     db = FakeDatabase()
     for scan in scans:
         await db.scans.insert_one(scan)
-    # Both rescan creators stamp the forward link on the source as they insert the rescan, so a
-    # fixture carrying only original_scan_id is a lineage no writer in this codebase produces.
+    # Both rescan creators stamp the forward link on the source, so a fixture must carry it too.
     for scan in scans:
         if scan.get("original_scan_id"):
             await db.scans.update_one({"_id": scan["original_scan_id"]}, {"$set": {"latest_rescan_id": scan["_id"]}})
@@ -60,8 +47,6 @@ async def _seeded(scans: list[dict]) -> FakeDatabase:
 
 
 class _CountingScans:
-    """Counts the reads head resolution makes, so its cost stays a stated property."""
-
     def __init__(self, collection):
         self._collection = collection
         self.finds = 0
@@ -103,8 +88,6 @@ class SimpleProject:
 
 
 class TestGetLatestActiveScan:
-    """The single-project entry point answers with the same head as the bulk one."""
-
     def test_head_is_the_default_branch_tip_not_the_newest_scan_anywhere(self):
         async def run():
             db = await _seeded([_scan("main-tip", "p1", "main", 6), _scan("feature-tip", "p1", "feature/spike", 0)])
@@ -115,9 +98,6 @@ class TestGetLatestActiveScan:
         assert scan is not None and scan.id == "main-tip"
 
     def test_a_rescan_does_not_take_head_from_the_build_it_re_analysed(self):
-        """The recommendations tab resolved head here and reported a 200-day-old release's findings
-        because the rescanner had just re-analysed it."""
-
         async def run():
             db = await _seeded(
                 [
@@ -190,8 +170,7 @@ class TestGetLatestActiveScanIds:
         assert (reads.finds, reads.seeks, reads.aggregates) == (_POINTER_READS, _NO_READS, _NO_READS)
 
     def test_keeps_the_pointer_when_the_deleted_branch_is_not_its_own(self):
-        """deleted_branches is the steady state of any VCS-integrated project, and an unrelated
-        entry must not throw away the tip and hand head mode a rescan of an old release."""
+        """deleted_branches is the steady state of a VCS-integrated project, so an unrelated entry must keep the tip."""
         result, reads = asyncio.run(
             _resolve(
                 [
@@ -254,8 +233,7 @@ class TestGetLatestActiveScanIds:
         assert result == {"p7": "active-scan"}
 
     def test_falls_back_when_the_pointer_names_an_unreadable_scan(self):
-        """Retention removes the scan document and leaves latest_scan_id behind, so a project whose
-        head was deleted must resolve to the older scan retention exempted, not to the dead id."""
+        """Retention removes the scan document and leaves latest_scan_id behind, so head must not be the dead id."""
         result, _ = asyncio.run(
             _resolve(
                 [_scan("exempted-release", "p8", "main", 200)],
@@ -362,8 +340,7 @@ class TestHeadIsTheDefaultBranch:
         assert result == {"p1": "develop-tip"}
 
     def test_head_is_the_rescan_of_the_tip_build_rather_than_the_analysis_it_replaced(self):
-        """Second step of the rule: the build picked the commit, so the rescan of that same commit
-        is what head reports — otherwise the rescanner's fresh enrichment never reaches a reader."""
+        """The build picks the commit, its rescan the analysis; else the rescan's enrichment never reaches a reader."""
         result, _ = asyncio.run(
             _resolve(
                 [
@@ -377,8 +354,7 @@ class TestHeadIsTheDefaultBranch:
         assert result == {"p1": "rescan"}
 
     def test_every_pointer_over_one_rescanned_build_resolves_to_the_same_scan(self):
-        """The two doors into the identical two-scan branch — pointer set, pointer stale, no
-        pointer — cannot answer differently, or which rule fired is decided by the pointer."""
+        """Pointer set, stale or absent must answer alike, or the pointer decides which rule fired."""
         scans = [
             _scan("build", "p1", "main", 5),
             _scan("rescan", "p1", "main", 0, is_rescan=True, original_scan_id="build"),
@@ -401,8 +377,7 @@ class TestHeadIsTheDefaultBranch:
         assert result == {"p1": "rescan"}
 
     def test_two_builds_stamped_in_the_same_millisecond_resolve_to_one_head(self):
-        """BSON dates are milliseconds, so the date alone cannot separate these two; the seeding
-        order is the one the server would hand back untied, and head must not be it."""
+        """BSON dates are milliseconds, so the date cannot separate these two, and head must not be insertion order."""
         result, _ = asyncio.run(
             _resolve(
                 [_scan("z-build", "p1", "main", 0), _scan("a-build", "p1", "main", 0)],
@@ -471,8 +446,6 @@ class TestHeadIsTheDefaultBranch:
 
 
 class TestGetPrecedingScan:
-    """The build a scan succeeded, which is what "what changed since the last build" compares against."""
-
     @staticmethod
     async def _preceding_id(scans: list[dict], scan_id: str = _HEAD) -> str | None:
         db = await _seeded(scans)
@@ -588,8 +561,7 @@ class TestGetPrecedingScan:
         assert result == "flag-absent"
 
     def test_a_rescan_of_the_tip_is_preceded_by_the_build_before_the_tip(self):
-        """A rescan re-analyses its build's commit, so comparing it with that build diffs a commit
-        against itself."""
+        """A rescan re-analyses its build's commit, so comparing it with that build diffs the commit with itself."""
         result = asyncio.run(
             self._preceding_id(
                 [
@@ -733,8 +705,6 @@ class TestStatsRecalculationReadsHead:
 
 
 class TestSyncProjectHead:
-    """The one writer of ``latest_scan_id`` and ``project.stats``: head derived afresh, written over the pointer read."""
-
     @staticmethod
     async def _synced(db: FakeDatabase, project: dict) -> tuple[str | None, dict]:
         await db.projects.insert_one(project)

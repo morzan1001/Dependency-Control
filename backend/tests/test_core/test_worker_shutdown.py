@@ -1,5 +1,3 @@
-"""Graceful shutdown lets a running scan finish within the grace period and no longer."""
-
 import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
@@ -13,7 +11,6 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 @pytest_asyncio.fixture
 async def running_scan():
-    """A manager whose only worker sits inside run_analysis for scan-1 until the yielded event is set."""
     db = FakeDatabase()
     await db.projects.insert_one({"_id": "proj-1", "active_analyzers": []})
     await db.scans.insert_one({"_id": "scan-1", "project_id": "proj-1", "status": "pending", "sbom_refs": []})

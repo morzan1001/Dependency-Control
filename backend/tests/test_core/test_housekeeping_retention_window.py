@@ -1,5 +1,3 @@
-"""Which scans retention is allowed to touch: the age window, and the action a project inherits."""
-
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock

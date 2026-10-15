@@ -1,5 +1,3 @@
-"""Tests for HTTP metric labels, the /metrics endpoint and removed dead helpers."""
-
 import secrets
 import threading
 
@@ -135,8 +133,6 @@ class TestRouteTemplateLabel:
 
 
 class TestInProgressGauge:
-    """The gauge counts requests in flight, so every increment needs its matching decrement."""
-
     @staticmethod
     def _in_progress() -> float:
         return _sample("http_requests_in_progress", {"method": "GET"})

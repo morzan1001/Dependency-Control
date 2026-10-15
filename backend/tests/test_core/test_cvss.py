@@ -1,7 +1,4 @@
-"""CVSS v3.x base-score computation, checked against published scores.
-
-OSV rates with a vector and no number, so an unparsed vector is a rating discarded.
-"""
+"""OSV rates with a vector and no number, so an unparsed vector is a rating discarded."""
 
 import pytest
 
@@ -40,7 +37,7 @@ def test_published_scores(vector, expected):
         "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",  # v4 needs a lookup table
         "AV:N/AC:L/Au:N/C:P/I:P/A:P",  # v2, absent from production OSV records
         "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",  # unknown metric value
-        "CVSS:3.1/AV:N/AC:L",  # truncated
+        "CVSS:3.1/AV:N/AC:L",
         "not-a-cvss-vector",
         "",
     ],
@@ -54,8 +51,7 @@ def test_surrounding_whitespace_is_tolerated():
 
 
 def test_a_repeated_metric_is_rejected_rather_than_silently_last_wins():
-    """The two occurrences score 9.8 and 6.5; picking either would be a guess, and the
-    reference implementation rejects the vector."""
+    """The two occurrences score 9.8 and 6.5, and the reference implementation rejects the vector."""
     duplicated = "CVSS:3.1/AV:N/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 
     assert cvss3_base_score(duplicated) is None
@@ -70,9 +66,7 @@ _NVD_TAILED_V4 = (
 )
 
 
-# Base scores as published by NVD, not as computed by the library we delegate to, so the
-# assertion is an independent oracle. A live census of 369 OSV records fetched for production
-# findings found 28 rated only by a v4 vector, all deriving UNKNOWN before this delegation.
+# Base scores as NVD publishes them, not as the delegated library computes them: an independent oracle.
 @pytest.mark.parametrize(
     ("vector", "expected"),
     [
@@ -94,7 +88,7 @@ def test_v4_scores_match_the_published_base_score(vector, expected):
     "vector",
     [
         "CVSS:4.0/AV:N/AC:L",  # truncated, missing mandatory metrics
-        "CVSS:4.0/AV:Z/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",  # unknown value
+        "CVSS:4.0/AV:Z/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
         "CVSS:4.0/",
         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",  # v3 is not this function's job
         "",

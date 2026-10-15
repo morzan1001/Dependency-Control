@@ -1,6 +1,3 @@
-"""Each housekeeping iteration works the waiver recalculation queue off, so a change a restart interrupted, or a
-waiver that expired, is recalculated within one interval."""
-
 from types import SimpleNamespace
 from typing import Any
 

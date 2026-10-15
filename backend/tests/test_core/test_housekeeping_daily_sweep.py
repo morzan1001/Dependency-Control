@@ -1,6 +1,3 @@
-"""The daily sweep runs every task in turn; one that fails is logged under its name and keeps none of the others
-from running."""
-
 import logging
 from typing import Any
 

@@ -1,5 +1,4 @@
-"""Scan status transitions: each one is a conditional write, so a writer holding a stale view of the
-scan changes nothing instead of overwriting the run that replaced it."""
+"""Each transition is a conditional write, so a stale writer changes nothing instead of overwriting a newer run."""
 
 import asyncio
 import time
@@ -86,7 +85,7 @@ async def test_a_failed_rescan_reports_its_run_on_the_build_it_re_analyses():
 
 @pytest.mark.asyncio
 async def test_a_failed_build_reports_its_own_run_over_the_rescan_it_announced():
-    """Re-ingested past its rescan's SBOM, the build never hears how that rescan ends, so only its own run replaces it."""
+    """Re-ingested past its rescan's SBOM, the build never learns that rescan's end, so its own run replaces it."""
     announced = {"scan_id": "rescan", "status": SCAN_STATUS_PENDING}
     db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, latest_run=announced)
 

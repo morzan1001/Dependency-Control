@@ -1,5 +1,3 @@
-"""Tests for GitHub models (GitHubInstance, GitHubOIDCPayload)."""
-
 from app.models.github_api import GitHubOIDCPayload
 from app.models.github_instance import GitHubInstance
 

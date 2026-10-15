@@ -1,5 +1,3 @@
-"""completed_with_errors scans must stay visible to every latest-scan consumer."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

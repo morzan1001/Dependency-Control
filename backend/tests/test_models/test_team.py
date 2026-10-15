@@ -1,5 +1,3 @@
-"""Tests for Team and TeamMember models."""
-
 import pytest
 from pydantic import ValidationError
 
@@ -84,8 +82,7 @@ class TestTeamBindings:
         assert isinstance(team.bindings[1], GitLabGroupBinding)
 
     def test_a_github_binding_without_an_organisation_is_refused(self):
-        """It addresses no team on GitHub, and storing it leaves every repository of an
-        organisation undetermined instead of resolving against the bindings that are whole."""
+        """It addresses no GitHub team and would leave every repository of an organisation undetermined."""
         with pytest.raises(ValidationError):
             Team(name="Half", bindings=[{"provider": "github", "instance_id": "gh-1", "external_id": 1}])
 
@@ -108,6 +105,5 @@ class TestTeamBindings:
         assert TeamMember(user_id="u-1", source=team_source(TEAM_SOURCE_GITHUB, "gh-1")).source == "github:gh-1"
 
     def test_a_member_whose_source_names_no_instance_still_loads(self):
-        """A team holding an unmigrated member is read by every request that resolves the caller's
-        teams; rejecting the value here answers 500 instead of leaving the member in place."""
+        """Every request resolving the caller's teams reads it, so rejecting the value would answer 500."""
         assert TeamMember(user_id="u-1", source="gitlab").source == "gitlab"

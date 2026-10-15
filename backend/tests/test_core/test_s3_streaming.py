@@ -80,7 +80,7 @@ async def test_download_stream_chunks_body(fake_s3):
 
     chunks = [chunk async for chunk in download_stream("k")]
     assert b"".join(chunks) == b"D" * 200_000
-    assert len(chunks) > 1  # confirms chunking
+    assert len(chunks) > 1
 
 
 @pytest.mark.asyncio
@@ -116,7 +116,7 @@ async def test_list_objects_returns_under_prefix(fake_s3):
 
 
 class _PaginatingS3Client:
-    """Fake S3 client that pages keys via the ContinuationToken protocol, mimicking the 1000-key cap."""
+    """Pages keys through ContinuationToken like S3, which caps a listing at 1000 keys."""
 
     def __init__(self, keys: list[str], page_size: int = 1000) -> None:
         self._keys = keys
@@ -141,7 +141,6 @@ class _PaginatingS3Client:
 
 @pytest.mark.asyncio
 async def test_list_objects_follows_pagination_past_first_page():
-    """list_objects must page past the 1000-key list_objects_v2 cap."""
     from app.core.s3 import list_objects
 
     fake = _PaginatingS3Client([f"archive/{i:05d}" for i in range(2500)], page_size=1000)

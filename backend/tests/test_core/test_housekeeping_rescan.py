@@ -1,5 +1,3 @@
-"""Characterisation of the scheduled-rescan path as it behaves today."""
-
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -174,8 +172,7 @@ _FAILURE_MESSAGE = "kaboom"
 _NOW = datetime.now(timezone.utc)
 _WITHIN_INTERVAL = timedelta(hours=1)
 _PAST_INTERVAL = timedelta(hours=30)
-# _RECENT and everything older must clear _DEFAULT_INTERVAL_HOURS: a source-selection test only
-# reaches the selection once the source it expects is due.
+# _RECENT and older must clear _DEFAULT_INTERVAL_HOURS, or the expected source is not due yet.
 _RECENT = timedelta(days=2)
 _STALE = timedelta(days=3)
 _OLDER = timedelta(days=9)
@@ -237,8 +234,7 @@ def _scan_doc(scan_id: str = _SOURCE_SCAN_ID, **overrides: Any) -> dict[str, Any
 
 
 def _saturated_scan_doc() -> dict[str, Any]:
-    """A source holding every Scan field at a value a freshly built rescan does not hold, so a field
-    whose value survives into the rescan is exactly a field the builder copied."""
+    """Every field differs from a fresh rescan's, so a value surviving into the rescan is one the builder copied."""
     return _scan_doc(
         pipeline_user=_PIPELINE_USER,
         sbom_generation=_SBOM_GENERATION,
@@ -388,8 +384,7 @@ class TestIsRescanDue:
     def test_due_once_the_interval_has_elapsed_since_the_source_was_created(self) -> None:
         assert _is_rescan_due(_scan_doc(created_at=_NOW - _PAST_INTERVAL), _DEFAULT_INTERVAL_HOURS) is True
 
-    # Every scan persisted through the model carries this key with a null value, so a
-    # never-rescanned source reaches the fallback with the key present, not absent.
+    # Model-persisted scans carry this key as null, so a never-rescanned source has it present, not absent.
     def test_due_when_the_rescan_clock_is_present_but_null_and_the_source_is_old(self) -> None:
         source = _scan_doc(created_at=_NOW - _PAST_INTERVAL, last_rescanned_at=None)
 
@@ -687,8 +682,7 @@ class TestProcessProjectRescan:
     async def test_the_original_stays_the_source_so_the_lineage_never_grows_past_one_link(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
-        """A rescan is this loop's own output; sourcing from it would deepen the chain every
-        interval and hand the tip to whichever rescan ran last."""
+        """Sourcing from a rescan would deepen the chain every interval and hand the tip to the last rescan."""
         await _seed_scan(db, _ROOT_SCAN_ID, created_at=_NOW - _OLDER, latest_rescan_id=_PREVIOUS_RESCAN_ID)
         await _seed_scan(
             db,
@@ -731,9 +725,7 @@ class TestProcessProjectRescan:
     async def test_the_tip_of_two_scans_sharing_a_created_at_is_the_lower_id(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
-        """Dates are stored to the millisecond, so parallel CI can land two scans on the same one.
-        A tip that alternates between passes hands each alternate a clock it was never rescanned on,
-        so the pair rescans every pass instead of once per interval."""
+        """Parallel CI can land two scans on one millisecond; an alternating tip would rescan every pass."""
         tied_at = _NOW - _RECENT
         await _seed_scan(db, _TIED_TIP_HIGH_ID, created_at=tied_at)
         await _seed_scan(db, _TIED_TIP_LOW_ID, created_at=tied_at)
@@ -746,8 +738,7 @@ class TestProcessProjectRescan:
     async def test_the_tip_is_the_default_branch_even_when_another_branch_is_newer(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
-        """The same head the analytics resolver reports: a feature-branch pipeline finishing later
-        answers a different question than "what is on main"."""
+        """The same head the analytics resolver reports: a later feature-branch pipeline is not "what is on main"."""
         await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
         await _seed_scan(db, _FEATURE_SCAN_ID, branch=_FEATURE_BRANCH, created_at=_NOW - _RECENT)
 
@@ -859,8 +850,7 @@ class TestProcessProjectRescan:
 
 
 class TestReleaseRescanTargets:
-    """What runs in an environment is a second identity of the project, and the tip of a branch is
-    no evidence about it, so both are re-evaluated."""
+    """A branch tip says nothing about what runs in an environment, so both are re-evaluated."""
 
     @pytest.mark.asyncio
     async def test_a_release_past_the_interval_is_rescanned_alongside_a_due_tip(
@@ -916,8 +906,7 @@ class TestReleaseRescanTargets:
     async def test_a_project_that_tags_its_release_still_has_its_branch_tip_rescanned(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
-        """The tag build held both slots, so the two targets collapsed to one and the branch that
-        accrues new CVEs was the one that stopped being re-evaluated."""
+        """If the tag build held both slots, the branch that accrues new CVEs would stop being re-evaluated."""
         await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
         await _seed_scan(db, _TAG_BUILD_SCAN_ID, branch=_COMMIT_TAG, created_at=_NOW - _RECENT)
         await _seed_release(db, _PRODUCTION_ENVIRONMENT, _TAG_BUILD_SCAN_ID)
@@ -971,8 +960,7 @@ class TestReleaseRescanTargets:
     async def test_the_target_is_the_marked_scan_rather_than_the_rescan_it_points_at(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
-        """Sourcing from the rescan would add a link per interval until the chain outruns the bound
-        the release resolver walks, and the resolver would then answer with a mid-chain scan."""
+        """Sourcing from the rescan grows the chain past the resolver's walk bound, which then answers mid-chain."""
         await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, latest_rescan_id=_PREVIOUS_RESCAN_ID)
         await _seed_scan(
             db,

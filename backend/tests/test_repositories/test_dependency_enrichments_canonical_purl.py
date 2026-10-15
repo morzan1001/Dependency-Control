@@ -1,9 +1,4 @@
-"""Enrichment lookups must resolve qualifier/subpath purl variants to the canonical doc.
-
-Prod shape: enrichment docs are keyed by the canonical purl (no qualifiers), while
-dependency docs carry tool-specific qualifier variants like `?type=jar` or
-`?goarch=amd64&goos=linux&type=module`.
-"""
+"""Enrichment docs are keyed by the canonical purl, dependency docs carry qualifiers like ?type=jar."""
 
 import asyncio
 

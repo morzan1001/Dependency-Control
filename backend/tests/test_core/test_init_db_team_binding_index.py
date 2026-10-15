@@ -1,5 +1,3 @@
-"""A team binding is identified by its composite key and must belong to a single team."""
-
 import asyncio
 import logging
 from unittest.mock import AsyncMock
@@ -27,8 +25,7 @@ def test_the_binding_key_is_unique():
 
 
 def test_teams_holding_no_binding_stay_outside_the_unique_scope():
-    """A unique index over a path inside a missing array indexes the document under the key null,
-    so without the filter the second team holding no binding is a duplicate key."""
+    """A unique index keys a missing array path as null, so without the filter a second unbound team collides."""
     assert _binding_index_calls()[0].kwargs["partialFilterExpression"] == {TEAM_BINDING_KEY_FIELD: {"$type": "string"}}
 
 

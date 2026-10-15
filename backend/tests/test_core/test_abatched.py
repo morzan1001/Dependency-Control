@@ -1,5 +1,3 @@
-"""abatched cuts an async stream into full batches and flushes the short remainder once."""
-
 import pytest
 
 from app.core import abatched

@@ -1,5 +1,3 @@
-"""Tests for InstrumentedAsyncClient verb delegation and request metrics."""
-
 import asyncio
 import logging
 import time
@@ -17,8 +15,6 @@ from app.core.metrics import (
 
 
 class _FakeHttpxClient:
-    """Records request() calls and returns a canned response (or raises)."""
-
     def __init__(self, exc: Exception | None = None, delay: float = 0.0) -> None:
         self.calls: list[tuple[str, str, dict]] = []
         self._exc = exc
@@ -108,8 +104,7 @@ async def test_started_client_carries_the_configured_timeout():
     default = InstrumentedAsyncClient("TimeoutDefault")
     await default.start()
     try:
-        # httpx's own default is 5s, so an unset timeout is indistinguishable from a set one
-        # unless we pin the value the wrapper is supposed to install.
+        # httpx defaults to 5s, so only the exact value proves the wrapper installed its own timeout.
         assert default._client.timeout == httpx.Timeout(30.0)
     finally:
         await default.close()
@@ -303,8 +298,6 @@ async def test_stream_raises_when_not_started():
 
 
 def _scripted(outcomes: list[int | Exception], seen: list[str]) -> httpx.MockTransport:
-    """Answers each request with the next status code or raises the next transport error."""
-
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(request.method)
         outcome = outcomes[min(len(seen), len(outcomes)) - 1]

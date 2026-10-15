@@ -1,5 +1,4 @@
-"""A release must survive retention: the delete path drops nine collections plus GridFS, and the
-archive path removes the scan document, either of which would break release resolution."""
+"""Both retention paths remove the scan a release resolves through, so a release must be exempt from both."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -46,14 +45,12 @@ def _capturing_db(captured):
 
 
 def _retention_cursors(captured):
-    """The age-bounded candidate cursors, told apart from the reconcile's own scan read."""
     return [query for query in captured if "created_at" in query]
 
 
 @pytest.mark.asyncio
 async def test_global_retention_cursor_does_not_key_on_the_release_flag(monkeypatch):
-    """A term in the candidate cursor decides ahead of _unreferenced, so a drifted flag would be an
-    exemption no release row can lift and no pass can clear."""
+    """A cursor term decides ahead of _unreferenced, so a drifted flag would be an exemption nothing can lift."""
     captured: list[dict] = []
     db = _capturing_db(captured)
 
@@ -148,8 +145,7 @@ async def test_a_release_row_without_the_flag_survives_retention(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_rescan_a_release_resolves_to_survives_retention(monkeypatch):
-    """The exemption's unit is the release's live analysis chain: losing the rescan silently moves
-    the release's answer back to the numbers the marked scan shipped with."""
+    """Losing the rescan would silently move the release's answer back to the marked scan's original numbers."""
     db = await _retention_store(
         [
             _expired_scan(_RELEASE_SCAN_ID, is_release=True, latest_rescan_id=_RESCAN_ID),

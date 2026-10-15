@@ -1,5 +1,3 @@
-"""Tests for Pydantic v2 ConfigDict migration."""
-
 from datetime import datetime, timezone
 from typing import ClassVar
 
@@ -7,8 +5,6 @@ import pytest
 
 
 class TestUseEnumValues:
-    """Finding and FindingRecord store enum values as plain strings."""
-
     def test_finding_record_inherits_enum_config(self):
         from app.models.finding import FindingType, Severity
         from app.models.finding_record import FindingRecord
@@ -43,8 +39,6 @@ class TestUseEnumValues:
 
 
 class TestDatetimeSerialization:
-    """Pydantic v2 serializes datetimes to ISO strings in JSON mode."""
-
     def test_broadcast_datetime_json(self):
         from app.models.broadcast import Broadcast
 
@@ -81,8 +75,6 @@ class TestDatetimeSerialization:
 
 
 class TestFromAttributes:
-    """Response schemas with from_attributes=True can parse ORM-like objects."""
-
     def test_user_schema_from_dict(self):
         from app.schemas.user import UserResponse
 
@@ -140,8 +132,6 @@ class TestFromAttributes:
 
 
 class TestProjectionSchemas:
-    """Projection schemas used for MongoDB performance queries."""
-
     def test_project_with_scan_id(self):
         from app.schemas.projections import ProjectWithScanId
 
@@ -221,8 +211,6 @@ class TestSystemSettingsConfig:
 
 
 class TestMongoRoundTrip:
-    """Simulate MongoDB insert and read round-trip."""
-
     def test_project_roundtrip(self):
         from app.models.project import Project, ProjectMember
 
@@ -279,7 +267,6 @@ class TestMongoRoundTrip:
 
         mongo_doc = original.model_dump(by_alias=True)
         assert "_id" in mongo_doc
-        # access_token is excluded (exclude=True) so it never leaks via model_dump.
         assert "access_token" not in mongo_doc
 
         restored = GitLabInstance(**mongo_doc, access_token=None)
@@ -308,7 +295,6 @@ class TestMongoRoundTrip:
 
 class TestGitLabInstanceAccessTokenPersistence:
     def test_model_dump_excludes_access_token(self):
-        # Excluded from model_dump so it never leaks in API responses.
         from app.models.gitlab_instance import GitLabInstance
 
         instance = GitLabInstance(
@@ -412,8 +398,6 @@ class TestProjectApiKeyHashExclusion:
 
 
 class TestMongoDocumentIdConsolidation:
-    """Persisted models inherit the uuid ``_id`` field from MongoDocument rather than redeclaring it."""
-
     _CASES: ClassVar[dict[str, dict[str, object]]] = {
         "app.models.archive:ArchiveMetadata": {
             "project_id": "p1",

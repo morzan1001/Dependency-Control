@@ -1,5 +1,3 @@
-"""Tests for PURL parsing and utility functions."""
-
 import asyncio
 
 import pytest
@@ -164,10 +162,8 @@ class TestParsedPURLProperties:
             pytest.param("pkg:maven/org.apache/commons@1.0", "org.apache:commons", id="maven"),
             pytest.param("pkg:npm/%40angular/core@16.0.0", "@angular/core", id="npm_scoped"),
             pytest.param("pkg:pypi/requests@1.0", "requests", id="simple"),
-            # deps.dev serves PyPI packages under their PEP 503 name; unnormalized
-            # purls (underscores, dots, mixed case) 404 otherwise.
+            # deps.dev serves PyPI packages under their PEP 503 name and 404s on any other spelling.
             pytest.param("pkg:pypi/My_Package.Name@1.0", "my-package-name", id="pypi_pep503_normalized"),
-            # A Go module name must not double the domain prefix.
             pytest.param("pkg:golang/github.com/gin-gonic/gin@1.9.1", "github.com/gin-gonic/gin", id="go_no_doubling"),
             pytest.param(
                 "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0", "github.com/cespare/xxhash/v2", id="go_nested"

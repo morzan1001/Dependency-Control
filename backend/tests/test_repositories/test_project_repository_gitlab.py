@@ -1,5 +1,3 @@
-"""ProjectRepository's find-or-create by a VCS composite key, driven through FakeDatabase."""
-
 import pytest
 
 from app.models.project import Project

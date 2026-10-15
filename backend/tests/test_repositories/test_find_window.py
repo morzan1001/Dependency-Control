@@ -1,6 +1,3 @@
-"""Read up to a limit and count only when the read saturated: the count is what tells a small
-result from a truncated one, and a result that exactly fills the limit is not truncated."""
-
 import pytest
 
 from app.repositories.base import find_window

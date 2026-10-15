@@ -1,5 +1,3 @@
-"""Tests for the archive branch of retention housekeeping."""
-
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -21,11 +19,6 @@ from tests.mocks.fake_mongo import FakeDatabase
 MODULE = "app.core.housekeeping"
 # archive_scan is lazy-imported inside _archive_scans_and_delete, so patch it at its source module.
 ARCHIVE_SVC = "app.services.archive"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _mock_db() -> MagicMock:
@@ -53,11 +46,6 @@ def _make_archive_metadata(scan_id="scan-1"):
         s3_key=f"proj-1/{scan_id}.json.gz",
         s3_bucket="dc-archives",
     )
-
-
-# ---------------------------------------------------------------------------
-# _archive_scans_and_delete
-# ---------------------------------------------------------------------------
 
 
 class TestArchiveScansAndDelete:
@@ -115,11 +103,6 @@ class TestArchiveScansAndDelete:
             await _archive_scans_and_delete(await _store_with(*scan_ids), scan_ids, "test")
 
         assert mock_archive.call_count == 100
-
-
-# ---------------------------------------------------------------------------
-# _handle_retention_action
-# ---------------------------------------------------------------------------
 
 
 class TestHandleRetentionAction:
@@ -187,11 +170,6 @@ async def test_an_action_that_cannot_act_walks_no_expired_scan(monkeypatch, capl
     assert await db.scans.count_documents({}) == 2 * ARCHIVE_BATCH_SIZE + 1
 
 
-# ---------------------------------------------------------------------------
-# _run_retention (global mode)
-# ---------------------------------------------------------------------------
-
-
 class TestRunRetention:
     def test_global_mode_with_archive_action(self):
         mock_settings = MagicMock()
@@ -224,7 +202,7 @@ class TestRunRetention:
 
         mock_handle.assert_called_once()
         call_args = mock_handle.call_args
-        assert call_args[0][2] == "archive"  # positional action argument
+        assert call_args[0][2] == "archive"
 
     def test_global_mode_none_action_skips_cleanup(self):
         mock_settings = MagicMock()
@@ -295,14 +273,8 @@ class TestRunRetention:
         mock_handle.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Status filter tests (in-progress scan exclusion)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
-    """Global retention cursor must exclude scans with status pending/processing."""
     captured_queries: list[dict] = []
 
     db = _mock_db()
@@ -343,7 +315,6 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch):
-    """Project-specific retention cursor must also exclude pending/processing scans."""
     captured_queries: list[dict] = []
 
     db = _mock_db()
@@ -361,7 +332,6 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
 
     db.scans.find = find_capture
 
-    # Aggregate yields one group
     async def _agg_iter(_pipeline):
         yield {
             "_id": {"days": 30, "action": "delete"},
@@ -392,7 +362,6 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
 
 @pytest.mark.asyncio
 async def test_reap_orphan_s3_objects_deletes_only_old_unknown_keys(monkeypatch):
-    """Reaper deletes S3 objects that have no archive_metadata record AND are older than min age."""
     from datetime import datetime, timedelta, timezone
 
     from app.core.housekeeping import _reap_orphan_s3_objects
@@ -438,7 +407,6 @@ async def test_reap_orphan_skips_when_archive_disabled(monkeypatch):
     from app.core.housekeeping import _reap_orphan_s3_objects
 
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
-    # list_objects should NOT be called
     list_calls = []
     monkeypatch.setattr(
         "app.core.housekeeping.list_objects",
@@ -453,7 +421,6 @@ async def test_reap_orphan_skips_when_archive_disabled(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reap_orphan_tolerates_list_failure(monkeypatch):
-    """If list_objects raises, the reaper returns 0 (best-effort) without re-raising."""
     from app.core.housekeeping import _reap_orphan_s3_objects
 
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
@@ -465,11 +432,6 @@ async def test_reap_orphan_tolerates_list_failure(monkeypatch):
     db = MagicMock()
     reaped = await _reap_orphan_s3_objects(db)
     assert reaped == 0
-
-
-# ---------------------------------------------------------------------------
-# Stale metadata reaping
-# ---------------------------------------------------------------------------
 
 
 _ARCHIVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -494,8 +456,7 @@ async def _surviving_metadata(db) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_reap_stale_metadata_keeps_the_metadata_of_an_archive_in_flight():
-    """Archival writes the metadata before it deletes the scan, so a scan that is still present
-    without restore evidence is mid-archive and its metadata is the only index of the bundle."""
+    """Archival writes metadata before deleting the scan, so a scan present without restore evidence is mid-archive."""
     from app.core.housekeeping import _reap_stale_metadata
     from tests.mocks.fake_mongo import FakeDatabase
 
@@ -627,7 +588,6 @@ async def test_reap_stale_metadata_reads_scans_and_locks_once_per_batch():
 
 @pytest.mark.asyncio
 async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
-    """_reap_orphan_s3_objects must call _reap_stale_metadata before listing S3."""
     from app.core.housekeeping import _reap_orphan_s3_objects
 
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
@@ -663,8 +623,7 @@ async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window():
-    """The window protects a callgraph uploaded before its scan row exists; the reaper deletes
-    rows outright, so an inverted cutoff destroys work in flight."""
+    """The window protects callgraphs uploaded before their scan row exists; an inverted cutoff destroys them."""
     from datetime import datetime, timedelta, timezone
 
     from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
@@ -699,8 +658,7 @@ async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window()
 
 @pytest.mark.asyncio
 async def test_reap_orphan_callgraphs_spares_a_fresh_upload_reusing_an_orphaned_scan_id():
-    """An abandoned scan_id is selected from its stale rows, but a retry uploading under the
-    same scan_id right now is still in flight and must survive the sweep."""
+    """A retry uploading under an abandoned scan_id right now is still in flight and must survive the sweep."""
     from datetime import datetime, timedelta, timezone
 
     from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
