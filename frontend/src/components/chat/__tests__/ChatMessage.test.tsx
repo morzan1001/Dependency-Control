@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect } from 'vitest';
 
-import { ChatMessage } from '../ChatMessage';
+import { ChatMessage, StreamingMessage } from '../ChatMessage';
 
 function renderAssistant(content: string) {
   return render(
@@ -52,10 +52,40 @@ describe('ChatMessage on a phone', () => {
   it('scrolls a wide markdown table in its own wrapper and wraps a long command inside the message', () => {
     renderAssistant('| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |\n\nRun `mvn versions:use-dep-version -Dincludes=org.apache.logging.log4j:log4j-core`');
 
-    expect(screen.getByRole('table').parentElement).toHaveClass('overflow-x-auto');
+    expect(screen.getByRole('table').parentElement).toHaveClass('overflow-auto');
     const body = screen.getByRole('table').closest('.prose');
     expect(body).toHaveClass('break-words');
     expect(body?.parentElement).toHaveClass('min-w-0');
+  });
+
+  it('scrolls a fenced command sideways inside the message instead of running past it', () => {
+    const command = 'mvn versions:use-dep-version -Dincludes=org.apache.logging.log4j:log4j-core -DdepVersion=2.17.1 -DforceVersion=true';
+    renderAssistant(`Run:\n\n\`\`\`bash\n${command}\n\`\`\``);
+
+    expect(screen.getByText(command).closest('pre')).toHaveClass('overflow-x-auto');
+  });
+
+  it("keeps a streaming answer's table, and so its sideways scroll, when the next chunk arrives", () => {
+    const table = '| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |\n\n';
+    const stream = (content: string) => (
+      <MemoryRouter>
+        <StreamingMessage content={content} toolCalls={[]} activeToolCall={null} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(stream(`${table}Upgrade`));
+    const shown = screen.getByRole('table');
+
+    rerender(stream(`${table}Upgrade log4j-core first.`));
+
+    expect(screen.getByRole('table')).toBe(shown);
+  });
+
+  it("lays a markdown table out with the app's table cells, keeping a column's alignment", () => {
+    renderAssistant('| Project | Fix |\n|---|---:|\n| checkout-service | 2.17.1 |');
+
+    expect(screen.getByRole('columnheader', { name: 'Project' })).toHaveClass('px-4');
+    expect(screen.getByRole('cell', { name: 'checkout-service' })).toHaveClass('p-4');
+    expect(screen.getByRole('cell', { name: '2.17.1' })).toHaveStyle({ textAlign: 'right' });
   });
 
   it("truncates a long tool name in its call's header and names it in full as the title", () => {

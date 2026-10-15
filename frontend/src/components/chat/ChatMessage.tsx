@@ -1,11 +1,12 @@
 import { memo, useMemo, type ComponentProps } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { Bot, User } from 'lucide-react';
 import { Link as RouterLink } from 'react-router-dom';
 
 import { Card } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import type { Message, ToolCall } from '@/types/chat';
 
@@ -54,6 +55,20 @@ function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
   );
 }
 
+// Module-level, so a streaming answer's table is not remounted, losing its sideways scroll, on every chunk.
+const MARKDOWN_COMPONENTS: Components = {
+  a: AssistantLink,
+  // A rendered <img> would fetch a model-chosen URL without a click.
+  img: ({ src, alt }) => <AssistantLink href={src}>{alt || src}</AssistantLink>,
+  pre: ({ children }) => <pre className="overflow-x-auto">{children}</pre>,
+  table: ({ children }) => <Table>{children}</Table>,
+  thead: ({ children }) => <TableHeader>{children}</TableHeader>,
+  tbody: ({ children }) => <TableBody>{children}</TableBody>,
+  tr: ({ children }) => <TableRow>{children}</TableRow>,
+  th: ({ children, style }) => <TableHead style={style}>{children}</TableHead>,
+  td: ({ children, style }) => <TableCell style={style}>{children}</TableCell>,
+};
+
 function MessageBody({
   content,
   className,
@@ -78,27 +93,10 @@ function MessageBody({
         'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-xs prose-code:before:content-none prose-code:after:content-none',
         'prose-p:my-1 prose-ul:my-1 prose-ol:my-1',
         'prose-a:text-primary prose-a:no-underline hover:prose-a:underline',
-        'prose-table:my-3 prose-table:w-full prose-table:border-collapse prose-table:overflow-hidden prose-table:rounded-md prose-table:border',
-        'prose-thead:bg-muted/60',
-        'prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:border-b',
-        'prose-td:px-3 prose-td:py-1.5 prose-td:align-top prose-td:border-b prose-td:last:border-b-0',
-        'prose-tr:border-0',
         className,
       )}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={{
-          a: AssistantLink,
-          // A rendered <img> would fetch a model-chosen URL without a click.
-          img: ({ src, alt }) => <AssistantLink href={src}>{alt || src}</AssistantLink>,
-          table: ({ children }) => (
-            <div className="overflow-x-auto">
-              <table>{children}</table>
-            </div>
-          ),
-        }}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={MARKDOWN_COMPONENTS}>
         {linkified}
       </ReactMarkdown>
     </div>
