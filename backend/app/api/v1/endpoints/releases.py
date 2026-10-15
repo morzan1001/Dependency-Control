@@ -1,5 +1,3 @@
-"""Mark, unmark and list the releases of a project."""
-
 import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -78,15 +76,7 @@ async def mark_release(
     payload: ReleaseMarkRequest,
     db: DatabaseDep,
 ) -> ReleaseItem:
-    """Mark the newest build scan of a commit as running in an environment.
-
-    The CD stage knows the commit it deployed, not our scan id, and may deploy before analysis
-    finishes — a mark states where an artefact runs, not what we know about it. Re-scans are excluded
-    because they copy the commit verbatim with a fresh created_at, so re-marking an already-rescanned
-    commit would otherwise resolve to a different scan and open a second record for one deployment.
-    Re-marking is the rollback path: the older scan's own record wins on a fresher released_at.
-    A failed build is marked only when the commit has no other build, as it holds no analysis.
-    """
+    """Mark the newest build of a commit, a failed one only as a last resort, as released; re-marking rolls back."""
     builds = {"project_id": project_id, "commit_hash": payload.commit_hash, "is_rescan": {"$ne": True}}
     scan_repo = ScanRepository(db)
     scan = await scan_repo.find_one(
@@ -114,8 +104,7 @@ async def mark_release(
         extra={"project_id": project_id, "scan_id": scan_id, "environment": environment},
     )
 
-    # The stored row rather than an echo: an unversioned re-mark keeps the version the deploy job
-    # recorded, and that fallback belongs to the repository alone.
+    # The stored row, not an echo: an unversioned re-mark keeps the recorded version, a fallback the repository owns.
     if row is None:
         raise HTTPException(status_code=409, detail=f"The release of {scan_id} to {environment} was withdrawn")
     return _to_item(row, scan, (await scan_repo.freshest_in_lineage([scan_id])).get(scan_id))
@@ -137,14 +126,11 @@ async def unmark_release(
     remaining = await release_repo.withdraw(project_id, environment, scan_id)
     if remaining is None:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} is not released to {environment}")
-    # is_release denormalises "this scan has a release record" for the scans_released_list partial
-    # index, so it is recomputed rather than cleared: a scan still released to another environment
-    # has to stay indexed. Ingest never demotes; reconcile_release_flags is the other path that does.
+    # is_release feeds the scans_released_list partial index, so a scan still released elsewhere keeps the flag.
     if not remaining:
         await db.scans.update_one({"_id": scan_id, "project_id": project_id}, {"$set": {"is_release": False}})
 
-    # Marks are history, so withdrawing the newest uncovers the one below it and the environment
-    # goes on reporting a release the operator did not choose. Read it back and say which.
+    # Marks are history: withdrawing the newest uncovers the one below, so the response names that uncovered release.
     uncovered = await release_repo.latest_for_environment(project_id, environment)
     environment_release = (await _to_items(db, [uncovered]))[0] if uncovered else None
 
@@ -175,8 +161,7 @@ async def list_releases(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE_SIZE)] = _DEFAULT_PAGE_SIZE,
     environment: _OptionalEnvironmentQuery = None,
 ) -> Page[ReleaseItem]:
-    """Every release of a project, newest first — one entry per environment a scan was deployed to,
-    so an environment's current release is its first entry."""
+    """Releases newest first, one per environment a scan was deployed to, so each environment's first is its current."""
     await check_project_access(project_id, current_user, db)
 
     query: dict[str, Any] = {"project_id": project_id}

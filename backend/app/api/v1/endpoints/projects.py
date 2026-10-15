@@ -163,15 +163,12 @@ async def get_dashboard_stats(
 
     query = await build_user_project_query(current_user, team_repo)
 
-    # Aggregate rather than fetch all projects, for performance.
     pipeline: list[dict[str, Any]] = [
         {"$match": query},
         {
             "$project": {
                 "name": 1,
                 "stats": 1,
-                # Prefer persisted stats.risk_score; else the same saturating
-                # severity-weighted formula used by calculate_comprehensive_stats.
                 "calculated_risk": {
                     "$ifNull": [
                         "$stats.risk_score",
@@ -281,7 +278,6 @@ async def create_project(
     project = Project(
         id=project_id,
         name=project_in.name,
-        # A user-chosen team is a manual assignment.
         **ownership_fields([project_in.team_id] if project_in.team_id else [], TEAM_SOURCE_MANUAL),
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
@@ -290,7 +286,7 @@ async def create_project(
         members=[ProjectMember(user_id=str(current_user.id), role=PROJECT_ROLE_ADMIN)],
     )
 
-    # api_key_hash is excluded from the model dump by default; add it back manually.
+    # The model dump excludes api_key_hash.
     project_data = project.model_dump(by_alias=True)
     project_data["api_key_hash"] = api_key_hash
 
@@ -432,7 +428,6 @@ async def read_project(
 
 
 async def _reload_project(project_repo: ProjectRepository, project_id: str) -> Project:
-    """The stored project a write endpoint answers with."""
     project = await project_repo.get_by_id(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
@@ -440,7 +435,6 @@ async def _reload_project(project_repo: ProjectRepository, project_id: str) -> P
 
 
 async def _assert_may_grant_teams(gained: set[str], current_user: User, team_repo: TeamRepository) -> None:
-    """404 for a team that does not exist (whoever asks); 403 unless the caller is a member or a write superuser."""
     teams = await team_repo.members_by_team(sorted(gained))
     for team_id in sorted(gained):
         if team_id not in teams:
@@ -499,7 +493,6 @@ async def _assert_gitlab_mr_token_present(
     update_data: dict[str, Any],
     db: Any,
 ) -> None:
-    """Reject MR-decoration enablement when the linked GitLab instance lacks a token."""
     mr_enabled = update_data.get("gitlab_mr_comments_enabled", project.gitlab_mr_comments_enabled)
     instance_id = update_data.get("gitlab_instance_id", project.gitlab_instance_id)
     if not (mr_enabled and instance_id):
@@ -517,10 +510,7 @@ async def _assert_github_pr_token_present(
     update_data: dict[str, Any],
     db: Any,
 ) -> None:
-    """Reject PR-decoration enablement when the linked GitHub instance lacks a token."""
-    # The link is set by OIDC ingest, never by an update body, so unlike its GitLab twin this has no
-    # in-UI escape hatch: reading a stored true back would lock the project out of every unrelated
-    # edit. Only an explicit enable is refused; decorate_github_pr re-checks the token at scan time.
+    # Only an explicit enable is refused: the link comes from OIDC ingest, so a stored true would block unrelated edits.
     if not (update_data.get("github_pr_comments_enabled") and project.github_instance_id):
         return
 
@@ -539,7 +529,6 @@ async def _audit_license_policy_change(
     updated_project: Project,
     actor: User,
 ) -> None:
-    """Record a best-effort license-policy audit entry; never blocks the caller."""
     try:
         old_entry = (old_project.analyzer_settings or {}).get("license_compliance") if old_project else None
         new_entry = (updated_project.analyzer_settings or {}).get("license_compliance")
@@ -570,8 +559,7 @@ async def update_project(
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
     reject_unknown_analyzers(update_data.get("active_analyzers"))
-    # The picker sends every owner it showed, a sync's included, so the write keeps each retained
-    # owner's provenance rather than claiming the lot as hand-assigned.
+    # The picker resends every owner, synced ones included, so a retained owner keeps its provenance.
     ownership_stages: list[dict] = []
     guard: dict[str, Any] = {}
     if "team_ids" in update_data:
@@ -623,8 +611,7 @@ async def read_project_branches(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> list[BranchInfo]:
-    """Every branch the project's scans name, with its active/deleted status; the default is the
-    branch head resolves to, so the view opens on what the project tile reports."""
+    """Every branch the scans name with its active/deleted status; the default is the branch head resolution picks."""
     project = await check_project_access(project_id, current_user, db)
     scan_repo = ScanRepository(db)
 
@@ -676,7 +663,6 @@ async def sync_project_branches_endpoint(
 
 
 async def _with_releases(db: Any, docs: list[dict[str, Any]]) -> list[ScanWithReleases]:
-    """The scans, each carrying the environments it was released to."""
     by_scan = await ReleaseRepository(db).group_by_scan([doc["_id"] for doc in docs])
     return [ScanWithReleases(**{**doc, "releases": _release_refs(by_scan.get(doc["_id"], []))}) for doc in docs]
 
@@ -742,11 +728,7 @@ async def read_project_branch_tips(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ProjectBranchTips:
-    """Every branch's representative scan and scan count.
-
-    A page of the scan list cannot answer this: a branch whose newest scan fell off the page
-    disappears from it.
-    """
+    """Every branch's representative scan and scan count, which a page of the scan list cannot answer."""
     project = await check_project_access(project_id, current_user, db)
     tips = await ScanRepository(db).branch_tips(project_id, list(project.deleted_branches or []))
     return ProjectBranchTips(
@@ -799,11 +781,7 @@ async def read_scan_history(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ScanHistoryResponse:
-    """Get a scan's history (original plus all re-scans), newest first.
-
-    Housekeeping re-scans a branch tip every ``global_rescan_interval`` hours, so a
-    long-lived scan outgrows one page; ``total`` is counted over the lineage.
-    """
+    """A scan's history (original plus every re-scan), newest first; ``total`` counts the whole lineage across pages."""
     await check_project_access(project_id, current_user, db)
 
     scan_repo = ScanRepository(db)
@@ -932,8 +910,7 @@ async def read_scan(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ScanWithReleases:
-    """Get details of a specific scan and the environments it runs in; SBOMs are excluded
-    (fetch them via /scans/{scan_id}/sboms)."""
+    """A scan with the environments it runs in; SBOMs are excluded, fetch them via /scans/{scan_id}/sboms."""
     scan = await _load_scan_with_access(scan_id, current_user, db)
     return (await _with_releases(db, [scan.model_dump(by_alias=True)]))[0]
 
@@ -947,7 +924,7 @@ def _stream_json(stream: Any, filename: str) -> StreamingResponse:
 
 
 async def _open_gridfs(db: Any, file_id: str | None, what: str) -> Any:
-    """An open download stream of one stored file, or the HTTP error, raised before any byte is sent."""
+    """Raises the HTTP error before any byte is streamed, while a status code can still be sent."""
     if not file_id:
         raise HTTPException(status_code=500, detail=f"Invalid {what} reference (not GridFS)")
     try:
@@ -1035,7 +1012,6 @@ def _build_scan_findings_match(
     waived: bool | None = None,
     hide_historical_secrets: bool | None = None,
 ) -> dict[str, Any]:
-    """Compose the $match stage for the scan-findings aggregation."""
     query: dict[str, Any] = {"scan_id": scan_id}
 
     if type:
@@ -1058,10 +1034,9 @@ def _build_scan_findings_match(
     if license_category:
         query["details.category"] = license_category
     if waived is not None:
-        # Explicit True/False splits active vs waived; None returns both.
         query["waived"] = waived
     if hide_historical_secrets:
-        # Drop secrets no longer in the current tree; unknown-tree (field absent) stays visible.
+        # A secret with no in_current_tree field stays visible.
         query["$nor"] = [{"type": "secret", "details.in_current_tree": False}]
     if search:
         escaped_search = re.escape(search)
@@ -1104,8 +1079,7 @@ def _scan_findings_dependency_join() -> list[dict[str, Any]]:
                         }
                     }
                 },
-                # Exact spelling first so a qualified finding never takes a same-artifact
-                # sibling's row; then direct wins, as in the findings CSV.
+                # Exact name first, so a qualified finding never takes a same-artifact sibling's row; then direct wins.
                 {"$addFields": {"_exact": {"$eq": ["$name", "$$component"]}}},
                 {"$sort": {"_exact": -1, "direct": -1, "_id": 1}},
                 {"$limit": 1},
@@ -1122,7 +1096,6 @@ def _scan_findings_add_fields_stage() -> dict[str, Any]:
     return {
         "$addFields": {
             "severity_rank": severity_rank_expr("$severity"),
-            # Map finding_id to id for frontend compatibility.
             "id": "$finding_id",
             # Deterministic scalar for sorting by scanner (scanners is a list).
             "first_scanner": {"$arrayElemAt": ["$scanners", 0]},
@@ -1130,21 +1103,20 @@ def _scan_findings_add_fields_stage() -> dict[str, Any]:
     }
 
 
-# Sort keys the API accepts mapped to real document fields; unlisted keys fall back
-# to severity so an unrecognised sort_by can't yield an unstably-paginated result.
+# Unlisted sort keys fall back to severity, so an unrecognised sort_by cannot paginate unstably.
 _SCAN_FINDINGS_SORT_FIELDS: dict[str, str] = {
     "severity": "severity",
     "component": "component",
     "type": "type",
     "source_type": "source_type",
     "finding_id": "finding_id",
-    "vuln_id": "finding_id",  # UI alias -> real field
-    "scanner": "first_scanner",  # UI alias -> computed scalar
+    "vuln_id": "finding_id",
+    "scanner": "first_scanner",
 }
 
 
 def _scan_findings_sort_stage(sort_by: str, sort_dir: int) -> dict[str, Any]:
-    """Compose the $sort stage, always ending with the unique _id tiebreaker so skip/limit pagination is stable (finding_id is not unique within a scan)."""
+    """Ends on the unique _id, since finding_id is not unique within a scan and skip/limit needs a stable order."""
     field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
     if field == "severity":
         return {"$sort": {"severity_rank": sort_dir, "component": 1, "_id": 1}}
@@ -1160,7 +1132,6 @@ def _build_scan_findings_pipeline(
     limit: int,
     direct_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Compose the full aggregation pipeline used by ``read_scan_findings``."""
     join = _scan_findings_dependency_join()
     # The join runs one dependency query per finding, so only the page is joined unless the filter or sort reads it.
     early_join, page_join = (join, []) if direct_only or sort_by == "source_type" else ([], join)
@@ -1186,7 +1157,6 @@ def _build_scan_findings_pipeline(
 
 
 def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
-    """Pull ``(data, total)`` out of the ``$facet`` result envelope."""
     bucket = result[0]
     data = bucket.get("data") or []
     metadata = bucket.get("metadata") or []
@@ -1195,7 +1165,6 @@ def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
 
 
 async def _require_scan_access(scan_id: str, current_user: User, db: Any) -> None:
-    """404 for an unknown scan, else the caller must be able to read its project."""
     scan = await ScanRepository(db).get_minimal_by_id(scan_id)
     if not scan or not scan.project_id:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
@@ -1203,7 +1172,6 @@ async def _require_scan_access(scan_id: str, current_user: User, db: Any) -> Non
 
 
 async def _load_scan_with_access(scan_id: str, current_user: User, db: Any) -> Scan:
-    """The whole scan, once the caller is shown to read its project."""
     scan = await ScanRepository(db).get_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
@@ -1222,19 +1190,19 @@ async def read_scan_findings(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0)] = 0,
-    # Cap at 500 (higher than the 100 used elsewhere) for deep-link and per-component drilldowns.
+    # Above the usual 100, for deep-link and per-component drilldowns.
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
-    sort_by: str = "severity",  # severity, type, component
+    sort_by: str = "severity",
     sort_order: SortOrderQuery = "desc",
     type: str | None = None,
-    category: str | None = None,  # security, secret, sast, compliance, quality
+    category: str | None = None,
     severity: str | None = None,
     search: str | None = None,
-    license_category: str | None = None,  # permissive, weak_copyleft, strong_copyleft, etc.
-    hide_info: bool | None = None,  # Hide INFO severity findings
-    waived: bool | None = None,  # True: only waived; False: only active; None: both
-    direct_only: bool | None = None,  # Hide findings on transitive dependencies
-    hide_historical_secrets: bool | None = None,  # Hide secrets no longer in the current git tree
+    license_category: str | None = None,
+    hide_info: bool | None = None,
+    waived: bool | None = None,
+    direct_only: bool | None = None,
+    hide_historical_secrets: bool | None = None,
 ) -> dict[str, Any]:
     """Get paginated findings for a scan."""
     await _require_scan_access(scan_id, current_user, db)

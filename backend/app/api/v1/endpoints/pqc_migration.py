@@ -1,5 +1,3 @@
-"""PQC migration plan REST endpoint."""
-
 from fastapi import Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep

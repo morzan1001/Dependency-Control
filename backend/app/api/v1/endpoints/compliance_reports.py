@@ -1,5 +1,3 @@
-"""Compliance report REST endpoints; generation runs in a BackgroundTask that announces its outcome."""
-
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -59,7 +57,6 @@ def _status_str(value: Any) -> str:
 
 
 def _report_view(report: ComplianceReport) -> dict[str, Any]:
-    """The stored report with the coverage sentence its artifact prints."""
     statement = coverage_statement(report.coverage) if report.coverage else None
     return {**report.model_dump(by_alias=True), "coverage_statement": statement}
 
@@ -106,7 +103,7 @@ async def create_report(
 
 
 async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: ComplianceReport) -> bool:
-    """True iff the ScopeResolver resolves the report's scope for this user; scope='user' is gated on requester id (ScopeResolver ignores scope_id there) with system:manage as an admin escape."""
+    """ScopeResolver ignores scope_id for scope='user', so that scope is gated on the requester instead."""
     if report.scope == "user":
         return report.requested_by == str(user.id) or has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
     try:
@@ -218,7 +215,6 @@ async def delete_report(
 
 
 async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, user: User) -> None:
-    """Run the engine, announce the outcome by webhook and tell project members once the report is ready."""
     try:
         status, summary = await ComplianceReportEngine().generate(report=report, db=db, user=user)
     except Exception:

@@ -1,5 +1,3 @@
-"""Per-project inventory endpoints: stats, components, licenses, crypto — JSON and CSV."""
-
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Query
@@ -57,7 +55,6 @@ async def _resolve_scan_or_404(db: AsyncIOMotorDatabase, project: Project, branc
 async def _inventory_scope(
     project_id: str, current_user: CurrentUserDep, db: DatabaseDep, branch: str | None = Query(None)
 ) -> tuple[Project, Scan]:
-    """The project the caller may view and the scan of the requested branch it reads."""
     project = await check_project_access(project_id, current_user, db)
     return project, await _resolve_scan_or_404(db, project, branch)
 

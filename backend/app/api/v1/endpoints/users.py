@@ -64,7 +64,6 @@ logger = logging.getLogger(__name__)
 async def _save_user_fields(
     user_repo: UserRepository, actor: User, target_id: str, current_name: str, update_data: dict[str, Any]
 ) -> None:
-    """Write ``update_data``; a username other than ``current_name`` follows the rule and is no other account's."""
     new_name: str | None = update_data.get("username")
     if new_name == current_name:
         del update_data["username"]
@@ -83,7 +82,6 @@ async def _save_user_fields(
 
 
 def _ensure_can_set_permissions(caller: User, existing: set[str], requested: set[str]) -> None:
-    """Require user:manage_permissions and refuse to grant or revoke any permission the caller lacks."""
     if not has_permission(caller.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
         raise HTTPException(
             status_code=403,

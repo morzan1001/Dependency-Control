@@ -1,5 +1,3 @@
-"""Analytics API package - aggregates routers from focused submodules."""
-
 from app.api.router import CustomAPIRouter
 
 from . import (

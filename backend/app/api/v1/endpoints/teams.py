@@ -162,7 +162,7 @@ async def delete_team(
 
 
 async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDatabase) -> GitHubTeamBinding:
-    """The binding to store, with the slug the organisation reports, which also proves the team number exists."""
+    """Reading the organisation's slug also proves the team number exists."""
     instance = await GitHubInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail=f"GitHub instance with ID {request.instance_id} not found")
@@ -192,7 +192,7 @@ async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDat
 
 
 async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDatabase) -> GitLabGroupBinding:
-    """The binding to store, with the full path the instance reports, which also proves the group number exists."""
+    """Reading the instance's full path also proves the group number exists."""
     instance = await GitLabInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail=f"GitLab instance with ID {request.instance_id} not found")
@@ -325,7 +325,7 @@ async def add_team_member(
 
 
 async def _ensure_hand_editable_member(team: Team, user_id: str, db: AsyncIOMotorDatabase) -> None:
-    """404 for a non-member; 409 for an entry a live sync owns, which its next ingest would restore."""
+    """An entry a live sync owns is refused, as its next ingest would restore it."""
     member = next((m for m in team.members if m.user_id == user_id), None)
     if member is None:
         raise HTTPException(status_code=404, detail="User not in team")

@@ -78,7 +78,7 @@ _MSG_INVALID_RESET_TOKEN = "Invalid or expired reset token"
 
 
 async def _within_rate_limit(key: str, max_attempts: int, window_seconds: int) -> bool:
-    """Count this attempt; True while the budget holds or Redis is unreachable."""
+    """Fails open while Redis is unreachable."""
     attempts = await cache_service.incr(f"rate_limit:{key}", window_seconds)
     return attempts is None or attempts <= max_attempts
 
@@ -101,7 +101,6 @@ async def _within_email_budget(scope: str, email: str) -> bool:
 
 
 async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> dict | None:
-    """Try username then email lookup."""
     user = await user_repo.get_raw_by_username(username)
     if not user:
         user = await user_repo.get_raw_by_email(username)
@@ -109,7 +108,6 @@ async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> di
 
 
 async def _verify_totp_or_raise(user_repo: UserRepository, user: dict, otp: str | None) -> None:
-    """Verify TOTP code. Raises HTTPException on failure."""
     if not otp:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -151,7 +149,6 @@ def _ensure_email_verified(user: dict, system_config: SystemSettings) -> None:
 
 
 def _session_tokens(user: dict, system_config: SystemSettings) -> dict[str, str]:
-    """A token pair for a password session; only the setup-2FA scope while enforced 2FA is unconfigured."""
     if (
         system_config.enforce_2fa
         and not user.get("totp_enabled", False)
@@ -435,7 +432,6 @@ class _OidcLoginError(Exception):
     responses=RESP_400_500,
 )
 async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectResponse:
-    """Initiate OIDC login flow by redirecting to the identity provider."""
     system_config = await deps.get_system_settings(db)
     if not system_config.oidc_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled")
@@ -490,7 +486,6 @@ def _resolve_oidc_redirect_uri(request: Request) -> str:
 
 
 async def _idp_json(call: Awaitable[httpx.Response], failure: str) -> dict[str, Any]:
-    """The IdP's JSON object answer; raises ``failure`` for any other answer."""
     try:
         response = await call
     except httpx.RequestError as exc:
@@ -509,7 +504,6 @@ async def _idp_json(call: Awaitable[httpx.Response], failure: str) -> dict[str, 
 
 
 async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: dict, email: str) -> str:
-    """Generate a unique username for a new OIDC user."""
     preferred = str(user_info.get("preferred_username") or "").strip()
     base_username = preferred if preferred and "@" not in preferred else email.split("@")[0]
     username = base_username
@@ -517,7 +511,7 @@ async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: d
     while await user_repo.exists_by_username(username):
         suffix += 1
         username = f"{base_username}{suffix}"
-        if suffix > 100:  # Safety limit
+        if suffix > 100:
             username = f"{email.split('@')[0]}_{secrets.token_hex(4)}"
             break
     return username
@@ -526,7 +520,6 @@ async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: d
 async def _create_oidc_user(
     user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
 ) -> dict:
-    """Create a new OIDC user, return the persisted user dict."""
     username = await _generate_unique_oidc_username(user_repo, user_info, email)
     new_user = User(
         email=email,
@@ -542,7 +535,6 @@ async def _create_oidc_user(
 
 
 def _validate_existing_oidc_user(user: dict, email: str) -> None:
-    """Verify an existing user can use OIDC and is active."""
     if is_local_account(user.get("auth_provider")):
         logger.warning(f"OIDC login attempt blocked for local user: {email}")
         raise _OidcLoginError("local_user_blocked")
@@ -575,7 +567,6 @@ async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redire
 async def _oidc_login_user(
     request: Request, db: DatabaseDep, code: str | None, state: str | None, error: str | None
 ) -> dict:
-    """The account an SSO callback signs in; raises _OidcLoginError with the reason otherwise."""
     system_config = await deps.get_system_settings(db)
     if not system_config.oidc_enabled:
         raise _OidcLoginError("not_configured")
@@ -610,7 +601,6 @@ async def login_oidc_callback(
     state: str | None = None,
     error: str | None = None,
 ) -> RedirectResponse:
-    """Leave the session for POST /login/oidc/exchange in a cookie, or send the browser a fixed error code."""
     landing = f"{settings.FRONTEND_BASE_URL}/login/callback"
     try:
         user = await _oidc_login_user(request, db, code, state, error)

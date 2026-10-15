@@ -19,7 +19,6 @@ _SLACK_REDIRECT_URI = f"{settings.FRONTEND_BASE_URL}{settings.API_V1_STR}/integr
 
 
 async def _slack_app(db: AsyncIOMotorDatabase) -> tuple[str, str, str]:
-    """The Slack app's client id, client secret and bot scopes; 400 while id or secret is missing."""
     system_settings = await SystemSettingsRepository(db).get()
     if not system_settings.slack_client_id or not system_settings.slack_client_secret:
         raise HTTPException(

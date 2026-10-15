@@ -1,5 +1,3 @@
-"""Chat API endpoints for the AI security assistant."""
-
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status

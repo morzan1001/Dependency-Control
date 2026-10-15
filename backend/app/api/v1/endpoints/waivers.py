@@ -42,8 +42,7 @@ _MSG_NO_MATCHING_FINDING = (
 )
 
 
-# finding_id is not unique within a scan for these types (one document per affected
-# component), so a waiver carrying only a finding_id blankets every one of them.
+# These finding_ids repeat on every affected component's finding, so a finding_id alone blankets all of them.
 _BROAD_FINDING_ID_PREFIXES = {"license": f"{FindingIdPrefix.LICENSE}-", "eol": f"{FindingIdPrefix.EOL}-"}
 
 _MSG_NEEDS_PACKAGE_SCOPE = (
@@ -61,7 +60,6 @@ _MSG_SCOPE_NEEDS_LOCATION = "File and rule scope apply only to findings a scanne
 
 
 async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> None:
-    """A file or rule scope names its rule: as given, else the one its stored source finding reports."""
     if waiver_in.finding_type is not None and waiver_in.finding_type not in LOCATION_FINDING_TYPES:
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_LOCATION)
     if waiver_in.scope == WAIVER_SCOPE_FILE and not waiver_in.package_name:
@@ -79,7 +77,6 @@ async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabas
 
 
 def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
-    """Refuse a waiver whose criteria would blanket findings nobody picked; without a type its id names it."""
     finding_id = waiver_in.finding_id
     if waiver_in.package_name or not finding_id:
         return
@@ -91,7 +88,6 @@ def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
 
 
 async def _named_scan_id(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> str | None:
-    """The scan the waiver was written from, refused unless it belongs to the waiver's project."""
     if not waiver_in.scan_id:
         return None
     scan = await ScanRepository(db).get_minimal_by_id(waiver_in.scan_id)
@@ -103,7 +99,6 @@ async def _named_scan_id(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> s
 async def _ensure_waiver_matches_finding(
     waiver: Waiver, project: Project | None, scan_id: str | None, db: AsyncIOMotorDatabase
 ) -> dict | None:
-    """Refuse a finding-scope project waiver that matches nothing on the named scan, else on head; return the match."""
     if project is None or waiver.scope != WAIVER_SCOPE_FINDING or waiver.vulnerability_id:
         return None
     scan_id = scan_id or await ScanRepository(db).get_latest_active_scan_id(project)
@@ -128,7 +123,6 @@ async def _with_creator_names(db: AsyncIOMotorDatabase, waivers: list[Waiver]) -
 
 
 async def _authorize_waiver_write(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> Project | None:
-    """A project waiver is written by a project editor, a global one by a waiver:manage holder; returns the project."""
     if project_id:
         return await check_project_access(project_id, user, db, required_role=PROJECT_ROLE_EDITOR)
     if not has_permission(user.permissions, Permissions.WAIVER_MANAGE):

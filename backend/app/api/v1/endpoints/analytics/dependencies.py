@@ -1,5 +1,3 @@
-"""Analytics dependency endpoints: dependency-tree, component-findings, dependency-metadata."""
-
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Annotated, Any
@@ -49,7 +47,6 @@ from ._shared import resolve_project_scan_id
 
 router = CustomAPIRouter()
 
-# Live advisory details per component, then per normalized version.
 TreeFindings = dict[str, dict[str, list[Any]]]
 
 _COMPONENT_FINDINGS_SHOWN = 100
@@ -71,8 +68,7 @@ async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, 
     enrichment = await enrichment_repo.get_by_purl(purl) if purl else None
     if not enrichment:
         return EnrichmentInfo()
-    # Dependency docs only carry parser-declared metadata; deps.dev-derived description/links live solely here.
-    # DependencyEnrichment.to_mongo_dict() stores the license fields top-level, not nested under license_compliance.
+    # deps.dev description and links live only here; DependencyEnrichment stores the license fields top-level.
     return EnrichmentInfo(
         deps_dev=enrichment.get("deps_dev"),
         enrichment_sources=enrichment.get("enrichment_sources") or [],
@@ -109,7 +105,6 @@ def _tree_findings_map(details_by_package: dict[tuple[Any, ...], list[Any]]) -> 
 
 
 def _build_tree_node(dep: Dependency, findings_map: TreeFindings, *, direct: bool) -> DependencyTreeNode:
-    """Build one node without its children; the graph builder fills in child_ids."""
     # The bare-artifact alias keys are lowercased, dependency names are not.
     by_version = lookup_component(findings_map, dep.name) or {}
     # A finding without a version cannot tell the package's versions apart, so it covers them all.
@@ -141,7 +136,6 @@ def _build_dependency_graph(
     findings_map: TreeFindings,
     dependencies_total: int,
 ) -> DependencyGraph:
-    """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
     edges = build_dependency_edges(dependencies)
     node_by_key = {
         key: _build_tree_node(dep, findings_map, direct=key in edges.direct_keys)
@@ -172,9 +166,7 @@ def _build_dependency_graph(
     for key in root_keys:
         reachable |= _closure(key)
 
-    # Whatever is still unreachable belongs to a component with no natural entry (a fully
-    # disconnected cycle). Promote one entry per component and drop any extra root its subtree
-    # already covers, so a descendant seen before its component's entry is not left as a root.
+    # What is still unreachable is a disconnected cycle: one entry per cycle, dropping roots its subtree covers.
     extra_roots: list[str] = []
     for key in node_by_key:
         if key not in reachable:
@@ -241,8 +233,7 @@ async def get_component_findings(
     if not projects:
         return []
 
-    # Same scope resolution as the tables that link here, or a component the hotspot ranking
-    # found in the release is looked up against the branch tip and reads as having no findings.
+    # Resolved like the tables that link here, or a release hotspot is looked up on the branch tip and shows none.
     project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
 
     if not scan_ids:
@@ -250,8 +241,7 @@ async def get_component_findings(
 
     finding_repo = FindingRepository(db)
 
-    # Waived findings are excluded here as everywhere else, so this list agrees with the
-    # severity tiles and the hotspot ranking for the same scan.
+    # Waived findings are excluded, as everywhere else, so this list agrees with the severity tiles and hotspots.
     query = await _package_finding_query(finding_repo, scan_ids, component, version)
     response.headers["X-Total-Count"] = str(await finding_repo.count(query))
     docs = await finding_repo.aggregate(
@@ -269,11 +259,7 @@ async def get_component_findings(
 
 
 def _build_dep_query(scan_ids: list[str], component: str, version: str | None, type: str | None) -> dict[str, Any]:
-    """Dependency filter for a component name that may arrive group-qualified.
-
-    The Hotspots and Impact tabs hand this endpoint a finding component, which the inventory
-    stores under its bare artifact name, so both spellings are candidates.
-    """
+    """A finding's component may be group-qualified while the inventory stores the bare artifact name, so both match."""
     dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": {"$in": component_name_candidates(component)}}
     if version:
         dep_query["version"] = version
@@ -285,7 +271,6 @@ def _build_dep_query(scan_ids: list[str], component: str, version: str | None, t
 async def _package_projects_by_version(
     dep_repo: DependencyRepository, dep_query: dict[str, Any], component: str
 ) -> tuple[str, dict[str, list[dict[str, Any]]]] | None:
-    """The one package path ``component`` names with its projects per version; None while the name spans several."""
     artifact = artifact_segment(component)
     wanted = None if artifact == component else f"{component[: -len(artifact) - 1]}/{artifact}".lower()
     rows = await dep_repo.aggregate(

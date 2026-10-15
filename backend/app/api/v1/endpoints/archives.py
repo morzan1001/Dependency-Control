@@ -1,5 +1,3 @@
-"""Endpoints for listing, downloading, restoring, and managing archived scan data."""
-
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -61,7 +59,6 @@ async def _archive_for_project(db: AsyncIOMotorDatabase, project_id: str, scan_i
 
 
 def _require_archive_enabled() -> None:
-    """Raise 501 if S3 archive storage is not configured."""
     if not is_archive_enabled():
         raise HTTPException(status_code=501, detail=_MSG_ARCHIVE_NOT_CONFIGURED)
 
@@ -141,8 +138,7 @@ async def restore_archive(
 
     result = await restore_scan(db, scan_id)
     if not result:
-        # restore_scan returns None for several failures; if the scan now exists
-        # it was a concurrent restore → 409 (best-effort, small TOCTOU window).
+        # restore_scan returns None for several failures; a scan that exists now was a concurrent restore (best-effort).
         existing_scan = await db.scans.find_one({"_id": scan_id})
         if existing_scan:
             raise HTTPException(status_code=409, detail="Scan already exists in MongoDB")

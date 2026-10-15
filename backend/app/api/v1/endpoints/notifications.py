@@ -87,11 +87,7 @@ async def suggest_packages(
     ],
     q: Annotated[str, Query(min_length=2, description="Search query for package name")],
 ) -> PackageSuggestions:
-    """Suggest package names for advisories from the head scans an advisory reaches.
-
-    The field takes free text, so a short list costs nothing but a hint; one row past the
-    limit is read so the answer can say the query still has to narrow.
-    """
+    """Package names in the head scans an advisory reaches; ``more`` says the query has to narrow further."""
     head_scan_ids = list((await resolve_scan_ids(db, None)).values())
     probe = _PACKAGE_SUGGESTION_LIMIT + 1
     pipeline: list[dict[str, Any]] = [
@@ -146,12 +142,10 @@ async def _announcement_audience(payload: BroadcastRequest, team_repo: TeamRepos
 
 
 def _segment_key(name: str) -> str:
-    """Lookup key a rule and a dependency share: the last name segment, blind to case and separators."""
     return pep503_normalize(re.split(r"[/:]", name)[-1])
 
 
 def _rule_matches(rule: AdvisoryPackage, dep_type: str, dep_path: str) -> bool:
-    """Whether a dependency with package identity ``(dep_type, dep_path)`` is the package ``rule`` names."""
     if rule.type and dep_type != rule.type and dep_type not in ECOSYSTEM_STORED_TYPES.get(rule.type, ()):
         return False
     rule_name = rule.name.strip().replace(":", "/")
@@ -194,7 +188,6 @@ def _group_projects_by_admin(
     affected: dict[str, dict[str, bool]],
     users_dict: dict[str, Any],
 ) -> dict[str, dict]:
-    """Group affected projects under each admin user that should be notified."""
     user_notification_map: dict[str, dict] = {}
     for project in projects:
         for uid in sorted(admins_by_project[project.id]):
@@ -246,7 +239,6 @@ async def _notify_advisory_admins(
     background_tasks: BackgroundTasks,
     db: Any,
 ) -> int:
-    """Queue one advisory per active admin of the affected projects; returns how many admins that is."""
     admins_by_project = await project_admin_ids(projects, TeamRepository(db))
     admin_ids = list(set().union(*admins_by_project.values()))
     admin_users = await user_repo.find_many({"_id": {"$in": admin_ids}, "is_active": True}, limit=len(admin_ids))

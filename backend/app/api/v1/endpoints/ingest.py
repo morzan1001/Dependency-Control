@@ -1,5 +1,3 @@
-"""Ingest endpoints for scan results from security tools (SBOM, TruffleHog, OpenGrep, KICS, Bearer)."""
-
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -59,7 +57,6 @@ async def ingest_trufflehog(
     data = await read_json_body(request, TruffleHogIngest)
     response = await process_findings_ingest(ScanManager(db, project), "trufflehog", data)
 
-    # Any secret found fails the pipeline.
     return SecretScanResponse(
         status="failed" if response.findings_count else "success",
         scan_id=response.scan_id,
@@ -92,7 +89,7 @@ for _route in (
 
 
 async def _upload_recognized_sboms(sboms: list[Any], db: Any, scan_id: str) -> list[dict[str, Any]]:
-    """Store each CycloneDX, SPDX or Syft document in GridFS, freeing its list slot as it goes; skip the rest."""
+    """Frees each list slot as it goes, so a stored document does not stay in memory."""
     refs = []
     for index, sbom in enumerate(sboms):
         sboms[index] = None
@@ -140,8 +137,7 @@ async def ingest_sbom(
     sboms_failed = len(data.sboms) - sboms_processed
 
     scan_update = await manager.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
-    # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
-    # stored and re-analysed forever; the orphan reaper frees the superseded uploads.
+    # Replaced, never appended, so CI retries cannot pile up SBOMs; the orphan reaper frees the superseded uploads.
     scan_update["$set"]["sbom_refs"] = sbom_refs
     scan_update["$inc"] = {"sbom_generation": 1}
     await db.scans.update_one({"_id": scan_id}, scan_update, upsert=True)

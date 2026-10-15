@@ -1,5 +1,3 @@
-"""Analytics search endpoints: /search and /vulnerability-search."""
-
 import re
 from collections.abc import Callable
 from typing import Annotated, Any
@@ -50,7 +48,6 @@ router = CustomAPIRouter()
 async def _resolve_search_scope(
     current_user: User, db: AsyncIOMotorDatabase, project_ids: str | None, release_environment: str | None
 ) -> tuple[dict[str, str], list[str], dict[str, int]]:
-    """(project names, scans to search, scope counters) over the caller's projects, narrowed to ``project_ids``."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
     projects = await get_user_projects(current_user, db)
     if project_ids:
@@ -68,12 +65,10 @@ async def _dependency_ids_by_vulnerability(
     has_vulnerabilities: bool,
     sort: dict[str, int],
 ) -> list[str]:
-    """Ids, in ``sort`` order, of the dependencies matching ``query`` whose vulnerability status is ``has_vulnerabilities``."""
     candidates = await DependencyRepository(db).aggregate(
         [{"$match": query}, {"$sort": sort}, {"$project": {"project_id": 1, "name": 1, "version": 1}}]
     )
-    # No component filter: a finding's component can be a qualified form of the
-    # dependency name, which no $in list over inventory names can express.
+    # No component filter: a finding's component can be a qualified form no $in over inventory names expresses.
     vuln_pipeline: list[dict[str, Any]] = [
         {
             "$match": {
@@ -302,7 +297,6 @@ def _build_vuln_query(
 
 _RowKey = Callable[[VulnerabilitySearchResult], float]
 
-# sort_by -> (value over a finding's advisory rows, value of a finding that is its own row, order of its rows)
 _VULN_SORTS: dict[str, tuple[Any, Any, _RowKey | None]] = {
     "severity": (
         {"$map": {"input": "$rows", "as": "v", "in": severity_rank_expr({"$ifNull": ["$$v.severity", "$severity"]})}},

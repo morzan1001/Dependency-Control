@@ -1,5 +1,3 @@
-"""Endpoints for uploading and deleting call graph data for reachability analysis."""
-
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -36,7 +34,6 @@ _GRAPH_FIELDS = ("module_usage", "analyzed_modules")
 async def _resolve_scan_id(
     db: Any, project_id: str, pipeline_id: int | None, commit_hash: str | None
 ) -> tuple[str | None, bool]:
-    """``(scan_id, exists)`` of the CI run's scan in the authorized project; its newest scan when the derived id has none."""
     derived = deterministic_scan_id(project_id, pipeline_id, commit_hash)
     if derived is None:
         return None, False
@@ -49,7 +46,6 @@ async def _resolve_scan_id(
 
 
 def _build_upsert_filter(project_id: str, language: str, scan_id: str | None) -> tuple[dict[str, Any], str]:
-    """Build the MongoDB upsert filter and a context string for logging."""
     if scan_id:
         return {"project_id": project_id, "language": language, "scan_id": scan_id}, f"scan {scan_id} ({language})"
     return {
