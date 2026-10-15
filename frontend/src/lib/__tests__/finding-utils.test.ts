@@ -69,6 +69,13 @@ describe('severity chart tokens', () => {
       expect(SEVERITY_CHART_COLORS[severity]).toMatch(/^#[0-9a-f]{6}$/)
     }
   })
+
+  it('keeps critical/high/medium/low on the Tailwind palette colours the charts of both themes share', () => {
+    expect(SEVERITY_CHART_COLORS.CRITICAL).toBe('#dc2626')
+    expect(SEVERITY_CHART_COLORS.HIGH).toBe('#f97316')
+    expect(SEVERITY_CHART_COLORS.MEDIUM).toBe('#eab308')
+    expect(SEVERITY_CHART_COLORS.LOW).toBe('#3b82f6')
+  })
 })
 
 describe('getSecretTreeStatusInfo', () => {

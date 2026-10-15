@@ -10,15 +10,14 @@ export function advisoryUrl(id: string): string | null {
   return null
 }
 
-// Severity hex colours for charts (Recharts can't use Tailwind token classes);
-// values mirror the light-mode severity tokens in index.css.
+// Recharts can't take Tailwind token classes, so the charts of both themes share these fixed colours.
 export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
-  CRITICAL: '#dc2626', // red-600 / --severity-critical
-  HIGH: '#c2410c', // orange-700 / --severity-high
-  MEDIUM: '#ebbd05', // --severity-medium
-  LOW: '#2563eb', // blue-600 / --severity-low
+  CRITICAL: '#dc2626', // red-600
+  HIGH: '#f97316', // orange-500
+  MEDIUM: '#eab308', // yellow-500
+  LOW: '#3b82f6', // blue-500
   NEGLIGIBLE: '#d1d5db', // gray-300
-  INFO: '#6b7280', // gray-500 / --severity-info
+  INFO: '#6b7280', // gray-500
   UNKNOWN: '#9ca3af', // gray-400
 }
 

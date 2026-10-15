@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { SEVERITY_CHART_COLORS, type Severity } from '@/lib/finding-utils'
-
 type Rgb = [number, number, number]
 
 const lightTheme = /:root\s*\{([^}]*)\}/.exec(readFileSync(`${import.meta.dirname}/../../index.css`, 'utf8'))![1]
@@ -35,12 +33,5 @@ describe('light-theme severity colours', () => {
 
   it.each(severityTokens)('give the %s pill text a WCAG contrast of at least 4.5:1 on its fill', (name) => {
     expect(contrast(token(`severity-${name}`), token(`severity-${name}-foreground`))).toBeGreaterThanOrEqual(4.5)
-  })
-
-  // NEGLIGIBLE and UNKNOWN chart in their own greys; only their pills need a fill dark enough for text.
-  it.each(['critical', 'high', 'medium', 'low', 'info'])('paint the %s chart colour in the pill fill', (name) => {
-    const hex = SEVERITY_CHART_COLORS[name.toUpperCase() as Severity]
-    const chart = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16))
-    token(`severity-${name}`).forEach((value, i) => expect(Math.abs(value - chart[i])).toBeLessThanOrEqual(2))
   })
 })
