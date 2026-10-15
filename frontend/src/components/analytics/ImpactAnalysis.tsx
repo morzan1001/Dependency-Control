@@ -13,7 +13,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { formatEpssScore } from '@/lib/finding-utils'
+import { formatEpssScore, getSeverityBgColor } from '@/lib/finding-utils'
+import { cn } from '@/lib/utils'
 import { withRemainder } from '@/lib/sampled-list'
 import { EpssCell, KevCell } from '@/components/findings/enrichment-cells'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
@@ -127,12 +128,12 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                     </div>
                     <div className="flex gap-1 mt-2 flex-wrap">
                       {r.findings_by_severity.critical > 0 && (
-                        <Badge variant="destructive" className="text-xs">
+                        <Badge className={cn('text-xs', getSeverityBgColor('CRITICAL'))}>
                           {r.findings_by_severity.critical} Critical
                         </Badge>
                       )}
                       {r.findings_by_severity.high > 0 && (
-                        <Badge className="text-xs bg-orange-500">
+                        <Badge className={cn('text-xs', getSeverityBgColor('HIGH'))}>
                           {r.findings_by_severity.high} High
                         </Badge>
                       )}
