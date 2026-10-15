@@ -1,6 +1,25 @@
 """Tests for sorting helper."""
 
-from app.api.v1.helpers.sorting import get_sort_field, parse_sort_direction
+from app.api.v1.helpers.sorting import case_insensitive_key, get_sort_field, parse_sort_direction
+
+
+class TestCaseInsensitiveKey:
+    def test_accented_names_sort_beside_their_base_letters_as_the_collation_sorts_them(self):
+        names = ["Zahlung", "strat", "éclair", "Straße", "Ärzte", "navy", "Bravo", "naïve", "ezra", "cello", "eclair"]
+
+        assert sorted(names, key=case_insensitive_key) == [
+            "Ärzte",
+            "Bravo",
+            "cello",
+            "eclair",
+            "éclair",
+            "ezra",
+            "naïve",
+            "navy",
+            "Straße",
+            "strat",
+            "Zahlung",
+        ]
 
 
 class TestParseSortDirection:

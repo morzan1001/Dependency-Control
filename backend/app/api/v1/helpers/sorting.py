@@ -1,5 +1,6 @@
 """Shared utilities for sorting across endpoints."""
 
+import unicodedata
 from typing import Annotated, Literal
 
 from fastapi import Query
@@ -9,8 +10,9 @@ CASE_INSENSITIVE = Collation(locale="en", strength=CollationStrength.SECONDARY)
 
 
 def case_insensitive_key(text: str) -> tuple[str, str]:
-    """CASE_INSENSITIVE for a sort in Python: case decides only between otherwise equal texts."""
-    return text.casefold(), text
+    """Case and combining accents decide only between otherwise equal texts, as under CASE_INSENSITIVE."""
+    base = "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
+    return base.casefold(), text
 
 
 SORT_FIELDS: dict[str, dict[str, str]] = {
