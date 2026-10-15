@@ -69,6 +69,23 @@ async def test_a_cbom_without_crypto_assets_is_accepted_as_a_cbom_scan(client, d
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "document",
+    [
+        {},
+        {"error": "cbomkit-theia: no such directory"},
+        {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [{"name": "flask"}]},
+    ],
+    ids=["empty-object", "error-object", "spdx"],
+)
+async def test_a_payload_that_is_not_a_cyclonedx_document_is_rejected(client, db, api_key_headers, document):
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": document}, headers=api_key_headers)
+
+    assert resp.status_code == 400, resp.text
+    assert await db.scans.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_an_empty_cbom_retry_replaces_the_earlier_uploads_assets(client, db, api_key_headers):
     pipeline = {"pipeline_id": 14, "commit_hash": "abc123", "branch": "main"}

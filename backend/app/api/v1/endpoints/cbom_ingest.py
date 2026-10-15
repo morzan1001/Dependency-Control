@@ -67,6 +67,8 @@ async def ingest_cbom(
     manager = ScanManager(db, project)
     scan_id = manager.run_scan_id(payload)
     assets = await asyncio.to_thread(parse_cbom, payload.cbom)
+    if not assets and payload.cbom.get("bomFormat") != "CycloneDX":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CBOM payload is not a CycloneDX document")
     project_id = str(project.id)
 
     try:
