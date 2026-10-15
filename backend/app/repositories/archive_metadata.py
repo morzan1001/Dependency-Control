@@ -1,5 +1,3 @@
-"""Repository for archive tracking records."""
-
 from datetime import datetime
 from typing import Any
 

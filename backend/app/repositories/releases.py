@@ -1,5 +1,3 @@
-"""MongoDB access for releases."""
-
 from collections.abc import Sequence
 from typing import Any
 
@@ -16,7 +14,6 @@ class ReleaseRepository(BaseRepository[Release]):
     model_class = Release
 
     async def group_by_scan(self, scan_ids: list[str]) -> dict[str, list[Release]]:
-        """One query for a whole page of scans; each list is newest first."""
         if not scan_ids:
             return {}
         grouped: dict[str, list[Release]] = {}
@@ -26,14 +23,9 @@ class ReleaseRepository(BaseRepository[Release]):
         return grouped
 
     async def record(self, release: Release) -> dict[str, Any] | None:
-        """Keyed on (project_id, environment, scan_id): a CI retry or a re-deploy of the same artefact
-        refreshes one record, while a rollback to an older scan is a distinct one that wins on released_at.
-
-        Answers with the stored row; None only when a concurrent withdraw removed it in between.
-        """
+        """A re-deploy refreshes its record, a rollback adds its own; None only if a concurrent withdraw removed it."""
         key = {field: getattr(release, field) for field in RELEASES_UPSERT_KEY_FIELDS}
-        # Only carried when this payload names one, so a later job of the same CI pipeline cannot
-        # null the version the deploy job recorded, nor a CI's unset tag ("") name the release.
+        # Only when named, so a later job cannot null the deploy job's version, nor an unset CI tag ("") name it.
         changes: dict[str, Any] = {"released_at": release.released_at}
         if release.version:
             changes["version"] = release.version
@@ -45,15 +37,13 @@ class ReleaseRepository(BaseRepository[Release]):
                 return_document=ReturnDocument.AFTER,
             )
         except DuplicateKeyError:
-            # A concurrent mark inserted the row between this filter miss and its insert;
-            # the update cannot insert, so it cannot race again.
+            # A concurrent mark inserted the row first; this update cannot insert, so it cannot race again.
             row = await self.collection.find_one_and_update(
                 key, {"$set": changes}, return_document=ReturnDocument.AFTER
             )
         return row
 
     async def withdraw(self, project_id: str, environment: str, scan_id: str) -> list[str] | None:
-        """Remove one environment's record; the environments the scan still runs in, or None if it ran in none."""
         scan_key = {"project_id": project_id, "scan_id": scan_id}
         if not (await self.collection.delete_one({**scan_key, "environment": environment})).deleted_count:
             return None

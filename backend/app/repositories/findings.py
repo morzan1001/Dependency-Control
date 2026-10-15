@@ -1,5 +1,3 @@
-"""Repository for finding database operations."""
-
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime
@@ -73,7 +71,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
     model_class = FindingRecord
 
     async def find_waiver_state(self, scan_id: str) -> list[dict[str, Any]]:
-        """The scan's findings that carry a waived or lapsed flag."""
         query = {"scan_id": scan_id, "$or": [{"waived": True}, {"waiver_lapsed": True}]}
         projection = {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1}
         return await self.collection.find(query, projection).to_list(None)
@@ -82,7 +79,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return [doc["_id"] async for doc in self.collection.find({"scan_id": scan_id, **query}, {"_id": 1})]
 
     async def find_advisory_state(self, scan_id: str, clause: dict[str, Any]) -> list[dict[str, Any]]:
-        """Vulnerability documents matching ``clause``: waiver scope fields and advisories, in stored order."""
         projection = {
             "finding_id": 1,
             "component": 1,
@@ -105,17 +101,13 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return await self.collection.find_one({"scan_id": {"$in": scan_ids}, **query}, {"_id": 1}) is not None
 
     async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[FindingRecord], int]:
-        """Unwaived findings up to ``limit`` and their total; no default ``limit``, so no caller gets a hidden cap."""
+        """``limit`` has no default, so no caller gets a hidden cap."""
         query = {"scan_id": scan_id, "waived": {"$ne": True}}
         rows, total = await find_window(self.collection, query, limit, projection=_RECOMMENDATION_EXCLUDED)
         return self._to_model_list(rows), total
 
     async def iter_vulnerability_identities(self, scan_ids: Sequence[str]) -> AsyncGenerator[dict[str, Any], None]:
-        """Every vulnerability finding of these scans, projected to what names a CVE.
-
-        Streamed and unbounded: a recurrence count taken over a cut of this set reports a CVE
-        present in every scan as absent from most of them.
-        """
+        """Unbounded, as a recurrence count over a cut would report a CVE present in every scan as mostly absent."""
         if not scan_ids:
             return
         query = {"scan_id": {"$in": list(scan_ids)}, "type": "vulnerability"}
@@ -125,8 +117,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def earliest_detections(
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[FindingIdentity, datetime]:
-        """Earliest detection per identity among the project's stored copies; a copy predating first_seen_at
-        counts from its scan. Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys."""
+        """Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys; older copies count from their scan."""
         earliest: dict[FindingIdentity, datetime] = {}
         # One $match naming every finding outgrows the 16 MiB command limit on large scans.
         for start in range(0, len(records), _DETECTION_CHUNK):
@@ -166,9 +157,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def advisory_detections(
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[tuple[str, str], datetime]:
-        """Earliest detection per (component, advisory id) of the records' advisories over every stored version.
-        Every persist dates each advisory of its copy with its earliest detection, so each version's newest copy
-        answers for the advisories it dates, and every copy of the component dates the rest."""
+        """Every persist dates its advisories, so each version's newest copy answers for the advisories it carries."""
         asked: dict[str, set[str]] = defaultdict(set)
         for record in records:
             for entry in record["details"]["vulnerabilities"]:
@@ -231,7 +220,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
         scan_ids: list[str],
         finding_type: str | None = "vulnerability",
     ) -> dict[str, int]:
-        """Returns {severity: count} of non-waived findings aggregated across `scan_ids`; None counts every type."""
         match: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}}
         if finding_type is not None:
             match["type"] = finding_type

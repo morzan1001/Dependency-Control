@@ -1,5 +1,3 @@
-"""Repository for webhooks."""
-
 import logging
 from collections.abc import Sequence
 from datetime import datetime
@@ -30,13 +28,11 @@ class WebhookRepository(BaseRepository[Webhook]):
     model_class = Webhook
 
     async def list_scope(self, scope: dict[str, Any], skip: int, limit: int) -> list[Webhook]:
-        """One page of a project's, a team's or the global webhooks, newest first."""
         return await self.find_many(scope, skip=skip, limit=limit, sort_by="created_at", sort_order=-1)
 
     async def find_deliverable(
         self, event_type: str, now: datetime, project_id: str | None, team_ids: Sequence[str]
     ) -> list[Webhook]:
-        """Active subscribers to the event outside a circuit-breaker cool-down, in the project, team or global scope."""
         scopes: list[dict[str, Any]] = [GLOBAL_WEBHOOK_SCOPE]
         if project_id:
             scopes.append({"project_id": project_id})
@@ -63,7 +59,7 @@ class WebhookRepository(BaseRepository[Webhook]):
     async def record_failure(
         self, webhook: Webhook, now: datetime, threshold: int, open_until: datetime
     ) -> dict[str, Any] | None:
-        """Count the failure; returns the document only from the failure that opened the circuit."""
+        """Only the failure that opened the circuit gets the document back."""
         await self.collection.update_one(
             _delivered_with(webhook),
             {"$set": {"last_failure_at": now}, "$inc": {"consecutive_failures": 1, "total_failures": 1}},

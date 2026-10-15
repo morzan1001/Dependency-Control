@@ -1,5 +1,3 @@
-"""Repository for teams."""
-
 import re
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
@@ -111,7 +109,6 @@ class TeamRepository:
         return await self.get_raw_by_binding_key(team_binding_key(provider, instance_id, external_id))
 
     async def add_binding_if_absent(self, team_id: str, binding: dict[str, Any]) -> dict[str, Any] | None:
-        """Attach a binding to a team the instance does not hold yet; None when it holds one by now."""
         # In the filter, since a multikey unique index cannot refuse two bindings of one instance on one team.
         adopted: dict[str, Any] | None = await self.collection.find_one_and_update(
             {"_id": team_id, _BINDING_INSTANCE: {"$ne": binding["instance_id"]}},
@@ -134,7 +131,6 @@ class TeamRepository:
         return bool(result.matched_count)
 
     async def remove_binding_for_instance(self, team_id: str, instance_id: str, source: str) -> bool:
-        """False when the team holds no binding for that instance."""
         result = await self.collection.update_one(
             {"_id": team_id, _BINDING_INSTANCE: instance_id}, _detach_instance(instance_id, source)
         )
@@ -155,14 +151,12 @@ class TeamRepository:
         binding_fields: dict[str, Any],
         member_subset: MemberSubset | None = None,
     ) -> None:
-        """One write for a sync's team fields, binding display fields and, unless None, its member subset."""
         now = datetime.now(timezone.utc)
         if member_subset is not None:
             members = _subset_members(member_subset)
             query: dict[str, Any] = {"_id": team_id}
             if not update_data and not binding_fields:
-                # An unchanged subset must not bump updated_at, or every ingest rewrites every holder.
-                # As sets: each sync appends its entries last, so two sources would reorder forever.
+                # As sets, since each sync appends last: an unchanged subset must not rewrite the team on every ingest.
                 query["$expr"] = {"$not": [{"$setEquals": [members, {"$ifNull": [f"${_MEMBERS}", []]}]}]}
             stages: list[dict[str, Any]] = [{"$set": {_MEMBERS: members}}]
             if binding_fields:
@@ -228,7 +222,6 @@ class TeamRepository:
         return [str(doc["_id"]) async for doc in self.collection.find(query, {"_id": 1})]
 
     async def members_by_team(self, team_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-        """Each existing team's member entries (user_id and role), in one read."""
         if not team_ids:
             return {}
         cursor = self.collection.find({"_id": {"$in": list(team_ids)}}, {"members.user_id": 1, "members.role": 1})
@@ -243,7 +236,6 @@ class TeamRepository:
         return bool(result.matched_count)
 
     async def remove_member(self, team_id: str, user_id: str, updated_at: datetime) -> bool:
-        """False when ``user_id`` is the team's last admin."""
         result = await self.collection.update_one(
             {"_id": team_id, **_not_the_last_admin(user_id)},
             {"$pull": {"members": {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
@@ -257,7 +249,6 @@ class TeamRepository:
         )
 
     async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> bool:
-        """False when the demotion would take the team's last admin."""
         query: dict[str, Any] = {"_id": team_id}
         if role != TEAM_ROLE_ADMIN:
             query.update(_not_the_last_admin(user_id))

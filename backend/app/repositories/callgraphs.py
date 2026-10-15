@@ -1,5 +1,3 @@
-"""Repository for callgraphs."""
-
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
@@ -25,7 +23,7 @@ class CallgraphRepository(BaseRepository[Callgraph]):
     model_class = Callgraph
 
     async def load_graph(self, doc: dict[str, Any]) -> dict[str, Any]:
-        """Merge the graph file into ``doc``; legacy docs carry module_usage and analyzed_modules inline."""
+        """Legacy documents carry module_usage and analyzed_modules inline."""
         if file_id := doc.pop("graph_gridfs_id", None):
             doc.update(await load_gridfs_json(AsyncIOMotorGridFSBucket(self.db), file_id))
         return doc

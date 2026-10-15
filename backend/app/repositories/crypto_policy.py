@@ -1,5 +1,3 @@
-"""MongoDB access for the crypto_policies collection."""
-
 from datetime import datetime, timezone
 
 from app.models.crypto_policy import CryptoPolicy

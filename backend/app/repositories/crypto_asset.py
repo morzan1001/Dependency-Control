@@ -1,5 +1,3 @@
-"""MongoDB access for the crypto_assets collection."""
-
 import itertools
 import re
 from collections.abc import Iterable
@@ -65,8 +63,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         return total
 
     async def carry_over_to_scan(self, project_id: str, from_scan_id: str, to_scan_id: str) -> None:
-        """Copy a scan's assets onto a rescan server-side, since /ingest/cbom assets have no SBOM to
-        re-derive them from; joining on the unique bom_ref key keeps any row the rescan already holds."""
+        """Copied, as /ingest/cbom assets have no SBOM to re-derive them from; rows the rescan already holds stay."""
         await self.aggregate(
             [
                 {"$match": {"project_id": project_id, "scan_id": from_scan_id}},
@@ -91,8 +88,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         primitive: CryptoPrimitive | None = None,
         name_search: str | None = None,
     ) -> list[CryptoAsset]:
-        """A scan's assets, name-ascending. ``limit`` is the caller's own budget and is applied
-        as given, so a short list means the scan is short and a caller can say so."""
+        """``limit`` applies as given, so a short list means the scan itself is short."""
         query = scan_query(project_id, scan_id, asset_type, primitive, name_search)
         cursor = self.collection.find(query).sort([("name", 1), ("bom_ref", 1)]).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)

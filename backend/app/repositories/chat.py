@@ -1,5 +1,3 @@
-"""Repository for chat conversations and messages."""
-
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -62,7 +60,6 @@ class ChatRepository:
         content: str = "",
         tool_calls: list[dict[str, Any]] | None = None,
     ) -> int | None:
-        """Store the message and return the conversation's message count, or None if the conversation is gone."""
         doc = {
             "_id": str(uuid.uuid4()),
             "conversation_id": conversation_id,

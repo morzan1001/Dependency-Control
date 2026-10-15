@@ -27,8 +27,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "project_id": project_id,
             "policy_type": policy_type,
         }
-        # Timestamps are stored to the millisecond and two saves can share one, so version —
-        # which only ever grows within a scope — decides which of them is the later change.
+        # Two saves can share a millisecond timestamp, so version, which only grows within a scope, orders them.
         cursor = (
             self.collection.find(query)
             .sort([("timestamp", DESCENDING), ("version", DESCENDING)])

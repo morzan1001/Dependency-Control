@@ -1,5 +1,3 @@
-"""Repository for projects."""
-
 from collections.abc import Iterable
 from typing import Any
 
@@ -14,7 +12,6 @@ _MEMBERS_USER_ID = "members.user_id"
 
 
 def _team_source_entries(cond: dict[str, Any]) -> dict[str, Any]:
-    """The provenance map's ``{k, v}`` entries satisfying ``cond``; a missing map reads as empty."""
     return {
         "$filter": {
             "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
@@ -30,7 +27,6 @@ def _owned_by(source: str) -> dict[str, Any]:
 
 
 def _sources_except(source: str) -> dict[str, Any]:
-    """The provenance map without the entries ``source`` wrote."""
     return {"$arrayToObject": _team_source_entries({"$ne": ["$$entry.v", source]})}
 
 
@@ -45,8 +41,7 @@ def owners_replaced_by(project: Project, source: str) -> set[str]:
 
 
 def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[str, Any]]:
-    """Replace exactly the owners one instance's ``source`` set, as one pipeline: ``$pull`` beside ``$addToSet``
-    is rejected with code 40, and two writes would show readers an empty, unassigned-looking ``team_ids``."""
+    """One pipeline: $pull beside $addToSet is rejected with code 40, and two writes would briefly empty team_ids."""
     # A missing field read as null would be written back as team_ids: null, which no ownership filter matches.
     held_elsewhere = {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]}
     return [
@@ -74,7 +69,6 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
 
 
 def _sources_kept(team_ids: list[str]) -> dict[str, Any]:
-    """The provenance entries naming one of ``team_ids``."""
     return {"$arrayToObject": _team_source_entries({"$in": ["$$entry.k", {"$literal": team_ids}]})}
 
 
@@ -92,7 +86,6 @@ def set_owners_pipeline(team_ids: list[str]) -> list[dict[str, Any]]:
 
 
 def remove_team_ops(team_id: str) -> dict[str, Any]:
-    """Remove one owner whatever wrote it."""
     return {"$pull": {"team_ids": team_id}, "$unset": {f"team_sources.{team_id}": ""}}
 
 
@@ -120,7 +113,6 @@ class ProjectRepository(BaseRepository[Project]):
     model_class = Project
 
     async def find_or_create_by_key(self, key: dict[str, Any], project: Project) -> tuple[Project, bool]:
-        """Atomic find-or-create by a VCS composite key ($setOnInsert leaves existing projects untouched); returns (project, created)."""
         result = await self.collection.find_one_and_update(
             key,
             {"$setOnInsert": project.model_dump(by_alias=True)},
@@ -164,12 +156,11 @@ class ProjectRepository(BaseRepository[Project]):
         ownership_stages: list[dict[str, Any]],
         guard: dict[str, Any] | None = None,
     ) -> bool:
-        """Fields and ownership as one pipeline write; True when nothing is to write, else whether ``guard`` held."""
         stages = ([_literal_set_stage(fields)] if fields else []) + ownership_stages
         return not stages or await self.update_raw(project_id, stages, guard)
 
     async def update_many_raw(self, query: dict[str, Any], update_ops: UpdateOps) -> int:
-        """Modifiers or a pipeline, verbatim; counts modified, so a pipeline rewriting the stored value reports 0."""
+        """Counts modified documents, so a pipeline that rewrites the stored value reports 0."""
         result = await self.collection.update_many(query, update_ops)
         return result.modified_count
 
@@ -182,7 +173,6 @@ class ProjectRepository(BaseRepository[Project]):
         return bool(result.matched_count)
 
     async def remove_member(self, project_id: str, user_id: str, guard: dict[str, Any] | None = None) -> bool:
-        """False when ``guard`` no longer holds, e.g. ``surviving_admin_filter``."""
         result = await self.collection.update_one(
             {"_id": project_id, **(guard or {})},
             {"$pull": {"members": {"user_id": user_id}}},
@@ -199,7 +189,6 @@ class ProjectRepository(BaseRepository[Project]):
         member_fields: dict[str, Any],
         guard: dict[str, Any] | None = None,
     ) -> bool:
-        """Set plain member fields such as ``{'role': 'admin'}``; False when ``guard`` no longer holds."""
         # By identity, not position: a concurrent $pull shifts array indices.
         result = await self.collection.update_one(
             {"_id": project_id, **(guard or {})},

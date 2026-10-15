@@ -12,7 +12,6 @@ class TokenBlacklistRepository:
         self.collection = db.token_blacklist
 
     async def blacklist_token(self, jti: str, expires_at: datetime) -> bool:
-        """Returns False if the token is already blacklisted."""
         try:
             await self.collection.insert_one(
                 {"_id": jti, "blacklisted_at": datetime.now(timezone.utc), "expires_at": expires_at}

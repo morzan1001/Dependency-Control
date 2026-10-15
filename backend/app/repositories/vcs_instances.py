@@ -1,5 +1,3 @@
-"""Shared persistence for VCS (GitLab/GitHub) instance repositories."""
-
 from typing import Any
 
 from app.models.base import VcsInstanceModel
@@ -11,17 +9,13 @@ def _excluding(query: dict[str, Any], exclude_id: str | None) -> dict[str, Any]:
 
 
 class VcsInstanceRepository[T: VcsInstanceModel](BaseRepository[T]):
-    """Subclasses set ``collection_name``, ``model_class`` and the project field that links to them."""
-
     project_link_field: str
 
     async def get_usable(self, instance_id: str) -> T | None:
-        """The instance only while it can be called: present, active and holding a token."""
         instance = await self.get_by_id(instance_id)
         return instance if instance and instance.is_active and instance.access_token else None
 
     async def get_by_url(self, url: str) -> T | None:
-        """Matches the issuer claim with any trailing slash stripped."""
         return await self.find_one({"url": url.rstrip("/")})
 
     async def create(self, model: T) -> T:

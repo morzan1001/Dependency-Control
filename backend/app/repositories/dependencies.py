@@ -1,5 +1,3 @@
-"""Repository for dependencies."""
-
 from typing import Any
 
 from pymongo import UpdateOne
@@ -15,12 +13,10 @@ class DependencyRepository(BaseRepository[Dependency]):
     model_class = Dependency
 
     async def find_by_scan(self, project_id: str, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
-        """The scan's dependencies up to ``limit``, and how many it holds."""
         rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)
         return self._to_model_list(rows), total
 
     async def upsert_many(self, dependencies: list[Dependency], fresh: bool = False) -> None:
-        """Write each dependency over its scan's (name, version, purl) row; the row keeps its newest created_at."""
         if fresh:
             try:
                 await self.collection.insert_many([d.model_dump(by_alias=True) for d in dependencies], ordered=False)
