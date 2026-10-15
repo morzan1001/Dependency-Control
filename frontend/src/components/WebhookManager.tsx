@@ -157,67 +157,62 @@ export function WebhookManager({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {webhooks.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
-                  No webhooks configured
+            {webhooks.map(webhook => (
+              <TableRow key={webhook.id}>
+                <TableCell className="font-mono text-xs truncate max-w-0" title={webhook.url}>{webhook.url}</TableCell>
+                <TableCell>
+                  <Badge variant={webhook.webhook_type && webhook.webhook_type !== "generic" ? "default" : "outline"}>
+                    {TYPE_LABELS[webhook.webhook_type ?? "generic"]}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <DeliveryState webhook={webhook} />
+                </TableCell>
+                <TableCell>
+                  <div className="flex gap-1 flex-wrap">
+                    {(webhook.events || []).map(e => (
+                      <Badge key={e} variant="secondary">{WEBHOOK_EVENTS.find(event => event.id === e)?.label ?? e}</Badge>
+                    ))}
+                  </div>
+                </TableCell>
+                <TableCell>{formatDate(webhook.created_at)}</TableCell>
+                <TableCell>
+                  <div className="flex">
+                    {canUpdate && (
+                      <>
+                        <Dialog open={editing?.id === webhook.id} onOpenChange={open => setEditing(open ? webhook : null)}>
+                          <DialogTrigger asChild>
+                            <Button variant="ghost" size="icon" aria-label="Edit webhook" title="Edit webhook">
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </DialogTrigger>
+                          {editing?.id === webhook.id && (
+                            <WebhookForm
+                              webhook={editing}
+                              onUpdate={data => onUpdate(editing.id, data)}
+                              onSaved={() => setEditing(null)}
+                            />
+                          )}
+                        </Dialog>
+                        <Button variant="ghost" size="icon" aria-label="Send test" title="Send test" onClick={() => handleTest(webhook.id)}>
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                    {canDeleteWh && (
+                      <Button variant="ghost" size="icon" aria-label="Delete webhook" title="Delete webhook" onClick={() => setWebhookToDelete(webhook)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
-            ) : (
-              webhooks.map(webhook => (
-                <TableRow key={webhook.id}>
-                  <TableCell className="font-mono text-xs truncate max-w-0" title={webhook.url}>{webhook.url}</TableCell>
-                  <TableCell>
-                    <Badge variant={webhook.webhook_type && webhook.webhook_type !== "generic" ? "default" : "outline"}>
-                      {TYPE_LABELS[webhook.webhook_type ?? "generic"]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <DeliveryState webhook={webhook} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 flex-wrap">
-                      {(webhook.events || []).map(e => (
-                        <Badge key={e} variant="secondary">{WEBHOOK_EVENTS.find(event => event.id === e)?.label ?? e}</Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>{formatDate(webhook.created_at)}</TableCell>
-                  <TableCell>
-                    <div className="flex">
-                      {canUpdate && (
-                        <>
-                          <Dialog open={editing?.id === webhook.id} onOpenChange={open => setEditing(open ? webhook : null)}>
-                            <DialogTrigger asChild>
-                              <Button variant="ghost" size="icon" aria-label="Edit webhook" title="Edit webhook">
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </DialogTrigger>
-                            {editing?.id === webhook.id && (
-                              <WebhookForm
-                                webhook={editing}
-                                onUpdate={data => onUpdate(editing.id, data)}
-                                onSaved={() => setEditing(null)}
-                              />
-                            )}
-                          </Dialog>
-                          <Button variant="ghost" size="icon" aria-label="Send test" title="Send test" onClick={() => handleTest(webhook.id)}>
-                            <Send className="h-4 w-4" />
-                          </Button>
-                        </>
-                      )}
-                      {canDeleteWh && (
-                        <Button variant="ghost" size="icon" aria-label="Delete webhook" title="Delete webhook" onClick={() => setWebhookToDelete(webhook)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
+            ))}
           </TableBody>
         </Table>
+        {webhooks.length === 0 && (
+          <p className="p-4 text-center text-sm text-muted-foreground">No webhooks configured</p>
+        )}
         <Dialog open={webhookToDelete !== null} onOpenChange={open => { if (!open) setWebhookToDelete(null) }}>
           <DialogContent>
             <DialogHeader>

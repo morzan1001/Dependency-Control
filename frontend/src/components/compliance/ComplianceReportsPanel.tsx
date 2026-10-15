@@ -50,15 +50,6 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Loading reports…</td></tr>
-            )}
-            {!isLoading && isError && (
-              <tr><td colSpan={5} className="p-4 text-center text-destructive">Failed to load reports.</td></tr>
-            )}
-            {!isLoading && !isError && reports.length === 0 && (
-              <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">No reports yet</td></tr>
-            )}
             {!isLoading && !isError && reports.map((r) => (
               <tr
                 key={r._id}
@@ -82,6 +73,11 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
             ))}
           </tbody>
         </table>
+        {isLoading && <p className="p-4 text-center text-sm text-muted-foreground">Loading reports…</p>}
+        {!isLoading && isError && <p className="p-4 text-center text-sm text-destructive">Failed to load reports.</p>}
+        {!isLoading && !isError && reports.length === 0 && (
+          <p className="p-4 text-center text-sm text-muted-foreground">No reports yet</p>
+        )}
       </div>
 
       {newReportDialog.open && (

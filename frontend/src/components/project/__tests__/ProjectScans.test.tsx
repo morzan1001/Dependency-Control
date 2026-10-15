@@ -447,4 +447,10 @@ describe('ProjectScans - on a narrow screen', () => {
     expect(table).toHaveClass('min-w-[1090px]')
     expect(table.parentElement).toHaveClass('overflow-auto')
   })
+
+  it("names an empty list under the table, where a phone shows it, instead of in a row centred on the table's 1090px", async () => {
+    renderScans([])
+
+    expect((await screen.findByText('No scans found.')).closest('table')).toBeNull()
+  })
 })
