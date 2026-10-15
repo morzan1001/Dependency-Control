@@ -99,16 +99,6 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
                   ))}
                 </TableRow>
               ))}
-              {!isPending && isError && (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-2">
-                      <span>Failed to load components.</span>
-                      <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
               {!isPending && !isError && data?.items.map((item) => (
                 <TableRow key={item.purl ?? `${item.name}@${item.version}`}>
                   <TableCell className="font-medium">{item.name}</TableCell>
@@ -120,15 +110,17 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
                   <TableCell><LifecycleBadge item={item} /></TableCell>
                 </TableRow>
               ))}
-              {!isPending && !isError && data?.items.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                    No components found.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
+          {!isPending && isError && (
+            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
+              <span>Failed to load components.</span>
+              <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+            </div>
+          )}
+          {!isPending && !isError && data?.items.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No components found.</p>
+          )}
         </div>
         <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />
       </CardContent>

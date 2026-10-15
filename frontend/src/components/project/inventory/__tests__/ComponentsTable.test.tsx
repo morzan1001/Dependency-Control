@@ -123,4 +123,21 @@ describe('ComponentsTable', () => {
     expect(controls).toHaveClass('flex-col', 'sm:flex-row')
     expect(screen.getByPlaceholderText('Search components…')).toHaveClass('w-full', 'sm:w-[220px]')
   })
+
+  it("names an empty table under it, where a phone shows the message, instead of in a row centred on the scrolling table", async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockResolvedValue({ ...page, items: [], total: 0 })
+    renderTable()
+
+    expect((await screen.findByText('No components found.')).closest('table')).toBeNull()
+  })
+
+  it('shows a failure and its retry under the table the same way', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockRejectedValue(
+      Object.assign(new Error('not found'), { response: { status: 404 } }),
+    )
+    renderTable()
+
+    expect((await screen.findByText('Failed to load components.')).closest('table')).toBeNull()
+    expect(screen.getByRole('button', { name: /retry/i }).closest('table')).toBeNull()
+  })
 })
