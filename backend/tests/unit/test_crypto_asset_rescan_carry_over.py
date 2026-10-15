@@ -1,10 +1,4 @@
-"""Crypto assets survive a rescan.
-
-Only two writers fill `crypto_assets`: /ingest/cbom, under the ingested scan id and with no SBOM in
-GridFS, and the engine's embedded-CBOM path. A rescan runs under a fresh scan id and can re-derive
-only the second, so without a carry-over every crypto surface reads a rescanned project as having
-no cryptography, and the crypto delta reads that as risk having disappeared.
-"""
+"""A rescan can re-derive only embedded-CBOM assets, so /ingest/cbom assets must be carried over."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock

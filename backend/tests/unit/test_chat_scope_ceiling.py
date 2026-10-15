@@ -1,8 +1,4 @@
-"""Chat answers the estate-wide question analytics answers, so it refuses the same scope.
-
-A chat tool that narrows the accessible-project list reads as an answer over the whole estate,
-and the reader has no chart beside the reply to notice the projects that were dropped.
-"""
+"""A narrowed chat answer reads as covering the whole estate, with no chart beside it to reveal dropped projects."""
 
 import pytest
 
@@ -77,7 +73,6 @@ async def test_the_refusal_names_the_ceiling_instead_of_a_generic_failure(small_
 
 @pytest.mark.asyncio
 async def test_a_legacy_project_document_does_not_fail_the_search():
-    """A project document missing its name still answers."""
     db = FakeDatabase()
     _seed_projects(db, _CEILING)
     del db.projects._docs["p0"]["name"]

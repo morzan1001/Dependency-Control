@@ -1,5 +1,3 @@
-"""A dependency search row carries the dependency's own fields under their own names."""
-
 from app.api.v1.endpoints.analytics.search import _dep_to_search_result
 from app.models.dependency import Dependency
 from app.schemas.analytics import DependencySearchResult

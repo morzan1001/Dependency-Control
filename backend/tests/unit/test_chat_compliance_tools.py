@@ -1,5 +1,3 @@
-"""The chat framework evaluation and policy audit tools, answered from what the producers store."""
-
 import pytest
 import pytest_asyncio
 
@@ -16,7 +14,6 @@ _PROJECT = "p-audit"
 
 @pytest_asyncio.fixture
 async def audited(db):
-    """The system crypto seed, one project crypto override and one project license-policy change."""
     await db.projects.insert_one(
         {"_id": _PROJECT, "name": "P", "default_branch": "main", "deleted_branches": [], "members": []}
     )

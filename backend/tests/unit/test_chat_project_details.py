@@ -1,5 +1,3 @@
-"""get_project_details answers with the retention, rescan and license policy the system applies."""
-
 import pytest
 
 from app.core.constants import (

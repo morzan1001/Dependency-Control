@@ -42,7 +42,7 @@ def test_family_alias_normalises():
 
 
 def test_family_alias_normalises_case_insensitively():
-    """Alias resolution must be case-insensitive, or a quantum-vulnerable asset misses both the alias and the canonical set and is dropped from the migration plan."""
+    """A case-sensitive alias lookup would drop a quantum-vulnerable asset from the migration plan."""
     m = load_mappings()
     assert normalise_family("diffie-hellman", m) == "DH"
     assert normalise_family("DIFFIE-HELLMAN", m) == "DH"

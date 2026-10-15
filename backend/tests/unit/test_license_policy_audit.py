@@ -1,5 +1,3 @@
-"""Unit tests for the license-policy change-summary helper, which diffs two resolved policies."""
-
 from app.schemas.project import LicensePolicySchema
 from app.services.audit.history import compute_license_policy_change_summary
 

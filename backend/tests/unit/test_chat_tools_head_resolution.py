@@ -1,10 +1,4 @@
-"""Every chat/MCP tool that answers "how is this project doing" must answer from the head build.
-
-The consumer is a language model relaying the answer to a human, so a wrong scan surfaces as a
-confident sentence with no branch name or chart beside it to contradict. The two shapes that used
-to divert a tool are both here: the cached pointer naming a scan that is not readable yet, and the
-pointer naming a branch the VCS no longer has.
-"""
+"""A relayed answer from the wrong scan reads as a confident sentence with nothing beside it to contradict it."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -64,8 +58,7 @@ _HEAD_CRITICAL_COUNT = 1
 _ERR_NO_SCAN_DATA = "No scan data available"
 _FIX_VERSION = "1.0.1"
 
-# Each is a pointer a live project really carried: re-ingest sent the head build back to pending,
-# and branch deletion left the pointer on a branch the VCS dropped.
+# Pointers live projects carried: a head re-ingested back to pending, and a branch the VCS dropped.
 _MISLEADING_POINTERS = [_QUEUED_SCAN, _DELETED_BRANCH_SCAN]
 _POINTER_IDS = ["pointer-names-a-queued-scan", "pointer-names-a-deleted-branch"]
 
@@ -117,7 +110,6 @@ def _dependency(scan_id, name):
 
 @pytest.fixture
 def seeded(db):
-    """A project whose head is `_HEAD_SCAN`, with every distraction the resolver has to rank below it."""
     for doc in (
         _scan(_OLDER_SCAN, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 20),
         _scan(_HEAD_SCAN, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 5, critical=_HEAD_CRITICAL_COUNT),
@@ -337,7 +329,6 @@ class TestWaivedFindingsAreNotReportedOpen:
 class TestTopPriorityPutsActiveExploitationFirst:
     @pytest.fixture
     def with_kev_high(self, seeded):
-        """A HIGH finding whose advisory CISA lists as exploited, enriched the way ingest enriches it."""
         _point_at(seeded, _HEAD_SCAN)
         doc = _vulnerability(_HEAD_SCAN, _KEV_CVE, _SEV_HIGH, _HEAD_COMPONENT)
         kev = KEVEntry(
@@ -363,8 +354,7 @@ class TestTopPriorityPutsActiveExploitationFirst:
 class TestCompareScansDefaultPair:
     @pytest.mark.asyncio
     async def test_defaults_to_head_against_the_build_before_it(self, seeded, admin_user):
-        """The newest scan is queued and holds nothing, so comparing against it reports the head
-        build's CRITICAL as resolved."""
+        """The newest scan is queued and empty, so comparing against it would report head's CRITICAL as resolved."""
         _point_at(seeded, _QUEUED_SCAN)
 
         result = await _call(seeded, admin_user, "compare_scans", {"project_id": _PROJECT})
@@ -458,8 +448,6 @@ def _crypto_asset(scan_id, name):
 
 @pytest.fixture
 def seeded_with_crypto(seeded):
-    """The CBOM and the crypto findings the scan-scoped tools read, on head and on the branch the
-    VCS dropped."""
     for doc in (
         _crypto_asset(_HEAD_SCAN, _HEAD_CRYPTO_ASSET),
         _crypto_asset(_DELETED_BRANCH_SCAN, _DELETED_BRANCH_CRYPTO_ASSET),
@@ -482,8 +470,7 @@ def seeded_with_crypto(seeded):
 
 
 class TestScanScopedToolsDefaultToHead:
-    """An omitted scan_id is the obvious call, and it has to be the correct one: the model's only
-    source for an id is get_scan_history, whose newest row is a queued run on any branch."""
+    """The model's only id source lists a queued run first, so an omitted scan_id must already mean head."""
 
     @pytest.mark.asyncio
     async def test_crypto_summary_counts_the_head_builds_assets(self, seeded_with_crypto, admin_user):

@@ -1,5 +1,3 @@
-"""What the model is sent: the replayed transcript, the trimmed history, tool results and the system prompt."""
-
 import json
 import re
 

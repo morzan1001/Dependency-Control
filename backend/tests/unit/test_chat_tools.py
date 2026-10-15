@@ -1,5 +1,3 @@
-"""Tests for chat tool definitions and authorization."""
-
 import re
 
 import pytest

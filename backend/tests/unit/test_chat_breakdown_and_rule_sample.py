@@ -1,9 +1,4 @@
-"""Two chat answers that read as complete: a breakdown over a closed domain, and a top-N sample.
-
-A breakdown bounded below the number of buckets it groups over drops some of them under a key
-named "breakdown", and the counts silently stop adding up to the total. A ranked sample with no
-population beside it reads as the whole list of offenders.
-"""
+"""A breakdown cut below its bucket count stops adding up, and a top-N sample without population reads as all."""
 
 import json
 from pathlib import Path

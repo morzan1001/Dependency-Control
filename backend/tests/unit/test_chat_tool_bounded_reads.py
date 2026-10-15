@@ -1,8 +1,4 @@
-"""A chat tool that stopped at its read ceiling must say what it stopped short of.
-
-An LLM relaying a list has no chart beside it against which a reader could notice that the list
-is a page, so a bare list is read as the whole of what was asked about.
-"""
+"""A relayed list has no chart beside it to reveal a page, so a capped tool must name what it left out."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -224,8 +220,6 @@ async def test_one_call_does_not_inherit_the_previous_call_s_saturated_read(seed
 
 @pytest.mark.asyncio
 async def test_the_occurrence_count_for_a_cve_is_the_population_not_the_page(seeded, admin_user):
-    """`total_occurrences` read `len(rows)`, so a saturated read reported the ceiling as the
-    number of places the CVE was found."""
     population = _CVE_OCCURRENCE_READ + _OVER_THE_CEILING
     _fill(
         seeded.findings,
@@ -328,8 +322,7 @@ async def test_an_expiring_waiver_names_only_the_package_parts_it_holds(seeded, 
 
 @pytest.mark.asyncio
 async def test_a_capped_project_listing_holds_the_most_recently_scanned(seeded, admin_user):
-    """An estate larger than the cap is answered with a page, so the page has to be the freshest
-    projects rather than whichever ones the collection happens to hand back first."""
+    """An estate larger than the cap gets a page, which must hold the freshest projects, not collection order."""
     oldest_first = _ESTATE_SIZE - 1
     for index in range(_ESTATE_SIZE):
         seeded.projects._docs[f"ps-{index:02d}"] = {

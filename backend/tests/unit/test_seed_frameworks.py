@@ -1,5 +1,3 @@
-"""NIST SP 800-131A, BSI TR-02102 and CNSA 2.0 judge one control per rule of their seed file."""
-
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
@@ -35,7 +33,6 @@ def _asset(name, primitive, **kw):
 
 
 def _persisted(assets):
-    """The analyzer's findings for `assets` as the engine stores them, stamped with their scan."""
     return [
         finding | {"_id": finding["id"], "scan_id": "s1"}
         for finding in crypto_findings_for_assets(assets, load_seed_rules(), scanner="crypto_weak_algorithm")

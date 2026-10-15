@@ -1,5 +1,3 @@
-"""Unit tests for SPDX expression tokenization."""
-
 from app.services.analyzers.license_compliance.normalizer import tokenize_license_string
 
 

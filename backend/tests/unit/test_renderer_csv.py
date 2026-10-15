@@ -48,7 +48,7 @@ def test_csv_header_present():
 
 
 def test_csv_renderer_includes_disclaimer_comment():
-    """A framework disclaimer must be prepended as a CSV comment block so the export isn't read as a full certification pass."""
+    """The disclaimer is prepended as a CSV comment block so the export does not read as a certification pass."""
     r = CsvRenderer()
     rep = _report()
     rep.format = ReportFormat.CSV

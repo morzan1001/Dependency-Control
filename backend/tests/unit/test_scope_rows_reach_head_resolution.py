@@ -1,5 +1,3 @@
-"""A scope the resolver read is not read again to find its head scans."""
-
 from datetime import datetime, timezone
 
 import pytest

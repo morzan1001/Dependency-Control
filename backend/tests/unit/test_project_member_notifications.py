@@ -1,5 +1,3 @@
-"""Who the project fan-out reaches (a deactivated account keeps its memberships) and on which channels."""
-
 import pytest
 
 from app.models.project import Project, ProjectMember

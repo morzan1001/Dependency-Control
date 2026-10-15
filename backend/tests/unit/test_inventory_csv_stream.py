@@ -1,5 +1,3 @@
-"""Tests for the streaming CSV renderer shared by all inventory/export views."""
-
 import csv
 import io
 

@@ -1,11 +1,4 @@
-"""The dependency graph says how much of the scan it was built from.
-
-A container-image scan of a fat base image plus a monorepo lockfile crosses
-SCAN_DEPENDENCY_READ_LIMIT without being unusual, and the graph carried no count of what it
-left behind: a package the read never reached rendered exactly like a package the scan does
-not contain. The ceiling itself is measured and stays — 200 000 rows cost 9.25 s and 1.04 GiB
-through the graph builder against a 2 GiB pod, where 10 000 cost 0.32 s and 52 MiB.
-"""
+"""A graph cut at SCAN_DEPENDENCY_READ_LIMIT must say so, or an unread package looks absent from the scan."""
 
 import pytest
 

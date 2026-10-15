@@ -1,6 +1,4 @@
-"""Version inconsistency across projects is a count over every dependency row of the compared
-scans, so it is grouped in Mongo. Pushing each scan's package list to the caller and slicing it
-at 100 hid any package past the hundredth of a scan, and there is no order to slice along."""
+"""Version inconsistency counts every dependency row of the compared scans, so it is grouped in Mongo."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -139,8 +137,7 @@ _COMPARISON_LIMIT = 20
 
 @pytest.mark.asyncio
 async def test_the_payload_says_how_many_projects_the_comparison_reached(db):
-    """total_projects counts what the user can see; a CVE count reported out of it claims a
-    comparison that never ran."""
+    """total_projects counts what the user can see, so a CVE count out of it claims a comparison never run."""
     from app.api.v1.helpers.analytics import gather_cross_project_data
     from app.services.analytics.scopes import read_scope_projects
 

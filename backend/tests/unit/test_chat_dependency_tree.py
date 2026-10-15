@@ -1,5 +1,3 @@
-"""get_dependency_tree answers with a page of short rows, direct dependencies first, that the model can narrow."""
-
 from datetime import datetime, timezone
 
 import pytest

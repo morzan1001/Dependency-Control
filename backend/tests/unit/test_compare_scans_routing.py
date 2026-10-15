@@ -1,5 +1,3 @@
-"""compare_scans answers every scan-delta category through the REST dispatcher, pageable and filterable by change."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

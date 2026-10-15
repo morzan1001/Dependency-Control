@@ -1,5 +1,3 @@
-"""A single-project report judges its controls by the policy the analyzers ran for that project."""
-
 from datetime import datetime, timezone
 
 import pytest

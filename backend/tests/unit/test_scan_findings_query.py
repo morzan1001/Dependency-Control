@@ -1,5 +1,3 @@
-"""Unit tests for the findings $match/$sort/pipeline builders used by read_scan_findings."""
-
 from app.api.v1.endpoints.projects import (
     _build_scan_findings_match,
     _scan_findings_sort_stage,
@@ -65,7 +63,7 @@ class TestBuildScanFindingsMatch:
 
 
 class TestScanFindingsSortStage:
-    """Every sort must end with the unique _id tiebreaker for stable pagination; finding_id isn't unique per scan (one CVE across N components)."""
+    """finding_id is not unique per scan, so every sort ends on _id for stable pagination."""
 
     def test_severity_sort_has_unique_tiebreaker(self):
         stage = _scan_findings_sort_stage("severity", -1)
@@ -101,13 +99,10 @@ class TestScanFindingsPipelineKeepsId:
         facet = next(st["$facet"] for st in pipeline if "$facet" in st)
         data_project = facet["data"][-1]["$project"]
         assert data_project.get("_id") == 0
-        # first_scanner sort-helper must not leak into the response
         assert data_project.get("first_scanner") == 0
 
 
 class TestScanFindingsDirectOnly:
-    """direct_only drops findings on transitive dependencies but keeps direct and non-dependency findings."""
-
     def _pipeline(self, direct_only: bool):
         from app.api.v1.endpoints.projects import _build_scan_findings_pipeline
 

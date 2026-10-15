@@ -1,5 +1,3 @@
-"""Waiver chat tool read paths must honour expiration_date so expired waivers never appear active."""
-
 from datetime import datetime, timedelta, timezone
 
 import pytest

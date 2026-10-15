@@ -229,7 +229,6 @@ async def test_engine_counts_a_crashed_report_under_the_error_status():
 
 
 async def _store_project(db, pid, *, scanned=True, sbom=True, failed_analyzers=None, scan_type=None, **fields):
-    """The project and its head scan as ingest and the analysis engine leave them."""
     scan_id = f"scan-{pid}" if scanned else None
     project = Project(id=pid, name=f"name-{pid}", latest_scan_id=scan_id, members=[{"user_id": "u1"}], **fields)
     await db.projects.insert_one(project.model_dump(by_alias=True))
@@ -268,7 +267,6 @@ async def _user_scope(db):
 
 
 def _reads(collection):
-    """Every find the collection serves, as (query, projection, options)."""
     reads: list[tuple] = []
     find = collection.find
 

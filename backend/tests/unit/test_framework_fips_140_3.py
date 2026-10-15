@@ -33,7 +33,6 @@ async def _statuses(assets):
 
 
 def _weak_algorithm_finding(asset, *, waiver_reason=None):
-    """The analyzer's finding for `asset` as persisted, waived when a reason is given."""
     [finding] = [
         f
         for f in crypto_findings_for_assets([asset], load_seed_rules(), scanner="crypto")
@@ -78,7 +77,7 @@ async def test_fips_approved_algorithm_passes():
 
 @pytest.mark.asyncio
 async def test_fips_disallowed_category_not_applicable_without_matching_primitive():
-    """A hash-only project must report the asymmetric/symmetric disallowed-category controls as NOT_APPLICABLE, not a false PASS."""
+    """A hash-only project must report the asymmetric and symmetric controls NOT_APPLICABLE, not a false PASS."""
     statuses = await _statuses([_asset("SHA-256", CryptoPrimitive.HASH)])
 
     assert statuses["FIPS-140-3-ASYMMETRIC"] == ControlStatus.NOT_APPLICABLE

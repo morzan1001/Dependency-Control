@@ -1,5 +1,3 @@
-"""An estate-wide tool reads the caller's scope once per call, and an unseen project_id is unknown."""
-
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -81,7 +79,6 @@ def _seeded() -> FakeDatabase:
 
 
 def _record(collection: FakeCollection) -> list[Any]:
-    """Every filter the collection is read with."""
     seen: list[Any] = []
     for method in ("find", "find_one", "aggregate", "count_documents"):
         original = getattr(collection, method)

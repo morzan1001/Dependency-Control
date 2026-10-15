@@ -1,9 +1,4 @@
-"""A compliance report may not claim a verdict it did not compute over the whole scope.
-
-A verdict whose evidence is the absence of a match is withheld as `not_evaluated` once a gap leaves
-part of the scope unread; a failure stands, because a partial scope can under-report a violation but
-cannot invent one.
-"""
+"""Absence-of-match verdicts are withheld when a gap leaves scope unread; failures stand, as gaps cannot invent one."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -173,7 +168,6 @@ def test_json_carries_the_statement_and_the_numbers():
 
 
 def test_csv_states_coverage_even_without_a_disclaimer():
-    """The '#' header block used to be written only when a disclaimer existed."""
     body = CsvRenderer().render(_evaluation_with(_partial()), _report())
 
     assert f"# Coverage: {coverage_statement(_partial())}" in body.decode()
@@ -292,8 +286,7 @@ def _rule(*, enabled: bool, match_primitive: CryptoPrimitive | None = None) -> C
 
 
 def test_a_not_applicable_decided_by_the_policy_stands_over_a_scope_with_a_gap():
-    """Only the inventory-read answer is unsafe; a control whose backing rules are all disabled
-    cannot change whatever the unread assets hold."""
+    """A control with all backing rules disabled cannot change whatever the unread assets hold."""
     control = ControlDefinition(
         control_id="C1",
         title="t",
@@ -397,8 +390,7 @@ def _control(control_id: str, status: ControlStatus) -> ControlResult:
 
 
 def test_residual_risks_lists_the_failed_control_and_nothing_else():
-    """The auditor reads this section as the outstanding exposure, so a sign flip here would
-    publish the controls that passed as the ones still open."""
+    """Auditors read this as the outstanding exposure, so a sign flip would publish passed controls as open."""
     results = [
         _control("c-failed", ControlStatus.FAILED),
         _control("c-passed", ControlStatus.PASSED),

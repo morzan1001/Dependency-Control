@@ -74,8 +74,7 @@ async def _evaluate(plan, **fields):
 
 @pytest.mark.asyncio
 async def test_a_control_list_cut_at_the_plan_ceiling_says_what_it_left_out():
-    """One control per plan item, so past the ceiling the control list and the plan summary
-    disagree with nothing to say which is right."""
+    """One control per plan item, so past the ceiling the control list and summary disagree unless it says so."""
     plan = _plan(total_items=_ITEMS_IN_SCOPE, items_returned=_PLAN_ITEMS_BUILT)
 
     result = await _evaluate(plan)

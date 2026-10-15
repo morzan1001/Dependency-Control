@@ -1,6 +1,3 @@
-"""The unified key dependency admits a caller only when the key names the surface and the owner
-still holds that surface's permission."""
-
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
@@ -26,8 +23,7 @@ _FORBIDDEN = 403
 
 _BOTH_SURFACES = [API_KEY_SURFACE_MCP, API_KEY_SURFACE_ADHOC]
 
-# The permission each surface gates on, and the sibling surface's permission, which is the one an
-# escalation would accept in its place.
+# Each surface's permission and its sibling's, the one an escalation would accept in its place.
 _SURFACE_PERMISSION = {
     API_KEY_SURFACE_MCP: Permissions.MCP_ACCESS,
     API_KEY_SURFACE_ADHOC: Permissions.ANALYZE_ADHOC,
@@ -38,8 +34,7 @@ _SIBLING_PERMISSION = {
 }
 
 _MSG_MISSING_BEARER = "Missing Bearer token"
-# Unknown, revoked and expired share one message: distinguishing them would confirm to a caller
-# holding a rejected token that the token once existed.
+# Unknown, revoked and expired share one message, or a rejected token's holder learns it once existed.
 _MSG_OPAQUE_KEY = "Invalid, revoked, or expired API key"
 _MSG_RETIRED_KEY = "This API key format is retired. Create a dck_ key under Profile > API Keys and use it instead."
 
@@ -49,7 +44,6 @@ _REACHABLE_COLLECTIONS = frozenset({_COL, _USERS_COL})
 
 
 def _key_doc(surfaces):
-    """The document ApiKeyRepository.create writes."""
     now = datetime.now(timezone.utc)
     return {
         "_id": _KEY_ID,
@@ -103,8 +97,7 @@ async def test_a_valid_key_for_the_surface_returns_the_owner_and_the_key_documen
 
     assert user.id == _OWNER
     assert key_doc["_id"] == _KEY_ID
-    # The ad-hoc rate limiter reads this field off the key document by name, and keys the caller's
-    # window on it; renaming it collapses every caller into one bucket or raises.
+    # The ad-hoc rate limiter keys each caller's window on this field by name, so renaming it would break that.
     assert key_doc["user_id"] == _OWNER
 
 
@@ -132,8 +125,7 @@ async def test_a_non_bearer_header_is_401():
 
 @pytest.mark.asyncio
 async def test_an_unresolvable_token_is_401_with_one_shared_message():
-    # The repository filters revoked and expired keys inside the query, so unknown, revoked and
-    # expired all arrive here as the same miss and must leave with the same answer.
+    # The repository filters revoked and expired keys in the query, so all three arrive here as one miss.
     db, _ = _db_with_key(None)
 
     with pytest.raises(HTTPException) as exc:
@@ -175,9 +167,7 @@ async def test_an_inactive_owner_is_401(monkeypatch):
     assert exc.value.status_code == _UNAUTHORIZED
 
 
-# The sibling case is the escalation this design guards against: a gate widened to accept either
-# permission would hand every ad-hoc key owner the MCP tool surface, and no unrelated permission
-# would show that.
+# A gate widened to accept the sibling permission would hand every ad-hoc key owner MCP; only it shows that.
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
 @pytest.mark.parametrize("held", ["unrelated", "sibling"])
 @pytest.mark.asyncio
@@ -212,8 +202,7 @@ async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface)
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
 @pytest.mark.asyncio
 async def test_the_surface_is_answered_before_the_permission(monkeypatch, surface):
-    # Checking the permission first tells the holder of a key that never named the surface whether
-    # its owner still holds that surface's permission, which is not theirs to learn.
+    # Checking the permission first would tell the key's holder whether its owner still holds it.
     other = API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP
     db, _ = _db_with_key(_key_doc([other]))
     _patch_user(monkeypatch, _active_user([Permissions.PROJECT_READ]))

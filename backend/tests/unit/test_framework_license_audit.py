@@ -1,5 +1,3 @@
-"""Unit tests for LicenseAuditFramework."""
-
 import pytest
 
 from app.schemas.project import LicensePolicySchema

@@ -159,7 +159,6 @@ def test_cipher_suites_object_shape_extracts_name():
 
 
 def test_cipher_suites_falsy_names_filtered():
-    """Objects without a usable name must not produce dict-repr garbage."""
     components = [
         {
             "type": "cryptographic-asset",

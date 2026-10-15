@@ -6,7 +6,6 @@ from app.services.pqc_migration.mappings_loader import load_mappings, normalise_
 
 
 def test_all_quantum_vulnerable_families_have_a_mapping():
-    """Every quantum-vulnerable family in the seed rule must be covered by mappings.yaml."""
     seed_path = Path(__file__).resolve().parents[2] / "app" / "services" / "crypto_policy" / "seed" / "nist_pqc.yaml"
     with seed_path.open() as f:
         seed = yaml.safe_load(f)

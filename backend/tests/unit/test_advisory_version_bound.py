@@ -1,5 +1,3 @@
-"""An advisory's inclusive max version, compared across the version schemes SBOMs carry."""
-
 import pytest
 from pydantic import ValidationError
 

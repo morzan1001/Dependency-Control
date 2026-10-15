@@ -1,9 +1,4 @@
-"""A hotspot row names the population behind each list it samples.
-
-Every one of these lists reads as the whole of what the row found: the projects it affects, the
-versions that fix it, the CVEs behind it. Without the population beside it, a reader acting on
-ten project names cannot tell them from all the projects the component is in.
-"""
+"""Each sampled list reads as everything the row found, so the population behind it must be named."""
 
 from app.api.v1.endpoints.analytics.risk import (
     _CVES_SHOWN,
@@ -73,8 +68,7 @@ def test_the_fix_version_sample_names_how_many_versions_there_are():
 
 
 def test_the_fix_versions_shown_are_the_newest_ones():
-    """The versions come out of a set, which has no order, so the same row samples a different
-    three between runs unless they are ranked first."""
+    """The versions come out of an unordered set, so unranked the same row would sample a different three."""
     versions = ["2.0.0", _NEWEST_FIX, "9.0.0", "1.0.1", "3.0.0"]
 
     hotspot = _hotspot(project_count=1, cve_count=1, fix_versions=versions)

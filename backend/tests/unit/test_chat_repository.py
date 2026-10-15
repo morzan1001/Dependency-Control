@@ -1,5 +1,3 @@
-"""Unit tests for ChatRepository using the FakeDb fixture from conftest.py."""
-
 import asyncio
 
 import pytest

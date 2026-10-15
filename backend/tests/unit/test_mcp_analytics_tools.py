@@ -1,5 +1,3 @@
-"""Unit tests for the crypto-analytics MCP tool functions."""
-
 from datetime import datetime, time, timedelta, timezone
 
 import pytest

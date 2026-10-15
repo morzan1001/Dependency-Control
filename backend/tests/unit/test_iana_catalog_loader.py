@@ -1,5 +1,3 @@
-"""Unit tests for the IANA TLS cipher-suite catalog loader: shared-cache read, live fetch and bundled fallback."""
-
 from functools import partial
 from unittest.mock import AsyncMock
 

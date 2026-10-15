@@ -23,7 +23,7 @@ def test_prefix_boundary_is_strict():
 
 
 def test_crypto_misuse_rule_mapped_when_check_id_has_dotted_path_prefix():
-    """The rule name lives in the final dot-segment of a Semgrep check_id, so a whole-string startswith would miss path-prefixed ids."""
+    """The rule name is a Semgrep check_id's last dot-segment, so a startswith on the whole id misses prefixed ids."""
     nested = "rules.crypto-misuse.ecb-mode.crypto-misuse-ecb-mode-python"
     assert _finding_type_from_rule(nested) == FindingType.CRYPTO_KEY_MANAGEMENT
 
