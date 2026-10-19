@@ -9,7 +9,6 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
-from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 _PROJECT = "p-crypto"
 _SCAN = "s-crypto"
@@ -27,8 +26,7 @@ def _algorithm(bom_ref: str, name: str, primitive: CryptoPrimitive) -> CryptoAss
     )
 
 
-@pytest_asyncio.fixture
-async def with_assets(db):
+def _seed_head_scan(db, scan_type: str | None = None) -> None:
     db.projects._docs[_PROJECT] = {
         "_id": _PROJECT,
         "name": "P",
@@ -41,8 +39,14 @@ async def with_assets(db):
         "project_id": _PROJECT,
         "branch": _BRANCH,
         "status": SCAN_STATUS_COMPLETED,
+        "scan_type": scan_type,
         "created_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
     }
+
+
+@pytest_asyncio.fixture
+async def with_assets(db):
+    _seed_head_scan(db)
     await CryptoAssetRepository(db).bulk_upsert(
         _PROJECT,
         _SCAN,
@@ -85,13 +89,21 @@ async def test_an_unknown_report_framework_is_refused_rather_than_dropped(db):
 
 
 @pytest.mark.asyncio
-async def test_mcp_get_crypto_summary():
-    from app.services.chat.tools.crypto_tools import get_crypto_summary
+@pytest.mark.parametrize("tool", ["get_crypto_summary", "list_crypto_assets"])
+@pytest.mark.parametrize(
+    ("scan_type", "assets", "evaluated"),
+    [(None, [], False), ("cbom", [], True), (None, ["AES-128"], True)],
+    ids=["no-cbom", "empty-cbom", "assets"],
+)
+async def test_the_crypto_tools_tell_an_empty_cbom_from_a_missing_one(db, tool, scan_type, assets, evaluated):
+    _seed_head_scan(db, scan_type)
+    await CryptoAssetRepository(db).bulk_upsert(
+        _PROJECT, _SCAN, [_algorithm(f"ref-{name}", name, CryptoPrimitive.BLOCK_CIPHER) for name in assets]
+    )
 
-    agg_results = [{"_id": "algorithm", "count": 1}]
-    mock_col = create_mock_collection(aggregate=agg_results, count_documents=1)
-    db = create_mock_db({"crypto_assets": mock_col})
+    result = await ChatToolRegistry().execute_tool(tool, {"project_id": _PROJECT, "limit": 10}, make_admin(), db)
 
-    result = await get_crypto_summary(db, project_id="p2", scan_id="s2")
-    assert result["total"] == 1
-    assert "by_type" in result
+    assert result["cbom_evaluated"] is evaluated
+    if tool == "get_crypto_summary":
+        assert result["total"] == len(assets)
+        assert result["by_type"] == ({"algorithm": len(assets)} if assets else {})

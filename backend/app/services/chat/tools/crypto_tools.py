@@ -49,6 +49,7 @@ async def list_crypto_assets(
     return {
         "items": [i.model_dump(by_alias=True) for i in items],
         "items_total": await repo.count_by_scan(project_id, scan_id, **filters),
+        "cbom_evaluated": scan_id in await repo.evaluated_scan_ids([project_id], [scan_id]),
     }
 
 
@@ -68,7 +69,9 @@ async def get_crypto_summary(
     project_id: str,
     scan_id: str,
 ) -> dict[str, Any]:
-    return await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
+    repo = CryptoAssetRepository(db)
+    summary = await repo.summary_for_scan(project_id, scan_id)
+    return {**summary, "cbom_evaluated": scan_id in await repo.evaluated_scan_ids([project_id], [scan_id])}
 
 
 async def get_project_crypto_policy(

@@ -501,7 +501,9 @@ _tool(
 _tool(
     "get_crypto_summary",
     "Get a summary of cryptographic assets broken down by asset type. Summarises the "
-    f"project's head build unless scan_id says otherwise. {_ANSWER_NAMES_BUILD}",
+    "project's head build unless scan_id says otherwise. total 0 with cbom_evaluated "
+    "false means no CBOM was posted, not that the build has no cryptography. "
+    f"{_ANSWER_NAMES_BUILD}",
     required=["project_id"],
     project_id=_PROJECT_ID,
     scan_id=_SCAN_ID,
