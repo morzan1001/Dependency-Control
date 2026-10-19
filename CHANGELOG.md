@@ -1,3 +1,99 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.56. Run mongosh commands in-pod against the application database; nothing has to happen before the rollout.
+
+## After the rollout: hide, then drop, the indexes the app does not declare on findings, dependencies, gitlab_instances and webhook_deliveries
+
+Startup no longer creates `findings` `severity_1`, `finding_id_1`, `scan_id_1_reachable_1` and `project_id_1_scan_created_at_1`, nor `dependencies` `name_1`, `purl_1`, `project_id_1_name_1` and `scan_id_1_source_type_1`: no read of the app uses them. Installations that ran older releases also carry indexes that startup stopped creating long ago. The loop below removes them, together with `gitlab_instances` `is_default_1` and `webhook_deliveries` `success_1_webhook_id_1`, which nothing reads, so both large collections end up with exactly the indexes startup declares (about 6.3 GiB per member on a large installation, and fewer indexes to maintain on every scan ingest). If you skipped the 1.9.49 step that drops `findings` `type_1` and `dependencies` `scan_id_1_name_1_version_1`, run it first; otherwise the keep check reports these two as EXTRA. Rewrite external reports, such as Metabase questions, that filter `findings` or `dependencies` without naming a scan before you hide the indexes; afterwards they run as collection scans.
+
+Run the loop once every pod runs this release, first with `step = "hide"`, then, after a few days that include your busiest reporting time, with `step = "drop"`; `step = "unhide"` undoes a hide without a rebuild:
+
+```js
+const step = "hide"
+const drops = {
+  findings: ["component_1", "component_1_version_1_type_1_scan_created_at_1", "created_at_-1", "finding_id_1", "project_id_1", "project_id_1_component_1_type_1", "project_id_1_scan_created_at_1", "scan_id_1_reachable_1", "version_1", "waived_1", "severity_1", "scan_id_1_severity_-1", "scan_id_1"],
+  dependencies: ["direct_1", "name_1", "project_id_1", "project_id_1_name_1", "purl_1", "scan_id_1_name_1", "scan_id_1_source_type_1", "source_type_1", "type_1", "version_1", "scan_id_1"],
+  gitlab_instances: ["is_default_1"],
+  webhook_deliveries: ["success_1_webhook_id_1"],
+}
+if (!["hide", "drop", "unhide"].includes(step)) throw new Error(`unknown step ${step}`)
+for (const [coll, names] of Object.entries(drops)) {
+  const present = new Set(db.getCollection(coll).getIndexes().map((i) => i.name))
+  for (const name of names) {
+    if (!present.has(name)) { print(`absent ${coll}.${name}`); continue }
+    if (step === "drop") db.getCollection(coll).dropIndex(name)
+    else db.runCommand({ collMod: coll, index: { name, hidden: step === "hide" } })
+    print(`${step} ${coll}.${name}`)
+  }
+}
+```
+
+Afterwards this must print only `keep check done`:
+
+```js
+const keep = {
+  findings: ["scan_id_1_severity_1_type_1_finding_id_1", "scan_id_1_waived_1", "scan_id_1_type_1", "scan_id_1_component_1_version_1", "project_id_1_component_1_type_1_finding_id_1_version_1_first_seen_at_1_scan_created_at_1", "project_id_1_finding_id_1_created_at_-1", "type_1_scan_created_at_1"],
+  dependencies: ["scan_id_1_name_1_version_1_purl_1", "scan_id_1_version_1", "scan_id_1_direct_1", "scan_id_1_purl_1"],
+}
+for (const [coll, names] of Object.entries(keep)) {
+  const indexes = db.getCollection(coll).getIndexes()
+  const present = new Set(indexes.map((i) => i.name))
+  names.filter((n) => !present.has(n)).forEach((n) => print(`MISSING ${coll}.${n}`))
+  indexes.filter((i) => i.hidden && names.includes(i.name)).forEach((i) => print(`HIDDEN ${coll}.${i.name}`))
+  indexes.filter((i) => !i.hidden && i.name !== "_id_" && !names.includes(i.name)).forEach((i) => print(`EXTRA ${coll}.${i.name}`))
+}
+print("keep check done")
+```
+
+This replaces the 1.9.42 step "Once 1.9.42 is confirmed stable: drop the old indexes"; the loop covers all seven of its indexes.
+
+## After the rollout (optional): remove dead leftovers
+
+Nothing in this release reads or writes these. The collections are dropped only when empty; never touch `system_invitations`, which is live:
+
+```js
+for (const c of ["project_invitations", "policy_audit_entries"]) {
+  if (!db.getCollectionNames().includes(c)) { print(`absent ${c}`); continue }
+  const n = db.getCollection(c).countDocuments({})
+  if (n === 0) { db.getCollection(c).drop(); print(`dropped ${c}`) } else print(`kept ${c}: ${n} documents`)
+}
+for (const name of ["gitlab_instance_id_1_gitlab_group_id_1", "github_instance_id_1_github_team_id_1"]) {
+  if (db.teams.getIndexes().some((i) => i.name === name)) { db.teams.dropIndex(name); print(`dropped teams.${name}`) }
+}
+db.system_settings.updateOne({ _id: "current" }, { $unset: { gitlab_access_token: "" } })
+```
+
+The two teams indexes are unique constraints on fields the team bindings replaced. `gitlab_access_token` has not been used for a GitLab request since 1.4.33; 1.9.56 only reported whether it was set, and this release neither reads nor writes it.
+
+## Rolling back to 1.9.56
+
+While the indexes are hidden, run the loop with `const step = "unhide"` before rolling the app back to 1.9.56 or older. Its startup re-declares 8 of the hidden indexes, and `createIndexes` refuses a hidden index of the same name (`IndexOptionsConflict`, code 85), so the old pods never start.
+
+After the drop, 1.9.56 builds eight of the dropped indexes during startup, one after another over the whole collection, and its pods are restarted before the builds finish. Build them first, and roll back once `db.currentOp({ "command.createIndexes": { $exists: true } }).inprog` is empty:
+
+```js
+db.findings.createIndexes([{ severity: 1 }, { finding_id: 1 }, { scan_id: 1, reachable: 1 }, { project_id: 1, scan_created_at: 1 }])
+db.dependencies.createIndexes([{ name: 1 }, { purl: 1 }, { project_id: 1, name: 1 }, { scan_id: 1, source_type: 1 }])
+```
+
+## Behaviour changes
+
+- A CycloneDX CBOM (`bomFormat: "CycloneDX"`) that lists no cryptographic-asset component is accepted with 202 and handled like any other CBOM: it tags the run's scan as `cbom`, runs the crypto analyzers and replaces the assets an earlier CBOM upload stored on that scan, so re-running a CBOM job that now finds nothing clears that scan's assets. The project counts as evaluated with no cryptography in compliance reports (the crypto frameworks and the PQC migration plan), in the project inventory and in the chat and MCP crypto tools; crypto hotspots and trends count assets and show 0, as for a project without a CBOM.
+- `/ingest/cbom` still refuses a payload without a readable crypto asset with 400 in two cases, with new details: "CBOM payload is not a CycloneDX document" when `bomFormat` is not "CycloneDX", and "CBOM components could not be read as cryptographic assets" when its `cryptographic-asset` components cannot be read (or `components` is not a list). The old detail "No cryptographic-asset components found in CBOM payload" is gone, so CI scripts that match on it need updating. A CBOM with at least one readable asset is accepted with the readable ones.
+- `cbom_ingests_total` has a new `status="empty"`; dashboards that want every CBOM ingest add it next to `success`. The `crypto_asset.ingested` webhook and the `crypto_asset_ingested` notification now also fire for empty CBOMs ("Crypto assets ingested: 0 entries", total 0 unless the SBOM carried embedded crypto assets), one per CBOM job run on every repository without cryptography.
+- The inventory tells a project whose latest CBOM held no cryptography ("No cryptography found in the latest CBOM") from one without a CBOM ("No CBOM uploaded for the latest scan"); `/inventory/stats` and the chat and MCP tools `get_crypto_summary` and `list_crypto_assets` carry `cbom_evaluated`. A crypto coverage gap in compliance reports reads "has no CBOM in scan …".
+- The outdated-dependency recommendation is back for projects that run the `outdated_packages` analyzer (not active by default). Its type is `outdated_dependency`, with a MEDIUM card for outdated direct dependencies and a LOW card when more than three transitive ones are outdated; the action `upgrade_outdated` lists `packages` (`name`, `current_version`, `latest_version`) and `packages_total`, and leaves out packages a vulnerability or end-of-life card already upgrades. The summary carries `outdated_deps` again.
+- Compliance reports and PQC migration plans show project and team names instead of raw ids in the UI and in rendered reports, and the PDF cover names the requester. The API adds `scope_name` beside the unchanged `scope_id` (report list, single report, chat `list_compliance_reports`, which also gains `requested_by_name`) and a `project_names` map to the PQC plan. In generated reports `scope_description` reads `project '<name>'` instead of the id; JSON reports already carried `"scope": {"kind", "id"}`, SARIF reports gain it under `runs[].properties.scope`, so readers that parsed the id from `scope_description` should read `scope.id`. Report artifacts generated from now on and SBOM exports (`<project>_sbom_<date>.json`, `<project>_sboms_<date>.zip`) are named after their project or team with the same cleaned name segment as the other exports; reports generated before the upgrade keep their stored file names.
+- Creating or renaming a project or team shows a non-blocking hint when another project or team the user can see already has that name, ignoring case and surrounding spaces.
+- The nightly update-frequency reconcile, and the branch census that the update-frequency project view and comparison use to pick their branch, read their windows with streamed finds instead of a `$group`. The reconcile no longer fails with code 292 at the 100 MB blocking-stage limit, which it did from 2026-10-19 on; results are unchanged.
+- Text sorts ignore letter case and accents in more places: every waiver column, project branch lists and branch tips, archive branches, a project's owning `teams` and members' `inherited_from` names, and the chat `list_teams` tool; the dependency-type distribution breaks ties by type name. The inventory component and crypto-asset tables still sort case-sensitively.
+- A waiver restamp no longer fails on a location finding stored without a `finding_id`.
+- `GET` and `PUT /system/settings` and the chat and MCP `get_system_settings` tool no longer return `gitlab_access_token_configured`, and `PUT /system/settings` ignores a `gitlab_access_token` it is sent; GitLab instances keep their own tokens. The hotspot API's `priority_reasons` use the impact analysis's wording and can list `blast_radius` and `overdue`.
+- The Helm default backup image is `percona/percona-backup-mongodb:2.11.0`, so a Percona install (`database.type=percona`) renders with `database.percona.backup.enabled=true` and no image set.
+- UI: light-theme HIGH, LOW, NEGLIGIBLE and UNKNOWN severity pills use darker fills with readable white text, and the destructive colour (field errors, delete buttons) is readable in both themes; many more screens fit a 375 px phone (tables, cards, dialogs, settings forms, chat answers); malware and crypto finding types have their own badge colour and icon; the project picker shows the owning teams of projects that share a name, or their repository path when no team owns them; chat answers style links and quotes; page loads that fail with a server error show the server's reason when it gives one, and failed downloads show it under their toast title; forms, dialogs, status pills, legends, pickers and toasts follow one pattern in more places.
+
+
+
 # Release 1.9.56
 
 ## 🧪 Tests
