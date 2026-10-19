@@ -31,6 +31,7 @@ from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
+from app.services.compliance.renderers.pdf_renderer import build_template_context
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.normalizers.license import normalize_license
@@ -645,6 +646,39 @@ async def test_generate_lets_go_of_the_inputs_before_rendering():
     assert alive_at_render == [(False, "shop")]
     assert update_status.call_args_list[-1].kwargs["policy_version_snapshot"] == 3
     assert update_status.call_args_list[-1].kwargs["iana_catalog_version_snapshot"] == 4
+
+
+@pytest.mark.asyncio
+async def test_the_pdf_names_its_requester_and_the_stored_report_keeps_their_id():
+    engine = ComplianceReportEngine()
+    report = _report(framework=ReportFramework.CVE_REMEDIATION_SLA, format=ReportFormat.PDF, requested_by="u1")
+    printed: list[str] = []
+
+    class PageContext:
+        mime_type, extension = "application/pdf", "pdf"
+
+        def render(self, evaluation, rep, *, disclaimer=None):
+            printed.append(build_template_context(evaluation, rep, disclaimer)["requested_by"])
+            return b"%PDF"
+
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=AsyncMock()),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=MagicMock(resolve=AsyncMock(return_value=_project_scope())),
+        ),
+        patch.dict(engine_module.RENDERER_REGISTRY, {ReportFormat.PDF: PageContext()}),
+        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=evaluation_input())),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
+    ):
+        await engine.generate(
+            report=report, db=MagicMock(), user=MagicMock(id="u1", username="ada", permissions=frozenset())
+        )
+
+    assert (printed, report.requested_by) == (["ada"], "u1")
 
 
 @pytest.mark.asyncio

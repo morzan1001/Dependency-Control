@@ -87,7 +87,8 @@ class ComplianceReportEngine:
                     report.format,
                     framework,
                     evaluation,
-                    report,
+                    # The artifact prints its requester's name; the stored report keeps the id.
+                    report.model_copy(update={"requested_by": user.username}),
                     scope_name,
                 )
             gridfs_id = await self._store_artifact(
