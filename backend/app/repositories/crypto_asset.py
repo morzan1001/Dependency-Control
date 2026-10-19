@@ -109,6 +109,14 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         query = scan_query(project_id, scan_id, asset_type, primitive, name_search)
         return await self.collection.count_documents(query)
 
+    async def evaluated_scan_ids(self, project_ids: list[str], scan_ids: list[str]) -> set[str]:
+        """A posted CBOM that listed no asset found its scan free of cryptography."""
+        with_assets = await self.collection.distinct(
+            "scan_id", {"project_id": {"$in": project_ids}, "scan_id": {"$in": scan_ids}}
+        )
+        with_cbom = await self.db.scans.distinct("_id", {"_id": {"$in": scan_ids}, "scan_type": "cbom"})
+        return {*with_assets, *with_cbom}
+
     async def summary_for_scan(self, project_id: str, scan_id: str) -> dict[str, Any]:
         pipeline: list[dict[str, Any]] = [
             {"$match": {"project_id": project_id, "scan_id": scan_id}},

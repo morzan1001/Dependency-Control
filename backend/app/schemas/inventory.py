@@ -18,6 +18,7 @@ class InventoryStatsResponse(BaseModel):
     license_count: int
     ecosystem_count: int
     crypto_asset_count: int
+    cbom_evaluated: bool
 
 
 class ComponentItem(BaseModel):

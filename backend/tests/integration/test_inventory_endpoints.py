@@ -10,7 +10,7 @@ _PID = "test-project-id"
 _NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
 
 
-async def _seed_scan(db, scan_id="s1", branch="main"):
+async def _seed_scan(db, scan_id="s1", branch="main", scan_type=None):
     await db.scans.insert_one(
         {
             "_id": scan_id,
@@ -19,6 +19,7 @@ async def _seed_scan(db, scan_id="s1", branch="main"):
             "status": "completed",
             "created_at": _NOW,
             "commit_hash": "abc123",
+            "scan_type": scan_type,
         }
     )
 
@@ -90,6 +91,26 @@ async def test_stats_counts_and_scan_context(client, db, member_auth_headers):
     assert body["license_count"] == 2
     assert body["ecosystem_count"] == 2
     assert body["crypto_asset_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scan_type", "assets", "evaluated"),
+    [(None, [], False), ("cbom", [], True), (None, ["AES"], True), ("cbom", ["AES"], True)],
+    ids=["no-cbom", "empty-cbom", "sbom-embedded-assets", "cbom-with-assets"],
+)
+async def test_stats_tell_a_scan_evaluated_for_cryptography_from_one_without_a_cbom(
+    client, db, member_auth_headers, scan_type, assets, evaluated
+):
+    await _seed_scan(db, scan_type=scan_type)
+    for name in assets:
+        await _seed_crypto(db, "s1", name)
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/stats", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["crypto_asset_count"] == len(assets)
+    assert resp.json()["cbom_evaluated"] is evaluated
 
 
 @pytest.mark.asyncio
