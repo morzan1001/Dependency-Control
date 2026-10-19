@@ -135,6 +135,7 @@ LICENSE_ALIASES: dict[str, str] = {
     "LGPL": SPDX_LGPL_2_1_OR_LATER,
     "LGPLv2": SPDX_LGPL_2_1,
     "LGPLv2.1": SPDX_LGPL_2_1,
+    "LGPL 2.1": SPDX_LGPL_2_1,
     "LGPLv3": SPDX_LGPL_3_0,
     "GNU LGPL": SPDX_LGPL_2_1_OR_LATER,
     "GNU Lesser General Public License": SPDX_LGPL_2_1_OR_LATER,
@@ -142,6 +143,7 @@ LICENSE_ALIASES: dict[str, str] = {
     "AGPLv3": SPDX_AGPL_3_0,
     "GNU AGPL": SPDX_AGPL_3_0,
     "MPL": SPDX_MPL_2_0,
+    "MPL 1.1": SPDX_MPL_1_1,
     "MPL 2.0": SPDX_MPL_2_0,
     "Mozilla Public License 2.0": SPDX_MPL_2_0,
     # As Maven POMs spell them.

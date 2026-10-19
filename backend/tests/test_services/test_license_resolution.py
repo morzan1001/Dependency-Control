@@ -80,6 +80,8 @@ def test_every_licence_the_vocabulary_names_is_one_the_database_knows():
         ("GNU General Public License, version 2", "GPL-2.0"),
         ("GNU General Public License v3.0 only", "GPL-3.0-only"),
         ("GNU Lesser General Public License", "LGPL-2.1-or-later"),
+        ("LGPL 2.1", "LGPL-2.1"),
+        ("MPL 1.1", "MPL-1.1"),
         ("Common Development and Distribution License 1.0", "CDDL-1.0"),
         ("CDDL", "CDDL-1.0"),
         ("Python Software Foundation License 2.0", "PSF-2.0"),
