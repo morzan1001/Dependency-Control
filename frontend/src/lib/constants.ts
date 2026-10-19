@@ -34,6 +34,19 @@ export const TEAM_ROLES = [
   { value: 'admin', label: 'Admin' },
 ] as const;
 
+export const FINDING_TYPE_LABELS: Record<string, string> = {
+  vulnerability: 'Vulnerability',
+  secret: 'Secret',
+  sast: 'SAST',
+  iac: 'IaC',
+  system_warning: 'System Error',
+  outdated: 'Outdated',
+  license: 'License',
+  quality: 'Quality',
+  eol: 'EOL',
+  malware: 'Malware',
+};
+
 export const CRYPTO_FINDING_TYPES = [
   { value: 'crypto_weak_algorithm', label: 'Weak algorithm' },
   { value: 'crypto_weak_key', label: 'Weak key' },

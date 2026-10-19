@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import { CRYPTO_FINDING_TYPES } from '@/lib/constants'
+import { CRYPTO_FINDING_TYPES, FINDING_TYPE_LABELS } from '@/lib/constants'
 import { 
   ShieldAlert, 
   FileCode, 
@@ -9,19 +9,6 @@ import {
   Clock,
   Stamp
 } from 'lucide-react'
-
-export const FINDING_TYPE_LABELS: Record<string, string> = {
-  vulnerability: 'Vulnerability',
-  secret: 'Secret',
-  sast: 'SAST',
-  iac: 'IaC',
-  system_warning: 'System Error',
-  outdated: 'Outdated',
-  license: 'License',
-  quality: 'Quality',
-  eol: 'EOL',
-  malware: 'Malware',
-}
 
 export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
   const getBadgeStyle = (type: string) => {

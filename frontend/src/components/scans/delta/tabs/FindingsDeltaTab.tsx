@@ -9,7 +9,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SeverityBadge } from "@/components/findings/SeverityBadge";
-import { FINDING_TYPE_LABELS, FindingTypeBadge } from "@/components/findings/FindingTypeBadge";
+import { FindingTypeBadge } from "@/components/findings/FindingTypeBadge";
+import { FINDING_TYPE_LABELS } from "@/lib/constants";
 import { formatDate, toggle } from "@/lib/utils";
 import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
