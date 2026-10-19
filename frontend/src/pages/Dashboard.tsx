@@ -21,7 +21,7 @@ const DASHBOARD_ACTIVITY_SKELETON_IDS = ['da1', 'da2', 'da3', 'da4', 'da5']
 const DASHBOARD_PROJECTS_SKELETON_IDS = ['dp1', 'dp2', 'dp3', 'dp4', 'dp5']
 
 function projectStatus(stats: Project['stats']): [label: string, className: string] {
-  if ((stats?.critical || 0) > 0) return ['Critical', 'bg-destructive text-destructive-foreground hover:bg-destructive/80']
+  if ((stats?.critical || 0) > 0) return ['Critical', 'bg-severity-critical text-severity-critical-foreground hover:bg-severity-critical/80']
   if ((stats?.high || 0) > 0) return ['High Risk', 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80']
   return ['Secure', 'bg-success text-success-foreground hover:bg-success/80']
 }
@@ -68,7 +68,7 @@ export default function Dashboard() {
       value: String(dashboardStats?.total_critical ?? 0),
       icon: ShieldAlert,
       description: "Click to view",
-      className: "text-destructive",
+      className: "text-severity-critical",
       onClick: () => navigate("/analytics?tab=search-vulns&severity=CRITICAL"),
     },
     {
@@ -272,7 +272,7 @@ export default function Dashboard() {
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 overflow-hidden"><OwningTeamsCell teams={project.teams} /></td>
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}</td>
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-critical font-bold">{project.stats?.critical || 0}</td>
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-high font-bold">{project.stats?.high || 0}</td>
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0"><ProjectStatusPill stats={project.stats} /></td>
                                 </tr>

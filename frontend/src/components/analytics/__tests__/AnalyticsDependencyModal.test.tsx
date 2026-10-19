@@ -431,3 +431,11 @@ describe("AnalyticsDependencyModal known advisories", () => {
     expect(screen.queryByRole("link", { name: "OSV-2024-1" })).not.toBeInTheDocument();
   });
 });
+
+describe("AnalyticsDependencyModal vulnerability count", () => {
+  it("writes the count in the critical severity colour", () => {
+    renderModal({ ...baseMetadata, total_vulnerability_count: 4 });
+
+    expect(screen.getByText("4").parentElement).toHaveClass("text-severity-critical");
+  });
+});

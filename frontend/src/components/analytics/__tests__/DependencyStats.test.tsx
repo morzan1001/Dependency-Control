@@ -131,3 +131,19 @@ describe("DependencyStats on a narrow screen", () => {
     expect(screen.getAllByRole("combobox")[0].parentElement).toHaveClass("flex-wrap");
   });
 });
+
+describe("DependencyStats vulnerability count", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (analyticsApi.getDependencyTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (analyticsApi.getTopDependencies as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...makeDep("left-pad"), has_vulnerabilities: true, vulnerability_count: 7 },
+    ]);
+  });
+
+  it("writes the count in the critical severity colour", async () => {
+    renderStats();
+
+    expect((await screen.findByText("7")).parentElement).toHaveClass("text-severity-critical");
+  });
+});

@@ -220,7 +220,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
         
         <div className="flex items-center gap-3 flex-shrink-0">
           {metadata.total_vulnerability_count > 0 && (
-            <div className="text-center text-destructive">
+            <div className="text-center text-severity-critical">
               <p className="text-lg font-semibold">{metadata.total_vulnerability_count}</p>
               <p className="text-xs">Vulnerabilities</p>
             </div>

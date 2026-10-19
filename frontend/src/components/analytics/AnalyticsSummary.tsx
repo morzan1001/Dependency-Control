@@ -41,7 +41,7 @@ export function AnalyticsSummaryCards() {
       value: summary?.total_vulnerabilities.toLocaleString() || "0",
       icon: AlertTriangle,
       description: "Across all projects",
-      className: summary?.total_vulnerabilities && summary.total_vulnerabilities > 0 ? "text-destructive" : ""
+      className: summary?.total_vulnerabilities && summary.total_vulnerabilities > 0 ? "text-severity-critical" : ""
     },
     {
       title: "Package Types",

@@ -179,3 +179,15 @@ describe('Dashboard riskiest projects and recent activity on a phone or tablet',
     expect(activity).not.toHaveClass('col-span-3')
   })
 })
+
+describe('Dashboard critical colour', () => {
+  it('draws the critical card icon, count cell and Critical pill from the severity token, as the high ones are', () => {
+    renderDashboard([{ ...project('p1', []), stats: { critical: 3, high: 1 } } as Project])
+
+    const card = screen.getByText('Critical Vulnerabilities').closest('.rounded-lg') as HTMLElement
+    expect(card.querySelector('svg')).toHaveClass('text-severity-critical')
+    const row = screen.getByRole('row', { name: /project-p1/ })
+    expect(within(row).getByText('3')).toHaveClass('text-severity-critical')
+    expect(within(row).getByText('Critical')).toHaveClass('bg-severity-critical', 'text-severity-critical-foreground')
+  })
+})

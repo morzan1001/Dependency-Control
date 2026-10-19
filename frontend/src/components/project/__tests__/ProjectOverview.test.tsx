@@ -710,3 +710,13 @@ describe('ProjectOverview - the trend and severity cards on a phone or tablet', 
     expect(severity).not.toHaveClass('col-span-3')
   })
 })
+
+describe('ProjectOverview - the Critical Issues tile', () => {
+  it('writes its count and icon in the severity colour, like the High Issues tile', () => {
+    renderOverview([makeScan({}, { critical: 2, high: 11 })])
+
+    const tile = screen.getByText('Critical Issues').closest('.rounded-lg') as HTMLElement
+    expect(within(tile).getByText('2')).toHaveClass('text-severity-critical')
+    expect(tile.querySelector('svg')).toHaveClass('text-severity-critical')
+  })
+})

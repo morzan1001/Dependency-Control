@@ -133,7 +133,7 @@ export function DependencyStats({ onSelectDependency }: Readonly<DependencyStats
                   </TableCell>
                   <TableCell className="text-center">
                     {dep.has_vulnerabilities ? (
-                      <div className="flex items-center justify-center gap-1 text-destructive">
+                      <div className="flex items-center justify-center gap-1 text-severity-critical">
                         <AlertTriangle className="h-4 w-4" />
                         <span>{dep.vulnerability_count}</span>
                       </div>

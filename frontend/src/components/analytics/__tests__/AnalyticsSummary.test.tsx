@@ -125,3 +125,13 @@ describe('SeverityDistribution', () => {
     }
   })
 })
+
+describe('AnalyticsSummaryCards vulnerability colour', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('writes a vulnerability total in the critical severity colour', () => {
+    renderCards(base)
+
+    expect(screen.getByText(String(TOTAL_VULNERABILITIES))).toHaveClass('text-severity-critical')
+  })
+})
