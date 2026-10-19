@@ -107,6 +107,7 @@ LICENSE_ALIASES: dict[str, str] = {
     "Apache License Version 2.0": SPDX_APACHE_2_0,
     "Apache Software License": SPDX_APACHE_2_0,
     "The Apache Software License, Version 2.0": SPDX_APACHE_2_0,
+    "The Apache License, Version 2.0": SPDX_APACHE_2_0,
     "ASL 2.0": SPDX_APACHE_2_0,
     "BSD": SPDX_BSD_3_CLAUSE,
     "BSD License": SPDX_BSD_3_CLAUSE,

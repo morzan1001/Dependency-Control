@@ -66,6 +66,7 @@ def test_every_licence_the_vocabulary_names_is_one_the_database_knows():
         ("Apache License", "Apache-2.0"),
         ("Apache Software License", "Apache-2.0"),
         ("The Apache Software License, Version 2.0", "Apache-2.0"),
+        ("The Apache License, Version 2.0", "Apache-2.0"),
         ("Apache License Version 2.0", "Apache-2.0"),
         ("Apache 2", "Apache-2.0"),
         ("Eclipse Public License 2.0", "EPL-2.0"),
