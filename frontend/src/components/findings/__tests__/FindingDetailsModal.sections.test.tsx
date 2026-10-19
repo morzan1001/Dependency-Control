@@ -55,6 +55,22 @@ describe("FindingDetailsModal header", () => {
   });
 });
 
+describe("FindingDetailsModal fixed version", () => {
+  it("shows a fix version in the success colour", () => {
+    renderModal(finding({ details: { fixed_version: "4.17.21" } }));
+
+    expect(screen.getByText("4.17.21")).toHaveClass("text-success");
+  });
+
+  it("says no fix is known in the neutral colour, like the findings tables, instead of a green None", () => {
+    renderModal(finding({ details: {} }));
+
+    expect(screen.queryByText("None")).not.toBeInTheDocument();
+    expect(screen.getByText("No known fix")).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("No known fix")).not.toHaveClass("text-success");
+  });
+});
+
 describe("FindingDetailsModal severity", () => {
   it("colours the finding's and each advisory's severity like the findings table row", () => {
     renderModal(finding({ severity: "MEDIUM", details: { vulnerabilities: [{ id: "CVE-2024-1", severity: "LOW" }] } }));
