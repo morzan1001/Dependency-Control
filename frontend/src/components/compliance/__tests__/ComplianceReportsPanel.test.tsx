@@ -76,11 +76,27 @@ describe('ComplianceReportsPanel', () => {
   })
 
   it('lists every report the caller may open, not only personal ones', async () => {
-    vi.mocked(listReports).mockResolvedValue({ reports: [{ ...report('completed'), scope: 'project', scope_id: 'p1' }] })
+    vi.mocked(listReports).mockResolvedValue({
+      reports: [{ ...report('completed'), scope: 'project', scope_id: 'p1', scope_name: 'shop' }],
+    })
     renderPanel()
 
-    expect(await screen.findByText('project:p1')).toBeInTheDocument()
+    expect(await screen.findByText('project: shop')).toBeInTheDocument()
     expect(listReports).toHaveBeenCalledWith({ limit: 50 })
+  })
+
+  it('names each scope by its project or team, and one whose project is gone by its id', async () => {
+    vi.mocked(listReports).mockResolvedValue({
+      reports: [
+        { ...report('completed'), _id: 'r-team', scope: 'team', scope_id: 't1', scope_name: 'Core' },
+        { ...report('completed'), _id: 'r-gone', scope: 'project', scope_id: 'p-gone' },
+        { ...report('completed'), _id: 'r-user' },
+      ],
+    })
+    renderPanel()
+
+    const rows = await screen.findAllByRole('button', { name: /nist-sp-800-131a/ })
+    expect(rows.map((row) => row.lastElementChild?.textContent)).toEqual(['team: Core', 'project: p-gone', 'user'])
   })
 
   it('opens an empty form again after a cancelled draft', async () => {

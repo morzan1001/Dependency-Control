@@ -118,7 +118,7 @@ async def test_the_engine_hands_the_coverage_to_the_renderer_and_to_the_stored_r
     engine = ComplianceReportEngine()
     rendered: dict = {}
 
-    def capture_render(fmt, fw, ev, rep):
+    def capture_render(fmt, fw, ev, rep, scope_name):
         rendered["coverage"] = ev.coverage
         return b"{}", "x.json", "application/json"
 

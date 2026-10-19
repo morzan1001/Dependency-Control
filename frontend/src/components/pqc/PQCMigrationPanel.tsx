@@ -45,7 +45,7 @@ export function PQCMigrationPanel({ onExport }: Readonly<{ onExport: () => void 
         </Button>
       </div>
       <MigrationPlanTable items={data.items} onSelect={setSelected} />
-      <MigrationItemDetailDrawer item={selected} onClose={() => setSelected(null)} />
+      <MigrationItemDetailDrawer item={selected} projectNames={data.project_names} onClose={() => setSelected(null)} />
     </div>
   );
 }

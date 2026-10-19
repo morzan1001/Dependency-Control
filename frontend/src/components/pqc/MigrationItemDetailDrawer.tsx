@@ -6,10 +6,11 @@ import type { MigrationItem } from "@/types/pqcMigration";
 
 interface Props {
   item: MigrationItem | null;
+  projectNames: Record<string, string>;
   onClose: () => void;
 }
 
-export function MigrationItemDetailDrawer({ item, onClose }: Readonly<Props>) {
+export function MigrationItemDetailDrawer({ item, projectNames, onClose }: Readonly<Props>) {
   return (
     <Dialog open={!!item} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl">
@@ -44,8 +45,8 @@ export function MigrationItemDetailDrawer({ item, onClose }: Readonly<Props>) {
             {item.project_ids.length > 0 && (
               <div className="mt-4">
                 <div className="text-xs font-medium text-muted-foreground">Projects</div>
-                <ul className="mt-1 list-inside list-disc font-mono text-xs">
-                  {item.project_ids.map((p) => <li key={p}>{p}</li>)}
+                <ul className="mt-1 list-inside list-disc text-xs">
+                  {item.project_ids.map((p) => <li key={p}>{projectNames[p] ?? p}</li>)}
                 </ul>
               </div>
             )}

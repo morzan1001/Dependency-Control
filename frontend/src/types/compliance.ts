@@ -38,6 +38,8 @@ export interface ComplianceReportMeta {
   _id: string;
   scope: "project" | "team" | "global" | "user";
   scope_id: string | null;
+  // Set while the project or team of a project or team scope exists.
+  scope_name?: string;
   framework: ReportFramework;
   format: ReportFormat;
   status: ReportStatus;

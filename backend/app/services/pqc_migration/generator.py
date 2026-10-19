@@ -4,6 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.projects import ProjectRepository
 from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
 from app.schemas.pqc_migration import (
     MigrationItem,
@@ -47,6 +48,7 @@ class PQCMigrationPlanGenerator:
             scope_id=resolved.scope_id,
             generated_at=now,
             items=returned,
+            project_names=await ProjectRepository(self.db).names_by_ids(p for i in returned for p in i.project_ids),
             # Summarised over every migratable group: an under-counting plan is wrong in the direction that matters.
             summary=self._summarise(items, items_returned=len(returned)),
             mappings_version=CURRENT_MAPPINGS_VERSION,

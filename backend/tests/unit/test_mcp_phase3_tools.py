@@ -39,7 +39,7 @@ async def test_list_compliance_reports_returns_metadata():
             list=AsyncMock(
                 return_value=[
                     MagicMock(
-                        model_dump=lambda **kw: {"id": "r1", "status": "completed"},
+                        model_dump=lambda **kw: {"id": "r1", "status": "completed", "scope": "user", "scope_id": None},
                     )
                 ]
             )

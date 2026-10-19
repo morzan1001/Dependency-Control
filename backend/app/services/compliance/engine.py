@@ -25,7 +25,7 @@ from app.schemas.compliance import (
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 from app.schemas.projections import ProjectWithScanId
 from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, VULNERABILITY_ANALYZERS
-from app.services.analytics.scopes import ResolvedScope, ScopeResolver, read_scope_projects
+from app.services.analytics.scopes import ResolvedScope, ScopeResolver, read_scope_projects, resolve_scope_names
 from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VERSION
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import ComplianceFramework, EvaluationInput, SeedFramework
@@ -78,6 +78,7 @@ class ComplianceReportEngine:
             framework = FRAMEWORK_REGISTRY[report.framework]
             inputs, evaluation = await self.evaluate(db, resolved, framework)
             policy_version, iana_version = inputs.policy_version, inputs.iana_catalog_version
+            scope_name = inputs.scope_name
             # The findings stay alive through render, upload and the status write otherwise.
             del inputs
             async with _RENDER_SLOT:
@@ -86,7 +87,9 @@ class ComplianceReportEngine:
                     report.format,
                     framework,
                     evaluation,
-                    report,
+                    # The artifact prints its requester's name; the stored report keeps the id.
+                    report.model_copy(update={"requested_by": user.username}),
+                    scope_name,
                 )
             gridfs_id = await self._store_artifact(
                 db,
@@ -175,10 +178,12 @@ class ComplianceReportEngine:
             system = await CryptoPolicyRepository(db).require_system_policy()
             policy_rules, policy_version = system.rules, system.version
             override_version = None
-        scope_desc = self._scope_description(resolved)
+        [scope] = await resolve_scope_names(db, [{"scope": resolved.scope, "scope_id": resolved.scope_id}])
+        scope_name = scope.get("scope_name", resolved.scope_id)
         return EvaluationInput(
             resolved=resolved,
-            scope_description=scope_desc,
+            scope_name=scope_name,
+            scope_description=self._scope_description(resolved, scope_name),
             crypto_assets=assets,
             findings=findings,
             policy_rules=policy_rules,
@@ -271,11 +276,9 @@ class ComplianceReportEngine:
         doc = await db["projects"].find_one({"_id": project_ids[0]}, {"analyzer_settings.license_compliance": 1})
         return license_policy_from_settings(((doc or {}).get("analyzer_settings") or {}).get("license_compliance"))
 
-    def _scope_description(self, resolved: ResolvedScope) -> str:
-        if resolved.scope == "project":
-            return f"project '{resolved.scope_id}'"
-        if resolved.scope == "team":
-            return f"team '{resolved.scope_id}'"
+    def _scope_description(self, resolved: ResolvedScope, scope_name: str | None) -> str:
+        if resolved.scope in ("project", "team"):
+            return f"{resolved.scope} '{scope_name}'"
         if resolved.scope == "user":
             count = len(resolved.project_ids or [])
             return f"user scope ({count} project(s))"
@@ -287,10 +290,11 @@ class ComplianceReportEngine:
         framework: ComplianceFramework,
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
+        scope_name: str | None,
     ) -> tuple[bytes, str, str]:
         renderer = RENDERER_REGISTRY[fmt]
         body = renderer.render(evaluation, report, disclaimer=framework.disclaimer)
-        return body, build_filename(report, renderer.extension), renderer.mime_type
+        return body, build_filename(report, renderer.extension, scope_name), renderer.mime_type
 
     async def _store_artifact(
         self,

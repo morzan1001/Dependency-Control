@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -38,7 +38,7 @@ def _asset(
 
 @pytest.mark.asyncio
 async def test_generate_empty_when_no_vulnerable_assets():
-    db = MagicMock()
+    db = FakeDatabase()
     gen = PQCMigrationPlanGenerator(db)
     with patch.object(gen, "_list_vulnerable_assets", new=AsyncMock(return_value=[])):
         resp = await gen.generate(
@@ -51,7 +51,7 @@ async def test_generate_empty_when_no_vulnerable_assets():
 
 @pytest.mark.asyncio
 async def test_generate_maps_rsa_pke_to_ml_kem():
-    db = MagicMock()
+    db = FakeDatabase()
     gen = PQCMigrationPlanGenerator(db)
     with patch.object(
         gen,
@@ -70,7 +70,7 @@ async def test_generate_maps_rsa_pke_to_ml_kem():
 
 @pytest.mark.asyncio
 async def test_generate_sorts_items_descending_priority():
-    db = MagicMock()
+    db = FakeDatabase()
     gen = PQCMigrationPlanGenerator(db)
     weak = _asset(key_size_bits=1024, bom_ref="r1")
     strong = _asset(key_size_bits=4096, bom_ref="r2")
@@ -163,7 +163,7 @@ async def test_list_vulnerable_assets_reads_the_head_build_not_a_deleted_branch(
 
 @pytest.mark.asyncio
 async def test_generate_alias_resolution():
-    db = MagicMock()
+    db = FakeDatabase()
     gen = PQCMigrationPlanGenerator(db)
     with patch.object(
         gen,
@@ -185,7 +185,7 @@ _PLAN_LIMIT = 5
 @pytest.mark.asyncio
 async def test_the_summary_counts_every_migratable_group_not_the_page_it_returns():
     """A migration plan that under-counts the work is wrong in the direction that matters."""
-    db = MagicMock()
+    db = FakeDatabase()
     gen = PQCMigrationPlanGenerator(db)
     assets = [_asset(bom_ref=f"r{index}") for index in range(_GROUPS_BEYOND_LIMIT)]
     with patch.object(gen, "_list_vulnerable_assets", new=AsyncMock(return_value=assets)):
@@ -198,6 +198,19 @@ async def test_the_summary_counts_every_migratable_group_not_the_page_it_returns
     assert resp.summary.items_returned == _PLAN_LIMIT
     assert resp.summary.total_items == _GROUPS_BEYOND_LIMIT
     assert sum(resp.summary.status_counts.values()) == _GROUPS_BEYOND_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_the_plan_names_each_project_its_items_list_and_keeps_the_ids():
+    db = FakeDatabase()
+    await db.projects.insert_many([{"_id": "p1", "name": "shop"}, {"_id": "p2", "name": "mail"}])
+    gen = PQCMigrationPlanGenerator(db)
+    assets = [_asset(project_id=project_id) for project_id in ("p1", "p2", "p-gone")]
+    with patch.object(gen, "_list_vulnerable_assets", new=AsyncMock(return_value=assets)):
+        resp = await gen.generate(resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p1", "p2"]))
+
+    assert [item.project_ids for item in resp.items] == [["p-gone", "p1", "p2"]]
+    assert resp.project_names == {"p1": "shop", "p2": "mail"}
 
 
 async def _plan_for(assets):

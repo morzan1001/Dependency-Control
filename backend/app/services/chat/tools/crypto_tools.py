@@ -18,7 +18,7 @@ from app.schemas.compliance import ReportFramework
 from app.schemas.finding_details import all_rule_ids
 from app.services.analytics.crypto_hotspots import CryptoHotspotService
 from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket
-from app.services.analytics.scopes import ResolvedScope, ScopeResolver
+from app.services.analytics.scopes import ResolvedScope, ScopeResolver, resolve_scope_names
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.renderers.base import coverage_statement
@@ -175,7 +175,8 @@ async def list_compliance_reports(
 ) -> dict[str, Any]:
     fw = ReportFramework(framework) if framework else None
     reports = await ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
-    return {"reports": [r.model_dump(by_alias=True) for r in reports]}
+    rows = await resolve_scope_names(db, [r.model_dump(by_alias=True) for r in reports])
+    return {"reports": await resolve_usernames(db, rows, "requested_by_name", id_field="requested_by")}
 
 
 async def list_policy_audit_entries(

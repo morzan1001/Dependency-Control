@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -14,6 +14,7 @@ const plan: MigrationPlanResponse = {
   scope_id: null,
   generated_at: "2026-01-01T00:00:00Z",
   items: [],
+  project_names: {},
   mappings_version: 3,
   summary: {
     total_items: 0,
@@ -92,5 +93,26 @@ describe("PQCMigrationPanel item count", () => {
     expect(
       await screen.findByText(new RegExp(`Showing ${PLAN_LIMIT} of ${MIGRATABLE_GROUPS} item`)),
     ).toBeInTheDocument();
+  });
+});
+
+describe("PQCMigrationPanel item details", () => {
+  beforeEach(async () => {
+    const { getPQCMigrationPlan } = await import("@/api/pqcMigration");
+    vi.mocked(getPQCMigrationPlan).mockResolvedValue({
+      ...plan,
+      items: [{ ...migrationItem(0), project_ids: ["p1", "p-gone"] }],
+      project_names: { p1: "shop" },
+      summary: { ...plan.summary, total_items: 1, items_returned: 1 },
+    });
+  });
+
+  it("lists an item's projects by name, and one whose project is gone by its id", async () => {
+    renderPanel();
+
+    fireEvent.click(await screen.findByText("ML-KEM-768"));
+
+    const projects = within(screen.getByRole("dialog")).getAllByRole("listitem");
+    expect(projects.map((project) => project.textContent)).toEqual(["shop", "p-gone"]);
   });
 });

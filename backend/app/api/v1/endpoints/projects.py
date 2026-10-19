@@ -1351,7 +1351,8 @@ async def export_project_sbom(
 
     if len(scan.sbom_refs) == 1:
         return _stream_json(
-            await _open_gridfs(db, gridfs_ref_id(scan.sbom_refs[0]), "SBOM"), f"project_{project_id}_sbom.json"
+            await _open_gridfs(db, gridfs_ref_id(scan.sbom_refs[0]), "SBOM"),
+            export_filename(project.name, "sbom", extension="json"),
         )
 
     # The spool's file I/O and DEFLATE run in worker threads, so a large export leaves the event loop free.
@@ -1370,7 +1371,7 @@ async def export_project_sbom(
     return StreamingResponse(
         iter(partial(spool.read, DEFAULT_CHUNK_SIZE), b""),
         media_type="application/zip",
-        headers=_attachment(f"project_{project_id}_sboms.zip"),
+        headers=_attachment(export_filename(project.name, "sboms", extension="zip")),
         background=BackgroundTask(spool.close),
     )
 

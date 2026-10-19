@@ -71,6 +71,7 @@ def crypto_assets_verdict(
 @dataclass
 class EvaluationInput:
     resolved: ResolvedScope
+    scope_name: str | None
     scope_description: str
     crypto_assets: list[CryptoAsset]
     findings: list[dict]
