@@ -211,6 +211,7 @@ describe('CreateProjectDialog name check', () => {
     expect(submit().name).toBe('svc')
 
     expect(screen.getByLabelText('Project Name').parentElement).toContainElement(screen.getByText(TAKEN))
+    expect(screen.getByLabelText('Project Name')).toHaveAccessibleDescription(TAKEN)
     expect(mockUseProjectNameTaken).toHaveBeenLastCalledWith('svc')
   })
 })

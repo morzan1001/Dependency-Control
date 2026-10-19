@@ -32,6 +32,7 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
   const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: !!team || isOpen });
   const nameTaken = isNameTaken(teams, name, team);
   const mode = team ? EDIT : CREATE;
+  const nameTakenHintId = `${mode.idPrefix}name-taken`;
   const isPending = createTeamMutation.isPending || updateTeamMutation.isPending;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -84,8 +85,9 @@ export function TeamFormDialog({ team, onClose }: Readonly<{ team?: Team; onClos
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              aria-describedby={nameTaken ? nameTakenHintId : undefined}
             />
-            {nameTaken && <WarningHint>A team with this name already exists</WarningHint>}
+            {nameTaken && <WarningHint id={nameTakenHintId}>A team with this name already exists</WarningHint>}
           </div>
           <div className="grid gap-2">
             <Label htmlFor={`${mode.idPrefix}description`}>Description</Label>

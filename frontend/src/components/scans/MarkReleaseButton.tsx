@@ -1,4 +1,4 @@
-import { AlertTriangle, Rocket } from 'lucide-react'
+import { Rocket } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { WarningHint } from '@/components/ui/warning-hint'
 import { useReleaseEnvironments } from '@/hooks/queries/use-releases'
 import { useDialogState } from '@/hooks/use-dialog-state'
 import { useReleaseActions } from '@/hooks/use-release-actions'
@@ -126,12 +127,7 @@ export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButto
                     {rejection.reason}
                   </span>
                 )}
-                {versionLike && (
-                  <span id={VERSION_LIKE_HINT_ID} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                    <AlertTriangle className="mt-px h-3 w-3 shrink-0 text-warning" />
-                    {VERSION_LIKE_HINT}
-                  </span>
-                )}
+                {versionLike && <WarningHint id={VERSION_LIKE_HINT_ID}>{VERSION_LIKE_HINT}</WarningHint>}
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="release-version">{VERSION_LABEL}</Label>

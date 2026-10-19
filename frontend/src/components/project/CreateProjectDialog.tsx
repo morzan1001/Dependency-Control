@@ -28,6 +28,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const NAME_TAKEN_HINT_ID = "create-project-name-taken";
+
 const EMPTY_FORM = {
   name: "",
   team_id: undefined as string | undefined,
@@ -125,8 +127,9 @@ export function CreateProjectDialog({
                 onChange={(e) => set({ name: e.target.value })}
                 placeholder="my-awesome-project"
                 required
+                aria-describedby={nameTaken ? NAME_TAKEN_HINT_ID : undefined}
               />
-              {nameTaken && <WarningHint>A project with this name already exists</WarningHint>}
+              {nameTaken && <WarningHint id={NAME_TAKEN_HINT_ID}>A project with this name already exists</WarningHint>}
             </div>
 
             <div className="space-y-2">

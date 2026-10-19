@@ -119,8 +119,10 @@ describe("the team name check", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "team gamma " } });
     const hint = await screen.findByText(TAKEN);
     expect(screen.getByLabelText("Name").parentElement).toContainElement(hint);
+    expect(screen.getByLabelText("Name")).toHaveAccessibleDescription(TAKEN);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team Beta" } });
     expect(screen.queryByText(TAKEN)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).not.toHaveAttribute("aria-describedby");
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team Gamma" } });
     await screen.findByText(TAKEN);

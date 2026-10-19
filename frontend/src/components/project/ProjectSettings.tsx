@@ -53,6 +53,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
+const NAME_TAKEN_HINT_ID = 'project-name-taken'
+
 interface ProjectSettingsProps {
   project: Project
   projectId: string
@@ -335,8 +337,13 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             <form onSubmit={handleUpdate} className="space-y-4">
                 <div className="grid gap-2">
                     <Label htmlFor="name">Project Name</Label>
-                    <Input id="name" value={form.name} onChange={(e) => set({ name: e.target.value })} />
-                    {nameTaken && <WarningHint>A project with this name already exists</WarningHint>}
+                    <Input
+                        id="name"
+                        value={form.name}
+                        onChange={(e) => set({ name: e.target.value })}
+                        aria-describedby={nameTaken ? NAME_TAKEN_HINT_ID : undefined}
+                    />
+                    {nameTaken && <WarningHint id={NAME_TAKEN_HINT_ID}>A project with this name already exists</WarningHint>}
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="teams">Teams</Label>

@@ -616,6 +616,7 @@ describe('ProjectSettings name check', () => {
     fireEvent.change(screen.getByLabelText('Project Name'), { target: { value: 'shared' } })
 
     expect(screen.getByLabelText('Project Name').parentElement).toContainElement(screen.getByText(TAKEN))
+    expect(screen.getByLabelText('Project Name')).toHaveAccessibleDescription(TAKEN)
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
     expect(mockUpdate.mock.calls[0][1]).toMatchObject({ name: 'shared' })

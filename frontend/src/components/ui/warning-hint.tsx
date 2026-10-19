@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 
-export function WarningHint({ children }: Readonly<{ children: ReactNode }>) {
+export function WarningHint({ id, children }: Readonly<{ id?: string; children: ReactNode }>) {
   return (
-    <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-      <AlertTriangle className="h-3 w-3" />
+    <span id={id} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+      <AlertTriangle className="mt-px h-3 w-3 shrink-0 text-warning" />
       {children}
-    </p>
+    </span>
   )
 }
