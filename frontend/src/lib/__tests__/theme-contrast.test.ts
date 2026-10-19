@@ -55,13 +55,16 @@ describe('light-theme severity colours', () => {
   })
 })
 
-describe('dark-theme destructive colour', () => {
+describe.each([
+  ['light', lightTheme],
+  ['dark', darkTheme],
+])('%s-theme destructive colour', (_name, theme) => {
   it('gives destructive text and icons a WCAG contrast of at least 4.5:1 on the background', () => {
-    expect(contrast(token(darkTheme, 'destructive'), token(darkTheme, 'background'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(token(theme, 'destructive'), token(theme, 'background'))).toBeGreaterThanOrEqual(4.5)
   })
 
   it('gives a destructive button its label at a WCAG contrast of at least 4.5:1', () => {
-    expect(contrast(token(darkTheme, 'destructive'), token(darkTheme, 'destructive-foreground'))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(token(theme, 'destructive'), token(theme, 'destructive-foreground'))).toBeGreaterThanOrEqual(4.5)
   })
 })
 
