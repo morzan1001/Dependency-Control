@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
-import { AnalyticsSummaryCards, DependencyTypesChart } from '../AnalyticsSummary'
+import { AnalyticsSummaryCards, DependencyTypesChart, SeverityDistribution } from '../AnalyticsSummary'
 import { AnalyticsModeContext } from '@/context/analytics-mode'
+import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import type { AnalyticsSummary } from '@/types/analytics'
 
 const mockUseAnalyticsSummary = vi.fn()
@@ -105,5 +106,22 @@ describe('analytics summary load error', () => {
     render(<DependencyTypesChart />)
 
     expect(screen.getByText('No dependencies found')).toBeInTheDocument()
+  })
+})
+
+describe('SeverityDistribution', () => {
+  it('colours its bar and legend from the palette the other severity charts use', () => {
+    mockUseAnalyticsSummary.mockReturnValue({
+      data: { ...base, severity_distribution: { critical: 1, high: 2, medium: 3, low: 4, negligible: 5, info: 6, unknown: 7 } },
+      isLoading: false,
+    })
+    render(<SeverityDistribution />)
+
+    const shown = [['Critical', 1], ['High', 2], ['Medium', 3], ['Low', 4], ['Negligible', 5], ['Info', 6], ['Unknown', 7]] as const
+    for (const [label, count] of shown) {
+      const color = SEVERITY_CHART_COLORS[label.toUpperCase() as keyof typeof SEVERITY_CHART_COLORS]
+      expect(screen.getByTitle(`${label}: ${count}`)).toHaveStyle({ backgroundColor: color })
+      expect(screen.getByText(label).previousElementSibling).toHaveStyle({ backgroundColor: color })
+    }
   })
 })

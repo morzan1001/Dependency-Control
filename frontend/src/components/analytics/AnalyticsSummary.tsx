@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Package, AlertTriangle, Layers, PieChart } from 'lucide-react'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
+import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
+import type { Severity } from '@/types/common'
 
 export function AnalyticsSummaryCards() {
   const { data: summary, isLoading, error, refetch } = useAnalyticsSummary(useAnalyticsMode())
@@ -101,17 +103,17 @@ export function SeverityDistribution() {
     )
   }
 
-  const severities = [
-    { label: 'Critical', value: severity.critical, color: 'bg-severity-critical' },
-    { label: 'High', value: severity.high, color: 'bg-severity-high' },
-    { label: 'Medium', value: severity.medium, color: 'bg-severity-medium' },
-    { label: 'Low', value: severity.low, color: 'bg-severity-low' },
+  const severities: { key: Severity; label: string; value: number }[] = [
+    { key: 'CRITICAL', label: 'Critical', value: severity.critical },
+    { key: 'HIGH', label: 'High', value: severity.high },
+    { key: 'MEDIUM', label: 'Medium', value: severity.medium },
+    { key: 'LOW', label: 'Low', value: severity.low },
     // Low-signal buckets appear only when present, so the bar still reconciles with the headline total.
-    ...[
-      { label: 'Negligible', value: severity.negligible ?? 0, color: 'bg-gray-300' },
-      { label: 'Info', value: severity.info ?? 0, color: 'bg-severity-info' },
-      { label: 'Unknown', value: severity.unknown ?? 0, color: 'bg-gray-400' },
-    ].filter((s) => s.value > 0),
+    ...([
+      { key: 'NEGLIGIBLE', label: 'Negligible', value: severity.negligible ?? 0 },
+      { key: 'INFO', label: 'Info', value: severity.info ?? 0 },
+      { key: 'UNKNOWN', label: 'Unknown', value: severity.unknown ?? 0 },
+    ] as const).filter((s) => s.value > 0),
   ]
 
   return (
@@ -124,9 +126,8 @@ export function SeverityDistribution() {
           {severities.map((s) => (
             s.value > 0 && (
               <div
-                key={s.label}
-                className={`${s.color}`}
-                style={{ width: `${(s.value / total) * 100}%` }}
+                key={s.key}
+                style={{ backgroundColor: SEVERITY_CHART_COLORS[s.key], width: `${(s.value / total) * 100}%` }}
                 title={`${s.label}: ${s.value}`}
               />
             )
@@ -135,8 +136,8 @@ export function SeverityDistribution() {
         
         <div className="grid grid-cols-2 gap-2">
           {severities.map((s) => (
-            <div key={s.label} className="flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${s.color}`} />
+            <div key={s.key} className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: SEVERITY_CHART_COLORS[s.key] }} />
               <span className="text-sm text-muted-foreground">{s.label}</span>
               <span className="text-sm font-medium ml-auto">{s.value}</span>
             </div>
