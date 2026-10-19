@@ -360,23 +360,33 @@ describe("FindingDetailsModal secret details", () => {
 
 describe("FindingDetailsModal related finding badges", () => {
   it.each([
-    ["OUTDATED-lodash", "Outdated: lodash", "text-blue-700"],
-    ["QUALITY:lodash:4.17.20", "Quality: lodash (4.17.20)", "text-yellow-700"],
-    ["QUALITY:org.apache.logging.log4j:log4j-core:2.14.1", "Quality: org.apache.logging.log4j:log4j-core:2.14.1", "text-yellow-700"],
-    ["LIC-MIT", "License: MIT", "text-purple-700"],
-    ["EOL-spring-boot-2", "EOL: spring-boot-2", "text-orange-700"],
-    ["lodash:4.17.21", "Vuln: lodash (4.17.21)", "text-red-700"],
-    ["org.apache:log4j-core:2.14.1", "org.apache:log4j-core:2.14.1", "text-red-700"],
-    ["SAST-2", "SAST-2", "text-gray-700"],
-  ])("names %s as %s and opens it on click", (id, label, colour) => {
+    ["OUTDATED-lodash", "Outdated: lodash", "yellow"],
+    ["QUALITY:lodash:4.17.20", "Quality: lodash (4.17.20)", "green"],
+    ["QUALITY:org.apache.logging.log4j:log4j-core:2.14.1", "Quality: org.apache.logging.log4j:log4j-core:2.14.1", "green"],
+    ["LIC-MIT", "License: MIT", "purple"],
+    ["EOL-spring-boot-2", "EOL: spring-boot-2", "orange"],
+    ["lodash:4.17.21", "Vuln: lodash (4.17.21)", "red"],
+    ["org.apache:log4j-core:2.14.1", "org.apache:log4j-core:2.14.1", "red"],
+  ])("names %s as %s in its type badge's %s, in both themes, and opens it on click", (id, label, hue) => {
     const onSelectFinding = vi.fn();
     renderModal(finding({ related_findings: [id, id] }), { onSelectFinding });
 
     const badge = screen.getByText(label);
     fireEvent.click(badge);
 
-    expect(badge).toHaveClass(colour);
+    expect(badge).toHaveClass(`text-${hue}-700`, `dark:text-${hue}-400`, `dark:bg-${hue}-950/50`);
     expect(onSelectFinding).toHaveBeenCalledWith(id);
+  });
+
+  it("leaves a related finding of unknown type in the neutral outline and opens it on click", () => {
+    const onSelectFinding = vi.fn();
+    renderModal(finding({ related_findings: ["SAST-2"] }), { onSelectFinding });
+
+    const badge = screen.getByText("SAST-2");
+    fireEvent.click(badge);
+
+    expect(badge.className).not.toMatch(/\bbg-[a-z]+-50\b/);
+    expect(onSelectFinding).toHaveBeenCalledWith("SAST-2");
   });
 });
 

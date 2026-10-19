@@ -18,7 +18,7 @@ type ParsedRelatedId =
     | { kind: 'vulnerability'; component: string; version?: string }
     | { kind: 'exact' }
 
-export type RelatedFindingKind = ParsedRelatedId['kind']
+type RelatedFindingKind = ParsedRelatedId['kind']
 
 function parseRelatedFindingId(id: string): ParsedRelatedId {
     if (id.startsWith('OUTDATED-')) {

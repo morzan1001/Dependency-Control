@@ -10,6 +10,7 @@ import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
 import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
+import { getFindingTypeBadgeClass } from '@/lib/finding-utils'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { SeverityBadge } from './SeverityBadge'
 import { ContextBannersSection } from './details/ContextBannersSection'
@@ -22,16 +23,7 @@ import { SastDetailsView, ScanContext } from './details/SastDetailsView'
 import { SecretDetailsView } from './details/SecretDetailsView'
 import { VulnerabilityDetailsView } from './details/VulnerabilityDetailsView'
 import { DetailSection, BadgeList } from './details/shared'
-import { describeRelatedFinding, type RelatedFindingKind } from './related-finding-rows'
-
-const RELATED_KIND_STYLES: Record<RelatedFindingKind, string> = {
-    outdated: 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100',
-    quality: 'border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100',
-    license: 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100',
-    eol: 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100',
-    vulnerability: 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100',
-    exact: 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100',
-}
+import { describeRelatedFinding } from './related-finding-rows'
 
 interface DetailsViewProps {
     readonly finding: Finding
@@ -250,7 +242,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                                     <Badge
                                                         key={relatedId}
                                                         variant="outline"
-                                                        className={`font-mono text-xs cursor-pointer ${RELATED_KIND_STYLES[kind]}`}
+                                                        className={`font-mono text-xs cursor-pointer ${kind === 'exact' ? '' : getFindingTypeBadgeClass(kind)}`}
                                                         onClick={() => onSelectFinding?.(relatedId)}
                                                     >
                                                         {label}
