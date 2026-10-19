@@ -4,6 +4,8 @@ import {
   ShieldAlert, 
   FileCode, 
   Key, 
+  KeyRound,
+  Bug,
   ServerCrash,
   FileText,
   Clock,
@@ -67,7 +69,20 @@ export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
           className: 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 dark:border-orange-800 dark:bg-orange-950/50 dark:text-orange-400 dark:hover:bg-orange-900/50',
           icon: Clock
         }
+      case 'malware':
+        return {
+          variant: 'outline' as const,
+          className: 'border-pink-200 bg-pink-50 text-pink-700 hover:bg-pink-100 dark:border-pink-800 dark:bg-pink-950/50 dark:text-pink-400 dark:hover:bg-pink-900/50',
+          icon: Bug
+        }
       default:
+        if (CRYPTO_FINDING_TYPES.some((crypto) => crypto.value === type?.toLowerCase())) {
+          return {
+            variant: 'outline' as const,
+            className: 'border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-400 dark:hover:bg-teal-900/50',
+            icon: KeyRound
+          }
+        }
         return {
           variant: 'outline' as const,
           className: '',
