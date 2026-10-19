@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { ResponsiveContainer, Treemap } from "recharts";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
+import { SEVERITY_CHART_COLORS, SEVERITY_ORDER } from "@/lib/finding-utils";
+import type { Severity } from "@/types/common";
 import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
 
 interface Props {
@@ -9,20 +11,8 @@ interface Props {
   groupBy: GroupingDimension;
 }
 
-const SEVERITY_COLORS: Record<string, string> = {
-  CRITICAL: "#dc2626",
-  HIGH: "#ea580c",
-  MEDIUM: "#ca8a04",
-  LOW: "#0891b2",
-  NEGLIGIBLE: "#94a3b8",
-  INFO: "#6366f1",
-  UNKNOWN: "#6b7280",
-};
-
-function topSeverity(mix: Record<string, number>): string {
-  const order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO", "UNKNOWN"];
-  for (const s of order) if ((mix[s] ?? 0) > 0) return s;
-  return "UNKNOWN";
+function topSeverity(mix: Record<string, number>): Severity {
+  return SEVERITY_ORDER.find((s) => (mix[s] ?? 0) > 0) ?? "UNKNOWN";
 }
 
 export function HotspotTreemap({ scope, scopeId, groupBy }: Readonly<Props>) {
@@ -36,7 +26,7 @@ export function HotspotTreemap({ scope, scopeId, groupBy }: Readonly<Props>) {
   const chartData = data.items.map((e) => ({
     name: e.key,
     size: e.asset_count,
-    fill: SEVERITY_COLORS[topSeverity(e.severity_mix)],
+    fill: SEVERITY_CHART_COLORS[topSeverity(e.severity_mix)],
   }));
 
   return (
