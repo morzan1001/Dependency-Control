@@ -6,7 +6,6 @@ import pytest
 
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
-    _SCAN_WINDOW_PROJECT_BATCH,
     _WINDOW_PROJECT_BATCH,
     WINDOW_HARD_LIMIT,
     ScanOutdatedSetRepository,
@@ -128,7 +127,7 @@ class TestGroupWindowByBranch:
         buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch([], T0)
 
         assert buckets == {}
-        assert db.scan_update_deltas.aggregate.call_count == 0
+        assert db.scan_update_deltas.find.call_count == 0
 
 
 async def _seed_scan(db: FakeDatabase, scan_id: str, project_id: str, branch: str | None, minutes: int, **overrides):
@@ -263,12 +262,6 @@ class TestWindowScansByBranch:
         )
         await _seed_scan(db, "s1", "p1", "main", 10)
 
-        # The server omits a grouping key whose field the document lacks, so the row has no branch entry.
-        rows = await db.scans.aggregate(
-            [{"$group": {"_id": {"p": "$project_id", "b": "$branch"}, "n": {"$sum": 1}}}]
-        ).to_list(None)
-        assert {"p": "p1"} in [row["_id"] for row in rows]
-
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
         assert {project: list(branches) for project, branches in activity.items()} == {"p1": ["main"]}
@@ -286,7 +279,7 @@ class TestWindowScansByBranch:
 
     @pytest.mark.asyncio
     async def test_a_branch_whose_dates_are_restored_iso_strings_keeps_its_count(self):
-        # Archive restore inserts bundle JSON verbatim, so $max can return a string.
+        # Archive restore inserts bundle JSON verbatim, so a branch can carry no real date at all.
         db = FakeDatabase()
         await _seed_scan(db, "s1", "p1", "main", 0, created_at="2026-01-01T00:00:00+00:00")
         await _seed_scan(db, "s2", "p1", "main", 10, created_at="2026-01-02T00:00:00+00:00")
@@ -299,29 +292,29 @@ class TestWindowScansByBranch:
     @pytest.mark.asyncio
     async def test_a_scope_larger_than_one_batch_is_read_in_batches(self):
         db = FakeDatabase()
-        project_ids = [f"p{i}" for i in range(_SCAN_WINDOW_PROJECT_BATCH * 2 + 1)]
+        project_ids = [f"p{i}" for i in range(_WINDOW_PROJECT_BATCH * 2 + 1)]
         for project_id in project_ids:
             await _seed_scan(db, f"{project_id}-s1", project_id, "main", 0)
 
-        real_aggregate = db.scans.aggregate
-        calls: list[list[dict[str, Any]]] = []
+        real_find = db.scans.find
+        batch_sizes: list[int] = []
 
-        def _spy(pipeline: list[dict[str, Any]], **kwargs: Any):
-            calls.append(pipeline)
-            return real_aggregate(pipeline, **kwargs)
+        def _spy(query: dict[str, Any], *args: Any, **kwargs: Any):
+            batch_sizes.append(len(query["project_id"]["$in"]))
+            return real_find(query, *args, **kwargs)
 
-        db.scans.aggregate = _spy  # type: ignore[method-assign]
+        db.scans.find = _spy  # type: ignore[method-assign]
         activity = await window_scans_by_branch(ScanRepository(db), project_ids, T0 - timedelta(days=1))
 
         assert len(activity) == len(project_ids)
-        assert len(calls) == 3
+        assert batch_sizes == [_WINDOW_PROJECT_BATCH, _WINDOW_PROJECT_BATCH, 1]
 
     @pytest.mark.asyncio
     async def test_an_empty_scope_issues_no_query(self):
         db = MagicMock()
 
         assert await window_scans_by_branch(ScanRepository(db), [], T0) == {}
-        assert db.scans.aggregate.call_count == 0
+        assert db.scans.find.call_count == 0
 
 
 class TestWindowHardLimit:
