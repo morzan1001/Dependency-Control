@@ -606,7 +606,7 @@ def test_the_artifact_is_named_after_the_report_and_typed_by_its_format(fmt, suf
     body, filename, mime_type = ComplianceReportEngine()._render(fmt, framework, _evaluation(), report, "Core/ops a")
 
     assert body
-    assert (filename, mime_type) == (f"nist-sp-800-131a_team-Core_ops_a_20260420T100500Z.{suffix}", mime)
+    assert (filename, mime_type) == (f"nist-sp-800-131a_team-Core-ops-a_20260420T100500Z.{suffix}", mime)
 
 
 @pytest.mark.asyncio

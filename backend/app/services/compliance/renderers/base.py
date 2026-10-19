@@ -1,9 +1,9 @@
-import re
 from typing import Protocol
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import EvaluationCoverage, FrameworkEvaluation, InputCoverage
 from app.services.compliance.frameworks.base import NAMES_SHOWN
+from app.services.inventory.csv_stream import filename_part
 from app.services.recommendation.common import name_some
 
 _INPUT_COMPLETE = "Evaluated all {in_scope} {subject} in scope."
@@ -58,5 +58,5 @@ class Renderer(Protocol):
 
 
 def build_filename(report: ComplianceReport, extension: str, scope_name: str | None) -> str:
-    scope = re.sub(r"[^A-Za-z0-9\-]", "_", f"{report.scope}-{scope_name}" if scope_name else report.scope)
+    scope = f"{report.scope}-{filename_part(scope_name)}" if scope_name else report.scope
     return f"{report.framework}_{scope}_{report.requested_at:%Y%m%dT%H%M%SZ}.{extension}"

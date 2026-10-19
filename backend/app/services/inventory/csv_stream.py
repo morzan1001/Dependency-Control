@@ -56,8 +56,12 @@ async def iter_csv(columns: list[str], rows: AsyncIterator[dict[str, Any]]) -> A
         yield _drain(buffer)
 
 
+def filename_part(part: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", part).strip("-")
+
+
 def export_filename(*parts: str, extension: str = "csv") -> str:
-    safe = [re.sub(r"[^A-Za-z0-9._-]+", "-", part).strip("-") for part in parts if part]
+    safe = [filename_part(part) for part in parts if part]
     return "_".join([*safe, datetime.now(timezone.utc).date().isoformat()]) + f".{extension}"
 
 
