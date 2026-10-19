@@ -21,6 +21,8 @@ def _lookup(lic_id: str) -> str | None:
     return _ALIAS_LOWER.get(lic_id.lower()) or _DB_LOWER.get(lic_id.lower())
 
 
+# Free-text licences contain ";" too, so only a Bundle-License parameter marks a header.
+BUNDLE_LICENSE_PARAMETER = re.compile(r";\s*(?:link\s*=|description\s*=|see:)", re.IGNORECASE)
 _LINK_URL = re.compile(r'link\s*=\s*"?(https?://[^\s";]+)', re.IGNORECASE)
 _PARAMETER_URL = re.compile(r'(https?://[^\s";]+)')
 
@@ -60,19 +62,22 @@ _MAX_TITLE_PARTS = 1 + max(
 )
 
 
-# A comma inside quotes belongs to a quoted name or parameter value.
+# In a Bundle-License header a comma inside quotes belongs to a quoted name or parameter value.
 _LIST_PART = re.compile(r'(?:"[^"]*"|[^,])+')
 
 
 def split_license_list(raw: str) -> list[str]:
     """Licence titles can contain commas, so a plain split would break them."""
-    parts = [part.strip() for part in _LIST_PART.findall(raw)]
+    header = BUNDLE_LICENSE_PARAMETER.search(raw)
+    parts = [part.strip() for part in (_LIST_PART.findall(raw) if header else raw.split(","))]
     names: list[str] = []
     start = 0
     while start < len(parts):
         window = min(len(parts), start + _MAX_TITLE_PARTS)
         # Parameters close a licence, so a title never runs past the part that carries them.
-        window = next((stop + 1 for stop in range(start, window) if ";" in parts[stop]), window)
+        window = next(
+            (stop + 1 for stop in range(start, window) if BUNDLE_LICENSE_PARAMETER.search(parts[stop])), window
+        )
         end = next(
             (
                 stop

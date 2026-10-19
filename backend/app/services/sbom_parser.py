@@ -22,6 +22,7 @@ from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type
 from app.services.analyzers.hash_verification import normalize_hash_algorithm
 from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import (
+    BUNDLE_LICENSE_PARAMETER,
     extract_license_from_url,
     normalize_license,
     split_license_list,
@@ -67,13 +68,9 @@ def _join_licenses(entries: list[str], purl: str | None) -> str:
     return operator.join(f"({entry})" if _SPDX_OPERATORS.intersection(entry.split()) else entry for entry in unique)
 
 
-# Free-text licences contain ";" too, so only a Bundle-License parameter marks a header.
-_BUNDLE_LICENSE_PARAMETER = re.compile(r";\s*(?:link\s*=|description\s*=|see:)", re.IGNORECASE)
-
-
 def _license_entries(value: str) -> tuple[list[str], str | None]:
     """A Bundle-License header can list several licences, each with its parameters: "a";link="u1",b;link=u2."""
-    if not _BUNDLE_LICENSE_PARAMETER.search(value):
+    if not BUNDLE_LICENSE_PARAMETER.search(value):
         return [value], None
     entries = [strip_license_parameters(entry) for entry in split_license_list(value)]
     return [name for name, _ in entries if name], next((url for _, url in entries if url), None)

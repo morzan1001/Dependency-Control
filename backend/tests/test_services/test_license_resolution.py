@@ -149,6 +149,18 @@ def test_a_stored_bundle_license_header_reads_as_its_licences(raw, expected):
     assert tokenize_license_string(raw) == expected
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("MIT; see LICENSE, NOTICE", ["MIT"]),
+        ("Apache-2.0; with exceptions, see NOTICE", ["Apache-2.0"]),
+        ('"MIT, Apache-2.0"', ["MIT", "Apache-2.0"]),
+    ],
+)
+def test_free_text_without_bundle_license_parameters_reads_as_before(raw, expected):
+    assert tokenize_license_string(raw) == expected
+
+
 def test_syft_prefers_the_spdx_expression_it_resolved_over_the_raw_value():
     entry = {"value": "GPL-2.0+", "spdxExpression": "GPL-2.0-or-later", "type": "declared"}
     assert SBOMParser()._handle_syft_license_dict(entry) == ("GPL-2.0-or-later", None)
