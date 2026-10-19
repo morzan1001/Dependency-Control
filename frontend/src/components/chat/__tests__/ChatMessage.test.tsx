@@ -4,14 +4,14 @@ import { describe, it, expect } from 'vitest';
 
 import { ChatMessage, StreamingMessage } from '../ChatMessage';
 
-function renderAssistant(content: string) {
+function renderMessage(role: 'user' | 'assistant', content: string) {
   return render(
     <MemoryRouter>
       <ChatMessage
         message={{
           id: 'm1',
           conversation_id: 'c1',
-          role: 'assistant',
+          role,
           content,
           tool_calls: [],
           created_at: '2026-10-05T00:00:00Z',
@@ -20,6 +20,8 @@ function renderAssistant(content: string) {
     </MemoryRouter>,
   );
 }
+
+const renderAssistant = (content: string) => renderMessage('assistant', content);
 
 describe('ChatMessage markdown', () => {
   it('renders a markdown image as a link instead of loading it', () => {
@@ -48,13 +50,44 @@ describe('ChatMessage markdown', () => {
   });
 });
 
+describe('ChatMessage typography', () => {
+  it('sets fenced code in a panel like a tool call, inline code as a chip, and lists with their markers', () => {
+    renderAssistant('Run `npm-ci`:\n\n```bash\nnpm run build\n```\n\n- one\n- two\n\n1. first\n2. second');
+
+    expect(screen.getByText('npm-ci')).toHaveClass('rounded', 'bg-muted', 'font-mono');
+    expect(screen.getByText('npm run build').closest('pre')).toHaveClass('rounded-md', 'border', 'bg-muted/20', 'text-xs');
+    expect(screen.getByText('one').closest('ul')).toHaveClass('list-disc', 'pl-5');
+    expect(screen.getByText('first').closest('ol')).toHaveClass('list-decimal', 'pl-5');
+    expect(screen.getByText('npm-ci').closest('p')).toHaveClass('my-1');
+  });
+
+  it("keeps a table in the user's bubble in the bubble's colour, without the muted header or the row hover", () => {
+    renderMessage('user', '| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |');
+
+    expect(screen.getByRole('columnheader', { name: 'Project' })).toHaveClass('text-inherit');
+    expect(screen.getByRole('columnheader', { name: 'Project' })).not.toHaveClass('text-muted-foreground');
+    expect(screen.getByRole('cell', { name: 'checkout-service' }).closest('tr')).toHaveClass('hover:bg-transparent');
+  });
+
+  it("writes a link in the user's bubble in the bubble's colour, underlined, instead of the primary colour of its fill", () => {
+    renderMessage('user', 'See https://example.com/docs');
+
+    expect(screen.getByRole('link').closest('.break-words')).toHaveClass('[&_a]:text-inherit', '[&_a]:underline');
+  });
+
+  it("keeps an assistant table's muted header", () => {
+    renderAssistant('| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |');
+
+    expect(screen.getByRole('columnheader', { name: 'Project' })).toHaveClass('text-muted-foreground');
+  });
+});
+
 describe('ChatMessage on a phone', () => {
   it('scrolls a wide markdown table in its own wrapper and wraps a long command inside the message', () => {
     renderAssistant('| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |\n\nRun `mvn versions:use-dep-version -Dincludes=org.apache.logging.log4j:log4j-core`');
 
     expect(screen.getByRole('table').parentElement).toHaveClass('overflow-auto');
-    const body = screen.getByRole('table').closest('.prose');
-    expect(body).toHaveClass('break-words');
+    const body = screen.getByRole('table').closest('.break-words');
     expect(body?.parentElement).toHaveClass('min-w-0');
   });
 

@@ -56,11 +56,20 @@ function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
 }
 
 // Module-level, so a streaming answer's table is not remounted, losing its sideways scroll, on every chunk.
-const MARKDOWN_COMPONENTS: Components = {
+const ASSISTANT_MARKDOWN: Components = {
   a: AssistantLink,
   // A rendered <img> would fetch a model-chosen URL without a click.
   img: ({ src, alt }) => <AssistantLink href={src}>{alt || src}</AssistantLink>,
-  pre: ({ children }) => <pre className="overflow-x-auto">{children}</pre>,
+  p: ({ children }) => <p className="my-1">{children}</p>,
+  ul: ({ children }) => <ul className="my-1 list-disc pl-5">{children}</ul>,
+  ol: ({ children }) => <ol className="my-1 list-decimal pl-5">{children}</ol>,
+  // Matches a tool call's panel; its <code> child drops the inline chip.
+  pre: ({ children }) => (
+    <pre className="my-2 overflow-x-auto rounded-md border bg-muted/20 px-3 py-2 text-xs [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-inherit">
+      {children}
+    </pre>
+  ),
+  code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">{children}</code>,
   table: ({ children }) => <Table>{children}</Table>,
   thead: ({ children }) => <TableHeader>{children}</TableHeader>,
   tbody: ({ children }) => <TableBody>{children}</TableBody>,
@@ -69,12 +78,21 @@ const MARKDOWN_COMPONENTS: Components = {
   td: ({ children, style }) => <TableCell style={style}>{children}</TableCell>,
 };
 
+// The muted header and row hover of the app table fail on the bubble's primary fill.
+const USER_MARKDOWN: Components = {
+  ...ASSISTANT_MARKDOWN,
+  tr: ({ children }) => <TableRow className="hover:bg-transparent">{children}</TableRow>,
+  th: ({ children, style }) => <TableHead style={style} className="text-inherit">{children}</TableHead>,
+};
+
 function MessageBody({
   content,
+  components,
   className,
   toolCalls,
 }: Readonly<{
   content: string;
+  components: Components;
   className?: string;
   toolCalls?: ReadonlyArray<ToolCall>;
 }>) {
@@ -86,17 +104,8 @@ function MessageBody({
   }, [content, toolCalls]);
 
   return (
-    <div
-      className={cn(
-        'prose prose-sm max-w-none break-words dark:prose-invert',
-        'prose-pre:my-2 prose-pre:rounded-md prose-pre:bg-muted prose-pre:text-foreground',
-        'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-xs prose-code:before:content-none prose-code:after:content-none',
-        'prose-p:my-1 prose-ul:my-1 prose-ol:my-1',
-        'prose-a:text-primary prose-a:no-underline hover:prose-a:underline',
-        className,
-      )}
-    >
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={MARKDOWN_COMPONENTS}>
+    <div className={cn('break-words text-sm', className)}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
         {linkified}
       </ReactMarkdown>
     </div>
@@ -124,7 +133,7 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
     return (
       <div className="flex justify-end gap-3">
         <div className="min-w-0 max-w-[78%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-primary-foreground">
-          <MessageBody content={message.content} className="prose-invert" />
+          <MessageBody content={message.content} components={USER_MARKDOWN} className="[&_a]:text-inherit [&_a]:underline" />
         </div>
         <AvatarChip role="user" />
       </div>
@@ -139,7 +148,7 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
           <ToolCallBlock key={`${message.id}-tc-${i}-${tc.tool_name}`} toolCall={tc} />
         ))}
         {message.content && (
-          <MessageBody content={message.content} toolCalls={message.tool_calls} />
+          <MessageBody content={message.content} components={ASSISTANT_MARKDOWN} toolCalls={message.tool_calls} />
         )}
       </Card>
     </div>
@@ -169,7 +178,7 @@ export function StreamingMessage({
           <ToolCallBlock key={`stream-tc-${i}-${tc.tool_name}`} toolCall={tc} />
         ))}
         {activeToolCall && <ToolCallLoading toolName={activeToolCall} />}
-        {content && <MessageBody content={content} toolCalls={toolCalls} />}
+        {content && <MessageBody content={content} components={ASSISTANT_MARKDOWN} toolCalls={toolCalls} />}
         {isThinking && <TypingDots />}
       </Card>
     </div>
