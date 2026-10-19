@@ -32,12 +32,14 @@ function AvatarChip({ role }: Readonly<{ role: 'user' | 'assistant' }>) {
   );
 }
 
+const LINK_CLASS = 'text-primary underline underline-offset-4';
+
 function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
   const { href, children, ...rest } = props;
   // Single-slash paths stay in the SPA; `//host` is protocol-relative and therefore external.
   if (typeof href === 'string' && href.startsWith('/') && !href.startsWith('//')) {
     return (
-      <RouterLink to={href} className="text-primary hover:underline">
+      <RouterLink to={href} className={LINK_CLASS}>
         {children}
       </RouterLink>
     );
@@ -48,7 +50,7 @@ function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className="text-primary hover:underline"
+      className={LINK_CLASS}
     >
       {children}
     </a>
@@ -63,6 +65,7 @@ const ASSISTANT_MARKDOWN: Components = {
   p: ({ children }) => <p className="my-1">{children}</p>,
   ul: ({ children }) => <ul className="my-1 list-disc pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="my-1 list-decimal pl-5">{children}</ol>,
+  blockquote: ({ children }) => <blockquote className="my-2 border-l-4 pl-4 italic">{children}</blockquote>,
   // Matches a tool call's panel; its <code> child drops the inline chip.
   pre: ({ children }) => (
     <pre className="my-2 overflow-x-auto rounded-md border bg-muted/20 px-3 py-2 text-xs [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-inherit">
