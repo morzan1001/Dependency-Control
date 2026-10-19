@@ -1,3 +1,5 @@
+import type { MigrationItemStatus } from '@/types/pqcMigration';
+
 export const AVAILABLE_ANALYZERS = [
   { id: 'trivy', label: 'Trivy (Container/FS)', description: 'Scans container images and filesystems for vulnerabilities (CVEs) and misconfigurations.', category: 'vulnerability' },
   { id: 'grype', label: 'Grype (Anchore)', description: 'A vulnerability scanner for container images and filesystems, similar to Trivy.', category: 'vulnerability' },
@@ -61,6 +63,13 @@ export const CRYPTO_FINDING_TYPES = [
   { value: 'crypto_weak_protocol', label: 'Weak protocol' },
   { value: 'crypto_key_management', label: 'Key management misuse' },
 ] as const;
+
+export const MIGRATION_STATUS_LABEL: Record<MigrationItemStatus, string> = {
+  migrate_now: 'Migrate now',
+  migrate_soon: 'Migrate soon',
+  plan_migration: 'Plan migration',
+  monitor: 'Monitor',
+};
 
 export const DEFAULT_PAGE_SIZE = 50;
 export const SMALL_PAGE_SIZE = 20;

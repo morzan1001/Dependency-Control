@@ -1,3 +1,4 @@
+import { MIGRATION_STATUS_LABEL } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
 import type { MigrationItem, MigrationItemStatus } from "@/types/pqcMigration";
 
@@ -11,13 +12,6 @@ const STATUS_COLOR: Record<MigrationItemStatus, string> = {
   migrate_soon: "bg-orange-500/80 text-white",
   plan_migration: "bg-yellow-500/60",
   monitor: "bg-muted text-foreground",
-};
-
-const STATUS_LABEL: Record<MigrationItemStatus, string> = {
-  migrate_now: "Migrate now",
-  migrate_soon: "Migrate soon",
-  plan_migration: "Plan migration",
-  monitor: "Monitor",
 };
 
 export function MigrationPlanTable({ items, onSelect }: Readonly<Props>) {
@@ -57,7 +51,7 @@ export function MigrationPlanTable({ items, onSelect }: Readonly<Props>) {
             >
               <td className="p-2">
                 <span className={`rounded px-2 py-0.5 text-xs ${STATUS_COLOR[it.status]}`}>
-                  {STATUS_LABEL[it.status]}
+                  {MIGRATION_STATUS_LABEL[it.status]}
                 </span>
               </td>
               <td className="p-2 font-mono">{it.priority_score}</td>

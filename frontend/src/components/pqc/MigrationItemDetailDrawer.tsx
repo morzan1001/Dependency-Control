@@ -1,6 +1,7 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { MIGRATION_STATUS_LABEL } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
 import type { MigrationItem } from "@/types/pqcMigration";
 
@@ -23,7 +24,7 @@ export function MigrationItemDetailDrawer({ item, projectNames, onClose }: Reado
             </DialogHeader>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
               <dt className="text-muted-foreground">Priority score</dt><dd>{item.priority_score}</dd>
-              <dt className="text-muted-foreground">Status</dt><dd>{item.status}</dd>
+              <dt className="text-muted-foreground">Status</dt><dd>{MIGRATION_STATUS_LABEL[item.status]}</dd>
               <dt className="text-muted-foreground">Primitive</dt><dd>{item.source_primitive}</dd>
               <dt className="text-muted-foreground">Use case</dt><dd>{item.use_case}</dd>
               <dt className="text-muted-foreground">Standard</dt><dd>{item.recommended_standard}</dd>
