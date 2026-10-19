@@ -238,6 +238,23 @@ describe("ReachabilityResults on a phone", () => {
     expect(screen.getByText("org.apache.commons:commons-text@1.9")).toHaveClass("wrap-anywhere");
   });
 
+  it("shows each row's severity in the severity pill every other list uses", () => {
+    render(
+      <ReachabilityResults
+        data={{
+          ...reachabilityData,
+          reachable_vulnerabilities: [{ ...reachabilityData.reachable_vulnerabilities[0], severity: "high" }],
+          unreachable_vulnerabilities: [{ ...reachabilityData.unreachable_vulnerabilities[0], severity: "medium" }],
+          reachable_total: 1,
+          unreachable_total: 1,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("HIGH")).toHaveClass("bg-severity-high", "text-severity-high-foreground");
+    expect(screen.getByText("MEDIUM")).toHaveClass("bg-severity-medium", "text-severity-medium-foreground");
+  });
+
   it("wraps a vulnerability row's badges under the CVE", () => {
     render(<ReachabilityResults data={reachabilityData} />);
 

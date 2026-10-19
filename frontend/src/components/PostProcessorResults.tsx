@@ -31,7 +31,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { getSeverityBadgeVariant } from "@/lib/finding-utils";
+import { SeverityBadge } from "@/components/findings/SeverityBadge";
 import { formatDateTime } from "@/lib/utils";
 import { useScanResult } from "@/hooks/queries/use-scans";
 import { ReachabilitySummary } from "@/types/scan";
@@ -478,9 +478,7 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-red-50/50 dark:bg-red-950/50 hover:bg-red-100/50 dark:hover:bg-red-900/50 transition-colors">
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                       <span className="font-mono text-sm">{vuln.cve}</span>
-                      <Badge variant={getSeverityBadgeVariant(vuln.severity)} className="capitalize">
-                        {vuln.severity}
-                      </Badge>
+                      <SeverityBadge severity={vuln.severity.toUpperCase()} />
                       <Badge 
                         variant="outline" 
                         className={`${
@@ -547,9 +545,7 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
                       {vuln.component}@{vuln.version}
                     </span>
                   </div>
-                  <Badge variant={getSeverityBadgeVariant(vuln.severity)} className="capitalize">
-                    {vuln.severity}
-                  </Badge>
+                  <SeverityBadge severity={vuln.severity.toUpperCase()} />
                 </div>
               ))}
               {unreachableTotal > shownUnreachable.length && (
