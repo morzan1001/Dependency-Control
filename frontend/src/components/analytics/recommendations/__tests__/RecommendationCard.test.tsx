@@ -328,3 +328,23 @@ describe("RecommendationCard copy button", () => {
     expect(rejections).toEqual([]);
   });
 });
+
+describe("RecommendationCard on a phone", () => {
+  it("wraps its badges under a long title instead of truncating the title to nothing", () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard recommendation={makeRecommendation({ type: "upgrade_outdated" }, { title: "Upgrade 4 outdated direct dependencies" })} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Upgrade 4 outdated direct dependencies" }).parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("breaks a long current image reference inside the card", () => {
+    renderExpanded(
+      makeRecommendation({ type: "update_base_image", current_image: "registry.example.com/platform/checkout-service:1.4.2" }),
+    );
+
+    expect(screen.getByText("registry.example.com/platform/checkout-service:1.4.2")).toHaveClass("break-all");
+  });
+});

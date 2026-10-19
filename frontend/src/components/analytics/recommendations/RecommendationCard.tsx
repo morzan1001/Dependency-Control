@@ -105,8 +105,8 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
             <TypeIcon className={cn("h-5 w-5", typeInfo.color)} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <h4 className="font-semibold truncate">{recommendation.title}</h4>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+              <h4 className="font-semibold truncate max-w-full">{recommendation.title}</h4>
               <Badge
                 variant="outline"
                 className={cn("shrink-0", priorityInfo.textColor)}
@@ -190,7 +190,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                 {recommendation.action.current_image && (
                   <div>
                     <span className="text-muted-foreground">Current: </span>
-                    <code>{recommendation.action.current_image}</code>
+                    <code className="break-all">{recommendation.action.current_image}</code>
                   </div>
                 )}
                 {recommendation.action.suggestion && (
