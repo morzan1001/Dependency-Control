@@ -32,7 +32,7 @@ export interface MigrationPlanResponse {
   scope_id: string | null;
   generated_at: string;
   items: MigrationItem[];
-  // Only projects that still exist; the drawer shows any other by its id.
+  // Only projects that still exist.
   project_names: Record<string, string>;
   summary: MigrationPlanSummary;
   mappings_version: number;
