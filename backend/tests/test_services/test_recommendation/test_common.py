@@ -19,7 +19,6 @@ from app.services.recommendation.common import (
     live_cves,
     name_some,
     recommend,
-    sample_components,
     severity_impact,
     sort_key,
     summarize_vulns,
@@ -423,43 +422,6 @@ class TestCalculateScore:
         assert isinstance(score, int)
 
 
-class TestSampleComponents:
-    """One cut, one count: the reader always learns the size of the population."""
-
-    def test_a_population_past_the_cap_is_counted_before_it_is_cut(self):
-        covered = AFFECTED_COMPONENTS_SHOWN * 45
-        shown, total = sample_components(f"pkg{index:04d}" for index in range(covered))
-
-        assert len(shown) == AFFECTED_COMPONENTS_SHOWN
-        assert total == covered
-
-    @pytest.mark.parametrize(
-        "entries",
-        [
-            pytest.param(["a", "b", "a", "b"], id="duplicates"),
-            pytest.param(["a", "", "b"], id="blank_entries"),
-        ],
-    )
-    def test_only_distinct_named_components_are_listed_and_counted(self, entries):
-        shown, total = sample_components(entries)
-
-        assert shown == ["a", "b"]
-        assert total == 2
-
-    def test_the_callers_order_survives_so_a_ranked_population_keeps_its_ranking(self):
-        ranked = [f"pkg{index:04d}" for index in range(AFFECTED_COMPONENTS_SHOWN * 2)][::-1]
-
-        shown, _total = sample_components(ranked)
-
-        assert shown == ranked[:AFFECTED_COMPONENTS_SHOWN]
-
-    def test_a_card_names_twenty_components_before_it_cuts(self):
-        shown, total = sample_components(f"pkg{index:04d}" for index in range(30))
-
-        assert len(shown) == 20
-        assert total == 30
-
-
 class TestTakeTop:
     """Rank and population are how a card says "you are looking at a sample"."""
 
@@ -519,6 +481,31 @@ class TestRecommend:
 
         assert len(card.affected_components) == AFFECTED_COMPONENTS_SHOWN
         assert card.to_dict()["affected_components_total"] == covered
+
+    @pytest.mark.parametrize(
+        "entries",
+        [
+            pytest.param(["a", "b", "a", "b"], id="duplicates"),
+            pytest.param(["a", "", "b"], id="blank_entries"),
+        ],
+    )
+    def test_only_distinct_named_components_are_listed_and_counted(self, entries):
+        card = self._card(entries)
+
+        assert (card.affected_components, card.affected_components_total) == (["a", "b"], 2)
+
+    def test_the_callers_order_survives_so_a_ranked_population_keeps_its_ranking(self):
+        ranked = [f"pkg{index:04d}" for index in range(AFFECTED_COMPONENTS_SHOWN * 2)][::-1]
+
+        card = self._card(ranked)
+
+        assert card.affected_components == ranked[:AFFECTED_COMPONENTS_SHOWN]
+
+    @pytest.mark.parametrize("covered", [20, 30])
+    def test_a_card_names_twenty_components_before_it_cuts(self, covered):
+        card = self._card(f"pkg{index:04d}" for index in range(covered))
+
+        assert (len(card.affected_components), card.affected_components_total) == (20, covered)
 
 
 class TestSeverityImpact:

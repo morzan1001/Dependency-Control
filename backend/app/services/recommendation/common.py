@@ -48,7 +48,7 @@ class VulnerabilityInfo:
     direct_inferred: bool = False
 
 
-# Components one recommendation lists; drawn via sample_components/sampled so each list carries its population.
+# Components one recommendation lists; drawn via recommend/sampled so each list carries its population.
 AFFECTED_COMPONENTS_SHOWN = 20
 
 
@@ -56,12 +56,6 @@ def name_some(values: Sequence[str], shown: int) -> str:
     head = ", ".join(values[:shown])
     remaining = len(values) - shown
     return f"{head} and {remaining} more" if remaining > 0 else head
-
-
-def sample_components(components: Iterable[str]) -> tuple[list[str], int]:
-    """Keeps the caller's order: pass a sorted sequence where the source is a set."""
-    unique = list(dict.fromkeys(component for component in components if component))
-    return unique[:AFFECTED_COMPONENTS_SHOWN], len(unique)
 
 
 def sampled(name: str, values: Sequence[Any], cap: int) -> dict[str, Any]:
@@ -82,15 +76,16 @@ def recommend(
     rank: int = 0,
     ranked_out_of: int = 0,
 ) -> Recommendation:
-    shown, total = sample_components(components)
+    """Keeps the order of components: pass a sorted sequence where the source is a set."""
+    unique = list(dict.fromkeys(c for c in components if c))
     return Recommendation(
         type=rec_type,
         priority=priority,
         title=title,
         description=description,
         impact=impact,
-        affected_components=shown,
-        affected_components_total=total,
+        affected_components=unique[:AFFECTED_COMPONENTS_SHOWN],
+        affected_components_total=len(unique),
         action=action,
         effort=effort,
         rank=rank,
