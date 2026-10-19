@@ -24,7 +24,7 @@ from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
-from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
+from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver, resolve_scope_names
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.compliance.visibility import report_visibility_filter
@@ -59,6 +59,11 @@ def _status_str(value: Any) -> str:
 def _report_view(report: ComplianceReport) -> dict[str, Any]:
     statement = coverage_statement(report.coverage) if report.coverage else None
     return {**report.model_dump(by_alias=True), "coverage_statement": statement}
+
+
+async def _report_views(db: AsyncIOMotorDatabase, reports: list[ComplianceReport]) -> list[dict[str, Any]]:
+    views = await resolve_scope_names(db, [_report_view(r) for r in reports])
+    return await resolve_usernames(db, views, "requested_by_name", id_field="requested_by")
 
 
 @router.post(
@@ -133,8 +138,7 @@ async def list_reports(
         skip=skip,
         limit=limit,
     )
-    views = [_report_view(r) for r in reports]
-    return {"reports": await resolve_usernames(db, views, "requested_by_name", id_field="requested_by")}
+    return {"reports": await _report_views(db, reports)}
 
 
 @router.get(
@@ -152,7 +156,7 @@ async def get_report(
     if not await _user_can_see_report(db, current_user, r):
         # Don't leak the report's existence to a caller without scope access.
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
-    [view] = await resolve_usernames(db, [_report_view(r)], "requested_by_name", id_field="requested_by")
+    [view] = await _report_views(db, [r])
     return view
 
 
