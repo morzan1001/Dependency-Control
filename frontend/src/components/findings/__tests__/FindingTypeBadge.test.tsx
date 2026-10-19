@@ -30,9 +30,15 @@ describe("FindingTypeBadge", () => {
     expect(screen.getByText("Vulnerability").parentElement?.querySelector("svg")).toHaveClass("shrink-0");
   });
 
-  it("still names a type it has no label for by the type itself", () => {
+  it("names a malware finding by its label", () => {
     render(<FindingTypeBadge type="malware" />);
 
-    expect(screen.getByText("malware")).toHaveClass("capitalize");
+    expect(screen.getByText("Malware")).toBeInTheDocument();
+  });
+
+  it("still names a type it has no label for by the type itself", () => {
+    render(<FindingTypeBadge type="typosquat" />);
+
+    expect(screen.getByText("typosquat")).toHaveClass("capitalize");
   });
 });

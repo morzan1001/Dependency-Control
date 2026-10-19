@@ -10,6 +10,19 @@ import {
   Stamp
 } from 'lucide-react'
 
+export const FINDING_TYPE_LABELS: Record<string, string> = {
+  vulnerability: 'Vulnerability',
+  secret: 'Secret',
+  sast: 'SAST',
+  iac: 'IaC',
+  system_warning: 'System Error',
+  outdated: 'Outdated',
+  license: 'License',
+  quality: 'Quality',
+  eol: 'EOL',
+  malware: 'Malware',
+}
+
 export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
   const getBadgeStyle = (type: string) => {
     switch (type?.toLowerCase()) {
@@ -17,86 +30,78 @@ export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
         return {
           variant: 'outline' as const,
           className: 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/50 dark:text-red-400 dark:hover:bg-red-900/50',
-          icon: ShieldAlert,
-          label: 'Vulnerability'
+          icon: ShieldAlert
         }
       case 'secret':
         return {
           variant: 'outline' as const,
           className: 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 dark:border-orange-800 dark:bg-orange-950/50 dark:text-orange-400 dark:hover:bg-orange-900/50',
-          icon: Key,
-          label: 'Secret'
+          icon: Key
         }
       case 'sast':
         return {
           variant: 'outline' as const,
           className: 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-400 dark:hover:bg-blue-900/50',
-          icon: FileCode,
-          label: 'SAST'
+          icon: FileCode
         }
       case 'iac':
         return {
           variant: 'outline' as const,
           className: 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-400 dark:hover:bg-indigo-900/50',
-          icon: FileCode,
-          label: 'IaC'
+          icon: FileCode
         }
       case 'system_warning':
         return {
           variant: 'destructive' as const,
           className: 'bg-destructive/90 hover:bg-destructive',
-          icon: ServerCrash,
-          label: 'System Error'
+          icon: ServerCrash
         }
       case 'outdated':
         return {
           variant: 'outline' as const,
           className: 'border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 dark:border-yellow-800 dark:bg-yellow-950/50 dark:text-yellow-400 dark:hover:bg-yellow-900/50',
-          icon: Clock,
-          label: 'Outdated'
+          icon: Clock
         }
       case 'license':
         return {
           variant: 'outline' as const,
           className: 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 dark:border-purple-800 dark:bg-purple-950/50 dark:text-purple-400 dark:hover:bg-purple-900/50',
-          icon: Stamp,
-          label: 'License'
+          icon: Stamp
         }
       case 'quality':
         return {
           variant: 'outline' as const,
           className: 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-800 dark:bg-green-950/50 dark:text-green-400 dark:hover:bg-green-900/50',
-          icon: FileText,
-          label: 'Quality'
+          icon: FileText
         }
       case 'eol':
         return {
           variant: 'outline' as const,
           className: 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 dark:border-orange-800 dark:bg-orange-950/50 dark:text-orange-400 dark:hover:bg-orange-900/50',
-          icon: Clock,
-          label: 'EOL'
+          icon: Clock
         }
       default:
         return {
           variant: 'outline' as const,
           className: '',
-          icon: null,
-          label: CRYPTO_FINDING_TYPES.find((crypto) => crypto.value === type?.toLowerCase())?.label ?? type
+          icon: null
         }
     }
   }
 
   const style = getBadgeStyle(type)
   const Icon = style.icon
+  const key = type?.toLowerCase()
+  const label = FINDING_TYPE_LABELS[key] ?? CRYPTO_FINDING_TYPES.find((crypto) => crypto.value === key)?.label ?? type
 
   return (
     <Badge
       variant={style.variant}
       className={`${style.className} flex max-w-full items-center gap-1.5`}
-      title={style.label}
+      title={label}
     >
       {Icon && <Icon className="h-3 w-3 shrink-0" />}
-      <span className="truncate capitalize">{style.label}</span>
+      <span className="truncate capitalize">{label}</span>
     </Badge>
   )
 }

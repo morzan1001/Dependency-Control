@@ -71,6 +71,21 @@ describe("FindingsDeltaTab", () => {
     expect(within(table).getByRole("columnheader", { name: "Type" })).toHaveClass("w-[160px]");
   });
 
+  it("labels the type chips as the type column below names the types, and still filters by the raw type", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
+    renderTab();
+    await waitFor(() => expect(api.getScanDelta).toHaveBeenCalledTimes(1));
+
+    for (const label of ["Vulnerability", "Secret", "SAST", "IaC", "License", "Malware", "EOL"]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "IaC" }));
+    await waitFor(() => {
+      const calls = (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[calls.length - 1][0].findingType).toEqual(["iac"]);
+    });
+  });
+
   it("renders summary totals from the response", async () => {
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
     renderTab();

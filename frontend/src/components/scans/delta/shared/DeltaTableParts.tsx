@@ -11,18 +11,19 @@ export function DeltaFilterBar({ children }: { readonly children: ReactNode }) {
   );
 }
 
-export function DeltaFilterGroup<T extends string>({ label, options, isActive, onSelect }: Readonly<{
+export function DeltaFilterGroup<T extends string>({ label, options, isActive, onSelect, labelOf }: Readonly<{
   label: string;
   options: readonly T[];
   isActive: (option: T) => boolean;
   onSelect: (option: T) => void;
+  labelOf?: (option: T) => string;
 }>) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-muted-foreground">{label}:</span>
       {options.map((option) => (
         <Button key={option} size="sm" variant={isActive(option) ? "default" : "outline"} onClick={() => onSelect(option)}>
-          {option}
+          {labelOf?.(option) ?? option}
         </Button>
       ))}
     </div>
