@@ -70,7 +70,7 @@ def _make_dependency(
 
 class TestEmptyFindings:
     def test_empty_findings_returns_empty_list(self):
-        result = process_vulnerabilities([], [])
+        result, _ = process_vulnerabilities([], [])
         assert result == []
 
 
@@ -88,7 +88,7 @@ class TestDirectDependencyUpdate:
         finding = _make_finding(severity=severity)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         assert len(result) >= 1
         rec = result[0]
@@ -99,7 +99,7 @@ class TestDirectDependencyUpdate:
         finding = _make_finding(component="requests")
         dep = _make_dependency(name="requests")
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         assert result[0].affected_components == ["requests@1.0.0"]
 
@@ -107,7 +107,7 @@ class TestDirectDependencyUpdate:
         finding = _make_finding(fixed_version="2.0.0")
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         assert result[0].action["target_version"] == "2.0.0"
 
@@ -115,14 +115,14 @@ class TestDirectDependencyUpdate:
         finding = _make_finding(version="1.0.0")
         dep = _make_dependency(version="1.0.0")
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         assert result[0].action["current_version"] == "1.0.0"
 
     def test_a_finding_without_an_inventory_row_is_not_called_direct(self):
         finding = _make_finding(component="unknown-pkg")
 
-        assert process_vulnerabilities([finding], []) == []
+        assert process_vulnerabilities([finding], []) == ([], [])
 
     def test_a_group_qualified_finding_joins_the_bare_inventory_name(self):
         sbom = json.loads((Path(__file__).parents[2] / "fixtures" / "sbom" / "maven.trivy.cdx.json").read_text())
@@ -131,7 +131,7 @@ class TestDirectDependencyUpdate:
             "ch.qos.logback:logback-core", "1.5.6", [{"id": "CVE-2024-0007", "fixed_version": "1.5.13"}]
         )
 
-        [card] = process_vulnerabilities([finding], [dep])
+        [card], _ = process_vulnerabilities([finding], [dep])
 
         assert card.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT
 
@@ -150,7 +150,7 @@ class TestGroupedVulnerabilities:
         ]
         dep = _make_dependency(name="requests", version="1.0.0")
 
-        result = process_vulnerabilities(findings, [dep])
+        result, _ = process_vulnerabilities(findings, [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert len(direct_recs) == 1
@@ -163,7 +163,7 @@ class TestGroupedVulnerabilities:
         ]
         dep = _make_dependency(name="flask", version="1.0.0", purl="pkg:pypi/flask@1.0.0")
 
-        result = process_vulnerabilities(findings, [dep])
+        result, _ = process_vulnerabilities(findings, [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].action["target_version"] == "1.2.0"
@@ -178,7 +178,7 @@ class TestGroupedVulnerabilities:
             _make_dependency(name="pkg-b", version="2.0.0", purl="pkg:pypi/pkg-b@2.0.0"),
         ]
 
-        result = process_vulnerabilities(findings, deps)
+        result, _ = process_vulnerabilities(findings, deps)
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert len(direct_recs) == 2
@@ -191,7 +191,7 @@ class TestGroupedVulnerabilities:
         ]
         dep = _make_dependency(name="pkg")
 
-        result = process_vulnerabilities(findings, [dep])
+        result, _ = process_vulnerabilities(findings, [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         impact = direct_recs[0].impact
@@ -221,7 +221,7 @@ class TestBaseImageUpdate:
             for i in range(4)
         ]
 
-        result = process_vulnerabilities(findings, deps)
+        result, _ = process_vulnerabilities(findings, deps)
 
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert len(base_recs) == 1
@@ -240,7 +240,7 @@ class TestBaseImageUpdate:
             dep_type="deb",
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert len(base_recs) == 1
@@ -252,7 +252,7 @@ class TestBaseImageUpdate:
             name="libssl", purl="pkg:deb/debian/libssl@1.0.0", direct=True, source_type="directory", dep_type="deb"
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         assert [r.type for r in result] == [RecommendationType.DIRECT_DEPENDENCY_UPDATE]
 
@@ -262,7 +262,7 @@ class TestBaseImageUpdate:
             name="libssl", purl="pkg:deb/debian/libssl@1.0.0", direct=False, source_type=None, dep_type="deb"
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         assert [r.type for r in result] == [RecommendationType.BASE_IMAGE_UPDATE]
 
@@ -272,7 +272,7 @@ class TestBaseImageUpdate:
         dep = next(d.model_dump() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
         finding = _make_finding(severity="CRITICAL", component="libssl3", version=dep["version"])
 
-        [card] = process_vulnerabilities([finding], [dep])
+        [card], _ = process_vulnerabilities([finding], [dep])
 
         assert dep["source_type"] == "application"
         assert card.type == RecommendationType.BASE_IMAGE_UPDATE
@@ -293,7 +293,7 @@ class TestBaseImageUpdate:
             ),
         ]
 
-        result = process_vulnerabilities(findings, deps)
+        result, _ = process_vulnerabilities(findings, deps)
 
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert len(base_recs) == 0
@@ -318,7 +318,7 @@ class TestBaseImageUpdate:
             for i in range(4)
         ]
 
-        result = process_vulnerabilities(findings, deps)
+        result, _ = process_vulnerabilities(findings, deps)
 
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert len(base_recs) == 1
@@ -344,7 +344,7 @@ class TestBaseImageUpdate:
             for i in range(4)
         ]
 
-        result = process_vulnerabilities(findings, deps)
+        result, _ = process_vulnerabilities(findings, deps)
 
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_recs[0].action["current_image"] == "python:3.11-slim"
@@ -373,7 +373,7 @@ class TestBaseImageUpdate:
             source_target=source_target,
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         [base_rec] = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_rec.action["commands"][1] == f"docker pull {image_name}:latest"
@@ -395,7 +395,7 @@ class TestBaseImageUpdate:
         ]
 
         [base_rec] = [
-            r for r in process_vulnerabilities(findings, deps) if r.type == RecommendationType.BASE_IMAGE_UPDATE
+            r for r in process_vulnerabilities(findings, deps)[0] if r.type == RecommendationType.BASE_IMAGE_UPDATE
         ]
 
         assert base_rec.action["current_image"] == "alpine:3.20"
@@ -416,7 +416,7 @@ class TestBaseImageUpdate:
             for i in range(15)
         ]
 
-        result = process_vulnerabilities(findings, deps)
+        result, _ = process_vulnerabilities(findings, deps)
 
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_recs[0].effort == "low"
@@ -437,7 +437,7 @@ class TestTransitiveDependency:
             source_type="application",
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         trans_recs = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
         assert len(trans_recs) == 1
@@ -456,7 +456,7 @@ class TestTransitiveDependency:
             source_type="application",
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         trans_recs = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
         assert trans_recs[0].effort == "high"
@@ -476,7 +476,7 @@ class TestTransitiveDependency:
             source_type="application",
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         trans_recs = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
         assert trans_recs[0].priority == Priority.CRITICAL
@@ -505,7 +505,7 @@ class TestTransitiveDependency:
             source_type="application",
         )
 
-        result = process_vulnerabilities(findings, [dep])
+        result, _ = process_vulnerabilities(findings, [dep])
 
         trans_recs = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
         assert len(trans_recs) == 1
@@ -526,7 +526,7 @@ class TestNoFixAvailable:
         finding = _make_finding(severity=severity, fixed_version=None)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
         assert len(no_fix_recs) == expected_count
@@ -537,7 +537,7 @@ class TestNoFixAvailable:
         finding = _make_finding(severity="CRITICAL", fixed_version=None)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
         assert no_fix_recs[0].effort == "high"
@@ -546,7 +546,7 @@ class TestNoFixAvailable:
         finding = _make_finding(severity="CRITICAL", fixed_version=None, component="vulnerable-lib")
         dep = _make_dependency(name="vulnerable-lib")
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
         assert "vulnerable-lib" in no_fix_recs[0].affected_components
@@ -556,7 +556,7 @@ class TestNoFixAvailable:
         finding = _make_finding(severity="CRITICAL", fixed_version=None)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         card = next(r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE)
         assert _UNSUPPORTED_NO_FIX_CLAIM not in card.description
@@ -574,7 +574,7 @@ class TestKevVulnerabilities:
         finding = _make_finding(severity="MEDIUM", is_kev=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert len(direct_recs) >= 1
@@ -584,7 +584,7 @@ class TestKevVulnerabilities:
         finding = _make_finding(is_kev=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["kev_count"] >= 1
@@ -593,7 +593,7 @@ class TestKevVulnerabilities:
         finding = _make_finding(finding_id="CVE-2024-9999", is_kev=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert "CVE-2024-9999" in direct_recs[0].action.get("kev_cves", [])
@@ -602,7 +602,7 @@ class TestKevVulnerabilities:
         finding = _make_finding(is_kev=True, kev_ransomware=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["kev_ransomware_count"] >= 1
@@ -620,7 +620,7 @@ class TestKevVulnerabilities:
             source_type="application",
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         trans_recs = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
         assert trans_recs[0].priority == Priority.CRITICAL
@@ -631,7 +631,7 @@ class TestUnreachableDowngrade:
         finding = _make_finding(severity="CRITICAL", reachable=False)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].priority == Priority.HIGH
@@ -643,7 +643,7 @@ class TestUnreachableDowngrade:
         ]
         dep = _make_dependency()
 
-        result = process_vulnerabilities(findings, [dep])
+        result, _ = process_vulnerabilities(findings, [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].priority == Priority.CRITICAL
@@ -652,7 +652,7 @@ class TestUnreachableDowngrade:
         finding = _make_finding(severity="CRITICAL", reachable=None)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].priority == Priority.CRITICAL
@@ -664,7 +664,7 @@ class TestUnreachableDowngrade:
         ]
         dep = _make_dependency()
 
-        result = process_vulnerabilities(findings, [dep])
+        result, _ = process_vulnerabilities(findings, [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].priority == Priority.CRITICAL
@@ -682,7 +682,7 @@ class TestUnreachableDowngrade:
             source_type="application",
         )
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         trans_recs = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
         assert trans_recs[0].priority == Priority.HIGH
@@ -693,7 +693,7 @@ class TestEpssHandling:
         finding = _make_finding(severity="MEDIUM", epss_score=0.15)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].priority == Priority.HIGH
@@ -702,7 +702,7 @@ class TestEpssHandling:
         finding = _make_finding(epss_score=0.2)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["high_epss_count"] >= 1
@@ -711,7 +711,7 @@ class TestEpssHandling:
         finding = _make_finding(severity="LOW", epss_score=0.05)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["medium_epss_count"] >= 1
@@ -720,7 +720,7 @@ class TestEpssHandling:
         finding = _make_finding(finding_id="CVE-2024-7777", severity="MEDIUM", epss_score=0.1)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["high_epss_count"] == 1
@@ -732,7 +732,7 @@ class TestEpssHandling:
         finding = _make_finding(finding_id="CVE-2024-5555", epss_score=0.5)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert "CVE-2024-5555" in direct_recs[0].action.get("high_epss_cves", [])
@@ -743,7 +743,7 @@ class TestReachabilityImpactData:
         finding = _make_finding(reachable=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["reachable_count"] >= 1
@@ -752,7 +752,7 @@ class TestReachabilityImpactData:
         finding = _make_finding(reachable=False)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["unreachable_count"] >= 1
@@ -761,7 +761,7 @@ class TestReachabilityImpactData:
         finding = _make_finding(severity="CRITICAL", reachable=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["reachable_critical"] >= 1
@@ -770,7 +770,7 @@ class TestReachabilityImpactData:
         finding = _make_finding(severity="HIGH", reachable=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["reachable_high"] >= 1
@@ -779,7 +779,7 @@ class TestReachabilityImpactData:
         finding_crit = _make_finding(severity="CRITICAL", reachable=True)
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding_crit], [dep])
+        result, _ = process_vulnerabilities([finding_crit], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].priority == Priority.CRITICAL
@@ -798,7 +798,7 @@ class TestLookupFallback:
         )
         # The finding's purl won't match the dep's purl, but name@version will
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         assert len(result) >= 1
 
@@ -808,7 +808,7 @@ class TestCveIdOnTheStoredShape:
         finding = _make_finding(finding_id="CVE-2024-7777", component="log4j-core", version="2.14.1")
         dep = _make_dependency(name="log4j-core", version="2.14.1")
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].action["cves"] == ["CVE-2024-7777"]
@@ -817,7 +817,7 @@ class TestCveIdOnTheStoredShape:
         finding = _make_finding(finding_id="GHSA-jfh8-c2jp-5v3q", aliases=["CVE-2021-44228"])
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].action["cves"] == ["CVE-2021-44228"]
@@ -826,12 +826,12 @@ class TestCveIdOnTheStoredShape:
         finding = _make_finding()
         finding["details"]["vulnerabilities"] = []
 
-        assert process_vulnerabilities([finding], [_make_dependency()]) == []
+        assert process_vulnerabilities([finding], [_make_dependency()]) == ([], [])
 
 
 class TestUpdateCardsArePerInstalledVersion:
     def _cards(self, findings, deps, card_type):
-        return [r for r in process_vulnerabilities(findings, deps) if r.type == card_type]
+        return [r for r in process_vulnerabilities(findings, deps)[0] if r.type == card_type]
 
     def test_each_transitive_version_gets_its_own_card(self):
         findings = [
@@ -870,7 +870,7 @@ class TestInferredDirectnessIsNotPresentedAsDeclared:
         finding = _make_finding(component="openssl-lib")
         dep = {**_make_dependency(name="openssl-lib"), "direct_inferred": True}
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert card.action["direct_inferred"] is True
@@ -881,7 +881,7 @@ class TestInferredDirectnessIsNotPresentedAsDeclared:
         finding = _make_finding()
         dep = _make_dependency()
 
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
 
         [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert card.action["direct_inferred"] is False
@@ -894,7 +894,7 @@ class TestUpdateCardsReadTheLiveAdvisories:
         fixed = [{"severity": "MEDIUM", **a, "fixed_version": "2.17.1"} for a in advisories]
         finding["details"] |= {**details, "vulnerabilities": fixed}
         dep = _make_dependency(name="log4j-core", version="2.14.1")
-        result = process_vulnerabilities([finding], [dep])
+        result, _ = process_vulnerabilities([finding], [dep])
         [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         return card
 
@@ -927,7 +927,7 @@ class TestPartiallyFixableRecords:
     """OS images routinely pair a fixable CRITICAL with a LOW the distribution will not fix in one record."""
 
     def _types(self, finding, dep):
-        return [r.type for r in process_vulnerabilities([finding], [dep])]
+        return [r.type for r in process_vulnerabilities([finding], [dep])[0]]
 
     def test_a_fixed_critical_beside_an_unfixed_low_gets_the_base_image_card(self):
         finding = stored_vulnerability(
@@ -961,7 +961,7 @@ class TestPartiallyFixableRecords:
         )
         dep = _make_dependency(name="axios", version="1.5.0")
 
-        [card] = process_vulnerabilities([finding], [dep])
+        [card], _ = process_vulnerabilities([finding], [dep])
 
         assert card.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE
         assert card.action["target_version"] == "1.6.0"
@@ -1007,7 +1007,7 @@ class TestCardsCountTheCvesOfAnInstalledVersion:
         unfixed_low = {"id": "CVE-2022-99999", "severity": "LOW", "fixed_version": None}
         finding = stored_vulnerability("lodash", "4.17.20", [*_LODASH_CVES, unfixed_low])
 
-        [card] = process_vulnerabilities([finding], [_make_dependency(name="lodash", version="4.17.20")])
+        [card], _ = process_vulnerabilities([finding], [_make_dependency(name="lodash", version="4.17.20")])
 
         assert card.description.startswith("Update lodash from 4.17.20 to 4.17.21 to fix 8 vulnerabilities.")
         assert {k: card.impact[k] for k in ("critical", "high", "medium", "low", "total")} == {
@@ -1034,7 +1034,7 @@ class TestCardsCountTheCvesOfAnInstalledVersion:
             dep_type="deb",
         )
 
-        [card] = process_vulnerabilities([finding], [dep])
+        [card], _ = process_vulnerabilities([finding], [dep])
 
         assert card.description.startswith("Updating the base image could fix 3 vulnerabilities across 1 OS packages.")
         assert (card.impact["medium"], card.impact["total"]) == (3, 3)
@@ -1051,7 +1051,7 @@ class TestCardsCountTheCvesOfAnInstalledVersion:
             ],
         )
 
-        [card] = process_vulnerabilities([finding], [_make_dependency(name="openssl", version="1.1.1")])
+        [card], _ = process_vulnerabilities([finding], [_make_dependency(name="openssl", version="1.1.1")])
 
         assert card.description.startswith("2 Critical/High vulnerabilities used in your project have no fixed version")
         assert {k: card.impact[k] for k in ("critical", "high", "low", "total")} == {
@@ -1072,7 +1072,7 @@ class TestCardsCountTheCvesOfAnInstalledVersion:
             ],
         )
 
-        [card] = process_vulnerabilities([finding], [_make_dependency(name="acme-lib", version="1.5.0")])
+        [card], _ = process_vulnerabilities([finding], [_make_dependency(name="acme-lib", version="1.5.0")])
 
         assert (card.type, card.affected_components) == (RecommendationType.NO_FIX_AVAILABLE, ["acme-lib"])
         assert card.description.startswith("2 Critical/High vulnerabilities used in your project have no fixed version")

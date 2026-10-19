@@ -78,11 +78,14 @@ def generate_recommendations(
     for f in findings_by_type["malware"]:
         malware_by_kind[common.malware_kind(f)].append(f)
 
-    _safe_extend(
-        recommendations,
-        lambda: vulnerabilities.process_vulnerabilities(vulns, join_list),
-        "vulnerabilities",
-    )
+    upgraded_by_vuln_cards: list[ModelOrDict] = []
+
+    def vulnerability_cards() -> list[Recommendation]:
+        cards, upgraded = vulnerabilities.process_vulnerabilities(vulns, join_list)
+        upgraded_by_vuln_cards.extend(upgraded)
+        return cards
+
+    _safe_extend(recommendations, vulnerability_cards, "vulnerabilities")
     _safe_extend(recommendations, lambda: secrets.process_secrets(findings_by_type["secret"]), "secrets")
     _safe_extend(recommendations, lambda: sast.process_sast(findings_by_type["sast"]), "sast")
     _safe_extend(recommendations, lambda: iac.process_iac(findings_by_type["iac"]), "iac")
@@ -102,7 +105,7 @@ def generate_recommendations(
         recommendations,
         lambda: dep_analysis.analyze_outdated_dependencies(
             findings_by_type["outdated"],
-            [*(v for v in vulns if common.live_fixed_version(v)), *findings_by_type["eol"]],
+            [*upgraded_by_vuln_cards, *findings_by_type["eol"]],
             join_list,
         ),
         "outdated_dependencies",

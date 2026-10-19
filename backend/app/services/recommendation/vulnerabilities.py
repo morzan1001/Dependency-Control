@@ -40,15 +40,19 @@ _CVES_SAMPLED = 10
 _MARKED_CVES_SAMPLED = 5
 
 
-def process_vulnerabilities(findings: list[ModelOrDict], join_dependencies: list[ModelOrDict]) -> list[Recommendation]:
-    """join_dependencies holds the inventory rows the findings name."""
+def process_vulnerabilities(
+    findings: list[ModelOrDict], join_dependencies: list[ModelOrDict]
+) -> tuple[list[Recommendation], list[ModelOrDict]]:
+    """join_dependencies holds the inventory rows the findings name; also returns the findings the cards upgrade."""
     recommendations = []
 
-    vulns_by_source = _categorize_by_source(findings, join_dependencies)
+    vulns_by_source, findings_by_source, image_rows = _categorize_by_source(findings, join_dependencies)
+    upgraded = [*findings_by_source["application"], *findings_by_source["transitive"]]
 
-    base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), _scanned_image(join_dependencies))
+    base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), _scanned_image(image_rows))
     if base_image_rec:
         recommendations.append(base_image_rec)
+        upgraded.extend(findings_by_source["image"])
 
     # One card per installed copy: another version of the package has its own fixes and CVEs.
     for source, transitive in (("application", False), ("transitive", True)):
@@ -58,7 +62,7 @@ def process_vulnerabilities(findings: list[ModelOrDict], join_dependencies: list
     no_fix_recs = _analyze_no_fix_vulns(vulns_by_source.get("no_fix", []))
     recommendations.extend(no_fix_recs)
 
-    return recommendations
+    return recommendations, upgraded
 
 
 def _by_installed_version(vulns: list[VulnerabilityInfo]) -> dict[tuple[str, str], list[VulnerabilityInfo]]:
@@ -90,17 +94,24 @@ def _classify_category(vuln: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
 def _categorize_by_source(
     findings: list[ModelOrDict],
     join_dependencies: list[ModelOrDict],
-) -> dict[str, list[VulnerabilityInfo]]:
+) -> tuple[dict[str, list[VulnerabilityInfo]], dict[str, list[ModelOrDict]], list[ModelOrDict]]:
+    """Also returns each category's findings and the rows of the image-category ones."""
     row_of = installed_copy_lookup(join_dependencies, "name")
-    categories = defaultdict(list)
+    categories: dict[str, list[VulnerabilityInfo]] = defaultdict(list)
+    findings_by_category: dict[str, list[ModelOrDict]] = defaultdict(list)
+    image_rows: list[ModelOrDict] = []
 
     for f in findings:
         dep = row_of(f)
         vuln = vuln_info(f)
         vuln.direct_inferred = bool(dep and get_attr(dep, "direct_inferred", False))
-        categories[_classify_category(vuln, dep)].append(vuln)
+        category = _classify_category(vuln, dep)
+        categories[category].append(vuln)
+        findings_by_category[category].append(f)
+        if category == "image":
+            image_rows.append(dep)
 
-    return categories
+    return categories, findings_by_category, image_rows
 
 
 def _scanned_image(dependencies: list[ModelOrDict]) -> str | None:

@@ -78,7 +78,7 @@ def _vulnerability_cards():
         _row("minimist", "0.0.8"),
     ]
     return [
-        *vulnerabilities.process_vulnerabilities(findings, rows),
+        *vulnerabilities.process_vulnerabilities(findings, rows)[0],
         *optimization.identify_quick_wins(findings, rows),
         *incidents.detect_known_exploits(findings),
     ]

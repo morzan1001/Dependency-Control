@@ -44,6 +44,17 @@ def _make_vuln_finding(
     }
 
 
+def _make_outdated_finding(component, version, latest):
+    return {
+        "id": f"OUT-{component}",
+        "type": "outdated",
+        "severity": "INFO",
+        "component": component,
+        "version": version,
+        "details": {"fixed_version": latest},
+    }
+
+
 def _make_secret_finding(
     finding_id="SECRET-001",
     severity="HIGH",
@@ -341,6 +352,28 @@ class TestGenerateRecommendationsBaseImage:
         [base_rec] = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_rec.action["current_image"] == "python:3.11-slim"
 
+    def test_the_image_holding_the_vulnerable_packages_is_named_over_one_holding_outdated_packages(self):
+        def image_row(name, image):
+            purl = f"pkg:deb/debian/{name}@1.0.0"
+            row = _make_dependency(name=name, purl=purl, direct=False, source_type="image", dep_type="deb")
+            return row | {"source_target": image}
+
+        vulnerable = [image_row(name, "registry/app:1.2") for name in ("openssl", "zlib")]
+        outdated = [image_row(f"sidecar-lib{i}", "registry/sidecar:3.4") for i in range(5)]
+        findings = [
+            *(
+                _make_vuln_finding(finding_id=f"CVE-2024-000{i}", component=row["name"], purl=row["purl"])
+                for i, row in enumerate(vulnerable)
+            ),
+            *(_make_outdated_finding(row["name"], "1.0.0", "2.0.0") for row in outdated),
+        ]
+        rows = vulnerable + outdated
+
+        result = generate_recommendations(findings=findings, dependencies=rows, join_dependencies=rows)
+
+        [base_rec] = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
+        assert base_rec.action["current_image"] == "registry/app:1.2"
+
 
 class TestGenerateRecommendationsTyposquatting:
     # Typosquat findings are malware with details.imitated_package and produce TYPOSQUAT_DETECTED recs.
@@ -609,3 +642,22 @@ def test_an_outdated_direct_dependency_outside_the_read_window_stays_direct():
 
     [outdated] = [r for r in recs if r.type == RecommendationType.OUTDATED_DEPENDENCY]
     assert outdated.title == "Upgrade 2 outdated direct dependencies"
+
+
+@pytest.mark.parametrize(("severity", "stays"), [("MEDIUM", True), ("HIGH", False)])
+def test_an_image_package_leaves_the_outdated_card_only_when_the_base_image_card_upgrades_it(severity, stays):
+    row = _make_dependency("express", "4.17.1", purl="pkg:npm/express@4.17.1", source_type="image", dep_type="npm")
+    findings = [
+        _make_vuln_finding(
+            severity=severity, component="express", version="4.17.1", fixed_version="4.17.3", purl=row["purl"]
+        ),
+        _make_outdated_finding("express", "4.17.1", "4.21.2"),
+    ]
+
+    recs = generate_recommendations(findings=findings, dependencies=[row], join_dependencies=[row])
+
+    outdated = [
+        p["name"] for r in recs if r.type == RecommendationType.OUTDATED_DEPENDENCY for p in r.action["packages"]
+    ]
+    assert outdated == (["express"] if stays else [])
+    assert any(r.type == RecommendationType.BASE_IMAGE_UPDATE for r in recs) is not stays
