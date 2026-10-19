@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -106,6 +107,7 @@ export function CryptoPolicyEditor({
   const [saving, setSaving] = useState(false);
 
   const mergedMode = systemRules !== undefined;
+  const actionColumn = !readOnly && !mergedMode;
   const systemMap = useMemo(
     () => new Map((systemRules ?? []).map(r => [r.rule_id, r])),
     [systemRules],
@@ -198,10 +200,10 @@ export function CryptoPolicyEditor({
       </div>
 
       <div className="rounded-md border overflow-x-auto">
-        {/* Rule takes what the fixed columns leave, never less than 200px; Status and the actions count only when shown. */}
+        {/* Rule takes what the fixed columns leave, never less than 200px; a project's 960px fit the 989px a 1440px screen leaves. */}
         <table
           className="w-full table-fixed text-sm"
-          style={{ minWidth: 952 + (mergedMode ? 120 : 0) + (readOnly ? 0 : 96) }}
+          style={{ minWidth: 840 + (mergedMode ? 120 : 0) + (actionColumn ? 96 : 0) }}
         >
           <thead className="bg-muted/50 text-left">
             <tr>
@@ -211,15 +213,24 @@ export function CryptoPolicyEditor({
               <th className="p-2 w-30">Severity</th>
               <th className="p-2 w-24">Min key size</th>
               <th className="p-2 w-40">Name patterns</th>
-              <th className="p-2 w-28">Source</th>
               {mergedMode && <th className="p-2 w-30">Status</th>}
-              {!readOnly && <th className="p-2 w-24" />}
+              {actionColumn && <th className="p-2 w-24" />}
             </tr>
           </thead>
           <tbody>
             {visibleRules.map((r) => {
               const idx = rules.findIndex(x => x.rule_id === r.rule_id);
               const status = mergedMode ? getRuleStatus(r, systemMap) : "system";
+              const revertable = mergedMode && status === "overridden";
+              const removable = (!mergedMode || status === "custom") && r.source === "custom";
+              const action = !readOnly && (revertable || removable) && (
+                <Button
+                  variant="outline" size="sm" className="h-6 text-xs"
+                  onClick={() => (revertable ? revertRule(r.rule_id) : removeRule(r.rule_id))}
+                >
+                  {revertable ? "Revert" : "Remove"}
+                </Button>
+              );
               return (
                 <tr key={r.rule_id} className="border-t">
                   <td className="p-2">
@@ -230,13 +241,14 @@ export function CryptoPolicyEditor({
                     />
                   </td>
                   <td className="p-2">
-                    <Input
+                    <Textarea
                       disabled={readOnly}
                       value={r.name}
                       title={r.name}
-                      onChange={(e) => updateRule(idx, { name: e.target.value })}
-                      className="mt-1"
+                      onChange={(e) => updateRule(idx, { name: e.target.value.replaceAll(/\s*\n\s*/g, " ") })}
+                      className="min-h-10 resize-none field-sizing-content"
                     />
+                    <div className="mt-1 font-mono text-xs text-muted-foreground">{r.source}</div>
                   </td>
                   <td className="p-2">
                     <Select
@@ -286,26 +298,15 @@ export function CryptoPolicyEditor({
                       placeholder="comma-separated"
                     />
                   </td>
-                  <td className="p-2 font-mono text-xs">{r.source}</td>
                   {mergedMode && (
-                    <td className="p-2"><StatusBadge status={status} /></td>
-                  )}
-                  {!readOnly && (
-                    <td className="p-2 text-right">
-                      {mergedMode && status === "overridden" && (
-                        <Button variant="outline" size="sm"
-                          onClick={() => revertRule(r.rule_id)}>
-                          Revert
-                        </Button>
-                      )}
-                      {(!mergedMode || status === "custom") && r.source === "custom" && (
-                        <Button variant="outline" size="sm"
-                          onClick={() => removeRule(r.rule_id)}>
-                          Remove
-                        </Button>
-                      )}
+                    <td className="p-2">
+                      <div className="flex flex-col items-start gap-1">
+                        <StatusBadge status={status} />
+                        {action}
+                      </div>
                     </td>
                   )}
+                  {actionColumn && <td className="p-2 text-right">{action}</td>}
                 </tr>
               );
             })}
