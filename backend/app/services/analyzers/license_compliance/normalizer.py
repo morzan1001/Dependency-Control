@@ -21,14 +21,16 @@ def _lookup(lic_id: str) -> str | None:
     return _ALIAS_LOWER.get(lic_id.lower()) or _DB_LOWER.get(lic_id.lower())
 
 
-_PARAMETER_URL = re.compile(r'https?://[^\s";]+')
+_LINK_URL = re.compile(r'link\s*=\s*"?(https?://[^\s";]+)', re.IGNORECASE)
+_PARAMETER_URL = re.compile(r'(https?://[^\s";]+)')
 
 
 def strip_license_parameters(entry: str) -> tuple[str, str | None]:
     """OSGi Bundle-License syntax, which syft copies from jar manifests: "name";link="url";description="..."."""
     name, _, parameters = entry.partition(";")
-    url = _PARAMETER_URL.search(parameters)
-    return name.strip('" '), url.group() if url else None
+    # "; see: <url>" names its link without a link= key.
+    url = _LINK_URL.search(parameters) or _PARAMETER_URL.search(parameters)
+    return name.strip('" '), url.group(1) if url else None
 
 
 def normalize_license(lic_id: str) -> str:

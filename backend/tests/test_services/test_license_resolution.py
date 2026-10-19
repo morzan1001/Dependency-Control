@@ -123,6 +123,10 @@ def test_splitting_a_long_licence_list_normalizes_each_part_a_bounded_number_of_
             ("Apache License, Version 2.0", "http://www.apache.org/licenses/LICENSE-2.0.txt"),
         ),
         ('"EPL-2.0";description="no link here"', ("EPL-2.0", None)),
+        (
+            '"MIT";description="see https://description.example/x";link="https://link.example/y"',
+            ("MIT", "https://link.example/y"),
+        ),
         ("MIT", ("MIT", None)),
     ],
 )
