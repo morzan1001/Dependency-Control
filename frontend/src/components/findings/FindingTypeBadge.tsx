@@ -79,16 +79,17 @@ export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
   const style = getBadgeStyle(type)
   const Icon = style.icon
   const key = type?.toLowerCase()
-  const label = FINDING_TYPE_LABELS[key] ?? CRYPTO_FINDING_TYPES.find((crypto) => crypto.value === key)?.label ?? type
+  const known = FINDING_TYPE_LABELS[key] ?? CRYPTO_FINDING_TYPES.find((crypto) => crypto.value === key)?.label
+  const label = known ?? type
 
   return (
     <Badge
       variant={style.variant}
-      className={`${style.className} flex max-w-full items-center gap-1.5`}
+      className={`${style.className} inline-flex max-w-full items-center gap-1.5`}
       title={label}
     >
       {Icon && <Icon className="h-3 w-3 shrink-0" />}
-      <span className="truncate capitalize">{label}</span>
+      <span className={known ? 'truncate' : 'truncate capitalize'}>{label}</span>
     </Badge>
   )
 }

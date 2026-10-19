@@ -41,4 +41,18 @@ describe("FindingTypeBadge", () => {
 
     expect(screen.getByText("typosquat")).toHaveClass("capitalize");
   });
+
+  it("hugs its label wherever it sits, as in the findings table, instead of stretching across a cell", () => {
+    render(<FindingTypeBadge type="vulnerability" />);
+
+    const badge = screen.getByText("Vulnerability").parentElement;
+    expect(badge).toHaveClass("inline-flex");
+    expect(badge).not.toHaveClass("flex");
+  });
+
+  it("writes a crypto label in the policy editor's casing", () => {
+    render(<FindingTypeBadge type="crypto_weak_algorithm" />);
+
+    expect(screen.getByText("Weak algorithm")).not.toHaveClass("capitalize");
+  });
 });
