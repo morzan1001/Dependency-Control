@@ -81,4 +81,54 @@ describe('ProjectCombobox', () => {
     fireEvent.keyDown(clear, { key: 'Enter' })
     expect(onValueChange).toHaveBeenCalledWith('')
   })
+
+  it('has an accessible name, like the other pickers', () => {
+    vi.mocked(useProjects).mockReturnValue(asListResult(mkListResponse([])))
+    vi.mocked(useProject).mockReturnValue(asDetailResult(undefined))
+
+    render(<ProjectCombobox value="" onValueChange={vi.fn()} />)
+
+    expect(screen.getByRole('combobox', { name: 'Project' })).toBeInTheDocument()
+  })
+})
+
+describe('ProjectCombobox namesakes', () => {
+  const inTeam = (id: string, name: string, team: string): Project => ({ id, name, teams: [{ id: `t-${id}`, name: team }] })
+
+  function openWith(items: Project[], value = '') {
+    vi.mocked(useProjects).mockReturnValue(asListResult(mkListResponse(items)))
+    vi.mocked(useProject).mockReturnValue(asDetailResult(undefined))
+    render(<ProjectCombobox value={value} onValueChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('combobox'))
+  }
+
+  it('names the owning team of each project whose name another one shares, and only theirs', () => {
+    openWith([inTeam('p1', 'aufstrg/tm/app', 'Payments'), inTeam('p2', 'aufstrg/tm/app', 'Platform'), inTeam('p3', 'checkout', 'Retail')])
+
+    expect(screen.getByText('Payments')).toBeInTheDocument()
+    expect(screen.getByText('Platform')).toBeInTheDocument()
+    expect(screen.queryByText('Retail')).not.toBeInTheDocument()
+  })
+
+  it('names the repository path of a namesake no team owns', () => {
+    openWith([
+      { id: 'p1', name: 'app', teams: [], gitlab_project_path: 'group-a/app' },
+      { id: 'p2', name: 'app', teams: [], github_repository_path: 'org-b/app' },
+    ])
+
+    expect(screen.getByText('group-a/app')).toBeInTheDocument()
+    expect(screen.getByText('org-b/app')).toBeInTheDocument()
+  })
+
+  it('names the owner of the chosen namesake on the closed picker too', () => {
+    vi.mocked(useProjects).mockReturnValue(
+      asListResult(mkListResponse([inTeam('p1', 'app', 'Payments'), inTeam('p2', 'app', 'Platform')])),
+    )
+    vi.mocked(useProject).mockReturnValue(asDetailResult(undefined))
+
+    render(<ProjectCombobox value="p2" onValueChange={vi.fn()} />)
+
+    expect(screen.getByRole('combobox')).toHaveTextContent('Platform')
+    expect(screen.queryByText('Payments')).not.toBeInTheDocument()
+  })
 })
