@@ -416,10 +416,11 @@ describe('ProjectScans - sorting', () => {
 })
 
 describe('ProjectScans - findings counts', () => {
-  it('writes the high count in the severity colour beside the critical count', () => {
+  it('fills the critical and high counts with their severity colours, as the impact and hotspot pills do', () => {
     renderScans([makeScan({ id: 'risky', stats: { critical: 2, high: 13, medium: 0, low: 0 } })])
 
-    expect(screen.getByText('13')).toHaveClass('text-severity-high')
+    expect(screen.getByText('2')).toHaveClass('bg-severity-critical', 'text-severity-critical-foreground')
+    expect(screen.getByText('13')).toHaveClass('bg-severity-high', 'text-severity-high-foreground')
   })
 })
 

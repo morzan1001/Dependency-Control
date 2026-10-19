@@ -263,6 +263,13 @@ describe("RecommendationCard action sections", () => {
     expect(classesOf(actionBox(title))).toEqual(new Set(boxClasses.split(" ")));
   });
 
+  it("fills a priority project's critical and high counts with their severity colours", () => {
+    renderExpanded(makeRecommendation({ type: "prioritize_projects", priority_projects: [{ name: "p", id: "p", critical: 1, high: 2 }] }));
+
+    expect(screen.getByText("1 Critical")).toHaveClass("bg-severity-critical", "text-severity-critical-foreground");
+    expect(screen.getByText("2 High")).toHaveClass("bg-severity-high", "text-severity-high-foreground");
+  });
+
   it("marks a regression's heading icon as destructive", () => {
     renderExpanded(makeRecommendation({ type: "investigate_regression", suggestion: "Look" }));
 

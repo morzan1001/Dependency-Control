@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { getSeverityBgColor } from '@/lib/finding-utils'
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import {
@@ -380,8 +381,8 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                   <div key={proj.name} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
                     <span className="font-medium">{proj.name}</span>
                     <div className="flex gap-2">
-                      <Badge variant="destructive">{proj.critical} Critical</Badge>
-                      <Badge variant="outline" className="text-severity-high">{proj.high} High</Badge>
+                      <Badge className={getSeverityBgColor('CRITICAL')}>{proj.critical} Critical</Badge>
+                      <Badge className={getSeverityBgColor('HIGH')}>{proj.high} High</Badge>
                     </div>
                   </div>
                 ))}

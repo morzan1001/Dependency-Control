@@ -20,7 +20,8 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, RefreshCw, Rocket, Trash2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
-import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { cn, formatDateTime, shortCommitHash } from '@/lib/utils'
+import { getSeverityBgColor } from '@/lib/finding-utils'
 
 interface ProjectScansProps {
   projectId: string
@@ -266,13 +267,13 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                           return (
                               <>
                                 {(stats.critical || 0) > 0 && (
-                                    <Badge variant="destructive" className="gap-1">
+                                    <Badge className={cn('gap-1', getSeverityBgColor('CRITICAL'))}>
                                     <ShieldAlert className="h-3 w-3" />
                                     {stats.critical}
                                     </Badge>
                                 )}
                                 {(stats.high || 0) > 0 && (
-                                    <Badge variant="outline" className="gap-1 text-severity-high">
+                                    <Badge className={cn('gap-1', getSeverityBgColor('HIGH'))}>
                                     <Activity className="h-3 w-3" />
                                     {stats.high}
                                     </Badge>
