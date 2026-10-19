@@ -54,6 +54,7 @@ from app.repositories.distributed_locks import (
 )
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
+from app.services.analyzers.license_compliance.normalizer import BUNDLE_LICENSE_PARAMETER, strip_license_parameters
 from app.services.archive_bundle import (
     BundleFrames,
     BundleStats,
@@ -96,9 +97,14 @@ def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
 
 def _strip_license_parameters(collection: str, doc: dict[str, Any]) -> None:
     """Bundles archived before ingest stripped Bundle-License parameters still carry them."""
-    if collection == "dependencies" and ";" in (doc.get("license") or ""):
+    if collection != "dependencies":
+        return
+    if ";" in (doc.get("license") or ""):
         doc["license"], url = strip_license_header(doc["license"], doc.get("purl"))
         doc["license_url"] = doc.get("license_url") or url
+    # A header that named its licence by URL left its parameters on that URL.
+    if BUNDLE_LICENSE_PARAMETER.search(doc.get("license_url") or ""):
+        doc["license_url"] = strip_license_parameters(doc["license_url"])[0]
 
 
 async def _hash_plaintext_secrets_in(

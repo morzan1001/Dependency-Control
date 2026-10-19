@@ -750,6 +750,13 @@ async def test_replay_strips_the_bundle_license_parameters_an_old_bundle_stored(
         },
         {"_id": "d3", "scan_id": "scan-1", "purl": purl, "license": "MIT"},
         {"_id": "d4", "scan_id": "scan-1", "purl": purl, "license": 'MIT OR "Apache-2.0";link="https://c.example"'},
+        {
+            "_id": "d5",
+            "scan_id": "scan-1",
+            "purl": purl,
+            "license": "Apache-2.0",
+            "license_url": "https://www.apache.org/licenses/LICENSE-2.0;description=Apache-2.0",
+        },
     ]
 
     async def bundle():
@@ -771,6 +778,7 @@ async def test_replay_strips_the_bundle_license_parameters_an_old_bundle_stored(
         ("Apache-2.0 OR MIT", "https://kept.example"),
         ("MIT", None),
         ("MIT OR Apache-2.0", "https://c.example"),
+        ("Apache-2.0", "https://www.apache.org/licenses/LICENSE-2.0"),
     ]
 
 
