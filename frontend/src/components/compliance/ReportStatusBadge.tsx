@@ -1,10 +1,12 @@
+import type { ComponentProps } from "react";
+import { StatusPill } from "@/components/users/UserStatusBadge";
 import type { ReportStatus } from "@/types/compliance";
 
-const COLOR: Record<ReportStatus, string> = {
-  pending: "bg-muted text-foreground",
-  generating: "bg-blue-500/70 text-white",
-  completed: "bg-green-500/80 text-white",
-  failed: "bg-red-500/90 text-white",
+const TONE: Record<ReportStatus, ComponentProps<typeof StatusPill>["tone"]> = {
+  pending: "yellow",
+  generating: "yellow",
+  completed: "green",
+  failed: "red",
 };
 
 const LABEL: Record<ReportStatus, string> = {
@@ -15,9 +17,5 @@ const LABEL: Record<ReportStatus, string> = {
 };
 
 export function ReportStatusBadge({ status }: Readonly<{ status: ReportStatus }>) {
-  return (
-    <span className={`inline-block rounded px-2 py-0.5 text-xs ${COLOR[status]}`}>
-      {LABEL[status]}
-    </span>
-  );
+  return <StatusPill tone={TONE[status]}>{LABEL[status]}</StatusPill>;
 }
