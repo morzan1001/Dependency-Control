@@ -3646,6 +3646,22 @@ def _syft_license_sbom(raw: str, purl: str = _LOG4J_PURL) -> dict:
     return _syft_142_json([artifact])
 
 
+def _spdx_license_sbom(declared: str, extracted: dict) -> dict:
+    package = {
+        "SPDXID": "SPDXRef-Package-log4j-api",
+        "name": "log4j-api",
+        "versionInfo": "2.25.5",
+        "licenseDeclared": declared,
+        "externalRefs": [{"referenceType": "purl", "referenceLocator": _LOG4J_PURL}],
+    }
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "packages": [package],
+        "hasExtractedLicensingInfos": [extracted],
+    }
+
+
 _LICENSE_SOURCES = {
     "cyclonedx-name": lambda raw: _cyclonedx_license_sbom({"license": {"name": raw}}),
     "cyclonedx-id": lambda raw: _cyclonedx_license_sbom({"license": {"id": raw}}),
@@ -3749,24 +3765,38 @@ class TestOsgiLicenseParameters:
         ],
     )
     def test_an_spdx_declared_licence_with_parameters_is_stripped_too(self, declared, license):
-        package = {
-            "SPDXID": "SPDXRef-Package-log4j-api",
-            "name": "log4j-api",
-            "versionInfo": "2.25.5",
-            "licenseDeclared": declared,
-            "externalRefs": [{"referenceType": "purl", "referenceLocator": _LOG4J_PURL}],
-        }
         # syft names the ref after the sanitised value and keeps the value itself in extractedText
         extracted = {
             "licenseId": _SYFT_HEADER_REF,
             "extractedText": f'Apache-2.0;link="{_APACHE_TXT}",MIT;link="https://opensource.org/licenses/MIT"',
         }
-        [dep] = parse_sbom(
-            {
-                "spdxVersion": "SPDX-2.3",
-                "SPDXID": "SPDXRef-DOCUMENT",
-                "packages": [package],
-                "hasExtractedLicensingInfos": [extracted],
-            }
-        ).dependencies
+        [dep] = parse_sbom(_spdx_license_sbom(declared, extracted)).dependencies
         assert (dep.license, dep.license_url) == (license, _APACHE_TXT)
+
+    @pytest.mark.parametrize("source", list(_LICENSE_SOURCES))
+    @pytest.mark.parametrize(
+        ("raw", "license", "license_url"),
+        [
+            (f"{_APACHE_HTML};description=Apache 2.0 License", "Apache-2.0", _APACHE_HTML),
+            (
+                "https://opensource.org/licenses/BSD-2-Clause;description=BSD 2-Clause License",
+                "BSD-2-Clause",
+                "https://opensource.org/licenses/BSD-2-Clause",
+            ),
+        ],
+    )
+    def test_a_header_naming_its_licence_by_url_stores_that_licence_and_the_bare_url(
+        self, source, raw, license, license_url
+    ):
+        [dep] = parse_sbom(_LICENSE_SOURCES[source](raw)).dependencies
+        assert (dep.license, dep.license_url) == (license, license_url)
+
+    def test_an_spdx_ref_named_after_a_url_header_stores_that_licence_and_the_bare_url(self):
+        ref = "LicenseRef-http---www.apache.org-licenses-LICENSE-2.0.html-description-Apache-2.0-License"
+        extracted = {
+            "licenseId": ref,
+            "extractedText": "NOASSERTION",
+            "name": f"{_APACHE_HTML};description=Apache 2.0 License",
+        }
+        [dep] = parse_sbom(_spdx_license_sbom(ref, extracted)).dependencies
+        assert (dep.license, dep.license_url) == ("Apache-2.0", _APACHE_HTML)

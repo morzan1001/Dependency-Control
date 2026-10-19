@@ -72,8 +72,15 @@ def _license_entries(value: str) -> tuple[list[str], str | None]:
     """A Bundle-License header can list several licences, each with its parameters: "a";link="u1",b;link=u2."""
     if not BUNDLE_LICENSE_PARAMETER.search(value):
         return [value], None
-    entries = [strip_license_parameters(entry) for entry in split_license_list(value)]
+    entries = [_classify_license_value(*strip_license_parameters(entry)) for entry in split_license_list(value)]
     return [name for name, _ in entries if name], next((url for _, url in entries if url), None)
+
+
+def _classify_license_value(value: str, fallback_url: str | None = None) -> tuple[str | None, str | None]:
+    # A header can name its licence by URL: "https://www.apache.org/licenses/LICENSE-2.0;description=Apache-2.0".
+    if is_url(value) and not BUNDLE_LICENSE_PARAMETER.search(value):
+        return extract_license_from_url(value), value
+    return value, fallback_url
 
 
 # Quoted text matches whole, so an operator inside a quoted name or description never splits a value.
@@ -761,12 +768,6 @@ class SBOMParser:
             properties={key: raw_properties[key] for key in _OS_SOURCE_PACKAGE_PROPERTIES if key in raw_properties},
         )
 
-    @staticmethod
-    def _classify_license_value(value: str, fallback_url: str | None = None) -> tuple[str | None, str | None]:
-        if is_url(value):
-            return extract_license_from_url(value), value
-        return value, fallback_url
-
     def _extract_licenses_full(
         self,
         licenses: list[Any],
@@ -779,7 +780,7 @@ class SBOMParser:
             if isinstance(lic, dict):
                 name, url = handle_dict(lic)
             elif isinstance(lic, str):
-                name, url = self._classify_license_value(lic)
+                name, url = _classify_license_value(lic)
             else:
                 continue
             if name:
@@ -794,12 +795,12 @@ class SBOMParser:
             inner = lic["license"]
             if not isinstance(inner, dict):
                 return None, None
-            return self._classify_license_value(
+            return _classify_license_value(
                 inner.get("id") or inner.get("name") or inner.get("url", ""), inner.get("url")
             )
         for key in ("expression", "id", "name"):
             if key in lic:
-                return self._classify_license_value(lic[key], lic.get("url") if key != "expression" else None)
+                return _classify_license_value(lic[key], lic.get("url") if key != "expression" else None)
         return None, None
 
     @staticmethod
@@ -985,7 +986,7 @@ class SBOMParser:
         dedicated_url = self._syft_license_dict_url(lic)
         # Syft fills spdxExpression only when it resolved the value to an SPDX id.
         value = lic.get("spdxExpression") or lic.get("value") or dedicated_url or ""
-        return self._classify_license_value(value, dedicated_url)
+        return _classify_license_value(value, dedicated_url)
 
     @staticmethod
     def _build_spdx_dependency_graph(
