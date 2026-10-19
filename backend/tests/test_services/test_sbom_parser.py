@@ -3616,3 +3616,129 @@ class TestSPDXFieldExtraction:
         result = parse_sbom({"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": packages})
         assert [(d.name, d.purl) for d in result.dependencies] == [("debian", None)]
         assert result.skipped_reasons.get("unidentifiable") == 1
+
+
+_LOG4J_PURL = "pkg:maven/org.apache.logging.log4j/log4j-api@2.25.5"
+_APACHE_TXT = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+_APACHE_HTML = "http://www.apache.org/licenses/LICENSE-2.0.html"
+_APACHE_PLAIN = "http://www.apache.org/licenses/LICENSE-2.0"
+_APACHE_TXT_HTTP = "http://www.apache.org/licenses/LICENSE-2.0.txt"
+
+
+def _cyclonedx_license_sbom(entry: dict) -> dict:
+    return _cyclonedx_with(
+        [{"type": "library", "name": "log4j-api", "version": "2.25.5", "purl": _LOG4J_PURL, "licenses": [entry]}]
+    )
+
+
+def _syft_license_sbom(raw: str, purl: str = _LOG4J_PURL) -> dict:
+    artifact = {
+        "id": "log4j-api",
+        "name": "log4j-api",
+        "version": "2.25.5",
+        "type": "java-archive",
+        "purl": purl,
+        "licenses": [{"value": raw, "spdxExpression": "", "type": "declared", "urls": [], "locations": []}],
+    }
+    return _syft_142_json([artifact])
+
+
+_LICENSE_SOURCES = {
+    "cyclonedx-name": lambda raw: _cyclonedx_license_sbom({"license": {"name": raw}}),
+    "cyclonedx-id": lambda raw: _cyclonedx_license_sbom({"license": {"id": raw}}),
+    "cyclonedx-expression": lambda raw: _cyclonedx_license_sbom({"expression": raw}),
+    "syft": _syft_license_sbom,
+}
+
+
+class TestOsgiLicenseParameters:
+    """Syft copies a jar manifest's Bundle-License header verbatim into the package licence."""
+
+    @pytest.mark.parametrize("source", list(_LICENSE_SOURCES))
+    @pytest.mark.parametrize(
+        ("raw", "license", "license_url"),
+        [
+            (f'"Apache-2.0";link="{_APACHE_TXT}"', "Apache-2.0", _APACHE_TXT),
+            (f'"Apache License 2.0";link="{_APACHE_HTML}"', "Apache License 2.0", _APACHE_HTML),
+            ("BSD-3-Clause;link=https://asm.ow2.io/LICENSE.txt", "BSD-3-Clause", "https://asm.ow2.io/LICENSE.txt"),
+            (f'"Apache License, version 2.0";link="{_APACHE_PLAIN}"', "Apache License, version 2.0", _APACHE_PLAIN),
+            (f'"Apache 2.0";link="{_APACHE_TXT_HTTP}"', "Apache 2.0", _APACHE_TXT_HTTP),
+            (
+                f"Apache License, Version 2.0; see: {_APACHE_TXT_HTTP}",
+                "Apache License, Version 2.0",
+                _APACHE_TXT_HTTP,
+            ),
+            (f'Apache License, Version 2.0;link="{_APACHE_PLAIN}"', "Apache License, Version 2.0", _APACHE_PLAIN),
+            (
+                f'"The Apache Software License, Version 2.0";link="{_APACHE_TXT_HTTP}"',
+                "The Apache Software License, Version 2.0",
+                _APACHE_TXT_HTTP,
+            ),
+            (
+                '"Bouncy Castle Licence";link="https://www.bouncycastle.org/licence.html";'
+                'description="MIT-style, permissive"',
+                "Bouncy Castle Licence",
+                "https://www.bouncycastle.org/licence.html",
+            ),
+            (
+                '"Acme, Inc. Licence";link="https://acme.example/licence"',
+                "Acme, Inc. Licence",
+                "https://acme.example/licence",
+            ),
+        ],
+    )
+    def test_the_stored_licence_is_the_name_and_its_link_becomes_the_licence_url(
+        self, source, raw, license, license_url
+    ):
+        [dep] = parse_sbom(_LICENSE_SOURCES[source](raw)).dependencies
+        assert (dep.license, dep.license_url) == (license, license_url)
+
+    @pytest.mark.parametrize("source", list(_LICENSE_SOURCES))
+    @pytest.mark.parametrize(
+        ("raw", "license"),
+        [
+            (f'Apache-2.0;link="{_APACHE_TXT}",MIT;link="https://opensource.org/licenses/MIT"', "Apache-2.0 OR MIT"),
+            (
+                f'Apache License, Version 2.0;link="{_APACHE_TXT}",MIT;link=https://opensource.org/licenses/MIT',
+                "Apache License, Version 2.0 OR MIT",
+            ),
+            (f'"Apache-2.0";link="{_APACHE_TXT}","Apache-2.0";link="{_APACHE_TXT}"', "Apache-2.0"),
+        ],
+    )
+    def test_several_header_entries_become_licences_joined_like_any_other(self, source, raw, license):
+        [dep] = parse_sbom(_LICENSE_SOURCES[source](raw)).dependencies
+        assert (dep.license, dep.license_url) == (license, _APACHE_TXT)
+
+    def test_entries_of_a_package_without_a_licence_choice_are_all_required(self):
+        raw = 'MIT;link="https://opensource.org/licenses/MIT",ISC;link="https://opensource.org/licenses/ISC"'
+        [dep] = parse_sbom(_syft_license_sbom(raw, "pkg:pypi/pkg@1.0")).dependencies
+        assert dep.license == "MIT AND ISC"
+
+    def test_the_licence_entry_url_wins_over_the_link_parameter(self):
+        entry = {"license": {"name": f'"Apache-2.0";link="{_APACHE_TXT}"', "url": "https://example.org/LICENSE"}}
+        [dep] = parse_sbom(_cyclonedx_license_sbom(entry)).dependencies
+        assert (dep.license, dep.license_url) == ("Apache-2.0", "https://example.org/LICENSE")
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "Apache License, Version 2.0",
+            "Permission is hereby granted, free of charge; subject to the following conditions",
+        ],
+    )
+    def test_a_value_without_bundle_license_parameters_is_kept_as_the_sbom_gives_it(self, raw):
+        [dep] = parse_sbom(_syft_license_sbom(raw)).dependencies
+        assert (dep.license, dep.license_url) == (raw, None)
+
+    def test_an_spdx_declared_licence_with_parameters_is_stripped_too(self):
+        package = {
+            "SPDXID": "SPDXRef-Package-log4j-api",
+            "name": "log4j-api",
+            "versionInfo": "2.25.5",
+            "licenseDeclared": f'"Apache-2.0";link="{_APACHE_TXT}"',
+            "externalRefs": [{"referenceType": "purl", "referenceLocator": _LOG4J_PURL}],
+        }
+        [dep] = parse_sbom(
+            {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [package]}
+        ).dependencies
+        assert (dep.license, dep.license_url) == ("Apache-2.0", _APACHE_TXT)

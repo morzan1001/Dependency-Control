@@ -14,6 +14,7 @@ from app.services.analyzers.license_compliance.normalizer import (
     normalize_license,
     parse_license_expression,
     split_license_list,
+    strip_license_parameters,
     tokenize_license_string,
 )
 from app.services.sbom_parser import SBOMParser, parse_sbom
@@ -107,6 +108,41 @@ def test_splitting_a_long_licence_list_normalizes_each_part_a_bounded_number_of_
 
     assert split_license_list(", ".join(parts)) == parts
     assert calls <= 5 * len(parts)
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        (
+            '"Apache-2.0";link="https://www.apache.org/licenses/LICENSE-2.0.txt"',
+            ("Apache-2.0", "https://www.apache.org/licenses/LICENSE-2.0.txt"),
+        ),
+        ("BSD-3-Clause;link=https://asm.ow2.io/LICENSE.txt", ("BSD-3-Clause", "https://asm.ow2.io/LICENSE.txt")),
+        (
+            "Apache License, Version 2.0; see: http://www.apache.org/licenses/LICENSE-2.0.txt",
+            ("Apache License, Version 2.0", "http://www.apache.org/licenses/LICENSE-2.0.txt"),
+        ),
+        ('"EPL-2.0";description="no link here"', ("EPL-2.0", None)),
+        ("MIT", ("MIT", None)),
+    ],
+)
+def test_licence_parameters_are_stripped_and_their_link_kept(entry, expected):
+    assert strip_license_parameters(entry) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('Apache-2.0;link="https://a.example",MIT;link="https://b.example"', ["Apache-2.0", "MIT"]),
+        (
+            '"Eclipse Public License 2.0";link="https://www.eclipse.org/legal/epl-2.0/";description="EPL, version 2"',
+            ["EPL-2.0"],
+        ),
+        ('"Acme, Inc. Licence";link="https://acme.example"', ["Acme, Inc. Licence"]),
+    ],
+)
+def test_a_stored_bundle_license_header_reads_as_its_licences(raw, expected):
+    assert tokenize_license_string(raw) == expected
 
 
 def test_syft_prefers_the_spdx_expression_it_resolved_over_the_raw_value():

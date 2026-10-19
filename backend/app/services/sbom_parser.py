@@ -21,7 +21,12 @@ from app.schemas.sbom import UNKNOWN_VERSION, ParsedDependency, ParsedSBOM, SBOM
 from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
 from app.services.analyzers.hash_verification import normalize_hash_algorithm
 from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
-from app.services.analyzers.license_compliance.normalizer import extract_license_from_url, normalize_license
+from app.services.analyzers.license_compliance.normalizer import (
+    extract_license_from_url,
+    normalize_license,
+    split_license_list,
+    strip_license_parameters,
+)
 from app.services.cbom_parser import (
     MAX_COMPONENT_NESTING_DEPTH,
     flatten_cyclonedx_components,
@@ -60,6 +65,23 @@ def _join_licenses(entries: list[str], purl: str | None) -> str:
     parsed = parse_purl(purl or "")
     operator = " OR " if parsed and parsed.type in _LICENSE_CHOICE_PURL_TYPES else " AND "
     return operator.join(f"({entry})" if _SPDX_OPERATORS.intersection(entry.split()) else entry for entry in unique)
+
+
+# Free-text licences contain ";" too, so only a Bundle-License parameter marks a header.
+_BUNDLE_LICENSE_PARAMETER = re.compile(r";\s*(?:link\s*=|description\s*=|see:)", re.IGNORECASE)
+
+
+def _license_entries(value: str) -> tuple[list[str], str | None]:
+    """A Bundle-License header can list several licences, each with its parameters: "a";link="u1",b;link=u2."""
+    if not _BUNDLE_LICENSE_PARAMETER.search(value):
+        return [value], None
+    entries = [strip_license_parameters(entry) for entry in split_license_list(value)]
+    return [name for name, _ in entries if name], next((url for _, url in entries if url), None)
+
+
+def strip_license_header(value: str, purl: str | None) -> tuple[str, str | None]:
+    names, url = _license_entries(value)
+    return _join_licenses(names, purl), url
 
 
 def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[list[ParsedDependency], int]:
@@ -753,7 +775,9 @@ class SBOMParser:
             else:
                 continue
             if name:
-                names.append(name)
+                entries, parameter_url = _license_entries(name)
+                names += entries
+                url = url or parameter_url
             license_url = license_url or url
         return _join_licenses(names, purl), license_url
 
@@ -1090,7 +1114,9 @@ class SBOMParser:
         return refs
 
     @staticmethod
-    def _resolve_spdx_license(pkg: dict[str, Any], license_refs: dict[str, str]) -> tuple[str, str | None]:
+    def _resolve_spdx_license(
+        pkg: dict[str, Any], license_refs: dict[str, str], purl: str | None
+    ) -> tuple[str, str | None]:
         license_str = next(
             (
                 value
@@ -1101,7 +1127,9 @@ class SBOMParser:
         )
         if is_url(license_str):
             return extract_license_from_url(license_str) or "", license_str
-        return _SPDX_LICENSE_REF.sub(lambda ref: license_refs.get(ref.group(), ref.group()), license_str), None
+        return strip_license_header(
+            _SPDX_LICENSE_REF.sub(lambda ref: license_refs.get(ref.group(), ref.group()), license_str), purl
+        )
 
     @staticmethod
     def _resolve_spdx_originator(
@@ -1147,7 +1175,7 @@ class SBOMParser:
             if not keep:
                 return None
 
-        license_str, license_url = self._resolve_spdx_license(pkg, license_refs)
+        license_str, license_url = self._resolve_spdx_license(pkg, license_refs, purl)
         pkg_type = get_purl_type(purl) or "unknown"
         author, publisher = self._resolve_spdx_originator(pkg)
         package_file_name = pkg.get("packageFileName")

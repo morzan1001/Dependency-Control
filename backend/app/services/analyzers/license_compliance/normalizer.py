@@ -21,9 +21,18 @@ def _lookup(lic_id: str) -> str | None:
     return _ALIAS_LOWER.get(lic_id.lower()) or _DB_LOWER.get(lic_id.lower())
 
 
+_PARAMETER_URL = re.compile(r'https?://[^\s";]+')
+
+
+def strip_license_parameters(entry: str) -> tuple[str, str | None]:
+    """OSGi Bundle-License syntax, which syft copies from jar manifests: "name";link="url";description="..."."""
+    name, _, parameters = entry.partition(";")
+    url = _PARAMETER_URL.search(parameters)
+    return name.strip('" '), url.group() if url else None
+
+
 def normalize_license(lic_id: str) -> str:
-    # Strip metadata suffixes like ;link="..." common in NuGet/RPM SBOMs.
-    lic_id = lic_id.split(";", 1)[0].strip('" ')
+    lic_id = strip_license_parameters(lic_id)[0]
     known = _lookup(lic_id)
     if known:
         return known
@@ -49,16 +58,23 @@ _MAX_TITLE_PARTS = 1 + max(
 )
 
 
+# A comma inside quotes belongs to a quoted name or parameter value.
+_LIST_PART = re.compile(r'(?:"[^"]*"|[^,])+')
+
+
 def split_license_list(raw: str) -> list[str]:
     """Licence titles can contain commas, so a plain split would break them."""
-    parts = [part.strip() for part in raw.split(",")]
+    parts = [part.strip() for part in _LIST_PART.findall(raw)]
     names: list[str] = []
     start = 0
     while start < len(parts):
+        window = min(len(parts), start + _MAX_TITLE_PARTS)
+        # Parameters close a licence, so a title never runs past the part that carries them.
+        window = next((stop + 1 for stop in range(start, window) if ";" in parts[stop]), window)
         end = next(
             (
                 stop
-                for stop in range(min(len(parts), start + _MAX_TITLE_PARTS), start + 1, -1)
+                for stop in range(window, start + 1, -1)
                 if normalize_license(", ".join(parts[start:stop])) in LICENSE_DATABASE
             ),
             start + 1,
