@@ -55,6 +55,7 @@ class DependencyRepository(BaseRepository[Dependency]):
         pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
-            {"$sort": {"count": -1}},
+            # Ties break by name: $group order is arbitrary and the summary tile names the leading types.
+            {"$sort": {"count": -1, "_id": 1}},
         ]
         return await self.aggregate(pipeline)
