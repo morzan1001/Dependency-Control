@@ -3,6 +3,7 @@ import logging
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from app.services.sbom_parser import (
     is_url,
     merge_duplicate_dependencies,
     parse_sbom,
+    strip_license_header,
 )
 from tests.helpers.comparisons import counted_str_type
 
@@ -3623,6 +3625,7 @@ _APACHE_TXT = "https://www.apache.org/licenses/LICENSE-2.0.txt"
 _APACHE_HTML = "http://www.apache.org/licenses/LICENSE-2.0.html"
 _APACHE_PLAIN = "http://www.apache.org/licenses/LICENSE-2.0"
 _APACHE_TXT_HTTP = "http://www.apache.org/licenses/LICENSE-2.0.txt"
+_SYFT_HEADER_REF = "LicenseRef-Apache-2.0-link-https-www.apache.org-licenses-LICENSE-2.0.txt-MIT-link"
 
 
 def _cyclonedx_license_sbom(entry: dict) -> dict:
@@ -3730,15 +3733,40 @@ class TestOsgiLicenseParameters:
         [dep] = parse_sbom(_syft_license_sbom(raw)).dependencies
         assert (dep.license, dep.license_url) == (raw, None)
 
-    def test_an_spdx_declared_licence_with_parameters_is_stripped_too(self):
+    def test_a_long_whitespace_run_strips_in_linear_time(self):
+        raw = "MIT" + " " * 50_000 + f'OR "Apache-2.0";link="{_APACHE_TXT}"'
+        started = time.perf_counter()
+        license, license_url = strip_license_header(raw, _LOG4J_PURL)
+        assert time.perf_counter() - started < 1.0
+        assert (license.split(), license_url) == (["MIT", "OR", "Apache-2.0"], _APACHE_TXT)
+
+    @pytest.mark.parametrize(
+        ("declared", "license"),
+        [
+            (f'"Apache-2.0";link="{_APACHE_TXT}"', "Apache-2.0"),
+            (_SYFT_HEADER_REF, "Apache-2.0 OR MIT"),
+            (f"BSD-3-Clause AND {_SYFT_HEADER_REF}", "BSD-3-Clause AND (Apache-2.0 OR MIT)"),
+        ],
+    )
+    def test_an_spdx_declared_licence_with_parameters_is_stripped_too(self, declared, license):
         package = {
             "SPDXID": "SPDXRef-Package-log4j-api",
             "name": "log4j-api",
             "versionInfo": "2.25.5",
-            "licenseDeclared": f'"Apache-2.0";link="{_APACHE_TXT}"',
+            "licenseDeclared": declared,
             "externalRefs": [{"referenceType": "purl", "referenceLocator": _LOG4J_PURL}],
         }
+        # syft names the ref after the sanitised value and keeps the value itself in extractedText
+        extracted = {
+            "licenseId": _SYFT_HEADER_REF,
+            "extractedText": f'Apache-2.0;link="{_APACHE_TXT}",MIT;link="https://opensource.org/licenses/MIT"',
+        }
         [dep] = parse_sbom(
-            {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [package]}
+            {
+                "spdxVersion": "SPDX-2.3",
+                "SPDXID": "SPDXRef-DOCUMENT",
+                "packages": [package],
+                "hasExtractedLicensingInfos": [extracted],
+            }
         ).dependencies
-        assert (dep.license, dep.license_url) == ("Apache-2.0", _APACHE_TXT)
+        assert (dep.license, dep.license_url) == (license, _APACHE_TXT)

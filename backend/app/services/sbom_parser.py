@@ -76,9 +76,20 @@ def _license_entries(value: str) -> tuple[list[str], str | None]:
     return [name for name, _ in entries if name], next((url for _, url in entries if url), None)
 
 
+# Quoted text matches whole, so an operator inside a quoted name or description never splits a value.
+_EXPRESSION_PIECE = re.compile(r'(?:"[^"]*"|\S|\s(?!(?:OR|AND)\s))+|\s(?:OR|AND)\s')
+
+
 def strip_license_header(value: str, purl: str | None) -> tuple[str, str | None]:
-    names, url = _license_entries(value)
-    return _join_licenses(names, purl), url
+    """A header can sit among the other licences of an expression: 'MIT OR "Apache-2.0";link="u"'."""
+    pieces, url = _EXPRESSION_PIECE.findall(value), None
+    for index, piece in enumerate(pieces):
+        names, piece_url = _license_entries(piece)
+        joined = _join_licenses(names, purl)
+        # A header listing several licences is one term of the expression around it.
+        pieces[index] = f"({joined})" if len(pieces) > 1 and len(set(names)) > 1 else joined
+        url = url or piece_url
+    return "".join(pieces), url
 
 
 def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[list[ParsedDependency], int]:
@@ -1104,6 +1115,10 @@ class SBOMParser:
                 continue
             # Trivy names the licence in `name` with a sentence in extractedText; syft puts the name in extractedText.
             for candidate in (info.get("name"), info.get("extractedText")):
+                # Kept whole: only the package purl decides how a header's licences join.
+                if isinstance(candidate, str) and BUNDLE_LICENSE_PARAMETER.search(candidate):
+                    refs[info["licenseId"]] = candidate
+                    break
                 spdx_id = normalize_license(candidate) if isinstance(candidate, str) else ""
                 if spdx_id in LICENSE_DATABASE:
                     refs[info["licenseId"]] = spdx_id
