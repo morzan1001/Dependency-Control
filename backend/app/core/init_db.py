@@ -420,7 +420,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["adhoc_jobs"].create_index("input_file_id")
     await database["adhoc_jobs"].create_index("result_file_id", sparse=True)
 
-    # Reads by type and scan date across every project, Metabase's direct ones included, have no other index.
+    # Crypto trends read findings by type and scan date across projects; no other index bounds that read.
     await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
     logger.info("Database indexes created successfully.")
