@@ -1,5 +1,6 @@
 import csv
 import io
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.responses import StreamingResponse
@@ -92,6 +93,12 @@ def test_export_filename_sanitizes_and_appends_date():
     assert name.endswith(".csv")
     assert "/" not in name and " " not in name
     assert "findings" in name
+
+
+def test_an_export_filename_carries_the_extension_of_its_format():
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    assert export_filename("shop/api", "sbom", extension="json") == f"shop-api_sbom_{today}.json"
 
 
 @pytest.mark.asyncio

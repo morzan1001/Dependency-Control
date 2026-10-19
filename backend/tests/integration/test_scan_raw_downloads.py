@@ -23,6 +23,7 @@ from app.models.user import User
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.gridfs_maintenance import make_gridfs_ref
+from app.services.inventory.csv_stream import export_filename
 from app.services.rescan import build_rescan
 from tests.helpers.analyzers import process_sbom_document, run_context
 
@@ -148,7 +149,10 @@ async def test_a_multi_sbom_export_zips_each_stored_file_byte_for_byte_in_bounde
     )
 
     assert response.media_type == "application/zip"
-    assert response.headers["content-disposition"] == f'attachment; filename="project_{_PROJECT_ID}_sboms.zip"'
+    assert (
+        response.headers["content-disposition"]
+        == f'attachment; filename="{export_filename("shop", "sboms", extension="zip")}"'
+    )
     with zipfile.ZipFile(io.BytesIO(body)) as archive:
         entries = {name: _sha(archive.read(name)) for name in archive.namelist()}
     assert entries == {"sbom-1.json": stored[0], "sbom-2.json": stored[1]}
@@ -183,7 +187,9 @@ async def test_a_single_sbom_export_is_the_stored_upload_byte_for_byte(client, d
     served = await client.get(f"/api/v1/projects/{_PROJECT_ID}/export/sbom", headers=member_auth_headers)
 
     assert served.status_code == 200, served.text[:500]
-    assert served.headers["content-disposition"] == f'attachment; filename="project_{_PROJECT_ID}_sbom.json"'
+    assert served.headers["content-disposition"] == (
+        f'attachment; filename="{export_filename("test-project", "sbom", extension="json")}"'
+    )
     assert served.content == await _gridfs_bytes(db, scan.sbom_refs[0])
 
 
