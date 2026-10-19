@@ -57,6 +57,6 @@ class Renderer(Protocol):
     ) -> bytes: ...
 
 
-def build_filename(report: ComplianceReport, extension: str) -> str:
-    scope = re.sub(r"[^A-Za-z0-9\-]", "_", f"{report.scope}-{report.scope_id}" if report.scope_id else report.scope)
+def build_filename(report: ComplianceReport, extension: str, scope_name: str | None) -> str:
+    scope = re.sub(r"[^A-Za-z0-9\-]", "_", f"{report.scope}-{scope_name}" if scope_name else report.scope)
     return f"{report.framework}_{scope}_{report.requested_at:%Y%m%dT%H%M%SZ}.{extension}"

@@ -18,6 +18,7 @@ from app.services.notifications.service import notification_service
 def evaluation_input(**fields: Any) -> EvaluationInput:
     values: dict[str, Any] = {
         "resolved": ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
+        "scope_name": None,
         "scope_description": "user",
         "crypto_assets": [],
         "findings": [],

@@ -10,6 +10,7 @@ from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFrame
 from app.services.chat.tools import ChatToolRegistry
 from app.services.compliance.renderers.base import coverage_statement
 from tests.helpers.auth import make_admin
+from tests.helpers.compliance import generated_report
 
 ADMIN = make_admin()
 # The third project report outlived its project.
@@ -159,3 +160,18 @@ async def test_the_chat_report_list_names_each_project_and_team_beside_its_id(sc
 
     assert _scopes_shown(result["reports"]) == EXPECTED_SCOPES
 
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_project_report_names_the_project_and_keeps_its_id_for_machines(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    report = await generated_report(db, monkeypatch)
+
+    served = await client.get(f"/api/v1/compliance/reports/{report.id}/download", headers=owner_auth_headers_proj)
+
+    assert report.artifact_filename.startswith("nist-sp-800-131a_project-project-p_")
+    assert (served.json()["scope_description"], served.json()["scope"]) == (
+        "project 'project-p'",
+        {"kind": "project", "id": "p"},
+    )

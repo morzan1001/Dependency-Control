@@ -40,6 +40,12 @@ def test_sarif_driver_properties_omit_the_disclaimer_when_the_framework_has_none
     assert "disclaimer" not in properties
 
 
+def test_sarif_run_keeps_the_scope_id_beside_the_named_scope():
+    properties = json.loads(SarifRenderer().render(_evaluation(), _report()))["runs"][0]["properties"]
+
+    assert (properties["scope_description"], properties["scope"]) == ("project 'x'", {"kind": "project", "id": "p1"})
+
+
 def test_sarif_passed_control_emits_pass_result():
     from datetime import datetime, timezone
 

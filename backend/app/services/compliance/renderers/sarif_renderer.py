@@ -90,6 +90,7 @@ class SarifRenderer:
                     "results": results,
                     "properties": {
                         "generated_at": evaluation.generated_at.isoformat(),
+                        "scope": {"kind": report.scope, "id": report.scope_id},
                         "scope_description": evaluation.scope_description,
                         "coverage": coverage_statement(evaluation.coverage),
                     },

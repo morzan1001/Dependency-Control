@@ -296,6 +296,22 @@ async def test_engine_gather_inputs_builds_evaluation_input(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("resolved", "named"),
+    [(_project_scope(), "name-p1"), (ResolvedScope(scope="team", scope_id="t1", project_ids=["p1"]), "Payments")],
+    ids=["project", "team"],
+)
+async def test_a_project_or_team_scope_is_described_by_its_name(db, resolved, named):
+    await seed_crypto_policies(db)
+    await db.teams.insert_one({"_id": "t1", "name": "Payments", "members": []})
+    await _store_project(db, "p1", team_ids=["t1"])
+
+    result = await _gather(db, resolved, ReportFramework.CVE_REMEDIATION_SLA)
+
+    assert (result.scope_name, result.scope_description) == (named, f"{resolved.scope} '{named}'")
+
+
+@pytest.mark.asyncio
 async def test_an_unscanned_project_withholds_a_cve_pass(db):
     await seed_crypto_policies(db)
     await _store_project(db, "p1")
@@ -583,13 +599,13 @@ async def test_a_stored_rsa_key_size_reaches_the_key_size_control(db):
     ],
 )
 def test_the_artifact_is_named_after_the_report_and_typed_by_its_format(fmt, suffix, mime):
-    report = _report(scope="team", scope_id="t/1 a", requested_at=datetime(2026, 4, 20, 10, 5, tzinfo=timezone.utc))
+    report = _report(scope="team", scope_id="t1", requested_at=datetime(2026, 4, 20, 10, 5, tzinfo=timezone.utc))
     framework = FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A]
 
-    body, filename, mime_type = ComplianceReportEngine()._render(fmt, framework, _evaluation(), report)
+    body, filename, mime_type = ComplianceReportEngine()._render(fmt, framework, _evaluation(), report, "Core/ops a")
 
     assert body
-    assert (filename, mime_type) == (f"nist-sp-800-131a_team-t_1_a_20260420T100500Z.{suffix}", mime)
+    assert (filename, mime_type) == (f"nist-sp-800-131a_team-Core_ops_a_20260420T100500Z.{suffix}", mime)
 
 
 @pytest.mark.asyncio
@@ -598,16 +614,16 @@ async def test_generate_lets_go_of_the_inputs_before_rendering():
     engine = ComplianceReportEngine()
     report = _report(framework=ReportFramework.CVE_REMEDIATION_SLA)
     handed_out: list[weakref.ref] = []
-    alive_at_render: list[bool] = []
+    alive_at_render: list[tuple[bool, str | None]] = []
 
     async def gather(db, resolved, framework):
-        inputs = evaluation_input(policy_version=3, iana_catalog_version=4)
+        inputs = evaluation_input(policy_version=3, iana_catalog_version=4, scope_name="shop")
         handed_out.append(weakref.ref(inputs))
         return inputs
 
-    def render(fmt, framework, evaluation, rep):
+    def render(fmt, framework, evaluation, rep, scope_name):
         gc.collect()
-        alive_at_render.append(handed_out[0]() is not None)
+        alive_at_render.append((handed_out[0]() is not None, scope_name))
         return b"{}", "x.json", "application/json"
 
     update_status = AsyncMock()
@@ -626,7 +642,7 @@ async def test_generate_lets_go_of_the_inputs_before_rendering():
     ):
         await engine.generate(report=report, db=MagicMock(), user=MagicMock(id="u1", permissions=frozenset()))
 
-    assert alive_at_render == [False]
+    assert alive_at_render == [(False, "shop")]
     assert update_status.call_args_list[-1].kwargs["policy_version_snapshot"] == 3
     assert update_status.call_args_list[-1].kwargs["iana_catalog_version_snapshot"] == 4
 
@@ -641,7 +657,7 @@ async def test_reports_render_one_at_a_time_while_the_event_loop_keeps_running(m
     overlapped: list[bool] = []
     loop_ran_during_render: list[bool] = []
 
-    def slow_render(fmt, framework, evaluation, rep):
+    def slow_render(fmt, framework, evaluation, rep, scope_name):
         rendering.append(rep.id)
         overlapped.append(len(rendering) > 1)
         loop_ran = threading.Event()
