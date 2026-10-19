@@ -20,7 +20,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.cbom import ParsedCryptoAsset
 from app.schemas.ingest import BaseIngest
-from app.services.cbom_parser import parse_cbom
+from app.services.cbom_parser import flatten_cyclonedx_components, parse_cbom
 from app.services.notifications.service import safe_notify_project_event
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
@@ -57,13 +57,19 @@ async def ingest_cbom(
     db: DatabaseDep,
     project: ProjectIngestDep,
 ) -> CBOMIngestResponse:
-    """Upload a CBOM, persisted before the response; one with no crypto asset records the project as free of crypto."""
+    """Upload a CBOM, persisted before the response; one listing no crypto asset records the project as free of crypto."""
     payload = await read_json_body(request, CBOMIngest)
     manager = ScanManager(db, project)
     scan_id = manager.run_scan_id(payload)
     assets = await asyncio.to_thread(parse_cbom, payload.cbom)
     if not assets and payload.cbom.get("bomFormat") != "CycloneDX":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "CBOM payload is not a CycloneDX document")
+    components = payload.cbom.get("components", [])
+    if not assets and (
+        not isinstance(components, list)
+        or any(c.get("type") == "cryptographic-asset" for c in flatten_cyclonedx_components(components)[0])
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CBOM components could not be read as cryptographic assets")
     project_id = str(project.id)
 
     try:

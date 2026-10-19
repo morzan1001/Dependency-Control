@@ -84,6 +84,34 @@ async def test_a_payload_that_is_not_a_cyclonedx_document_is_rejected(client, db
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "document",
+    [
+        cbom_of([{"type": "cryptographic-asset", "name": "RSA"}]),
+        cbom_of([{"type": "cryptographic-asset", "name": "RSA", "cryptoProperties": {"assetType": "Algorithm"}}]),
+        cbom_of([{"type": "cryptographic-asset", "name": "RSA", "cryptoProperties": []}]),
+        {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": {"type": "cryptographic-asset"}},
+    ],
+    ids=["no-crypto-properties", "unknown-asset-type", "crypto-properties-list", "components-object"],
+)
+async def test_a_cbom_listing_crypto_it_cannot_read_is_rejected_and_keeps_the_earlier_upload(
+    client, db, api_key_headers, document
+):
+    pipeline = {"pipeline_id": 16, "commit_hash": "abc123", "branch": "main"}
+    first = await client.post(
+        "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("legacy_crypto_mixed.json")}, headers=api_key_headers
+    )
+    scan_id = first.json()["scan_id"]
+    scan = await db.scans.find_one({"_id": scan_id})
+
+    resp = await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": document}, headers=api_key_headers)
+
+    assert resp.status_code == 400, resp.text
+    assert await db.scans.find_one({"_id": scan_id}) == scan
+    assert await db.crypto_assets.count_documents({"scan_id": scan_id}) == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_an_empty_cbom_retry_replaces_the_earlier_uploads_assets(client, db, api_key_headers):
     pipeline = {"pipeline_id": 14, "commit_hash": "abc123", "branch": "main"}
