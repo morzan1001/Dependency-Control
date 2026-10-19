@@ -176,33 +176,64 @@ describe("CryptoPolicyEditor name patterns", () => {
 });
 
 describe("CryptoPolicyEditor rules table width", () => {
-  it("gives the Rule column what the fixed columns leave, at least 200px, and scrolls sideways below that", () => {
+  it("fits a project's columns and a 200px Rule column into the 989px a 1440px screen leaves, and scrolls sideways below that", () => {
     const sys = systemRule();
     render(<CryptoPolicyEditor initialRules={[sys]} systemRules={[sys]} onSave={vi.fn()} />);
 
     const table = screen.getByRole("table");
     expect(table).toHaveClass("table-fixed");
-    expect(table).toHaveStyle({ minWidth: "1168px" });
+    expect(table).toHaveStyle({ minWidth: "960px" });
     expect(table.parentElement).toHaveClass("overflow-x-auto");
     expect(screen.getByRole("columnheader", { name: "Rule" })).toHaveClass("w-auto");
     expect(screen.getByRole("columnheader", { name: "Status" })).toHaveClass("w-30");
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
   });
 
   it("fits the system policy's columns and a 200px Rule column on a 1440px screen", () => {
     render(<CryptoPolicyEditor initialRules={[systemRule()]} onSave={vi.fn()} />);
 
-    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "1048px" });
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "936px" });
     expect(screen.queryByRole("columnheader", { name: "Status" })).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Min key size" })).toHaveClass("w-24");
-    expect(screen.getByRole("columnheader", { name: "Source" })).toHaveClass("w-28");
   });
 
-  it("keeps no room for the Revert and Remove column a read-only viewer does not get", () => {
-    const sys = systemRule();
-    render(<CryptoPolicyEditor initialRules={[sys]} systemRules={[sys]} readOnly onSave={vi.fn()} />);
+  it("keeps no room for the Remove column a read-only viewer of the system policy does not get", () => {
+    render(<CryptoPolicyEditor initialRules={[systemRule()]} readOnly onSave={vi.fn()} />);
 
-    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "1072px" });
-    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "840px" });
+    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+  });
+
+  it("names each rule's source under its name instead of in a column of its own", () => {
+    render(<CryptoPolicyEditor initialRules={[systemRule()]} onSave={vi.fn()} />);
+
+    expect(screen.queryByRole("columnheader", { name: "Source" })).not.toBeInTheDocument();
+    const ruleCell = screen.getByDisplayValue("Block RC4").closest("td");
+    expect(ruleCell).toContainElement(screen.getByText("nist-sp-800-131a"));
+    expect(screen.getByText("nist-sp-800-131a")).toHaveClass("font-mono", "text-xs");
+  });
+
+  it("offers Revert beside an overridden rule's status, as Deactivate sits beside a user's", () => {
+    const sys = systemRule();
+    render(<CryptoPolicyEditor initialRules={[{ ...sys, name: "Block RC4 now" }]} systemRules={[sys]} onSave={vi.fn()} />);
+
+    const revert = screen.getByRole("button", { name: "Revert" });
+    expect(revert).toHaveClass("h-6", "text-xs");
+    expect(revert.closest("td")).toContainElement(screen.getByText("Overridden"));
+    fireEvent.click(revert);
+    expect(screen.getByDisplayValue("Block RC4")).toBeInTheDocument();
+  });
+
+  it("offers Remove beside a project's custom rule's status", () => {
+    const sys = systemRule();
+    const custom = { ...sys, rule_id: "custom-des", name: "Block DES", source: "custom" as const };
+    render(<CryptoPolicyEditor initialRules={[sys, custom]} systemRules={[sys]} onSave={vi.fn()} />);
+
+    const remove = screen.getByRole("button", { name: "Remove" });
+    expect(remove).toHaveClass("h-6", "text-xs");
+    expect(remove.closest("td")).toContainElement(screen.getByText("Custom"));
+    fireEvent.click(remove);
+    expect(screen.queryByDisplayValue("Block DES")).not.toBeInTheDocument();
   });
 
   it("keeps the System default pill on one line in its column", () => {
@@ -212,10 +243,22 @@ describe("CryptoPolicyEditor rules table width", () => {
     expect(screen.getByText("System default")).toHaveClass("whitespace-nowrap");
   });
 
-  it("names a rule in full as its input's title, for a name longer than the column", () => {
+  it("wraps a rule's name over as many lines as it needs instead of cutting it off", () => {
     const long = { ...systemRule(), name: "BSI requires RSA keys of at least 3000 bits from 2024 onwards" };
     render(<CryptoPolicyEditor initialRules={[long]} onSave={vi.fn()} />);
 
-    expect(screen.getByDisplayValue(long.name)).toHaveAttribute("title", long.name);
+    const name = screen.getByDisplayValue(long.name);
+    expect(name.tagName).toBe("TEXTAREA");
+    expect(name).toHaveClass("field-sizing-content", "resize-none");
+    expect(name).toHaveAttribute("title", long.name);
+  });
+
+  it("keeps a rule's name on one logical line when a line break is typed or pasted", () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CryptoPolicyEditor initialRules={[systemRule()]} onSave={onSave} />);
+
+    fireEvent.change(screen.getByDisplayValue("Block RC4"), { target: { value: "Block\nRC4 \n now" } });
+
+    expect(screen.getByDisplayValue("Block RC4 now")).toBeInTheDocument();
   });
 });

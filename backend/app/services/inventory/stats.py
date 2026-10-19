@@ -19,7 +19,8 @@ async def build_inventory_stats(db: AsyncIOMotorDatabase, project: Project, scan
     direct = await deps.count({"scan_id": scan.id, "direct": True})
     licenses = await deps.collection.distinct("license", {"scan_id": scan.id})
     ecosystems = await deps.collection.distinct("type", {"scan_id": scan.id})
-    crypto_count = await CryptoAssetRepository(db).count_by_scan(project.id, scan.id)
+    crypto_assets = CryptoAssetRepository(db)
+    crypto_count = await crypto_assets.count_by_scan(project.id, scan.id)
     return InventoryStatsResponse(
         scan=scan_context(scan),
         components_total=total,
@@ -28,4 +29,5 @@ async def build_inventory_stats(db: AsyncIOMotorDatabase, project: Project, scan
         license_count=len({t for lic in licenses for t in license_ids(lic)}),
         ecosystem_count=len({e or "unknown" for e in ecosystems}),
         crypto_asset_count=crypto_count,
+        cbom_evaluated=scan.id in await crypto_assets.evaluated_scan_ids([project.id], [scan.id]),
     )

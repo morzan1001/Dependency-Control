@@ -13,6 +13,7 @@ export interface InventoryStats {
   license_count: number;
   ecosystem_count: number;
   crypto_asset_count: number;
+  cbom_evaluated: boolean;
 }
 
 export interface ComponentItem {

@@ -15,12 +15,16 @@ import { inventoryApi } from '@/api/inventory'
 import { downloadServerFile } from '@/lib/download'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 
+export const NO_CRYPTO_IN_CBOM = 'No cryptography found in the latest CBOM'
+export const NO_CBOM = 'No CBOM uploaded for the latest scan'
+
 interface CryptoTableProps {
   projectId: string
   branch?: string
+  cbomEvaluated?: boolean
 }
 
-export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
+export function CryptoTable({ projectId, branch, cbomEvaluated }: Readonly<CryptoTableProps>) {
   const [page, setPage] = useState(1)
   const [pageBranch, setPageBranch] = useState(branch)
   if (pageBranch !== branch) {
@@ -92,8 +96,8 @@ export function CryptoTable({ projectId, branch }: Readonly<CryptoTableProps>) {
               <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
             </div>
           )}
-          {!isPending && !isError && data?.items.length === 0 && (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">No cryptographic assets found.</p>
+          {!isPending && !isError && data?.items.length === 0 && cbomEvaluated !== undefined && (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">{cbomEvaluated ? NO_CRYPTO_IN_CBOM : NO_CBOM}.</p>
           )}
         </div>
         <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />

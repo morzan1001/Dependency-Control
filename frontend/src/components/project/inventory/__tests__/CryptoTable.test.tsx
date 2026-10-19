@@ -17,11 +17,11 @@ const page = {
   total: 2, page: 1, page_size: 25,
 }
 
-function renderTable() {
+function renderTable(cbomEvaluated?: boolean) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <CryptoTable projectId="p1" branch="main" />
+      <CryptoTable projectId="p1" branch="main" cbomEvaluated={cbomEvaluated} />
     </QueryClientProvider>,
   )
 }
@@ -57,7 +57,7 @@ describe('CryptoTable', () => {
     renderTable()
 
     await waitFor(() => expect(screen.getByText('Failed to load crypto assets.')).toBeInTheDocument())
-    expect(screen.queryByText(/no cryptographic assets found/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/No CBOM|No cryptography/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
 
@@ -85,9 +85,25 @@ describe('CryptoTable', () => {
 
   it("names an empty table under it, where a phone shows the message, instead of in a row centred on the scrolling table", async () => {
     vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue({ ...page, items: [], total: 0 })
+    renderTable(true)
+
+    expect((await screen.findByText('No cryptography found in the latest CBOM.')).closest('table')).toBeNull()
+  })
+
+  it('tells a scan without a CBOM from one whose CBOM listed no cryptography', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue({ ...page, items: [], total: 0 })
+    renderTable(false)
+
+    expect(await screen.findByText('No CBOM uploaded for the latest scan.')).toBeInTheDocument()
+    expect(screen.queryByText('No cryptography found in the latest CBOM.')).not.toBeInTheDocument()
+  })
+
+  it('names no empty state before it knows whether the scan has a CBOM', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue({ ...page, items: [], total: 0 })
     renderTable()
 
-    expect((await screen.findByText('No cryptographic assets found.')).closest('table')).toBeNull()
+    await waitFor(() => expect(inventoryApiModule.inventoryApi.getCrypto).toHaveBeenCalled())
+    expect(screen.queryByText(/No CBOM|No cryptography/)).not.toBeInTheDocument()
   })
 
   it('shows a failure and its retry under the table the same way', async () => {
