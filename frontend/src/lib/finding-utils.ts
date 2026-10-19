@@ -14,7 +14,7 @@ export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
   HIGH: '#f97316',
   MEDIUM: '#eab308',
   LOW: '#3b82f6',
-  NEGLIGIBLE: '#d1d5db',
+  NEGLIGIBLE: '#5b6472',
   INFO: '#6b7280',
   UNKNOWN: '#9ca3af',
 }
