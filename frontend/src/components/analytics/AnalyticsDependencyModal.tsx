@@ -207,7 +207,7 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
               <Badge variant="destructive">Deprecated</Badge>
             )}
             {metadata.license && (
-              <Badge variant={getLicenseBadgeVariant(metadata.license_category)} className="text-xs">
+              <Badge variant={getLicenseBadgeVariant(metadata.license_category)} className="text-xs wrap-anywhere">
                 <FileText className="h-3 w-3 mr-1" />
                 {metadata.license}
               </Badge>

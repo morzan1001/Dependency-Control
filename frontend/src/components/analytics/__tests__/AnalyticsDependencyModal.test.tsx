@@ -55,6 +55,13 @@ describe("AnalyticsDependencyModal header", () => {
 
     expect(screen.getByRole("heading", { name: /pkg/ })).toHaveClass("justify-center", "sm:justify-start");
   });
+
+  it("wraps a licence without spaces inside a phone-wide dialog instead of running past its edge", () => {
+    const license = '"Apache-2.0";link="https://www.apache.org/licenses/LICENSE-2.0.txt"';
+    renderModal({ ...baseMetadata, license });
+
+    expect(screen.getByText(license)).toHaveClass("wrap-anywhere");
+  });
 });
 
 describe("AnalyticsDependencyModal metadata link hardening", () => {
