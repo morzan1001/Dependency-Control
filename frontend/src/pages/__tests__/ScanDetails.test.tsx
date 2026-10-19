@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 
 import { projectApi } from '@/api/projects'
 import { scanApi } from '@/api/scans'
+import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { createMutationCache } from '@/lib/mutation-cache'
 import type { ProjectMember } from '@/types/project'
 import type { SbomResponse, ScanAnalysisResult } from '@/types/scan'
@@ -686,6 +687,20 @@ describe('ScanDetails distribution charts', () => {
     renderPage()
 
     expect(await legendOf('Severity Distribution')).toEqual(['Critical', 'High', 'Medium', 'Low', 'Negligible', 'Info', 'Unknown'])
+  })
+
+  it('writes the legend labels in the theme text colour and keeps each swatch in its slice colour', async () => {
+    mockUseScan.mockReturnValue({
+      data: { ...scan('completed'), stats: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0, info: 0, unknown: 1 } },
+      isLoading: false,
+    })
+
+    renderPage()
+
+    await legendOf('Severity Distribution')
+    const item = screen.getByText('Severity Distribution').closest('.bg-card')!.querySelector('.recharts-legend-item')!
+    expect(item.querySelector<HTMLElement>('.recharts-legend-item-text')?.style.color).toBe('hsl(var(--foreground))')
+    expect(item.querySelector('path')).toHaveAttribute('fill', SEVERITY_CHART_COLORS.UNKNOWN)
   })
 
   it('lists the categories in the order of the finding tabs', async () => {

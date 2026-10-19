@@ -32,6 +32,19 @@ function contrast(a: Rgb, b: Rgb): number {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
+function lab(rgb: Rgb): Rgb {
+  const [r, g, b] = rgb.map((v) => (v / 255 <= 0.04045 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4))
+  const f = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116)
+  const [x, y, z] = [
+    (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047,
+    0.2126 * r + 0.7152 * g + 0.0722 * b,
+    (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883,
+  ].map(f)
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)]
+}
+
+const deltaE76 = (a: Rgb, b: Rgb) => Math.hypot(...lab(a).map((v, i) => v - lab(b)[i]))
+
 describe('light-theme severity colours', () => {
   it('pair every severity fill with its own text colour, unknown included', () => {
     expect(severityTokens).toEqual(expect.arrayContaining(['critical', 'high', 'medium', 'low', 'info', 'unknown']))
@@ -55,16 +68,14 @@ describe('dark-theme destructive colour', () => {
 describe('negligible chart colour', () => {
   const negligible = hex(SEVERITY_CHART_COLORS.NEGLIGIBLE)
 
-  it('writes its legend label, drawn in the slice colour, at a WCAG contrast of at least 4.5:1 on the light card', () => {
-    expect(contrast(negligible, token(lightTheme, 'card'))).toBeGreaterThanOrEqual(4.5)
+  it.each([
+    ['light', lightTheme],
+    ['dark', darkTheme],
+  ])('draws its slice at a WCAG contrast of at least 3:1 on the %s card', (_name, theme) => {
+    expect(contrast(negligible, token(theme, 'card'))).toBeGreaterThanOrEqual(3)
   })
 
-  it('draws its slice at a WCAG contrast of at least 3:1 on the dark card too', () => {
-    expect(contrast(negligible, token(darkTheme, 'card'))).toBeGreaterThanOrEqual(3)
-  })
-
-  it('stays apart from the info and unknown greys beside it', () => {
-    expect(SEVERITY_CHART_COLORS.NEGLIGIBLE).not.toBe(SEVERITY_CHART_COLORS.INFO)
-    expect(SEVERITY_CHART_COLORS.NEGLIGIBLE).not.toBe(SEVERITY_CHART_COLORS.UNKNOWN)
+  it.each(['INFO', 'UNKNOWN'] as const)('differs in colour from the %s grey beside it by a Delta E of at least 15', (other) => {
+    expect(deltaE76(negligible, hex(SEVERITY_CHART_COLORS[other]))).toBeGreaterThanOrEqual(15)
   })
 })
