@@ -1,3 +1,11 @@
+# Release 1.9.58
+
+## 📦 Build & CI
+
+- chore(release): 1.9.58 stores the licence a Bundle-License header names instead of the raw header and cleans the stored ones (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.57. Nothing has to happen before the rollout.
