@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
+import { bySeverityOrder } from "@/lib/finding-utils";
 import { formatDate } from "@/lib/utils";
 import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
 
@@ -46,7 +47,7 @@ export function HotspotTable({ scope, scopeId, groupBy }: Readonly<Props>) {
               <td className="p-2">{e.asset_count}</td>
               <td className="p-2">{e.finding_count}</td>
               <td className="p-2 text-xs">
-                {Object.entries(e.severity_mix).map(([sev, n]) => (
+                {Object.entries(e.severity_mix).sort(([a], [b]) => bySeverityOrder({ value: a }) - bySeverityOrder({ value: b })).map(([sev, n]) => (
                   <span key={sev} className="mr-2">
                     {sev}: <strong>{n}</strong>
                   </span>

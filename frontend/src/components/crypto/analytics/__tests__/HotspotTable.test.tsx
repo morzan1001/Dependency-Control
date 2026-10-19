@@ -71,4 +71,23 @@ describe("HotspotTable", () => {
     expect(table).toHaveClass("min-w-[640px]");
     expect(table?.parentElement).toHaveClass("overflow-x-auto");
   });
+
+  it("lists a row's severity mix in severity order, whatever order the API sent", async () => {
+    vi.mocked(getCryptoHotspots).mockResolvedValueOnce({
+      scope: "project",
+      scope_id: "p",
+      grouping_dimension: "name",
+      items: [{
+        key: "RSA", grouping_dimension: "name", asset_count: 4, finding_count: 7,
+        severity_mix: { LOW: 1, MEDIUM: 4, HIGH: 2 }, locations: [], locations_complete: true, project_ids: ["p"],
+        first_seen: "2026-01-01", last_seen: "2026-04-01",
+      }],
+      total: 1,
+      generated_at: "2026-04-20",
+    });
+    renderWithClient(<HotspotTable scope="project" scopeId="p" groupBy="name" />);
+
+    const cell = (await screen.findByText("RSA")).closest("tr")!.querySelectorAll("td")[3];
+    expect(cell.textContent).toBe("HIGH: 2MEDIUM: 4LOW: 1");
+  });
 });

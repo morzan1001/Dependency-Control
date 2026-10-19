@@ -1,5 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { SeverityBadge } from '@/components/findings/SeverityBadge'
+import { bySeverityOrder } from '@/lib/finding-utils'
 
 interface DeltaSummaryCardsProps {
   readonly added: number
@@ -16,7 +17,9 @@ export function DeltaSummaryCards({ added, removed, unchanged, changed, bySeveri
     ...(changed !== undefined ? [{ label: 'Changed', value: `↻${changed}`, className: 'text-blue-600' }] : []),
     { label: 'Unchanged', value: `${unchanged}`, className: 'text-muted-foreground' },
   ]
-  const severities = Object.entries(bySeverity ?? {}).filter(([, count]) => count > 0)
+  const severities = Object.entries(bySeverity ?? {})
+    .filter(([, count]) => count > 0)
+    .sort(([a], [b]) => bySeverityOrder({ value: a }) - bySeverityOrder({ value: b }))
 
   return (
     <div className="space-y-2">
