@@ -206,7 +206,7 @@ describe("WebhookManager", () => {
     expect(screen.getByRole("columnheader", { name: "URL" })).toHaveClass("w-auto");
   });
 
-  it("names an empty list under the table, where a phone shows it, instead of in a row centred on the table's 880px", () => {
+  it("names an empty list under the table, where a phone shows it, instead of in a row centred on the table's full width", () => {
     renderWith([]);
 
     expect(screen.getByText("No webhooks configured").closest("table")).toBeNull();
