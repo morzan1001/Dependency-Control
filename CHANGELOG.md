@@ -1,3 +1,61 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.57. Nothing has to happen before the rollout.
+
+## After the rollout: clean licences stored from Bundle-License headers
+
+Older releases stored the OSGi `Bundle-License` manifest header that Syft copies from Java archives as the licence itself (for example `"Apache-2.0";link="https://www.apache.org/licenses/LICENSE-2.0.txt"`), and a header that names its licence by URL left `;description=…` on `license_url`. New scans store the licence and keep the link as `license_url`. This rewrites the stored values with the same rule; run it in a backend pod (`kubectl exec -i <backend-pod> -- env SCOPE=head python - < fix.py`), first `SCOPE=head` as a dry run, then `SCOPE=head APPLY=1`, then the same two with `SCOPE=all`, which reads the whole dependencies collection and belongs off-peak. A second run reports 0:
+
+```python
+import os
+
+from pymongo import MongoClient, UpdateOne
+
+from app.core.config import settings
+from app.services.archive import _strip_license_parameters
+
+SCOPE = os.environ.get("SCOPE", "head")
+APPLY = os.environ.get("APPLY") == "1"
+db = MongoClient(settings.MONGODB_URL)[settings.DATABASE_NAME]
+query = {"$or": [{"license": {"$regex": ";"}}, {"license_url": {"$regex": ";"}}]}
+if SCOPE == "head":
+    heads = db.projects.distinct("latest_scan_id", {"latest_scan_id": {"$nin": [None, ""]}})
+    query = {"scan_id": {"$in": heads}, **query}
+ops, samples, scans, kept = [], [], set(), 0
+for doc in db.dependencies.find(query, {"license": 1, "license_url": 1, "purl": 1, "scan_id": 1}, batch_size=2000):
+    new = {"license": doc.get("license"), "license_url": doc.get("license_url"), "purl": doc.get("purl")}
+    _strip_license_parameters("dependencies", new)
+    if (new["license"], new["license_url"]) == (doc.get("license"), doc.get("license_url")):
+        kept += 1
+        continue
+    scans.add(doc["scan_id"])
+    if len(samples) < 12:
+        samples.append((doc.get("license"), doc.get("license_url"), new["license"], new["license_url"]))
+    ops.append(UpdateOne({"_id": doc["_id"], "license": doc.get("license"), "license_url": doc.get("license_url")},
+                         {"$set": {"license": new["license"], "license_url": new["license_url"]}}))
+print(f"scope={SCOPE} apply={APPLY}: rewrite {len(ops)} dependencies in {len(scans)} scans; unchanged {kept}")
+for s in samples:
+    print("  ", repr(s[0])[:90], "|", s[1], "->", repr(s[2]), "|", s[3])
+if APPLY and ops:
+    written = sum(db.dependencies.bulk_write(ops[i:i + 1000], ordered=False).modified_count for i in range(0, len(ops), 1000))
+    print("modified:", written)
+```
+
+Archived scans are cleaned when they are restored.
+
+## Rolling back to 1.9.57
+
+Nothing to undo; cleaned values stay readable by 1.9.57.
+
+## Behaviour changes
+
+- Dependencies store the licence a Bundle-License header names (CycloneDX, Syft and SPDX), with the header's link as `license_url` when the SBOM gave none; several licences in one header are joined like other licence lists (OR for Maven and npm). Licence names are otherwise kept as the SBOM gives them.
+- The licence check reads every licence of a header that lists several (it kept only the first), and a comma inside a quoted header parameter no longer produces an extra, unknown licence.
+- "The Apache License, Version 2.0", "LGPL 2.1" and "MPL 1.1" resolve to their SPDX ids.
+- The analytics dependency dialog wraps a long licence.
+
+
+
 # Release 1.9.57
 
 ## 📦 Build & CI
