@@ -175,7 +175,8 @@ async def list_compliance_reports(
 ) -> dict[str, Any]:
     fw = ReportFramework(framework) if framework else None
     reports = await ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
-    return {"reports": await resolve_scope_names(db, [r.model_dump(by_alias=True) for r in reports])}
+    rows = await resolve_scope_names(db, [r.model_dump(by_alias=True) for r in reports])
+    return {"reports": await resolve_usernames(db, rows, "requested_by_name", id_field="requested_by")}
 
 
 async def list_policy_audit_entries(

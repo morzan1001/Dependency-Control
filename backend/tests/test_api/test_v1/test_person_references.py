@@ -258,6 +258,13 @@ class TestComplianceReports:
         assert shown == {"w-ada": ("u-ada", "ada.lovelace"), "w-legacy": ("grace", None), "w-gone": ("u-gone", None)}
 
     @pytest.mark.asyncio
+    async def test_the_chat_list_names_each_requester_beside_the_id(self, reported):
+        result = await _tool(reported, "list_compliance_reports")
+
+        shown = {r["_id"]: (r["requested_by"], r.get("requested_by_name")) for r in result["reports"]}
+        assert shown == {"w-ada": ("u-ada", "ada.lovelace"), "w-legacy": ("grace", None), "w-gone": ("u-gone", None)}
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("report_id", list(CREATORS))
     async def test_one_report_names_its_requester_beside_the_id(self, reported, report_id):
         report = await compliance_reports.get_report(report_id, ADMIN, reported)
