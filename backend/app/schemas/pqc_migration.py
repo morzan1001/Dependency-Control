@@ -47,5 +47,6 @@ class MigrationPlanResponse(BaseModel):
     scope_id: str | None = None
     generated_at: datetime
     items: list[MigrationItem] = Field(default_factory=list)
+    project_names: dict[str, str] = Field(default_factory=dict)
     summary: MigrationPlanSummary
     mappings_version: int
