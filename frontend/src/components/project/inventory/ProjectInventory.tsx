@@ -101,7 +101,7 @@ export function ProjectInventory({ projectId, defaultBranch }: Readonly<ProjectI
           <ComponentsTable projectId={projectId} branch={branch} />
           <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
             <LicensesTable projectId={projectId} branch={branch} />
-            <CryptoTable projectId={projectId} branch={branch} />
+            <CryptoTable projectId={projectId} branch={branch} cbomEvaluated={stats?.cbom_evaluated} />
           </div>
         </>
       )}

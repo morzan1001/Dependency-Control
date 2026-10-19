@@ -2,10 +2,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Boxes, KeyRound, Package, Scale } from 'lucide-react'
 import { InventoryStats } from '@/types/inventory'
+import { NO_CBOM, NO_CRYPTO_IN_CBOM } from './CryptoTable'
 
 interface InventoryStatCardsProps {
   stats?: InventoryStats
   isLoading: boolean
+}
+
+function cryptoDescription(stats: InventoryStats) {
+  if (!stats.cbom_evaluated) return NO_CBOM
+  return stats.crypto_asset_count ? 'Algorithms, certificates, protocols' : NO_CRYPTO_IN_CBOM
 }
 
 export function InventoryStatCards({ stats, isLoading }: Readonly<InventoryStatCardsProps>) {
@@ -27,7 +33,12 @@ export function InventoryStatCards({ stats, isLoading }: Readonly<InventoryStatC
     },
     { title: 'Licenses', value: stats.license_count.toLocaleString(), icon: Scale, description: 'Distinct licenses, unknown included' },
     { title: 'Ecosystems', value: stats.ecosystem_count.toLocaleString(), icon: Boxes, description: 'npm, pypi, maven, …' },
-    { title: 'Crypto Assets', value: stats.crypto_asset_count.toLocaleString(), icon: KeyRound, description: 'Algorithms, certificates, protocols' },
+    {
+      title: 'Crypto Assets',
+      value: stats.cbom_evaluated ? stats.crypto_asset_count.toLocaleString() : '—',
+      icon: KeyRound,
+      description: cryptoDescription(stats),
+    },
   ]
 
   return (

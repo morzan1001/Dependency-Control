@@ -12,7 +12,7 @@ vi.mock('@/hooks/queries/use-projects')
 const stats = {
   scan: { scan_id: 's1', branch: 'main', created_at: '2026-08-10T12:00:00Z', commit_hash: 'abcdef1234' },
   components_total: 42, direct_count: 10, transitive_count: 32,
-  license_count: 7, ecosystem_count: 2, crypto_asset_count: 3,
+  license_count: 7, ecosystem_count: 2, crypto_asset_count: 3, cbom_evaluated: true,
 }
 
 function renderInventory() {
@@ -121,6 +121,22 @@ describe('ProjectInventory', () => {
     await waitFor(() => expect(screen.getByText(/no active branches/i)).toBeInTheDocument())
     expect(inventoryApiModule.inventoryApi.getStats).not.toHaveBeenCalled()
     expect(screen.queryByText('Components')).not.toBeInTheDocument()
+  })
+
+  it("names the scan's missing CBOM in the cryptography card, as the crypto tile does", async () => {
+    vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
+      data: [{ name: 'main', is_active: true }],
+    } as ReturnType<typeof projectHooks.useProjectBranches>)
+    const api = vi.mocked(inventoryApiModule.inventoryApi)
+    api.getStats.mockResolvedValue({ ...stats, crypto_asset_count: 0, cbom_evaluated: false })
+    api.getLicenses.mockResolvedValue({ scan: stats.scan, items: [] })
+    api.getComponents.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
+    api.getCrypto.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
+
+    renderInventory()
+
+    expect(await screen.findByText('No CBOM uploaded for the latest scan.')).toBeInTheDocument()
+    expect(screen.getByText('No CBOM uploaded for the latest scan')).toBeInTheDocument()
   })
 
   it('lets the licenses and cryptography cards shrink to the screen, so their tables scroll sideways inside them', async () => {
