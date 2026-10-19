@@ -734,6 +734,45 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
 
 
 @pytest.mark.asyncio
+async def test_replay_strips_the_bundle_license_parameters_an_old_bundle_stored():
+    from app.services.archive import _replay_bundle
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    purl = "pkg:maven/org.apache.logging.log4j/log4j-api@2.25.5"
+    dependencies = [
+        {"_id": "d1", "scan_id": "scan-1", "purl": purl, "license": '"Apache-2.0";link="https://a.example"'},
+        {
+            "_id": "d2",
+            "scan_id": "scan-1",
+            "purl": purl,
+            "license": 'Apache-2.0;link="https://a.example",MIT;link="https://b.example"',
+            "license_url": "https://kept.example",
+        },
+        {"_id": "d3", "scan_id": "scan-1", "purl": purl, "license": "MIT"},
+    ]
+
+    async def bundle():
+        async for chunk in BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p"},
+            collections={"dependencies": _aiter(dependencies)},
+            stats=BundleStats(),
+        ):
+            yield chunk
+
+    db = _make_mock_db()
+
+    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+
+    assert reason is None
+    restored = db.dependencies.insert_many.await_args.args[0]
+    assert [(d["license"], d.get("license_url")) for d in restored] == [
+        ("Apache-2.0", "https://a.example"),
+        ("Apache-2.0 OR MIT", "https://kept.example"),
+        ("MIT", None),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_archive_hashes_the_plaintext_secret_of_a_legacy_trufflehog_row(archive_env):
     """A Mongo row from before ingest hashed Raw must not carry the plaintext into a new bundle."""
     from app.services.archive_bundle import read_bundle_frames

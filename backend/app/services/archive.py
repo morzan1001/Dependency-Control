@@ -67,6 +67,7 @@ from app.services.gridfs_maintenance import (
     iter_gridfs_chunks,
 )
 from app.services.releases import release_protected_scan_ids
+from app.services.sbom_parser import strip_license_header
 from app.services.update_frequency_rollup import record_scan_update_delta
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,13 @@ def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
     findings = (doc.get("result") or {}).get("findings")
     if findings:
         doc["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]
+
+
+def _strip_license_parameters(collection: str, doc: dict[str, Any]) -> None:
+    """Bundles archived before ingest stripped Bundle-License parameters still carry them."""
+    if collection == "dependencies" and ";" in (doc.get("license") or ""):
+        doc["license"], url = strip_license_header(doc["license"], doc.get("purl"))
+        doc["license_url"] = doc.get("license_url") or url
 
 
 async def _hash_plaintext_secrets_in(
@@ -488,6 +496,7 @@ async def _handle_doc_event(
     coll = event["collection"]
     doc = event["data"]
     _hash_plaintext_secrets(coll, doc)
+    _strip_license_parameters(coll, doc)
     batch_by_collection.setdefault(coll, []).append(doc)
     if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
         await _flush_batches(db, batch_by_collection, collections_restored)
