@@ -1,3 +1,11 @@
+# Release 1.9.57
+
+## 📦 Build & CI
+
+- chore(release): 1.9.57 drops the indexes nothing reads, accepts empty CBOMs, restores the outdated card, repairs the nightly reconcile and finishes the phone and uniformity sweep (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.56. Run mongosh commands in-pod against the application database; nothing has to happen before the rollout.
