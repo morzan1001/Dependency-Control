@@ -47,11 +47,31 @@ describe("HotspotTable", () => {
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
-  it("shows severity mix", async () => {
+  it("counts the severity mix in the severity pills the other breakdowns use", async () => {
     renderWithClient(
       <HotspotTable scope="project" scopeId="p" groupBy="name" />,
     );
-    expect(await screen.findByText(/HIGH/)).toBeInTheDocument();
+    expect(await screen.findByText("H:2")).toHaveClass("text-xs", "bg-severity-high", "text-severity-high-foreground");
+  });
+
+  it("codes negligible, info and unknown as N, I and U", async () => {
+    vi.mocked(getCryptoHotspots).mockResolvedValueOnce({
+      scope: "project",
+      scope_id: "p",
+      grouping_dimension: "name",
+      items: [{
+        key: "RSA", grouping_dimension: "name", asset_count: 4, finding_count: 7,
+        severity_mix: { UNKNOWN: 1, INFO: 3, NEGLIGIBLE: 2, CRITICAL: 1 }, locations: [], locations_complete: true,
+        project_ids: ["p"], first_seen: "2026-01-01", last_seen: "2026-04-01",
+      }],
+      total: 1,
+      generated_at: "2026-04-20",
+    });
+    renderWithClient(<HotspotTable scope="project" scopeId="p" groupBy="name" />);
+
+    const cell = (await screen.findByText("RSA")).closest("tr")!.querySelectorAll("td")[3];
+    expect(cell.textContent).toBe("C:1N:2I:3U:1");
+    expect(screen.getByText("I:3")).toHaveClass("bg-severity-info");
   });
 
   it("says the hotspots failed to load instead of reporting none", async () => {
@@ -88,6 +108,6 @@ describe("HotspotTable", () => {
     renderWithClient(<HotspotTable scope="project" scopeId="p" groupBy="name" />);
 
     const cell = (await screen.findByText("RSA")).closest("tr")!.querySelectorAll("td")[3];
-    expect(cell.textContent).toBe("HIGH: 2MEDIUM: 4LOW: 1");
+    expect(cell.textContent).toBe("H:2M:4L:1");
   });
 });
