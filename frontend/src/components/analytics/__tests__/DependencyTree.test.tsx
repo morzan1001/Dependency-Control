@@ -124,17 +124,20 @@ describe("DependencyTree severity borders", () => {
   beforeEach(() => getTree.mockReset());
 
   it("marks a node's worst finding severity on its left border in the severity colours", async () => {
-    const withFindings = (severity: "high" | "low") =>
+    const severities = ["critical", "high", "medium", "low"] as const;
+    const withFindings = (severity: (typeof severities)[number]) =>
       node(`${severity}-dep`, {
         direct: true,
         has_findings: true,
         findings_count: 1,
         findings_severity: { critical: 0, high: 0, medium: 0, low: 0, [severity]: 1 },
       });
-    renderTree(graph([withFindings("high"), withFindings("low")], ["high-dep", "low-dep"]));
+    renderTree(graph(severities.map(withFindings), severities.map((severity) => `${severity}-dep`)));
 
-    expect((await screen.findByText("high-dep")).closest('[role="treeitem"]')).toHaveClass("border-l-severity-high");
-    expect(screen.getByText("low-dep").closest('[role="treeitem"]')).toHaveClass("border-l-severity-low");
+    await screen.findByText("critical-dep");
+    for (const severity of severities) {
+      expect(screen.getByText(`${severity}-dep`).closest('[role="treeitem"]')).toHaveClass(`border-l-severity-${severity}`);
+    }
   });
 });
 
