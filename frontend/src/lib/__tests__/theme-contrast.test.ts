@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest'
 
 type Rgb = [number, number, number]
 
-const lightTheme = /:root\s*\{([^}]*)\}/.exec(readFileSync(`${import.meta.dirname}/../../index.css`, 'utf8'))![1]
+const css = readFileSync(`${import.meta.dirname}/../../index.css`, 'utf8')
+const lightTheme = /:root\s*\{([^}]*)\}/.exec(css)![1]
+const darkTheme = /\.dark\s*\{([^}]*)\}/.exec(css)![1]
 const severityTokens = [...lightTheme.matchAll(/--severity-([a-z]+):/g)].map((match) => match[1])
 
-function token(name: string): Rgb {
-  const match = new RegExp(`--${name}:\\s*([\\d.]+) ([\\d.]+)% ([\\d.]+)%;`).exec(lightTheme)
-  if (!match) throw new Error(`no light-theme token --${name}`)
+function token(theme: string, name: string): Rgb {
+  const match = new RegExp(`--${name}:\\s*([\\d.]+) ([\\d.]+)% ([\\d.]+)%;`).exec(theme)
+  if (!match) throw new Error(`no token --${name}`)
   const [h, s, l] = match.slice(1).map(Number)
   const k = (n: number) => (n + h / 30) % 12
   const a = (s / 100) * Math.min(l / 100, 1 - l / 100)
@@ -32,6 +34,16 @@ describe('light-theme severity colours', () => {
   })
 
   it.each(severityTokens)('give the %s pill text a WCAG contrast of at least 4.5:1 on its fill', (name) => {
-    expect(contrast(token(`severity-${name}`), token(`severity-${name}-foreground`))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(token(lightTheme, `severity-${name}`), token(lightTheme, `severity-${name}-foreground`))).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('dark-theme destructive colour', () => {
+  it('gives destructive text and icons a WCAG contrast of at least 4.5:1 on the background', () => {
+    expect(contrast(token(darkTheme, 'destructive'), token(darkTheme, 'background'))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('gives a destructive button its label at a WCAG contrast of at least 4.5:1', () => {
+    expect(contrast(token(darkTheme, 'destructive'), token(darkTheme, 'destructive-foreground'))).toBeGreaterThanOrEqual(4.5)
   })
 })
