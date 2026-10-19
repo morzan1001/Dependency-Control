@@ -23,6 +23,9 @@ export function AnalyticsSummaryCards() {
     return <AnalyticsErrorCard title="Failed to load the analytics summary" error={error} onRetry={() => refetch()} />
   }
 
+  const packageTypes = summary?.dependency_types ?? []
+  const commonTypes = packageTypes.slice(0, 3).map((t) => t.type).join(', ')
+
   const stats = [
     {
       title: "Total Dependencies",
@@ -45,9 +48,9 @@ export function AnalyticsSummaryCards() {
     },
     {
       title: "Package Types",
-      value: summary?.dependency_types.length.toString() || "0",
+      value: packageTypes.length.toString(),
       icon: PieChart,
-      description: "npm, pypi, maven, etc."
+      description: packageTypes.length > 3 ? `${commonTypes}, …` : commonTypes || "Across all projects"
     }
   ]
 

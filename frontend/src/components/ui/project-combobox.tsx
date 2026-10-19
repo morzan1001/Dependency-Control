@@ -9,6 +9,8 @@ import { Check, ChevronsUpDown, Search, X, Folder } from 'lucide-react'
 import { useDebounce } from '@/hooks/use-debounce'
 import { useClickOutside } from '@/hooks/use-click-outside'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
+import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
+import type { Project } from '@/types/project'
 
 interface ProjectComboboxProps
   extends Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'id' | 'aria-invalid' | 'aria-describedby'> {
@@ -16,6 +18,18 @@ interface ProjectComboboxProps
   onValueChange: (value: string) => void
   placeholder?: string
   className?: string
+}
+
+function ProjectOwner({ project }: Readonly<{ project: Project }>) {
+  const repositoryPath = project.gitlab_project_path ?? project.github_repository_path
+  if (!project.teams?.length && repositoryPath) {
+    return <span className="truncate font-mono text-xs text-muted-foreground">{repositoryPath}</span>
+  }
+  return (
+    <span className="min-w-0 max-w-[50%] text-xs text-muted-foreground">
+      <OwningTeamsCell teams={project.teams} />
+    </span>
+  )
 }
 
 export function ProjectCombobox({
@@ -36,7 +50,9 @@ export function ProjectCombobox({
   const projects = projectsData?.items || []
   // Resolve the selection separately so the trigger shows its name even when it is off the current page.
   const { data: selectedProjectData } = useProject(value)
-  const selectedProject = projects.find(p => p.id === value) ?? selectedProjectData
+  const listedSelection = projects.find(p => p.id === value)
+  const selectedProject = listedSelection ?? selectedProjectData
+  const namesakes = new Set(projects.map((p) => p.name).filter((name, i, names) => names.indexOf(name) !== i))
 
   const handleClose = useCallback(() => setOpen(false), [])
   useClickOutside(containerRef, handleClose, open)
@@ -94,6 +110,7 @@ export function ProjectCombobox({
             {...triggerProps}
             variant="outline"
             role="combobox"
+            aria-label="Project"
             aria-expanded={open}
             onClick={() => {
               setOpen(true)
@@ -106,6 +123,7 @@ export function ProjectCombobox({
                 <>
                   <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span className="truncate">{selectedProject.name}</span>
+                  {listedSelection && namesakes.has(listedSelection.name) && <ProjectOwner project={listedSelection} />}
                 </>
               ) : (
                 <span className="text-muted-foreground">Select a project...</span>
@@ -169,6 +187,7 @@ export function ProjectCombobox({
                     />
                     <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                     <span className="truncate flex-1 text-left">{project.name}</span>
+                    {namesakes.has(project.name) && <ProjectOwner project={project} />}
                   </button>
                 ))}
                 {projectsData && projectsData.total > projects.length && (

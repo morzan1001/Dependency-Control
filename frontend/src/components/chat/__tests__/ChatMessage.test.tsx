@@ -75,6 +75,19 @@ describe('ChatMessage typography', () => {
     expect(screen.getByRole('link').closest('.break-words')).toHaveClass('[&_a]:text-inherit', '[&_a]:underline');
   });
 
+  it("underlines an answer's links, in-app and external, so they stand apart from the text around them", () => {
+    renderAssistant('See [project](/projects/p1) and [docs](https://example.com/docs).');
+
+    expect(screen.getByRole('link', { name: 'project' })).toHaveClass('underline');
+    expect(screen.getByRole('link', { name: 'docs' })).toHaveClass('underline');
+  });
+
+  it('sets a quote off from the answer with a rule and italics', () => {
+    renderAssistant('The advisory says:\n\n> Upgrade to 2.17.1 or later.');
+
+    expect(screen.getByText('Upgrade to 2.17.1 or later.').closest('blockquote')).toHaveClass('border-l-4', 'pl-4', 'italic');
+  });
+
   it("keeps an assistant table's muted header", () => {
     renderAssistant('| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |');
 

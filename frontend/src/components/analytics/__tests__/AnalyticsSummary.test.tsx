@@ -76,6 +76,30 @@ describe('AnalyticsSummaryCards', () => {
   })
 })
 
+describe('Package Types tile', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  const types = (...names: string[]) => names.map((type) => ({ type, count: 1, percentage: 0 }))
+
+  it('names the most common package types the summary found', () => {
+    renderCards({ ...base, dependency_types: types('golang', 'npm', 'cargo', 'pypi') })
+
+    expect(screen.getByText('golang, npm, cargo, …')).toBeInTheDocument()
+  })
+
+  it('names every package type when there are three or fewer', () => {
+    renderCards({ ...base, dependency_types: types('golang', 'npm') })
+
+    expect(screen.getByText('golang, npm')).toBeInTheDocument()
+  })
+
+  it('names no package type the summary did not find', () => {
+    renderCards(base)
+
+    expect(screen.queryByText(/npm|pypi|maven/)).not.toBeInTheDocument()
+  })
+})
+
 describe('analytics summary load error', () => {
   const error = Object.assign(new Error('Request failed'), {
     response: { status: 403, data: { detail: 'Not enough permissions' } },

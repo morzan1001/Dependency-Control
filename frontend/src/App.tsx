@@ -33,15 +33,17 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { authApi } from '@/api/auth'
 import { usePublicConfig } from '@/hooks/queries/use-system'
 import { createMutationCache } from '@/lib/mutation-cache'
+import { getErrorMessage } from '@/lib/utils'
 import { ANALYTICS_ROUTE_PERMISSIONS, LOGIN_RETURN_KEY } from '@/lib/constants'
 import { lazy, Suspense } from 'react'
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error: Error) => {
-      const axiosError = error as { response?: { status?: number } }
+      const axiosError = error as { response?: { status?: number; data?: { detail?: unknown } } }
       if (axiosError.response?.status && axiosError.response.status >= 500) {
-        toast.error("Server Error", { description: "Something went wrong on the server" })
+        const description = axiosError.response.data?.detail ? getErrorMessage(error) : "Something went wrong on the server"
+        toast.error("Server Error", { description })
       }
     }
   }),

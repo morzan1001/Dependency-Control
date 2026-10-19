@@ -1,7 +1,20 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { FINDING_TYPE_LABELS } from "@/lib/constants";
+
 import { FindingTypeBadge } from "../FindingTypeBadge";
+
+const SEVERITY_HUES = ["red", "orange", "yellow", "blue", "gray"];
+
+function badgeOf(type: string) {
+  const { container, unmount } = render(<FindingTypeBadge type={type} />);
+  const badge = container.firstElementChild as HTMLElement;
+  const hue = /\bbg-([a-z]+)-50\b/.exec(badge.className)?.[1];
+  const hasIcon = badge.querySelector("svg") !== null;
+  unmount();
+  return { hue, hasIcon };
+}
 
 describe("FindingTypeBadge", () => {
   it.each([
@@ -54,5 +67,32 @@ describe("FindingTypeBadge", () => {
     render(<FindingTypeBadge type="crypto_weak_algorithm" />);
 
     expect(screen.getByText("Weak algorithm")).not.toHaveClass("capitalize");
+  });
+
+  it.each(["malware", "crypto_weak_algorithm"])("tints %s and gives it an icon, like every other type", (type) => {
+    const { hue, hasIcon } = badgeOf(type);
+
+    expect(hue).toBeDefined();
+    expect(hasIcon).toBe(true);
+  });
+
+  it("tints malware and crypto apart from each other, every other type and the severity colours", () => {
+    const otherHues = Object.keys(FINDING_TYPE_LABELS)
+      .filter((type) => type !== "malware")
+      .map((type) => badgeOf(type).hue);
+    const malware = badgeOf("malware").hue;
+    const crypto = badgeOf("crypto_cert_expired").hue;
+
+    expect(malware).not.toBe(crypto);
+    for (const hue of [malware, crypto]) {
+      expect([...otherHues, ...SEVERITY_HUES]).not.toContain(hue);
+    }
+  });
+
+  it("tints every crypto type alike", () => {
+    const { hue } = badgeOf("crypto_key_management");
+
+    expect(hue).toBeDefined();
+    expect(badgeOf("crypto_weak_key").hue).toBe(hue);
   });
 });

@@ -36,3 +36,12 @@ describe('InventoryStatCards crypto tile', () => {
     expect(cryptoTile()).toHaveTextContent('No CBOM uploaded for the latest scan')
   })
 })
+
+describe('InventoryStatCards', () => {
+  it('describes the ecosystem count like the license count, without naming ecosystems the scan may not have', () => {
+    render(<InventoryStatCards stats={stats} isLoading={false} />)
+
+    expect(screen.getByText('Distinct ecosystems, unknown included')).toBeInTheDocument()
+    expect(screen.queryByText(/npm|pypi|maven/)).not.toBeInTheDocument()
+  })
+})

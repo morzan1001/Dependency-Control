@@ -32,7 +32,7 @@ export function InventoryStatCards({ stats, isLoading }: Readonly<InventoryStatC
       description: `${stats.direct_count} direct · ${stats.transitive_count} transitive`,
     },
     { title: 'Licenses', value: stats.license_count.toLocaleString(), icon: Scale, description: 'Distinct licenses, unknown included' },
-    { title: 'Ecosystems', value: stats.ecosystem_count.toLocaleString(), icon: Boxes, description: 'npm, pypi, maven, …' },
+    { title: 'Ecosystems', value: stats.ecosystem_count.toLocaleString(), icon: Boxes, description: 'Distinct ecosystems, unknown included' },
     {
       title: 'Crypto Assets',
       value: stats.cbom_evaluated ? stats.crypto_asset_count.toLocaleString() : '—',
