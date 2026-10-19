@@ -1,8 +1,11 @@
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import batched
 from typing import Any
+
+from motor.motor_asyncio import AsyncIOMotorCollection
 
 from app.core import UNDATED
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
@@ -27,7 +30,22 @@ _WINDOW_PROJECTION = {
     "error": 1,
 }
 
-# Bounds one read's $in list; a delta can reach ~11 KB when its predecessor had no outdated analysis.
+_LEDGER_PROJECTION = {
+    "_id": 1,
+    "project_id": 1,
+    "branch": 1,
+    "schema_version": 1,
+    "prev_scan_id": 1,
+    "prev_created_at": 1,
+    "scan_created_at": 1,
+    "dep_count": 1,
+    "error": 1,
+}
+
+_SCAN_ID_PROJECTION = {"_id": 1, "project_id": 1, "branch": 1, "created_at": 1}
+_ACTIVITY_PROJECTION = {**_SCAN_ID_PROJECTION, "commit_hash": 1}
+
+# Bounds one read's $in list.
 _WINDOW_PROJECT_BATCH = 100
 
 
@@ -46,14 +64,14 @@ class LedgerEntry:
     comparable: bool
 
 
-def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
-    prev_at = pushed.get("prev_at")
+def _ledger_entry(delta: dict[str, Any]) -> LedgerEntry:
+    prev_at = delta.get("prev_created_at")
     return LedgerEntry(
-        pushed.get("v"),
-        pushed.get("prev"),
+        delta.get("schema_version"),
+        delta.get("prev_scan_id"),
         prev_at if isinstance(prev_at, datetime) else None,
-        pushed["at"],
-        int(pushed.get("n") or 0) > 0 and not pushed.get("e"),
+        delta["scan_created_at"],
+        int(delta.get("dep_count") or 0) > 0 and not delta.get("error"),
     )
 
 
@@ -69,14 +87,8 @@ class BranchWindowActivity:
         return len(self.scans_per_commit)
 
 
-# One row per branch holds its commit hashes, so even a 50k-scan scope keeps each batch far under the 100 MB limit.
-_SCAN_WINDOW_PROJECT_BATCH = 200
-
 # Both read paths stop at this many documents of one branch, so they truncate a busier one to the same stretch.
 WINDOW_HARD_LIMIT = 1000
-
-# Coverage counts commits, as counting documents reads a CI retry storm as missing data; a commitless scan counts alone.
-_COMMIT_TOKEN = {"$cond": [{"$eq": [{"$ifNull": ["$commit_hash", ""]}, ""]}, "$_id", "$commit_hash"]}
 
 
 def usable_scan_match(since: datetime | None) -> dict[str, Any]:
@@ -87,12 +99,33 @@ def usable_scan_match(since: datetime | None) -> dict[str, Any]:
     return scoped
 
 
-def _named_branch(row_id: Any) -> tuple[str, str] | None:
-    """$group drops a missing key field, and a scan naming no branch cannot be diffed, so both read paths skip it."""
-    project_id, branch = row_id.get("p"), row_id.get("b")
+def _named_branch(doc: dict[str, Any]) -> tuple[str, str] | None:
+    """A scan naming no branch cannot be diffed, so every window read skips it."""
+    project_id, branch = doc.get("project_id"), doc.get("branch")
     if not isinstance(project_id, str) or not isinstance(branch, str) or not branch:
         return None
     return project_id, branch
+
+
+async def _window_docs(
+    collection: AsyncIOMotorCollection,
+    project_ids: Sequence[str],
+    scope: dict[str, Any],
+    projection: dict[str, int],
+) -> AsyncIterator[tuple[tuple[str, str], dict[str, Any]]]:
+    """Streamed for bucketing in Python, as a $group over a window's documents outgrew a blocking stage's 100 MB."""
+    for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
+        # Unsorted: a blocking sort has the same ceiling.
+        async for doc in collection.find({"project_id": {"$in": list(batch)}, **scope}, projection):
+            chain = _named_branch(doc)
+            if chain is not None:
+                yield chain, doc
+
+
+def _commit_token(scan: dict[str, Any]) -> Any:
+    """Commits, not scans: a CI retry storm would read as missing data; a commitless scan counts alone."""
+    commit = scan.get("commit_hash")
+    return scan["_id"] if commit in (None, "") else commit
 
 
 async def window_scans_by_branch(
@@ -104,36 +137,21 @@ async def window_scans_by_branch(
     # A findings-only scan holds no dependencies to compare; $ne keeps scans older than sbom_refs.
     scoped = {**usable_scan_match(since), "sbom_refs": {"$ne": []}}
 
+    commits: dict[tuple[str, str], Counter[str]] = {}
+    latest: dict[tuple[str, str], datetime] = {}
+    async for chain, scan in _window_docs(scan_repo.collection, project_ids, scoped, _ACTIVITY_PROJECTION):
+        per_commit = commits.setdefault(chain, Counter())
+        if isinstance(token := _commit_token(scan), str):
+            per_commit[token] += 1
+        created_at = scan.get("created_at")
+        # Archive restore can insert a scan date as an ISO string.
+        if isinstance(created_at, datetime) and created_at > latest.get(chain, UNDATED):
+            latest[chain] = created_at
+
     activity: dict[str, dict[str, BranchWindowActivity]] = {}
-    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
-        pipeline = [
-            {"$match": {"project_id": {"$in": list(batch)}, **scoped}},
-            {"$addFields": {"_commit": _COMMIT_TOKEN}},
-            {
-                "$group": {
-                    "_id": {"p": "$project_id", "b": "$branch", "c": "$_commit"},
-                    "scans": {"$sum": 1},
-                    "last_scan_at": {"$max": "$created_at"},
-                }
-            },
-            {
-                "$group": {
-                    "_id": {"p": "$_id.p", "b": "$_id.b"},
-                    "commits": {"$push": {"t": "$_id.c", "n": "$scans"}},
-                    "last_scan_at": {"$max": "$last_scan_at"},
-                }
-            },
-        ]
-        for row in await scan_repo.aggregate(pipeline):
-            chain = _named_branch(row["_id"])
-            if chain is None:
-                continue
-            last_scan_at = row["last_scan_at"]
-            # Archive restore can insert a scan date as an ISO string, which $max hands back verbatim.
-            moment = last_scan_at if isinstance(last_scan_at, datetime) else UNDATED
-            per_commit = {c["t"]: int(c["n"]) for c in row["commits"] if isinstance(c.get("t"), str)}
-            project_id, branch = chain
-            activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, moment)
+    for (project_id, branch), per_commit in commits.items():
+        moment = latest.get((project_id, branch), UNDATED)
+        activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, moment)
     return activity
 
 
@@ -143,22 +161,10 @@ async def window_scan_ids_by_branch(
     since: datetime,
 ) -> dict[tuple[str, str], list[tuple[str, datetime]]]:
     """Per scan, as the writer owes each scan a delta; a non-date created_at drops out here as in the writer."""
+    scoped = usable_scan_match(since)
     scans: dict[tuple[str, str], list[tuple[str, datetime]]] = {}
-    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
-        pipeline = [
-            {"$match": {"project_id": {"$in": list(batch)}, **usable_scan_match(since)}},
-            {
-                "$group": {
-                    "_id": {"p": "$project_id", "b": "$branch"},
-                    "scans": {"$push": {"i": "$_id", "t": "$created_at"}},
-                }
-            },
-        ]
-        for row in await scan_repo.aggregate(pipeline):
-            chain = _named_branch(row["_id"])
-            if chain is None:
-                continue
-            scans[chain] = [(entry["i"], entry["t"]) for entry in row["scans"]]
+    async for chain, scan in _window_docs(scan_repo.collection, project_ids, scoped, _SCAN_ID_PROJECTION):
+        scans.setdefault(chain, []).append((scan["_id"], scan["created_at"]))
     return scans
 
 
@@ -204,22 +210,10 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     async def group_window_by_branch(
         self, project_ids: Sequence[str], since: datetime
     ) -> dict[str, dict[str, list[dict[str, Any]]]]:
-        """Bucketed in Python: a $group over 8.7 MB of deltas' outdated arrays exceeded a blocking stage's 100 MB."""
+        scope = {"scan_created_at": {"$gte": since}, "schema_version": UPDATE_DELTA_SCHEMA_VERSION}
         buckets: dict[str, dict[str, list[dict[str, Any]]]] = {}
-        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
-            query = {
-                "project_id": {"$in": list(batch)},
-                "scan_created_at": {"$gte": since},
-                "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
-            }
-            # Unsorted: an in-memory sort has the group's ceiling, and each chain is ordered below anyway.
-            docs = await self.collection.find(query, _WINDOW_PROJECTION).to_list(None)
-            for doc in docs:
-                chain = _named_branch({"p": doc.get("project_id"), "b": doc.get("branch")})
-                if chain is None:
-                    continue
-                project_id, branch = chain
-                buckets.setdefault(project_id, {}).setdefault(branch, []).append(doc)
+        async for (project_id, branch), delta in _window_docs(self.collection, project_ids, scope, _WINDOW_PROJECTION):
+            buckets.setdefault(project_id, {}).setdefault(branch, []).append(delta)
         for branches in buckets.values():
             for deltas in branches.values():
                 deltas.sort(key=_chain_order)
@@ -230,32 +224,9 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     ) -> dict[tuple[str, str], dict[str, LedgerEntry]]:
         """Only chain fields travel; whole deltas would make the nightly census as heavy as the comparison's fold."""
         chains: dict[tuple[str, str], dict[str, LedgerEntry]] = {}
-        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
-            pipeline = [
-                {"$match": {"project_id": {"$in": list(batch)}, "scan_created_at": {"$gte": since}}},
-                {
-                    "$group": {
-                        "_id": {"p": "$project_id", "b": "$branch"},
-                        "deltas": {
-                            "$push": {
-                                "i": "$_id",
-                                "v": "$schema_version",
-                                "prev": "$prev_scan_id",
-                                "prev_at": "$prev_created_at",
-                                "at": "$scan_created_at",
-                                "n": "$dep_count",
-                                "e": "$error",
-                            }
-                        },
-                    }
-                },
-            ]
-            rows = await self.collection.aggregate(pipeline, allowDiskUse=False).to_list(None)
-            for row in rows:
-                chain = _named_branch(row["_id"])
-                if chain is None:
-                    continue
-                chains[chain] = {entry["i"]: _ledger_entry(entry) for entry in row["deltas"]}
+        scope = {"scan_created_at": {"$gte": since}}
+        async for chain, delta in _window_docs(self.collection, project_ids, scope, _LEDGER_PROJECTION):
+            chains.setdefault(chain, {})[delta["_id"]] = _ledger_entry(delta)
         return chains
 
     async def find_dependents(self, project_id: str, branch: str, prev_scan_ids: Sequence[str]) -> list[dict[str, Any]]:
