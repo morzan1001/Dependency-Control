@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.cbom_parser import parse_cbom, parse_crypto_components
 from tests.helpers.analyzers import scan_cbom
@@ -276,3 +278,39 @@ def test_a_cyclonedx_1_7_algorithm_family_is_read_as_the_variant():
     [asset] = parse_crypto_components([comp])
 
     assert (asset.variant, asset.key_size_bits) == ("RSAES-OAEP", 1024)
+
+
+@pytest.mark.parametrize(
+    ("evidence", "context", "confidence"),
+    [
+        (
+            {"identity": [{"field": "name", "confidence": 0.8, "methods": [{"technique": "source-code-analysis"}]}]},
+            "source",
+            0.8,
+        ),
+        (
+            {"identity": {"field": "name", "confidence": 0.6, "methods": [{"technique": "binary-analysis"}]}},
+            "binary",
+            0.6,
+        ),
+        (
+            {"identity": [{"field": "name", "methods": ["bad", {"technique": ["bad"]}, {"technique": "filename"}]}]},
+            None,
+            None,
+        ),
+        (
+            {
+                "detectionContext": "config",
+                "confidence": 0.9,
+                "identity": [{"confidence": 0.1, "methods": [{"technique": "binary-analysis"}]}],
+            },
+            "config",
+            0.9,
+        ),
+    ],
+    ids=["1.6-identity-list", "1.5-identity-object", "no-source-or-binary-technique", "explicit-keys-first"],
+)
+def test_identity_evidence_gives_the_detection_context_and_confidence(evidence, context, confidence):
+    [asset] = parse_crypto_components([_rsa_component(evidence=evidence)])
+
+    assert (asset.detection_context, asset.confidence) == (context, confidence)

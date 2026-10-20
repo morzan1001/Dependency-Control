@@ -222,10 +222,18 @@ def occurrence_locations(comp: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(str(loc) for loc in locations if loc))
 
 
+_DETECTION_CONTEXT_BY_TECHNIQUE = {"source-code-analysis": "source", "binary-analysis": "binary"}
+
+
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: dict[str, Any]) -> None:
-    detection = evidence.get("detectionContext")
-    if isinstance(detection, str):
-        asset.detection_context = detection
-    confidence = evidence.get("confidence")
-    if isinstance(confidence, (int, float)):
-        asset.confidence = float(confidence)
+    # CycloneDX 1.6 lists identity evidence, 1.5 gives one object; neither has the bare keys read first.
+    identity = evidence.get("identity")
+    identities = [i for i in (identity if isinstance(identity, list) else [identity]) if isinstance(i, dict)]
+    methods = [m for i in identities if isinstance(i.get("methods"), list) for m in i["methods"] if isinstance(m, dict)]
+    contexts = [
+        evidence.get("detectionContext"),
+        *(_DETECTION_CONTEXT_BY_TECHNIQUE.get(str(m.get("technique"))) for m in methods),
+    ]
+    asset.detection_context = next((c for c in contexts if isinstance(c, str)), None)
+    confidences = [evidence.get("confidence"), *(i.get("confidence") for i in identities)]
+    asset.confidence = next((float(c) for c in confidences if isinstance(c, (int, float))), None)
