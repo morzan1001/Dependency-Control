@@ -1,6 +1,7 @@
 import { RecommendationsResponse } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { AlertTriangle, Lightbulb, ShieldAlert, type LucideIcon } from 'lucide-react'
+import { ThreatIntelNote } from '../ThreatIntelNote'
 
 interface Tile {
   label: string
@@ -63,6 +64,10 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
             scoped to those rows and under-reports the rest.
           </div>
         )}
+        <ThreatIntelNote
+          sources={data.threat_intel_unavailable ?? []}
+          consequence="this advice uses the KEV and EPSS signals stored at scan time."
+        />
         <TileGroup
           title="Vulnerabilities"
           icon={ShieldAlert}

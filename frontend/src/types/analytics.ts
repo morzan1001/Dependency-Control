@@ -75,6 +75,8 @@ export interface ImpactAnalysisResult {
   fix_versions?: string[];
   fix_version_count?: number;
   priority_reasons?: string[];
+  // Live KEV/EPSS sources that could not be read, so their signals and the scores they raise may be missing.
+  threat_intel_unavailable?: string[];
 }
 
 export interface VulnerabilityHotspot {
@@ -101,7 +103,8 @@ export interface VulnerabilityHotspot {
   has_fix?: boolean;
   fix_versions?: string[];
   top_cves?: string[];
-  priority_reasons?: string[]; 
+  priority_reasons?: string[];
+  threat_intel_unavailable?: string[];
 }
 
 export interface DependencyTypeStats {
@@ -358,6 +361,8 @@ export interface RecommendationsResponse {
   // Dependency rows the engine reasoned over against what the scan holds.
   dependencies_read: number;
   dependencies_total: number;
+  // Live KEV/EPSS sources that could not be read; the advice then rests on the scores stored at scan time.
+  threat_intel_unavailable?: string[];
 }
 
 export interface AdvancedSearchOptions {

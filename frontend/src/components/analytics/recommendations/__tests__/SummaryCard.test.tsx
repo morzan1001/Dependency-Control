@@ -52,6 +52,20 @@ describe("SummaryCard dependency coverage", () => {
   });
 });
 
+describe("SummaryCard live threat intel", () => {
+  it("says the advice rests on the scan's exploit signals when a live source could not be read", () => {
+    render(<SummaryCard data={makeResponse({ threat_intel_unavailable: ["KEV"] })} />);
+
+    expect(screen.getByText(/Live KEV data could not be read in full/)).toHaveTextContent(/stored at scan time/);
+  });
+
+  it("stays quiet when every live source answered", () => {
+    render(<SummaryCard data={makeResponse({ threat_intel_unavailable: [] })} />);
+
+    expect(screen.queryByText(/could not be read in full/)).not.toBeInTheDocument();
+  });
+});
+
 describe("SummaryCard headline", () => {
   it("counts each finding once, since total_findings already holds secrets, SAST and IaC", () => {
     render(

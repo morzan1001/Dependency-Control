@@ -51,7 +51,7 @@ from app.services.component_identity import (
 )
 from app.services.analytics.cache import get_analytics_cache
 from app.services.aggregation.versions import newest_first, normalize_version
-from app.services.enrichment.service import vulnerability_enrichment_service
+from app.services.enrichment.service import THREAT_INTEL_SOURCES, vulnerability_enrichment_service
 from app.services.recommendation.common import live_cves
 
 logger = logging.getLogger(__name__)
@@ -104,16 +104,16 @@ def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
     ]
 
 
-async def _enrich(groups: Iterable[dict[str, Any]]) -> dict[str, VulnerabilityEnrichment]:
-    """Enrichment is supplementary, so a failure leaves the groups unenriched."""
+async def _enrich(groups: Iterable[dict[str, Any]]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+    """Enrichment is supplementary, so a failure leaves the groups unenriched and names every source unavailable."""
     cves = list({cve for group in groups for cve in live_cves(group["details_list"])})
     if not cves:
-        return {}
+        return {}, []
     try:
         return await vulnerability_enrichment_service.enrich_cves(cves)
     except Exception as e:
         logger.warning(f"Failed to enrich CVEs: {e}")
-        return {}
+        return {}, list(THREAT_INTEL_SOURCES)
 
 
 @router.get("/impact", responses=RESP_AUTH)
@@ -149,11 +149,11 @@ async def _impact(
     candidates = select_impact_candidates(
         [(impact_pre_score(counts, len(r["project_ids"])), (r, counts)) for r, counts in counted], limit
     )
-    enrichments = await _enrich(r for r, _ in candidates)
+    enrichments, unavailable = await _enrich(r for r, _ in candidates)
 
     impact_results = []
     for r, severity_counts in candidates:
-        intel, enrichment = _threat_intel(r, severity_counts, enrichments)
+        intel, enrichment = _threat_intel(r, severity_counts, enrichments, unavailable)
         affected_projects = len(r["project_ids"])
         impact_results.append(
             ImpactAnalysisResult(
@@ -185,7 +185,10 @@ def _format_first_seen(first_seen: Any) -> str:
 
 
 def _threat_intel(
-    r: dict[str, Any], severity_counts: dict[str, int], enrichments: Mapping[str, VulnerabilityEnrichment]
+    r: dict[str, Any],
+    severity_counts: dict[str, int],
+    enrichments: Mapping[str, VulnerabilityEnrichment],
+    unavailable: list[str],
 ) -> tuple[dict[str, Any], CVEEnrichmentResult]:
     details_list = r["details_list"]
     fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
@@ -208,6 +211,7 @@ def _threat_intel(
         "priority_reasons": build_priority_reasons(
             severity_counts, enrichment, len(r["project_ids"]), bool(fix_versions), days_known
         ),
+        "threat_intel_unavailable": unavailable,
     }
     return intel, enrichment
 
@@ -215,6 +219,7 @@ def _threat_intel(
 def _build_hotspot(
     r: dict[str, Any],
     enrichments: Mapping[str, VulnerabilityEnrichment],
+    unavailable: list[str],
     version_type_index: dict[str, set[str]],
     type_index: dict[str, set[str]],
     project_name_map: dict[str, str],
@@ -224,7 +229,7 @@ def _build_hotspot(
     # One name at one version can ship in several ecosystems (a deb and an apk openssl); name them all.
     types = lookup_component(version_type_index, component) or lookup_component(type_index, component)
     cves = live_cves(r["details_list"])
-    intel, _ = _threat_intel(r, severity_counts, enrichments)
+    intel, _ = _threat_intel(r, severity_counts, enrichments, unavailable)
 
     return VulnerabilityHotspot(
         **intel,
@@ -304,19 +309,20 @@ async def _hotspots(
     type_index = build_component_index(types_by_name)
 
     # Only an enrichment-ranked sort needs every group enriched; the others enrich their page alone.
-    enrichments = await _enrich(groups) if sort_by in ("epss", "risk") else None
+    enriched = await _enrich(groups) if sort_by in ("epss", "risk") else None
     if rank := _PYTHON_RANKS.get(sort_by):
+        ranked_by = enriched[0] if enriched else {}
         # $group emits its rows in no fixed order, so ties need an order of their own to page through.
         groups.sort(key=lambda r: (case_insensitive_key(r["_id"]["component"]), r["_id"].get("version") or "unknown"))
-        groups.sort(key=lambda r: rank(r, enrichments or {}), reverse=sort_direction == -1)
+        groups.sort(key=lambda r: rank(r, ranked_by), reverse=sort_direction == -1)
         groups = groups[skip : skip + limit]
-    if enrichments is None:
-        enrichments = await _enrich(groups)
+    enrichments, unavailable = enriched or await _enrich(groups)
 
     return [
         _build_hotspot(
             r,
             enrichments,
+            unavailable,
             type_index_by_version.get(normalize_version(r["_id"].get("version")), {}),
             type_index,
             project_name_map,

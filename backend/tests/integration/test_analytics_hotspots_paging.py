@@ -14,7 +14,7 @@ _PATH = "/api/v1/analytics/hotspots"
 def _no_live_enrichment(monkeypatch):
     from app.api.v1.endpoints.analytics import risk
 
-    monkeypatch.setattr(risk.vulnerability_enrichment_service, "enrich_cves", AsyncMock(return_value={}))
+    monkeypatch.setattr(risk.vulnerability_enrichment_service, "enrich_cves", AsyncMock(return_value=({}, [])))
 
 
 async def _seed_groups(db, count: int) -> None:

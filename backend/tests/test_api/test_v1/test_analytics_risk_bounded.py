@@ -15,6 +15,7 @@ from app.core.constants import BLAST_RADIUS_THRESHOLD, DAYS_KNOWN_OVERDUE_THRESH
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import SeverityBreakdown
+from app.schemas.enrichment import VulnerabilityEnrichment
 from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
@@ -106,6 +107,7 @@ def _details_is_slimmed_before_group(pipeline: list[dict[str, Any]]) -> bool:
 def _run_impact(
     agg_results: list[dict[str, Any]],
     limit: int = 20,
+    enrich: Any = None,
 ) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
     from app.api.v1.endpoints.analytics.risk import get_impact_analysis
 
@@ -128,14 +130,11 @@ def _run_impact(
     mock_finding_repo = MagicMock()
     mock_finding_repo.aggregate = _fake_aggregate
 
-    async def _fake_enrich(_cves):
-        return {}
-
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
-        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
+        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=enrich or _no_enrichment),
     ):
         response = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=limit))
 
@@ -143,8 +142,8 @@ def _run_impact(
     return response, captured[0], captured_kwargs[0]
 
 
-async def _no_enrichment(_cves: list[str]) -> dict[str, Any]:
-    return {}
+async def _no_enrichment(_cves: list[str]) -> tuple[dict[str, Any], list[str]]:
+    return {}, []
 
 
 def _run_hotspots(
@@ -444,7 +443,7 @@ class TestDistinctSeverityCounts:
             "project_ids": ["p1"],
             "first_seen": None,
         }
-        hotspot = _build_hotspot(group, {}, {}, {}, {"p1": "p1"})
+        hotspot = _build_hotspot(group, {}, [], {}, {}, {"p1": "p1"})
 
         assert hotspot.finding_count == hotspot.cve_count == sum(hotspot.severity_breakdown.model_dump().values()) == 3
 
@@ -535,9 +534,9 @@ class TestHotspotsBuildOnlyThePage:
 
         enriched: list[str] = []
 
-        async def _record(cves: list[str]) -> dict[str, Any]:
+        async def _record(cves: list[str]) -> tuple[dict[str, Any], list[str]]:
             enriched.extend(cves)
-            return {}
+            return {}, []
 
         with patch(f"{MODULE}._build_hotspot", side_effect=risk._build_hotspot) as build:
             response, _, _ = _run_hotspots(
@@ -764,7 +763,7 @@ class TestPriorityReasons:
             "first_seen": datetime.now(timezone.utc) - timedelta(days=DAYS_KNOWN_OVERDUE_THRESHOLD + 30),
         }
 
-        hotspot = _build_hotspot(group, {}, {}, {}, {})
+        hotspot = _build_hotspot(group, {}, [], {}, {}, {})
 
         assert hotspot.priority_reasons == build_priority_reasons(
             {"critical": 1}, CVEEnrichmentResult(), len(projects), has_fix=True, days_known=hotspot.days_known
@@ -815,7 +814,7 @@ def _impact_aggregate_calls(*limits: int) -> int:
     repo.aggregate = _fake_aggregate
 
     async def _fake_enrich(_c):
-        return {}
+        return {}, []
 
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -851,7 +850,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     dep_repo.aggregate = AsyncMock(return_value=[])
 
     async def _fake_enrich(_c):
-        return {}
+        return {}, []
 
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -899,7 +898,7 @@ class TestAnalyticsResultCache:
         repo.aggregate = _fake_aggregate
 
         async def _fake_enrich(_c):
-            return {}
+            return {}, []
 
         with (
             patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -956,3 +955,42 @@ class TestDistinctVulnCount:
         response, _, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
         b = response[0].severity_breakdown
         assert response[0].finding_count == b.critical + b.high + b.medium + b.low
+
+
+_ONE_GROUP = [
+    {
+        "_id": {"component": "log4j-core", "version": "2.14.1"},
+        "project_ids": ["proj-1"],
+        "first_seen": None,
+        "details_list": [{"vulnerabilities": [{"id": "CVE-2021-44228", "severity": "CRITICAL"}]}],
+    }
+]
+
+
+async def _kev_down(cves: list[str]) -> tuple[dict[str, Any], list[str]]:
+    return {cve: VulnerabilityEnrichment(cve=cve, epss_score=0.9, risk_score=60.0) for cve in cves}, ["KEV"]
+
+
+async def _feeds_down(_cves: list[str]) -> tuple[dict[str, Any], list[str]]:
+    raise RuntimeError("feeds down")
+
+
+class TestThreatIntelOutage:
+    def test_impact_rows_name_the_source_that_was_unavailable(self):
+        [row], _, _ = _run_impact(agg_results=_ONE_GROUP, enrich=_kev_down)
+        assert row.threat_intel_unavailable == ["KEV"]
+        assert row.max_epss_score == 0.9, "the source that answered still counts"
+
+    def test_hotspots_name_the_source_that_was_unavailable(self):
+        [row], _, _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_kev_down)
+        assert row.threat_intel_unavailable == ["KEV"]
+
+    def test_a_failed_enrichment_names_both_sources(self):
+        [impact], _, _ = _run_impact(agg_results=_ONE_GROUP, enrich=_feeds_down)
+        [hotspot], _, _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_feeds_down)
+        assert impact.threat_intel_unavailable == hotspot.threat_intel_unavailable == ["KEV", "EPSS"]
+
+    def test_a_complete_enrichment_names_none(self):
+        [impact], _, _ = _run_impact(agg_results=_ONE_GROUP)
+        [hotspot], _, _ = _run_hotspots(agg_results=_ONE_GROUP)
+        assert impact.threat_intel_unavailable == hotspot.threat_intel_unavailable == []

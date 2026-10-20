@@ -101,7 +101,7 @@ def _vulnerability_records(scan_id: str, component: str, version: str, advisorie
 @pytest.fixture
 def no_live_intel(monkeypatch):
     async def _enrich(_cves):
-        return {}
+        return {}, []
 
     monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _enrich)
 
@@ -281,7 +281,7 @@ async def test_the_live_per_cve_threat_intel_reaches_the_engine(client, db, owne
     live = {cve: VulnerabilityEnrichment(cve=cve, risk_score=20.0) for cve in ("CVE-2023-0001", "CVE-2023-0002")}
 
     async def _enrich(cves):
-        return {cve: live[cve] for cve in cves}
+        return {cve: live[cve] for cve in cves}, []
 
     monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _enrich)
     seen: dict = {}
@@ -291,6 +291,30 @@ async def test_the_live_per_cve_threat_intel_reaches_the_engine(client, db, owne
 
     assert resp.status_code == 200, resp.text
     assert seen["threat_intel"] == live
+    assert resp.json()["threat_intel_unavailable"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_live_source_is_named_and_the_engine_reasons_on_stored_data(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    await _insert_scan(db, "s")
+    finding = _finding("f1", "vulnerability")
+    finding["details"] = {"vulnerabilities": [{"id": "CVE-2023-0001", "in_kev": True}]}
+    await db.findings.insert_one(finding)
+
+    async def _kev_down(cves):
+        return {}, ["KEV"]
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _kev_down)
+    seen: dict = {}
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["threat_intel_unavailable"] == ["KEV"]
+    assert seen["threat_intel"] == {}
 
 
 @pytest.mark.asyncio

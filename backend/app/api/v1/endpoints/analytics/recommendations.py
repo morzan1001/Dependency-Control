@@ -33,7 +33,11 @@ from app.schemas.analytics import (
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
 from app.services.component_identity import component_name_candidates
-from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
+from app.services.enrichment.service import (
+    THREAT_INTEL_SOURCES,
+    apply_enrichments,
+    vulnerability_enrichment_service,
+)
 from app.services.recommendation import trends
 from app.services.recommendation.common import live_cves
 from app.services.recommendation.crypto import CRYPTO_ISSUE_FINDING_TYPES, CRYPTO_RECOMMENDATION_TYPES
@@ -81,24 +85,30 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
 _SAST_FINDING_TYPES = {"sast"} | (CRYPTO_FINDING_TYPES - CRYPTO_ISSUE_FINDING_TYPES)
 
 
-async def _apply_live_threat_intel(findings: list[FindingRecord]) -> dict[str, VulnerabilityEnrichment]:
-    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan."""
+async def _apply_live_threat_intel(
+    findings: list[FindingRecord],
+) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan, unless a live source is down."""
     vuln_findings = [f for f in findings if f.type == "vulnerability"]
     all_cves = list({c for f in vuln_findings for c in live_cves([f.details])})
     if not all_cves:
-        return {}
+        return {}, []
     try:
-        enrichments = await vulnerability_enrichment_service.enrich_cves(all_cves)
+        enrichments, unavailable = await vulnerability_enrichment_service.enrich_cves(all_cves)
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
-        return {}
+        return {}, list(THREAT_INTEL_SOURCES)
+    if unavailable:
+        # A partial refresh would clear stored KEV marks and the risk points they carry, so the scan's data stands.
+        logger.warning("Recommendations: %s unavailable, using stored data", " and ".join(unavailable))
+        return {}, unavailable
 
     # A CVE the live sources returned nothing for keeps the scores stored at scan time.
     live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.is_kev}
     for f in vuln_findings:
         refreshed = [v for v in f.details.get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
         apply_enrichments({"vulnerabilities": refreshed}, live)
-    return enrichments
+    return enrichments, []
 
 
 @router.get("/projects/{project_id}/recommendations", responses=RESP_AUTH_404)
@@ -135,7 +145,7 @@ async def get_project_recommendations(
 
     async def _compute() -> dict[str, Any]:
         findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-        threat_intel = await _apply_live_threat_intel(findings)
+        threat_intel, threat_intel_unavailable = await _apply_live_threat_intel(findings)
 
         dependencies, dependencies_total = await find_window(
             dep_repo.collection,
@@ -201,6 +211,7 @@ async def get_project_recommendations(
             summary=_summarize(recommendations, finding_counts),
             dependencies_read=len(dependencies),
             dependencies_total=dependencies_total,
+            threat_intel_unavailable=threat_intel_unavailable,
         )
         # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
         return response.model_dump(mode="json")

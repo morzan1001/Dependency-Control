@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 _ROLLUP_ONLY_KEYS = frozenset({"epss_date"})
 
+THREAT_INTEL_SOURCES = ("KEV", "EPSS")
+
 
 def _build_enrichment(cve: str, kev_entry: KEVEntry | None, epss_entry: EPSSData | None) -> VulnerabilityEnrichment:
     is_kev = kev_entry is not None
@@ -160,7 +162,8 @@ class VulnerabilityEnrichmentService:
         self._kev_provider = KEVProvider()
         self._ghsa_provider = GHSAProvider()
 
-    async def _enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+    async def enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+        """Also returns the THREAT_INTEL_SOURCES that could not be read in full."""
         unique_cves = list({cve for cve in cves if cve and cve.startswith("CVE-")})
         if not unique_cves:
             return {}, []
@@ -168,7 +171,8 @@ class VulnerabilityEnrichmentService:
         kev_catalog, (epss_data, epss_complete) = await asyncio.gather(
             self._kev_provider.load_kev_catalog(), self._epss_provider.load_epss_scores(unique_cves)
         )
-        unavailable = [name for name, missing in (("KEV", kev_catalog is None), ("EPSS", not epss_complete)) if missing]
+        missing = (kev_catalog is None, not epss_complete)
+        unavailable = [name for name, gone in zip(THREAT_INTEL_SOURCES, missing, strict=True) if gone]
         kev_catalog = kev_catalog or {}
         results = {cve: _build_enrichment(cve, kev_catalog.get(cve), epss_data.get(cve)) for cve in unique_cves}
 
@@ -177,9 +181,6 @@ class VulnerabilityEnrichmentService:
             f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {len(epss_data)}, unavailable: {unavailable})"
         )
         return results, unavailable
-
-    async def enrich_cves(self, cves: list[str]) -> dict[str, VulnerabilityEnrichment]:
-        return (await self._enrich_cves(cves))[0]
 
     async def enrich_findings(
         self, findings: list[dict[str, Any]], github_token: str | None = None
@@ -190,7 +191,7 @@ class VulnerabilityEnrichmentService:
             resolutions = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
             _dedupe_finding_vulnerabilities(_apply_ghsa_resolutions(findings, resolutions))
 
-        enrichments, unavailable = await self._enrich_cves(_cves(findings))
+        enrichments, unavailable = await self.enrich_cves(_cves(findings))
         for finding in findings:
             apply_enrichments(finding.setdefault("details", {}), enrichments)
         return enrichments, unavailable

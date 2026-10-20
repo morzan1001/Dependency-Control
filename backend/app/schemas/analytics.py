@@ -85,6 +85,8 @@ class ThreatIntelFields(BaseModel):
     fix_versions: list[str] = []
     fix_version_count: int = 0
     priority_reasons: list[str] = []
+    # Live KEV/EPSS sources that could not be read, so their signals and the scores they raise may be missing.
+    threat_intel_unavailable: list[str] = []
 
 
 class ImpactAnalysisResult(ThreatIntelFields):
@@ -259,6 +261,8 @@ class RecommendationsResponse(BaseModel):
     findings_total: int = 0
     dependencies_read: int = 0
     dependencies_total: int = 0
+    # Live KEV/EPSS sources that could not be read; the advice then rests on the scores stored at scan time.
+    threat_intel_unavailable: list[str] = []
 
 
 class DependencyUpdateEvent(BaseModel):
