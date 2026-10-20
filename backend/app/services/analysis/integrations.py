@@ -12,6 +12,8 @@ from app.core.config import scan_link
 from app.core.constants import SCAN_STATUS_COMPLETED, ScanStatus
 from app.models.project import Project, Scan
 from app.models.stats import Stats
+from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.services.github import GitHubService, split_repo_path
 from app.services.gitlab import GitLabService
 
@@ -93,8 +95,6 @@ async def decorate_gitlab_mr(
         return
 
     try:
-        from app.repositories.gitlab_instances import GitLabInstanceRepository
-
         gitlab_instance = await GitLabInstanceRepository(db).get_usable(project.gitlab_instance_id)
         if not gitlab_instance:
             logger.warning(
@@ -160,8 +160,6 @@ async def decorate_github_pr(
         return
 
     try:
-        from app.repositories.github_instances import GitHubInstanceRepository
-
         github_instance = await GitHubInstanceRepository(db).get_usable(project.github_instance_id)
         if not github_instance:
             logger.warning(

@@ -22,6 +22,7 @@ from app.core.constants import (
 from app.models.finding import FindingType
 from app.models.waiver import Waiver
 from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.waivers import WaiverRepository
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport, WaiversApplied
 from app.schemas.bearer import BearerFinding
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
@@ -524,8 +525,6 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     waived_count = 0
     waivers_applied: WaiversApplied = "none"
     if request.apply_global_waivers:
-        from app.repositories.waivers import WaiverRepository
-
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
         waivers_applied = "global"
 
