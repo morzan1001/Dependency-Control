@@ -421,3 +421,31 @@ async def test_the_endpoint_rejects_a_link_without_repository_coordinates():
         await _call_endpoint(Project(id=_PROJECT_ID, name="p", gitlab_instance_id="inst-1"))
 
     assert raised.value.status_code == 400
+
+
+_FORGED_NAME = "demo\nCRITICAL forged line"
+
+
+@pytest.mark.asyncio
+async def test_the_deleted_branch_report_keeps_a_multi_line_project_name_on_one_line(caplog):
+    with caplog.at_level(logging.INFO, logger=MODULE):
+        await _run(_project(name=_FORGED_NAME), [_scan("s-main", _MAIN), _scan("s-gone", _GONE)], [_MAIN])
+
+    assert [r.getMessage() for r in caplog.records] == [
+        "Project demo CRITICAL forged line: 1 deleted branch(es) detected"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_branch_sync_keeps_a_multi_line_project_name_on_one_line(monkeypatch, caplog):
+    from app.core.housekeeping import sync_branch_status
+
+    db = await _db(_project(name=_FORGED_NAME), [])
+    monkeypatch.setattr("app.core.housekeeping.sync_project_branches", AsyncMock(side_effect=RuntimeError("boom")))
+
+    with caplog.at_level(logging.ERROR, logger="app.core.housekeeping"):
+        await sync_branch_status(db)
+
+    assert [r.getMessage() for r in caplog.records] == [
+        "Branch sync failed for project demo CRITICAL forged line: boom"
+    ]

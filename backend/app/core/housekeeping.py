@@ -37,6 +37,7 @@ from app.core.constants import (
     SCANS_TIP_SORT,
     SETTINGS_MODE_GLOBAL,
 )
+from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     archive_housekeeping_batch_total,
     archive_housekeeping_scans_processed_total,
@@ -177,12 +178,16 @@ async def _process_project_rescan(
     targets = await _rescan_targets(project, db)
     if not targets:
         # Fires on every main-loop pass for such a project, so it must not be info.
-        logger.debug(f"Project {project.name} has no valid previous scan with SBOMs; nothing to re-scan.")
+        logger.debug(
+            "Project %s has no valid previous scan with SBOMs; nothing to re-scan.", sanitize_for_log(project.name)
+        )
         return
 
     for source_scan in targets:
         if _is_rescan_due(source_scan, interval_hours) and not worker_manager.is_saturated():
-            logger.info(f"Re-scan due for project {project.name} from source scan {source_scan['_id']}")
+            logger.info(
+                "Re-scan due for project %s from source scan %s", sanitize_for_log(project.name), source_scan["_id"]
+            )
             await create_rescan(db, source_scan, worker_manager)
 
 
@@ -200,7 +205,7 @@ async def check_scheduled_rescans(worker_manager: "AnalysisWorkerManager") -> No
         try:
             await _process_project_rescan(project_data, system_settings, db, worker_manager)
         except Exception as e:
-            logger.exception("Error processing project %s: %s", project_data.get("name"), e)
+            logger.exception("Error processing project %s: %s", sanitize_for_log(project_data.get("name")), e)
 
 
 async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
@@ -635,7 +640,7 @@ async def sync_branch_status(db: Any) -> None:
         try:
             await sync_project_branches(project_data, db)
         except Exception as e:
-            logger.exception("Branch sync failed for project %s: %s", project_data.get("name"), e)
+            logger.exception("Branch sync failed for project %s: %s", sanitize_for_log(project_data.get("name")), e)
         count += 1
 
     logger.info(f"Branch status sync completed for {count} project(s)")

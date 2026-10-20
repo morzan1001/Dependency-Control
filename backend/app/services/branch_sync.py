@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
+from app.core.log_utils import sanitize_for_log
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
@@ -64,5 +65,9 @@ async def sync_project_branches(project: dict[str, Any], db: Any) -> bool:
     await db.projects.update_one({"_id": project_id}, {"$set": update_fields})
     await ScanRepository(db).sync_project_head(project_id)
     if deleted:
-        logger.info("Project %s: %d deleted branch(es) detected", project.get("name", project_id), len(deleted))
+        logger.info(
+            "Project %s: %d deleted branch(es) detected",
+            sanitize_for_log(project.get("name", project_id)),
+            len(deleted),
+        )
     return True
