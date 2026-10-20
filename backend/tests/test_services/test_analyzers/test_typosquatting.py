@@ -479,6 +479,31 @@ class TestAFamilySiblingIsJudgedAfterTheSharedPrefix:
         assert await self._issues("mypy-boto3-ecr", "apache-airflow-providers-anomalo") == {}
 
     @pytest.mark.asyncio
+    async def test_a_replaced_letter_in_a_short_tail_is_not_flagged(self, monkeypatch):
+        """aws-sdj differs from aws-sdk as mypy-boto3-ecr does from mypy-boto3-ec2."""
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), [_npm("aws-sdj")])
+
+        assert issues == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("name", "imitated"),
+        [
+            ("react-dmo", "react-dom"),
+            ("react-do", "react-dom"),
+            ("core-jss", "core-js"),
+            ("core-j", "core-js"),
+            ("date-fsn", "date-fns"),
+            ("date-fn", "date-fns"),
+            ("es5-etx", "es5-ext"),
+        ],
+    )
+    async def test_a_short_tail_with_one_letter_added_dropped_or_swapped_is_flagged(self, monkeypatch, name, imitated):
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), [_npm(name)])
+
+        assert issues == {name: imitated}
+
+    @pytest.mark.asyncio
     async def test_a_typo_after_the_shared_prefix_is_flagged_with_the_whole_names_similarity(self):
         issues = await self._issues(
             "apache-airflow-providers-amazom", "apache-airflow-providers-googel", "apache-airflow-providers-commom-io"

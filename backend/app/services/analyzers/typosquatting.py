@@ -88,8 +88,21 @@ def _one_typo_apart(name: str, popular: str, min_length: int = 4) -> bool:
     return False
 
 
+def _one_letter_moved(name: str, popular: str) -> bool:
+    """One added, dropped or swapped letter in a short segment; a replaced one names a sibling, like ecr beside ec2."""
+    shorter, longer = sorted((name, popular), key=len)
+    if len(longer) >= 4:
+        return False
+    if len(longer) == len(shorter) + 1:
+        return any(longer[:i] + longer[i + 1 :] == shorter for i in range(len(longer)))
+    return len(name) == len(popular) and any(
+        name == popular[:i] + popular[i + 1] + popular[i] + popular[i + 2 :] for i in range(len(popular) - 1)
+    )
+
+
 def _looks_mistyped(name: str, popular: str, similarity_threshold: float) -> bool:
-    return difflib.SequenceMatcher(None, name, popular).ratio() > similarity_threshold or _one_typo_apart(name, popular)
+    ratio = difflib.SequenceMatcher(None, name, popular).ratio()
+    return ratio > similarity_threshold or _one_typo_apart(name, popular) or _one_letter_moved(name, popular)
 
 
 def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
