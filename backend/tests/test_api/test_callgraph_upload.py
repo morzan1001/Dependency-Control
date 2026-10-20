@@ -515,6 +515,26 @@ class TestReachabilityVerdicts:
         assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
 
     @pytest.mark.asyncio
+    async def test_a_later_upload_also_reaches_the_lineage_s_newest_rescan_after_its_enrichment(self, client, db):
+        """An enriched rescan no longer waits for a callgraph, yet it still shows the missing language's verdict."""
+        await db.scans.insert_one(
+            {
+                "_id": _SCAN_ID,
+                "project_id": _PROJECT_ID,
+                "branch": _BRANCH,
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+                "latest_run": {"scan_id": _RESCAN_ID, "status": "completed"},
+            }
+        )
+        await _seed_rescan(db)
+        await db.scans.update_one({"_id": _RESCAN_ID}, {"$unset": {"reachability_pending": ""}})
+
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["pending", "processing"])
     async def test_an_upload_for_a_scan_under_analysis_is_left_to_that_analysis(self, client, db, status):
         """Its findings are about to be replaced, so enriching them now would lose the verdicts."""
