@@ -9,6 +9,7 @@ from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analytics.scopes import ResolvedScope
 from app.services.cbom_parser import parse_crypto_components
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
+from app.services.pqc_migration.mappings_loader import load_mappings
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -47,7 +48,7 @@ async def test_generate_empty_when_no_vulnerable_assets():
         )
     assert resp.items == []
     assert resp.summary.total_items == 0
-    assert resp.mappings_version == 1
+    assert resp.mappings_version == load_mappings().version
 
 
 @pytest.mark.asyncio
@@ -299,3 +300,19 @@ async def test_an_asset_whose_family_is_one_part_of_its_name_or_algorithm_family
 
     [item] = items.values()
     assert (item.source_family, item.recommended_pqc) == (family, recommended)
+
+
+@pytest.mark.asyncio
+async def test_dsa_is_past_its_deadline_and_dh_shares_the_2030_one():
+    """DSA is no longer approved for signatures, and DH breaks to a quantum computer like ECDH."""
+    items = await _plan_for(
+        [
+            _asset(name="DSA", primitive=CryptoPrimitive.SIGNATURE, bom_ref="dsa"),
+            _asset(name="RSA", primitive=CryptoPrimitive.SIGNATURE, bom_ref="rsa"),
+            _asset(name="DH", primitive=CryptoPrimitive.KEY_AGREE, bom_ref="dh"),
+        ]
+    )
+
+    assert items["dsa"].recommended_deadline == "2023-02-03T00:00:00+00:00"
+    assert items["dh"].recommended_deadline == "2030-01-01T00:00:00+00:00"
+    assert items["dsa"].priority_score > items["rsa"].priority_score
