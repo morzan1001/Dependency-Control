@@ -2,6 +2,7 @@ import json
 
 import pytest
 from bson import ObjectId
+from pydantic import ValidationError
 from app.api.v1.helpers.callgraph import (
     detect_format,
     parse_generic_format,
@@ -9,6 +10,7 @@ from app.api.v1.helpers.callgraph import (
     resolve_callgraph_payload,
 )
 from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
+from app.schemas.callgraph import CallgraphUploadRequest
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
     _find_usage,
@@ -353,6 +355,14 @@ class TestFormatDetectionRegressions:
     def test_pyan_format_is_no_longer_parseable(self):
         with pytest.raises(ValueError, match="pyan"):
             resolve_callgraph_payload("pyan", "python", {})
+
+    def test_a_misspelt_format_is_named_rather_than_asking_for_a_language(self):
+        with pytest.raises(ValueError, match="Unsupported format: madgee"):
+            resolve_callgraph_payload("madgee", None, {"src/index.ts": ["lodash"]})
+
+    def test_the_upload_schema_lists_the_formats_it_accepts(self):
+        with pytest.raises(ValidationError, match="'auto', 'madge' or 'generic'"):
+            CallgraphUploadRequest(format="madgee", data={})
 
     def test_madge_without_dependencies_is_valid_alongside_a_universe(self):
         data = {"src/index.ts": [], "__analyzed_modules__": ["lodash"]}

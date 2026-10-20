@@ -175,13 +175,12 @@ def resolve_callgraph_payload(
     format_type = detect_format(data) if request_format == "auto" else request_format
     if format_type == "unknown":
         raise ValueError("Could not auto-detect callgraph format. Please specify 'format' explicitly.")
+    # The upload schema pins the format, but an ad-hoc posted callgraph carries any string.
+    if format_type not in _FORMAT_PARSERS:
+        raise ValueError(f"Unsupported format: {format_type}")
     if format_type == "generic" and not any(key in data for key in _GENERIC_KEYS):
         raise ValueError(f"A generic callgraph needs at least one of {', '.join(_GENERIC_KEYS)}")
     language = language or _FORMAT_LANGUAGES.get(format_type)
     if not language:
         raise ValueError(f"'language' is required for '{format_type}' callgraph payloads")
-    canonical = canonical_callgraph_language(language)
-    parser = _FORMAT_PARSERS.get(format_type)
-    if parser is None:
-        raise ValueError(f"Unsupported format: {format_type}")
-    return format_type, canonical, parser
+    return format_type, canonical_callgraph_language(language), _FORMAT_PARSERS[format_type]

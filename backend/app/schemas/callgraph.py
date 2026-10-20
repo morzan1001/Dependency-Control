@@ -1,10 +1,10 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 
 class CallgraphUploadRequest(BaseModel):
-    format: str = "auto"  # auto, madge, generic
+    format: Literal["auto", "madge", "generic"] = "auto"
 
     # Required if format is generic or auto-detection fails.
     language: str | None = None
