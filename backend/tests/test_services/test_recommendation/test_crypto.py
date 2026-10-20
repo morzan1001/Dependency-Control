@@ -109,7 +109,7 @@ def test_certificate_and_protocol_cards_name_their_asset_like_every_crypto_card(
         ("crypto_quantum_vulnerable", "Plan PQC migration for SHA1withRSA"),
         ("crypto_weak_algorithm", "Replace weak algorithm: MD5"),
         ("crypto_weak_algorithm", "Replace weak algorithm: TLS"),
-        ("crypto_weak_protocol", "Upgrade protocol/cipher: TLS 1.0"),
+        ("crypto_weak_protocol", "Upgrade protocol/cipher: tls 1.0"),
     ]
     # The frontend keys recommendation cards by type and title.
     assert len({(rec.type, rec.title) for rec in recs}) == len(recs)
@@ -122,9 +122,9 @@ def test_two_protocols_of_one_name_share_a_card_as_two_algorithms_of_one_name_do
 
     [card] = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_PROTOCOL])
 
-    assert card.title == "Upgrade protocol/cipher: TLS 1.0"
+    assert card.title == "Upgrade protocol/cipher: tls 1.0"
     assert card.action["bom_refs"] == sorted(asset.bom_ref for asset in assets)
-    assert card.description.startswith("TLS 1.0 uses a deprecated protocol version or cipher suite (4 findings).")
+    assert card.description.startswith("tls 1.0 uses a deprecated protocol version or cipher suite (4 findings).")
 
 
 def test_two_versions_of_one_protocol_get_a_card_each_named_by_version():
@@ -136,12 +136,32 @@ def test_two_versions_of_one_protocol_get_a_card_each_named_by_version():
     cards = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_PROTOCOL])
 
     assert sorted(card.title for card in cards) == [
-        "Upgrade protocol/cipher: TLS 1.0",
-        "Upgrade protocol/cipher: TLS 1.2",
+        "Upgrade protocol/cipher: tls 1.0",
+        "Upgrade protocol/cipher: tls 1.2",
     ]
     assert {card.action["suggested_replacement"] for card in cards} == {
         "TLS 1.2 (preferably TLS 1.3) with AEAD cipher suites"
     }
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"protocol_type": "tls", "protocol_version": "1.0"},
+        {"asset_name": "TLSv1.0", "protocol_type": "tls", "protocol_version": "1.0"},
+    ],
+)
+def test_a_protocol_card_names_the_version_once_when_the_name_already_carries_it(details):
+    finding = {
+        "type": FindingType.CRYPTO_WEAK_PROTOCOL.value,
+        "severity": "HIGH",
+        "component": "tls 1.0 [bom-ref:p1]",
+        "details": {"bom_ref": "p1", **details},
+    }
+
+    [card] = process_crypto([finding])
+
+    assert card.title == "Upgrade protocol/cipher: tls 1.0"
 
 
 def test_every_lifecycle_finding_of_two_certificates_of_one_name_lands_on_one_rotate_card():
