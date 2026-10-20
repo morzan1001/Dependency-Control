@@ -295,7 +295,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                     }
                 )
 
-        # Both registries give several maintainers as one "Name <addr>, Name2 <addr2>" string.
+        # Both registries list several maintainers comma-separated, PyPI sometimes as "Name <addr>".
         addresses = [
             addr
             for _, addr in getaddresses([info.get("maintainer_email") or info.get("author_email") or ""])
