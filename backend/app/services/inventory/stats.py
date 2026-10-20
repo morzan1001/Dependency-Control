@@ -2,7 +2,6 @@ from collections import Counter
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.v1.helpers.sorting import case_insensitive_key
 from app.models.project import Project, Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.dependencies import DependencyRepository
@@ -22,9 +21,9 @@ async def build_inventory_stats(db: AsyncIOMotorDatabase, project: Project, scan
     direct = await deps.count({"scan_id": scan.id, "direct": True})
     licenses = await deps.collection.distinct("license", {"scan_id": scan.id})
     by_ecosystem: Counter[str] = Counter()
-    for row in await deps.aggregate([{"$match": {"scan_id": scan.id}}, {"$group": {"_id": "$type", "n": {"$sum": 1}}}]):
-        by_ecosystem[row["_id"] or "unknown"] += row["n"]
-    ecosystems = sorted(by_ecosystem, key=lambda e: (-by_ecosystem[e], case_insensitive_key(e)))
+    for row in await deps.get_type_distribution([scan.id]):
+        by_ecosystem[row["_id"] or "unknown"] += row["count"]
+    ecosystems = sorted(by_ecosystem, key=lambda e: (-by_ecosystem[e], e == "unknown"))
     crypto_assets = CryptoAssetRepository(db)
     crypto_count = await crypto_assets.count_by_scan(project.id, scan.id)
     return InventoryStatsResponse(
