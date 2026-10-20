@@ -228,7 +228,8 @@ describe("CrossProjectSearch accessible names", () => {
     expect(screen.getByRole("textbox", { name: "Search packages" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Version" })).toBeInTheDocument();
     for (const name of ["Package Type", "Source", "Vulnerability Status", "Project"]) {
-      expect(screen.getByRole("combobox", { name })).toBeInTheDocument();
+      const field = screen.getByRole("combobox", { name });
+      expect(document.querySelector(`label[for="${field.id}"]`)?.textContent).toBe(name);
     }
   });
 });

@@ -212,7 +212,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="dependency-search-project">Projects</Label>
+                <Label htmlFor="dependency-search-project">Project</Label>
                 <ProjectCombobox id="dependency-search-project" value={selectedProject} onValueChange={setSelectedProject} />
               </div>
             </div>
