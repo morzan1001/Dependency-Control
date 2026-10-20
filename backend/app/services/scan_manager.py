@@ -152,6 +152,7 @@ class ScanManager:
         scan = await self.db.scans.find_one_and_update(
             {"_id": scan_id},
             update_ops,
+            projection={"status": 1},
             return_document=True,
         )
 
