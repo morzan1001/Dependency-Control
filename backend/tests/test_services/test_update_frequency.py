@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import app.core.purl as purl_module
 import app.repositories.update_frequency as update_frequency_repository
 import app.services.update_frequency as update_frequency_module
 from app.core.purl import parse_purl
@@ -32,6 +33,7 @@ from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
+    fold_scan_deps,
     load_outdated_entries,
     rank_summaries,
     retention_horizon,
@@ -776,6 +778,21 @@ class TestIdentityKeying:
         assert m.total_updates == 1
         assert m.recent_updates[0].package_name == "internal-lib"
         assert m.recent_updates[0].update_type == "patch"
+
+    def test_each_dependency_purl_is_parsed_once(self, monkeypatch):
+        parsed: list[str] = []
+
+        def _counting_parse(purl: str) -> Any:
+            parsed.append(purl)
+            return parse_purl(purl)
+
+        monkeypatch.setattr(purl_module, "parse_purl", _counting_parse)
+        monkeypatch.setattr(update_frequency_module, "parse_purl", _counting_parse)
+        deps = [_make_dep("s1", "pkg-a", "1.0.0"), _make_dep("s1", "pkg-b", "2.0.0", ptype="npm")]
+
+        fold_scan_deps(deps)
+
+        assert sorted(parsed) == sorted(dep["purl"] for dep in deps)
 
     @pytest.mark.asyncio
     async def test_scoped_npm_packages_do_not_collide(self):

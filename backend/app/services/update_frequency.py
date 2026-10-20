@@ -23,7 +23,7 @@ from app.core.constants import (
     UPDATE_SAMPLE_RANK,
     UpdateKind,
 )
-from app.core.purl import package_identity, parse_purl
+from app.core.purl import parse_purl, parsed_package_identity
 from app.core.s3 import is_archive_enabled
 from app.models.system import SystemSettings
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
@@ -115,8 +115,8 @@ def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
     if not name:
         return None
     purl = dep.get("purl", "")
-    identity = ":".join(package_identity(purl, name, dep.get("type"), dep.get("group")))
     parsed = parse_purl(purl) if purl else None
+    identity = ":".join(parsed_package_identity(parsed, name, dep.get("type"), dep.get("group")))
     if parsed:
         deps_dev_name = parsed.deps_dev_name
         display = parsed.full_name

@@ -121,7 +121,12 @@ _IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:(?<!/)@[^@?#]*)?(?:[?#].*)?$"
 
 
 def package_identity(purl: str | None, name: str, component_type: str | None, group: str | None) -> tuple[str, str]:
-    parsed = parse_purl(purl) if purl else None
+    return parsed_package_identity(parse_purl(purl) if purl else None, name, component_type, group)
+
+
+def parsed_package_identity(
+    parsed: ParsedPURL | None, name: str, component_type: str | None, group: str | None
+) -> tuple[str, str]:
     if parsed is None:
         namespace = (group or "").strip()
         path = f"{namespace}/{name.strip()}" if namespace else name.strip()
