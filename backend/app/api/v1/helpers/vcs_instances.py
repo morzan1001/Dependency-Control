@@ -127,6 +127,13 @@ class Refusal(Enum):
     UNDETERMINED = auto()
 
 
+def undetermined(failure: str) -> str:
+    return (
+        f"{failure}, and GET /rate_limit did not answer either, so whether an exhausted rate limit or a missing "
+        "read:org refused could not be determined. Check both"
+    )
+
+
 async def why_refused(github_service: GitHubService) -> tuple[Refusal, str]:
     """Asks the uncharged GET /rate_limit only when the read's own rate-limit headers are silent."""
     reset_at = github_service.rate_limited_until
@@ -152,8 +159,5 @@ async def refused_listing(github_service: GitHubService, subject: str, scope_hin
     elif cause is Refusal.SCOPE:
         detail = f"Could not list {subject}. {scope_hint}"
     else:
-        detail = (
-            f"Could not list {subject}, and GET /rate_limit did not answer either, so whether an "
-            "exhausted rate limit or a missing read:org refused could not be determined. Check both."
-        )
+        detail = f"{undetermined(f'Could not list {subject}')}."
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)

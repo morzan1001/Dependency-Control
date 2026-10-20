@@ -14,6 +14,7 @@ from app.api.v1.helpers.vcs_instances import (
     get_or_404,
     list_page,
     refused_listing,
+    undetermined,
     why_refused,
 )
 from app.api.v1.helpers.responses import (
@@ -210,44 +211,17 @@ async def _probe_token(
     )
 
 
-async def _refused_org_listing(
-    github_service: GitHubService, instance: GitHubInstance
+async def _refused_probe(
+    github_service: GitHubService, instance: GitHubInstance, blocked: str
 ) -> GitHubInstanceTestConnectionResponse | None:
+    """None when the budget stands, so the refusal was the missing read:org each caller words its own way."""
     cause, reset = await why_refused(github_service)
     if cause is Refusal.BUDGET:
-        return _budget_failure(instance, "its organisations could not be listed", reset)
+        return _budget_failure(instance, f"its {blocked}", reset)
     if cause is Refusal.UNDETERMINED:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token could not list its organisations, and "
-            "GET /rate_limit did not answer either, so whether an exhausted rate limit or a missing "
-            "read:org refused could not be determined. Check both, then test again.",
-        )
+        failure = f"OIDC endpoint reachable, but the token's {blocked}"
+        return _failed_test(instance, f"{undetermined(failure)}, then test again.")
     return None
-
-
-async def _refused_team_listing(
-    github_service: GitHubService, instance: GitHubInstance, unreadable: list[str]
-) -> GitHubInstanceTestConnectionResponse:
-    cause, reset = await why_refused(github_service)
-    # Exhaustion mid-loop makes every later organisation look unreadable, so naming any could accuse a readable one.
-    if cause is Refusal.BUDGET:
-        return _budget_failure(instance, "its team access could not be checked", reset)
-    if cause is Refusal.UNDETERMINED:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token's team access could not be checked, and "
-            "GET /rate_limit did not answer either, so whether an exhausted rate limit or a missing "
-            "read:org refused could not be determined. Check both, then test again.",
-        )
-    return _failed_test(
-        instance,
-        "OIDC endpoint reachable, but the token cannot read teams in "
-        f"{', '.join(unreadable)}. Every organisation the token belongs to is "
-        "probed, so either grant it read:org there, or use a dedicated identity "
-        "that belongs only to the organisations DependencyControl covers. "
-        "Until then repositories there get partial or no teams.",
-    )
 
 
 async def _probe_team_access(
@@ -255,7 +229,9 @@ async def _probe_team_access(
 ) -> GitHubInstanceTestConnectionResponse | str:
     orgs = await github_service.get_viewer_organisations()
     # Only a refusal can be a throttle; a 200 carrying an empty list already spent budget to answer.
-    if orgs is None and (refused := await _refused_org_listing(github_service, instance)):
+    if orgs is None and (
+        refused := await _refused_probe(github_service, instance, "organisations could not be listed")
+    ):
         return refused
 
     org_names = [str(org["login"]) for org in orgs if org.get("login")] if orgs else []
@@ -271,7 +247,15 @@ async def _probe_team_access(
     probes = [(name, await github_service.count_org_teams(name)) for name in org_names]
     unreadable = [name for name, count in probes if count is None]
     if unreadable:
-        return await _refused_team_listing(github_service, instance, unreadable)
+        # Exhaustion mid-loop makes every later organisation look unreadable, so naming any could accuse a readable one.
+        return await _refused_probe(github_service, instance, "team access could not be checked") or _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the token cannot read teams in "
+            f"{', '.join(unreadable)}. Every organisation the token belongs to is "
+            "probed, so either grant it read:org there, or use a dedicated identity "
+            "that belongs only to the organisations DependencyControl covers. "
+            "Until then repositories there get partial or no teams.",
+        )
 
     covered = ", ".join(f"{name} ({count} team(s))" for name, count in probes)
     return f" Token reads teams in {covered}."
