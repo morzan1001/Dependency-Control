@@ -122,7 +122,7 @@ describe("TeamMembersDialog sync-owned members", () => {
     expect(screen.getByRole("button", { name: "Remove Bob Example" })).toBeDisabled();
 
     await screen.findByText("Synced from GitLab · Internal GitLab");
-    fireEvent.focus(role.parentElement!);
+    fireEvent.pointerMove(role.parentElement!, { pointerType: "mouse" });
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Synced from GitLab · Internal GitLab; change their membership there",
     );

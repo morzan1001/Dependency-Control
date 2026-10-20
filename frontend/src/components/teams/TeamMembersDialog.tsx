@@ -52,14 +52,14 @@ function syncSource(source: string, instanceNames: ReadonlyMap<string, string>):
   return provider in PROVIDER_LABEL ? sourceLabel(provider as BindingProvider, instanceId, instanceNames) : source;
 }
 
-// A disabled control fires no pointer events, so the tooltip hangs on a focusable wrapper.
+// A disabled control fires no pointer events; the wrapper stays unfocusable, or dialog autofocus would open the tooltip.
 function SyncLock({ reason, children }: Readonly<{ reason: string | null; children: ReactNode }>) {
   if (!reason) return children;
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span tabIndex={0} className="inline-flex">{children}</span>
+          <span className="inline-flex">{children}</span>
         </TooltipTrigger>
         <TooltipContent>{reason}</TooltipContent>
       </Tooltip>
