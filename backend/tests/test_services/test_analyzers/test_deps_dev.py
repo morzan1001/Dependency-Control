@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Any
 
 import httpx
@@ -284,6 +285,18 @@ class TestDepsDevLookups:
         assert result["partial_components_skipped"] == 1
         assert result["package_metadata"] == {}
         assert await fake_cache.get(_CORE_KEY) is None
+
+    @pytest.mark.asyncio
+    async def test_failed_lookups_are_logged_once_per_run(self, fake_cache, monkeypatch, caplog):
+        routes = _babel_routes()
+        routes[_CORE_URL] = routes[_TRAVERSE_URL] = 500
+        _serve(monkeypatch, fake_cache, routes)
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE, _TRAVERSE])
+
+        [warning] = [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert result["partial_components_skipped"] == 2
+        assert warning.getMessage().startswith("deps_dev: 2 components not checked, first failure: HTTPStatusError(")
 
     @pytest.mark.parametrize(
         "answer",

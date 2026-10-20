@@ -83,20 +83,21 @@ class OutdatedAnalyzer(Analyzer):
     ) -> dict[str, Any]:
         outdated: list[dict[str, Any]] = []
         ahead: list[dict[str, Any]] = []
-        failed: list[str] = []
+        failed: list[tuple[str, BaseException]] = []
 
         infos = await self._resolve_package_infos(parsed_components)
 
         for component, info in zip(parsed_components, infos, strict=True):
             if isinstance(info, BaseException):
-                failed.append(component.get("name", ""))
+                failed.append((component.get("name", ""), info))
             elif info and info.get("default"):
                 self._classify_version(component, info, outdated, ahead)
 
         result: dict[str, Any] = {"outdated_dependencies": outdated, "ahead_of_default": ahead}
         if failed:
+            logger.warning(f"{self.name}: {len(failed)} components not checked, first failure: {failed[0][1]!r}")
             result["partial_components_skipped"] = len(failed)
-            result["lookup_failed_components"] = sorted(set(failed))
+            result["lookup_failed_components"] = sorted({name for name, _ in failed})
         return result
 
     @staticmethod

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -116,6 +117,18 @@ class TestDepsDevStatusPolicy:
             "lookup_failed_components": ["flaky"],
         }
         assert await fake_cache.get("latest3:pypi:flaky") is None
+
+    @pytest.mark.asyncio
+    async def test_failed_lookups_are_logged_once_per_run(self, fake_cache, monkeypatch, caplog) -> None:
+        _serve(monkeypatch, fake_cache, {"flaky": 500, "broken": httpx.ConnectError("refused")})
+
+        result = await OutdatedAnalyzer().analyze(
+            {}, parsed_components=[_component("flaky", "1.0.0"), _component("broken", "1.0.0")]
+        )
+
+        [warning] = [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert result["partial_components_skipped"] == 2
+        assert warning.getMessage().startswith("outdated_packages: 2 components not checked, first failure: ")
 
     @pytest.mark.asyncio
     async def test_an_unknown_package_is_negative_cached_briefly(self, fake_cache, monkeypatch) -> None:

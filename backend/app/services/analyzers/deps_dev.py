@@ -96,17 +96,15 @@ class DepsDevAnalyzer(Analyzer):
                 ANALYZER_BATCH_SIZES["deps_dev"],
             )
 
-        skipped = 0
+        failures = [payload for payload in payloads.values() if isinstance(payload, BaseException)]
         for key, payload in payloads.items():
-            if isinstance(payload, BaseException):
-                logger.warning(f"deps_dev lookup failed for {key}: {payload!r}")
-                skipped += 1
-            else:
+            if not isinstance(payload, BaseException):
                 self._collect(targets[key][0], key, payload, threshold, package_metadata, scorecard_issues)
 
         result: dict[str, Any] = {"scorecard_issues": scorecard_issues, "package_metadata": package_metadata}
-        if skipped:
-            result["partial_components_skipped"] = skipped
+        if failures:
+            logger.warning(f"{self.name}: {len(failures)} components not checked, first failure: {failures[0]!r}")
+            result["partial_components_skipped"] = len(failures)
         return result
 
     @staticmethod
