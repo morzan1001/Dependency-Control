@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from prometheus_client import REGISTRY
 
+from app.core.config import settings
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
     INSTANCE_ID,
@@ -206,7 +207,7 @@ async def test_a_scan_cancelled_at_shutdown_is_logged_as_finished(caplog):
         caplog.at_level(logging.INFO, logger="app.core.worker"),
         patch("app.core.worker.get_database", AsyncMock(return_value=db)),
         patch("app.core.worker.run_analysis", _outlives_the_grace_period),
-        patch("app.core.worker.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS", 0.01),
+        patch.object(settings, "WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01),
     ):
         manager.queue.put_nowait("scan-1")
         manager.workers.append(asyncio.create_task(manager.worker("worker-1")))

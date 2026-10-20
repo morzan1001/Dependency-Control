@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     WORKER_COUNT: int = 2
+    # Below the pod's terminationGracePeriodSeconds, so shutdown finishes before Kubernetes kills it.
+    WORKER_SHUTDOWN_TIMEOUT_SECONDS: int = 25
 
     FRONTEND_BASE_URL: str = "http://localhost:3000"
 

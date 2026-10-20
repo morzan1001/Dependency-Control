@@ -272,9 +272,7 @@ backend:
     capabilities:
       drop: [ALL]
 
-  # Graceful shutdown timeout (seconds)
-  # Workers will finish current scan before shutdown, up to this limit
-  # Should be > worker shutdown timeout (25s) to allow graceful completion
+  # Running scans get this minus 5 seconds to finish on shutdown; the rest covers the shutdown itself.
   terminationGracePeriodSeconds: 30
 
   env:

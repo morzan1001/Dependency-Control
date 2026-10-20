@@ -229,6 +229,8 @@ spec:
               value: "32768"
             - name: WORKER_COUNT
               value: "{{ .Values.backend.env.workerCount }}"
+            - name: WORKER_SHUTDOWN_TIMEOUT_SECONDS
+              value: "{{ sub (.Values.backend.terminationGracePeriodSeconds | default 30) 5 }}"
             - name: LOG_LEVEL
               value: "{{ .Values.backend.env.logLevel }}"
             - name: ALGORITHM

@@ -38,9 +38,6 @@ from app.services.analysis.notifications import notify_analysis_failed
 
 logger = logging.getLogger(__name__)
 
-# Below the pod's terminationGracePeriodSeconds, so shutdown finishes before Kubernetes kills it.
-DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
-
 # Far below HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS, so a live run is never taken for a stuck one.
 _CLAIM_RENEW_SECONDS = 60
 
@@ -158,7 +155,7 @@ class AnalysisWorkerManager:
         if not self._active_scans:
             return
 
-        timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+        timeout = settings.WORKER_SHUTDOWN_TIMEOUT_SECONDS
         logger.info(f"Waiting for {len(self._active_scans)} active scan(s) to complete: {self._active_scans}")
         try:
             async with asyncio.timeout(timeout):
@@ -173,7 +170,7 @@ class AnalysisWorkerManager:
             )
 
     async def stop(self) -> None:
-        timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+        timeout = settings.WORKER_SHUTDOWN_TIMEOUT_SECONDS
 
         logger.info(
             f"Initiating graceful shutdown (timeout: {timeout}s, "

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 
+from app.core.config import settings
 from app.core.worker import AnalysisWorkerManager
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -55,7 +56,7 @@ async def test_stop_returns_as_soon_as_the_running_scan_finishes(running_scan):
 async def test_stop_gives_up_on_a_scan_that_outlives_the_grace_period(running_scan, caplog):
     manager, _release = running_scan
 
-    with patch("app.core.worker.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS", 0.1), caplog.at_level(logging.WARNING):
+    with patch.object(settings, "WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.1), caplog.at_level(logging.WARNING):
         await asyncio.wait_for(manager.stop(), timeout=5)
 
     assert all(task.done() for task in manager.workers)
