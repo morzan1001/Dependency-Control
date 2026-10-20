@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Any
 
 from app.schemas.pqc_migration import MigrationItemStatus
-from app.services.pqc_migration.mappings_loader import Timeline
 
 EXPOSURE_WEIGHT = 0.35
 KEY_WEAKNESS_WEIGHT = 0.30
@@ -41,16 +40,15 @@ def priority_score(
     *,
     asset: Any,
     source_family: str,
-    timelines: list[Timeline],
+    deadline: datetime | None,
     now: datetime,
     asset_count: int = 1,
 ) -> int:
-    exposure = _score_exposure(asset)
-    weakness = _score_key_weakness(asset, source_family)
-    deadline = _score_deadline(source_family, timelines, now)
-    count = _score_count(asset_count)
     raw = (
-        exposure * EXPOSURE_WEIGHT + weakness * KEY_WEAKNESS_WEIGHT + deadline * DEADLINE_WEIGHT + count * COUNT_WEIGHT
+        _score_exposure(asset) * EXPOSURE_WEIGHT
+        + _score_key_weakness(asset, source_family) * KEY_WEAKNESS_WEIGHT
+        + _score_deadline(deadline, now) * DEADLINE_WEIGHT
+        + _score_count(asset_count) * COUNT_WEIGHT
     )
     return max(0, min(100, round(raw)))
 
@@ -89,11 +87,10 @@ def _score_key_weakness(asset: Any, source_family: str) -> float:
     return 50.0
 
 
-def _score_deadline(source_family: str, timelines: list[Timeline], now: datetime) -> float:
-    applicable = [t for t in timelines if source_family in t.applies_to]
-    if not applicable:
+def _score_deadline(deadline: datetime | None, now: datetime) -> float:
+    if deadline is None:
         return 40.0
-    nearest_days = min((t.deadline - now).days for t in applicable)
+    nearest_days = (deadline - now).days
     if nearest_days < 365:
         return 100.0
     if nearest_days < 365 * 3:

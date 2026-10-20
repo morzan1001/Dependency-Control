@@ -23,7 +23,6 @@ class PQCMapping:
 
 @dataclass(frozen=True)
 class Timeline:
-    name: str
     deadline: datetime
     applies_to: list[str]
 
@@ -35,6 +34,7 @@ class PQCMappings:
     timelines: list[Timeline]
     # Upper-cased family or alias -> canonical source_family; CBOM tools emit names in arbitrary casing.
     families: dict[str, str]
+    canonical: frozenset[str]
 
 
 @lru_cache(maxsize=1)
@@ -54,7 +54,6 @@ def load_mappings() -> PQCMappings:
     ]
     timelines = [
         Timeline(
-            name=t["name"],
             deadline=ensure_utc(datetime.fromisoformat(t["deadline"])),
             applies_to=list(t.get("applies_to", [])),
         )
@@ -62,7 +61,13 @@ def load_mappings() -> PQCMappings:
     ]
     families = {m.source_family.upper(): m.source_family for m in mappings}
     families.update({alias.upper(): family for alias, family in (doc.get("family_aliases") or {}).items()})
-    return PQCMappings(version=doc["version"], mappings=mappings, timelines=timelines, families=families)
+    return PQCMappings(
+        version=doc["version"],
+        mappings=mappings,
+        timelines=timelines,
+        families=families,
+        canonical=frozenset(m.source_family for m in mappings),
+    )
 
 
 def normalise_family(name: str | None, mappings: PQCMappings) -> str:
@@ -72,8 +77,7 @@ def normalise_family(name: str | None, mappings: PQCMappings) -> str:
 
 
 def resolve_family(asset: CryptoAsset, mappings: PQCMappings) -> str:
-    canonical = {m.source_family for m in mappings.mappings}
     for candidate in (asset.name, asset.variant):
-        if (family := normalise_family(candidate, mappings)) in canonical:
+        if (family := normalise_family(candidate, mappings)) in mappings.canonical:
             return family
     return ""

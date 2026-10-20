@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 
-from app.services.pqc_migration.mappings_loader import Timeline
 from app.services.pqc_migration.scoring import (
     COUNT_WEIGHT,
     DEADLINE_WEIGHT,
@@ -29,13 +28,11 @@ def test_weights_sum_to_one():
 
 def test_score_is_between_0_and_100():
     now = datetime.now(timezone.utc)
-    timelines = [
-        Timeline(name="t", deadline=now + timedelta(days=365 * 5), applies_to=["RSA"]),
-    ]
+    deadline = now + timedelta(days=365 * 5)
     score = priority_score(
         asset=_A(name="RSA", key_size_bits=2048),
         source_family="RSA",
-        timelines=timelines,
+        deadline=deadline,
         now=now,
         asset_count=1,
     )
@@ -44,18 +41,18 @@ def test_score_is_between_0_and_100():
 
 def test_short_key_bumps_weakness():
     now = datetime.now(timezone.utc)
-    timelines = [Timeline(name="t", deadline=now + timedelta(days=365 * 5), applies_to=["RSA"])]
+    deadline = now + timedelta(days=365 * 5)
     weak = priority_score(
         asset=_A(name="RSA", key_size_bits=1024),
         source_family="RSA",
-        timelines=timelines,
+        deadline=deadline,
         now=now,
         asset_count=1,
     )
     strong = priority_score(
         asset=_A(name="RSA", key_size_bits=4096),
         source_family="RSA",
-        timelines=timelines,
+        deadline=deadline,
         now=now,
         asset_count=1,
     )
@@ -64,35 +61,35 @@ def test_short_key_bumps_weakness():
 
 def test_imminent_deadline_raises_priority():
     now = datetime.now(timezone.utc)
-    soon = [Timeline(name="t", deadline=now + timedelta(days=180), applies_to=["RSA"])]
-    far = [Timeline(name="t", deadline=now + timedelta(days=365 * 10), applies_to=["RSA"])]
-    s_soon = priority_score(asset=_A(), source_family="RSA", timelines=soon, now=now, asset_count=1)
-    s_far = priority_score(asset=_A(), source_family="RSA", timelines=far, now=now, asset_count=1)
+    soon = now + timedelta(days=180)
+    far = now + timedelta(days=365 * 10)
+    s_soon = priority_score(asset=_A(), source_family="RSA", deadline=soon, now=now, asset_count=1)
+    s_far = priority_score(asset=_A(), source_family="RSA", deadline=far, now=now, asset_count=1)
     assert s_soon > s_far
 
 
 def test_many_occurrences_bump_count():
     now = datetime.now(timezone.utc)
-    timelines = [Timeline(name="t", deadline=now + timedelta(days=365), applies_to=["RSA"])]
-    s1 = priority_score(asset=_A(), source_family="RSA", timelines=timelines, now=now, asset_count=1)
-    s100 = priority_score(asset=_A(), source_family="RSA", timelines=timelines, now=now, asset_count=100)
+    deadline = now + timedelta(days=365)
+    s1 = priority_score(asset=_A(), source_family="RSA", deadline=deadline, now=now, asset_count=1)
+    s100 = priority_score(asset=_A(), source_family="RSA", deadline=deadline, now=now, asset_count=100)
     assert s100 > s1
 
 
 def test_certificate_asset_bumps_exposure():
     now = datetime.now(timezone.utc)
-    timelines = [Timeline(name="t", deadline=now + timedelta(days=365), applies_to=["RSA"])]
+    deadline = now + timedelta(days=365)
     cert = priority_score(
         asset=_A(asset_type="certificate", certificate_format="X.509"),
         source_family="RSA",
-        timelines=timelines,
+        deadline=deadline,
         now=now,
         asset_count=1,
     )
     internal = priority_score(
         asset=_A(detection_context="binary"),
         source_family="RSA",
-        timelines=timelines,
+        deadline=deadline,
         now=now,
         asset_count=1,
     )
@@ -179,18 +176,18 @@ def test_binary_detection_is_the_least_exposed_classification():
 
 def test_a_binary_detected_asset_is_prioritised_below_an_unclassified_one():
     now = datetime.now(timezone.utc)
-    timelines = [Timeline(name="t", deadline=now + timedelta(days=365 * 5), applies_to=["RSA"])]
+    deadline = now + timedelta(days=365 * 5)
     binary = priority_score(
         asset=_A(detection_context="binary"),
         source_family="RSA",
-        timelines=timelines,
+        deadline=deadline,
         now=now,
         asset_count=1,
     )
     unclassified = priority_score(
         asset=_A(),
         source_family="RSA",
-        timelines=timelines,
+        deadline=deadline,
         now=now,
         asset_count=1,
     )

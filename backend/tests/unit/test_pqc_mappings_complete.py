@@ -13,9 +13,8 @@ def test_all_quantum_vulnerable_families_have_a_mapping():
     vulnerable_families = set(rule["match_name_patterns"])
 
     m = load_mappings()
-    canonical = {mp.source_family for mp in m.mappings}
 
-    missing = {family for family in vulnerable_families if normalise_family(family, m) not in canonical}
+    missing = {family for family in vulnerable_families if normalise_family(family, m) not in m.canonical}
     assert not missing, (
         f"Families listed as quantum-vulnerable in Phase-1 seed are missing "
         f"from mappings.yaml: {sorted(missing)}. "

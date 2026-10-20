@@ -38,7 +38,7 @@ class PQCMigrationPlanGenerator:
         now = datetime.now(timezone.utc)
 
         groups = self._group_assets(assets)
-        items = [item for key, group in groups.items() if (item := self._build_item(key, group, now)) is not None]
+        items = [self._build_item(key, group, now) for key, group in groups.items()]
         items.sort(key=lambda i: i.priority_score, reverse=True)
         returned = items[:limit]
 
@@ -68,21 +68,19 @@ class PQCMigrationPlanGenerator:
         key: _GroupKey,
         group: list[CryptoAsset],
         now: datetime,
-    ) -> MigrationItem | None:
+    ) -> MigrationItem:
         _name, variant, key_size_bits, _ref = key
         first_asset = group[0]
         canonical = resolve_family(first_asset, self.mappings)
         mapping = self._find_mapping(canonical, first_asset.primitive)
-        if mapping is None:
-            return None
+        deadline = self._nearest_deadline(canonical, self.mappings.timelines)
         score = priority_score(
             asset=first_asset,
             source_family=canonical,
-            timelines=self.mappings.timelines,
+            deadline=deadline,
             now=now,
             asset_count=len(group),
         )
-        deadline = self._nearest_deadline(canonical, self.mappings.timelines)
         return MigrationItem(
             asset_bom_ref=first_asset.bom_ref,
             asset_name=first_asset.name or canonical,
@@ -129,24 +127,11 @@ class PQCMigrationPlanGenerator:
         }
         return [a async for a in CryptoAssetRepository(self.db).iterate(query) if resolve_family(a, self.mappings)]
 
-    def _find_mapping(self, family: str, primitive: str | None) -> PQCMapping | None:
-        exact = next(
-            (m for m in self.mappings.mappings if m.source_family == family and m.source_primitive == primitive),
-            None,
-        )
-        if exact is not None:
-            return exact
-        return next(
-            (m for m in self.mappings.mappings if m.source_family == family),
-            None,
-        )
+    def _find_mapping(self, family: str, primitive: str | None) -> PQCMapping:
+        """``family`` is canonical, as only assets of a mapped family enter the plan."""
+        candidates = [m for m in self.mappings.mappings if m.source_family == family]
+        return next((m for m in candidates if m.source_primitive == primitive), candidates[0])
 
     @staticmethod
-    def _nearest_deadline(
-        family: str,
-        timelines: list[Timeline],
-    ) -> datetime | None:
-        applicable = [t for t in timelines if family in t.applies_to]
-        if not applicable:
-            return None
-        return min(t.deadline for t in applicable)
+    def _nearest_deadline(family: str, timelines: list[Timeline]) -> datetime | None:
+        return min((t.deadline for t in timelines if family in t.applies_to), default=None)
