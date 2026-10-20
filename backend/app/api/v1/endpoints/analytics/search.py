@@ -42,6 +42,7 @@ from app.schemas.analytics import (
 )
 from app.services.aggregation.versions import normalize_version
 from app.services.component_identity import build_component_index, lookup_component
+from app.services.inventory.components import TEXT_SORT_FIELDS
 from app.services.recommendation.common import max_advisory_cvss
 
 router = CustomAPIRouter()
@@ -102,8 +103,6 @@ async def _dependency_ids_by_vulnerability(
     return [dep["_id"] for dep in candidates if is_vulnerable(dep) == has_vulnerabilities]
 
 
-_TEXT_SORTS = frozenset({"name", "version", "type", "license"})
-
 # Every other result field carries the dependency's own field of the same name.
 _DEPENDENCY_FIELDS = DependencySearchResult.model_fields.keys() - {"project_name", "package"}
 
@@ -162,7 +161,9 @@ async def search_dependencies_advanced(
         "direct": "direct",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "name")
-    ordered = case_insensitive_sort([(mongo_sort_field, parse_sort_direction(sort_order)), ("_id", 1)], _TEXT_SORTS)
+    ordered = case_insensitive_sort(
+        [(mongo_sort_field, parse_sort_direction(sort_order)), ("_id", 1)], TEXT_SORT_FIELDS
+    )
     # An unanchored name regex bounds no key range, so only an exact version narrows the scan.
     hint = DEPENDENCIES_SCAN_VERSION_INDEX if version else DEPENDENCIES_SCAN_PACKAGE_INDEX
 
