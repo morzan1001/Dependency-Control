@@ -470,6 +470,54 @@ class TestRecalculateWithoutAHead:
         assert (await headless_db.waivers.find_one({"_id": "w-1"})).get("last_eval_scan_id") == "scan-rel-2"
 
 
+class TestOneScanFailingItsRestamp:
+    @pytest_asyncio.fixture
+    async def two_named_db(self, seeded_db):
+        now = datetime.now(timezone.utc)
+        for scan_id, age in (("scan-w4-broken", 1), ("scan-w4-older", 5)):
+            await seeded_db.scans.insert_one(
+                {
+                    "_id": scan_id,
+                    "project_id": PROJECT_ID,
+                    "status": "completed",
+                    "created_at": now - timedelta(days=400 + age),
+                }
+            )
+            named = _finding(f"f-{scan_id}", "CRITICAL", cvss_score=9.0)
+            named.update(scan_id=scan_id, finding_id="f-waived")
+            await seeded_db.findings.insert_one(named)
+        return seeded_db
+
+    @staticmethod
+    def _fail_on(monkeypatch, failing_scan: str, error: Exception) -> None:
+        original = stats._restamp_scan
+
+        async def restamp(scan_id, *args):
+            if scan_id == failing_scan:
+                raise error
+            return await original(scan_id, *args)
+
+        monkeypatch.setattr(stats, "_restamp_scan", restamp)
+
+    @pytest.mark.asyncio
+    async def test_the_projects_other_scans_are_still_restamped(self, two_named_db, monkeypatch):
+        self._fail_on(monkeypatch, "scan-w4-broken", RuntimeError("legacy document"))
+
+        await recalculate_project_stats(PROJECT_ID, two_named_db, restamp=["scan-w4-broken", "scan-w4-older"])
+
+        assert (await two_named_db.findings.find_one({"_id": "f-scan-w4-older"}))["waived"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_server_still_ends_the_recalculation(self, two_named_db, monkeypatch):
+        """The queued change then stays for the next run rather than being dropped with scans unstamped."""
+        from pymongo.errors import AutoReconnect
+
+        self._fail_on(monkeypatch, "scan-w4-broken", AutoReconnect("connection reset"))
+
+        with pytest.raises(AutoReconnect):
+            await recalculate_project_stats(PROJECT_ID, two_named_db, restamp=["scan-w4-broken", "scan-w4-older"])
+
+
 BRANCH_SCAN_ID = "scan-w4-feature"
 
 

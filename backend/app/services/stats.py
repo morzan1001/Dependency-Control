@@ -157,7 +157,13 @@ async def recalculate_project_stats(
                 logger.warning(f"Lost lock {lock_name} partway; the recalculation holding it now stamps the rest")
                 break
             outcomes = waiver_repo if other_id == owner else None
-            await _restamp_scan(other_id, db, _copy(waivers), fingerprint, finding_repo, outcomes)
+            try:
+                await _restamp_scan(other_id, db, _copy(waivers), fingerprint, finding_repo, outcomes)
+            # An unreachable server ends the recalculation instead, so the change stays queued.
+            except ConnectionFailure:
+                raise
+            except Exception:
+                logger.exception("Waiver restamp failed for scan %s", other_id)
         return stats
 
     finally:
