@@ -320,9 +320,7 @@ class OsvMalwareDetails(_DetailsModel):
 
 
 class OsMalwareDetails(_DetailsModel):
-    # info carries the raw OpenSourceMalware report block; analyzer-specific passthrough.
     info: dict[str, Any] = {}
-    threats: Any = None
     reference: str | None = None
     source: str | None = None
 
