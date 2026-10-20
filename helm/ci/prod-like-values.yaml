@@ -7,6 +7,12 @@ global:
 
 database:
   type: percona
+  extraRoles:
+    - role: reportingRead
+      db: dependency_control
+      privileges:
+        - resource: {db: dependency_control, collection: projects}
+          actions: [find, listIndexes, collStats]
   extraUsers:
     - name: reporting
       db: dependency_control
@@ -14,7 +20,7 @@ database:
         name: reporting-mongodb-user
         key: password
       roles:
-        - name: read
+        - name: reportingRead
           db: dependency_control
   percona:
     backup:
