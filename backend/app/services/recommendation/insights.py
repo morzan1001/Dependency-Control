@@ -285,7 +285,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
 
 
 def _weighted_findings(project: dict[str, Any]) -> int:
-    return project["total_critical"] * _CRITICAL_RANK_WEIGHT + project["total_high"]
+    return int(project["total_critical"] * _CRITICAL_RANK_WEIGHT + project["total_high"])
 
 
 def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendation | None:
