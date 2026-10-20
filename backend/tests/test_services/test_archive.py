@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import zlib
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -12,7 +13,7 @@ from pymongo.errors import AutoReconnect
 
 from app.core.constants import ENCRYPTION_MAGIC, SCAN_SCOPED_COLLECTIONS
 from app.models.archive import ArchiveMetadata
-from app.services.archive import archive_scan, restore_scan
+from app.services.archive import _gzip_decompress_stream, archive_scan, restore_scan
 
 MODULE = "app.services.archive"
 _NO_IDS: list[str] = []
@@ -542,7 +543,7 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
 )
 async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal, reason):
     count_failure = MagicMock()
-    monkeypatch.setattr(f"{MODULE}._count_failure", count_failure)
+    monkeypatch.setattr(f"{MODULE}.count_archive_failure", count_failure)
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
     # An unguarded rollback stops at the first delete that is not awaitable, so every target must be one.
@@ -722,6 +723,46 @@ async def test_replay_maps_bad_version_to_version_mismatch():
 
     reason, _ = await _replay_bundle(db, "x", src())
     assert reason == "version_mismatch"
+
+
+def _bundle_with_collection(name: str) -> AsyncIterator[bytes]:
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    return BundleFrames.write(
+        scan_doc={"_id": "scan-1", "project_id": "p"}, collections={name: _aiter([{"_id": "a1"}])}, stats=BundleStats()
+    )
+
+
+def _bundle_with_a_list_line() -> AsyncIterator[bytes]:
+    header = json.dumps({"version": 2, "scan": {"_id": "scan-1"}}).encode() + b"\n"
+    return _aiter([header + b'{"collection":"findings"}\n' + b"[1, 2]\n"])
+
+
+def _unknown_encryption_version() -> AsyncIterator[bytes]:
+    from app.core.encryption import decrypt_stream
+
+    return decrypt_stream(_aiter([ENCRYPTION_MAGIC + b"\x99" + b"\x00\x80\x00\x00" + b"\x00\x00\x00\x00"]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "reason"),
+    [
+        (lambda: _bundle_with_collection("version_audit"), "integrity"),
+        (lambda: _gzip_decompress_stream(_aiter([b"not a gzip stream"])), "integrity"),
+        (_bundle_with_a_list_line, "integrity"),
+        (_unknown_encryption_version, "version_mismatch"),
+    ],
+    ids=["collection-named-version", "not-gzip", "line-not-an-object", "unknown-encryption-version"],
+)
+async def test_replay_labels_a_broken_bundle_by_its_cause(monkeypatch, source, reason):
+    from app.services.archive import _replay_bundle
+
+    monkeypatch.setattr("app.core.encryption.settings", SimpleNamespace(ARCHIVE_ENCRYPTION_KEY="0" * 64))
+
+    failure, _ = await _replay_bundle(_make_mock_db(), "scan-1", source())
+
+    assert failure == reason
 
 
 @pytest.mark.asyncio

@@ -307,6 +307,12 @@ archive_failures_total = Counter(
     ["operation", "reason"],
 )
 
+
+def count_archive_failure(operation: str, reason: str) -> None:
+    archive_failures_total.labels(operation=operation, reason=reason).inc()
+    archive_operations_total.labels(operation=operation, status="failure").inc()
+
+
 archive_operation_duration_seconds = Histogram(
     "archive_operation_duration_seconds",
     "Archive operation duration in seconds by type",

@@ -33,9 +33,9 @@ from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_bundle_compressed_bytes,
-    archive_failures_total,
     archive_operation_duration_seconds,
     archive_operations_total,
+    count_archive_failure,
 )
 from app.core.s3 import (
     delete_object,
@@ -58,6 +58,7 @@ from app.services.analyzers.license_compliance.normalizer import BUNDLE_LICENSE_
 from app.services.archive_bundle import (
     BundleFrames,
     BundleStats,
+    BundleVersionError,
     json_line,
     read_bundle_frames,
     rewrite_bundle_frames,
@@ -198,17 +199,12 @@ def _build_archive_payload(
     return gzipped, "application/gzip"
 
 
-def _count_failure(operation: str, reason: str) -> None:
-    archive_failures_total.labels(operation=operation, reason=reason).inc()
-    archive_operations_total.labels(operation=operation, status="failure").inc()
-
-
 async def _drop_upload(s3_key: str, reason: str) -> None:
     try:
         await delete_object(s3_key)
     except Exception:
         logger.exception("Cleanup delete failed for orphan S3 upload")
-    _count_failure("archive", reason)
+    count_archive_failure("archive", reason)
 
 
 async def _save_archive_metadata(
@@ -256,7 +252,7 @@ async def _save_archive_metadata(
     except Exception as e:
         # The insert may still have landed, so the upload stays; the orphan reaper takes it if nothing points at it.
         logger.warning("Metadata create failed for scan %s: %s", sanitize_for_log(scan_id), sanitize_for_log(e))
-        _count_failure("archive", ArchiveFailureReason.UNKNOWN)
+        count_archive_failure("archive", ArchiveFailureReason.UNKNOWN)
         return None
 
 
@@ -273,7 +269,7 @@ async def _load_scan_for_archive(
             logger.info("Scan %s already archived, returning existing metadata", sanitize_for_log(scan_id))
             return existing, None
         logger.error("Scan %s not found for archiving", sanitize_for_log(scan_id))
-        _count_failure("archive", ArchiveFailureReason.NOT_FOUND)
+        count_archive_failure("archive", ArchiveFailureReason.NOT_FOUND)
         return None, None
     # Checked after the scan read: a reachability pass locking later claims later, so the bundle keeps its flag.
     if (
@@ -282,7 +278,7 @@ async def _load_scan_for_archive(
         or await DistributedLocksRepository(db).held_locks([REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id)])
     ):
         logger.info("Scan %s pinned or under analysis, not archiving it", sanitize_for_log(scan_id))
-        _count_failure("archive", ArchiveFailureReason.PROTECTED)
+        count_archive_failure("archive", ArchiveFailureReason.PROTECTED)
         return None, None
     if existing is None:
         return None, scan_doc
@@ -291,7 +287,7 @@ async def _load_scan_for_archive(
         return existing, None
     # Its bundle lacks what ingest wrote since, and a recreated scan lacks what only the bundle holds.
     logger.warning("Scan %s written to or restored since it was archived, keeping both", sanitize_for_log(scan_id))
-    _count_failure("archive", ArchiveFailureReason.WRITTEN_SINCE_ARCHIVE)
+    count_archive_failure("archive", ArchiveFailureReason.WRITTEN_SINCE_ARCHIVE)
     return None, None
 
 
@@ -311,11 +307,11 @@ async def _upload_archive_bundle(
             sanitize_for_log(scan_id),
             sanitize_for_log(e),
         )
-        _count_failure("archive", ArchiveFailureReason.INTEGRITY)
+        count_archive_failure("archive", ArchiveFailureReason.INTEGRITY)
         return None
     except Exception as e:
         logger.exception("Failed to upload the archive of scan %s: %s", sanitize_for_log(scan_id), sanitize_for_log(e))
-        _count_failure("archive", ArchiveFailureReason.S3_ERROR)
+        count_archive_failure("archive", ArchiveFailureReason.S3_ERROR)
         return None
     archive_bundle_compressed_bytes.observe(total)
     return total, stats
@@ -336,7 +332,7 @@ async def archive_scan(
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info("Archive of scan %s skipped, lock held by another worker", sanitize_for_log(scan_id))
-        _count_failure("archive", ArchiveFailureReason.LOCK_HELD)
+        count_archive_failure("archive", ArchiveFailureReason.LOCK_HELD)
         return None
 
     try:
@@ -351,7 +347,7 @@ async def archive_scan(
         # Archival removes the scan document, which would orphan release resolution.
         if await release_protected_scan_ids(db, [scan_id]):
             logger.info("Archive of release scan %s refused", sanitize_for_log(scan_id))
-            _count_failure("archive", ArchiveFailureReason.RELEASE_PROTECTED)
+            count_archive_failure("archive", ArchiveFailureReason.RELEASE_PROTECTED)
             return None
 
         project_id = scan_doc["project_id"]
@@ -557,6 +553,18 @@ def _whole_file_frame(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def bundle_failure_reason(e: Exception) -> str:
+    if isinstance(e, BundleVersionError):
+        return ArchiveFailureReason.VERSION_MISMATCH
+    if isinstance(e, ValueError | zlib.error):
+        return ArchiveFailureReason.INTEGRITY
+    if isinstance(e, PyMongoError):
+        return ArchiveFailureReason.UNKNOWN
+    if isinstance(e, InvalidTag):
+        return ArchiveFailureReason.ENCRYPTION
+    return ArchiveFailureReason.S3_ERROR
+
+
 async def _replay_bundle(
     db: Any,
     scan_id: str,
@@ -590,16 +598,7 @@ async def _replay_bundle(
                 await _flush_batches(db, batch_by_collection, collections_restored)
                 break
     except Exception as e:
-        if isinstance(e, ValueError):
-            reason = (
-                ArchiveFailureReason.VERSION_MISMATCH if "version" in str(e).lower() else ArchiveFailureReason.INTEGRITY
-            )
-        elif isinstance(e, PyMongoError):
-            reason = ArchiveFailureReason.UNKNOWN
-        elif isinstance(e, InvalidTag):
-            reason = ArchiveFailureReason.ENCRYPTION
-        else:
-            reason = ArchiveFailureReason.S3_ERROR
+        reason = bundle_failure_reason(e)
         logger.exception("Restore of scan %s failed (%s): %s", sanitize_for_log(scan_id), reason, sanitize_for_log(e))
         return reason, collections_restored
     finally:
@@ -627,7 +626,7 @@ async def _load_restore_metadata(
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
         logger.error("No archive metadata for scan %s", sanitize_for_log(scan_id))
-        _count_failure("restore", ArchiveFailureReason.NOT_FOUND)
+        count_archive_failure("restore", ArchiveFailureReason.NOT_FOUND)
         return None
 
     existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
@@ -639,7 +638,7 @@ async def _load_restore_metadata(
         await _rollback_partial_restore(db, scan_id)
     elif existing:
         logger.warning("Scan %s already exists in MongoDB, aborting its restore", sanitize_for_log(scan_id))
-        _count_failure("restore", ArchiveFailureReason.ALREADY_EXISTS)
+        count_archive_failure("restore", ArchiveFailureReason.ALREADY_EXISTS)
         return None
 
     return metadata
@@ -726,7 +725,7 @@ async def _run_restore_pipeline(
         # Before its header insert the restore wrote nothing, and a scan already there belongs to an ingest.
         await _abandon_restore(db, scan_id, renew_lock)
     if failure_reason is not None:
-        _count_failure("restore", failure_reason)
+        count_archive_failure("restore", failure_reason)
         return None
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
@@ -765,7 +764,7 @@ async def restore_scan(
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info("Restore of scan %s blocked, lock held", sanitize_for_log(scan_id))
-        _count_failure("restore", ArchiveFailureReason.LOCK_HELD)
+        count_archive_failure("restore", ArchiveFailureReason.LOCK_HELD)
         return None
 
     try:
@@ -776,7 +775,7 @@ async def restore_scan(
         return await run_holding_lock(renew_lock, _ARCHIVE_LOCK_TTL_SECONDS, pipeline)
     except LockLost:
         logger.error("Restore of scan %s lost its lock to another restore, aborting", sanitize_for_log(scan_id))
-        _count_failure("restore", ArchiveFailureReason.LOCK_HELD)
+        count_archive_failure("restore", ArchiveFailureReason.LOCK_HELD)
         return None
     finally:
         await lock_repo.release_lock(lock_name, holder)

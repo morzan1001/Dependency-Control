@@ -13,6 +13,7 @@ from app.core.constants import (
     ENCRYPTION_FORMAT_VERSION,
     ENCRYPTION_MAGIC,
 )
+from app.services.archive_bundle import BundleVersionError
 
 NONCE_SIZE = 12
 _HEADER = struct.Struct(">4sBI")
@@ -81,7 +82,7 @@ async def decrypt_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     if magic != ENCRYPTION_MAGIC:
         raise ValueError(f"Invalid encryption magic: {magic!r}")
     if version != ENCRYPTION_FORMAT_VERSION:
-        raise ValueError(f"Unsupported encryption version: {version}")
+        raise BundleVersionError(f"Unsupported encryption version: {version}")
     # CHUNK_SIZE field is informational; per-chunk LEN drives reads.
 
     while True:

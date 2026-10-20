@@ -17,10 +17,9 @@ from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
-    ArchiveFailureReason,
-    archive_failures_total,
     archive_operation_duration_seconds,
     archive_operations_total,
+    count_archive_failure,
 )
 from app.core.permissions import Permissions
 from app.core.s3 import is_archive_enabled
@@ -35,7 +34,7 @@ from app.schemas.archive import (
     ScanPinResponse,
 )
 from app.schemas.pagination import Page
-from app.services.archive import restore_scan, stream_bundle_for_download
+from app.services.archive import bundle_failure_reason, restore_scan, stream_bundle_for_download
 from app.services.inventory.csv_stream import export_filename
 
 logger = logging.getLogger(__name__)
@@ -196,9 +195,8 @@ async def download_archive(
             duration = time.monotonic() - start_time
             archive_operations_total.labels(operation="download", status="success").inc()
             archive_operation_duration_seconds.labels(operation="download").observe(duration)
-        except Exception:
-            archive_failures_total.labels(operation="download", reason=ArchiveFailureReason.S3_ERROR).inc()
-            archive_operations_total.labels(operation="download", status="failure").inc()
+        except Exception as e:
+            count_archive_failure("download", bundle_failure_reason(e))
             raise
 
     return StreamingResponse(

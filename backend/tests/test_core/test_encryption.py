@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.constants import ENCRYPTION_CHUNK_SIZE, ENCRYPTION_FORMAT_VERSION, ENCRYPTION_MAGIC
 from app.core.encryption import NONCE_SIZE, decrypt_stream, encrypt_stream
+from app.services.archive_bundle import BundleVersionError
 
 
 @pytest.fixture
@@ -94,7 +95,7 @@ async def test_decrypt_rejects_unknown_version(encryption_key):
     async def bad_source():
         yield ENCRYPTION_MAGIC + b"\x99" + b"\x00\x80\x00\x00" + b"\x00\x00\x00\x00"
 
-    with pytest.raises(ValueError, match="version"):
+    with pytest.raises(BundleVersionError):
         async for _ in decrypt_stream(bad_source()):
             pass
 

@@ -12,6 +12,10 @@ from bson import json_util
 from app.core.constants import ARCHIVE_BUNDLE_VERSION
 
 
+class BundleVersionError(ValueError):
+    """A bundle or encryption format this release cannot read."""
+
+
 @dataclass
 class BundleStats:
     findings: int = 0
@@ -82,11 +86,14 @@ class _Frame(NamedTuple):
     data: Any
 
 
-def _loads(line: bytes) -> Any:
+def _loads(line: bytes) -> dict[str, Any]:
     try:
-        return json_util.loads(line)
+        obj = json_util.loads(line)
     except json.JSONDecodeError as e:
         raise ValueError(f"Malformed bundle line: {e}") from e
+    if not isinstance(obj, dict):
+        raise ValueError(f"Malformed bundle line: a {type(obj).__name__}, not an object")
+    return obj
 
 
 async def _bundle_lines(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
@@ -106,11 +113,11 @@ async def _bundle_lines(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
         yield bytes(buffer)
 
 
-def _parse_header(line: bytes) -> Any:
+def _parse_header(line: bytes) -> dict[str, Any]:
     header = _loads(line)
     version = header.get("version")
     if version != ARCHIVE_BUNDLE_VERSION:
-        raise ValueError(f"Unsupported bundle version: {version}")
+        raise BundleVersionError(f"Unsupported bundle version: {version}")
     return header
 
 

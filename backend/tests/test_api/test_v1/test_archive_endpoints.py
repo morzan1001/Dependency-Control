@@ -795,6 +795,39 @@ class TestDownloadStripsPlaintextSecrets:
         assert restored_result["result"]["findings"][0]["RawHash"] == _LEGACY_RAW_HASH
 
 
+class TestDownloadFailureMetric:
+    def test_a_bundle_that_is_not_gzip_counts_as_an_integrity_failure(self, admin_user):
+        from prometheus_client import REGISTRY
+
+        from app.api.v1.endpoints.archives import download_archive
+
+        metadata = _make_archive_metadata(s3_key="proj-1/scan-1-1.bundle")
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+        s3 = FakeS3Client()
+        s3.objects[metadata.s3_key] = b"not a gzip stream"
+        labels = {"operation": "download", "reason": "integrity"}
+        before = REGISTRY.get_sample_value("archive_failures_total", labels) or 0.0
+
+        async def download() -> None:
+            response = await download_archive(
+                project_id="proj-1", scan_id="scan-1", current_user=admin_user, db=MagicMock()
+            )
+            with pytest.raises(zlib.error):
+                async for _ in response.body_iterator:
+                    pass
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock, return_value=_SHOP),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch("app.core.s3.get_s3_client", lambda: fake_get_s3_client(s3)),
+        ):
+            asyncio.run(download())
+
+        assert REGISTRY.get_sample_value("archive_failures_total", labels) == before + 1
+
+
 class TestRestoreReturns409WhenScanAlreadyExists:
     def test_returns_409_when_scan_already_exists_in_mongo(self, admin_user):
         from app.api.v1.endpoints.archives import restore_archive
