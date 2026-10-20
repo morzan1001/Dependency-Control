@@ -50,7 +50,6 @@ class KEVProvider:
         self._refresh = asyncio.Lock()
 
     async def load_kev_catalog(self) -> dict[str, KEVEntry] | None:
-        """After a failed refresh the last catalog stays in use."""
         async with self._refresh:
             if time.monotonic() >= self._memo_expires:
                 cached = await cache_service.get_or_fetch_with_lock(
