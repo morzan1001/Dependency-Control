@@ -259,7 +259,7 @@ class TestCreateWaiverValidatesFindingMatch:
         """finding_id is not unique per scan for license/eol, so an unscoped waiver would blanket every such finding."""
         exc = _refused(
             admin_user,
-            project_id=None,
+            project_id=_PROJECT,
             finding_id="LIC-GPL-2.0-only",
             finding_type="license",
             scope="finding",
@@ -276,14 +276,28 @@ class TestCreateWaiverValidatesFindingMatch:
 
     @pytest.mark.parametrize("finding_id", ["LIC-GPL-2.0-only", "EOL-python-3.8"])
     def test_an_unscoped_shared_id_is_rejected_without_its_type(self, admin_user, finding_id):
-        """The id names the type the caller left out, and a global waiver never reaches the head-build check."""
-        assert _refused(admin_user, project_id=None, finding_id=finding_id, reason="approved").status_code == 422
+        """The id names the type the caller left out."""
+        assert _refused(admin_user, project_id=_PROJECT, finding_id=finding_id, reason="approved").status_code == 422
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            {"finding_id": "LIC-GPL-2.0-only", "finding_type": "license"},
+            {"finding_id": "LIC-GPL-2.0-only"},
+            {"finding_id": "EOL-python-3.8"},
+        ],
+        ids=["license", "license id alone", "eol id alone"],
+    )
+    def test_an_org_wide_license_or_eol_policy_needs_no_package(self, admin_user, fields):
+        stored = _create(admin_user, project_id=None, reason="accepted estate-wide", **fields).stored
+
+        assert (stored.project_id, stored.finding_id, stored.package_name) == (None, fields["finding_id"], None)
 
     def test_unknown_placeholder_does_not_count_as_a_package_scope(self, admin_user):
         """The waiver form sends 'Unknown' when it cannot resolve a package, which is no package scope."""
         exc = _refused(
             admin_user,
-            project_id=None,
+            project_id=_PROJECT,
             finding_id="LIC-GPL-2.0-only",
             finding_type="license",
             package_name="Unknown",

@@ -141,7 +141,9 @@ async def create_waiver(
     project = await _authorize_waiver_write(waiver_in.project_id, current_user, db)
 
     # Reject zombie and over-broad waivers early, before consuming a write and recalculating stats.
-    _reject_unscoped_broad_waiver(waiver_in)
+    # A global LIC-/EOL- waiver without a package is an estate-wide license or end-of-life policy.
+    if waiver_in.project_id:
+        _reject_unscoped_broad_waiver(waiver_in)
     scan_id = await _named_scan_id(waiver_in, db)
     if waiver_in.scope != WAIVER_SCOPE_FINDING:
         await _resolve_widened_rule(waiver_in, db)
