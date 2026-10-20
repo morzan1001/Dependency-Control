@@ -478,3 +478,15 @@ describe("FindingDetailsModal on a phone", () => {
     expect(screen.getByText("2.17.1-hotfix-for-the-jndi-lookup")).toHaveClass("wrap-anywhere");
   });
 });
+
+describe("FindingDetailsModal advisory description", () => {
+  it("sets an advisory's headings apart from its text, like the chat and a SAST rule", () => {
+    renderModal(finding({
+      id: "CVE-2021-44228",
+      details: { vulnerabilities: [{ id: "CVE-2021-44228", severity: "CRITICAL", description: "### Impact\n\nRemote code execution." }] },
+    }));
+
+    expect(screen.getByRole("heading", { level: 3, name: "Impact" })).toHaveClass("font-semibold");
+    expect(screen.getByText("Remote code execution.")).not.toHaveClass("font-semibold");
+  });
+});

@@ -88,6 +88,13 @@ describe('ChatMessage typography', () => {
     expect(screen.getByText('Upgrade to 2.17.1 or later.').closest('blockquote')).toHaveClass('border-l-4', 'pl-4', 'italic');
   });
 
+  it("sets an answer's headings apart from its text, like the headings of an advisory or a SAST rule", () => {
+    renderAssistant('### Impact\n\nUpgrade to 2.17.1.');
+
+    expect(screen.getByRole('heading', { level: 3, name: 'Impact' })).toHaveClass('font-semibold');
+    expect(screen.getByText('Upgrade to 2.17.1.')).not.toHaveClass('font-semibold');
+  });
+
   it("keeps an assistant table's muted header", () => {
     renderAssistant('| Project | Fix |\n|---|---|\n| checkout-service | 2.17.1 |');
 

@@ -12,8 +12,10 @@ import {
     FileLocation 
 } from "./shared"
 import { SeverityBadge } from '../SeverityBadge'
+import { MARKDOWN_HEADINGS } from '@/lib/markdown'
 
 const markdownComponents: Partial<Components> = {
+    ...MARKDOWN_HEADINGS,
     code: ({ className, children, ...props }) => {
         const isInline = !className
         if (isInline) {
@@ -219,7 +221,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
 
             {findingDesc && (
                 <DetailSection label="Description & Remediation">
-                    <div className="prose prose-sm dark:prose-invert max-w-none bg-muted/30 p-4 rounded-lg border">
+                    <div className="bg-muted/30 p-4 rounded-lg border">
                         <ReactMarkdown components={markdownComponents}>
                             {findingDesc}
                         </ReactMarkdown>

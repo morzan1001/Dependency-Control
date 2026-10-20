@@ -56,3 +56,14 @@ describe("SastDetailsView location", () => {
     expect(screen.getByText("Line 12 - 14 (Col 5-20)")).toBeInTheDocument();
   });
 });
+
+describe("SastDetailsView description", () => {
+  it("sets a rule's subheading apart from its text like its section headings", () => {
+    const sast = { ...finding("sast", {}), description: "## Description\n\nUser input reaches eval().\n\n### Example\n\nAvoid eval." };
+
+    render(<SastDetailsView finding={sast} />);
+
+    expect(screen.getByRole("heading", { name: "Example" })).toHaveClass("font-semibold");
+    expect(screen.getByRole("heading", { name: "Description" })).toHaveClass("font-semibold");
+  });
+});
