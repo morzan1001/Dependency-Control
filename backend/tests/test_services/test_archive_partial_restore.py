@@ -1,4 +1,6 @@
 import asyncio
+import gzip
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +12,7 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.distributed_locks import new_lock_holder
 from app.services.archive import RestoreFailed, archive_scan, reap_stale_metadata, restore_scan
+from app.services.archive_bundle import BundleFrames, BundleStats
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.services.archive"
@@ -51,6 +54,11 @@ async def _restore_dying_after_the_header(db: FakeDatabase) -> None:
     ):
         await restore_scan(db, SCAN_ID)
     assert await db.scans.find_one({"_id": SCAN_ID}) is not None, "the rollback was meant to leave the scan behind"
+
+
+async def _rows(docs: list[dict]) -> AsyncIterator[dict]:
+    for doc in docs:
+        yield doc
 
 
 async def _surviving_metadata(db: FakeDatabase) -> list[str]:
@@ -293,3 +301,61 @@ async def test_a_restore_failing_after_another_restore_completed_leaves_its_scan
     assert "restore_in_progress" not in scan
     assert [doc["_id"] async for doc in db.dependencies.find({"scan_id": SCAN_ID})] == [f"{SCAN_ID}:requests"]
     assert [doc["_id"] async for doc in db.analysis_results.find({"scan_id": SCAN_ID})] == [f"{SCAN_ID}:outdated"]
+
+
+async def _archive_of(db: FakeDatabase, scan_id: str) -> str:
+    return (await db.archive_metadata.find_one({"scan_id": scan_id}))["s3_key"]
+
+
+@pytest.mark.asyncio
+async def test_a_bundle_of_another_scan_under_this_scans_key_restores_nothing(archive_env):
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "other-scan", "project_id": "other-project", "status": "completed"})
+    await db.findings.insert_one({"_id": "f-other", "scan_id": "other-scan", "project_id": "other-project"})
+    assert await archive_scan(db, "other-scan") is not None
+    other_bundle = archive_env.objects[await _archive_of(db, "other-scan")]
+    await db.scans.delete_one({"_id": "other-scan"})
+    await db.findings.delete_many({})
+    await _archived_scan(db)
+    archive_env.objects[await _archive_of(db, SCAN_ID)] = other_bundle
+
+    with pytest.raises(RestoreFailed) as failure:
+        await restore_scan(db, SCAN_ID)
+
+    assert failure.value.reason == "integrity"
+    assert await db.scans.count_documents({}) == 0
+    assert await db.findings.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "foreign_row",
+    [
+        {"_id": "f-foreign", "scan_id": "victim-scan", "project_id": "proj-1"},
+        {"_id": "f-foreign", "scan_id": SCAN_ID, "project_id": "victim-project"},
+    ],
+    ids=["another-scan", "another-project"],
+)
+async def test_a_bundle_carrying_a_row_of_another_scan_or_project_restores_nothing(archive_env, foreign_row):
+    db = FakeDatabase()
+    await _archived_scan(db)
+    bundle = b"".join(
+        [
+            chunk
+            async for chunk in BundleFrames.write(
+                scan_doc={"_id": SCAN_ID, "project_id": "proj-1", "status": "completed"},
+                collections={
+                    "findings": _rows([{"_id": "f-own", "scan_id": SCAN_ID, "project_id": "proj-1"}, foreign_row])
+                },
+                stats=BundleStats(),
+            )
+        ]
+    )
+    archive_env.objects[await _archive_of(db, SCAN_ID)] = gzip.compress(bundle)
+
+    with pytest.raises(RestoreFailed) as failure:
+        await restore_scan(db, SCAN_ID)
+
+    assert failure.value.reason == "integrity"
+    assert await db.scans.count_documents({}) == 0
+    assert await db.findings.count_documents({}) == 0

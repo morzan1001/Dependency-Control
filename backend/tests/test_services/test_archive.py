@@ -452,7 +452,7 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
     from app.services.archive import _replay_bundle
 
-    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}).encode() + b"\n"
+    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x", "project_id": "y"}}).encode() + b"\n"
 
     async def src():
         yield header
@@ -464,7 +464,7 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
     db.scans.insert_one = fail_insert
 
-    reason, _ = await _replay_bundle(db, "x", src())
+    reason, _ = await _replay_bundle(db, "x", "y", src())
     assert reason == "unknown"
     assert reason != "s3_error"
 
@@ -485,7 +485,7 @@ async def test_replay_labels_invalid_tag_as_encryption():
     src = _RaisingStream()
 
     db = MagicMock()
-    reason, _ = await _replay_bundle(db, "x", src)
+    reason, _ = await _replay_bundle(db, "x", "y", src)
     assert reason == "encryption"
 
 
@@ -497,7 +497,7 @@ async def test_replay_labels_a_broken_download_as_s3_error():
         raise OSError("connection reset by peer")
         yield b""
 
-    reason, _ = await _replay_bundle(MagicMock(), "x", src())
+    reason, _ = await _replay_bundle(MagicMock(), "x", "y", src())
     assert reason == "s3_error"
 
 
@@ -823,7 +823,7 @@ async def test_replay_rejects_unknown_collection_marker():
 
     db = _make_mock_db(scan_doc={"_id": "scan-1"})
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason == "integrity"
     db.users.insert_many.assert_not_called()
@@ -840,7 +840,7 @@ async def test_replay_maps_bad_version_to_version_mismatch():
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "x", src())
+    reason, _ = await _replay_bundle(db, "x", "y", src())
     assert reason == "version_mismatch"
 
 
@@ -853,7 +853,7 @@ def _bundle_with_collection(name: str) -> AsyncIterator[bytes]:
 
 
 def _bundle_with_a_list_line() -> AsyncIterator[bytes]:
-    header = json.dumps({"version": 2, "scan": {"_id": "scan-1"}}).encode() + b"\n"
+    header = json.dumps({"version": 2, "scan": {"_id": "scan-1", "project_id": "p"}}).encode() + b"\n"
     return _aiter([header + b'{"collection":"findings"}\n' + b"[1, 2]\n"])
 
 
@@ -879,7 +879,7 @@ async def test_replay_labels_a_broken_bundle_by_its_cause(monkeypatch, source, r
 
     monkeypatch.setattr("app.core.encryption.settings", SimpleNamespace(ARCHIVE_ENCRYPTION_KEY="0" * 64))
 
-    failure, _ = await _replay_bundle(_make_mock_db(), "scan-1", source())
+    failure, _ = await _replay_bundle(_make_mock_db(), "scan-1", "p", source())
 
     assert failure == reason
 
@@ -908,7 +908,7 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason is None
     (restored,) = db.analysis_results.insert_many.await_args.args[0]
@@ -952,7 +952,7 @@ async def test_replay_strips_the_bundle_license_parameters_an_old_bundle_stored(
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason is None
     restored = db.dependencies.insert_many.await_args.args[0]
@@ -1008,7 +1008,7 @@ async def test_replay_inserts_the_scan_as_a_restore_in_progress():
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason is None
     inserted = db.scans.insert_one.await_args.args[0]

@@ -590,9 +590,16 @@ def bundle_failure_reason(e: Exception) -> str:
     return ArchiveFailureReason.S3_ERROR
 
 
+def _require_owner(kind: str, row_scan_id: Any, row_project_id: Any, scan_id: str, project_id: str) -> None:
+    # The footer is a plain sha256, so a swapped bundle must not write what the scan_id rollback cannot remove.
+    if (row_scan_id, row_project_id) != (scan_id, project_id):
+        raise ValueError(f"Bundle {kind} belongs to scan {row_scan_id!r} of project {row_project_id!r}")
+
+
 async def _replay_bundle(
     db: Any,
     scan_id: str,
+    project_id: str,
     decompressed: AsyncIterator[bytes],
 ) -> tuple[str | None, list[str]]:
     collections_restored: list[str] = []
@@ -603,6 +610,8 @@ async def _replay_bundle(
         async for event in read_bundle_frames(decompressed):
             etype = event["type"]
             if etype == "header":
+                scan = event["data"].get("scan") or {}
+                _require_owner("header", scan.get("_id"), scan.get("project_id"), scan_id, project_id)
                 await _handle_header_event(db, event["data"])
                 collections_restored.append("scans")
             elif etype == "doc":
@@ -618,6 +627,8 @@ async def _replay_bundle(
                     if coll not in collections_restored:
                         collections_restored.append(coll)
                 else:
+                    doc = event["data"]
+                    _require_owner(coll, doc.get("scan_id"), doc.get("project_id", project_id), scan_id, project_id)
                     await _handle_doc_event(db, event, batch_by_collection, collections_restored)
             elif etype == "footer":
                 await gridfs.close()
@@ -743,7 +754,7 @@ async def _run_restore_pipeline(
 ) -> ArchiveRestoreResponse:
     start_time = time.monotonic()
     decompressed = _open_bundle_stream(metadata)
-    failure_reason, collections_restored = await _replay_bundle(db, scan_id, decompressed)
+    failure_reason, collections_restored = await _replay_bundle(db, scan_id, metadata.project_id, decompressed)
     if failure_reason is None:
         failure_reason = await _mark_restore_complete(db, scan_id, renew_lock)
     elif "scans" in collections_restored:
