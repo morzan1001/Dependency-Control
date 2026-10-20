@@ -117,6 +117,37 @@ def _record_license(enrichment: DependencyEnrichment, entry: dict[str, Any]) -> 
         enrichment.licenses.append(entry)
 
 
+def _plausible_spdx_token(token: str) -> bool:
+    if token.upper() in _LICENSE_SENTINELS:
+        return False
+    if token.startswith("LicenseRef-"):
+        return True
+    return all(_SPDX_TOKEN_SHAPE.match(part) for part in token.split(" WITH "))
+
+
+def _sanitize_deps_dev_license(lic: Any) -> str | None:
+    """deps.dev emits sentinels like 'non-standard'; drop those but keep any plausible SPDX id or expression."""
+    if not isinstance(lic, str):
+        return None
+    value = lic.strip()
+    if not value or value.upper() in _LICENSE_SENTINELS:
+        return None
+    normalized = normalize_spdx_id(value)
+    if normalized in LICENSE_DATABASE:
+        return normalized
+    tokens = tokenize_license_string(value)
+    if tokens and all(_plausible_spdx_token(t) for t in tokens):
+        return value
+    return None
+
+
+def _record_deps_dev_license(enrichment: DependencyEnrichment, lic: Any, source: str) -> None:
+    spdx_id = _sanitize_deps_dev_license(lic)
+    if spdx_id:
+        _record_license(enrichment, {"spdx_id": spdx_id, "source": source})
+        enrichment.primary_license = enrichment.primary_license or spdx_id
+
+
 def _deps_dev_block(metadata: dict[str, Any]) -> dict[str, Any]:
     """Copied key by key so cached metadata cannot add stray fields."""
     project = metadata.get("project") or {}
@@ -157,37 +188,6 @@ class ResultAggregator:
             )
         return self._dependency_enrichments[key]
 
-    @staticmethod
-    def _plausible_spdx_token(token: str) -> bool:
-        if token.upper() in _LICENSE_SENTINELS:
-            return False
-        if token.startswith("LicenseRef-"):
-            return True
-        return all(_SPDX_TOKEN_SHAPE.match(part) for part in token.split(" WITH "))
-
-    @staticmethod
-    def _sanitize_deps_dev_license(lic: Any) -> str | None:
-        """deps.dev emits sentinels like 'non-standard'; drop those but keep any plausible SPDX id or expression."""
-        if not isinstance(lic, str):
-            return None
-        value = lic.strip()
-        if not value or value.upper() in _LICENSE_SENTINELS:
-            return None
-        normalized = normalize_spdx_id(value)
-        if normalized in LICENSE_DATABASE:
-            return normalized
-        tokens = tokenize_license_string(value)
-        if tokens and all(ResultAggregator._plausible_spdx_token(t) for t in tokens):
-            return value
-        return None
-
-    @staticmethod
-    def _record_deps_dev_license(enrichment: DependencyEnrichment, lic: Any, source: str) -> None:
-        spdx_id = ResultAggregator._sanitize_deps_dev_license(lic)
-        if spdx_id:
-            _record_license(enrichment, {"spdx_id": spdx_id, "source": source})
-            enrichment.primary_license = enrichment.primary_license or spdx_id
-
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
         enrichment = self._get_or_create_enrichment(name, version, metadata.get("purl"))
         if "deps_dev" not in enrichment.sources:
@@ -197,8 +197,8 @@ class ResultAggregator:
         links = metadata.get("links") or {}
         # Recorded before the repository's license, so the version's own one wins primary.
         for lic in metadata.get("licenses") or []:
-            self._record_deps_dev_license(enrichment, lic, "deps_dev")
-        self._record_deps_dev_license(enrichment, project.get("license"), "deps_dev_project")
+            _record_deps_dev_license(enrichment, lic, "deps_dev")
+        _record_deps_dev_license(enrichment, project.get("license"), "deps_dev_project")
 
         # The version-level links homepage is more specific than the project one.
         enrichment.homepage = enrichment.homepage or links.get("homepage") or project.get("homepage")

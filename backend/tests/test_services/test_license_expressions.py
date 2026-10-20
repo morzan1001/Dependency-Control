@@ -6,7 +6,7 @@ import pytest
 
 from app.models.finding import Severity
 from app.models.license import LicenseCategory
-from app.services.aggregation.aggregator import ResultAggregator
+from app.services.aggregation.aggregator import _sanitize_deps_dev_license
 from app.services.analyzers.license_compliance import normalizer
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer, classify_license
 from app.services.analyzers.license_compliance.compatibility import partition_or_groups
@@ -317,7 +317,7 @@ def test_inventory_keeps_a_with_exception_on_its_licence():
 
 def test_a_deps_dev_expression_with_an_exception_stays_plausible():
     value = "GPL-2.0-only WITH Classpath-exception-2.0"
-    assert ResultAggregator._sanitize_deps_dev_license(value) == value
+    assert _sanitize_deps_dev_license(value) == value
 
 
 class TestCycloneDX:
