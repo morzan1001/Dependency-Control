@@ -311,8 +311,9 @@ class TestDirectnessOfRealGraphs:
         assert _directness(result) == expected
         assert result.skipped_reasons.get("root-component", 0) == skipped_roots
 
-    def test_spdx_image_root_sets_the_image_source(self):
-        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+    @pytest.mark.parametrize("fixture", ["alpine.syft.spdx.json", "alpine.syft.spdx22.json"])
+    def test_spdx_image_root_sets_the_image_source(self, fixture):
+        result = parse_sbom(_fixture(fixture))
 
         apk = [dep for dep in result.dependencies if dep.type == "apk"]
         assert (result.source_type, result.source_target) == ("image", "alpine:3.20")
@@ -325,8 +326,9 @@ class TestDirectnessOfRealGraphs:
             "ssl_client",
         }
 
-    def test_the_spdx_image_root_is_skipped_and_its_distro_becomes_the_operating_system(self):
-        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+    @pytest.mark.parametrize("fixture", ["alpine.syft.spdx.json", "alpine.syft.spdx22.json"])
+    def test_the_spdx_image_root_is_skipped_and_its_distro_becomes_the_operating_system(self, fixture):
+        result = parse_sbom(_fixture(fixture))
         components = [dep.model_dump() for dep in result.dependencies]
 
         assert [dep.purl for dep in result.dependencies if dep.type == "oci"] == []
@@ -338,7 +340,9 @@ class TestDirectnessOfRealGraphs:
         ] == [("alpine", "3.20.10", "image", "alpine:3.20")]
         assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
 
-    @pytest.mark.parametrize("fixture", ["alpine.syft.json", "alpine.syft.cdx.json", "alpine.syft.spdx.json"])
+    @pytest.mark.parametrize(
+        "fixture", ["alpine.syft.json", "alpine.syft.cdx.json", "alpine.syft.spdx.json", "alpine.syft.spdx22.json"]
+    )
     def test_every_syft_format_of_one_image_hands_its_distro_to_end_of_life(self, fixture):
         result = parse_sbom(_fixture(fixture))
         components = [dep.model_dump() for dep in result.dependencies]

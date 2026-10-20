@@ -1082,7 +1082,9 @@ class SBOMParser:
         for pkg in packages:
             if not isinstance(pkg, dict) or _graph_id(pkg.get("SPDXID")) not in described:
                 continue
-            if pkg.get("primaryPackagePurpose") == "CONTAINER":
+            # SPDX 2.2 has no primaryPackagePurpose, so there only the root's purl names an image.
+            purl, _ = self._extract_spdx_external_refs(pkg.get("externalRefs"))
+            if pkg.get("primaryPackagePurpose") == "CONTAINER" or get_purl_type(purl) in ("oci", "docker"):
                 result.source_type = SOURCE_TYPE_IMAGE
                 result.source_target = _image_reference(_spdx_value(pkg, "name"), _spdx_value(pkg, "versionInfo"))
                 roots.add(pkg["SPDXID"])
