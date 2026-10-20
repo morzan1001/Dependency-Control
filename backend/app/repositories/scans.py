@@ -9,6 +9,7 @@ from typing import Any, Literal, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core import UNDATED
 from app.core.constants import (
@@ -158,8 +159,14 @@ class ScanRepository:
         await self.collection.insert_one(scan.model_dump(by_alias=True))
         return scan
 
-    async def upsert(self, query: dict[str, Any], update: dict[str, Any]) -> None:
-        await self.collection.update_one(query, update, upsert=True)
+    async def upsert_unless_restoring(self, scan_id: str, update: dict[str, Any]) -> None:
+        """Raises DuplicateKeyError while a restore writes the scan, as its rollback would delete this write."""
+        guarded = {"_id": scan_id, "restore_in_progress": {"$ne": True}}
+        try:
+            await self.collection.update_one(guarded, update, upsert=True)
+        except DuplicateKeyError:
+            # The non-_id term opts out of the server's upsert retry, so losing a race to create the scan lands here too.
+            await self.collection.update_one(guarded, update, upsert=True)
 
     async def touch(self, scan_id: str) -> None:
         await self.collection.update_one({"_id": scan_id}, {"$set": {"updated_at": datetime.now(timezone.utc)}})

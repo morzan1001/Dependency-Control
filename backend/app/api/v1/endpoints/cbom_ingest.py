@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.request_body import read_json_body
+from app.api.v1.helpers.responses import RESP_AUTH_400_409_500
 from app.core.constants import (
     NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
     WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
@@ -50,6 +51,7 @@ class CBOMIngestResponse(BaseModel):
     "/ingest/cbom",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest CBOM",
+    responses=RESP_AUTH_400_409_500,
 )
 async def ingest_cbom(
     request: Request,

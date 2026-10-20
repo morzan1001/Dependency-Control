@@ -4,7 +4,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
@@ -86,13 +88,21 @@ class ScanManager:
         # pipeline_id 0 derives nothing and still needs a scan of its own.
         return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
+    async def upsert_scan(self, scan_id: str, update: dict[str, Any]) -> None:
+        try:
+            await ScanRepository(self.db).upsert_unless_restoring(scan_id, update)
+        except DuplicateKeyError:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "The scan is being restored from its archive; retry once the restore is done"
+            ) from None
+
     async def find_or_create_scan(self, data: BaseIngest, scan_id: str, scan_type: str | None = None) -> None:
         """scan_type is only set, never cleared, since the run's other scanners pass none."""
         update = await self.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
         if scan_type is not None:
             update["$set"]["scan_type"] = scan_type
-        await ScanRepository(self.db).upsert({"_id": scan_id}, update)
+        await self.upsert_scan(scan_id, update)
 
     async def _get_waivers(self) -> list[Waiver]:
         if self._waivers is None:

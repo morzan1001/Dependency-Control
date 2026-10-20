@@ -24,6 +24,7 @@ from app.repositories.scans import ScanRepository
 from app.services import archive, stats
 from app.services.analysis.stats import _STATS_CURSOR_HINT
 from app.services.archive import RestoreFailed, restore_scan
+from app.services.scan_manager import deterministic_scan_id
 
 _NOW = datetime.now(timezone.utc)
 _PROJECT_ID = "test-project-id"
@@ -43,6 +44,12 @@ _VULNERABILITY = {
     "details": {},
 }
 _CBOM = json.loads((Path(__file__).parents[1] / "fixtures/cbom/legacy_crypto_mixed.json").read_text())
+_SBOM = json.loads((Path(__file__).parents[1] / "fixtures/sbom/mono.syft.json").read_text())
+_UPLOADS = {
+    "opengrep": ("/api/v1/ingest/opengrep", {"findings": []}),
+    "sbom": ("/api/v1/ingest", {"sboms": [_SBOM]}),
+    "cbom": ("/api/v1/ingest/cbom", {"cbom": _CBOM}),
+}
 
 
 def _scan(scan_id: str, age_days: float, **fields) -> dict:
@@ -615,10 +622,36 @@ async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_sca
 
     monkeypatch.setattr(archive, "_handle_header_event", retry_before_the_header_insert)
 
-    with pytest.raises(RestoreFailed):
+    with pytest.raises(RestoreFailed) as failure:
         await restore_scan(db, scan_id)
     assert await _remaining(db) == {scan_id}
     assert await _analyzers(db, scan_id) == {"opengrep"}
+    if header_keys_scan:
+        assert failure.value.reason == "already_exists"
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("upload", sorted(_UPLOADS))
+async def test_an_upload_meeting_a_restore_is_told_to_retry_and_leaves_the_restoring_scan_alone(
+    client, db, api_key_headers, upload
+):
+    scan_id = deterministic_scan_id(_PROJECT_ID, _RUN["pipeline_id"], _RUN["commit_hash"])
+    await db.scans.insert_one(_scan(scan_id, 200, restore_in_progress=True, commit_message="archived"))
+    restoring = await db.scans.find_one({"_id": scan_id}, {"updated_at": 0})
+    path, body = _UPLOADS[upload]
+
+    resp = await client.post(path, json={**_RUN, **body, "commit_message": "retried"}, headers=api_key_headers)
+
+    assert resp.status_code == 409, resp.text
+    assert await db.scans.find_one({"_id": scan_id}, {"updated_at": 0}) == restoring
+
+
+@pytest.mark.parametrize("scanner", ["", "/trufflehog", "/opengrep", "/kics", "/bearer", "/cbom"])
+def test_each_upload_route_documents_the_409_a_restore_answers(scanner):
+    from app.main import app
+
+    assert "409" in app.openapi()["paths"][f"/api/v1/ingest{scanner}"]["post"]["responses"]
 
 
 @pytest.mark.asyncio
@@ -757,6 +790,7 @@ async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps
     scan_id = await _analysed_run(client, db, api_key_headers)
     real_archive_scan = archive.archive_scan
     finish_the_restore: list[Callable[[], Awaitable[None]]] = []
+    retried_job_statuses: list[int] = []
 
     async def other_runner_archives_then_a_job_meets_a_restore(db_, scan_id_):
         monkeypatch.setattr(archive, "archive_scan", real_archive_scan)
@@ -764,7 +798,8 @@ async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps
         metadata = await real_archive_scan(db_, scan_id_)
         restore = restore_scan(db_, scan_id_)
         finish_the_restore.append(await _paused_before(monkeypatch, archive, "_handle_doc_event", restore))
-        await _retried_job(client, db, api_key_headers)
+        retried = await client.post("/api/v1/ingest/opengrep", json={**_RUN, "findings": []}, headers=api_key_headers)
+        retried_job_statuses.append(retried.status_code)
         return metadata
 
     monkeypatch.setattr(archive, "archive_scan", other_runner_archives_then_a_job_meets_a_restore)
@@ -772,6 +807,7 @@ async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps
     restoring_scan_kept_its_archive = await db.archive_metadata.count_documents({"scan_id": scan_id}) == 1
     await finish_the_restore[0]()
 
+    assert retried_job_statuses == [409]
     assert restoring_scan_kept_its_archive
 
 

@@ -597,6 +597,9 @@ def bundle_failure_reason(e: Exception) -> str:
         return ArchiveFailureReason.VERSION_MISMATCH
     if isinstance(e, ValueError | zlib.error):
         return ArchiveFailureReason.INTEGRITY
+    # Only the header insert raises it: an ingest created the scan since the restore checked for it.
+    if isinstance(e, DuplicateKeyError):
+        return ArchiveFailureReason.ALREADY_EXISTS
     if isinstance(e, PyMongoError):
         return ArchiveFailureReason.UNKNOWN
     if isinstance(e, InvalidTag):
