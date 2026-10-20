@@ -2564,6 +2564,14 @@ class TestCycloneDXNpmScope:
         [dep] = result.dependencies
         assert (dep.name, dep.group) == ("@angular/core", "@angular")
 
+    def test_a_purl_less_scoped_component_keeps_its_scope_in_the_name(self):
+        result = parse_sbom(
+            _cyclonedx_with([{"type": "library", "group": "@angular", "name": "core", "version": "16.2.0"}])
+        )
+
+        [dep] = result.dependencies
+        assert (dep.name, dep.group, dep.purl) == ("@angular/core", "@angular", "pkg:generic/%40angular/core@16.2.0")
+
     def test_a_maven_group_stays_in_its_own_field(self):
         result = parse_sbom(
             _cyclonedx_with(
