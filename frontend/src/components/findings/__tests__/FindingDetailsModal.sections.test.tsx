@@ -493,6 +493,35 @@ describe("FindingDetailsModal details by type", () => {
     expect(screen.getByText("exit status 124")).toBeInTheDocument();
   });
 
+  it("shows each failure of a scanner with its source and details, not only the first", () => {
+    const errors = [
+      { source: "SBOM #1", message: "Scanner 'trivy' failed: timed out", error_details: "exit status 124" },
+      { source: "SBOM #2", message: "Scanner 'trivy' failed: bad report", error_details: { code: "E_JSON", message: "unexpected token" } },
+    ];
+    renderModal(
+      finding({
+        type: "system_warning",
+        description: errors.map((error) => error.message).join("; "),
+        details: { error_details: "exit status 124", errors },
+      }),
+    );
+
+    expect(screen.getByText("SBOM #1")).toBeInTheDocument();
+    expect(screen.getByText("SBOM #2")).toBeInTheDocument();
+    expect(screen.getByText("Scanner 'trivy' failed: bad report")).toBeInTheDocument();
+    expect(screen.getByText("exit status 124")).toBeInTheDocument();
+    expect(screen.getByText(/unexpected token/)).toBeInTheDocument();
+  });
+
+  it("leaves a single failure's message to the banner above it", () => {
+    const error = { source: "System: trivy", message: "Scanner 'trivy' failed: timed out", error_details: "exit status 124" };
+    renderModal(finding({ type: "system_warning", description: error.message, details: { error_details: "exit status 124", errors: [error] } }));
+
+    expect(screen.getByText("System: trivy")).toBeInTheDocument();
+    expect(screen.getAllByText(error.message)).toHaveLength(2);
+    expect(screen.getByText("exit status 124")).toBeInTheDocument();
+  });
+
   it.each(["vulnerability", "sast", "iac"])("leaves a %s finding's description to its own view", (type) => {
     renderModal(finding({ type: type as Finding["type"], description: "finding-level text" }));
 

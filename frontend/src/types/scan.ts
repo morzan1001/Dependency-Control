@@ -157,6 +157,12 @@ export interface ErrorDetails {
   [key: string]: string | number | boolean | undefined;
 }
 
+export interface ScannerFailure {
+  source?: string | null;
+  message: string;
+  error_details?: string | ErrorDetails;
+}
+
 export interface FindingDetails {
   vulnerabilities?: NestedVulnerability[];
   quality_issues?: QualityIssue[];
@@ -252,6 +258,7 @@ export interface FindingDetails {
   scorecard?: ScorecardData;
   maintainer_risk?: MaintainerRiskData;
   error_details?: string | ErrorDetails;
+  errors?: ScannerFailure[];
 }
 
 export interface Finding {
