@@ -253,7 +253,7 @@ async def get_vulnerability_hotspots(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of records to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    sort_by: HotspotSort = "finding_count",
+    sort_by: HotspotSort = "risk",
     sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
