@@ -137,7 +137,9 @@ def _queue_announcement(
 async def _announcement_audience(payload: BroadcastRequest, team_repo: TeamRepository) -> dict[str, Any]:
     if payload.target_type == "global":
         return {"is_active": True}
-    teams = (await team_repo.members_by_team(payload.target_teams or [])).values()
+    if not payload.target_teams:
+        raise HTTPException(status_code=400, detail="At least one team required")
+    teams = (await team_repo.members_by_team(payload.target_teams)).values()
     return {"_id": {"$in": sorted({m["user_id"] for members in teams for m in members})}, "is_active": True}
 
 

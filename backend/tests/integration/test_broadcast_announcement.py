@@ -43,6 +43,19 @@ async def test_an_announcement_without_a_channel_is_refused(client, db, admin_au
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("target_teams", [None, []])
+async def test_a_team_announcement_naming_no_team_is_refused(client, db, admin_auth_headers, sent, target_teams, dry_run):
+    await _seed_users(db, 1)
+
+    resp = await _announce(client, admin_auth_headers, target_type="teams", target_teams=target_teams, dry_run=dry_run)
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "At least one team required"
+    assert await db.broadcasts.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
 async def test_the_announcement_email_carries_the_markdown_rendered_once(client, db, admin_auth_headers, sent):
     await _seed_users(db, 1)
 
