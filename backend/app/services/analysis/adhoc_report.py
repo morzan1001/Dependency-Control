@@ -23,19 +23,17 @@ _DERIVED_FIELDS = frozenset({"findings", "dependencies", "recommendations"})
 _FINDING_ROW_CAP = 500
 _RECOMMENDATION_ROW_CAP = 50
 _DESCRIPTION_CHARS = 300
-_UNKNOWN_SEVERITY = "UNKNOWN"
 
 
 def _row(finding: dict[str, Any]) -> dict[str, str | bool]:
     return {
-        "type": str(finding.get("type", "")),
-        "severity": str(finding.get("severity") or _UNKNOWN_SEVERITY),
-        "component": str(finding.get("component", "")),
-        "version": str(finding.get("version") or ""),
-        "description": str(finding.get("description") or "")[:_DESCRIPTION_CHARS]
-        or ", ".join(canonical_cves([finding.get("details")])),
-        "scanners": ", ".join(str(scanner) for scanner in (finding.get("scanners") or [])),
-        "waived": bool(finding.get("waived")),
+        "type": finding["type"],
+        "severity": finding["severity"],
+        "component": finding["component"],
+        "version": finding["version"] or "",
+        "description": finding["description"][:_DESCRIPTION_CHARS] or ", ".join(canonical_cves([finding["details"]])),
+        "scanners": ", ".join(finding["scanners"]),
+        "waived": finding["waived"],
     }
 
 

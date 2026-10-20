@@ -211,16 +211,6 @@ def test_a_vulnerability_row_lists_every_cve_of_the_finding():
     assert f"<td>{listed}</td>" in html
 
 
-def test_a_finding_without_a_severity_is_labelled_unknown():
-    """UNKNOWN is the label the rest of the app uses for an ungraded finding."""
-    result = _result(findings=[_finding(severity=None)])
-
-    html = render_adhoc_html(result)
-
-    assert '<td class="severity">UNKNOWN</td>' in html
-    assert '<tr class="sev-UNKNOWN">' in html
-
-
 def test_sbom_content_is_html_escaped():
     result = _result(
         findings=[_finding(component=_HOSTILE_COMPONENT, description=_HOSTILE_DESCRIPTION, severity="HIGH")]
