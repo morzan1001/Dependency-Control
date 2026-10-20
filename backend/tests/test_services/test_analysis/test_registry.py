@@ -2,6 +2,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES, CryptoPolicySource, CryptoRule
+from app.services.aggregation import aggregator
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, analyzer_factories, crypto_evaluators
 from app.services.crypto_policy.resolver import EffectivePolicy
@@ -48,3 +49,8 @@ def test_the_enrichments_are_selectable_engine_rows_that_no_analyzer_builds():
     assert enrichments <= SELECTABLE_ANALYZERS
     assert enrichments <= engine._ENGINE_RESULT_NAMES
     assert not enrichments & set(analyzer_factories)
+
+
+def test_every_analyzer_the_engine_runs_has_a_normalizer():
+    """aggregate() skips an analyzer without one silently, so its findings would vanish."""
+    assert set(analyzer_factories) | CRYPTO_ANALYZERS <= set(aggregator._NORMALIZERS)
