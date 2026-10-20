@@ -466,3 +466,28 @@ class TestCallEdges:
 
         assert usage.import_locations == ["app/client.py", "app/jobs.py"]
         assert (usage.import_count, usage.call_count) == (1, 2)
+
+
+class TestRelativeModules:
+    @pytest.mark.parametrize(
+        ("language", "module"),
+        [
+            ("javascript", "./utils"),
+            ("javascript", "../lib/helpers"),
+            ("python", ".utils"),
+            ("python", "..pkg.mod"),
+            ("python", "."),
+        ],
+    )
+    def test_a_relative_import_or_call_names_no_package(self, language, module):
+        data = {
+            "imports": [{"module": module, "file": "src/a", "symbols": ["helper"]}],
+            "calls": [{"caller_file": "src/a", "callee_module": module, "callee_function": "helper"}],
+            "analyzed_modules": [module, "requests"],
+        }
+
+        parsed = parse_generic_format(data, language)
+
+        assert parsed.module_usage == {}
+        assert parsed.analyzed_modules == ["requests"]
+        assert (parsed.total_imports, parsed.total_calls) == (1, 1)

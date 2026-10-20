@@ -38,9 +38,6 @@ def canonical_callgraph_language(raw: str) -> str:
 
 def canonical_module_key(name: str, language: str) -> str:
     """The single meeting point between callgraph parsers (stored keys) and reachability enrichment (lookup keys)."""
-    if name.startswith(("./", "../")):
-        return name
-
     language = language.lower()
 
     if language == "python":
