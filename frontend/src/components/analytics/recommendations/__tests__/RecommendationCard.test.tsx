@@ -1,9 +1,17 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 import { RecommendationCard } from '../RecommendationCard'
 import type { Recommendation, RecommendationAction } from '@/types/analytics'
+import type { Project } from '@/types/project'
+
+const { useProjectDetailsMock } = vi.hoisted(() => ({ useProjectDetailsMock: vi.fn((_ids: readonly string[]): Project[] => []) }))
+vi.mock('@/hooks/queries/use-projects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-projects')>()),
+  useProjectDetails: (ids: readonly string[]) => useProjectDetailsMock(ids),
+}))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 
 const COMPONENTS_LISTED = 20
 const COMPONENTS_COVERED = 900
@@ -348,3 +356,27 @@ describe("RecommendationCard on a phone", () => {
     expect(screen.getByText("registry.example.com/platform/checkout-service:1.4.2")).toHaveClass("break-all");
   });
 });
+
+describe('RecommendationCard priority projects', () => {
+  it('names the owner of each priority project whose name another one shares, and lists both', () => {
+    const owners: Record<string, Project> = {
+      p1: { id: 'p1', name: 'shared-lib', teams: [{ id: 't1', name: 'Payments' }] } as Project,
+      p2: { id: 'p2', name: 'shared-lib', teams: [{ id: 't2', name: 'Platform' }] } as Project,
+    }
+    useProjectDetailsMock.mockImplementation((ids) => ids.map((id) => owners[id]))
+
+    renderExpanded(makeRecommendation({
+      type: 'prioritize_projects',
+      priority_projects: [
+        { name: 'shared-lib', id: 'p1', critical: 3, high: 1 },
+        { name: 'shared-lib', id: 'p2', critical: 2, high: 4 },
+        { name: 'checkout', id: 'p3', critical: 1, high: 0 },
+      ],
+    }))
+
+    expect(screen.getAllByText('shared-lib')).toHaveLength(2)
+    expect(screen.getByText('Payments')).toBeInTheDocument()
+    expect(screen.getByText('Platform')).toBeInTheDocument()
+    expect(useProjectDetailsMock).not.toHaveBeenCalledWith(expect.arrayContaining(['p3']))
+  })
+})

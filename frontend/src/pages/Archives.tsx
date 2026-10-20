@@ -14,9 +14,15 @@ import {
   ArchiveSummaryHead,
 } from '@/components/project/ProjectArchives'
 import { Archive } from 'lucide-react'
-import { formatDateTime } from '@/lib/utils'
+import type { AdminArchiveListItem } from '@/types/archive'
+import { formatDateTime, sharedNames } from '@/lib/utils'
+import { ProjectOwnerById } from '@/components/project/ProjectOwner'
 
 const ARCHIVE_SKELETON_KEYS = ['s1', 's2', 's3', 's4', 's5']
+
+function projectName(archive: AdminArchiveListItem) {
+  return archive.project_name || archive.project_id
+}
 
 export default function ArchivesPage() {
   const [page, setPage] = useState(1)
@@ -34,6 +40,7 @@ export default function ArchivesPage() {
 
   const items = data?.items || []
   const totalPages = data?.pages || 1
+  const namesakes = sharedNames(items.map((archive) => ({ id: archive.project_id, name: projectName(archive) })))
 
   const renderContent = () => {
     if (isLoading) {
@@ -69,12 +76,17 @@ export default function ArchivesPage() {
             {items.map((archive) => (
               <TableRow key={archive.id}>
                 <TableCell>
-                  <Link
-                    to={`/projects/${archive.project_id}`}
-                    className="text-sm font-medium text-primary hover:underline"
-                  >
-                    {archive.project_name || archive.project_id}
-                  </Link>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Link
+                      to={`/projects/${archive.project_id}`}
+                      className="truncate text-sm font-medium text-primary hover:underline"
+                    >
+                      {projectName(archive)}
+                    </Link>
+                    {namesakes.has(projectName(archive)) && (
+                      <ProjectOwnerById projectId={archive.project_id} namesakes={namesakes.get(projectName(archive))} />
+                    )}
+                  </div>
                 </TableCell>
                 <ArchiveSummaryCells archive={archive} />
                 <TableCell className="text-sm">

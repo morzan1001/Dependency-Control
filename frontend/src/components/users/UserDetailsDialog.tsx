@@ -25,6 +25,8 @@ import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
 import { RenameUserDialog } from './RenameUserDialog';
 import { UserStatusBadge } from './UserStatusBadge';
+import { ProjectOwner } from '@/components/project/ProjectOwner';
+import { sharedNames } from '@/lib/utils';
 
 interface AsyncListSectionProps {
   isLoading: boolean;
@@ -143,6 +145,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
 
   const canUpdateUser = hasPermission('user:update');
   const userProjects = user ? getUserProjects(user.id) : [];
+  const namesakes = sharedNames(userProjects);
   const userTeams = user ? getUserTeams(user.id) : [];
   const isLocalAuth = user?.auth_provider === 'local';
 
@@ -303,7 +306,10 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                             to={`/projects/${project.id}`}
                             className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors"
                           >
-                            <span>{project.name}</span>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="truncate">{project.name}</span>
+                              {namesakes.has(project.name) && <ProjectOwner project={project} namesakes={namesakes.get(project.name)!} />}
+                            </span>
                           </Link>
                         </li>
                       ))}

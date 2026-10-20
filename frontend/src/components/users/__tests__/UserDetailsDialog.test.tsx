@@ -10,6 +10,7 @@ interface ProjectStub {
   name: string
   members?: { user_id: string }[]
   team_ids?: string[]
+  teams?: { id: string; name: string }[]
 }
 
 // useProjects returns only the first 100 projects; useProjectsDropdown pages the full list.
@@ -29,7 +30,12 @@ const coOwnedProject: ProjectStub = {
   name: 'Project 200',
   team_ids: ['team-other', 'team-target'],
 }
-const allProjects: ProjectStub[] = [...firstPage, projectBeyondFirstPage, coOwnedProject]
+// Two of the user's projects share a name and differ by owning team.
+const namesakes: ProjectStub[] = [
+  { id: 'p-301', name: 'shared-lib', members: [{ user_id: targetUserId }], teams: [{ id: 't-pay', name: 'Payments' }] },
+  { id: 'p-302', name: 'shared-lib', members: [{ user_id: targetUserId }], teams: [{ id: 't-plat', name: 'Platform' }] },
+]
+const allProjects: ProjectStub[] = [...firstPage, projectBeyondFirstPage, coOwnedProject, ...namesakes]
 
 vi.mock('@/hooks/queries/use-projects', () => ({
   // First page only: omits Project 150.
@@ -69,6 +75,8 @@ vi.mock('@/context/useAuth', () => ({
   useAuth: () => ({ hasPermission: () => true }),
 }))
 
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
+
 vi.mock('../UserPermissionsDialog', () => ({
   UserPermissionsDialog: () => null,
 }))
@@ -104,6 +112,19 @@ describe('UserDetailsDialog - project membership', () => {
     )
 
     expect(screen.getByText('Project 200')).toBeInTheDocument()
+  })
+
+  it("names the owner of each of the user's projects whose name another one shares, as the project list does", () => {
+    render(
+      <MemoryRouter>
+        <UserDetailsDialog user={makeUser()} open onOpenChange={() => {}} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getAllByText('shared-lib')).toHaveLength(2)
+    expect(screen.getByText('Payments')).toBeInTheDocument()
+    expect(screen.getByText('Platform')).toBeInTheDocument()
+    expect(screen.getByText('Project 150').closest('a')).not.toHaveTextContent('Unassigned')
   })
 })
 

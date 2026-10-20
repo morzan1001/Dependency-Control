@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import ArchivesPage from '../Archives'
 import type { AdminArchiveListItem, AdminArchiveListResponse, ArchiveFilters } from '@/types/archive'
+import type { Project } from '@/types/project'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 const mockUseAdminArchives = vi.fn()
@@ -15,6 +16,12 @@ vi.mock('@/hooks/queries/use-archives', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/queries/use-archives')>()),
   useAdminArchives: (...args: unknown[]) => mockUseAdminArchives(...args),
 }))
+const { useProjectDetailsMock } = vi.hoisted(() => ({ useProjectDetailsMock: vi.fn((_ids: readonly string[]): Project[] => []) }))
+vi.mock('@/hooks/queries/use-projects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-projects')>()),
+  useProjectDetails: (ids: readonly string[]) => useProjectDetailsMock(ids),
+}))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 
 function makeArchive(overrides: Partial<AdminArchiveListItem> = {}): AdminArchiveListItem {
   return {
@@ -149,5 +156,30 @@ describe('ArchivesPage branch filter', () => {
 
     const requested = mockUseAdminArchives.mock.calls.map(([, , filters]) => (filters as ArchiveFilters | undefined)?.branch)
     expect(new Set(requested.filter(Boolean))).toEqual(new Set(['main']))
+  })
+})
+
+describe('ArchivesPage namesakes', () => {
+  it('names the owner of each archived project whose name another listed project shares, as the project list does', () => {
+    const owners: Record<string, Project> = {
+      p1: { id: 'p1', name: 'shared-lib', teams: [{ id: 't1', name: 'Payments' }] } as Project,
+      p2: { id: 'p2', name: 'shared-lib', teams: [{ id: 't2', name: 'Platform' }] } as Project,
+    }
+    useProjectDetailsMock.mockImplementation((ids) => ids.map((id) => owners[id]))
+    mockUseAdminArchives.mockReturnValue({
+      data: makeResponse([
+        makeArchive({ id: 'a1', project_id: 'p1', project_name: 'shared-lib' }),
+        makeArchive({ id: 'a2', project_id: 'p2', project_name: 'shared-lib' }),
+        makeArchive({ id: 'a3', project_id: 'p1', project_name: 'shared-lib' }),
+        makeArchive({ id: 'a4', project_id: 'p3', project_name: 'checkout' }),
+      ]),
+      isLoading: false,
+    })
+
+    renderPage()
+
+    expect(screen.getAllByText('Payments')).toHaveLength(2)
+    expect(screen.getByText('Platform')).toBeInTheDocument()
+    expect(useProjectDetailsMock).not.toHaveBeenCalledWith(expect.arrayContaining(['p3']))
   })
 })

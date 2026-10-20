@@ -3,9 +3,10 @@ import { Recommendation, RecommendationAction, CrossProjectCve, RecurringCve } f
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { cn, sharedNames } from '@/lib/utils'
 import { getSeverityBgColor } from '@/lib/finding-utils'
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
+import { ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import {
   Tooltip,
@@ -92,6 +93,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
   const TypeIcon = typeInfo.icon
   const severityCounts = SEVERITY_CHIPS.filter(([key]) => (recommendation.impact[key] ?? 0) > 0)
   const { copy } = useCopyToClipboard()
+  const namesakes = sharedNames(recommendation.action.priority_projects ?? [])
 
   return (
     <Card className="overflow-hidden">
@@ -378,8 +380,11 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
             {recommendation.action.type === 'prioritize_projects' && recommendation.action.priority_projects && (
               <ActionSection icon={TrendingUp} title="Priority Projects">
                 {recommendation.action.priority_projects.map((proj) => (
-                  <div key={proj.name} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
-                    <span className="font-medium">{proj.name}</span>
+                  <div key={proj.id} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-medium">{proj.name}</span>
+                      {namesakes.has(proj.name) && <ProjectOwnerById projectId={proj.id} namesakes={namesakes.get(proj.name)} />}
+                    </span>
                     <div className="flex gap-2">
                       <Badge className={getSeverityBgColor('CRITICAL')}>{proj.critical} Critical</Badge>
                       <Badge className={getSeverityBgColor('HIGH')}>{proj.high} High</Badge>
