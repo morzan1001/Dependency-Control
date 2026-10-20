@@ -82,3 +82,34 @@ async def test_a_scorecard_row_carries_the_advice_for_its_failed_checks(db):
         "quality",
         "Consider finding an actively maintained alternative • No fuzzing - potential undiscovered bugs",
     )
+
+
+async def test_a_partly_waived_finding_is_titled_by_a_live_cve_and_names_its_waived_ones(db):
+    await db.findings.insert_one(
+        {
+            "_id": "f-partly-waived",
+            "finding_id": "lodash:4.17.20",
+            "scan_id": _SCAN.id,
+            "project_id": "p-export",
+            "type": "vulnerability",
+            "severity": "HIGH",
+            "component": "lodash",
+            "version": "4.17.20",
+            "description": "",
+            "details": {
+                "vulnerabilities": [
+                    {"id": "CVE-2024-0001", "aliases": [], "waived": True, "waiver_reason": "not reachable"},
+                    {"id": "CVE-2024-0002", "aliases": []},
+                ]
+            },
+        }
+    )
+
+    [row] = await _exported_rows(db)
+
+    assert (row["title"], row["cves"], row["waived"], row.get("waived_cves")) == (
+        "CVE-2024-0002",
+        "CVE-2024-0001; CVE-2024-0002",
+        "false",
+        "CVE-2024-0001",
+    )

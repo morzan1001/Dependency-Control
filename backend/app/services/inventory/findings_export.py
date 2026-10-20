@@ -46,6 +46,7 @@ FINDINGS_COLUMNS = [
     "waived",
     "waiver_reason",
     "cves",
+    "waived_cves",
 ]
 
 # Findings lack top-level purl/direct (added by the dependencies join); the license normalizer nests purl in details.
@@ -75,6 +76,7 @@ _PROJECTION = {
     "details.vulnerabilities.id": 1,
     "details.vulnerabilities.aliases": 1,
     "details.vulnerabilities.resolved_cve": 1,
+    "details.vulnerabilities.waived": 1,
 }
 
 _DEP_PROJECTION = {"name": 1, "version": 1, "purl": 1, "direct": 1}
@@ -115,6 +117,9 @@ def _row(scan: ExportedScan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dic
         "waived": doc.get("waived", False),
         "waiver_reason": doc.get("waiver_reason"),
         "cves": canonical_cves([details]),
+        "waived_cves": canonical_cves(
+            [{"vulnerabilities": [v for v in details.get("vulnerabilities") or [] if v.get("waived")]}]
+        ),
     }
 
 
