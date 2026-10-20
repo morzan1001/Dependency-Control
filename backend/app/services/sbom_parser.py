@@ -338,7 +338,7 @@ def _spdx_value(pkg: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) and value not in _SPDX_NO_VALUE else None
 
 
-# osv derives a distro binary's source package from these; nothing reads any other raw property.
+# Trivy Src* keys: the only raw properties persisted.
 _OS_SOURCE_PACKAGE_PROPERTIES = tuple(
     f"aquasecurity:trivy:{key}" for key in ("SrcName", "SrcVersion", "SrcRelease", "SrcEpoch")
 )
@@ -428,7 +428,7 @@ class SBOMParser:
 
     @staticmethod
     def _append_distro(result: ParsedSBOM, distro_id: Any, version: Any, description: Any = None) -> None:
-        """Shaped like the CycloneDX row base-image end-of-life detection reads."""
+        """Shaped like the row a CycloneDX operating-system component parses into."""
         if not (isinstance(distro_id, str) and distro_id and isinstance(version, str) and version):
             return
         result.dependencies.append(
@@ -750,7 +750,7 @@ class SBOMParser:
         pkg_type = _SYFT_TYPE_TO_PURL_TYPE.get(syft_type, syft_type) if syft_type else component_type
 
         if not purl:
-            # OS descriptors stay without a purl: they feed base-image EOL detection.
+            # OS descriptors stay without a purl.
             kind = {"operating-system": "os", "application": "binary"}.get(component_type, "package")
             keep, purl = _purl_less_identity(kind, name, version, pkg_type, group, cpes)
             if not keep:
@@ -1061,7 +1061,7 @@ class SBOMParser:
     def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         creation_info = sbom.get("creationInfo")
         creators = creation_info.get("creators") if isinstance(creation_info, dict) else None
-        # osv reads a set found_by as "syft catalogued this", which only the syft creator tool can vouch for.
+        # found_by is set only when the syft creator tool vouches for it.
         found_by = next(
             (
                 creator.removeprefix("Tool: ")
