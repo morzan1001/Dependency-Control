@@ -5,7 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.projects import ProjectRepository
-from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES, CryptoAssetType
 from app.schemas.pqc_migration import (
     MigrationItem,
     MigrationPlanResponse,
@@ -18,9 +18,10 @@ from app.services.pqc_migration.mappings_loader import (
     load_mappings,
     resolve_family,
 )
-from app.services.pqc_migration.scoring import priority_score, status_from_score
+from app.services.pqc_migration.scoring import priority_score, referenced_exposure, status_from_score
 
 _GroupKey = tuple[str, str | None, int | None, str]
+_LINKING_TYPES = (CryptoAssetType.CERTIFICATE, CryptoAssetType.RELATED_CRYPTO_MATERIAL)
 
 
 class PQCMigrationPlanGenerator:
@@ -34,11 +35,12 @@ class PQCMigrationPlanGenerator:
         resolved: ResolvedScope,
         limit: int = 500,
     ) -> MigrationPlanResponse:
-        assets = await self._list_vulnerable_assets(resolved)
+        assets, linked = await self._list_assets(resolved)
         now = datetime.now(timezone.utc)
 
+        exposure = referenced_exposure(linked)
         groups = self._group_assets(assets)
-        items = [self._build_item(key, group, now) for key, group in groups.items()]
+        items = [self._build_item(key, group, now, exposure) for key, group in groups.items()]
         items.sort(key=lambda i: i.priority_score, reverse=True)
         returned = items[:limit]
 
@@ -68,6 +70,7 @@ class PQCMigrationPlanGenerator:
         key: _GroupKey,
         group: list[CryptoAsset],
         now: datetime,
+        exposure: dict[str, float],
     ) -> MigrationItem:
         _name, variant, key_size_bits, _ref = key
         first_asset = group[0]
@@ -81,6 +84,7 @@ class PQCMigrationPlanGenerator:
             deadline=deadline,
             now=now,
             asset_count=occurrences,
+            referenced=exposure.get(first_asset.bom_ref),
         )
         return MigrationItem(
             asset_bom_ref=first_asset.bom_ref,
@@ -114,19 +118,27 @@ class PQCMigrationPlanGenerator:
             earliest_deadline=earliest,
         )
 
-    async def _list_vulnerable_assets(
-        self,
-        resolved: ResolvedScope,
-    ) -> list[CryptoAsset]:
+    async def _list_assets(self, resolved: ResolvedScope) -> tuple[list[CryptoAsset], list[CryptoAsset]]:
+        """The scope's migratable algorithms, and the certificates and key material that may name them."""
         from app.services.releases import resolve_scan_ids
 
         scan_ids = await resolve_scan_ids(self.db, resolved.project_ids, projects=resolved.projects)
         query = {
             "project_id": {"$in": list(scan_ids)},
             "scan_id": {"$in": list(scan_ids.values())},
-            "primitive": {"$in": sorted(QUANTUM_VULNERABLE_PRIMITIVES)},
+            "$or": [
+                {"primitive": {"$in": sorted(QUANTUM_VULNERABLE_PRIMITIVES)}},
+                {"asset_type": {"$in": list(_LINKING_TYPES)}},
+            ],
         }
-        return [a async for a in CryptoAssetRepository(self.db).iterate(query) if resolve_family(a, self.mappings)]
+        algorithms: list[CryptoAsset] = []
+        linked: list[CryptoAsset] = []
+        async for a in CryptoAssetRepository(self.db).iterate(query):
+            if a.asset_type in _LINKING_TYPES:
+                linked.append(a)
+            elif resolve_family(a, self.mappings):
+                algorithms.append(a)
+        return algorithms, linked
 
     def _find_mapping(self, family: str, primitive: str | None) -> PQCMapping:
         """``family`` is canonical, as only assets of a mapped family enter the plan."""

@@ -10,6 +10,7 @@ from app.services.analytics.scopes import ResolvedScope
 from app.services.cbom_parser import parse_crypto_components
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from app.services.pqc_migration.mappings_loader import load_mappings
+from tests.helpers.cbom import load_cbom
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -42,7 +43,7 @@ def _asset(
 async def test_generate_empty_when_no_vulnerable_assets():
     db = FakeDatabase()
     gen = PQCMigrationPlanGenerator(db)
-    with patch.object(gen, "_list_vulnerable_assets", new=AsyncMock(return_value=[])):
+    with patch.object(gen, "_list_assets", new=AsyncMock(return_value=([], []))):
         resp = await gen.generate(
             resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p1"]),
         )
@@ -57,8 +58,8 @@ async def test_generate_maps_rsa_pke_to_ml_kem():
     gen = PQCMigrationPlanGenerator(db)
     with patch.object(
         gen,
-        "_list_vulnerable_assets",
-        new=AsyncMock(return_value=[_asset(name="RSA", primitive=CryptoPrimitive.PKE)]),
+        "_list_assets",
+        new=AsyncMock(return_value=([_asset(name="RSA", primitive=CryptoPrimitive.PKE)], [])),
     ):
         resp = await gen.generate(
             resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
@@ -78,8 +79,8 @@ async def test_generate_sorts_items_descending_priority():
     strong = _asset(key_size_bits=4096, bom_ref="r2")
     with patch.object(
         gen,
-        "_list_vulnerable_assets",
-        new=AsyncMock(return_value=[strong, weak]),
+        "_list_assets",
+        new=AsyncMock(return_value=([strong, weak], [])),
     ):
         resp = await gen.generate(
             resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
@@ -112,7 +113,7 @@ def _scanned_project(db, project_id, scans):
 
 
 @pytest.mark.asyncio
-async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
+async def test_list_assets_global_scope_enumerates_all_projects():
     # Global scope passes project_ids=None for all projects, which must not be coerced to an empty list.
     db = FakeDatabase()
     for pid in ("p1", "p2"):
@@ -121,7 +122,7 @@ async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
     _scanned_project(db, "p3", [("scan-p3", _DEFAULT_BRANCH, SCAN_STATUS_FAILED, 1)])
     _store(db, _asset(project_id="p3", scan_id="scan-p3"))
 
-    assets = await PQCMigrationPlanGenerator(db)._list_vulnerable_assets(
+    assets, _ = await PQCMigrationPlanGenerator(db)._list_assets(
         ResolvedScope(scope="global", scope_id=None, project_ids=None)
     )
 
@@ -129,13 +130,13 @@ async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
 
 
 @pytest.mark.asyncio
-async def test_list_vulnerable_assets_empty_project_ids_stays_empty():
+async def test_list_assets_empty_project_ids_stays_empty():
     # an explicit empty list means "no projects" and must not fall through to enumerating everything.
     db = FakeDatabase()
     _scanned_project(db, "p1", [("scan-p1", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
     _store(db, _asset(scan_id="scan-p1"))
 
-    assets = await PQCMigrationPlanGenerator(db)._list_vulnerable_assets(
+    assets, _ = await PQCMigrationPlanGenerator(db)._list_assets(
         ResolvedScope(scope="team", scope_id="t1", project_ids=[])
     )
 
@@ -143,7 +144,7 @@ async def test_list_vulnerable_assets_empty_project_ids_stays_empty():
 
 
 @pytest.mark.asyncio
-async def test_list_vulnerable_assets_reads_the_head_build_not_a_deleted_branch():
+async def test_list_assets_reads_the_head_build_not_a_deleted_branch():
     """The newest scan sits on a branch the VCS no longer has, so a plan from it would name crypto shipped nowhere."""
     db = FakeDatabase()
     _scanned_project(
@@ -156,7 +157,7 @@ async def test_list_vulnerable_assets_reads_the_head_build_not_a_deleted_branch(
     )
     _store(db, _asset(bom_ref="head", scan_id="scan-head"), _asset(bom_ref="gone", scan_id="scan-gone"))
 
-    assets = await PQCMigrationPlanGenerator(db)._list_vulnerable_assets(
+    assets, _ = await PQCMigrationPlanGenerator(db)._list_assets(
         ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     )
 
@@ -169,8 +170,8 @@ async def test_generate_alias_resolution():
     gen = PQCMigrationPlanGenerator(db)
     with patch.object(
         gen,
-        "_list_vulnerable_assets",
-        new=AsyncMock(return_value=[_asset(name="Diffie-Hellman", primitive=CryptoPrimitive.KEM)]),
+        "_list_assets",
+        new=AsyncMock(return_value=([_asset(name="Diffie-Hellman", primitive=CryptoPrimitive.KEM)], [])),
     ):
         resp = await gen.generate(
             resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
@@ -190,7 +191,7 @@ async def test_the_summary_counts_every_migratable_group_not_the_page_it_returns
     db = FakeDatabase()
     gen = PQCMigrationPlanGenerator(db)
     assets = [_asset(bom_ref=f"r{index}") for index in range(_GROUPS_BEYOND_LIMIT)]
-    with patch.object(gen, "_list_vulnerable_assets", new=AsyncMock(return_value=assets)):
+    with patch.object(gen, "_list_assets", new=AsyncMock(return_value=(assets, []))):
         resp = await gen.generate(
             resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
             limit=_PLAN_LIMIT,
@@ -208,7 +209,7 @@ async def test_the_plan_names_each_project_its_items_list_and_keeps_the_ids():
     await db.projects.insert_many([{"_id": "p1", "name": "shop"}, {"_id": "p2", "name": "mail"}])
     gen = PQCMigrationPlanGenerator(db)
     assets = [_asset(project_id=project_id) for project_id in ("p1", "p2", "p-gone")]
-    with patch.object(gen, "_list_vulnerable_assets", new=AsyncMock(return_value=assets)):
+    with patch.object(gen, "_list_assets", new=AsyncMock(return_value=(assets, []))):
         resp = await gen.generate(resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p1", "p2"]))
 
     assert [item.project_ids for item in resp.items] == [["p-gone", "p1", "p2"]]
@@ -331,3 +332,24 @@ async def test_an_asset_counts_every_place_it_was_found():
 
     assert {ref: item.asset_count for ref, item in items.items()} == {"spread": 3, "once": 1, "unplaced": 1}
     assert items["spread"].priority_score > items["once"].priority_score == items["unplaced"].priority_score
+
+
+async def _scores_by_name(cbom, asset_types):
+    components = [c for c in cbom["components"] if c["cryptoProperties"]["assetType"] in asset_types]
+    parsed = parse_crypto_components(components)
+    items = await _plan_for([CryptoAsset(project_id="p1", scan_id="s1", **a.model_dump()) for a in parsed])
+    return {item.asset_name: item.priority_score for item in items.values()}
+
+
+@pytest.mark.asyncio
+async def test_an_algorithm_a_certificate_or_key_names_is_scored_as_exposed_as_they_are():
+    """CycloneDX gives certificates and keys no primitive, so only their references carry their exposure."""
+    cbom = load_cbom("tls_service.json")
+
+    alone = await _scores_by_name(cbom, {"algorithm"})
+    with_key = await _scores_by_name(cbom, {"algorithm", "related-crypto-material"})
+    with_certificate = await _scores_by_name(cbom, {"algorithm", "related-crypto-material", "certificate"})
+
+    # The certificate signs with SHA1withRSA and holds an RSA-1024 key, whose algorithm is RSA.
+    assert alone["RSA"] < with_key["RSA"] < with_certificate["RSA"]
+    assert alone["SHA1withRSA"] == with_key["SHA1withRSA"] < with_certificate["SHA1withRSA"]
