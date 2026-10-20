@@ -140,7 +140,7 @@ describe('ProjectInventory', () => {
     expect(screen.getByText('No CBOM uploaded for the latest scan')).toBeInTheDocument()
   })
 
-  it('lets the licenses and cryptography cards shrink to the screen, so their tables scroll sideways inside them', async () => {
+  it('stacks the licenses and cryptography cards full width beside the components card, so their tables fit a desktop', async () => {
     vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
       data: [{ name: 'main', is_active: true }],
     } as ReturnType<typeof projectHooks.useProjectBranches>)
@@ -152,8 +152,10 @@ describe('ProjectInventory', () => {
 
     renderInventory()
 
-    const licensesCard = (await screen.findByRole('heading', { name: 'Licenses' })).closest('.rounded-lg')
-    expect(licensesCard?.parentElement).toHaveClass('grid-cols-1', 'lg:grid-cols-2')
+    const card = async (name: string) => (await screen.findByRole('heading', { name })).closest('.rounded-lg')
+    const components = await card('Components')
+    expect((await card('Licenses'))?.parentElement).toBe(components?.parentElement)
+    expect((await card('Cryptography'))?.parentElement).toBe(components?.parentElement)
   })
 })
 

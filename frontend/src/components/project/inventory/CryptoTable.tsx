@@ -45,19 +45,18 @@ export function CryptoTable({ projectId, branch, cbomEvaluated }: Readonly<Crypt
   )
 
   return (
-    <Card className="flex h-full flex-col">
+    <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0">
         <div>
           <CardTitle>Cryptography</CardTitle>
-          {/* min-h keeps both grid cards' headers equal when one description wraps. */}
-          <CardDescription className="min-h-10">Cryptographic assets detected on this branch.</CardDescription>
+          <CardDescription>Cryptographic assets detected on this branch.</CardDescription>
         </div>
         <Button variant="outline" size="sm" onClick={handleDownload}>
           <Download className="mr-2 h-4 w-4" />
           Download CSV
         </Button>
       </CardHeader>
-      <CardContent className="flex-1">
+      <CardContent>
         <div className="rounded-md border">
           <Table>
             <TableHeader>
