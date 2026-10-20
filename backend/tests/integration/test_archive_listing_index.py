@@ -21,6 +21,7 @@ async def _seed(db) -> None:
             "scan_id": f"scan-{i}",
             "s3_key": f"proj-{i % 3}/scan-{i}-1.bundle",
             "s3_bucket": "dc-archives",
+            "branch": f"branch-{i % 2}",
             "archived_at": _NOW - timedelta(hours=i),
         }
         for i in range(_ARCHIVES)
@@ -41,3 +42,15 @@ async def test_the_unfiltered_total_counts_every_archive(db):
     await _seed(db)
 
     assert await ArchiveMetadataRepository(db).count_all() == _ARCHIVES
+
+
+async def test_a_branch_filtered_listing_reads_only_that_branchs_archives_newest_first(db):
+    await _seed(db)
+    query = {"project_id": "proj-0", "branch": "branch-1"}
+
+    cursor = db.archive_metadata.find(query).sort("archived_at", pymongo.DESCENDING).limit(20)
+    explained = await cursor.explain()
+    plan = str(explained["queryPlanner"]["winningPlan"])
+
+    assert "'stage': 'SORT'" not in plan
+    assert explained["executionStats"]["totalDocsExamined"] == await db.archive_metadata.count_documents(query)

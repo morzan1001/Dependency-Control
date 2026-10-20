@@ -350,6 +350,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["archive_metadata"].create_index(
         [("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
     )
+    await database["archive_metadata"].create_index(
+        [("project_id", pymongo.ASCENDING), ("branch", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
+    )
     await database["archive_metadata"].create_index([("archived_at", pymongo.DESCENDING)])
 
     chat_conversations = database["chat_conversations"]
