@@ -56,6 +56,7 @@ from app.db.mongodb import DEFAULT_MAX_TIME_MS
 from app.models.finding import Severity
 from app.models.project import Project
 from app.models.stats import Stats
+from app.models.team import Team
 from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
@@ -879,7 +880,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_team_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await self._require_team(ctx)
         details = {
             "id": team.id,
             "name": team.name,
@@ -890,7 +891,7 @@ class ChatToolRegistry:
         return {"team": details}
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await self._require_team(ctx)
         query = and_filters(ctx.user_project_query, {"team_ids": team.id})
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
@@ -1435,7 +1436,7 @@ class ChatToolRegistry:
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
 
     async def _tool_get_team_risk_overview(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        team = await self._require_team(ctx)
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
             and_filters(ctx.user_project_query, {"team_ids": team.id}),
@@ -1726,6 +1727,9 @@ class ChatToolRegistry:
         if not project:
             raise _ToolRefusal(refusal)
         return project
+
+    async def _require_team(self, ctx: _ToolContext) -> Team:
+        return await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
 
     async def _get_authorized_project_ids(self, ctx: _ToolContext) -> list[str]:
         rows = await ProjectRepository(ctx.db).find_many_raw(
