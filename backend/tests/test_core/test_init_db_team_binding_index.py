@@ -4,10 +4,11 @@ from unittest.mock import AsyncMock
 
 import pymongo
 
-from app.core.init_db import TEAM_BINDING_KEY_FIELD, create_indexes
+from app.core.init_db import create_indexes
+from app.repositories.teams import BINDING_KEY_PATH
 from tests.mocks.fake_mongo import FakeDatabase
 
-_KEY = [(TEAM_BINDING_KEY_FIELD, pymongo.ASCENDING)]
+_KEY = [(BINDING_KEY_PATH, pymongo.ASCENDING)]
 
 
 def _binding_index_calls() -> list:
@@ -20,13 +21,13 @@ def _binding_index_calls() -> list:
 
 def test_the_binding_key_is_unique():
     calls = _binding_index_calls()
-    assert len(calls) == 1, f"exactly one {TEAM_BINDING_KEY_FIELD} index expected"
+    assert len(calls) == 1, f"exactly one {BINDING_KEY_PATH} index expected"
     assert calls[0].kwargs["unique"] is True
 
 
 def test_teams_holding_no_binding_stay_outside_the_unique_scope():
     """A unique index keys a missing array path as null, so without the filter a second unbound team collides."""
-    assert _binding_index_calls()[0].kwargs["partialFilterExpression"] == {TEAM_BINDING_KEY_FIELD: {"$type": "string"}}
+    assert _binding_index_calls()[0].kwargs["partialFilterExpression"] == {BINDING_KEY_PATH: {"$type": "string"}}
 
 
 def _skip_record(failure: Exception, caplog) -> logging.LogRecord:
@@ -43,7 +44,7 @@ def _skip_record(failure: Exception, caplog) -> logging.LogRecord:
     with caplog.at_level(logging.ERROR, logger="app.core.init_db"):
         asyncio.run(create_indexes(db))
 
-    return next(record for record in caplog.records if TEAM_BINDING_KEY_FIELD in record.getMessage())
+    return next(record for record in caplog.records if BINDING_KEY_PATH in record.getMessage())
 
 
 def test_an_options_conflict_is_named_rather_than_blamed_on_a_duplicate(caplog):
@@ -66,7 +67,7 @@ def test_a_real_duplicate_is_named_and_carries_the_offending_key(caplog):
         pymongo.errors.DuplicateKeyError(
             "E11000 duplicate key error",
             11000,
-            {"code": 11000, "codeName": "DuplicateKey", "keyValue": {TEAM_BINDING_KEY_FIELD: "github:gh-1:4711"}},
+            {"code": 11000, "codeName": "DuplicateKey", "keyValue": {BINDING_KEY_PATH: "github:gh-1:4711"}},
         ),
         caplog,
     )

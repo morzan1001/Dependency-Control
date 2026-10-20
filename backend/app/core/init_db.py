@@ -21,6 +21,7 @@ from app.db.mongodb import get_database
 from app.models.user import User
 from app.repositories.findings import FIRST_DETECTION_INDEX, NEWEST_VULNERABILITY_INDEX, VULNERABILITIES_ONLY
 from app.repositories.scans import TAG_BUILD_MATCH
+from app.repositories.teams import BINDING_KEY_PATH
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
 logger = logging.getLogger(__name__)
@@ -110,9 +111,8 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
         )
 
 
-TEAM_BINDING_KEY_FIELD = "bindings.key"
 # Partial, as a sparse unique index keys teams without bindings as null; lookups COLLSCAN, fine below five figures.
-TEAM_BINDING_KEY_PARTIAL_FILTER = {TEAM_BINDING_KEY_FIELD: {MONGO_TYPE: "string"}}
+TEAM_BINDING_KEY_PARTIAL_FILTER = {BINDING_KEY_PATH: {MONGO_TYPE: "string"}}
 
 
 async def _create_unique_index(
@@ -137,8 +137,8 @@ async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["teams"].create_index("members.user_id")
     await _create_unique_index(
         database["teams"],
-        [(TEAM_BINDING_KEY_FIELD, pymongo.ASCENDING)],
-        f"teams {TEAM_BINDING_KEY_FIELD}",
+        [(BINDING_KEY_PATH, pymongo.ASCENDING)],
+        f"teams {BINDING_KEY_PATH}",
         partialFilterExpression=TEAM_BINDING_KEY_PARTIAL_FILTER,
     )
 

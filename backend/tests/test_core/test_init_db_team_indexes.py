@@ -3,7 +3,8 @@ import asyncio
 import pytest
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
-from app.core.init_db import TEAM_BINDING_KEY_FIELD, create_indexes
+from app.core.init_db import create_indexes
+from app.repositories.teams import BINDING_KEY_PATH
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -16,7 +17,7 @@ class TestTeamsUniqueIndexGuard:
         original_create_index = teams.create_index
 
         async def create_index(keys, **kwargs):
-            if isinstance(keys, list) and [k[0] for k in keys] == [TEAM_BINDING_KEY_FIELD] and kwargs.get("unique"):
+            if isinstance(keys, list) and [k[0] for k in keys] == [BINDING_KEY_PATH] and kwargs.get("unique"):
                 raise exc
             return await original_create_index(keys, **kwargs)
 
@@ -62,4 +63,4 @@ class TestStartupBuildsTheBindingKey:
 
         asyncio.run(create_indexes(db))
 
-        assert (TEAM_BINDING_KEY_FIELD,) in db["teams"].created_indexes
+        assert (BINDING_KEY_PATH,) in db["teams"].created_indexes

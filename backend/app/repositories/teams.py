@@ -16,7 +16,7 @@ _MEMBERS = "members"
 _MEMBERS_USER_ID = f"{_MEMBERS}.{_USER_ID}"
 _MEMBERS_SOURCE = f"{_MEMBERS}.source"
 _BINDINGS = "bindings"
-_BINDING_KEY = f"{_BINDINGS}.key"
+BINDING_KEY_PATH = f"{_BINDINGS}.key"
 _BINDING_INSTANCE = f"{_BINDINGS}.instance_id"
 # The identifier the array filters address one binding by; the update path has to name the same one.
 _ENTRY = "entry"
@@ -104,7 +104,7 @@ class TeamRepository:
 
     async def get_raw_by_binding_key(self, key: str) -> dict[str, Any] | None:
         """The team holding one binding; checked here too, since the unique index build can be skipped."""
-        return await self.collection.find_one({_BINDING_KEY: key})
+        return await self.collection.find_one({BINDING_KEY_PATH: key})
 
     async def get_raw_by_binding(self, provider: str, instance_id: str, external_id: int) -> dict[str, Any] | None:
         return await self.get_raw_by_binding_key(team_binding_key(provider, instance_id, external_id))
