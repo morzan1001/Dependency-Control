@@ -15,7 +15,7 @@ async def test_generate_pqc_migration_plan_returns_response():
     db = MagicMock()
     with patch("app.services.chat.tools.crypto_tools.PQCMigrationPlanGenerator") as gen_cls:
         gen_cls.return_value = MagicMock(
-            generate=AsyncMock(
+            plan=AsyncMock(
                 return_value=MagicMock(
                     model_dump=lambda: {"scope": "project", "items": []},
                 )
@@ -24,7 +24,7 @@ async def test_generate_pqc_migration_plan_returns_response():
         out = await generate_pqc_migration_plan(db, project_id="p1", limit=500)
     assert out["scope"] == "project"
     assert out["items"] == []
-    assert gen_cls.return_value.generate.await_args.kwargs["resolved"] == ResolvedScope(
+    assert gen_cls.return_value.plan.await_args.kwargs["resolved"] == ResolvedScope(
         scope="project", scope_id="p1", project_ids=["p1"]
     )
 

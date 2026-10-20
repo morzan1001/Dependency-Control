@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.cache import scope_digest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.projects import ProjectRepository
@@ -11,6 +12,7 @@ from app.schemas.pqc_migration import (
     MigrationPlanResponse,
     MigrationPlanSummary,
 )
+from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
 from app.services.pqc_migration.mappings_loader import (
     PQCMapping,
@@ -28,6 +30,17 @@ class PQCMigrationPlanGenerator:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.mappings = load_mappings()
+
+    async def plan(self, *, resolved: ResolvedScope, limit: int) -> MigrationPlanResponse:
+        key = (
+            "pqc-migration",
+            resolved.scope,
+            resolved.scope_id,
+            scope_digest(resolved.project_ids),
+            limit,
+            self.mappings.version,
+        )
+        return await get_analytics_cache().get_or_compute(key, lambda: self.generate(resolved=resolved, limit=limit))
 
     async def generate(
         self,

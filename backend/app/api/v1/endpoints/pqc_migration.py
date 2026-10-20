@@ -3,17 +3,14 @@ from fastapi import Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_403
-from app.core.cache import scope_digest
 from app.core.constants import (
     DEFAULT_PQC_PLAN_ITEMS,
     MAX_PQC_PLAN_ITEMS,
     ScopeName,
 )
 from app.schemas.pqc_migration import MigrationPlanResponse
-from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ScopeResolver
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
-from app.services.pqc_migration.mappings_loader import load_mappings
 
 router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
@@ -30,15 +27,4 @@ async def get_pqc_migration_plan(
         scope=scope,
         scope_id=scope_id,
     )
-
-    key = (
-        "pqc-migration",
-        resolved.scope,
-        resolved.scope_id,
-        scope_digest(resolved.project_ids),
-        limit,
-        load_mappings().version,
-    )
-    return await get_analytics_cache().get_or_compute(
-        key, lambda: PQCMigrationPlanGenerator(db).generate(resolved=resolved, limit=limit)
-    )
+    return await PQCMigrationPlanGenerator(db).plan(resolved=resolved, limit=limit)

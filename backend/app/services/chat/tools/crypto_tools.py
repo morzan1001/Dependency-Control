@@ -163,10 +163,7 @@ async def generate_pqc_migration_plan(
 ) -> dict[str, Any]:
     """The caller must already have authorised the project."""
     resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
-    gen = PQCMigrationPlanGenerator(db)
-    resp = await gen.generate(resolved=resolved, limit=limit)
-    dumped: dict[str, Any] = resp.model_dump()
-    return dumped
+    return (await PQCMigrationPlanGenerator(db).plan(resolved=resolved, limit=limit)).model_dump()
 
 
 async def list_compliance_reports(
