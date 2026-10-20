@@ -268,6 +268,24 @@ class TestOnlyThePypiCorpusIsCached:
         assert ANALYZER_TIMEOUTS["typosquatting"] < max_wait < lock_ttl
 
     @pytest.mark.asyncio
+    async def test_a_download_still_trickling_in_at_the_timeout_is_abandoned(self, monkeypatch, caplog):
+        """httpx times each read, so without a total limit the holder could outlast the lock and its waiting peers."""
+        monkeypatch.setitem(ANALYZER_TIMEOUTS, "typosquatting", 0.05)
+
+        async def trickle(url):
+            await asyncio.sleep(5)
+
+        with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
+            ClientCls.return_value.__aenter__.return_value.get = trickle
+            started = time.perf_counter()
+            with caplog.at_level(logging.WARNING, logger="app.services.analyzers.typosquatting"):
+                packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
+
+        assert packages is None
+        assert time.perf_counter() - started < 1
+        assert "TimeoutError" in caplog.text
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("status_code", "payload", "reason"),
         [

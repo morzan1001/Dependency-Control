@@ -138,9 +138,11 @@ class TyposquattingAnalyzer(Analyzer):
     async def _fetch_pypi_packages(self) -> list[str] | None:
         timeout = ANALYZER_TIMEOUTS["typosquatting"]
         try:
-            # The corpus has moved host before; an unfollowed 301 leaves only the handful of built-in names.
-            async with InstrumentedAsyncClient("PyPI API", timeout=timeout, follow_redirects=True) as client:
-                resp = await client.get(TOP_PYPI_PACKAGES_URL)
+            # httpx times each read, so only a total limit keeps a trickling download inside the lock's lifetime.
+            async with asyncio.timeout(timeout):
+                # The corpus has moved host before; an unfollowed 301 leaves only the handful of built-in names.
+                async with InstrumentedAsyncClient("PyPI API", timeout=timeout, follow_redirects=True) as client:
+                    resp = await client.get(TOP_PYPI_PACKAGES_URL)
             reason = f"HTTP {resp.status_code}"
             if resp.status_code == 200:
                 packages = [row["project"] for row in resp.json().get("rows", [])]
