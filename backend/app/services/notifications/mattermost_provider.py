@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 class MattermostProvider:
+    def __init__(self) -> None:
+        # Server and token are in the key, so a bot or server switch never reuses another bot's channel.
+        self._dm_channels: dict[tuple[str, str, str], str] = {}
+
     async def _get_user_id(
         self, client: InstrumentedAsyncClient, user_path: str, base_url: str, headers: dict
     ) -> str | None:
@@ -70,17 +74,21 @@ class MattermostProvider:
             async with InstrumentedAsyncClient(
                 "Mattermost API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
             ) as client:
-                user_id = await self._get_user_id(client, f"username/{destination}", base_url, headers)
-                if not user_id:
-                    logger.error(f"Cannot send Mattermost DM: User {destination} not found")
-                    notifications_failed_total.labels(type="mattermost").inc()
-                    return False
+                channel_key = (base_url, mattermost_token, destination)
+                channel_id = self._dm_channels.get(channel_key)
+                if channel_id is None:
+                    user_id = await self._get_user_id(client, f"username/{destination}", base_url, headers)
+                    if not user_id:
+                        logger.error(f"Cannot send Mattermost DM: User {destination} not found")
+                        notifications_failed_total.labels(type="mattermost").inc()
+                        return False
 
-                channel_id = await self._create_dm_channel(client, user_id, base_url, headers)
-                if not channel_id:
-                    logger.error(f"Cannot send Mattermost DM: Failed to create channel for {destination}")
-                    notifications_failed_total.labels(type="mattermost").inc()
-                    return False
+                    channel_id = await self._create_dm_channel(client, user_id, base_url, headers)
+                    if not channel_id:
+                        logger.error(f"Cannot send Mattermost DM: Failed to create channel for {destination}")
+                        notifications_failed_total.labels(type="mattermost").inc()
+                        return False
+                    self._dm_channels[channel_key] = channel_id
 
                 payload = {
                     "channel_id": channel_id,
@@ -94,6 +102,7 @@ class MattermostProvider:
                     logger.info(f"Mattermost message sent to {destination}")
                     notifications_sent_total.labels(type="mattermost").inc()
                     return True
+                self._dm_channels.pop(channel_key, None)
                 logger.error(f"Failed to send Mattermost notification: {response.text}")
                 notifications_failed_total.labels(type="mattermost").inc()
                 return False

@@ -23,7 +23,8 @@ class _Response:
 
 class _Client:
     def __init__(self, routes: dict[str, _Response]) -> None:
-        self._routes = routes
+        self.routes = routes
+        self.got: list[str] = []
         self.posted: list[tuple[str, Any]] = []
 
     async def __aenter__(self) -> "_Client":
@@ -33,11 +34,12 @@ class _Client:
         return None
 
     async def get(self, url: str, **_kwargs: Any) -> _Response:
-        return self._routes[url.removeprefix(_BASE)]
+        self.got.append(url)
+        return self.routes[url.removeprefix(_BASE)]
 
     async def post(self, url: str, json: Any = None, **_kwargs: Any) -> _Response:
         self.posted.append((url, json))
-        return self._routes[url.removeprefix(_BASE)]
+        return self.routes[url.removeprefix(_BASE)]
 
 
 def _use_client(monkeypatch, module, client: _Client) -> None:
@@ -100,6 +102,45 @@ async def test_a_mattermost_dm_opens_the_channel_as_the_bot_of_the_current_token
         assert await provider.send("alice", "Subj", "Body", system_settings=settings) is True
 
     assert client.posted[0] == (f"{_BASE}/api/v4/channels/direct", ["bot-new", "u-1"])
+
+
+def _mattermost_server() -> _Client:
+    return _Client(
+        {
+            "/api/v4/users/username/alice": _Response(200, {"id": "u-1"}),
+            "/api/v4/users/me": _Response(200, {"id": "bot-1"}),
+            "/api/v4/channels/direct": _Response(201, {"id": "dm-1"}),
+            "/api/v4/posts": _Response(201),
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_mattermost_dm_is_a_single_post(monkeypatch):
+    client = _mattermost_server()
+    _use_client(monkeypatch, mattermost_provider, client)
+    provider, settings = MattermostProvider(), SystemSettings(mattermost_url=_BASE, mattermost_bot_token="tok")
+    await provider.send("alice", "Subj", "Body", system_settings=settings)
+    client.got.clear()
+    client.posted.clear()
+
+    assert await provider.send("alice", "Subj", "Body", system_settings=settings) is True
+    assert (client.got, [url for url, _payload in client.posted]) == ([], [f"{_BASE}/api/v4/posts"])
+
+
+@pytest.mark.asyncio
+async def test_a_refused_mattermost_post_looks_the_channel_up_again(monkeypatch):
+    client = _mattermost_server()
+    _use_client(monkeypatch, mattermost_provider, client)
+    provider, settings = MattermostProvider(), SystemSettings(mattermost_url=_BASE, mattermost_bot_token="tok")
+    await provider.send("alice", "Subj", "Body", system_settings=settings)
+    client.routes["/api/v4/posts"] = _Response(403)
+    assert await provider.send("alice", "Subj", "Body", system_settings=settings) is False
+    client.routes["/api/v4/posts"] = _Response(201)
+    client.got.clear()
+
+    assert await provider.send("alice", "Subj", "Body", system_settings=settings) is True
+    assert client.got == [f"{_BASE}/api/v4/users/username/alice", f"{_BASE}/api/v4/users/me"]
 
 
 @pytest.mark.asyncio
