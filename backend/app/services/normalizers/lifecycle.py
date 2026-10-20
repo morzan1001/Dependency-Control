@@ -62,7 +62,10 @@ def normalize_eol(aggregator: "ResultAggregator", result: dict[str, Any], source
         # endoflife.date marks an undated end of life with ``eol: true``.
         reached = f"reached EOL on {eol_date}" if isinstance(eol_date, str) else "reached EOL"
         if item.get("distro_build"):
-            advice = "The distribution may still backport fixes to this build; a newer base image leaves the cycle"
+            advice = (
+                "The distribution may still backport fixes to this build; "
+                "move to a newer base image to leave this cycle"
+            )
         elif recommended_cycle:
             advice = f"Upgrade to {recommended} (cycle {recommended_cycle})"
         else:

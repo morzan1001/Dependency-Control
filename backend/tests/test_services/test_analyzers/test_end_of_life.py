@@ -650,7 +650,9 @@ class TestFindings:
 
         finding = await self._finding(_component("nginx", "1.22.1-9+deb12u1", purl))
 
-        assert "distribution" in finding.description
+        assert finding.description.endswith(
+            "The distribution may still backport fixes to this build; move to a newer base image to leave this cycle"
+        )
         assert "fixed_version" not in finding.details
 
 
