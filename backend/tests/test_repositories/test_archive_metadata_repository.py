@@ -88,6 +88,17 @@ class TestCountByProject:
         assert await repo.count_all(project_id="absent") == 0
 
 
+class TestCountAll:
+    @pytest.mark.asyncio
+    async def test_the_unfiltered_total_reads_the_collection_count_instead_of_scanning(self, db, monkeypatch):
+        async def no_scan(*_args, **_kwargs):
+            raise AssertionError("count_documents scans the collection")
+
+        monkeypatch.setattr(db.archive_metadata, "count_documents", no_scan)
+
+        assert await ArchiveMetadataRepository(db).count_all() == _ARCHIVE_COUNT + 2
+
+
 class TestFindAndDeleteByScanId:
     @pytest.mark.asyncio
     async def test_the_archive_of_a_known_scan_is_found_and_deleted_once(self, db):
