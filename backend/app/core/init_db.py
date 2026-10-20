@@ -199,7 +199,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await create_team_indexes(database)
 
-    await scans.create_index("pipeline_id")
     await scans.create_index([("created_at", pymongo.DESCENDING)])
     await scans.create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
     await scans.create_index("sbom_refs.gridfs_id")
