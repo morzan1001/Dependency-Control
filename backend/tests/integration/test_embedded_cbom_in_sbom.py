@@ -12,10 +12,17 @@ from app.models.finding import FindingType
 from app.models.project import Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.analyzers import analyse_scan, bundled_iana_catalog, process_sbom_document, run_context
+from tests.helpers.analyzers import (
+    analyse_scan,
+    bundled_iana_catalog,
+    process_sbom_document,
+    run_context,
+    serve_analyzer,
+)
 from tests.helpers.cbom import content_ref, fixture_component
 from tests.helpers.sboms import store_sbom
 
@@ -96,6 +103,40 @@ async def test_a_json_number_in_a_crypto_text_field_keeps_every_asset_of_the_sbo
         ("RSA", "2048", None),
         ("TLS", None, "1.2"),
     ]
+
+
+class _Graded:
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        return {}
+
+
+_MD5 = {
+    "type": "cryptographic-asset",
+    "bom-ref": "algo-md5",
+    "name": "MD5",
+    "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "hash"}},
+}
+_REQUESTS = {"type": "library", "name": "requests", "version": "2.31.0", "purl": "pkg:pypi/requests@2.31.0"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("components", "graded"),
+    [
+        pytest.param([_MD5], ["license_compliance"], id="crypto-only"),
+        pytest.param([_MD5, _REQUESTS], ["license_compliance", "osv"], id="crypto-and-packages"),
+    ],
+)
+async def test_an_sbom_listing_only_crypto_assets_runs_no_vulnerability_scanner(db, monkeypatch, components, graded):
+    for name in ("osv", "license_compliance"):
+        serve_analyzer(monkeypatch, name, _Graded())
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
+    ctx = run_context(db, "scan-sbom-crypto-only", ["osv", "license_compliance"])
+
+    outcomes = await process_sbom_document(ctx, ResultAggregator(), sbom)
+
+    assert sorted(outcome.name for outcome in outcomes) == graded
 
 
 _PROJECT_ID = "embedded-cbom-project"

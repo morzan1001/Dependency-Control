@@ -12,6 +12,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.request_body import read_json_body
 from app.core.constants import (
     NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
+    SCAN_TYPE_CBOM,
     WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
 )
 from app.core.metrics import cbom_ingests_total
@@ -84,7 +85,7 @@ async def ingest_cbom(
         ) from exc
 
     # The cbom tag makes the analysis engine run the crypto analyzers even without an SBOM.
-    await manager.find_or_create_scan(payload, scan_id, scan_type="cbom")
+    await manager.find_or_create_scan(payload, scan_id, scan_type=SCAN_TYPE_CBOM)
     await manager.register_result(scan_id, "cbom", trigger_analysis=True)
 
     background_tasks.add_task(

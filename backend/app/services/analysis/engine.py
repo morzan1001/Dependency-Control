@@ -29,6 +29,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
+    SCAN_TYPE_CBOM,
     ScanStatus,
     SCAN_USABLE_STATUSES,
 )
@@ -370,11 +371,11 @@ async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, sca
 
 
 def _resolve_effective_analyzers(
-    active_analyzers: list[str], parsed_sbom: Any, parsed_components: list[dict[str, Any]], scan_type: str | None
+    active_analyzers: list[str], parsed_sbom: ParsedSBOM | None, parsed_components: list[dict[str, Any]]
 ) -> list[str]:
     if parsed_sbom is None:
-        active_analyzers = [n for n in active_analyzers if n in RAW_SBOM_ANALYZERS]
-    if not parsed_components and scan_type == "cbom":
+        return sorted(n for n in active_analyzers if n in RAW_SBOM_ANALYZERS)
+    if parsed_sbom.crypto_assets and not parsed_components:
         return sorted(n for n in active_analyzers if n not in VULNERABILITY_ANALYZERS)
     return sorted(active_analyzers)
 
@@ -388,7 +389,7 @@ async def _process_sbom(
             await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
         except Exception as e:
             outcomes = _crypto_analyzers_failed(ctx, aggregator, e)
-    names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components, ctx.scan.scan_type)
+    names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components)
     tasks = [process_analyzer(ctx, aggregator, name, sbom) for name in names if name in analyzer_factories]
     return [*outcomes, *await asyncio.gather(*tasks)]
 
@@ -914,7 +915,7 @@ async def run_analysis(
     payload, sbom_load_failures, sbom_outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
     outcomes.extend(sbom_outcomes)
 
-    if scan_doc.scan_type == "cbom" or any(p is not None and p.crypto_assets for p in payload):
+    if scan_doc.scan_type == SCAN_TYPE_CBOM or any(p is not None and p.crypto_assets for p in payload):
         outcomes.extend(await _run_crypto_analyzers(ctx, aggregator))
 
     if not await _still_claimed(ctx):
