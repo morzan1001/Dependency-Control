@@ -445,6 +445,32 @@ describe("FindingDetailsModal details by type", () => {
     expect(screen.queryByText("Vulnerability Info")).not.toBeInTheDocument();
   });
 
+  it("labels an end-of-life finding's LTS flag and EOL date in capitals, like the EOL badge above them", () => {
+    renderModal(finding({ type: "eol", details: { cycle: "3.2", lts: true, eol_date: "2024-04-01" } }));
+
+    expect(screen.getByText("LTS")).toBeInTheDocument();
+    expect(screen.getByText("EOL Date")).toBeInTheDocument();
+  });
+
+  it("lists every rule a crypto asset matched with its fields, not as [object Object]", () => {
+    const rule = (rule_id: string, policy_source: string) => ({ rule_id, rule_name: `${rule_id} name`, policy_source, severity: "HIGH" });
+    renderModal(
+      finding({
+        type: "crypto_weak_key",
+        details: {
+          bom_ref: "sha-79c0",
+          rule_id: "nist-131a-rsa-min-2048",
+          matched_rules: [rule("nist-131a-rsa-min-2048", "nist-sp-800-131a"), rule("bsi-02102-rsa-min-3000", "bsi-tr-02102")],
+        },
+      }),
+    );
+
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+    expect(screen.getByText(/bsi-02102-rsa-min-3000 name/)).toBeInTheDocument();
+    expect(screen.getByText("BOM Ref")).toBeInTheDocument();
+    expect(screen.getByText("Rule ID")).toBeInTheDocument();
+  });
+
   it.each(["vulnerability", "secret", "sast", "iac", "license", "quality", "outdated", "system_warning"])(
     "keeps the generic details list off a %s finding",
     (type) => {

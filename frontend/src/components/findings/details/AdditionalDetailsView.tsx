@@ -12,6 +12,10 @@ function isUrl(value: unknown): value is string {
   return typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'))
 }
 
+function isObject(value: unknown): value is object {
+  return typeof value === 'object' && value !== null
+}
+
 function isDateField(key: string): boolean {
   return key.includes('date') || key === 'eol' || key === 'end_of_life'
 }
@@ -79,7 +83,7 @@ function renderValue(key: string, value: unknown) {
     return <Badge variant={value ? 'default' : 'secondary'}>{value ? 'Yes' : 'No'}</Badge>
   }
 
-  if (Array.isArray(value)) {
+  if (Array.isArray(value) && !value.some(isObject)) {
     const hasUrls = value.some(isUrl)
     if (hasUrls) {
       return (
@@ -100,7 +104,7 @@ function renderValue(key: string, value: unknown) {
     )
   }
 
-  if (typeof value === 'object' && value !== null) {
+  if (isObject(value)) {
     return (
       <pre className="bg-muted p-2 rounded text-xs overflow-auto max-h-32">{JSON.stringify(value, null, 2)}</pre>
     )
@@ -119,12 +123,14 @@ function getFieldIcon(key: string) {
   return null
 }
 
+const ACRONYMS = new Set(['bom', 'eol', 'id', 'lts'])
+
 function formatFieldName(key: string) {
   return key
     .replaceAll('_', ' ')
     .replaceAll(/([A-Z])/g, ' $1')
     .split(' ')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .map((word) => (ACRONYMS.has(word.toLowerCase()) ? word.toUpperCase() : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()))
     .join(' ')
     .trim()
 }
