@@ -115,6 +115,9 @@ def _classify(scans: Sequence[tuple[str, datetime]], ledger: dict[str, LedgerEnt
             repairs.append(_Repair(scan_id, created_at, "missing"))
         elif entry.schema_version != UPDATE_DELTA_SCHEMA_VERSION:
             repairs.append(_Repair(scan_id, created_at, "stale"))
+        elif entry.failed:
+            # The scan is usable, so a writer failure or a demotion is worth another derivation.
+            repairs.append(_Repair(scan_id, created_at, "error"))
         elif _severed(entry, owed, ledger, since):
             repairs.append(_Repair(scan_id, created_at, "severed"))
         elif scan_id in skipping:
@@ -208,36 +211,40 @@ def _publish(report: ReconcileReport) -> None:
         return
     logger.warning(
         "Update-frequency reconcile found drift in %d of %d chain(s): derived %d missing, %d outdated, "
-        "%d severed, %d relinked and %d successor delta(s), deleted %d orphan(s)",
+        "%d severed, %d relinked, %d previously failed and %d successor delta(s), deleted %d orphan(s)",
         report.drifted_chains,
         report.chains,
         report.resolved["missing"],
         report.resolved["stale"],
         report.resolved["severed"],
         report.resolved["relink"],
+        report.resolved["error"],
         report.resolved["dependent"],
         report.resolved["orphan"],
     )
     if failed:
         logger.warning(
-            "Update-frequency reconcile could not derive %d missing, %d outdated, %d severed, %d relink and "
-            "%d successor delta(s); the rollup writer logged why",
+            "Update-frequency reconcile could not derive %d missing, %d outdated, %d severed, %d relink, "
+            "%d previously failed and %d successor delta(s); the rollup writer logged why",
             report.failed["missing"],
             report.failed["stale"],
             report.failed["severed"],
             report.failed["relink"],
+            report.failed["error"],
             report.failed["dependent"],
         )
     if deferred:
         logger.warning(
             "Update-frequency reconcile hit its per-run caps (%d repairs, %d orphan deletes) and left "
-            "%d missing, %d outdated, %d severed, %d relink, %d successor and %d orphan delta(s) for the next run",
+            "%d missing, %d outdated, %d severed, %d relink, %d previously failed, %d successor and %d orphan "
+            "delta(s) for the next run",
             _MAX_REPAIRS,
             _MAX_ORPHAN_DELETES,
             report.deferred["missing"],
             report.deferred["stale"],
             report.deferred["severed"],
             report.deferred["relink"],
+            report.deferred["error"],
             report.deferred["dependent"],
             report.deferred["orphan"],
         )

@@ -121,19 +121,19 @@ async def test_the_ledger_census_keys_every_named_chain_by_delta(db):
 
     assert chains == {
         ("p-a", "main"): {
-            "a1": LedgerEntry(V, None, None, _at(0), True),
-            "a2": LedgerEntry(V, "a1", _at(0), _at(10), False),
-            "a3": LedgerEntry(V, "a1", _at(0), _at(20), False),
-            "a4": LedgerEntry(V - 1, "a3", _at(20), _at(30), True),
-            "a5": LedgerEntry(None, None, None, _at(40), True),
+            "a1": LedgerEntry(V, None, None, _at(0), True, False),
+            "a2": LedgerEntry(V, "a1", _at(0), _at(10), False, False),
+            "a3": LedgerEntry(V, "a1", _at(0), _at(20), False, True),
+            "a4": LedgerEntry(V - 1, "a3", _at(20), _at(30), True, False),
+            "a5": LedgerEntry(None, None, None, _at(40), True, False),
         },
-        ("p-a", "release/1.x"): {"r1": LedgerEntry(V, "gone", None, _at(5), True)},
+        ("p-a", "release/1.x"): {"r1": LedgerEntry(V, "gone", None, _at(5), True, False)},
         ("p-b", "main"): {
-            "b0": LedgerEntry(V, None, None, SINCE, True),
-            "b1": LedgerEntry(V, "b0", SINCE, _at(1), False),
-            "b2": LedgerEntry(V, "b1", _at(1), _at(2), False),
+            "b0": LedgerEntry(V, None, None, SINCE, True, False),
+            "b1": LedgerEntry(V, "b0", SINCE, _at(1), False, False),
+            "b2": LedgerEntry(V, "b1", _at(1), _at(2), False, False),
         },
-        ("p-b", "feature"): {"f1": LedgerEntry(V + 1, None, None, _at(3), True)},
+        ("p-b", "feature"): {"f1": LedgerEntry(V + 1, None, None, _at(3), True, False)},
     }
 
 

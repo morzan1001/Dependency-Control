@@ -61,6 +61,7 @@ class LedgerEntry:
     prev_created_at: datetime | None
     scan_created_at: datetime
     comparable: bool
+    failed: bool
 
 
 def _ledger_entry(delta: dict[str, Any]) -> LedgerEntry:
@@ -71,6 +72,7 @@ def _ledger_entry(delta: dict[str, Any]) -> LedgerEntry:
         prev_at if isinstance(prev_at, datetime) else None,
         delta["scan_created_at"],
         is_comparable_delta(delta),
+        bool(delta.get("error")),
     )
 
 

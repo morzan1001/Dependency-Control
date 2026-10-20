@@ -224,18 +224,60 @@ class TestStaleSchema:
         assert spy == ["s1"]
         assert report.resolved == {"stale": 1}
 
+
+class TestRecordedFailure:
+    """A usable scan's error document keeps its branch partial until the scan leaves the window, unless retried."""
+
     @pytest.mark.asyncio
-    async def test_a_recorded_failure_is_left_alone(self, spy: list[str]):
-        """The writer stored that outcome on purpose."""
+    async def test_a_writer_failure_on_a_usable_scan_is_derived_again(
+        self, spy: list[str], caplog: pytest.LogCaptureFixture
+    ):
         db = FakeDatabase()
         await _seed_project(db)
-        await _seed_chain(db, {"s1": "1.0.0"})
-        await db.scan_update_deltas.update_one({"_id": "s1"}, {"$set": {"error": "boom"}})
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        with patch.object(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("mongo hiccup"))):
+            await record_scan_update_delta(db, "s1")
+        assert await _folded_window(db) == ["s2"]
+        exported = _metric("error", "resolved")
+
+        with caplog.at_level(logging.WARNING, logger=reconcile_module.__name__):
+            report = await run_update_frequency_reconcile(db)
+
+        assert spy == ["s1"]
+        assert report.resolved == {"error": 1}
+        assert _metric("error", "resolved") == exported + 1
+        assert (await _delta(db, "s1") or {}).get("error") is None
+        assert await _folded_window(db) == ["s1", "s2"]
+        assert "1 previously failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_delta_demoted_for_lost_dependencies_is_derived_again(self, spy: list[str]):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        await db.dependencies.insert_one({**_dep("s1", "flask", "3.0.0"), "project_id": PROJECT})
+        await record_scan_update_delta(db, "s2")
+        assert (await _delta(db, "s1") or {}).get("error")
 
         report = await run_update_frequency_reconcile(db)
 
-        assert spy == []
-        assert report == ReconcileReport(chains=1)
+        assert report.resolved == {"error": 1}
+        assert (await _delta(db, "s1") or {})["dep_count"] == 2
+        assert await _folded_window(db) == ["s1", "s2"]
+
+    @pytest.mark.asyncio
+    async def test_a_failure_that_repeats_is_counted_as_failed_again(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0"})
+        monkeypatch.setattr(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("boom")))
+        await record_scan_update_delta(db, "s1")
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert (spy, report.resolved, report.failed) == (["s1"], {}, {"error": 1})
 
 
 async def _folded_window(db: FakeDatabase) -> list[str]:
@@ -267,18 +309,27 @@ class TestSkipLink:
         assert await _folded_window(db) == ["p", "a", "b"]
 
     @pytest.mark.asyncio
-    async def test_the_successor_of_a_failed_recompute_is_relinked_past_it(self, spy: list[str]):
+    async def test_the_successor_of_a_failed_recompute_is_relinked_past_it(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
         db = FakeDatabase()
         await _seed_project(db)
         await _seed_chain(db, {"s0": "1.0.0", "s1": "1.1.0", "s2": "1.2.0", "s3": "1.3.0"})
-        with patch.object(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("mongo hiccup"))):
-            await record_scan_update_delta(db, "s1")
+        real_load = rollup_module.load_scan_deps
+
+        async def _s1_keeps_failing(repo: Any, scan_id: str) -> Any:
+            if scan_id == "s1":
+                raise RuntimeError("mongo hiccup")
+            return await real_load(repo, scan_id)
+
+        monkeypatch.setattr(rollup_module, "load_scan_deps", _s1_keeps_failing)
+        await record_scan_update_delta(db, "s1")
         assert await _folded_window(db) == ["s2", "s3"]
 
         report = await run_update_frequency_reconcile(db)
 
-        assert spy == ["s2"]
-        assert report.resolved == {"relink": 1}
+        assert spy == ["s1", "s2"]
+        assert (report.resolved, report.failed) == ({"relink": 1}, {"error": 1})
         assert (await _delta(db, "s1") or {}).get("error")
         assert await _folded_window(db) == ["s0", "s2", "s3"]
 
