@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -362,6 +363,12 @@ async def update_password_me(
     return await get_user_or_404(current_user.id, db)
 
 
+def _qr_png_base64(uri: str) -> str:
+    buffered = io.BytesIO()
+    qrcode.make(uri).save(buffered)
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+
 @router.post("/me/2fa/setup", response_model=User2FASetup, responses=RESP_AUTH_400)
 async def setup_2fa(
     current_user: CurrentUserDep,
@@ -384,12 +391,7 @@ async def setup_2fa(
 
     totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name=settings.PROJECT_NAME)
 
-    img = qrcode.make(totp_uri)
-    buffered = io.BytesIO()
-    img.save(buffered)
-    qr_code_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-    return {"secret": secret, "qr_code": qr_code_base64}
+    return {"secret": secret, "qr_code": await asyncio.to_thread(_qr_png_base64, totp_uri)}
 
 
 @router.post("/me/2fa/enable", response_model=UserResponse, responses=RESP_AUTH_400)
